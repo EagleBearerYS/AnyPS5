@@ -39,6 +39,12 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
     return it->second;
 }
 
+std::uint32_t readIfWritten(const Registers& registers, std::uint32_t offset, RegisterBank bank, std::uint32_t unwritten) {
+    NoteRegisterRead(bank, offset);
+    const auto it = registers.find(offset);
+    return it == registers.end() ? unwritten : it->second;
+}
+
 template <typename T> T _readHeaderPod(std::span<const std::byte> header, std::uint64_t headerAddress, const void* pointer, std::size_t bytes = sizeof(T)) {
     if (pointer == nullptr) throw std::runtime_error("AGC graphics: null AGC header pointer");
     const auto address = reinterpret_cast<std::uint64_t>(pointer);
@@ -145,6 +151,9 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     const bool stencilRefExportEnable = ((shaderControl >> 1u) & 0x1u) != 0;
     const bool depthBeforeShader = ((shaderControl >> 12u) & 0x1u) != 0;
     const auto zOrder = (shaderControl >> 4u) & 0x3u;
+    const auto aaMask = readIfWritten(context, 0x30e, RegisterBank::Context, 0xffffffffu);
+    const auto aaMaskBottom = readIfWritten(context, 0x30f, RegisterBank::Context, 0xffffffffu);
+    const auto quadPixelMask = static_cast<std::uint8_t>((aaMask & 1u) | (((aaMask >> 16u) & 1u) << 1u) | ((aaMaskBottom & 1u) << 2u) | (((aaMaskBottom >> 16u) & 1u) << 3u));
     const auto loaded = [&](PixelInput input) { return (activeInputs & PixelInputBit(input)) != 0; };
     return ShaderRecompiler::ShaderPixelStageInfo{
         .interpolatorCount = inputNum,
@@ -171,7 +180,8 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .orderedPixelShader = ((shaderControl >> 16u) & 0x1u) != 0,
         .targetOutputMode = targetOutputMode,
         .targetExportMapping = nullProgram ? std::array<std::uint8_t, 8>{} : exportMappings,
-        .stencilRefExportEnable = stencilRefExportEnable
+        .stencilRefExportEnable = stencilRefExportEnable,
+        .quadPixelMask = quadPixelMask
     };
 }
 
