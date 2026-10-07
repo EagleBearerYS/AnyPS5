@@ -3470,6 +3470,34 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     return {set, pool, chain.size() - 1, updateAfterBind};
 }
 
+DescriptorCache::SetAllocation DescriptorCache::AllocateRewritten(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, bool updateAfterBind) {
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = recycled.find(layout); found != recycled.end() && !found->second.empty()) {
+            const auto allocation = found->second.back();
+            found->second.pop_back();
+            return allocation;
+        }
+    }
+    return Allocate(layout, sizes, updateAfterBind);
+}
+
+void DescriptorCache::Recycle(VkDescriptorSetLayout layout, const SetAllocation& allocation) noexcept {
+    if (allocation.set == VK_NULL_HANDLE || allocation.pool == VK_NULL_HANDLE) return;
+    {
+        std::lock_guard lock(mutex);
+        try {
+            auto& list = recycled[layout];
+            if (list.size() < 4096) {
+                list.push_back(allocation);
+                return;
+            }
+        } catch (...) {
+        }
+    }
+    Free(allocation);
+}
+
 void DescriptorCache::Free(const SetAllocation& allocation) noexcept {
     if (allocation.set == VK_NULL_HANDLE || allocation.pool == VK_NULL_HANDLE) return;
     std::lock_guard lock(mutex);
@@ -4387,8 +4415,14 @@ bool ShaderResources::LayoutUpdateAfterBind() const {
 }
 
 ShaderResources::DrawBindings::~DrawBindings() {
-    if (cache != nullptr && allocation.set != VK_NULL_HANDLE) cache->Free(allocation);
-    if (cache != nullptr && fragmentAllocation.set != VK_NULL_HANDLE) cache->Free(fragmentAllocation);
+    if (cache == nullptr) return;
+    const auto release = [&](VkDescriptorSetLayout setLayout, const DescriptorCache::SetAllocation& set) {
+        if (set.set == VK_NULL_HANDLE) return;
+        if (setLayout != VK_NULL_HANDLE) cache->Recycle(setLayout, set);
+        else cache->Free(set);
+    };
+    release(layout, allocation);
+    release(fragmentLayout, fragmentAllocation);
 }
 
 std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const {
@@ -4451,7 +4485,9 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
     std::size_t totalSnapshotBytes = 0;
     auto result = std::make_shared<DrawBindings>();
-    std::vector<std::size_t> selected;
+    thread_local std::vector<std::size_t>* selectedSlot = nullptr;
+    auto& selected = ShaderRecompiler::ThreadOwned(selectedSlot);
+    selected.clear();
     std::array<std::uint64_t, 3> stamp{};
     bool stamped = false;
     for (std::size_t index = 0; index < allocations.size(); ++index) {
@@ -4539,11 +4575,15 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     const auto variableOf = [&](std::size_t set) { return tableBindings[set] != std::numeric_limits<std::size_t>::max() ? std::optional<std::uint32_t>(std::max(1u, static_cast<std::uint32_t>(bindings[tableBindings[set]].imageAllocations.size()))) : std::nullopt; };
     result->cache = context.descriptorCache;
     if (!descriptions[0].empty() || splitSets) {
-        result->allocation = result->cache->Allocate(_layout, sizesOf(0), updateAfterBind, variableOf(0));
+        const auto variable = variableOf(0);
+        result->allocation = variable.has_value() ? result->cache->Allocate(_layout, sizesOf(0), updateAfterBind, variable) : result->cache->AllocateRewritten(_layout, sizesOf(0), updateAfterBind);
+        if (!variable.has_value()) result->layout = _layout;
         Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
     if (!descriptions[1].empty() || splitSets) {
-        result->fragmentAllocation = result->cache->Allocate(fragment.layout, sizesOf(1), updateAfterBind, variableOf(1));
+        const auto variable = variableOf(1);
+        result->fragmentAllocation = variable.has_value() ? result->cache->Allocate(fragment.layout, sizesOf(1), updateAfterBind, variable) : result->cache->AllocateRewritten(fragment.layout, sizesOf(1), updateAfterBind);
+        if (!variable.has_value()) result->fragmentLayout = fragment.layout;
         Require(result->fragmentAllocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
     auto buffers = descriptorBuffers;
