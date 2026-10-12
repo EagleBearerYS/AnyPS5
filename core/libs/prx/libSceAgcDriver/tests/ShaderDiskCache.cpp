@@ -1669,6 +1669,150 @@ void verifyPlanKey() {
     require(planKey([](RecompileRequest& request) { request.context.floatMode = ShaderFloatMode{0xc0u, true, false, false}; }) != key, "the plan key ignores the float mode");
 }
 
+void appendWords(std::vector<std::byte>& out, std::span<const std::uint32_t> words) {
+    const auto count = static_cast<std::uint64_t>(words.size());
+    const auto countBytes = std::as_bytes(std::span(&count, 1));
+    out.insert(out.end(), countBytes.begin(), countBytes.end());
+    const auto bytes = std::as_bytes(words);
+    out.insert(out.end(), bytes.begin(), bytes.end());
+}
+
+void appendSnapshot(std::vector<std::byte>& out, const ResourceCapture& capture) {
+    const auto& snapshot = capture.snapshot;
+    for (const auto* values : {&snapshot.buffers, &snapshot.images, &snapshot.samplers}) {
+        std::vector<std::uint32_t> words;
+        for (const auto& value : *values) {
+            words.push_back(value.dwordCount);
+            words.insert(words.end(), value.dwords.begin(), value.dwords.end());
+        }
+        appendWords(out, words);
+    }
+    appendWords(out, snapshot.flattenedSrt);
+    appendWords(out, snapshot.userData);
+    const auto& fill = snapshot.uniformFill;
+    appendWords(out, std::vector<std::uint32_t>{static_cast<std::uint32_t>(fill.kind), fill.resource, fill.groupStride[0], fill.groupStride[1], fill.groupStride[2], fill.words, fill.value, snapshot.nullRootReads});
+    std::vector<std::uint32_t> poison;
+    for (const auto& entry : snapshot.srtPoison) poison.insert(poison.end(), {entry.slot, entry.pc, static_cast<std::uint32_t>(entry.address), static_cast<std::uint32_t>(entry.address >> 32u)});
+    appendWords(out, poison);
+    std::vector<std::uint32_t> leaves{capture.readTrace.leafSlot};
+    for (const auto& [slot, address] : capture.readTrace.leaves) leaves.insert(leaves.end(), {slot, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)});
+    appendWords(out, leaves);
+    std::vector<std::uint32_t> reads;
+    for (const auto address : capture.readTrace.otherReads) reads.insert(reads.end(), {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)});
+    appendWords(out, reads);
+}
+
+std::vector<std::vector<std::byte>> preparedOutputs(std::vector<PlanFixture>& fixtures) {
+    std::vector<std::vector<std::byte>> outputs;
+    for (auto& fixture : fixtures) {
+        const auto request = fixture.Request(true);
+        const auto handle = PrepareShader(request);
+        RequestMemoryView view(request.context.memory);
+        const auto capture = CaptureResources(request, view.MakeRuntime(request.context.userData, request.shader.codeAddress), *handle);
+        const auto result = MaterializeShader(request, *capture, *handle);
+        std::vector<std::byte> bytes;
+        appendWords(bytes, GetPreparedArtifact(*handle).spirv.Words());
+        ShaderDiskCache::EncodeResult(*result, bytes);
+        appendSnapshot(bytes, *capture);
+        require(ShaderDiskCache::EncodePlan(*capture->plan, bytes), fixture.name + ": the captured plan does not encode");
+        outputs.push_back(std::move(bytes));
+    }
+    return outputs;
+}
+
+std::filesystem::path planOutputPath(std::size_t index) {
+    return ShaderCacheDirectory() / "plan-outputs" / ("fixture-" + std::to_string(index) + ".bin");
+}
+
+std::filesystem::path planEntryPath(PlanFixture& fixture) {
+    std::vector<std::byte> key;
+    ShaderDiskCache::BuildPlanKey(fixture.Request(true), 32u, key);
+    return ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key);
+}
+
+int runPlanLoadingProcess(std::string_view mode) {
+    if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_IMAGE_TABLE", "1");
+    auto fixtures = planFixtures();
+    const auto count = fixtures.size();
+    const auto outputs = preparedOutputs(fixtures);
+    ShaderDiskCache::Flush();
+    const auto totals = ShaderDiskCache::Totals();
+    const auto builds = FrontEndBuilds();
+    const auto counts = " (front end builds " + std::to_string(builds) + ", plan hits " + std::to_string(totals.planHits) + ", plan misses " + std::to_string(totals.planMisses) + ", plan load failures " + std::to_string(totals.planLoadFailures) + ", variant hits " + std::to_string(totals.hits) + ", variant misses " + std::to_string(totals.misses) + ")";
+    if (mode == "--load-plan-switch") {
+        require(builds == count && totals.planHits == 0u && totals.planMisses == count && totals.misses == count, "another switch value reused stored plans or variants" + counts);
+        std::cout << "a process with another switch value rebuilt all " << count << " plans\n";
+        return 0;
+    }
+    if (mode == "--load-plan") {
+        require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.planLoadFailures == 0u && totals.hits == count && totals.misses == 0u, "the second process ran the front end" + counts);
+    } else {
+        require(builds == 1u && totals.planHits == count - 1u && totals.planLoadFailures == 1u && totals.planWrites == 1u && totals.hits == count && totals.misses == 0u, "the damaged plan was not rejected and rebuilt alone" + counts);
+    }
+    for (std::size_t index = 0; index < count; ++index) {
+        std::vector<std::byte> expected;
+        require(ReadWholeFile(planOutputPath(index), expected), "cannot read the first process's output for " + fixtures[index].name);
+        require(outputs[index] == expected, fixtures[index].name + ": the SPIR-V, bindings, push constants, snapshot or plan differ from the first process");
+    }
+    if (mode == "--load-plan") {
+        auto changed = planFixtures();
+        auto& fixture = changed.front();
+        fixture.code.insert(fixture.code.end() - 1, 0xbf800000u);
+        const auto request = fixture.Request(true);
+        static_cast<void>(PrepareShader(request));
+        const auto after = ShaderDiskCache::Totals();
+        require(FrontEndBuilds() == 1u && after.planHits == count && after.planMisses == 1u, "a changed code word reused a stored plan");
+        std::cout << "second process prepared " << count << " shaders from stored plans without running the front end\n";
+    } else {
+        std::cout << "a damaged plan entry was rejected, rebuilt and stored again with the same output\n";
+    }
+    ShaderDiskCache::Flush();
+    return 0;
+}
+
+void verifyPlanAcrossProcesses(const char* self) {
+    auto fixtures = planFixtures();
+    const auto builds = FrontEndBuilds();
+    const auto before = ShaderDiskCache::Totals();
+    const auto outputs = preparedOutputs(fixtures);
+    ShaderDiskCache::Flush();
+    const auto after = ShaderDiskCache::Totals();
+    require(FrontEndBuilds() - builds == fixtures.size() && after.planMisses - before.planMisses == fixtures.size() && after.planWrites - before.planWrites == fixtures.size(), "the first process did not build and store every plan");
+    std::filesystem::create_directories(planOutputPath(0).parent_path());
+    for (std::size_t index = 0; index < outputs.size(); ++index) require(WriteFileAtomically(planOutputPath(index), outputs[index]), "cannot write the first process's output");
+    auto refused = fixtures[1];
+    refused.codeAddress = 0x200000u;
+    refused.code = {0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0x20000000u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    bool threw = false;
+    try {
+        static_cast<void>(PrepareShader(refused.Request(true)));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    ShaderDiskCache::Flush();
+    require(threw && ShaderDiskCache::Totals().planWrites == after.planWrites && !std::filesystem::exists(planEntryPath(refused)), "a plan the front end refused was stored");
+    std::uintmax_t planBytes = 0;
+    for (auto& fixture : fixtures) planBytes += std::filesystem::file_size(planEntryPath(fixture));
+    std::cout << fixtures.size() << " plan entries, " << planBytes / fixtures.size() << " bytes per entry on average\n";
+    const auto run = [&](const char* mode) {
+        const std::string command = "\"" + std::string(self) + "\" " + mode;
+        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+    };
+    run("--load-plan");
+    std::vector<std::byte> entry;
+    const auto damaged = planEntryPath(fixtures.front());
+    require(ReadWholeFile(damaged, entry), "cannot read a stored plan entry");
+    entry[entry.size() / 2] ^= std::byte{0x20};
+    require(WriteFileAtomically(damaged, entry), "cannot damage a stored plan entry");
+    run("--load-plan-corrupt");
+    std::vector<std::byte> rewritten;
+    std::vector<std::byte> key;
+    ShaderDiskCache::BuildPlanKey(fixtures.front().Request(true), 32u, key);
+    IrResourcePlan plan;
+    require(ReadWholeFile(damaged, rewritten) && ShaderDiskCache::DecodePlanEntry(rewritten, key, plan) == ShaderDiskCache::LoadStatus::Loaded, "the rebuilt plan was not stored again");
+    run("--load-plan-switch");
+}
+
 void verifyDefaultDirectory(const char* self) {
     setEnvironment("ANYPS5_SHADER_CACHE_DIR", "");
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "1");
@@ -1686,6 +1830,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
+        if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(argv[0]);
@@ -1702,6 +1847,7 @@ int main(int argc, char** argv) {
         verifyStore();
         verifyPersist();
         verifyAcrossProcesses(argv[0]);
+        verifyPlanAcrossProcesses(argv[0]);
         verifyEmissionFailureMemo();
         verifyFailureMemoSwitch(argv[0]);
         verifyInvocationIsolation();
