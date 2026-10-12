@@ -572,8 +572,9 @@ public:
                 Fail("a tessellation ring base is used outside a lowered ring access", 0u);
             }
         }
-        requireRelativeIndependence(relative);
-        for (IrValue* base : relative) base->ReplaceAllUsesWith(&constant(0u));
+        const bool data = usedAsData(relative);
+        if (data) requireGroupedPatches();
+        for (IrValue* base : relative) base->ReplaceAllUsesWith(data ? &groupedPatch(*base) : &constant(0u));
         deadCodeEliminator.Eliminate(program);
         program.Metadata().tessellationLocalStride = localStride;
         program.Metadata().tessellationControlStride = controlStride;
@@ -729,7 +730,7 @@ private:
         return address && address->dynamic && address->relative == static_cast<std::int64_t>(tessellation.inputControlPoints) * localStride;
     }
 
-    void requireRelativeIndependence(const std::vector<IrValue*>& bases) {
+    bool usedAsData(const std::vector<IrValue*>& bases) {
         std::vector<IrValue*> pending(bases.begin(), bases.end());
         std::unordered_set<IrValue*> visited(bases.begin(), bases.end());
         while (!pending.empty()) {
@@ -755,9 +756,31 @@ private:
                 }
                 if (dynamicInputAddress(user, value)) continue;
                 const auto address = evaluator.Evaluate(value, nullptr);
-                if (!address || address->relative != 0) Fail("the relative patch or vertex index is used outside a tessellation ring or LDS address", 0u);
+                if (!address || address->relative != 0) return true;
             }
         }
+        return false;
+    }
+
+    void requireGroupedPatches() const {
+        if (stage == IrShaderStage::Local) Fail("the relative patch or vertex index is used outside a tessellation ring or LDS address", 0u);
+        if (tessellation.primitiveGroupSize == 0u) Fail(stage == IrShaderStage::TessellationControl ? "the hull program uses its relative patch index as data, but GE_CNTL.PRIM_GRP_SIZE is 0 or not programmed" : "the domain program uses its relative patch index as data, but GE_CNTL.PRIM_GRP_SIZE is 0 or not programmed", 0u);
+        if (!tessellation.breakAtInstance) Fail(stage == IrShaderStage::TessellationControl ? "the hull program uses its relative patch index as data, but GE_CNTL.BREAK_WAVE_AT_EOI is clear, so the instances of a draw can share hull threadgroups" : "the domain program uses its relative patch index as data, but GE_CNTL.BREAK_WAVE_AT_EOI is clear, so the instances of a draw can share hull threadgroups", 0u);
+    }
+
+    IrValue& groupedPatch(IrValue& base) {
+        const auto emit = [&](IrOpcode opcode, std::initializer_list<IrValue*> arguments) -> IrValue& {
+            IrValue& value = program.CreateValue(opcode, IrType::U32);
+            for (IrValue* argument : arguments) value.AddArgument(argument);
+            base.Parent()->InsertInstructionBefore(&base, &value);
+            return value;
+        };
+        const auto remainder = [&](IrValue& value, std::uint32_t divisor) -> IrValue& {
+            IrValue& count = constant(divisor);
+            return emit(IrOpcode::ISub32, {&value, &emit(IrOpcode::IMul32, {&emit(IrOpcode::UDiv32, {&value, &count}), &count})});
+        };
+        IrValue& primitive = emit(IrOpcode::GetBuiltin, {&constant(static_cast<std::uint32_t>(StageInputKind::PrimitiveId)), &constant(0u)});
+        return remainder(remainder(primitive, tessellation.primitiveGroupSize), tessellation.patchesPerGroup);
     }
 
     void removeUnobservedCycles() {

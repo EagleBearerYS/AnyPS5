@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -57,6 +58,14 @@ alignas(256) constexpr std::array<std::uint32_t, 30> DomainCode{
     0x7e2802f2, 0xf80008cf, 0x14131110, 0xf800020f, 0x14131214, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 34> DomainRelativeData{
+    0xf8000941, 0x00000000, 0x34020e84, 0x16020283, 0x4a2a0e81, 0x7e2a0d15, 0x102a2aff, 0x3e000000,
+    0xe0341000, 0x04030a01, 0xe0341010, 0x04030c01, 0xe0341020, 0x04030e01, 0xbf8c3f70, 0x08040af2,
+    0x08040d02, 0x10201505, 0x3e201906, 0x3e201d02, 0x10221705, 0x3e221b06, 0x3e221f02, 0xd5510012,
+    0x040a0d05, 0x102424ff, 0x40400000, 0x7e260280, 0x7e2802f2, 0xf80008cf, 0x14131110, 0xf800020f,
+    0x14151214, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 29> LocalIndexAsData{
     0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,
     0x7e080d04, 0x7e0a0d05, 0x7e0c0d06, 0x7e0e0d07, 0x10100cff, 0x3f19999a, 0x061010ff, 0xbf666666,
@@ -82,6 +91,16 @@ alignas(256) constexpr std::array<std::uint32_t, 52> HullPatchConstant{
     0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414,
     0xe0781000, 0x0403180a, 0x4a162481, 0x161616ff, 0x000000d0, 0x4c1616ff, 0x00008000, 0xe0741000,
     0x0202070b, 0xe0701064, 0x0202060b, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 54> HullRelativeData{
+    0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014,
+    0x02151101, 0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000,
+    0x02000015, 0x162c2890, 0xd5430016, 0x045a24ff, 0x00000030, 0xbf8cc07f, 0xe0781000, 0x02020216,
+    0x7da82881, 0xbe94047e, 0xb06a0060, 0x162602f9, 0x0086066a, 0xd8d80008, 0x06000013, 0xd8dc1008,
+    0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414,
+    0xe0781000, 0x0403180a, 0x4a162481, 0x161616ff, 0x000000d0, 0x4c1616ff, 0x00008000, 0xe0741000,
+    0x0202070b, 0x4a182481, 0x7e180d0c, 0xe0701064, 0x02020c0b, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 46> HullUnguardedFactors{
@@ -229,6 +248,17 @@ alignas(256) constexpr std::array<std::uint16_t, 9> Indices{
     Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 1, 2),
     Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
     Corner(2, 0, 0), Corner(2, 2, 0), Corner(2, 1, 2),
+};
+
+alignas(256) constexpr std::array<std::uint16_t, 24> LatePatchIndices{
+    Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
+    Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
+    Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
+    Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
+    Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
+    Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
+    Corner(2, 0, 0), Corner(2, 2, 0), Corner(2, 1, 2),
+    Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 1, 2),
 };
 
 alignas(256) constexpr std::array<std::uint16_t, 12> QuadIndices{
@@ -439,6 +469,27 @@ void RequirePatchConstants(AgcDriver::VulkanDevice& device, const ShaderRecompil
     Require(PixelAt(Column(1, 0.25f), center) == Background, "the patch with level 0 was not culled");
 }
 
+void RequireRelativePatches(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
+    const auto center = Row(-0.5f + 1.0f / 3.0f);
+    for (const auto& [hull, domain, name] : {std::tuple{std::span<const std::uint32_t>(HullRelativeData), std::span<const std::uint32_t>(DomainPatchRead), "hull"}, std::tuple{std::span<const std::uint32_t>(HullCode), std::span<const std::uint32_t>(DomainRelativeData), "domain"}}) {
+        for (const auto& [patches, blue] : {std::pair{PatchDraw{{3u, 3u, 1u, 2u, 2u, 3u, 3u, true}, Indices}, 96}, std::pair{PatchDraw{{3u, 3u, 1u, 2u, 2u, 2u, 4u, true}, Indices}, 32}, std::pair{PatchDraw{{3u, 3u, 1u, 2u, 2u, 3u, 4u, true}, LatePatchIndices}, 96}, std::pair{PatchDraw{{3u, 3u, 1u, 2u, 2u, 3u, 2u, true}, Indices}, 32}}) {
+            std::uint32_t cursor = 0;
+            const Stages stages{
+                Compile(target, ShaderStage::Local, LocalCode, cursor, patches),
+                Compile(target, ShaderStage::TessellationControl, hull, cursor, patches),
+                Compile(target, ShaderStage::TessellationEvaluation, domain, cursor, patches),
+                Compile(target, ShaderStage::Fragment, PixelCode, cursor, patches),
+            };
+            Draw(device, stages, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE, patches);
+            for (const auto& [patch, expected] : {std::pair{0u, 32}, std::pair{2u, blue}}) {
+                const auto pixel = PixelAt(Column(patch, 0.25f), center);
+                Require(pixel[0] == 255 && std::abs(pixel[2] - expected) <= 1, "the patch in column " + std::to_string(patch) + " with " + std::to_string(patches.configuration.patchesPerGroup) + " patches per group and " + std::to_string(patches.configuration.primitiveGroupSize) + " primitives per group did not take its blue channel from the " + name + " program's relative patch index, " + PixelText(pixel));
+            }
+            Require(PixelAt(Column(1, 0.25f), center) == Background, "the patch with level 0 was not culled");
+        }
+    }
+}
+
 void RequireQuads(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
     const auto center = Row(0.0f);
     std::array<bool, 2> frontFacing{};
@@ -531,6 +582,10 @@ int main() {
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainNeighbourPoint, "neither its patch's control points nor a patch-constant record", RecordPatches);
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainCulledPrimitive, "passthrough primitive");
         ExpectRefusal(target, ShaderStage::Local, LocalIndexAsData, "outside a tessellation ring or LDS address");
+        ExpectRefusal(target, ShaderStage::TessellationControl, HullRelativeData, "GE_CNTL.PRIM_GRP_SIZE is 0", RecordPatches);
+        ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainRelativeData, "GE_CNTL.PRIM_GRP_SIZE is 0", RecordPatches);
+        ExpectRefusal(target, ShaderStage::TessellationControl, HullRelativeData, "GE_CNTL.BREAK_WAVE_AT_EOI is clear", {{3u, 3u, 1u, 2u, 2u, 3u, 3u}, Indices});
+        ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainRelativeData, "GE_CNTL.BREAK_WAVE_AT_EOI is clear", {{3u, 3u, 1u, 2u, 2u, 3u, 3u}, Indices});
         ExpectRefusal(target, ShaderStage::TessellationControl, HullCode, "outside its patch's quad factors", {{3u, 3u, 2u, 2u, 2u}, Indices});
         ExpectRefusal(target, ShaderStage::TessellationControl, HullDescendingRecords, "not affine");
         ExpectRefusal(target, ShaderStage::TessellationControl, HullDescendingRecords, "not affine", {{3u, 3u, 1u, 2u, 2u, 158u}, Indices});
@@ -546,6 +601,7 @@ int main() {
         RequireLevelClamps(*device, target);
         RequireQuads(*device, target);
         RequirePatchConstants(*device, target);
+        RequireRelativePatches(*device, target);
         device.reset();
         RequireRegisteredStages();
         std::puts("Tessellation tests passed");
