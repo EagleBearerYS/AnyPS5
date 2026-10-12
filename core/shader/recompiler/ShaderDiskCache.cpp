@@ -506,15 +506,7 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     });
 }
 
-void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {
-    writer.Value(compiled.stage);
-    writer.Value(compiled.shaderHash);
-    writer.Value(compiled.waveSize);
-    writer.Value(compiled.userDataBase);
-    writer.Value(compiled.userDataCount);
-    writer.Value(compiled.scratchDwords);
-    writer.Value(compiled.paramExportMask);
-    const auto& info = compiled.info;
+void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.Value(info.scratchDwords);
     writer.Value(info.sharedMemoryBytes);
     writer.List(info.buffers, [](Writer& out, const BufferResource& buffer) {
@@ -611,18 +603,9 @@ void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {
     writer.Value(info.dispatchThreadLimit);
     writer.Value(info.rasterPrimitive);
     writer.Value(info.layerExported);
-    encodeLayout(writer, compiled.bindings);
 }
 
-void decodeInfo(Reader& reader, CompiledShaderInfo& compiled) {
-    reader.Value(compiled.stage);
-    reader.Value(compiled.shaderHash);
-    reader.Value(compiled.waveSize);
-    reader.Value(compiled.userDataBase);
-    reader.Value(compiled.userDataCount);
-    reader.Value(compiled.scratchDwords);
-    reader.Value(compiled.paramExportMask);
-    auto& info = compiled.info;
+void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.scratchDwords);
     reader.Value(info.sharedMemoryBytes);
     reader.List(info.buffers, 27, [](Reader& in, BufferResource& buffer) {
@@ -721,6 +704,29 @@ void decodeInfo(Reader& reader, CompiledShaderInfo& compiled) {
     reader.Value(info.dispatchThreadLimit);
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);
+}
+
+void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {
+    writer.Value(compiled.stage);
+    writer.Value(compiled.shaderHash);
+    writer.Value(compiled.waveSize);
+    writer.Value(compiled.userDataBase);
+    writer.Value(compiled.userDataCount);
+    writer.Value(compiled.scratchDwords);
+    writer.Value(compiled.paramExportMask);
+    encodeShaderInfo(writer, compiled.info);
+    encodeLayout(writer, compiled.bindings);
+}
+
+void decodeInfo(Reader& reader, CompiledShaderInfo& compiled) {
+    reader.Value(compiled.stage);
+    reader.Value(compiled.shaderHash);
+    reader.Value(compiled.waveSize);
+    reader.Value(compiled.userDataBase);
+    reader.Value(compiled.userDataCount);
+    reader.Value(compiled.scratchDwords);
+    reader.Value(compiled.paramExportMask);
+    decodeShaderInfo(reader, compiled.info);
     decodeLayout(reader, compiled.bindings);
 }
 
@@ -767,6 +773,30 @@ std::string hex(std::uint64_t value) {
     char text[17];
     std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(value));
     return text;
+}
+
+std::vector<std::byte> wrapEntry(std::span<const std::byte> key, std::span<const std::byte> payload) {
+    const FileHeader header{FileMagic, FormatVersion, SourceVersion(), key.size(), payload.size(), HashBytes(key), HashBytes(payload)};
+    std::vector<std::byte> file(sizeof(header) + key.size() + payload.size());
+    std::memcpy(file.data(), &header, sizeof(header));
+    std::memcpy(file.data() + sizeof(header), key.data(), key.size());
+    if (!payload.empty()) std::memcpy(file.data() + sizeof(header) + key.size(), payload.data(), payload.size());
+    return file;
+}
+
+LoadStatus unwrapEntry(std::span<const std::byte> file, std::span<const std::byte> key, std::span<const std::byte>& payload) {
+    if (file.size() < sizeof(FileHeader)) return LoadStatus::Rejected;
+    FileHeader header;
+    std::memcpy(&header, file.data(), sizeof(header));
+    if (header.magic != FileMagic || header.format != FormatVersion || header.sourceVersion != SourceVersion()) return LoadStatus::Rejected;
+    const auto body = file.size() - sizeof(header);
+    if (header.keyBytes > body || header.payloadBytes != body - header.keyBytes) return LoadStatus::Rejected;
+    const auto storedKey = file.subspan(sizeof(header), static_cast<std::size_t>(header.keyBytes));
+    payload = file.subspan(sizeof(header) + static_cast<std::size_t>(header.keyBytes));
+    if (HashBytes(storedKey) != header.keyHash) return LoadStatus::Rejected;
+    if (storedKey.size() != key.size() || !std::equal(storedKey.begin(), storedKey.end(), key.begin())) return LoadStatus::KeyMismatch;
+    if (HashBytes(payload) != header.payloadHash) return LoadStatus::Rejected;
+    return LoadStatus::Loaded;
 }
 
 class DiskStore {
@@ -1002,26 +1032,13 @@ std::vector<std::byte> EncodeEntry(std::span<const std::byte> key, const Compile
     encodeArtifact(writer, variant.artifact);
     encodeInfo(writer, variant.info);
     encodeAllocation(writer, variant.bindings);
-    const FileHeader header{FileMagic, FormatVersion, SourceVersion(), key.size(), payload.size(), HashBytes(key), HashBytes(payload)};
-    std::vector<std::byte> file(sizeof(header) + key.size() + payload.size());
-    std::memcpy(file.data(), &header, sizeof(header));
-    std::memcpy(file.data() + sizeof(header), key.data(), key.size());
-    std::memcpy(file.data() + sizeof(header) + key.size(), payload.data(), payload.size());
-    return file;
+    return wrapEntry(key, payload);
 }
 
 LoadStatus DecodeEntry(std::span<const std::byte> file, std::span<const std::byte> key, CompiledVariant& variant) {
-    if (file.size() < sizeof(FileHeader)) return LoadStatus::Rejected;
-    FileHeader header;
-    std::memcpy(&header, file.data(), sizeof(header));
-    if (header.magic != FileMagic || header.format != FormatVersion || header.sourceVersion != SourceVersion()) return LoadStatus::Rejected;
-    const auto body = file.size() - sizeof(header);
-    if (header.keyBytes > body || header.payloadBytes != body - header.keyBytes) return LoadStatus::Rejected;
-    const auto storedKey = file.subspan(sizeof(header), static_cast<std::size_t>(header.keyBytes));
-    const auto payload = file.subspan(sizeof(header) + static_cast<std::size_t>(header.keyBytes));
-    if (HashBytes(storedKey) != header.keyHash) return LoadStatus::Rejected;
-    if (storedKey.size() != key.size() || !std::equal(storedKey.begin(), storedKey.end(), key.begin())) return LoadStatus::KeyMismatch;
-    if (HashBytes(payload) != header.payloadHash) return LoadStatus::Rejected;
+    std::span<const std::byte> payload;
+    const auto status = unwrapEntry(file, key, payload);
+    if (status != LoadStatus::Loaded) return status;
     Reader reader(payload);
     CompiledVariant decoded;
     decodeArtifact(reader, decoded.artifact);
