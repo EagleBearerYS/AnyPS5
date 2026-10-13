@@ -25,6 +25,7 @@ class GraphicsPipelineCache;
 class Recorder;
 class DescriptorCache;
 class SamplerCache;
+class DescriptorHeap;
 class ShaderResources;
 class PlaceholderImages;
 
@@ -136,6 +137,7 @@ struct Context {
     // layouts, descriptor pools, samplers); null (tests) means every build makes and destroys its own.
     DescriptorCache* descriptorCache = nullptr;
     SamplerCache* samplerCache = nullptr;
+    DescriptorHeap* descriptorHeap = nullptr;
     // Indirect draw features of the device: records with a non-zero first instance, several records
     // per call, and a GPU-side draw count (VK_KHR_draw_indirect_count).
     bool drawIndirectFirstInstance = false;
@@ -164,7 +166,6 @@ struct Context {
     bool partiallyBound = false;
     bool variableDescriptorCount = false;
     std::uint32_t imageTableCapacity = 0;
-    std::uint32_t samplerTableCapacity = 0;
     bool geometryShader = false;
     bool sampleRateShading = false;
     bool shaderClipDistance = false;
@@ -236,7 +237,6 @@ inline void EndRenderPass(const Context& context, VkCommandBuffer commands) {
 }
 
 std::uint32_t ImageTableCapacity(const Context& context);
-std::uint32_t SamplerTableCapacity(const Context& context);
 
 }
 

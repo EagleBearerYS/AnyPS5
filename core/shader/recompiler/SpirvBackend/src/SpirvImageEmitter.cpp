@@ -1530,6 +1530,8 @@ ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t 
     return dword;
 }
 
+}
+
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.tableMapVariable, ConstantU32(state, 0u), index);
@@ -1537,6 +1539,8 @@ std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
     state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
     return value;
 }
+
+namespace {
 
 std::uint32_t TableMapAt(SpirvEmitterState& state, std::uint32_t base, std::uint32_t offset) {
     return LoadTableMap(state, offset == 0u ? base : Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, offset)));
@@ -1697,7 +1701,7 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         const auto driverRejected = both(checked, flagged(driverFault));
         EmitTableFault(ctx, inst, word, driverFault, both(both(exec, live), driverRejected));
         result.valid = both(result.valid, both(checked, negate(driverRejected)));
-        state.tableAccess.samplerElement = element;
+        state.tableAccess.samplerElement = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerSlots)), element);
         DecorateTableNonUniform(state, state.tableAccess.samplerElement);
     }
     state.tableAccess.active = true;

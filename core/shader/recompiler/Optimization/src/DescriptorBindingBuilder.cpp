@@ -39,7 +39,7 @@ DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
         return DescriptorKind::DeviceAddress;
     }
     if (kind == DescriptorBindingKind::Samplers || kind == DescriptorBindingKind::SamplerTable) {
-        return DescriptorKind::Sampler;
+        return DescriptorKind::SamplerSlot;
     }
     if (kind == DescriptorBindingKind::ImageTable) {
         return DescriptorKind::SampledImage;
@@ -385,14 +385,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             } else if (samplerHeap) {
                 active = (samplerModes.at(resource) & (1u << (element & 1u))) != 0u;
             }
-            if ((imageHeap || samplerHeap) && !registrationModules) plan.specialization.push_back({PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(logical.kind), element), active ? static_cast<std::uint32_t>(compact.resources.size()) : 0u});
-            if (active || ((imageHeap || samplerHeap) && registrationModules)) {
+            if (imageHeap && !registrationModules) plan.specialization.push_back({PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(logical.kind), element), active ? static_cast<std::uint32_t>(compact.resources.size()) : 0u});
+            if (active || samplerHeap || (imageHeap && registrationModules)) {
                 compact.resources.push_back(resource);
                 originals.push_back(element);
                 inactive.push_back(!active);
             }
         }
-        if ((imageHeap || samplerHeap) && !registrationModules) plan.specialization.push_back({PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(logical.kind), std::max(1u, static_cast<std::uint32_t>(compact.resources.size()))});
+        if (imageHeap && !registrationModules) plan.specialization.push_back({PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(logical.kind), std::max(1u, static_cast<std::uint32_t>(compact.resources.size()))});
         if ((imageHeap || samplerHeap) && compact.resources.empty()) continue;
         PreparedDescriptorBinding entry{};
         auto& physical = entry.descriptor;
@@ -437,6 +437,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.samplerUnnormalized.push_back(unnormalized.samplers.at(resource));
                 const auto mode = 1u << (originals[element] & 1u);
                 physical.samplerIntegerBorder.push_back((samplerIntegerModes.at(resource) & mode) != 0u && (samplerFloatModes.at(resource) & mode) == 0u);
+                physical.samplerUsed.push_back(!inactive[element]);
                 const auto& words = snapshot.samplers.at(resource).dwords;
                 const bool tablePointOnly = (directSamplerModes.at(resource) & 2u) == 0u;
                 if ((originals[element] & 1u) != 0u && !inactive[element] && !(tablePointOnly && ReducesBetweenTexels(words[0], words[2]))) entry.samplerFilterElements.push_back(element);
@@ -446,7 +447,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         }
         plan.storageData |= physical.role == DescriptorRole::ShaderData;
         entry.resources = std::move(compact.resources);
-        if (registrationModules && (imageHeap || samplerHeap)) entry.inactive = std::move(inactive);
+        if ((registrationModules && imageHeap) || samplerHeap) entry.inactive = std::move(inactive);
         plan.bindings.push_back(std::move(entry));
     }
     for (std::uint32_t resource = 0; resource < info.images.size() && registrationModules && layout.runtimeImageCount != 0u; ++resource) {
@@ -465,12 +466,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         plan.runtimeState.assign(layout.runtimeStateDwords, 0u);
         for (std::uint32_t target = 0; target < exportMappings.size(); ++target) plan.runtimeState.at(RuntimeAbi::StateExportMappings + target / 4u) |= static_cast<std::uint32_t>(exportMappings[target]) << (target % 4u * 8u);
     }
-    std::vector<std::uint32_t> samplerMasks(info.samplers.size());
+    std::vector<std::uint64_t> samplerMasks(info.samplers.size());
     for (const auto& binding : plan.bindings) {
         if (binding.descriptor.role != DescriptorRole::GuestSamplers) continue;
-        if (binding.resources.size() > ShaderInfo::MaxSamplers) fail("prepared sampler mask capacity exceeded");
+        if (binding.resources.size() > 64u) fail("prepared sampler mask capacity exceeded");
         for (std::uint32_t element = 0; element < binding.resources.size(); ++element) {
-            if (binding.inactive.empty() || !binding.inactive[element]) samplerMasks.at(binding.resources[element]) |= 1u << element;
+            if (binding.inactive.empty() || !binding.inactive[element]) samplerMasks.at(binding.resources[element]) |= std::uint64_t{1} << element;
         }
     }
     for (auto& binding : plan.bindings) {
@@ -488,13 +489,13 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     return plan;
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings) const {
+DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings, bool samplerHeap) const {
     DescriptorBindingPlan selected;
     std::set<std::uint32_t> remaining(bindings.begin(), bindings.end());
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
         const bool declared = remaining.erase(binding.descriptor.binding) != 0u;
-        if (!declared && binding.descriptor.kind != DescriptorKind::DeviceAddress) continue;
+        if (binding.descriptor.kind == DescriptorKind::SamplerSlot ? !samplerHeap : !declared && binding.descriptor.kind != DescriptorKind::DeviceAddress) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
     }
@@ -559,7 +560,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(false);
                 physical.imageAtomic.push_back(false);
-                std::uint32_t samplers = 0;
+                std::uint64_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
                     if ((element.samplers & (1u << sampler)) != 0u) samplers |= entry.tableSamplerMasks[sampler];
                 }

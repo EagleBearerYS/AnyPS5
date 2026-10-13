@@ -269,7 +269,8 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageUnnormalized);
     writer.Flags(binding.imageUnnormalizedBaseLevel);
     writer.Flags(binding.samplerIntegerBorder);
-    writer.Values(std::span<const std::uint32_t>(binding.imageSamplers));
+    writer.Flags(binding.samplerUsed);
+    writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
 }
 
@@ -296,6 +297,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageUnnormalized);
     reader.Flags(binding.imageUnnormalizedBaseLevel);
     reader.Flags(binding.samplerIntegerBorder);
+    reader.Flags(binding.samplerUsed);
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
 }
@@ -306,6 +308,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.bdaAbiVersion);
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.bufferAddressDword);
+    writer.Value(result.samplerSlotDword);
     writer.Value(result.shaderDataDwords);
     writer.Value(result.imageMetadataDword);
     writer.Value(result.runtimeImageCount);
@@ -351,6 +354,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.bdaAbiVersion);
     reader.Value(result.memoryOffsetDword);
     reader.Value(result.bufferAddressDword);
+    reader.Value(result.samplerSlotDword);
     reader.Value(result.shaderDataDwords);
     reader.Value(result.imageMetadataDword);
     reader.Value(result.runtimeImageCount);
@@ -468,6 +472,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.pushDataStartDword);
     writer.Value(layout.memoryOffsetDword);
     writer.Value(layout.memoryOffsetCount);
+    writer.Value(layout.samplerSlotCount);
     writer.Value(layout.dispatchThreadLimit);
     writer.Value(layout.runtimeImageCount);
     writer.Value(layout.runtimeStateDwords);
@@ -482,6 +487,7 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.pushDataStartDword);
     reader.Value(layout.memoryOffsetDword);
     reader.Value(layout.memoryOffsetCount);
+    reader.Value(layout.samplerSlotCount);
     reader.Value(layout.dispatchThreadLimit);
     reader.Value(layout.runtimeImageCount);
     reader.Value(layout.runtimeStateDwords);

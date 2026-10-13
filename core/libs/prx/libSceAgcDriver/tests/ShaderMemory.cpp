@@ -3095,7 +3095,7 @@ void verifyUnnormalizedSamplers() {
         throw std::runtime_error("unnormalized samplers: the program has no sampler or image binding");
     };
     const auto proven = [&](const RecompileResult& result, bool expected) {
-        return flags(result, DescriptorRole::GuestSamplers) == std::vector<bool>{expected} && flags(result, DescriptorRole::GuestImages) == std::vector<bool>{expected};
+        return flags(result, DescriptorRole::GuestSamplers) == std::vector<bool>{expected, expected} && flags(result, DescriptorRole::GuestImages) == std::vector<bool>{expected};
     };
     const auto auditSpirv = [](const std::vector<std::uint32_t>& words) {
         std::size_t samples = 0;

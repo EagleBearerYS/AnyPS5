@@ -63,6 +63,16 @@ void RequireTableIndexing(SpirvEmitterState& state) {
     state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
 }
 
+void DefineSamplerHeap(SpirvEmitterState& state) {
+    if (state.heapSamplerVariable != 0u) return;
+    RequireTableIndexing(state);
+    const auto type = state.module.Type(spv::OpTypeRuntimeArray, state.module.Type(spv::OpTypeSampler));
+    state.heapSamplerVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
+    state.module.AddName(state.heapSamplerVariable, "sampler_heap");
+    state.module.AddAnnotation(spv::OpDecorate, state.heapSamplerVariable, spv::DecorationDescriptorSet, RuntimeAbi::HeapDescriptorSet);
+    state.module.AddAnnotation(spv::OpDecorate, state.heapSamplerVariable, spv::DecorationBinding, RuntimeAbi::HeapSamplerBinding);
+}
+
 std::uint32_t BuiltInForInput(StageInputKind kind) {
     switch (kind) {
     case StageInputKind::VertexIndex: return spv::BuiltInVertexIndex;
@@ -426,7 +436,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
             state.flattenedSrtVariable = Define(StorageBufferBlockType(state), "flattened_srt");
             break;
         case DescriptorBindingKind::Samplers:
-            state.samplerVariable = Define(ArrayType(state.module.Type(spv::OpTypeSampler)), "samplers", spv::StorageClassUniformConstant);
+            DefineSamplerHeap(state);
             break;
         case DescriptorBindingKind::Gds:
             state.gdsVariable = Define(StorageBufferBlockType(state), "gds");
@@ -448,8 +458,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
             }
             break;
         case DescriptorBindingKind::SamplerTable:
-            RequireTableIndexing(state);
-            state.tableSamplerVariable = Define(state.module.Type(spv::OpTypeRuntimeArray, state.module.Type(spv::OpTypeSampler)), "table_samplers", spv::StorageClassUniformConstant);
+            DefineSamplerHeap(state);
             break;
         case DescriptorBindingKind::ImageTableMap:
             state.tableMapVariable = Define(StorageBufferBlockType(state), "table_map");

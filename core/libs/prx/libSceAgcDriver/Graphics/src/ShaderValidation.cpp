@@ -404,6 +404,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             case spv::OpTypeRuntimeArray:
             case spv::OpTypeStruct:
             case spv::OpTypePointer:
+            case spv::OpTypeSampler:
                 Require(count >= 2 && module.types.emplace(instruction[1], std::vector<std::uint32_t>(instruction.begin(), instruction.end())).second, "invalid or duplicate SPIR-V type");
                 break;
             case spv::OpVariable:
@@ -528,6 +529,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(stride.has_value() && *stride == 4, "push constant array must have an ArrayStride of 4");
         } else if (variable.storage == spv::StorageClassWorkgroup) {
             Require(mesh, "workgroup memory outside a mesh shader");
+        } else if (variable.storage == spv::StorageClassUniformConstant && decoration.set == ShaderRecompiler::RuntimeAbi::HeapDescriptorSet) {
+            Require(decoration.binding == ShaderRecompiler::RuntimeAbi::HeapSamplerBinding && type.size() == 3 && (type[0] & 0xffffu) == spv::OpTypeRuntimeArray && (module.Type(type[2])[0] & 0xffffu) == spv::OpTypeSampler, "the descriptor heap is declared as other than a runtime array of samplers at its binding");
         } else if (variable.storage == spv::StorageClassUniformConstant) {
             Require(decoration.set && decoration.binding, "unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
@@ -578,11 +581,12 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         Require(shader.vertexAttributes.empty(), "vertex attribute metadata is invalid for this stage");
     }
     for (const auto& binding : shader.bindings) {
+        if (binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) Require(binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable, "only samplers take slots in the descriptor heap");
         if (binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress) continue;
         Require(binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers, "only guest buffers are read through device addresses");
         Require(!binding.readOnly, "read-only descriptor metadata is unsupported because the recompiler emits no NonWritable decoration");
     }
-    Require(descriptors.size() == static_cast<std::size_t>(std::count_if(shader.bindings.begin(), shader.bindings.end(), [](const auto& binding) { return binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress; })), "recompiler binding metadata contains undeclared resources");
+    Require(descriptors.size() == static_cast<std::size_t>(std::count_if(shader.bindings.begin(), shader.bindings.end(), [](const auto& binding) { return binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress && binding.kind != ShaderRecompiler::DescriptorKind::SamplerSlot; })), "recompiler binding metadata contains undeclared resources");
     Require(push == (!shader.pushConstants.empty() || mesh || (control && !rectListControl)), "recompiler push constant metadata disagrees with SPIR-V");
     for (const auto id : module.interface) Require(module.variables.contains(id), "entry point interface contains an unknown variable");
     if (mesh) Require(module.primitiveIndices, "mesh shader does not export primitive indices");

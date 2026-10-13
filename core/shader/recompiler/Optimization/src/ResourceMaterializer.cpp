@@ -1154,6 +1154,8 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     out.map.resize(out.map.size() + out.elements.size(), 0u);
     out.map[Abi::HeaderSamplerFaults] = static_cast<std::uint32_t>(out.map.size());
     out.map.resize(out.map.size() + out.samplers.size() / Abi::SamplerEntryElements, 0u);
+    out.map[Abi::HeaderSamplerSlots] = static_cast<std::uint32_t>(out.map.size());
+    out.map.resize(out.map.size() + out.samplers.size(), 0u);
     out.faults = static_cast<std::uint32_t>(expected.size() + static_cast<std::size_t>(std::count(outside.begin(), outside.end(), true)));
     return out;
 }

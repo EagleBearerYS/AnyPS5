@@ -399,7 +399,12 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.imageTableReadRanges = result.imageTableReadRanges;
     for (const auto& binding : result.bindings) {
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) outcome.imageTableCount = binding.count;
-        if (binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) outcome.samplers = SamplerWords(binding.guestDescriptor);
+        if (binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) {
+            const auto words = SamplerWords(binding.guestDescriptor);
+            for (std::size_t element = 0; element < words.size(); ++element) {
+                if (binding.samplerUsed.at(element)) outcome.samplers.push_back(words[element]);
+            }
+        }
         if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) outcome.samplerTable = SamplerWords(binding.guestDescriptor);
     }
     StderrCapture capture;

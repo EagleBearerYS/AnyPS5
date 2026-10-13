@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -248,6 +249,14 @@ public:
                 robustness.pNext = address.pNext;
                 address.pNext = &robustness;
             }
+            VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT, address.pNext};
+            indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+            indexing.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            indexing.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+            indexing.descriptorBindingPartiallyBound = VK_TRUE;
+            indexing.runtimeDescriptorArray = VK_TRUE;
+            extensionsEnabled.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+            address.pNext = &indexing;
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
@@ -269,6 +278,8 @@ public:
             pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
+            heap = std::make_unique<DescriptorHeap>(context, 1024u);
+            context.descriptorHeap = heap.get();
         } catch (...) {
             release();
             throw;
@@ -290,6 +301,7 @@ private:
     }
 
     void release() noexcept {
+        heap.reset();
         if (context.pool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.pool, nullptr);
         context.bufferPool.reset();
         if (context.device != VK_NULL_HANDLE) {
@@ -304,6 +316,7 @@ private:
     PFN_vkGetInstanceProcAddr instanceProc = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
+    std::unique_ptr<DescriptorHeap> heap;
     bool graphics = false;
     bool nullDescriptors = false;
 };
@@ -1935,14 +1948,15 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
         program.bindings.push_back(data);
         data.binding = 7;
         program.bindings.push_back(data);
-        ShaderRecompiler::DescriptorBinding sampler{};
-        sampler.kind = ShaderRecompiler::DescriptorKind::Sampler;
-        sampler.role = ShaderRecompiler::DescriptorRole::GuestSamplers;
-        sampler.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
-        sampler.count = 2;
-        sampler.guestDescriptor.resize(8);
-        sampler.samplerDepthCompare = {false, false};
-        program.bindings.push_back(sampler);
+        ShaderRecompiler::DescriptorBinding images{};
+        images.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        images.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        images.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        images.count = 2;
+        images.guestDescriptor.resize(16);
+        images.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        images.imageSamplers = {0u, 0u};
+        program.bindings.push_back(images);
         const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
         ShaderResources resources(context, shader);
         Require(updates.calls.size() == 1, "building resources did not write one descriptor set");
@@ -5026,7 +5040,7 @@ void dataRefreshTests(const Device& device, Recorder& recorder) {
     Require(!resources.RefreshData(recorder.Commands(), original, &recorder), "a refresh with equal words recorded");
     auto replaced = patched;
     replaced.bindings[0].role = ShaderRecompiler::DescriptorRole::GuestSamplers;
-    replaced.bindings[0].kind = ShaderRecompiler::DescriptorKind::Sampler;
+    replaced.bindings[0].kind = ShaderRecompiler::DescriptorKind::SamplerSlot;
     const CompiledShader changedResources{ShaderRecompiler::ShaderStage::Compute, &replaced, 0};
     bool rejected = false;
     try {

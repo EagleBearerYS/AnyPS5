@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
@@ -173,10 +174,17 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
     key.insert(key.end(), bytes.begin(), bytes.end());
 }
 
+VkShaderStageFlags HeapStages(std::span<const CompiledShader> shaders) {
+    VkShaderStageFlags stages = 0;
+    for (const auto& shader : shaders) stages |= VulkanStage(shader.stage);
+    return stages;
+}
+
 bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
     using Stage = ShaderRecompiler::ShaderStage;
     if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || SplitsAlternateAlpha(state)) return false;
     keys = {};
+    if (resources.split) keys.preRasterizationSets = keys.fragmentSets = 1u << ShaderRecompiler::RuntimeAbi::HeapDescriptorSet;
     for (const auto& shader : shaders) {
         if (shader.stage == Stage::Geometry || shader.program->PipelineVariantId() == 0) return false;
         auto& key = shader.stage == Stage::Fragment ? keys.fragmentShader : keys.preRasterization;
@@ -187,7 +195,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
             for (const auto& binding : shader.program->bindings) {
                 Require(binding.descriptorSet < 2u, "split pipeline library descriptor set exceeds two slots");
-                sets |= 1u << binding.descriptorSet;
+                if (binding.kind != ShaderRecompiler::DescriptorKind::SamplerSlot) sets |= 1u << binding.descriptorSet;
             }
         }
     }
@@ -236,6 +244,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     if (state.depth) appendKey(keys.renderPass, state.depth->format);
     if (!resources.split) {
         appendKey(keys.layout, pushStagesOf(context));
+        appendKey(keys.layout, HeapStages(shaders));
         for (const auto word : resources.mainKey) appendKey(keys.layout, word);
         keys.preRasterizationLayout = keys.fragmentLayout = keys.layout;
         return true;
@@ -244,6 +253,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, ~0u);
         appendKey(key, sets);
         appendKey(key, pushStagesOf(context));
+        appendKey(key, HeapStages(shaders));
         if ((sets & 1u) != 0u) {
             appendKey(key, resources.mainKey.size());
             for (const auto word : resources.mainKey) appendKey(key, word);
@@ -253,7 +263,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             for (const auto word : resources.fragmentKey) appendKey(key, word);
         }
     };
-    splitKey(keys.layout, 3u);
+    splitKey(keys.layout, 7u);
     splitKey(keys.preRasterizationLayout, keys.preRasterizationSets);
     splitKey(keys.fragmentLayout, keys.fragmentSets);
     return true;
@@ -319,12 +329,13 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         }
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
-        const std::array<VkDescriptorSetLayout, 2> setLayouts{resources.main, resources.fragment};
+        heapSet = context.descriptorHeap->Set(HeapStages(shaders));
+        const std::array<VkDescriptorSetLayout, 3> setLayouts{resources.main, resources.split ? resources.fragment : context.descriptorHeap->EmptyLayout(), context.descriptorHeap->Layout(HeapStages(shaders))};
         const VkPushConstantRange push{pushStages, 0, PipelinePushSlotBytes};
         const std::array<VkPushConstantRange, 2> slots{{{pushStagesOf(context), 0, PipelinePushSlotBytes}, {VK_SHADER_STAGE_FRAGMENT_BIT, PipelinePushSlotBytes, PipelinePushSlotBytes}}};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         layoutInfo.flags = resources.split ? VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT : 0;
-        layoutInfo.setLayoutCount = resources.split ? 2u : 1u;
+        layoutInfo.setLayoutCount = static_cast<std::uint32_t>(setLayouts.size());
         layoutInfo.pSetLayouts = setLayouts.data();
         layoutInfo.pushConstantRangeCount = dynamicRendering ? static_cast<std::uint32_t>(slots.size()) : pushStages != 0 ? 1 : 0;
         layoutInfo.pPushConstantRanges = dynamicRendering ? slots.data() : pushStages != 0 ? &push : nullptr;
@@ -570,6 +581,10 @@ void Framebuffer::Abandon() noexcept {
 
 VkPipelineLayout Pipeline::Layout() const {
     return layout;
+}
+
+void Pipeline::BindHeap(VkCommandBuffer commands) const {
+    context.descriptorHeap->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, heapSet);
 }
 
 std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<StorageTexture>> owners, VkExtent2D extent, std::uint32_t layers, std::span<const std::uint8_t> persistent) {

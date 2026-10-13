@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "BdaAbi.hpp"
@@ -281,6 +282,7 @@ struct VulkanDevice::State {
     bool descriptorBindingPartiallyBound = false;
     bool descriptorBindingVariableDescriptorCount = false;
     bool runtimeDescriptorArray = false;
+    bool descriptorHeapFeatures = false;
     VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorIndexingProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES_EXT};
     bool imageInt64Atomics = false;
     bool bufferInt64Atomics = false;
@@ -347,6 +349,8 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
     std::unique_ptr<Graphics::DescriptorCache> descriptorCache;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
+    std::unique_ptr<Graphics::DescriptorHeap> descriptorHeap;
+    VkDescriptorSet computeHeapSet = VK_NULL_HANDLE;
     Graphics::ResourceCache& resourceCache = Graphics::SharedResourceCache();
     // Recorded dispatches that write a copied buffer (their results reach guest memory by a CPU
     // write-back when the batch is reaped), listed until that write-back ran. An indirect dispatch
@@ -688,6 +692,7 @@ struct VulkanDevice::State {
             descriptorCache.reset();
             placeholderImages.reset();
             samplerCache.reset();
+            descriptorHeap.reset();
             textureCache.reset();
             detiler.reset();
             colorTransfer.reset();
@@ -1430,11 +1435,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->descriptorBindingPartiallyBound = descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE;
         state->descriptorBindingVariableDescriptorCount = descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount == VK_TRUE;
         state->runtimeDescriptorArray = descriptorIndexingFeatures.runtimeDescriptorArray == VK_TRUE;
-        if (state->storageBufferUpdateAfterBind) {
-            VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &state->descriptorIndexingProperties};
-            state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
-        }
+        state->descriptorHeapFeatures = descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE && descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending == VK_TRUE && state->descriptorBindingPartiallyBound && state->runtimeDescriptorArray && descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
+        VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &state->descriptorIndexingProperties};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
     }
+    if (!state->descriptorHeapFeatures) throw std::runtime_error("Vulkan device: the descriptor heap needs VK_EXT_descriptor_indexing with descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, descriptorBindingPartiallyBound, runtimeDescriptorArray and shaderSampledImageArrayNonUniformIndexing");
     descriptorIndexingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT};
     if (state->descriptorIndexing || state->storageBufferUpdateAfterBind || state->descriptorBindingPartiallyBound || state->descriptorBindingVariableDescriptorCount || state->runtimeDescriptorArray) deviceExtensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
     if (state->descriptorIndexing) {
@@ -1446,6 +1451,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->spirvExtensions.push_back("SPV_EXT_descriptor_indexing");
     }
     descriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = state->storageBufferUpdateAfterBind ? VK_TRUE : VK_FALSE;
+    descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+    descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
     descriptorIndexingFeatures.descriptorBindingPartiallyBound = state->descriptorBindingPartiallyBound ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = state->descriptorBindingVariableDescriptorCount ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.runtimeDescriptorArray = state->runtimeDescriptorArray ? VK_TRUE : VK_FALSE;
@@ -1646,6 +1653,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
     state->descriptorCache = std::make_unique<Graphics::DescriptorCache>(graphicsContext());
+    state->descriptorHeap = std::make_unique<Graphics::DescriptorHeap>(graphicsContext(), Graphics::DescriptorHeap::SamplerSlots(graphicsContext()));
+    state->computeHeapSet = state->descriptorHeap->Set(VK_SHADER_STAGE_COMPUTE_BIT);
     state->samplerCache = std::make_unique<Graphics::SamplerCache>();
     state->CreateWorkgroupMemoryLayout();
     if (!state->shaderProfile->NullDescriptors()) {
@@ -3121,6 +3130,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.recorder = state->recorder.get();
     context.descriptorCache = state->descriptorCache.get();
     context.samplerCache = state->samplerCache.get();
+    context.descriptorHeap = state->descriptorHeap.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;
     context.dualSrcBlend = state->dualSrcBlend;
@@ -3145,7 +3155,6 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.partiallyBound = state->descriptorBindingPartiallyBound;
     context.variableDescriptorCount = state->descriptorBindingVariableDescriptorCount;
     context.imageTableCapacity = ImageTableCapacity(context);
-    context.samplerTableCapacity = SamplerTableCapacity(context);
     context.geometryShader = state->geometryShader;
     context.sampleRateShading = state->sampleRateShading;
     context.shaderClipDistance = state->shaderClipDistance;
@@ -3990,6 +3999,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->pipeline);
     resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout);
+    context.descriptorHeap->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, state->computeHeapSet);
     if (const auto dwords = record.shader->program->workgroupMemoryDwords; dwords != 0) {
         auto memory = state->WorkgroupMemoryFor(context, record.x, record.y, record.z, dwords);
         context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &memory->set, 0, nullptr);
@@ -4236,10 +4246,10 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         moduleInfo.pCode = shader.spirv.data();
         check(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule")(state->device, &moduleInfo, nullptr, &objects->module), "vkCreateShaderModule");
         timing.Mark("validate_shader_module");
-        const std::array<VkDescriptorSetLayout, 2> setLayouts{resources->Layout(), shader.workgroupMemoryDwords != 0 ? state->workgroupMemoryLayout : VK_NULL_HANDLE};
+        const std::array<VkDescriptorSetLayout, 3> setLayouts{resources->Layout(), shader.workgroupMemoryDwords != 0 ? state->workgroupMemoryLayout : state->descriptorHeap->EmptyLayout(), state->descriptorHeap->Layout(VK_SHADER_STAGE_COMPUTE_BIT)};
         const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutInfo.setLayoutCount = shader.workgroupMemoryDwords != 0 ? ShaderRecompiler::WorkgroupMemoryDescriptorSet + 1 : 1;
+        layoutInfo.setLayoutCount = static_cast<std::uint32_t>(setLayouts.size());
         layoutInfo.pSetLayouts = setLayouts.data();
         layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
         layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;
@@ -4262,6 +4272,8 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
             }
             capture.sets.push_back(std::move(resourcesLayout));
             if (shader.workgroupMemoryDwords != 0) capture.sets.push_back({0, {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}}});
+            else capture.sets.push_back({0, {}});
+            capture.sets.push_back({VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT, {{ShaderRecompiler::RuntimeAbi::HeapSamplerBinding, VK_DESCRIPTOR_TYPE_SAMPLER, state->descriptorHeap->SamplerCapacity(), VK_SHADER_STAGE_COMPUTE_BIT, VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT}}});
             if (pushStages != 0) capture.pushConstants.push_back(push);
             for (const auto& value : shader.specialization) capture.specialization.push_back({value.id, value.value});
             capture.requiredSubgroupSize = subgroupSize;

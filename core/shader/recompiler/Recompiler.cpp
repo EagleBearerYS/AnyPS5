@@ -478,6 +478,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.bufferAddressDword = bindings.layout.BufferAddressDword();
+    result.samplerSlotDword = bindings.layout.SamplerSlotDword();
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
@@ -540,6 +541,7 @@ struct SpecializedModule {
     SharedSpirv spirv;
     std::vector<std::uint32_t> bindings;
     bool pushData = false;
+    bool samplerHeap = false;
 };
 
 std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
@@ -614,13 +616,16 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
 #endif
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> bindingNumbers;
+    std::set<std::uint32_t> heapVariables;
     for (std::size_t cursor = 5; cursor < materialized.size();) {
         const auto count = materialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && materialized[cursor + 3u] == RuntimeAbi::HeapDescriptorSet) heapVariables.insert(materialized[cursor + 1u]);
         if (op == spv::OpVariable && count >= 4u) {
-            if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
+            if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end() && !heapVariables.contains(materialized[cursor + 2u])) module->bindings.push_back(found->second);
             module->pushData |= materialized[cursor + 3u] == spv::StorageClassPushConstant;
+            module->samplerHeap |= heapVariables.contains(materialized[cursor + 2u]);
         }
         cursor += count;
     }
@@ -767,6 +772,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     static_cast<CompiledShaderArtifact&>(result) = {
         .memoryOffsetDword = artifact.memoryOffsetDword,
         .bufferAddressDword = artifact.bufferAddressDword,
+        .samplerSlotDword = artifact.samplerSlotDword,
         .shaderDataDwords = artifact.shaderDataDwords,
         .imageMetadataDword = artifact.imageMetadataDword,
         .runtimeImageCount = artifact.runtimeImageCount,
@@ -860,7 +866,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             }
             const auto module = artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
             if (variant.bindings.layout.UsesPushData() && !module->pushData) throw std::runtime_error("specialization removed the prepared push constant interface");
-            auto selected = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings);
+            auto selected = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings, module->samplerHeap);
             entry->bindings = std::move(selected);
             entry->module = module;
         };

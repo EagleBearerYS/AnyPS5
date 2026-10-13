@@ -318,7 +318,7 @@ private:
         std::vector<std::size_t> imageAllocations;
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
-        bool addressOnly = false;
+        bool noDescriptor = false;
     };
 
     struct TableStage {
@@ -335,6 +335,7 @@ private:
         std::size_t samplerCount = 0;
         std::vector<std::size_t> elementTextures;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
+        std::vector<std::size_t> samplerSlots;
     };
     std::vector<TableStage> tableStages;
     std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
@@ -342,7 +343,7 @@ private:
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
     std::uint32_t rejectTableElement(TableStage& table, std::span<const std::uint32_t> words, const std::string& message);
-    void addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags, TableStage& table);
+    void addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, TableStage& table);
     void resolveImageTables();
     void finishImageTables();
 
@@ -372,6 +373,7 @@ private:
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
+    void addGuestSamplers(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader);
     // Stage A: one record per planned image element (ImageRecord), in plan order: the decoded
     // descriptor and its surface size (computed once for the build), the write watch walked so stage
     // B's collects are memo hits (APS5_NO_PRECOLLECT=1 skips the pass entirely), and for a sampled
@@ -419,6 +421,7 @@ private:
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
     std::pair<VkDeviceAddress, std::uint64_t> bufferAddress(Allocation& allocation);
     void patchBufferAddress(const Allocation& allocation, VkDeviceAddress address, std::uint64_t bytes);
+    void patchShaderData(std::int32_t pushByte, std::int64_t dataAllocation, std::uint32_t dataByte, std::span<const std::uint32_t> words);
     void noteReusable();
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)
@@ -545,6 +548,13 @@ private:
     void rehashDataWords();
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
     std::vector<DataPatch> dataPatches;
+    struct SamplerSlotPatch {
+        std::size_t sampler;
+        std::int32_t pushByte = -1;
+        std::int64_t dataAllocation = -1;
+        std::uint32_t dataByte = 0;
+    };
+    std::vector<SamplerSlotPatch> samplerSlotPatches;
     BuildTiming timing;
     // Build state carried from stage A to stage B: the bindings in plan order, the image bindings
     // still to look up (index into `bindings`; the DescriptorBinding lives in the compiled shader),

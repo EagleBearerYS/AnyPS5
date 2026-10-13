@@ -33,7 +33,7 @@ struct ProfileInput {
         device.pEnabledFeatures = &core;
         device.pNext = &bda;
         limits.maxPushConstantsSize = 128u;
-        limits.maxBoundDescriptorSets = 1u;
+        limits.maxBoundDescriptorSets = 3u;
         limits.maxStorageBufferRange = sizeof(ShaderRecompiler::RuntimeAbi::ShaderData);
     }
 
@@ -143,8 +143,8 @@ void CheckHeaps() {
     const auto sixteenSamplers = allocate(image, 1u, 16u);
     Require(BindingAllocator{}.FindBinding(sixteenSamplers.layout, DescriptorBindingKind::Samplers).resources.size() == 32u, "sixteen logical samplers must fit with both descriptor variants");
     const auto full = allocate(image, RuntimeAbi::SampledHeapCapacity, RuntimeAbi::SamplerHeapCapacity / 2u);
-    Require(single.layout.ShaderDataDwords() == full.layout.ShaderDataDwords() && single.layout.memoryOffsetDword == full.layout.memoryOffsetDword && !full.layout.UsesPushData(), "runtime layout depends on resource count");
-    Require(full.layout.memoryOffsetDword == 0u && full.layout.DispatchThreadLimitDword() == 0u && full.layout.ShaderDataDwords() == 0u, "direct image resources allocated runtime metadata");
+    Require(single.layout.ShaderDataDwords() == 0u && single.layout.memoryOffsetDword == full.layout.memoryOffsetDword && single.layout.SamplerSlotDword() == full.layout.SamplerSlotDword(), "runtime layout depends on the image count");
+    Require(full.layout.samplerSlotCount == RuntimeAbi::SamplerHeapCapacity && full.layout.SamplerSlotDword() == 0u && full.layout.ShaderDataDwords() == full.layout.samplerSlotCount, "direct samplers did not take one heap slot per descriptor variant, or direct images allocated runtime metadata");
     Reject([&] { allocate(image, RuntimeAbi::SampledHeapCapacity + 1u); }, "heap capacity exceeded");
     Require(BindingAllocator{}.FindBinding(allocate(image, 40u).layout, DescriptorBindingForImage(image)).resources.size() == 40u, "a sampled heap does not hold 40 images of one class");
     Require(BindingAllocator{}.FindBinding(allocate(image, RuntimeAbi::SampledHeapCapacity).layout, DescriptorBindingForImage(image)).resources.size() == RuntimeAbi::SampledHeapCapacity, "a sampled heap does not hold a full class of images");

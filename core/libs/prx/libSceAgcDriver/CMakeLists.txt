@@ -204,6 +204,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorHeap.cpp
         ${agcTextureDetileShaderHeader}
         ${agcCmaskClearShaderHeader}
         ${agcMeshArgumentsShaderHeader}
@@ -1037,6 +1038,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         tests/TextureTiling.cpp
         tests/GuestTextureResource.cpp
         tests/GuestSamplerResource.cpp
+        tests/MockDescriptorHeap.cpp
         tests/TextureDetiler.cpp
         tests/DepthSurfaceReuse.cpp
 )

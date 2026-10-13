@@ -180,20 +180,24 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
     const bool point = image != nullptr && (table ? TablePointSampled(*image) : (image->numericClass == IrTextureNumericClass::Sint || image->conversionFormat != IrBufferFormat::Invalid || image->depthBits));
     const auto samplerType = state.module.Type(spv::OpTypeSampler);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, samplerType);
+    if (state.heapSamplerVariable == 0u) ExitDescriptorBindingFailure(state, samplerResource.table != NoTable ? DescriptorBindingKind::SamplerTable : DescriptorBindingKind::Samplers, sampler, "sampler heap was not emitted");
     if (samplerResource.table != NoTable) {
-        if (state.tableSamplerVariable == 0 || !state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::SamplerTable, sampler, "sampler table array was not emitted");
+        if (!state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::SamplerTable, sampler, "sampler table access was not emitted");
         const auto variant = image != nullptr && image->depthCompare ? 2u : 0u;
-        const auto element = Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u)));
+        const auto slot = LoadTableMap(state, Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u))));
+        DecorateTableNonUniform(state, slot);
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, element);
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.heapSamplerVariable, slot);
         DecorateTableNonUniform(state, pointer);
         const auto loaded = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, samplerType, loaded, pointer);
         DecorateTableNonUniform(state, loaded);
         return loaded;
     }
-    const auto arrayIndex = ResourceForDescriptor(state, DescriptorBindingKind::Samplers, sampler) + (point ? 1u : 0u);
-    const auto pointer = DescriptorElementPointer(state, pointerType, state.samplerVariable, arrayIndex, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
+    const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Samplers, sampler) + (point ? 1u : 0u);
+    const auto slot = EmitShaderDataDwordLoad(state, state.program.Metadata().bindings.SamplerSlotDword() + element);
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.heapSamplerVariable, slot);
     const auto samplerId = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, samplerType, samplerId, pointer);
     return samplerId;

@@ -7,7 +7,7 @@
 
 namespace ShaderRecompiler::ImageTableAbi {
 
-inline constexpr std::uint32_t Version = 2;
+inline constexpr std::uint32_t Version = 3;
 
 inline constexpr std::uint32_t HeaderVersion = 0;
 inline constexpr std::uint32_t HeaderElementBase = 1;
@@ -17,7 +17,8 @@ inline constexpr std::uint32_t HeaderPoisonCount = 4;
 inline constexpr std::uint32_t HeaderElementFaults = 5;
 inline constexpr std::uint32_t HeaderSamplerFaults = 6;
 inline constexpr std::uint32_t HeaderTableCount = 7;
-inline constexpr std::uint32_t HeaderWords = 8;
+inline constexpr std::uint32_t HeaderSamplerSlots = 8;
+inline constexpr std::uint32_t HeaderWords = 9;
 
 inline constexpr std::uint32_t TableMapStart = 0;
 inline constexpr std::uint32_t TableKeyCount = 1;

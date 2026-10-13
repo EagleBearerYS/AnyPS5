@@ -339,7 +339,8 @@ enum class DescriptorKind {
     SampledImage,
     StorageImage,
     Sampler,
-    DeviceAddress
+    DeviceAddress,
+    SamplerSlot
 };
 
 enum class DescriptorImageShape {
@@ -393,9 +394,10 @@ struct DescriptorBinding {
     std::vector<bool> bufferWritten;
     std::vector<bool> samplerUnnormalized;
     std::vector<bool> samplerIntegerBorder;
+    std::vector<bool> samplerUsed;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
-    std::vector<std::uint32_t> imageSamplers;
+    std::vector<std::uint64_t> imageSamplers;
     std::vector<bool> bufferRead;
 };
 
@@ -505,6 +507,7 @@ struct CompiledShaderArtifact {
     SharedSpirv spirv;
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t bufferAddressDword = 0;
+    std::uint32_t samplerSlotDword = 0;
     std::uint32_t shaderDataDwords = 0;
     std::uint32_t imageMetadataDword = 0;
     std::uint32_t runtimeImageCount = 0;

@@ -45,17 +45,21 @@ std::pair<VkDeviceAddress, std::uint64_t> ShaderResources::bufferAddress(Allocat
 void ShaderResources::patchBufferAddress(const Allocation& allocation, VkDeviceAddress address, std::uint64_t bytes) {
     Require(bytes / 4u <= std::numeric_limits<std::uint32_t>::max(), "guest buffer view exceeds the shader's 32-bit dword count");
     const std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::BufferAddressDwords> words{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), static_cast<std::uint32_t>(bytes / 4u)};
-    const auto raw = std::as_bytes(std::span(words));
-    if (allocation.addressPushByte >= 0) {
-        for (std::size_t byte = 0; byte < raw.size(); ++byte) pushPatches.emplace_back(static_cast<std::uint32_t>(allocation.addressPushByte) + static_cast<std::uint32_t>(byte), static_cast<std::uint32_t>(raw[byte]));
+    patchShaderData(allocation.addressPushByte, allocation.dataAllocation, allocation.addressDataByte, words);
+}
+
+void ShaderResources::patchShaderData(std::int32_t pushByte, std::int64_t dataAllocation, std::uint32_t dataByte, std::span<const std::uint32_t> words) {
+    const auto raw = std::as_bytes(words);
+    if (pushByte >= 0) {
+        for (std::size_t byte = 0; byte < raw.size(); ++byte) pushPatches.emplace_back(static_cast<std::uint32_t>(pushByte) + static_cast<std::uint32_t>(byte), static_cast<std::uint32_t>(raw[byte]));
         return;
     }
-    Require(allocation.dataAllocation >= 0, "a guest buffer bound by device address in a shader without shader data");
-    auto& data = allocations[static_cast<std::size_t>(allocation.dataAllocation)];
-    Require(data.buffer != nullptr && allocation.addressDataByte + raw.size() <= data.size, "guest buffer address lies outside the shader's data buffer");
+    Require(dataAllocation >= 0, "a shader data patch in a shader without shader data");
+    auto& data = allocations[static_cast<std::size_t>(dataAllocation)];
+    Require(data.buffer != nullptr && dataByte + raw.size() <= data.size, "a shader data patch lies outside the shader's data buffer");
     for (std::size_t byte = 0; byte < raw.size(); ++byte) {
-        data.buffer->Bytes()[allocation.addressDataByte + byte] = raw[byte];
-        dataPatches.push_back({static_cast<std::size_t>(allocation.dataAllocation), allocation.addressDataByte + static_cast<std::uint32_t>(byte), static_cast<std::uint32_t>(raw[byte])});
+        data.buffer->Bytes()[dataByte + byte] = raw[byte];
+        dataPatches.push_back({static_cast<std::size_t>(dataAllocation), dataByte + static_cast<std::uint32_t>(byte), static_cast<std::uint32_t>(raw[byte])});
     }
 }
 

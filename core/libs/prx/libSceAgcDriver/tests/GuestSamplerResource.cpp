@@ -1,4 +1,5 @@
 #include "GraphicsTests.hpp"
+#include "MockDescriptorHeap.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
@@ -132,6 +133,7 @@ void RunSamplerReductionTests(const Fields& base) {
     Context context{};
     context.limits.maxSamplerAnisotropy = 1.0f;
     context.deviceProc = captureProc;
+    context.descriptorHeap = &MockDescriptorHeap();
     context.samplerFilterMinmax = true;
 
     const std::array<std::uint32_t, 4> capturedSampler{0x20000092u, 0x00fff000u, 0x05500000u, 0u};
@@ -247,6 +249,7 @@ void RunNonSeamlessCubeTests(const Fields& base) {
     Context context{};
     context.limits.maxSamplerAnisotropy = 1.0f;
     context.deviceProc = captureProc;
+    context.descriptorHeap = &MockDescriptorHeap();
     context.nonSeamlessCubeMap = true;
     Require((createSampler(context, decoded).flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT) != 0u, "a non-seamless cube sampler was created without VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT");
     Require(createSampler(context, DecodeSamplerResource(pack(base))).flags == 0u, "a seamless sampler was created with flags");
@@ -267,6 +270,7 @@ void RunSamplerCacheDegammaTests(const Fields& base) {
     Context context{};
     context.limits.maxSamplerAnisotropy = 1.0f;
     context.deviceProc = captureProc;
+    context.descriptorHeap = &MockDescriptorHeap();
     Fields forcedSrgb = base;
     forcedSrgb.forceSrgb = true;
     const auto words = pack(forcedSrgb);
