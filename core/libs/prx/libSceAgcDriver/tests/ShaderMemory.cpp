@@ -3335,6 +3335,51 @@ void verifyUnusedUnnormalizedSampler() {
     expectFailure([&] { static_cast<void>(populate(foldOnly)); }, "normalized guest sampler is used with a texel offset that is not a constant", "unnormalized samplers: a normalized S# was accepted for an offset that only folds");
 }
 
+void verifyManySamplerPairs() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t imageCount = 70u;
+    constexpr std::uint32_t samplerCount = 40u;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.numericClass = IrTextureNumericClass::Float;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    ShaderInfo info;
+    info.images.assign(imageCount, image);
+    info.samplers.assign(samplerCount, SamplerResource{});
+    info.runtimeImageModes.assign(imageCount, ResourceMaterializer::RuntimeImageModes(image));
+    std::vector<std::vector<std::uint32_t>> expected(imageCount);
+    for (std::uint32_t index = 0; index < imageCount; ++index) {
+        info.sampledPairs.push_back({index, index % samplerCount, 0u});
+        expected[index].push_back(2u * (index % samplerCount));
+    }
+    expected[0].clear();
+    for (std::uint32_t sampler = 0; sampler < samplerCount; ++sampler) {
+        info.sampledPairs.push_back({0u, sampler, 0u});
+        expected[0].push_back(2u * sampler);
+    }
+    require(info.sampledPairs.size() > 64u && info.samplers.size() > 32u, "many sampler pairs: the shader is not larger than the old limits");
+    ResourceSnapshot snapshot;
+    snapshot.images.assign(imageCount, DescriptorValue{{0x00001000u, 0x03800000u, 0x0000c000u, 0x90000facu, 0u, 0u, 0u, 0u}, 8u});
+    snapshot.samplers.assign(samplerCount, DescriptorValue{{0x00008092u, 0x00fff000u, 0x05500000u, 0u}, 4u});
+    BindingAllocationResult allocation;
+    std::vector<std::uint32_t> imageResources(imageCount);
+    for (std::uint32_t index = 0; index < imageCount; ++index) imageResources[index] = index;
+    std::vector<std::uint32_t> samplerResources;
+    for (std::uint32_t sampler = 0; sampler < samplerCount; ++sampler) samplerResources.insert(samplerResources.end(), 2u, sampler);
+    allocation.layout.descriptors = {{DescriptorBindingForImage(image), imageResources}, {DescriptorBindingKind::Samplers, samplerResources}};
+    allocation.layout.imageSlotBases = imageResources;
+    allocation.layout.imageSlotCount = imageCount;
+    allocation.layout.samplerSlotCount = static_cast<std::uint32_t>(samplerResources.size());
+    DescriptorBindingBuilder{}.Populate(allocation, info, IrShaderStage::Compute, 0u, snapshot, {});
+    const auto images = std::ranges::find_if(allocation.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::GuestImages; });
+    const auto samplers = std::ranges::find_if(allocation.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::GuestSamplers; });
+    require(images != allocation.bindings.end() && samplers != allocation.bindings.end(), "many sampler pairs: a binding is missing");
+    require(images->count == imageCount && samplers->count == 2u * samplerCount, "many sampler pairs: the bindings have the wrong sizes");
+    require(images->imageSamplers == expected, "many sampler pairs: an image is not paired with the sampler elements of its samplers");
+    require(images->imageSamplers[samplerCount - 1u].front() == 2u * (samplerCount - 1u) && images->imageSamplers[0].back() == 2u * (samplerCount - 1u), "many sampler pairs: a sampler element past 64 was dropped");
+}
+
 void verifyWaveUniformValues() {
     using namespace ShaderRecompiler;
     IrProgram program;
@@ -4031,6 +4076,7 @@ int main(int argc, char** argv) {
         verifyCoherentBufferAccesses();
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
+        verifyManySamplerPairs();
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();

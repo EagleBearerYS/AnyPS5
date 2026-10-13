@@ -258,7 +258,7 @@ std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Bl
     std::iota(binding.imageSlotDwords.begin(), binding.imageSlotDwords.end(), 0u);
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
     binding.imageWritten.assign(count, false);
-    binding.imageSamplers.assign(count, 0u);
+    binding.imageSamplers.resize(count);
     for (std::uint32_t element = 0; element < count; ++element) {
         const auto words = Descriptor(block.Surface(first + element));
         binding.guestDescriptor.insert(binding.guestDescriptor.end(), words.begin(), words.end());

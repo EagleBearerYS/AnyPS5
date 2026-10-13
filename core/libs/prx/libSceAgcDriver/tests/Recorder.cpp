@@ -511,7 +511,7 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
         imageBinding.descriptorSet = 0;
         imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
         imageBinding.count = 1;
-        imageBinding.imageSamplers = {0};
+        imageBinding.imageSamplers.resize(1);
         imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
         imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
         imageBinding.imageSlotDwords = {0u};
@@ -595,7 +595,7 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
             sharedBinding.count = 2;
             sharedBinding.guestDescriptor.assign(16u, 0u);
             std::copy(imageBinding.guestDescriptor.begin(), imageBinding.guestDescriptor.end(), sharedBinding.guestDescriptor.begin() + (presentFirst ? 0 : 8));
-            sharedBinding.imageSamplers = {0u, 0u};
+            sharedBinding.imageSamplers.resize(2);
             sharedBinding.imageSlotDwords = {0u, 0u};
             sharedProgram.bindings.push_back(sharedBinding);
             sharedProgram.pushConstants.assign(sizeof(std::uint32_t), std::byte{0});
@@ -1993,7 +1993,7 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
         images.count = 2;
         images.guestDescriptor.resize(16);
         images.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-        images.imageSamplers = {0u, 0u};
+        images.imageSamplers.resize(2);
         images.imageSlotDwords = {0u, 1u};
         program.bindings.push_back(images);
         program.pushConstants.assign(images.count * sizeof(std::uint32_t), std::byte{0});
@@ -4997,7 +4997,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     binding.binding = 1;
     binding.count = 1;
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-    binding.imageSamplers = {0u};
+    binding.imageSamplers.resize(1);
     binding.imageSlotDwords = {0u};
     program.bindings.push_back(binding);
     program.pushConstants.assign(4u * sizeof(std::uint32_t), std::byte{0});
@@ -5028,7 +5028,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
         program.bindings[0].guestDescriptor.clear();
         for (const auto& words : elements) program.bindings[0].guestDescriptor.insert(program.bindings[0].guestDescriptor.end(), words.begin(), words.end());
         program.bindings[0].imageDepthCompare = std::move(depthCompare);
-        program.bindings[0].imageSamplers.assign(elements.size(), 0u);
+        program.bindings[0].imageSamplers.assign(elements.size(), std::vector<std::uint32_t>{});
         program.bindings[0].imageSlotDwords.resize(elements.size());
         std::iota(program.bindings[0].imageSlotDwords.begin(), program.bindings[0].imageSlotDwords.end(), 0u);
         ShaderResources resources(context, compiled);
@@ -5040,7 +5040,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     Require(repeated[0] == remade && repeated[1] == remade && repeated[2] == replaced && repeated[3] == remade, "repeated elements of one build do not bind the cache's textures");
     program.bindings[0].count = 1;
     program.bindings[0].imageDepthCompare.clear();
-    program.bindings[0].imageSamplers.assign(1, 0u);
+    program.bindings[0].imageSamplers.assign(1, std::vector<std::uint32_t>{});
     program.bindings[0].imageSlotDwords.assign(1, 0u);
     recorder.Submit();
     device.WaitQueue();
@@ -5178,7 +5178,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
     binding.count = 1;
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-    binding.imageSamplers = {0};
+    binding.imageSamplers.resize(1);
     binding.imageSlotDwords = {0u};
     binding.guestDescriptor = {
         static_cast<std::uint32_t>(address >> 8u),
@@ -5298,7 +5298,7 @@ void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
     binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
     binding.count = 1;
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-    binding.imageSamplers = {0};
+    binding.imageSamplers.resize(1);
     binding.imageSlotDwords = {0u};
     binding.guestDescriptor = {
         static_cast<std::uint32_t>(address >> 8u),

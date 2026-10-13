@@ -100,7 +100,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
     next.memoryOffsetCount = static_cast<std::uint32_t>(info.buffers.size());
     next.dispatchThreadLimit = info.dispatchThreadLimit;
-    if (info.images.size() > RuntimeAbi::ImageCapacity || info.samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader binding layout exceeds runtime metadata capacity");
+    if (info.images.size() > RuntimeAbi::ImageCapacity) fail("shader binding layout exceeds runtime metadata capacity");
     next.samplerSlotCount = 2u * static_cast<std::uint32_t>(std::ranges::count_if(info.samplers, [](const SamplerResource& sampler) { return sampler.table == NoTable; }));
     if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");
     if (registrationModules) next.runtimeImageCount = static_cast<std::uint32_t>(info.images.size());
@@ -158,7 +158,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
     if (!samplers.empty()) {
-        if (samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader sampler pairs exceed runtime heap capacity");
         addBinding(next, DescriptorBindingKind::Samplers, std::move(samplers));
     }
     if (usesGds(program)) {

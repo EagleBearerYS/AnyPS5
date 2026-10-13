@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "BdaAbi.hpp"
 #include "Optimization/BindingAllocator.hpp"
+#include "PipelineSpecialization.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -126,6 +127,29 @@ void CheckAbi() {
     ShaderRecompiler::RuntimeAbi::RequireVersion(ShaderRecompiler::RuntimeAbi::Version);
 }
 
+void CheckSpecializationIds() {
+    namespace Spec = ShaderRecompiler::PipelineSpecialization;
+    constexpr std::uint32_t samplers = 100u;
+    std::set<std::uint32_t> ids;
+    const auto add = [&](std::uint32_t id, const char* what) { Require(ids.insert(id).second, std::string("specialization constant ID collision in ") + what); };
+    for (std::uint32_t sampler = 0u; sampler < samplers; ++sampler) {
+        add(Spec::FoldOffset(sampler), "the texel offset folds of the samplers");
+        add(Spec::UnnormalizedBaseLevel(sampler), "the unnormalized base level flags of the samplers");
+        Require(Spec::FoldOffset(sampler) >= Spec::SamplerBase && Spec::UnnormalizedBaseLevel(sampler) < Spec::BufferBase, "a sampler specialization ID left its range");
+    }
+    for (std::uint32_t image = 0u; image < ShaderRecompiler::RuntimeAbi::ImageCapacity; ++image) {
+        for (std::uint32_t word = 0u; word < Spec::ImageWords; ++word) add(Spec::ImageBase + image * Spec::ImageWords + word, "the image constants");
+        for (std::uint32_t word = 0u; word < Spec::CompareWords; ++word) add(Spec::CompareBase + image * Spec::CompareWords + word, "the comparison constants");
+    }
+    for (std::uint32_t buffer = 0u; buffer < ShaderRecompiler::RuntimeAbi::BufferCapacity; ++buffer) {
+        for (std::uint32_t word = 0u; word < Spec::BufferWords; ++word) add(Spec::BufferBase + buffer * Spec::BufferWords + word, "the buffer constants");
+    }
+    for (std::uint32_t binding = 0u; binding < static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count); ++binding) {
+        for (std::uint32_t element = 0u; element < Spec::DescriptorIndexStride; ++element) add(Spec::DescriptorIndex(binding, element), "the descriptor indices");
+    }
+    Require(Spec::FoldOffset(0u) > Spec::CompareBase + ShaderRecompiler::RuntimeAbi::ImageCapacity * Spec::CompareWords, "sampler specialization IDs start inside the comparison constants");
+}
+
 void CheckHeaps() {
     using namespace ShaderRecompiler;
     const auto allocate = [](const ImageResource& image, std::uint32_t count, std::uint32_t samplers = 0u) {
@@ -142,7 +166,8 @@ void CheckHeaps() {
     const auto single = allocate(image, 1u);
     const auto sixteenSamplers = allocate(image, 1u, 16u);
     Require(BindingAllocator{}.FindBinding(sixteenSamplers.layout, DescriptorBindingKind::Samplers).resources.size() == 32u, "sixteen logical samplers must fit with both descriptor variants");
-    const auto full = allocate(image, RuntimeAbi::SampledHeapCapacity, RuntimeAbi::SamplerHeapCapacity / 2u);
+    constexpr std::uint32_t manyImages = 64u;
+    const auto full = allocate(image, manyImages, RuntimeAbi::SamplerHeapCapacity / 2u);
     const auto expectSlots = [](const IrBindingLayout& layout, std::vector<std::uint32_t> bases, std::uint32_t count, std::string_view what) {
         Require(layout.imageSlotBases == bases && layout.imageSlotCount == count, std::string(what) + ": the image slots are not consecutive in image order");
         Require(layout.runtimeImageCount == 0u && layout.ImageSlotDword() == layout.SamplerSlotDword() + layout.samplerSlotCount && layout.ShaderDataDwords() == layout.samplerSlotCount + count, std::string(what) + ": the image slots do not follow the sampler slots, or direct images allocated runtime metadata");
@@ -153,13 +178,19 @@ void CheckHeaps() {
         return result;
     };
     expectSlots(single.layout, {0u}, 1u, "one sampled image takes one slot shared by all its typed heaps");
-    expectSlots(full.layout, sequence(RuntimeAbi::SampledHeapCapacity, 1u), RuntimeAbi::SampledHeapCapacity, "full sampled heaps");
+    expectSlots(full.layout, sequence(manyImages, 1u), manyImages, "many sampled images");
     Require(single.layout.memoryOffsetDword == full.layout.memoryOffsetDword && single.layout.SamplerSlotDword() == full.layout.SamplerSlotDword(), "runtime layout before the image slots depends on the image count");
     Require(full.layout.samplerSlotCount == RuntimeAbi::SamplerHeapCapacity && full.layout.SamplerSlotDword() == 0u, "direct samplers did not take one heap slot per descriptor variant");
-    Reject([&] { allocate(image, RuntimeAbi::SampledHeapCapacity + 1u); }, "heap capacity exceeded");
-    Require(BindingAllocator{}.FindBinding(allocate(image, 40u).layout, DescriptorBindingForImage(image)).resources.size() == 40u, "a sampled heap does not hold 40 images of one class");
-    Require(BindingAllocator{}.FindBinding(allocate(image, RuntimeAbi::SampledHeapCapacity).layout, DescriptorBindingForImage(image)).resources.size() == RuntimeAbi::SampledHeapCapacity, "a sampled heap does not hold a full class of images");
-    Reject([&] { allocate(image, 1u, RuntimeAbi::SamplerHeapCapacity + 1u); }, "metadata capacity");
+    Require(BindingAllocator{}.FindBinding(allocate(image, 40u).layout, DescriptorBindingForImage(image)).resources.size() == 40u, "a typed group does not hold 40 images of one class");
+    const auto limit = allocate(image, RuntimeAbi::ImageCapacity);
+    Require(BindingAllocator{}.FindBinding(limit.layout, DescriptorBindingForImage(image)).resources.size() == RuntimeAbi::ImageCapacity, "a typed group does not hold as many images as the runtime metadata does");
+    expectSlots(limit.layout, sequence(RuntimeAbi::ImageCapacity, 1u), RuntimeAbi::ImageCapacity, "as many sampled images as the runtime metadata holds");
+    Reject([&] { allocate(image, RuntimeAbi::ImageCapacity + 1u); }, "metadata capacity");
+    constexpr std::uint32_t manySamplers = 40u;
+    static_assert(manySamplers > RuntimeAbi::SamplerHeapCapacity);
+    const auto beyondMetadata = allocate(image, 1u, manySamplers);
+    Require(BindingAllocator{}.FindBinding(beyondMetadata.layout, DescriptorBindingKind::Samplers).resources.size() == 2u * manySamplers && beyondMetadata.layout.samplerSlotCount == 2u * manySamplers, "a shader with more samplers than the runtime metadata holds did not get two slots for each");
+    expectSlots(beyondMetadata.layout, {0u}, 1u, "one sampled image after more samplers than the runtime metadata holds");
     image.resourceClass = ImageResourceClass::Storage;
     const auto plainStorage = allocate(image, 2u);
     expectSlots(plainStorage.layout, {0u, 1u}, 2u, "storage images without dynamic mips");
@@ -169,13 +200,13 @@ void CheckHeaps() {
     Require(BindingAllocator{}.FindBinding(storage.layout, DescriptorBindingForImage(image)).resources.size() == image.mipCount, "storage heap did not reserve each mip");
     const auto shared = allocate(image, 2u);
     Require(BindingAllocator{}.FindBinding(shared.layout, DescriptorBindingForImage(image)).resources.size() == 2u * image.mipCount, "a storage heap did not hold two dynamic-mip images");
-    const auto capacity = RuntimeAbi::StorageHeapCapacity / image.mipCount;
-    const auto filled = allocate(image, capacity);
-    Require(BindingAllocator{}.FindBinding(filled.layout, DescriptorBindingForImage(image)).resources.size() == RuntimeAbi::StorageHeapCapacity, "a full storage heap was not allocated");
+    constexpr std::uint32_t manyStorage = RuntimeAbi::ImageCapacity;
+    const auto filled = allocate(image, manyStorage);
+    Require(BindingAllocator{}.FindBinding(filled.layout, DescriptorBindingForImage(image)).resources.size() == manyStorage * image.mipCount, "a storage group did not hold a slot per mip of every image");
     expectSlots(storage.layout, {0u}, RuntimeAbi::StorageMipSlots, "one dynamic-mip storage image takes a slot per mip");
     expectSlots(shared.layout, {0u, RuntimeAbi::StorageMipSlots}, 2u * RuntimeAbi::StorageMipSlots, "two dynamic-mip storage images");
-    expectSlots(filled.layout, sequence(capacity, RuntimeAbi::StorageMipSlots), capacity * RuntimeAbi::StorageMipSlots, "full storage heaps");
-    Reject([&] { allocate(image, capacity + 1u); }, "heap capacity exceeded");
+    expectSlots(filled.layout, sequence(manyStorage, RuntimeAbi::StorageMipSlots), manyStorage * RuntimeAbi::StorageMipSlots, "as many dynamic-mip storage images as the runtime metadata holds");
+    Reject([&] { allocate(image, manyStorage + 1u); }, "metadata capacity");
     {
         ImageResource sampled;
         sampled.resourceClass = ImageResourceClass::Sampled;
@@ -191,7 +222,9 @@ void CheckHeaps() {
         const auto result = BindingAllocator{}.Allocate(mixed, {0u, 0u, 0u, 128u});
         expectSlots(result.layout, {0u, 1u, 0u, 1u + RuntimeAbi::StorageMipSlots, 2u + RuntimeAbi::StorageMipSlots}, 3u + RuntimeAbi::StorageMipSlots, "sampled, dynamic-mip storage, table and plain storage images");
     }
-    Reject([&] { allocate(image, 0u, RuntimeAbi::SamplerHeapCapacity / 2u + 1u); }, "sampler pairs");
+    constexpr std::uint32_t hundredSamplers = 100u;
+    const auto hundred = allocate(image, 0u, hundredSamplers);
+    Require(BindingAllocator{}.FindBinding(hundred.layout, DescriptorBindingKind::Samplers).resources.size() == 2u * hundredSamplers && hundred.layout.samplerSlotCount == 2u * hundredSamplers && hundred.layout.ImageSlotDword() == 2u * hundredSamplers && hundred.layout.ShaderDataDwords() == 2u * hundredSamplers, "a hundred samplers did not take a pair of slots each");
     const std::array dimensions{RdnaImageDimension::Dim1D, RdnaImageDimension::Dim1DArray, RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray, RdnaImageDimension::Dim3D, RdnaImageDimension::Dim2DMsaa, RdnaImageDimension::Dim2DMsaaArray};
     std::set<std::uint32_t> classes;
     for (std::uint32_t group = 0u; group < 8u; ++group) {
@@ -205,11 +238,9 @@ void CheckHeaps() {
             image.dimension = dimension;
             const auto binding = DescriptorBindingForImage(image);
             Require(classes.insert(static_cast<std::uint32_t>(binding)).second, "typed image classes overlap");
-            Require(RuntimeAbi::HeapCapacity(binding) == (group < 4u ? RuntimeAbi::SampledHeapCapacity : RuntimeAbi::StorageHeapCapacity), "typed image class has an invalid capacity");
         }
     }
     Require(classes.size() == RuntimeAbi::ImageBindingCount && *classes.begin() == 1u && *classes.rbegin() == RuntimeAbi::ImageBindingCount, "typed image class mapping is incomplete");
-    Reject([] { RuntimeAbi::HeapCapacity(RuntimeAbi::Binding::ShaderData); }, "not a typed heap");
 }
 
 }
@@ -217,6 +248,7 @@ void CheckHeaps() {
 int main() {
     try {
         CheckAbi();
+        CheckSpecializationIds();
         CheckHeaps();
         CheckProfile();
         std::cout << "shader runtime ABI and device profile tests passed\n";

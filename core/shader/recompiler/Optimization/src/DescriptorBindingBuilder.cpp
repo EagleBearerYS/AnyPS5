@@ -34,6 +34,12 @@ struct BufferWrittenCounts {
 };
 BufferWrittenCounts bufferWrittenCounts;
 
+void MergeSamplerElements(std::vector<std::uint32_t>& into, std::span<const std::uint32_t> from) {
+    into.insert(into.end(), from.begin(), from.end());
+    std::ranges::sort(into);
+    into.erase(std::unique(into.begin(), into.end()), into.end());
+}
+
 DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
     if (kind == DescriptorBindingKind::Buffers) {
         return DescriptorKind::DeviceAddress;
@@ -279,8 +285,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     DescriptorBindingPlan plan;
     const auto unnormalized = ProveUnnormalized(info, snapshot);
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
-        if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
-        if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevelBase + index, unnormalized.samplers[index] ? 1u : 0u});
+        if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffset(index), unnormalized.samplers[index] ? 1u : 0u});
+        if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevel(index), unnormalized.samplers[index] ? 1u : 0u});
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
@@ -427,7 +433,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageAtomic.push_back(image.atomic);
                 physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
-                physical.imageSamplers.push_back(0u);
+                physical.imageSamplers.emplace_back();
                 physical.imageAtomic64.push_back(image.atomic64);
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
@@ -468,12 +474,11 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         plan.runtimeState.assign(layout.runtimeStateDwords, 0u);
         for (std::uint32_t target = 0; target < exportMappings.size(); ++target) plan.runtimeState.at(RuntimeAbi::StateExportMappings + target / 4u) |= static_cast<std::uint32_t>(exportMappings[target]) << (target % 4u * 8u);
     }
-    std::vector<std::uint64_t> samplerMasks(info.samplers.size());
+    std::vector<std::vector<std::uint32_t>> samplerElements(info.samplers.size());
     for (const auto& binding : plan.bindings) {
         if (binding.descriptor.role != DescriptorRole::GuestSamplers) continue;
-        if (binding.resources.size() > 64u) fail("prepared sampler mask capacity exceeded");
         for (std::uint32_t element = 0; element < binding.resources.size(); ++element) {
-            if (binding.inactive.empty() || !binding.inactive[element]) samplerMasks.at(binding.resources[element]) |= std::uint64_t{1} << element;
+            if (binding.inactive.empty() || !binding.inactive[element]) samplerElements.at(binding.resources[element]).push_back(element);
         }
     }
     for (auto& binding : plan.bindings) {
@@ -481,12 +486,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         for (std::size_t element = 0; element < binding.resources.size(); ++element) {
             const auto resource = binding.resources[element];
             for (const auto& pair : info.sampledPairs) {
-                if (pair.image == resource) binding.descriptor.imageSamplers[element] |= samplerMasks.at(pair.sampler);
+                if (pair.image == resource) MergeSamplerElements(binding.descriptor.imageSamplers[element], samplerElements.at(pair.sampler));
             }
         }
     }
     for (auto& binding : plan.bindings) {
-        if (binding.descriptor.role == DescriptorRole::ImageTable) binding.tableSamplerMasks = samplerMasks;
+        if (binding.descriptor.role == DescriptorRole::ImageTable) binding.tableSamplerElements = samplerElements;
     }
     return plan;
 }
@@ -506,8 +511,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     const bool hasSamplers = std::any_of(selected.bindings.begin(), selected.bindings.end(), [](const auto& binding) { return binding.descriptor.role == DescriptorRole::GuestSamplers; });
     if (!hasSamplers) {
         for (auto& binding : selected.bindings) {
-            std::fill(binding.descriptor.imageSamplers.begin(), binding.descriptor.imageSamplers.end(), 0u);
-            binding.tableSamplerMasks.clear();
+            for (auto& samplers : binding.descriptor.imageSamplers) samplers.clear();
+            binding.tableSamplerElements.clear();
         }
     }
     selected.imageMetadata = plan.imageMetadata;
@@ -563,11 +568,11 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(false);
                 physical.imageAtomic.push_back(false);
-                std::uint64_t samplers = 0;
-                for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
-                    if ((element.samplers & (1u << sampler)) != 0u) samplers |= entry.tableSamplerMasks[sampler];
+                std::vector<std::uint32_t> samplers;
+                for (const auto sampler : element.samplers) {
+                    if (sampler < entry.tableSamplerElements.size()) MergeSamplerElements(samplers, entry.tableSamplerElements[sampler]);
                 }
-                physical.imageSamplers.push_back(samplers);
+                physical.imageSamplers.push_back(std::move(samplers));
             }
             physical.count = static_cast<std::uint32_t>(tables->elements.size());
             break;

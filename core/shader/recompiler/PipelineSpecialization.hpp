@@ -32,10 +32,18 @@ inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
 inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
-inline constexpr std::uint32_t FoldOffsetBase = 57344u;
-inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
+inline constexpr std::uint32_t SamplerBase = 1u << 20u;
+inline constexpr std::uint32_t SamplerWords = 2u;
 
-static_assert(BufferBase > UnnormalizedBaseLevelBase && BufferBase > CompareBase && BufferBase > DescriptorIndexBase, "buffer specialization IDs must be above every bounded range");
+static_assert(BufferBase > SamplerBase && SamplerBase > CompareBase && BufferBase > DescriptorIndexBase, "buffer and sampler specialization IDs must be above every bounded range");
+
+inline constexpr std::uint32_t FoldOffset(std::uint32_t sampler) {
+    return SamplerBase + sampler * SamplerWords;
+}
+
+inline constexpr std::uint32_t UnnormalizedBaseLevel(std::uint32_t sampler) {
+    return SamplerBase + sampler * SamplerWords + 1u;
+}
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;

@@ -1031,12 +1031,12 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         return Abi::PoisonCode(found->second);
     };
     std::map<std::tuple<std::array<std::uint32_t, 8>, RdnaImageDimension, bool, DescriptorBindingKind>, std::uint32_t> elementIndex;
-    std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
+    std::vector<std::vector<std::uint32_t>> directSamplers(info.images.size());
     std::vector<bool> reducingSampler(info.images.size(), false);
     for (const auto& pair : info.sampledPairs) {
         const auto& sampler = info.samplers.at(pair.sampler);
         if (sampler.table != NoTable) continue;
-        directSamplers.at(pair.image) |= 1u << pair.sampler;
+        directSamplers.at(pair.image).push_back(pair.sampler);
         const auto& words = snapshot.samplers.at(pair.sampler).dwords;
         if (reducesBetweenTexels(words[0], words[2])) reducingSampler.at(pair.image) = true;
     }
@@ -1062,8 +1062,11 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                     elementIndex.erase(found);
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
-                    if (inserted) out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u});
-                    out.elements[found->second].samplers |= directSamplers[resource];
+                    if (inserted) out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, {}});
+                    auto& samplers = out.elements[found->second].samplers;
+                    samplers.insert(samplers.end(), directSamplers[resource].begin(), directSamplers[resource].end());
+                    std::ranges::sort(samplers);
+                    samplers.erase(std::unique(samplers.begin(), samplers.end()), samplers.end());
                     record[Abi::ImageRecordFlags] = decoded << Abi::ModeShift;
                     record[Abi::ImageRecordElement] = found->second;
                 }

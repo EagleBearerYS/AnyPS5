@@ -2017,9 +2017,9 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         // must not serve a build with another (the variant implies it, this makes it explicit).
         packBits(binding.bufferWritten);
         visit(static_cast<std::uint32_t>(binding.imageSamplers.size()));
-        for (const auto sampler : binding.imageSamplers) {
-            visit(static_cast<std::uint32_t>(sampler));
-            visit(static_cast<std::uint32_t>(sampler >> 32u));
+        for (const auto& samplers : binding.imageSamplers) {
+            visit(static_cast<std::uint32_t>(samplers.size()));
+            for (const auto sampler : samplers) visit(sampler);
         }
         visit(static_cast<std::uint32_t>(binding.imageShapes.size()));
         for (const auto shape : binding.imageShapes) visit(static_cast<std::uint32_t>(shape));
@@ -3631,8 +3631,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             if (!shaderSamplers.empty()) {
                 const bool singleLevel = DescriptorSingleLevel(words);
                 const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
-                for (std::uint32_t sampler = 0; sampler < shaderSamplers.size() && sampler < 64u; ++sampler) {
-                    if (((binding.imageSamplers[element] >> sampler) & 1u) == 0) continue;
+                for (const auto sampler : binding.imageSamplers[element]) {
+                    if (sampler >= shaderSamplers.size()) continue;
                     auto& source = samplerSources.at(firstSampler + sampler);
                     (singleLevel ? source.singleLevelImage : source.mipmappedImage) = true;
                 }
@@ -3776,8 +3776,8 @@ void ShaderResources::resolveImageTables() {
                 RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers.at(element), stageSamplers);
                 const auto numeric = ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) != 0u ? ShaderRecompiler::IrTextureNumericClass::Float : ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(resource.format));
                 const bool integerImage = numeric == ShaderRecompiler::IrTextureNumericClass::Uint || numeric == ShaderRecompiler::IrTextureNumericClass::Sint;
-                for (std::uint32_t sampler = 0; sampler < stageSamplers.size() && sampler < 64u; ++sampler) {
-                    if (((binding.imageSamplers.at(element) >> sampler) & 1u) == 0) continue;
+                for (const auto sampler : binding.imageSamplers.at(element)) {
+                    if (sampler >= stageSamplers.size()) continue;
                     const auto& source = samplerSources.at(table.firstSampler + sampler);
                     const auto descriptor = DecodeSamplerResource(source.words, source.unnormalized, true, source.integerBorder);
                     const bool border = descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;

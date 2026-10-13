@@ -141,7 +141,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.samplerUsed = {seed % 2 == 0, true, false};
     binding.imageUnnormalized = {true, false, seed % 2 == 0};
     binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
-    binding.imageSamplers = {0x5u, 0u, 0x80000000u};
+    binding.imageSamplers = {{0u, 2u, 70u}, {}, {31u, 4000u}};
     binding.bufferRead = {true, false, false, true, true, false};
     return binding;
 }

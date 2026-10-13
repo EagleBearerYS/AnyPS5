@@ -69,10 +69,10 @@ private:
     std::uint64_t misses = 0;
 };
 
-void RequireFilterMinmax(const Context& context, VkFormat format, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
-void RequireDegammaFormat(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
-void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
-void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireFilterMinmax(const Context& context, VkFormat format, std::span<const std::uint32_t> samplerElements, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireDegammaFormat(std::uint32_t guestFormat, std::span<const std::uint32_t> samplerElements, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::span<const std::uint32_t> samplerElements, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireNonSeamlessCube(bool cube, std::span<const std::uint32_t> samplerElements, std::span<const std::shared_ptr<Sampler>> samplers);
 
 }
 

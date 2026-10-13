@@ -17,7 +17,7 @@ struct ImageTableElement {
     RdnaImageDimension dimension = RdnaImageDimension::Unknown;
     bool depthCompare = false;
     DescriptorBindingKind kind = DescriptorBindingKind::Buffers;
-    std::uint32_t samplers = 0;
+    std::vector<std::uint32_t> samplers;
 };
 
 struct ImageTableSamplerElement {

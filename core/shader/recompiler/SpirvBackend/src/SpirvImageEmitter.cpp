@@ -1435,7 +1435,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     std::uint32_t sample = 0;
     const bool baseLevelIfUnnormalized = !setup.dref && SamplesBaseLevelIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
     if (baseLevelIfUnnormalized) {
-        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::UnnormalizedBaseLevelBase + mem.sampler, 0u);
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::UnnormalizedBaseLevel(mem.sampler), 0u);
         const auto unnormalized = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
         sample = EmitValueIfElse(state, unnormalized, resultType, [&] {
             return emitSample(setup.coord, spv::ImageOperandsLodMask, {ZeroF32(state)}, spv::OpImageSampleExplicitLod);
@@ -1447,7 +1447,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     } else if (!offsetOperand) {
         sample = emitSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
     } else {
-        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::FoldOffsetBase + mem.sampler, 0u);
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::FoldOffset(mem.sampler), 0u);
         const auto folded = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
         const auto foldLabel = state.module.AllocateId();
         const auto operandLabel = state.module.AllocateId();

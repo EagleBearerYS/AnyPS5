@@ -271,7 +271,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerUsed);
     writer.Values(std::span<const std::uint32_t>(binding.imageSlotDwords));
-    writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
+    writer.List(binding.imageSamplers, [](Writer& out, const std::vector<std::uint32_t>& samplers) { out.Values(std::span<const std::uint32_t>(samplers)); });
     writer.Flags(binding.bufferRead);
 }
 
@@ -300,7 +300,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.samplerIntegerBorder);
     reader.Flags(binding.samplerUsed);
     reader.Values(binding.imageSlotDwords);
-    reader.Values(binding.imageSamplers);
+    reader.List(binding.imageSamplers, 4, [](Reader& in, std::vector<std::uint32_t>& samplers) { in.Values(samplers); });
     reader.Flags(binding.bufferRead);
 }
 

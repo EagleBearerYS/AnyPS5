@@ -6,10 +6,12 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -44,6 +46,10 @@ struct Fields {
     bool blendZeroPrt = false;
     std::uint32_t borderColorType = 0;
 };
+
+std::vector<std::uint32_t> elements(std::initializer_list<std::uint32_t> values) {
+    return std::vector<std::uint32_t>(values);
+}
 
 std::array<std::uint32_t, 4> pack(const Fields& f) {
     std::array<std::uint32_t, 4> words{};
@@ -208,12 +214,12 @@ void RunSamplerReductionTests(const Fields& base) {
     minPoint.xyMinFilter = 0;
     minPoint.mipFilter = 1;
     const std::array samplers{std::make_shared<Sampler>(context, DecodeSamplerResource(pack(base))), std::make_shared<Sampler>(context, captured), std::make_shared<Sampler>(context, DecodeSamplerResource(pack(minPoint)))};
-    RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, 0b010u, samplers);
-    RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0u, samplers);
-    RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0b101u, samplers);
-    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0b010u, samplers); }, "format 37 does not support min/max filtering is sampled through a min or max reduction sampler");
-    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32G32_SFLOAT, 0b011u, samplers); }, "does not support min/max filtering");
-    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, 0b1000u, samplers); }, "sampler element 3, which its shader does not bind");
+    RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, elements({1u}), samplers);
+    RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, elements({}), samplers);
+    RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, elements({0u, 2u}), samplers);
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, elements({1u}), samplers); }, "format 37 does not support min/max filtering is sampled through a min or max reduction sampler");
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32G32_SFLOAT, elements({0u, 1u}), samplers); }, "does not support min/max filtering");
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, elements({3u}), samplers); }, "sampler element 3, which its shader does not bind");
 
     const auto borderSampler = [&](std::uint32_t clamp, std::uint32_t borderColorType) {
         Fields fields = base;
@@ -223,11 +229,11 @@ void RunSamplerReductionTests(const Fields& base) {
     };
     const std::array borderSamplers{borderSampler(6u, 0u), borderSampler(6u, 1u), borderSampler(6u, 2u), borderSampler(2u, 1u)};
     Require(!borderSamplers[0]->ReadsOpaqueBlackBorder() && borderSamplers[1]->ReadsOpaqueBlackBorder() && !borderSamplers[2]->ReadsOpaqueBlackBorder() && !borderSamplers[3]->ReadsOpaqueBlackBorder(), "opaque black border detection is wrong");
-    for (std::uint32_t swizzle = 0; swizzle <= 5u; ++swizzle) RequireBorderSwizzle(swizzle, 0b1101u, borderSamplers);
-    RequireBorderSwizzle(0u, 0b0010u, borderSamplers);
-    RequireBorderSwizzle(4u, 0b0010u, borderSamplers);
-    for (std::uint32_t swizzle : {1u, 2u, 3u, 5u}) reject([&] { RequireBorderSwizzle(swizzle, 0b0010u, borderSamplers); }, "moves the alpha channel is sampled through an opaque black border");
-    reject([&] { RequireBorderSwizzle(1u, 0b10000u, borderSamplers); }, "sampler element 4, which its shader does not bind");
+    for (std::uint32_t swizzle = 0; swizzle <= 5u; ++swizzle) RequireBorderSwizzle(swizzle, elements({0u, 2u, 3u}), borderSamplers);
+    RequireBorderSwizzle(0u, elements({1u}), borderSamplers);
+    RequireBorderSwizzle(4u, elements({1u}), borderSamplers);
+    for (std::uint32_t swizzle : {1u, 2u, 3u, 5u}) reject([&] { RequireBorderSwizzle(swizzle, elements({1u}), borderSamplers); }, "moves the alpha channel is sampled through an opaque black border");
+    reject([&] { RequireBorderSwizzle(1u, elements({4u}), borderSamplers); }, "sampler element 4, which its shader does not bind");
 
     const auto pointFiltered = [](const std::array<std::uint32_t, 4>& words) { return ShaderRecompiler::PointFilteredSamplerWord(words[0], words[2]); };
     Require(pointFiltered(pack(base)) == 0x05000000u, "a point-filtered weighted-average sampler kept its bilinear or linear mip filter");
@@ -255,15 +261,15 @@ void RunNonSeamlessCubeTests(const Fields& base) {
     Require(createSampler(context, DecodeSamplerResource(pack(base))).flags == 0u, "a seamless sampler was created with flags");
     const std::array honored{std::make_shared<Sampler>(context, decoded)};
     Require(!honored[0]->RequiresNonSeamlessCube(), "a sampler created with the non-seamless flag still restricts cube textures");
-    RequireNonSeamlessCube(true, 0b1u, honored);
+    RequireNonSeamlessCube(true, elements({0u}), honored);
 
     context.nonSeamlessCubeMap = false;
     Require(createSampler(context, decoded).flags == 0u, "a sampler set the non-seamless flag without the device feature");
     const std::array unsupported{std::make_shared<Sampler>(context, DecodeSamplerResource(pack(base))), std::make_shared<Sampler>(context, decoded)};
     Require(unsupported[1]->RequiresNonSeamlessCube(), "a non-seamless sampler without the device feature does not restrict cube textures");
-    RequireNonSeamlessCube(false, 0b11u, unsupported);
-    RequireNonSeamlessCube(true, 0b01u, unsupported);
-    reject([&] { RequireNonSeamlessCube(true, 0b10u, unsupported); }, "disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+    RequireNonSeamlessCube(false, elements({0u, 1u}), unsupported);
+    RequireNonSeamlessCube(true, elements({0u}), unsupported);
+    reject([&] { RequireNonSeamlessCube(true, elements({1u}), unsupported); }, "disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
 }
 
 void RunSamplerCacheDegammaTests(const Fields& base) {
@@ -282,6 +288,54 @@ void RunSamplerCacheDegammaTests(const Fields& base) {
     reject([&] { cache.Get(context, words, false); }, "forces sRGB decoding");
 }
 
+}
+
+void RunManySamplerPairingTests(const Fields& base) {
+    constexpr std::uint32_t samplerCount = 80u;
+    constexpr std::uint32_t flagged = 70u;
+    const std::string unbound = "sampler element " + std::to_string(samplerCount) + ", which its shader does not bind";
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    context.descriptorHeap = &MockDescriptorHeap();
+    context.samplerFilterMinmax = true;
+    context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+        *properties = {};
+        if (format == VK_FORMAT_R32_SFLOAT) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT;
+        if (format == VK_FORMAT_R8G8B8A8_UNORM) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    };
+    const auto many = [&](const GuestSamplerResource& plain, const GuestSamplerResource& special) {
+        std::vector<std::shared_ptr<Sampler>> samplers;
+        for (std::uint32_t element = 0; element < samplerCount; ++element) samplers.push_back(std::make_shared<Sampler>(context, element == flagged ? special : plain));
+        return samplers;
+    };
+
+    Fields nonSeamless = base;
+    nonSeamless.disableCubeWrap = true;
+    const auto cubes = many(DecodeSamplerResource(pack(base)), DecodeSamplerResource(pack(nonSeamless)));
+    Require(cubes[flagged]->RequiresNonSeamlessCube() && !cubes[flagged - 1u]->RequiresNonSeamlessCube(), "the sampler at element 70 does not alone restrict cube textures");
+    RequireNonSeamlessCube(true, elements({0u, flagged - 1u, flagged + 1u, samplerCount - 1u}), cubes);
+    RequireNonSeamlessCube(false, elements({flagged}), cubes);
+    reject([&] { RequireNonSeamlessCube(true, elements({0u, flagged}), cubes); }, "disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+
+    Fields transparent = base;
+    transparent.clampY = 6;
+    Fields opaque = transparent;
+    opaque.borderColorType = 1;
+    const auto borders = many(DecodeSamplerResource(pack(transparent)), DecodeSamplerResource(pack(opaque)));
+    Require(borders[flagged]->ReadsOpaqueBlackBorder() && !borders[flagged - 1u]->ReadsOpaqueBlackBorder(), "the sampler at element 70 does not alone read an opaque black border");
+    RequireBorderSwizzle(1u, elements({0u, flagged - 1u, flagged + 1u, samplerCount - 1u}), borders);
+    RequireBorderSwizzle(0u, elements({flagged}), borders);
+    reject([&] { RequireBorderSwizzle(1u, elements({0u, flagged}), borders); }, "moves the alpha channel is sampled through an opaque black border");
+    reject([&] { RequireBorderSwizzle(1u, elements({samplerCount}), borders); }, unbound);
+
+    const std::array<std::uint32_t, 4> minSampler{0x20000092u, 0x00fff000u, 0x05500000u, 0u};
+    const auto reductions = many(DecodeSamplerResource(pack(base)), DecodeSamplerResource(minSampler));
+    Require(reductions[flagged]->RequiresFilterMinmax() && !reductions[flagged - 1u]->RequiresFilterMinmax(), "the sampler at element 70 does not alone need min/max filtering");
+    RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, elements({0u, flagged - 1u, flagged + 1u, samplerCount - 1u}), reductions);
+    RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, elements({flagged}), reductions);
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, elements({0u, flagged}), reductions); }, "does not support min/max filtering");
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, elements({samplerCount}), reductions); }, unbound);
 }
 
 void RunGuestSamplerResourceTests() {
@@ -440,6 +494,7 @@ void RunGuestSamplerResourceTests() {
 
     RunNonSeamlessCubeTests(base);
     RunSamplerReductionTests(base);
+    RunManySamplerPairingTests(base);
 
     Fields badDegamma = base;
     badDegamma.disableDegamma = true;

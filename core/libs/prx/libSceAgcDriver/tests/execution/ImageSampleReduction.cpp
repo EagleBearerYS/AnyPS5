@@ -233,7 +233,7 @@ void Gather(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char*
     }
 }
 
-std::uint32_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, std::uint32_t format) {
+std::vector<std::uint32_t> PairedSamplers(const ShaderRecompiler::RecompileResult& result, std::uint32_t format) {
     for (const auto& binding : result.bindings) {
         if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
@@ -241,7 +241,7 @@ std::uint32_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, st
         }
     }
     Require(false, "image sample reduction: no sampled image of format " + std::to_string(format));
-    return 0;
+    return {};
 }
 
 float ExpectedColor(std::uint32_t tid, bool sampled) {
@@ -285,9 +285,9 @@ int main() {
         FillInput();
         const Sampler minBilinear{ReductionMin, FilterBilinear, MipPoint};
         const auto loaded = Compile(*device, Format32Float, minBilinear, LoadedCode);
-        Require(PairedSamplers(loaded, Format32Float) == 1u && PairedSamplers(loaded, Format8888UNorm) == 0u, "image_load of 8_8_8_8 next to a min sampler: wrong image-sampler pairs");
+        Require(PairedSamplers(loaded, Format32Float) == std::vector<std::uint32_t>{0u} && PairedSamplers(loaded, Format8888UNorm).empty(), "image_load of 8_8_8_8 next to a min sampler: wrong image-sampler pairs");
         const auto sampled = Compile(*device, Format32Float, minBilinear, SampledCode);
-        Require(PairedSamplers(sampled, Format32Float) == 1u && PairedSamplers(sampled, Format8888UNorm) == 1u, "8_8_8_8 sampled through a min sampler: wrong image-sampler pairs");
+        Require(PairedSamplers(sampled, Format32Float) == std::vector<std::uint32_t>{0u} && PairedSamplers(sampled, Format8888UNorm) == std::vector<std::uint32_t>{0u}, "8_8_8_8 sampled through a min sampler: wrong image-sampler pairs");
         static_cast<void>(Compile(*device, Format32SInt, {ReductionMin, FilterPoint, MipPoint}));
         Reject(*device, Format32SInt, {ReductionMin, FilterBilinear, MipPoint}, "needs point filtering");
         Reject(*device, Format32SInt, {ReductionMax, FilterPoint, MipLinear}, "needs point filtering");

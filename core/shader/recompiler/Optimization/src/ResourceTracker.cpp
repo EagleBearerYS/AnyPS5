@@ -1479,9 +1479,6 @@ private:
                 return i;
             }
         }
-        if (m_info.samplers.size() >= ShaderInfo::MaxSamplers) {
-            return std::numeric_limits<std::uint32_t>::max();
-        }
         m_info.samplers.push_back({source, pc});
         return static_cast<std::uint32_t>(m_info.samplers.size() - 1);
     }
