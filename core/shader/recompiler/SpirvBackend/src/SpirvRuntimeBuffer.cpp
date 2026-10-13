@@ -183,6 +183,14 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     });
 }
 
+bool byteStores(SpirvEmitterState& state) {
+    if (state.program.Resources().stage != IrShaderStage::Compute) return false;
+    if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityStorageBuffer8BitAccess)) == state.supportedCapabilities.end()) return false;
+    state.module.EmitCapability(spv::CapabilityStorageBuffer8BitAccess);
+    state.module.EmitExtension("SPV_KHR_8bit_storage");
+    return true;
+}
+
 void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t value, std::uint32_t bits = 32u) {
     if (context.Memory(instruction).gpuDescriptor) {
         EmitBdaWrite(context, instruction, address, value, bits);
@@ -196,6 +204,22 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, u32, unaligned, next, index);
+    if (bits != 32u && !access.coherent && byteStores(state)) {
+        const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, context.Memory(instruction).resource);
+        const auto block = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU8BlockPointer(state), block, state.bufferAddresses.at(element));
+        EmitIfCondition(state, EmitMemoryElementInBounds(state, access, last), [&] {
+            const auto first = EmitAddU32(state, EmitAddU32(state, Binary(state, spv::OpShiftLeftLogical, u32, index, ConstantU32(state, 2u)), misalignment), EmitAndConstant(state, address, 3u));
+            for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
+                const auto pointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAccessChain, TypePhysicalU8Pointer(state), pointer, block, ConstantU32(state, 0u), EmitAddU32(state, first, ConstantU32(state, byte)));
+                const auto shifted = byte == 0u ? value : Binary(state, spv::OpShiftRightLogical, u32, value, ConstantU32(state, byte * 8u));
+                const auto stored = Unary(state, spv::OpUConvert, TypeU8(state), shifted);
+                state.module.AddFunction(spv::OpStore, pointer, stored, spv::MemoryAccessAlignedMask, 1u);
+            }
+        });
+        return;
+    }
     EmitIfCondition(state, EmitMemoryElementInBounds(state, access, last), [&] {
         auto mask = ConstantU32(state, bits == 32u ? 0xffffffffu : (1u << bits) - 1u);
         auto masked = Binary(state, spv::OpBitwiseAnd, u32, value, mask);

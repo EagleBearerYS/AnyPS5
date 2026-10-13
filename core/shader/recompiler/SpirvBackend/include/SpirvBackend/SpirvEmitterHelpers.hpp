@@ -16,6 +16,7 @@ const RdnaImageDimensionInfo& RdnaImageDimensionInfoFor(RdnaImageDimension dimen
 std::uint32_t TypeVoid(SpirvEmitterState& state);
 std::uint32_t TypeBool(SpirvEmitterState& state);
 std::uint32_t TypeBoolVector(SpirvEmitterState& state, std::uint32_t components);
+std::uint32_t TypeU8(SpirvEmitterState& state);
 std::uint32_t TypeU32(SpirvEmitterState& state);
 std::uint32_t TypeU64(SpirvEmitterState& state);
 std::uint32_t TypeScalarU64(SpirvEmitterState& state);
@@ -33,6 +34,8 @@ std::uint32_t TypeStorageBufferPointer(SpirvEmitterState& state);
 std::uint32_t TypeStorageBufferElementPointer(SpirvEmitterState& state);
 std::uint32_t TypeStorageBufferU64Pointer(SpirvEmitterState& state);
 std::uint32_t TypeStorageBufferU64ElementPointer(SpirvEmitterState& state);
+std::uint32_t TypePhysicalU8BlockPointer(SpirvEmitterState& state);
+std::uint32_t TypePhysicalU8Pointer(SpirvEmitterState& state);
 std::uint32_t TypePhysicalU32Pointer(SpirvEmitterState& state);
 std::uint32_t TypePhysicalU64Pointer(SpirvEmitterState& state);
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index);
