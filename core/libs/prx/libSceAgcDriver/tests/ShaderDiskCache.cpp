@@ -1383,18 +1383,58 @@ IrResourcePlan handBuiltPlan() {
     memory.imageDimension = RdnaImageDimension::Dim2D;
     memory.gpuDescriptor = true;
     memory.flushDenormals = true;
-    plan.memoryInfo = {memory, MemoryInfo{}};
+    MemoryInfo every;
+    every.kind = ResourceKind::Buffer;
+    every.resource = 2u;
+    every.sampler = 3u;
+    every.offset = 0x14u;
+    every.secondaryOffset = 0x28u;
+    every.dmask = 0x5u;
+    every.dataDwords = 3u;
+    every.dataBits = 16u;
+    every.componentIndex = 1u;
+    every.componentCount = 2u;
+    every.dataFormat = 10u;
+    every.numberFormat = 7u;
+    every.imageSampleFlags = 0x21u;
+    every.imageDimension = RdnaImageDimension::Dim3D;
+    every.imageAddressComponents = 3u;
+    every.addressIsFull = true;
+    every.dataSigned = true;
+    every.typed = true;
+    every.formatted = true;
+    every.d16 = true;
+    every.imageHasMip = true;
+    every.imageR128 = true;
+    every.imagePacked = true;
+    every.imageByElements = 2u;
+    every.idxen = true;
+    every.offen = true;
+    every.planningOnly = true;
+    every.coherent = true;
+    every.gpuDescriptor = true;
+    every.flushDenormals = true;
+    plan.memoryInfo = {memory, every, MemoryInfo{}};
     DescriptorSource buffer;
     buffer.dwordCount = 4u;
     buffer.dwords = {&readConst(1), &readConst(2), &phi, &pointer};
     DescriptorSource table;
     table.dwordCount = 8u;
     table.dwords[0] = &readConst(3);
-    table.tableColumn = TableColumn{0u, 32u, 2u, 4u, 8u, 15u, true, true, true, 12u, 3u, KeyDomain{1u, 4u, 16u, true, true}};
-    plan.descriptorSources = {buffer, table};
-    plan.controlFlow = {{&condition, {1u, 2u}, {0u}, {}}, {nullptr, {2u}, {}, {0u}}, {nullptr, {}, {}, {}}};
-    plan.materializationSources = {0u};
-    plan.srtReads = {{&readConst(4), 0u}, {&pointer, 1u}};
+    table.tableColumn = TableColumn{2u, 32u, 2u, 4u, 8u, 15u, true, true, true, 12u, 3u, KeyDomain{3u, 4u, 16u, true, true}};
+    DescriptorSource heap;
+    heap.dwordCount = 4u;
+    heap.dwords[1] = &readConst(6);
+    DescriptorSource material;
+    material.dwordCount = 4u;
+    material.dwords[2] = &readConst(7);
+    auto& wide = make(IrOpcode::Void, IrType::U64);
+    wide.SetImmediateU64(0x8000000000000001ull);
+    material.dwords[3] = &wide;
+    plan.descriptorSources = {buffer, table, heap, material};
+    plan.controlFlow = {{&condition, {1u, 2u}, {0u}, {}}, {nullptr, {2u}, {3u}, {0u}}, {nullptr, {}, {}, {}}};
+    plan.materializationSources = {0u, 2u};
+    plan.srtReads = {{&readConst(4), 2u}, {&pointer, 1u}};
     plan.guardedSrtSlots = {1u};
     plan.srtGuardOffset = 6u;
     plan.cleanFlatSlots = {0u, 1u};
@@ -1402,14 +1442,14 @@ IrResourcePlan handBuiltPlan() {
     plan.requiresSpecializationMemory = true;
     plan.srtPlanComplete = true;
     plan.resourceTrackingComplete = true;
-    plan.info.buffers = {BufferResource{}};
+    plan.info.buffers = {BufferResource{}, BufferResource{2u, 0x40u, 0x100u, 0u, true, true, true, true, true, 0x7u, true, 4u}};
     ImageResource image{};
     image.source = 1u;
     image.resourceClass = ImageResourceClass::Sampled;
     image.dimension = RdnaImageDimension::Dim2D;
     plan.info.images = {image};
     ResourceMaterializer::PrepareImageModes(plan.info);
-    plan.uniformFill.fill = {UniformFillKind::Buffer, 0u, {4u, 0u, 0u}, 2u, 0u};
+    plan.uniformFill.fill = {UniformFillKind::Buffer, 1u, {4u, 8u, 12u}, 2u, 0x3f800000u};
     auto& fillValue = readConst(5);
     plan.uniformFill.values = {&fillValue, &fillValue, nullptr, nullptr};
     return plan;
@@ -1419,6 +1459,71 @@ std::vector<std::byte> encodedPlan(const IrResourcePlan& plan) {
     std::vector<std::byte> bytes;
     require(ShaderDiskCache::EncodePlan(plan, bytes), "a self-contained plan does not encode");
     return bytes;
+}
+
+bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
+    if (left.valueStorage.size() != right.valueStorage.size() || left.blockStorage.size() != right.blockStorage.size()) return false;
+    std::map<const IrValue*, std::size_t> leftValues;
+    std::map<const IrValue*, std::size_t> rightValues;
+    std::map<const IrBlock*, std::size_t> leftBlocks;
+    std::map<const IrBlock*, std::size_t> rightBlocks;
+    for (std::size_t index = 0; index < left.valueStorage.size(); ++index) {
+        leftValues.emplace(left.valueStorage[index].get(), index);
+        rightValues.emplace(right.valueStorage[index].get(), index);
+    }
+    for (std::size_t index = 0; index < left.blockStorage.size(); ++index) {
+        leftBlocks.emplace(left.blockStorage[index].get(), index);
+        rightBlocks.emplace(right.blockStorage[index].get(), index);
+    }
+    const auto sameValue = [&](const IrValue* a, const IrValue* b) {
+        if (a == nullptr || b == nullptr) return a == b;
+        const auto foundA = leftValues.find(a);
+        const auto foundB = rightValues.find(b);
+        return foundA != leftValues.end() && foundB != rightValues.end() && foundA->second == foundB->second;
+    };
+    const auto sameBlock = [&](const IrBlock* a, const IrBlock* b) {
+        const auto foundA = leftBlocks.find(a);
+        const auto foundB = rightBlocks.find(b);
+        return foundA != leftBlocks.end() && foundB != rightBlocks.end() && foundA->second == foundB->second;
+    };
+    for (std::size_t index = 0; index < left.blockStorage.size(); ++index) {
+        if (left.blockStorage[index]->Id() != right.blockStorage[index]->Id()) return false;
+    }
+    for (std::size_t index = 0; index < left.valueStorage.size(); ++index) {
+        const auto& a = *left.valueStorage[index];
+        const auto& b = *right.valueStorage[index];
+        if (a.Opcode() != b.Opcode() || a.Type() != b.Type() || a.Id() != b.Id() || a.Flags<std::uint64_t>() != b.Flags<std::uint64_t>() || !(a.Register() == b.Register()) || a.HasImmediate() != b.HasImmediate() || (a.HasImmediate() && a.ImmediateU64() != b.ImmediateU64())) return false;
+        if (a.ArgumentCount() != b.ArgumentCount() || a.IsPhi() != b.IsPhi() || a.PhiBlockCount() != b.PhiBlockCount()) return false;
+        for (std::size_t operand = 0; operand < a.ArgumentCount(); ++operand) {
+            if (!sameValue(a.Argument(operand), b.Argument(operand))) return false;
+        }
+        for (std::size_t operand = 0; operand < a.PhiBlockCount(); ++operand) {
+            if (!sameBlock(a.PhiBlock(operand), b.PhiBlock(operand))) return false;
+        }
+    }
+    if (left.stage != right.stage || left.shaderHash != right.shaderHash || left.userDataBase != right.userDataBase || left.userDataCount != right.userDataCount || left.srgbDecodeFormats != right.srgbDecodeFormats) return false;
+    if (left.memoryInfo != right.memoryInfo || left.descriptorSources.size() != right.descriptorSources.size() || left.controlFlow.size() != right.controlFlow.size() || left.srtReads.size() != right.srtReads.size()) return false;
+    for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
+        const auto& a = left.descriptorSources[index];
+        const auto& b = right.descriptorSources[index];
+        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn) return false;
+        for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
+            if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
+        }
+    }
+    for (std::size_t index = 0; index < left.controlFlow.size(); ++index) {
+        const auto& a = left.controlFlow[index];
+        const auto& b = right.controlFlow[index];
+        if (!sameValue(a.condition, b.condition) || a.successors != b.successors || a.sources != b.sources || a.images != b.images) return false;
+    }
+    for (std::size_t index = 0; index < left.srtReads.size(); ++index) {
+        if (!sameValue(left.srtReads[index].value, right.srtReads[index].value) || left.srtReads[index].flatOffset != right.srtReads[index].flatOffset) return false;
+    }
+    for (std::size_t index = 0; index < left.uniformFill.values.size(); ++index) {
+        if (!sameValue(left.uniformFill.values[index], right.uniformFill.values[index])) return false;
+    }
+    return left.materializationSources == right.materializationSources && left.guardedSrtSlots == right.guardedSrtSlots && left.srtGuardOffset == right.srtGuardOffset && left.cleanFlatSlots == right.cleanFlatSlots && left.pureFlatSlots == right.pureFlatSlots &&
+           left.requiresSpecializationMemory == right.requiresSpecializationMemory && left.srtPlanComplete == right.srtPlanComplete && left.resourceTrackingComplete == right.resourceTrackingComplete && left.info == right.info && left.uniformFill.fill == right.uniformFill.fill;
 }
 
 struct MaterializedPlan {
@@ -1556,10 +1661,10 @@ void verifyMalformedPlans() {
     };
     rejects("a branch with one successor", [](IrResourcePlan& plan) { plan.controlFlow[0].successors.pop_back(); });
     rejects("a successor past the blocks", [](IrResourcePlan& plan) { plan.controlFlow[1].successors[0] = 3u; });
-    rejects("a block source past the sources", [](IrResourcePlan& plan) { plan.controlFlow[0].sources[0] = 2u; });
+    rejects("a block source past the sources", [](IrResourcePlan& plan) { plan.controlFlow[0].sources[0] = 4u; });
     rejects("a block image past the images", [](IrResourcePlan& plan) { plan.controlFlow[1].images[0] = 1u; });
-    rejects("a materialized source past the sources", [](IrResourcePlan& plan) { plan.materializationSources.push_back(2u); });
-    rejects("a buffer past the sources", [](IrResourcePlan& plan) { plan.info.buffers[0].source = 2u; });
+    rejects("a materialized source past the sources", [](IrResourcePlan& plan) { plan.materializationSources.push_back(4u); });
+    rejects("a buffer past the sources", [](IrResourcePlan& plan) { plan.info.buffers[0].source = 4u; });
     rejects("an image past the sources", [](IrResourcePlan& plan) { plan.info.images[0].source = 5u; });
     rejects("a descriptor of nine dwords", [](IrResourcePlan& plan) { plan.descriptorSources[1].dwordCount = 9u; });
     rejects("a uniform fill of five words", [](IrResourcePlan& plan) { plan.uniformFill.fill.words = 5u; });
@@ -1591,7 +1696,7 @@ void verifyPlanRoundTrip() {
     const auto& phi = *handDecoded.descriptorSources[0].dwords[2];
     require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
     require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
-    require(handDecoded.descriptorSources[1].tableColumn == handBuilt.descriptorSources[1].tableColumn && handDecoded.memoryInfo == handBuilt.memoryInfo && handDecoded.info == handBuilt.info, "the decoded plan lost plain data");
+    require(samePlan(handBuilt, handDecoded), "the decoded hand-built plan differs from the plan in a field or a value");
     require(handDecoded.workgroupThreads == handBuilt.workgroupThreads, "the decoded plan lost the workgroup threads");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
@@ -1613,6 +1718,7 @@ void verifyPlanRoundTrip() {
         IrResourcePlan decoded;
         require(ShaderDiskCache::DecodePlan(bytes, decoded), fixture.name + ": the plan does not decode");
         require(encodedPlan(decoded) == bytes, fixture.name + ": the plan changed in a round trip");
+        require(samePlan(*plan, decoded), fixture.name + ": the decoded plan differs from the plan in a field or a value");
         require(decoded.valueStorage.size() == plan->valueStorage.size() && decoded.blockStorage.size() == plan->blockStorage.size(), fixture.name + ": the decoded plan holds another graph");
         const auto succeeded = verifyRoundTripRuntimes(*plan, decoded, fixture, 0x5eedu + static_cast<std::uint32_t>(index), fixture.name);
         require(succeeded != 0u, fixture.name + ": no runtime materialized");
@@ -1704,7 +1810,7 @@ void appendSnapshot(std::vector<std::byte>& out, const ResourceCapture& capture)
     appendWords(out, reads);
 }
 
-std::vector<std::vector<std::byte>> preparedOutputs(std::vector<PlanFixture>& fixtures) {
+std::vector<std::vector<std::byte>> preparedOutputs(std::vector<PlanFixture>& fixtures, std::vector<std::shared_ptr<const IrResourcePlan>>* plans = nullptr) {
     std::vector<std::vector<std::byte>> outputs;
     for (auto& fixture : fixtures) {
         const auto request = fixture.Request(true);
@@ -1717,6 +1823,7 @@ std::vector<std::vector<std::byte>> preparedOutputs(std::vector<PlanFixture>& fi
         ShaderDiskCache::EncodeResult(*result, bytes);
         appendSnapshot(bytes, *capture);
         require(ShaderDiskCache::EncodePlan(*capture->plan, bytes), fixture.name + ": the captured plan does not encode");
+        if (plans != nullptr) plans->push_back(capture->plan);
         outputs.push_back(std::move(bytes));
     }
     return outputs;
@@ -1736,7 +1843,8 @@ int runPlanLoadingProcess(std::string_view mode) {
     if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_IMAGE_TABLE", "1");
     auto fixtures = planFixtures();
     const auto count = fixtures.size();
-    const auto outputs = preparedOutputs(fixtures);
+    std::vector<std::shared_ptr<const IrResourcePlan>> plans;
+    const auto outputs = preparedOutputs(fixtures, &plans);
     ShaderDiskCache::Flush();
     const auto totals = ShaderDiskCache::Totals();
     const auto builds = FrontEndBuilds();
@@ -1767,6 +1875,10 @@ int runPlanLoadingProcess(std::string_view mode) {
         std::cout << "second process prepared " << count << " shaders from stored plans without running the front end\n";
     } else {
         std::cout << "a damaged plan entry was rejected, rebuilt and stored again with the same output\n";
+    }
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto fresh = GetResourcePlan(fixtures[index].Request(false));
+        require(samePlan(*plans[index], *fresh), fixtures[index].name + ": the plan this process used differs from the plan its front end builds");
     }
     ShaderDiskCache::Flush();
     return 0;
