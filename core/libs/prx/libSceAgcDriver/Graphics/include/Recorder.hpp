@@ -315,6 +315,7 @@ public:
     // The value alone, for callers asking whether any label is pending in a dword (afterStamp 0).
     static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp);
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
+    static bool PendingLabelsMatchMemory(std::uint64_t address, std::size_t bytes);
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
     // of the same queue) takes its value, since that queue's later work follows the label in queue
@@ -516,6 +517,10 @@ public:
     static bool FlipReadCheck();
 
 private:
+    struct WideLabel {
+        std::uint64_t end = 0;
+        std::vector<std::byte> bytes;
+    };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -560,7 +565,7 @@ private:
         std::uint64_t readGeneration = 0;
         // Dword addresses this batch noted in the label table (removed when it finishes).
         std::vector<std::uint64_t> labelDwords;
-        std::vector<std::multimap<std::uint64_t, std::uint64_t>::iterator> wideLabels;
+        std::vector<std::multimap<std::uint64_t, WideLabel>::iterator> wideLabels;
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
@@ -777,9 +782,10 @@ private:
     // The queued entries (batch always null), by dword; a lookup on the noting queue's thread
     // prefers them (its newest store in program order), every other lookup sees `labels` alone.
     std::map<std::uint64_t, LabelEntry> queuedLabels;
-    std::multimap<std::uint64_t, std::uint64_t> wideLabels;
+    std::multimap<std::uint64_t, WideLabel> wideLabels;
     std::uint64_t wideLabelBytes = 0;
     bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;
+    bool labelsMatchMemoryLocked(std::uint64_t address, std::size_t bytes) const;
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};

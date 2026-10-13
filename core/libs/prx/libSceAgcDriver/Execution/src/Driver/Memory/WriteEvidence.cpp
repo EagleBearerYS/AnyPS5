@@ -165,15 +165,9 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
     }
     const auto first = address & ~3ull;
     const auto limit = address + bytes;
-    if (Graphics::Recorder::WideLabelIn(first, static_cast<std::size_t>(limit - first))) {
+    if (!Graphics::Recorder::PendingLabelsMatchMemory(first, static_cast<std::size_t>(limit - first))) {
         reason = &ValidateCounters::syncedLabel;
         return Policy::Sync;
-    }
-    for (std::uint64_t dword = first; dword < limit; dword += 4) {
-        if (Graphics::Recorder::LookupLabelValue(dword, 4, 0).has_value()) {
-            reason = &ValidateCounters::syncedLabel;
-            return Policy::Sync;
-        }
     }
     if (writer->value && writer->begin <= address && limit <= writer->end && (known.empty() || known.size() == bytes) && knownValueCurrent(*writer)) {
         if (!known.empty()) {

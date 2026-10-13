@@ -814,6 +814,29 @@ void lateLabelTests(Recorder& recorder) {
     Require(!Recorder::LookupLabel(a, 4, 5).has_value() && !Recorder::LookupLabel(b, 8, 5).has_value() && !recorder.PendingLabelIn(0x70000, 0x400), "(7) entries outlived their batch");
 }
 
+void labelMatchTests(Recorder& recorder) {
+    alignas(16) static std::array<std::uint32_t, 128> memory{};
+    memory.fill(0x11111111u);
+    const auto base = reinterpret_cast<std::uint64_t>(memory.data());
+    std::array<std::byte, 256> wide{};
+    std::memcpy(wide.data(), memory.data(), wide.size());
+    const std::array<std::byte, 4> narrow{std::byte{0x11}, std::byte{0x11}, std::byte{0x11}, std::byte{0x11}};
+    recorder.Sync();
+    Require(Recorder::PendingLabelsMatchMemory(base, 16), "a range without labels does not match memory");
+    recorder.NoteLabel(base, wide, 300, 0);
+    recorder.NoteLabel(base + 0x100, narrow, 301, 0);
+    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
+    Require(Recorder::WideLabelIn(base + 0x18, 8) && Recorder::LookupLabel(base + 0x100, 4, 0).has_value(), "the labels were not noted");
+    Require(Recorder::PendingLabelsMatchMemory(base + 0x18, 8) && Recorder::PendingLabelsMatchMemory(base + 0xf8, 0x10), "labels that store the bytes memory holds were taken as changing them");
+    memory[7] = 0x22222222u;
+    Require(!Recorder::PendingLabelsMatchMemory(base + 0x18, 8) && Recorder::PendingLabelsMatchMemory(base + 0x20, 8), "a wide label over other bytes than memory holds was not found, or one beside them was");
+    memory[7] = 0x11111111u;
+    memory[64] = 0x33333333u;
+    Require(!Recorder::PendingLabelsMatchMemory(base + 0xfc, 8) && Recorder::PendingLabelsMatchMemory(base + 0x104, 4), "a narrow label over other bytes than memory holds was not found, or one beside it was");
+    recorder.Sync();
+    Require(Recorder::PendingLabelsMatchMemory(base + 0xfc, 8), "labels outlived their batch");
+}
+
 void largeLabelTests(Recorder& recorder) {
     constexpr std::uint64_t slot = 0x71000, small = slot + 0x10, outside = slot - 4, wide = 0x72000;
     const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
@@ -6027,6 +6050,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--written-buffer-order-only") {
             if (!writtenBufferOrderTests(device, recorder)) return 77;
             std::cout << "written buffer order tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--label-match-only") {
+            labelMatchTests(recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-unmap-only") {

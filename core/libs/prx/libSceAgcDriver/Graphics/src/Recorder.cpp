@@ -1237,9 +1237,41 @@ bool Recorder::wideLabelInLocked(std::uint64_t address, std::size_t bytes) const
     if (wideLabels.empty() || bytes == 0) return false;
     const auto end = address + bytes;
     for (auto it = wideLabels.lower_bound(address >= wideLabelBytes ? address - wideLabelBytes + 1 : 0); it != wideLabels.end() && it->first < end; ++it) {
-        if (it->second > address) return true;
+        if (it->second.end > address) return true;
     }
     return false;
+}
+
+bool Recorder::PendingLabelsMatchMemory(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard tableLock(labelTableMutex);
+    return labelTableOwner == nullptr || labelTableOwner->labelsMatchMemoryLocked(address, bytes);
+}
+
+bool Recorder::labelsMatchMemoryLocked(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return true;
+    const auto end = address + bytes;
+    const auto overlapsTable = [&](const std::map<std::uint64_t, LabelEntry>& table) {
+        const auto first = table.lower_bound(address >= 3 ? address - 3 : 0);
+        return first != table.end() && first->first < end;
+    };
+    const bool tabled = overlapsTable(labels) || overlapsTable(queuedLabels);
+    if (!tabled && !wideLabelInLocked(address, bytes)) return true;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address & ~3ull), static_cast<std::size_t>(((end + 3) & ~3ull) - (address & ~3ull)))) return false;
+    for (const auto* table : {&labels, &queuedLabels}) {
+        for (auto it = table->lower_bound(address >= 3 ? address - 3 : 0); it != table->end() && it->first < end; ++it) {
+            if (it->first + 4 <= address) continue;
+            if (std::memcmp(&it->second.value, reinterpret_cast<const void*>(it->first), 4) != 0) return false;
+        }
+    }
+    if (!wideLabels.empty()) {
+        for (auto it = wideLabels.lower_bound(address >= wideLabelBytes ? address - wideLabelBytes + 1 : 0); it != wideLabels.end() && it->first < end; ++it) {
+            const auto from = std::max(address, it->first);
+            const auto to = std::min(end, it->second.end);
+            if (from >= to) continue;
+            if (std::memcmp(it->second.bytes.data() + (from - it->first), reinterpret_cast<const void*>(from), static_cast<std::size_t>(to - from)) != 0) return false;
+        }
+    }
+    return true;
 }
 
 std::optional<std::uint64_t> Recorder::LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp) {
@@ -2935,7 +2967,7 @@ void Recorder::NoteLabel(std::uint64_t address, std::span<const std::byte> bytes
         std::lock_guard tableLock(labelTableMutex);
         labels.erase(labels.lower_bound(address), labels.lower_bound(address + bytes.size()));
         recordedLabels.store(labels.size(), std::memory_order_relaxed);
-        open->wideLabels.push_back(wideLabels.emplace(address, address + bytes.size()));
+        open->wideLabels.push_back(wideLabels.emplace(address, WideLabel{address + bytes.size(), std::vector<std::byte>(bytes.begin(), bytes.end())}));
         wideLabelBytes = std::max<std::uint64_t>(wideLabelBytes, bytes.size());
     }
     if (activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
