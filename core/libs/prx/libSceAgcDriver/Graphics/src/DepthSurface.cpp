@@ -230,6 +230,10 @@ public:
             std::snprintf(text, sizeof(text), "AGC graphics: storage image writes to the %s plane of depth surface 0x%llx through a view that another view of the plane (guest format %u, tile mode %d) replaced are not implemented", stencil ? "stencil" : "depth", static_cast<unsigned long long>(target.address), plane.storage->Descriptor().format, static_cast<int>(plane.storage->Descriptor().tileMode));
             throw std::runtime_error(text);
         }
+        return false;
+    }
+
+    bool StoreBackCovering(const StorageTexture& candidate) {
         for (const bool stencil : {false, true}) {
             if (!CoversPlane(candidate, stencil)) continue;
             auto& plane = stencil ? stencilPlane : depthPlane;
@@ -929,6 +933,9 @@ bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage
     }
     for (const auto& surface : surfaces()) {
         if (surface->context.device == context.device && surface->StoreBack(storage)) return true;
+    }
+    for (auto surface = surfaces().rbegin(); surface != surfaces().rend(); ++surface) {
+        if ((*surface)->context.device == context.device && (*surface)->StoreBackCovering(storage)) return true;
     }
     return false;
 }
