@@ -1103,6 +1103,7 @@ enum class RdnaOpcode : std::uint16_t {
 
 bool IsConditionalBranchOpcode(RdnaOpcode opcode);
 bool IsDirectBranchOpcode(RdnaOpcode opcode);
+bool IsControlNopOpcode(RdnaOpcode opcode);
 
 }
 

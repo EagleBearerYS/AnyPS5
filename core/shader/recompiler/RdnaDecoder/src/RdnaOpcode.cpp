@@ -929,4 +929,22 @@ bool IsDirectBranchOpcode(RdnaOpcode opcode) {
     return IsConditionalBranchOpcode(opcode);
 }
 
+bool IsControlNopOpcode(RdnaOpcode opcode) {
+    requireClassifiableOpcode(opcode);
+    switch (opcode) {
+        case RdnaOpcode::SNop:
+        case RdnaOpcode::SSleep:
+        case RdnaOpcode::SWakeup:
+        case RdnaOpcode::SSetprio:
+        case RdnaOpcode::STrap:
+        case RdnaOpcode::SClause:
+        case RdnaOpcode::SIcacheInv:
+        case RdnaOpcode::SIncperflevel:
+        case RdnaOpcode::SDecperflevel:
+            return true;
+        default:
+            return false;
+    }
+}
+
 }

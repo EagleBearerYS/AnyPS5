@@ -19,6 +19,27 @@ std::uint32_t instructionEndProgramCounter(const RdnaInstruction& instruction) {
     return instruction.programCounter + instruction.wordCount * 4u;
 }
 
+bool skipsOnlyControlNops(const RdnaProgram& program, std::uint32_t branchIndex) {
+    const auto& branch = program.instructions[branchIndex];
+    switch (branch.op) {
+        case RdnaOpcode::SCbranchScc0:
+        case RdnaOpcode::SCbranchScc1:
+        case RdnaOpcode::SCbranchVccz:
+        case RdnaOpcode::SCbranchVccnz:
+        case RdnaOpcode::SCbranchExecz:
+        case RdnaOpcode::SCbranchExecnz:
+            break;
+        default:
+            return false;
+    }
+    for (auto index = branchIndex + 1u; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        if (instruction.programCounter == branch.branchTarget) return true;
+        if (instruction.programCounter > branch.branchTarget || !IsControlNopOpcode(instruction.op)) return false;
+    }
+    return false;
+}
+
 std::uint32_t estimatedSpirvWords(const RdnaInstruction& instruction) {
     switch (instruction.op) {
     case RdnaOpcode::VReadfirstlaneB32:
@@ -1186,14 +1207,20 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
             block.terminator.condition = BranchCondition::Always;
             block.terminator.trueBlock = programCounterToBlock.at(last.branchTarget);
         } else if (IsConditionalBranchOpcode(last.op)) {
-            block.terminator.kind = TerminatorKind::ConditionalBranch;
-            block.terminator.condition = conditionForOpcode(last.op);
-            block.terminator.trueBlock = programCounterToBlock.at(last.branchTarget);
             const auto fallthrough = programCounterToBlock.find(nextProgramCounter);
             if (fallthrough == programCounterToBlock.end()) {
                 throw std::invalid_argument("conditional branch at program counter " + toHexString(last.programCounter) + " has no fallthrough block");
             }
-            block.terminator.falseBlock = fallthrough->second;
+            if (skipsOnlyControlNops(program, block.instructionEnd - 1u)) {
+                block.terminator.kind = TerminatorKind::Branch;
+                block.terminator.condition = BranchCondition::Always;
+                block.terminator.trueBlock = fallthrough->second;
+            } else {
+                block.terminator.kind = TerminatorKind::ConditionalBranch;
+                block.terminator.condition = conditionForOpcode(last.op);
+                block.terminator.trueBlock = programCounterToBlock.at(last.branchTarget);
+                block.terminator.falseBlock = fallthrough->second;
+            }
         } else {
             const auto next = programCounterToBlock.find(block.endProgramCounter);
             if (next != programCounterToBlock.end() && block.endProgramCounter != block.startProgramCounter) {

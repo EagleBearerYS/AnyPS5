@@ -39,6 +39,10 @@ bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalO
 }
 
 bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
+    if (IsControlNopOpcode(inst.op)) {
+        emitControlNop();
+        return true;
+    }
     switch (inst.op) {
     case RdnaOpcode::SMovB32:
         return sU32Mask(inst, IrOpcode::LogicalAnd, false, false, false, [&] { movB32(inst, false); return true; });
@@ -442,17 +446,6 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return packB16(inst, false, true);
     case RdnaOpcode::SPackHhB32B16:
         return packB16(inst, true, true);
-    case RdnaOpcode::SNop:
-    case RdnaOpcode::SSleep:
-    case RdnaOpcode::SWakeup:
-    case RdnaOpcode::SSetprio:
-    case RdnaOpcode::STrap:
-    case RdnaOpcode::SClause:
-    case RdnaOpcode::SIcacheInv:
-    case RdnaOpcode::SIncperflevel:
-    case RdnaOpcode::SDecperflevel:
-        emitControlNop();
-        return true;
     case RdnaOpcode::SRoundMode: {
         const std::uint32_t initial = floatMode.has_value() ? floatMode->floatMode : 0u;
         if ((inst.source0.value & 0xfu) != (initial & 0xfu)) {

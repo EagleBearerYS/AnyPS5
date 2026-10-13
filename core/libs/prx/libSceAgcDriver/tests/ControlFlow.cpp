@@ -450,6 +450,25 @@ void verifyLongBranch(const std::string& name, std::span<const std::uint32_t> co
     require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch && graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target, name + ": the jump does not branch to " + std::to_string(target));
 }
 
+void verifyControlNopSkip() {
+    const auto terminatorAt = [](std::span<const std::uint32_t> code, std::uint32_t branchPc) {
+        const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+        const auto graph = GraphBuilder{}.Build(decoded);
+        const auto source = std::find_if(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& block) { return block.instructionEnd != block.instructionBegin && decoded.instructions[block.instructionEnd - 1u].programCounter == branchPc; });
+        require(source != graph.blocks.end(), "control nop skip: no block ends at the branch");
+        return std::make_pair(source->terminator, graph.FindBlock(source->terminator.trueBlock).startProgramCounter);
+    };
+    const std::array<std::uint32_t, 4> trapSkip{0xbf0d8402u, 0xbf840001u, 0xbf920001u, 0xbf810000u};
+    const auto [skip, skipTarget] = terminatorAt(trapSkip, 0x4u);
+    require(skip.kind == TerminatorKind::Branch && skipTarget == 0x8u, "a s_cbranch_scc0 over s_trap alone kept its condition");
+    const std::array<std::uint32_t, 5> nopsSkip{0x7d880088u, 0xbf860002u, 0xbf8e0001u, 0xbf800000u, 0xbf810000u};
+    const auto [nops, nopsTarget] = terminatorAt(nopsSkip, 0x4u);
+    require(nops.kind == TerminatorKind::Branch && nopsTarget == 0x8u, "a s_cbranch_vccz over s_sleep and s_nop kept its condition");
+    const std::array<std::uint32_t, 4> moveSkip{0xbf0d8402u, 0xbf840001u, 0x7e020280u, 0xbf810000u};
+    const auto [move, moveTarget] = terminatorAt(moveSkip, 0x4u);
+    require(move.kind == TerminatorKind::ConditionalBranch && moveTarget == 0xcu, "a s_cbranch_scc0 over a v_mov_b32 lost its condition");
+}
+
 void verifyNullSwappc() {
     const std::array<std::uint32_t, 2> jump{0xbefd210cu, 0xbf810000u};
     const auto swappc = RdnaInstructionDecoder{}.Decode(jump).instructions.front();
@@ -1279,6 +1298,7 @@ done:
     }
     try {
         verifyNullSwappc();
+        verifyControlNopSkip();
         verifyLargeLoopExitFallback();
         verifyNestedExitForwarders();
     } catch (const std::exception& error) {
