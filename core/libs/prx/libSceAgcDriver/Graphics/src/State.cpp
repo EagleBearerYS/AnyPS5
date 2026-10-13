@@ -435,8 +435,14 @@ void decodeSampleLocations(const Registers& cx, State& state) {
             if (pixel == 0) {
                 state.sampleLocations[sample] = static_cast<std::uint8_t>(bits);
                 state.customSampleLocations |= x != standard[sample][0] || y != standard[sample][1];
-            } else {
-                Require(bits == state.sampleLocations[sample], "nonstandard sample locations varying between pixels are unsupported");
+            } else if (bits != state.sampleLocations[sample]) {
+                std::string words;
+                for (std::uint32_t index = 0; index < 16; ++index) {
+                    char text[16];
+                    std::snprintf(text, sizeof(text), " %08x", read(cx, 0x2fe + index));
+                    words += text;
+                }
+                throw std::runtime_error("AGC graphics: nonstandard sample locations varying between pixels are unsupported (samples " + std::to_string(samples) + ", PA_SC_AA_SAMPLE_LOCS_PIXEL_*:" + words + ")");
             }
         }
     }
