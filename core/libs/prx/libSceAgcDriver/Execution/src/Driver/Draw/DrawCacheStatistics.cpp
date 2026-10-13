@@ -37,6 +37,12 @@ void Driver::reportDrawCache(DrawEntryCounters& counters, bool profile) {
         text += line;
     }
     if (profile) text += profileDrawCacheLines(counters);
+    const auto bypassed = drawCacheBypassedDraws.exchange(0, std::memory_order_relaxed);
+    if (bypassed != 0) {
+        char line[160];
+        std::snprintf(line, sizeof(line), "[draw-cache] bypassed %llu draws (10 s): the hit rate stayed under 5%%, entries are neither looked up nor inserted\n", count(bypassed));
+        text += line;
+    }
     AgcDriver::ProfilePrint_nid_no_patch("%s", text.c_str());
     counters = DrawEntryCounters{};
 }
