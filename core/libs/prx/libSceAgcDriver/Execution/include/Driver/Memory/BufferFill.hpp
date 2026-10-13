@@ -26,6 +26,8 @@ inline constexpr auto PatternFillKernelMaskFirst = [] {
 
 enum class PatternFillControl : std::uint8_t { CountThenMask, MaskThenCount };
 
+inline constexpr std::uint32_t PatternFillUnusedSelects = 0xff8u;
+
 inline std::optional<PatternFillControl> MatchPatternFillKernel(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
     if (userData.size() != 12 || compute.numThreads != std::array<std::uint32_t, 3>{64, 1, 1} || !compute.groupIdEnable[0] || compute.threadIdComponentCount != 1) return std::nullopt;
     if (code.size() < PatternFillKernel.size()) return std::nullopt;
@@ -35,7 +37,7 @@ inline std::optional<PatternFillControl> MatchPatternFillKernel(std::span<const 
     else return std::nullopt;
     for (const auto first : {0u, 4u, 8u}) {
         if ((userData[first + 1] & 0xffff0000u) != (first == 8 ? 0x00100000u : 0x00040000u)) return std::nullopt;
-        if (userData[first + 3] != (first == 8 ? 0x0004dfacu : 0x00014004u)) return std::nullopt;
+        if ((userData[first + 3] & (first == 8 ? ~0u : ~PatternFillUnusedSelects)) != (first == 8 ? 0x0004dfacu : 0x00014004u)) return std::nullopt;
     }
     if (userData[2] < 1 || userData[10] < 1) return std::nullopt;
     return order;

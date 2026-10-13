@@ -19,7 +19,7 @@ alignas(256) std::array<std::uint32_t, 4> Pattern{0, 0x12345678u, 0xdeadbeefu, 0
 alignas(256) std::array<std::uint32_t, 4> Control{};
 alignas(256) std::array<std::uint32_t, 260> Output{};
 
-std::array<std::uint32_t, 12> UserData(void* output, std::uint32_t records) {
+std::array<std::uint32_t, 12> UserData(void* output, std::uint32_t records, std::uint32_t elementWord3 = 0x14004u) {
     std::array<std::uint32_t, 12> data{};
     const auto descriptor = [&](std::size_t first, const void* pointer, std::uint32_t stride, std::uint32_t count, std::uint32_t format) {
         const auto address = reinterpret_cast<std::uintptr_t>(pointer);
@@ -28,8 +28,8 @@ std::array<std::uint32_t, 12> UserData(void* output, std::uint32_t records) {
         data[first + 2] = count;
         data[first + 3] = format;
     };
-    descriptor(0, Pattern.data(), 4, Pattern.size(), 0x14004u);
-    descriptor(4, output, 4, records, 0x14004u);
+    descriptor(0, Pattern.data(), 4, Pattern.size(), elementWord3);
+    descriptor(4, output, 4, records, elementWord3);
     descriptor(8, Control.data(), 16, 1, 0x4dfacu);
     return data;
 }
@@ -134,6 +134,22 @@ void Submit(const std::vector<std::uint32_t>& words, void* output = Output.data(
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(output), bytes);
 }
 
+void SelectTests() {
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64, 1, 1}, 0, {true, false, false}, false, 1};
+    for (const auto word3 : {0x14204u, 0x141c4u, 0x14fc4u}) Require(MatchesPatternFillKernel(Code, UserData(Output.data(), 256, word3), compute), "a fill descriptor that differs only in its Y, Z or W select was not recognized");
+    for (const auto word3 : {0x14005u, 0x14000u, 0x15204u}) Require(!MatchesPatternFillKernel(Code, UserData(Output.data(), 256, word3), compute), "a fill descriptor with another X select or format matched");
+    for (const auto wave : {32u, 64u}) {
+        Output.fill(0xcafebabeu);
+        Pattern[0] = 0x2468ace0u;
+        Control = {200, 0, 0, 0};
+        Submit(Commands(UserData(Output.data(), 256, 0x14204u), 256, wave, false, false));
+        for (std::size_t i = 0; i < Output.size(); ++i) {
+            const auto expected = i < 200 ? 0x2468ace0u : 0xcafebabeu;
+            Require(Output[i] == expected, "fill through a descriptor with W select 1 mismatched at " + std::to_string(i) + " wave " + std::to_string(wave));
+        }
+    }
+}
+
 void ExecuteTests() {
     struct Case { std::uint32_t pattern, count, records, threads, mask; bool partial, indirect; };
     constexpr std::array<Case, 11> cases{{
@@ -236,6 +252,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark") Benchmark();
         else {
+            SelectTests();
             ExecuteTests();
             PartialGroupTests();
         }
