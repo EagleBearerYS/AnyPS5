@@ -1,4 +1,5 @@
 #include "Optimization/ResourceMaterializer.hpp"
+#include "Optimization/KeyValueSet.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
@@ -472,7 +473,16 @@ private:
         std::uint64_t base = 0;
         std::uint64_t size = 0;
         std::uint64_t positions = 0;
-        if (domain.value) {
+        if (domain.values) {
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
+            const auto keys = EvaluateKeyValues(plan, plan.descriptorSources.at(domain.source).dwords[0], runtime, reads);
+            if (!keys.has_value()) {
+                skip();
+                return;
+            }
+            values.insert(values.end(), keys->begin(), keys->end());
+            tables.ranges.insert(tables.ranges.end(), reads.begin(), reads.end());
+        } else if (domain.value) {
             DescriptorValue key;
             try {
                 walker.EvaluateDescriptorSource(plan, domain.source, runtime, key);

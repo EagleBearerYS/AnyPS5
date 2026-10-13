@@ -1061,7 +1061,8 @@ void verifyImageTables() {
 
     const auto whole = CompileTable(TableRequest(TableWholeCode, userData));
     const auto& wholePlan = *whole.capture->plan;
-    require(!wholePlan.descriptorSources.at(wholePlan.info.images.at(0).source).tableColumn->keyDomain.has_value(), "image tables: a key domain was recorded without a material read");
+    const auto& wholeDomain = wholePlan.descriptorSources.at(wholePlan.info.images.at(0).source).tableColumn->keyDomain;
+    require(!wholeDomain.has_value() || wholeDomain->values, "image tables: a key domain was recorded without a material read");
     const auto wholeCodes = TableCodes(TableMap(*whole.result), 0);
     require(wholeCodes.size() == 4u && wholeCodes[0] == wholeCodes[3] && wholeCodes[2] == Abi::NullCode && wholeCodes[1] != wholeCodes[0], "image tables: the whole table map is wrong");
 
@@ -1283,7 +1284,7 @@ void verifyPointerImageTable() {
     const auto plan = GetResourcePlan(masked);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "pointer image table: the T# was not planned as a table");
     const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-    require(column.address && column.stride == 32u && column.addend == 0u && column.offset == Palette && column.dwordCount == 8u && column.maxKey == 0xffu && !column.keyDomain.has_value(), "pointer image table: the column is wrong");
+    require(column.address && column.stride == 32u && column.addend == 0u && column.offset == Palette && column.dwordCount == 8u && column.maxKey == 0xffu && (!column.keyDomain.has_value() || column.keyDomain->values), "pointer image table: the column is wrong");
     require(plan->descriptorSources.at(column.heapSource).dwordCount == 2u, "pointer image table: the table base is not a 64-bit pointer");
     std::uint32_t planningOnly = 0;
     for (const auto& memory : plan->memoryInfo) {
@@ -1342,7 +1343,7 @@ void verifyPointerImageTable() {
     const auto wide = request(wideCode, 0x34000u);
     const auto widePlan = GetResourcePlan(wide);
     const auto& wideColumn = *widePlan->descriptorSources.at(widePlan->info.images.at(0).source).tableColumn;
-    require(wideColumn.maxKey == 0xffffffffu && !wideColumn.keyDomain.has_value(), "pointer image table: a lane key has a bound or a key domain");
+    require(wideColumn.maxKey == 0xffffffffu && (!wideColumn.keyDomain.has_value() || wideColumn.keyDomain->values), "pointer image table: a lane key has a bound or a key domain");
     const auto wideTable = CompileTable(wide);
     const auto& wideSnapshot = wideTable.capture->snapshot.tables.tables.at(0);
     constexpr std::uint32_t mapped = static_cast<std::uint32_t>((Committed - Palette) / 32u);

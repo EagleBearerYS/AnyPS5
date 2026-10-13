@@ -502,13 +502,12 @@ private:
         }
         std::uint32_t memoryIndex = 0;
         const MemoryInfo* memory = ScalarReadMemory(*key, memoryIndex);
-        if (memory == nullptr) {
-            return std::nullopt;
-        }
         DescriptorSource source;
         std::uint32_t sourceIndex = 0;
-        if (!MakeRuntimeSource(*key->Argument(0)->Resolve(), IrOpcode::GetBufferResource, 4u, sourceIndex, source)) {
-            return std::nullopt;
+        if (memory == nullptr || !MakeRuntimeSource(*key->Argument(0)->Resolve(), IrOpcode::GetBufferResource, 4u, sourceIndex, source)) {
+            KeyDomain domain{InternSource(direct), 0u, 4u};
+            domain.values = true;
+            return domain;
         }
         IrValue* selector = nullptr;
         std::uint32_t stride = 0;

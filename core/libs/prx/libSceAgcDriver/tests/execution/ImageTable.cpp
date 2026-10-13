@@ -253,6 +253,36 @@ alignas(256) constexpr std::array<std::uint32_t, 32> IndirectRecordCode{
 
 alignas(256) std::array<std::uint32_t, Records * 16> Indirect{};
 
+alignas(256) constexpr std::array<std::uint32_t, 32> LaneKeyCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xbf8cc07fu, 0xe030200cu,
+    0x80020100u, 0xbf8c3f70u, 0x360202ffu, 0x00ffffffu, 0x7e060300u, 0x7e080280u, 0xbea8047eu, 0x7e280501u,
+    0x7d840214u, 0xbeaa246au, 0x8f158514u, 0xf42c0302u, 0x2a000000u, 0xbf8cc07fu, 0xf0000108u, 0x00030203u,
+    0xbf8c3f70u, 0x8afe7e2au, 0xbf89fff4u, 0xbefe0428u, 0x340a0082u, 0xe0701000u, 0x80070205u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 32> LaneKeyPairCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xbf8cc07fu, 0xe0342008u,
+    0x80020600u, 0xbf8c3f70u, 0x36020effu, 0x00ffffffu, 0x7e060300u, 0x7e080280u, 0xbea8047eu, 0x7e280501u,
+    0x7d840214u, 0xbeaa246au, 0x8f158514u, 0xf42c0302u, 0x2a000000u, 0xbf8cc07fu, 0xf0000108u, 0x00030203u,
+    0xbf8c3f70u, 0x8afe7e2au, 0xbf89fff4u, 0xbefe0428u, 0x340a0082u, 0xe0701000u, 0x80070205u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 32> LaneKeyShiftCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xbf8cc07fu, 0xe0342008u,
+    0x80020600u, 0xbf8c3f70u, 0x2c020c84u, 0x3602028fu, 0x7e060300u, 0x7e080280u, 0xbea8047eu, 0x7e280501u,
+    0x7d840214u, 0xbeaa246au, 0x8f158514u, 0xf42c0302u, 0x2a000000u, 0xbf8cc07fu, 0xf0000108u, 0x00030203u,
+    0xbf8c3f70u, 0x8afe7e2au, 0xbf89fff4u, 0xbefe0428u, 0x340a0082u, 0xe0701000u, 0x80070205u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 34> LaneKeyPartialWave32Code{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xbf8cc07fu, 0x7e040280u,
+    0x7e060300u, 0x7e080280u, 0xbea8037eu, 0x7da80098u, 0xe030200cu, 0x80020100u, 0xbf8c3f70u, 0x360202ffu,
+    0x00ffffffu, 0x7e280501u, 0x7d840214u, 0xbeaa3c6au, 0x8f158514u, 0xf42c0302u, 0x2a000000u, 0xbf8cc07fu,
+    0xf0000108u, 0x00030203u, 0xbf8c3f70u, 0x8a7e7e2au, 0xbf89fff4u, 0xbefe0328u, 0x340a0082u, 0xe0701000u,
+    0x80070205u, 0xbf810000u,
+};
+constexpr std::uint32_t LaneKeyEntries = 16;
+alignas(256) std::array<std::uint32_t, LaneKeyEntries * Width * Height> LaneKeyTexels{};
+alignas(256) std::array<std::uint32_t, LaneKeyEntries * 8> LaneKeyHeap{};
+alignas(256) std::array<std::uint32_t, Lanes * 8> LaneKeyElements{};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
@@ -914,6 +944,49 @@ void RunLoopKeyTests(AgcDriver::VulkanDevice& device) {
     RequireIterations(Run(device, ReadTableSetBitLoopCode, 1, Lanes, 64), otherBits, "image table set-bit key after the mask changed");
 }
 
+void RunLaneKeyTests(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t entry = 0; entry < LaneKeyEntries; ++entry) {
+        auto* texels = LaneKeyTexels.data() + entry * Width * Height;
+        for (std::uint32_t texel = 0; texel < Width * Height; ++texel) texels[texel] = entry * 1000u + texel;
+        const auto image = Image(texels, Format32UInt);
+        std::fill(LaneKeyHeap.begin() + entry * 8u, LaneKeyHeap.begin() + entry * 8u + 8u, 0u);
+        std::copy(image.begin(), image.end(), LaneKeyHeap.begin() + entry * 8u);
+    }
+    const auto key = [](std::uint32_t lane) { return (lane & 1u) != 0u ? 9u : 3u; };
+    LaneKeyElements.fill(0u);
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        LaneKeyElements[lane * 8u + 2u] = 0xab000005u | (key(lane) << 4u);
+        LaneKeyElements[lane * 8u + 3u] = 0x5a000000u | key(lane);
+    }
+    const auto heap = Buffer(LaneKeyHeap.data(), static_cast<std::uint32_t>(sizeof(LaneKeyHeap)));
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(LaneKeyElements.data()));
+    const std::array<std::uint32_t, 4> elements{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (32u << 16u), Lanes, 0x31016facu};
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    Srt.fill(0u);
+    std::copy(heap.begin(), heap.end(), Srt.begin());
+    std::copy(elements.begin(), elements.end(), Srt.begin() + 4);
+    std::copy(output.begin(), output.end(), Srt.begin() + 8);
+    const auto run = [&](std::span<const std::uint32_t> span, std::uint32_t threads, std::uint32_t loadedLanes, const std::string& what) {
+        const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
+            {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(LaneKeyHeap.data()), std::as_bytes(std::span(LaneKeyHeap))},
+            {reinterpret_cast<std::uintptr_t>(LaneKeyElements.data()), std::as_bytes(std::span(LaneKeyElements))},
+        }};
+        const auto outcome = Execute(device, span, Srt.data(), memory, 1u, threads, threads);
+        Require(!Faulted(outcome), what + ": a selected entry faulted:\n" + outcome.log);
+        Require(outcome.imageTableCount == 3u, what + ": the table holds " + std::to_string(outcome.imageTableCount) + " entries, expected the 2 keys the lanes load and key 0");
+        for (std::uint32_t lane = 0; lane < threads; ++lane) {
+            const auto expected = lane < loadedLanes ? key(lane) * 1000u + lane : 0u;
+            Require(outcome.words[lane] == expected, what + ": lane " + std::to_string(lane) + " read " + Hex(outcome.words[lane]) + ", expected " + Hex(expected));
+        }
+    };
+    run(LaneKeyCode, Lanes, Lanes, "image table per-lane key");
+    run(LaneKeyPairCode, Lanes, Lanes, "image table per-lane key in the second dword of a pair load");
+    run(LaneKeyShiftCode, Lanes, Lanes, "image table per-lane key shifted and masked out of a loaded dword");
+    run(LaneKeyPartialWave32Code, 32u, 24u, "image table per-lane key loaded under a partial EXEC in wave32");
+}
+
 void RunGuardedTableTests(AgcDriver::VulkanDevice& device) {
     Keys = {};
     const auto image = Image(FloatTexels.data(), Format32Float);
@@ -1324,6 +1397,7 @@ int main() {
         RunAnisoOverrideTests(*device);
         RunReadTests(*device);
         RunLoopKeyTests(*device);
+        RunLaneKeyTests(*device);
         RunGuardedTableTests(*device);
         RunModeTests(*device);
         RunStoreTests(*device);
