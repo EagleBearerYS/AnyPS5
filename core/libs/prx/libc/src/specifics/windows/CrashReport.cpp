@@ -287,10 +287,93 @@ bool HandleSse4a(EXCEPTION_POINTERS* info) {
     return true;
 }
 
+// Debug aid (stack only): every write fault the handler resumes on a guest thread, kept per thread, so a
+// crash report shows whether the crashing thread resumed one just before (issue #361, the red zone).
+struct ResumedWrite {
+    std::uint64_t rip;
+    std::uint64_t rsp;
+    std::uint64_t address;
+    std::uint64_t tick;
+};
+
+struct ResumedWrites {
+    std::atomic<DWORD> thread {0};
+    std::uint64_t count = 0;
+    ResumedWrite newest[4] {};
+};
+
+constexpr std::size_t kResumedThreads = 1024;
+ResumedWrites g_resumedWrites[kResumedThreads];
+std::atomic<std::uint64_t> g_resumedWriteCount {0};
+
+ResumedWrites* ResumedWritesOf(DWORD thread, bool claim) {
+    for (std::size_t probe = 0; probe < kResumedThreads; ++probe) {
+        auto& entry = g_resumedWrites[(thread / 4 + probe) % kResumedThreads];
+        DWORD current = entry.thread.load(std::memory_order_acquire);
+        if (current == thread) return &entry;
+        if (current != 0) continue;
+        if (!claim) return nullptr;
+        if (entry.thread.compare_exchange_strong(current, thread)) return &entry;
+        if (current == thread) return &entry;
+    }
+    return nullptr;
+}
+
+void NoteResumedWrite(const EXCEPTION_POINTERS* info) {
+    g_resumedWriteCount.fetch_add(1, std::memory_order_relaxed);
+    auto* entry = ResumedWritesOf(GetCurrentThreadId(), true);
+    if (entry == nullptr) return;
+    entry->newest[entry->count % 4] = {info->ContextRecord->Rip, info->ContextRecord->Rsp, static_cast<std::uint64_t>(info->ExceptionRecord->ExceptionInformation[1]), GetTickCount64()};
+    ++entry->count;
+}
+
+void ReportResumedWrites(std::uint64_t rsp) {
+    const auto now = GetTickCount64();
+    const auto* entry = ResumedWritesOf(GetCurrentThreadId(), false);
+    Report("  resumed write faults: %llu in all, %llu on this thread\n", static_cast<unsigned long long>(g_resumedWriteCount.load()), static_cast<unsigned long long>(entry != nullptr ? entry->count : 0));
+    if (entry != nullptr) {
+        for (std::uint64_t index = 0; index < std::min<std::uint64_t>(entry->count, 4); ++index) {
+            const auto& fault = entry->newest[(entry->count - 1 - index) % 4];
+            char where[MAX_PATH + 64];
+            DescribeAddress(fault.rip, where, sizeof(where));
+            Report("    at %s, rsp %016llx (crash rsp %+lld), address 0x%llx, %llu ms before\n", where, static_cast<unsigned long long>(fault.rsp), static_cast<long long>(fault.rsp - rsp), static_cast<unsigned long long>(fault.address), static_cast<unsigned long long>(now - fault.tick));
+        }
+    }
+    if (IsReadable(rsp - 0x80)) {
+        const auto* words = reinterpret_cast<const std::uint64_t*>(rsp - 0x80);
+        for (int row = 0; row < 4; ++row) Report("  [rsp-0x%02x] %016llx %016llx %016llx %016llx\n", 0x80 - row * 0x20, words[row * 4], words[row * 4 + 1], words[row * 4 + 2], words[row * 4 + 3]);
+    }
+    std::pair<std::uint64_t, DWORD> busiest[8] {};
+    for (const auto& candidate : g_resumedWrites) {
+        const auto thread = candidate.thread.load(std::memory_order_acquire);
+        if (thread == 0) continue;
+        std::pair<std::uint64_t, DWORD> item {candidate.count, thread};
+        for (auto& slot : busiest) {
+            if (item.first > slot.first) std::swap(item, slot);
+        }
+    }
+    for (const auto& [count, thread] : busiest) {
+        if (count == 0) break;
+        char name[128] = "";
+        if (HANDLE handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, thread)) {
+            PWSTR description = nullptr;
+            if (SUCCEEDED(GetThreadDescription(handle, &description)) && description) {
+                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
+                LocalFree(description);
+            }
+            CloseHandle(handle);
+        }
+        Report("    thread %lu '%s': %llu resumed write faults\n", thread, name, static_cast<unsigned long long>(count));
+    }
+}
+
 LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     static std::atomic<bool> reported{false};
     const auto* fault = info->ExceptionRecord;
-    if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
+    if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) {
+        NoteResumedWrite(info);
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 0 && GuestArena::GuestArenaHandleRead_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
@@ -352,6 +435,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
             }
         }
     }
+    ReportResumedWrites(context->Rsp);
     Report("  frame pointer chain:\n");
     std::uint64_t frame = context->Rbp;
     for (int depth = 0; depth < 32 && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8); ++depth) {
