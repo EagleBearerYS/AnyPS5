@@ -71,6 +71,16 @@ alignas(256) constexpr std::array<std::uint32_t, 49> HullSingleInput{
     0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 49> HullSingleOutput{
+    0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014,
+    0x02151101, 0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x022224ff, 0x00000020, 0xdbfc0000,
+    0x02000015, 0x7e2c0280, 0xd5430016, 0x045a24ff, 0x00000010, 0xbf8cc07f, 0xe0781000, 0x02020216,
+    0xbf800000, 0xbe94047e, 0xb06a0020, 0x162602f9, 0x0086066a, 0xd8d80008, 0x06000013, 0xd8dc0201,
+    0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414,
+    0xe0781000, 0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b,
+    0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 51> HullRestoredExecSaved{
     0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014,
     0x02151101, 0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000,
@@ -708,6 +718,7 @@ ShaderRecompiler::RecompileResult CompileHull(const ShaderRecompiler::SpirvTarge
 
 void RequireSingleControlPointHulls(const ShaderRecompiler::SpirvTarget& target) {
     Require(!CompileHull(target, HullSingleInput, {1u, 3u, 1u, 2u, 2u}).spirv.empty(), "a hull that reads only the one input control point of its patch was not compiled");
+    Require(!CompileHull(target, HullSingleOutput, {1u, 1u, 1u, 2u, 2u}).spirv.empty(), "a hull with one output control point and unguarded patch outputs was not compiled");
 }
 
 }
