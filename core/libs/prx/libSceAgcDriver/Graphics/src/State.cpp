@@ -802,7 +802,15 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(ditheredAlphaSamplesSupported(cx), "dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration");
         Require(!result.customSampleLocations, "dithered alpha-to-coverage with custom sample locations is unsupported");
     }
-    Require(!result.depth || result.depth->samples == result.samples, "the depth target's sample count differs from the rasterizer's");
+    std::string depthSampleRefusal;
+    if (result.depth && result.depth->samples != result.samples) {
+        char text[320];
+        const auto value = [&](std::uint32_t offset) { const auto found = find(cx, offset); return found != cx.end() ? found->second : 0xdeadbeefu; };
+        std::snprintf(text, sizeof(text), "AGC graphics: the depth target's sample count differs from the rasterizer's (depth %u, raster %u, colors %zu, DB_Z_INFO 0x%08x, DB_STENCIL_INFO 0x%08x, DB_EQAA 0x%08x, PA_SC_AA_CONFIG 0x%08x, DB_DEPTH_CONTROL 0x%08x, CB_COLOR0_ATTRIB 0x%08x, DB_RENDER_CONTROL 0x%08x)", result.depth->samples, result.samples, result.colors.size(), value(0x010), value(0x011), value(0x201), value(0x2f8), value(0x200), value(0x31d), value(0x000));
+        static const bool strict = std::getenv("APS5_RE8_STRICT_DEPTH_SAMPLES") != nullptr;
+        if (strict || result.depth->samples > result.samples) throw std::runtime_error(text);
+        depthSampleRefusal = text;
+    }
     zero(cx, 0x292, ScanModeMask & ~1u, "scan conversion mode");
     Require(result.samples == 1 || (read(cx, 0x292) & 1u) != 0, "multisampled targets rasterized without MSAA_ENABLE are unsupported");
     if (result.samples == 1 && (read(cx, 0x292) & 1u) != 0) {
@@ -884,6 +892,14 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.renderExtent = {std::min(result.renderExtent.width, color.extent.width), std::min(result.renderExtent.height, color.extent.height)};
         }
         result.colors.push_back(color);
+    }
+    if (!depthSampleRefusal.empty()) {
+        if (result.hasColorTarget) throw std::runtime_error(depthSampleRefusal);
+        static std::atomic<unsigned> reported{0};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[re8-depth-samples] a depth-only pass rasterized with %u samples into a %u-sample depth target is rasterized with %u\n", result.samples, result.depth->samples, result.depth->samples);
+        result.samples = result.depth->samples;
+        result.customSampleLocations = false;
+        result.sampleLocations.fill(0);
     }
     if (result.hasColorTarget) {
         result.color = result.colors.front();
