@@ -830,8 +830,9 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     auto first = state.imports.lower_bound(base);
     if (first != state.imports.begin() && std::prev(first)->second.base + std::prev(first)->second.bytes > base) --first;
     std::uint64_t replaced = 0;
+    const auto held = [&](const HostImport& entry) { return !joined && pointerHeld(state, entry); };
     for (auto it = first; it != state.imports.end() && it->first < base + bytes; ++it) {
-        if (pointerHeld(state, it->second)) return nullptr;
+        if (held(it->second)) return nullptr;
         replaced += it->second.bytes;
     }
     const auto budget = importBudget(context);
