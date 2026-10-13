@@ -802,7 +802,12 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(ditheredAlphaSamplesSupported(cx), "dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration");
         Require(!result.customSampleLocations, "dithered alpha-to-coverage with custom sample locations is unsupported");
     }
-    Require(!result.depth || result.depth->samples == result.samples, "the depth target's sample count differs from the rasterizer's");
+    if (result.depth && result.depth->samples != result.samples) {
+        char text[320];
+        const auto value = [&](std::uint32_t offset) { const auto found = find(cx, offset); return found != cx.end() ? found->second : 0xdeadbeefu; };
+        std::snprintf(text, sizeof(text), "AGC graphics: the depth target's sample count differs from the rasterizer's (depth %u, raster %u, colors %zu, DB_Z_INFO 0x%08x, DB_STENCIL_INFO 0x%08x, DB_EQAA 0x%08x, PA_SC_AA_CONFIG 0x%08x, DB_DEPTH_CONTROL 0x%08x, CB_COLOR0_ATTRIB 0x%08x, DB_RENDER_CONTROL 0x%08x)", result.depth->samples, result.samples, result.colors.size(), value(0x010), value(0x011), value(0x201), value(0x2f8), value(0x200), value(0x31d), value(0x000));
+        throw std::runtime_error(text);
+    }
     zero(cx, 0x292, ScanModeMask & ~1u, "scan conversion mode");
     Require(result.samples == 1 || (read(cx, 0x292) & 1u) != 0, "multisampled targets rasterized without MSAA_ENABLE are unsupported");
     if (result.samples == 1 && (read(cx, 0x292) & 1u) != 0) {
