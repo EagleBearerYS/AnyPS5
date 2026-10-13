@@ -33,6 +33,11 @@ struct UserDataCall {
     std::uint32_t userDataRegister = 0;
 };
 
+struct TableCallRegister {
+    std::uint32_t reg = 0;
+    std::uint32_t dword = 0;
+};
+
 struct TableCall {
     std::uint32_t programCounter = 0;
     std::uint32_t linkRegister = 0;
@@ -41,10 +46,14 @@ struct TableCall {
     std::uint32_t descriptorOffset = 0;
     std::uint32_t entryOffset = 0;
     std::uint32_t entryStride = 0;
+    std::uint32_t recordOffset = 0;
+    std::uint32_t recordDwords = 0;
+    std::vector<TableCallRegister> recordRegisters;
 };
 
 struct TableCallee {
     std::uint64_t target = 0;
+    std::vector<std::uint32_t> record;
     std::vector<std::uint32_t> code;
 };
 

@@ -1449,7 +1449,13 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
             stride = 1u << shift;
         }
-        calls.push_back({instruction.programCounter, link, target, pointer, table.memoryOffset, load.memoryOffset + lowDword * 4u, stride});
+        std::vector<TableCallRegister> recordRegisters;
+        for (std::uint32_t reg = 0; reg < 106u; ++reg) {
+            std::uint32_t recordLoad = 0, recordDword = 0;
+            if (reg / 2u == link / 2u || !loadedDword(program, reg, index, swappc.waveSize, recordLoad, recordDword) || recordLoad != lowLoad) continue;
+            recordRegisters.push_back({reg, recordDword});
+        }
+        calls.push_back({instruction.programCounter, link, target, pointer, table.memoryOffset, load.memoryOffset + lowDword * 4u, stride, load.memoryOffset, load.dataDwordCount, std::move(recordRegisters)});
     }
     return calls;
 }
@@ -1485,23 +1491,39 @@ std::vector<std::uint32_t> LinkCalls(const RdnaProgram& program, std::span<const
         const auto& callees = tableCallees[call];
         const auto word = callWord(table.programCounter, "table");
         const auto at = "the table callees of the call at program counter " + toHexString(table.programCounter);
+        const auto targetDword = (table.entryOffset - table.recordOffset) / 4u;
+        std::vector<TableCallRegister> compared;
+        for (const auto& held : table.recordRegisters) {
+            if (held.dword == targetDword || held.dword == targetDword + 1u) continue;
+            if (std::ranges::none_of(compared, [&](const TableCallRegister& other) { return other.dword == held.dword; })) compared.push_back(held);
+        }
+        for (const auto& callee : callees) {
+            if (callee.record.size() != table.recordDwords || targetDword + 1u >= callee.record.size() ||
+                (static_cast<std::uint64_t>(callee.record[targetDword + 1u]) << 32u | callee.record[targetDword]) != callee.target) {
+                throw std::logic_error(at + " name a record that is not the call's record");
+            }
+        }
         const auto original = linked[word];
         const auto count = callees.size();
+        const auto chain = 3u * (2u + compared.size()) + 1u;
         const auto dispatch = linked.size();
         const auto zero = dispatch + 1u;
-        const auto one = zero + count * 7u + 2u;
-        const auto calls = one + count * 8u + 2u;
+        const auto one = zero + count * chain + 2u;
+        const auto calls = one + count * (chain + 1u) + 2u;
         const auto fault = calls + count * 2u;
         const auto branch = [&](std::uint32_t opcode, std::size_t target) { linked.push_back(branchWord(opcode, linked.size(), target, at.c_str())); };
         linked[word] = branchWord(0xbf820000u, word, dispatch, at.c_str());
         branch(0xbf850000u, one);
         for (const bool sccOne : {false, true}) {
             for (std::size_t callee = 0; callee < count; ++callee) {
-                const auto next = linked.size() + (sccOne ? 8u : 7u);
-                linked.insert(linked.end(), {0xbf07ff00u | table.targetRegister, static_cast<std::uint32_t>(callees[callee].target)});
-                branch(0xbf850000u, next);
-                linked.insert(linked.end(), {0xbf07ff00u | (table.targetRegister + 1u), static_cast<std::uint32_t>(callees[callee].target >> 32u)});
-                branch(0xbf850000u, next);
+                const auto next = linked.size() + chain + (sccOne ? 1u : 0u);
+                const auto compare = [&](std::uint32_t reg, std::uint32_t value) {
+                    linked.insert(linked.end(), {0xbf07ff00u | reg, value});
+                    branch(0xbf850000u, next);
+                };
+                compare(table.targetRegister, static_cast<std::uint32_t>(callees[callee].target));
+                compare(table.targetRegister + 1u, static_cast<std::uint32_t>(callees[callee].target >> 32u));
+                for (const auto& held : compared) compare(held.reg, callees[callee].record[held.dword]);
                 if (sccOne) linked.push_back(0xbf068080u);
                 branch(0xbf820000u, calls + callee * 2u);
             }
@@ -1519,6 +1541,7 @@ std::vector<std::uint32_t> LinkCalls(const RdnaProgram& program, std::span<const
             const auto offset = static_cast<std::int64_t>(linked.size()) - static_cast<std::int64_t>(site) - 1;
             if (offset > 0x7fff) throw std::invalid_argument(at + " land out of s_call_b64 range");
             linked[site] = 0xbb000000u | (table.linkRegister << 16u) | static_cast<std::uint32_t>(offset);
+            for (const auto& held : table.recordRegisters) linked.insert(linked.end(), {0xbe8003ffu | (held.reg << 16u), callees[callee].record[held.dword]});
             linked.insert(linked.end(), callees[callee].code.begin(), callees[callee].code.end());
         }
     }

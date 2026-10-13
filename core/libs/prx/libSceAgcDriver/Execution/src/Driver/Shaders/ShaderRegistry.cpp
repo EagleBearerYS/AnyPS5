@@ -22,9 +22,9 @@
 #include <exception>
 #include <functional>
 #include <list>
+#include <map>
 #include <atomic>
 #include <pthread.h>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -506,16 +506,28 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     const auto bytes = descriptor.GetSize();
     if (bytes > limitBytes) throw std::runtime_error("its call table of " + std::to_string(bytes) + " bytes is larger than the " + std::to_string(limitBytes) + " bytes that are searched for callees");
     const auto table = bytes == 0u ? std::vector<std::uint8_t>{} : ReadGuestBytes(descriptor.Base48(), bytes, "call table");
-    std::set<std::uint64_t> targets;
-    for (std::uint64_t offset = call.entryOffset; offset + 8u <= bytes; offset += call.entryStride) {
-        std::uint64_t target = 0;
-        std::memcpy(&target, table.data() + offset, sizeof(target));
-        if (target != 0u) targets.insert(target);
+    const auto targetDword = (call.entryOffset - call.recordOffset) / 4u;
+    std::vector<bool> held(call.recordDwords, false);
+    held[targetDword] = held[targetDword + 1u] = true;
+    for (const auto& reg : call.recordRegisters) held[reg.dword] = true;
+    std::map<std::vector<std::uint32_t>, std::uint64_t> records;
+    for (std::uint64_t offset = call.recordOffset; offset + (targetDword + 2u) * 4u <= bytes; offset += call.entryStride) {
+        std::vector<std::uint32_t> record(call.recordDwords, 0u);
+        for (std::uint32_t dword = 0; dword < call.recordDwords; ++dword) {
+            if (held[dword] && offset + (dword + 1u) * 4u <= bytes) std::memcpy(&record[dword], table.data() + offset + dword * 4u, sizeof(record[dword]));
+        }
+        const auto target = static_cast<std::uint64_t>(record[targetDword + 1u]) << 32u | record[targetDword];
+        if (target != 0u) records.emplace(std::move(record), target);
         if (call.entryStride == 0u) break;
     }
-    if (targets.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(limitCallees) + " are linked");
+    if (records.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(records.size()) + " distinct records; at most " + std::to_string(limitCallees) + " are linked");
+    std::map<std::uint64_t, std::vector<std::uint32_t>> codes;
     std::vector<ShaderRecompiler::TableCallee> callees;
-    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister)});
+    for (const auto& [record, target] : records) {
+        auto code = codes.find(target);
+        if (code == codes.end()) code = codes.emplace(target, ReadUserDataCallee(target, call.linkRegister)).first;
+        callees.push_back({target, record, code->second});
+    }
     return callees;
 }
 

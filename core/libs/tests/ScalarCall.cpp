@@ -206,6 +206,14 @@ static void CheckTableCalls() {
     Require(calls.size() == 1u);
     Require(calls[0].programCounter == 0x24u && calls[0].linkRegister == 14u && calls[0].targetRegister == 14u && calls[0].userDataRegister == 12u);
     Require(calls[0].descriptorOffset == 0x270u && calls[0].entryOffset == 0u && calls[0].entryStride == 16u);
+    const auto holds = [](const TableCall& call, std::initializer_list<std::pair<std::uint32_t, std::uint32_t>> expected) {
+        return std::ranges::equal(call.recordRegisters, expected, [](const TableCallRegister& held, const std::pair<std::uint32_t, std::uint32_t>& pair) { return held.reg == pair.first && held.dword == pair.second; });
+    };
+    Require(calls[0].recordOffset == 0u && calls[0].recordDwords == 4u && holds(calls[0], {{8u, 0u}, {9u, 1u}, {10u, 2u}, {11u, 3u}}));
+    auto moved = caller;
+    moved.insert(moved.begin() + 9, 0xbe90040au);
+    const auto movedCalls = FindTableCalls(RdnaInstructionDecoder{}.Decode(moved), swappc);
+    Require(movedCalls.size() == 1u && holds(movedCalls[0], {{8u, 0u}, {9u, 1u}, {10u, 2u}, {11u, 3u}, {16u, 2u}, {17u, 3u}}));
     Require(FindUserDataCalls(program, swappc).empty());
     const auto table = [&](std::size_t word, std::uint32_t value, std::uint32_t userDataCount = 16u) {
         auto code = caller;
@@ -229,25 +237,33 @@ static void CheckTableCalls() {
     Require(unlinked.Info().usesFaultBuffer && ProgramToString(unlinked).find("UnlinkedCall") != std::string::npos);
 
     const std::vector<std::uint32_t> first{0xbf068000u, 0x4a020285u, 0xbe80200eu};
-    const std::vector<std::uint32_t> second{0x4a0202c0u, 0xbf068001u, 0xbe80200eu};
-    const std::vector<std::vector<TableCallee>> callees{{{0x1122334455ull, first}, {0x66778899aaull, second}}};
+    const std::vector<std::vector<TableCallee>> callees{{{0x1122334455ull, {0x22334455u, 0x11u, 0x00c0ffeeu, 0x12u}, first}, {0x1122334455ull, {0x22334455u, 0x11u, 0x0badf00du, 0x13u}, first}}};
     const auto linked = LinkCalls(program, {}, {}, calls, callees);
-    Require(linked.size() == 59u && linked[9] == 0xbf820001u && linked[11] == 0xbf850010u && linked[58] == 0xbf9f0000u);
-    Require(linked[12] == 0xbf07ff0eu && linked[13] == 0x22334455u && linked[14] == 0xbf850004u && linked[15] == 0xbf07ff0fu && linked[16] == 0x11u && linked[17] == 0xbf850001u && linked[18] == 0xbf82001bu);
-    Require(linked[20] == 0x778899aau && linked[26] == 0xbf078080u && linked[27] == 0xbf820016u && linked[34] == 0xbf068080u && linked[35] == 0xbf82000au && linked[44] == 0xbf068080u && linked[45] == 0xbf820004u);
-    Require(linked[46] == 0xbb0e0005u && linked[47] == 0xbf82ffdau && linked[48] == 0xbb0e0006u && linked[49] == 0xbf82ffd8u && linked[50] == 0xbe8e210eu && linked[51] == 0xbf82ffd6u);
-    Require(std::equal(first.begin(), first.end(), linked.begin() + 52) && std::equal(second.begin(), second.end(), linked.begin() + 55));
+    Require(linked.size() == 99u && linked[9] == 0xbf820001u && linked[11] == 0xbf85001cu && linked[98] == 0xbf9f0000u);
+    Require(linked[12] == 0xbf07ff0eu && linked[13] == 0x22334455u && linked[14] == 0xbf85000au && linked[15] == 0xbf07ff0fu && linked[16] == 0x11u && linked[17] == 0xbf850007u);
+    Require(linked[18] == 0xbf07ff0au && linked[19] == 0x00c0ffeeu && linked[20] == 0xbf850004u && linked[21] == 0xbf07ff0bu && linked[22] == 0x12u && linked[23] == 0xbf850001u && linked[24] == 0xbf82002du);
+    Require(linked[31] == 0xbf07ff0au && linked[32] == 0x0badf00du && linked[34] == 0xbf07ff0bu && linked[35] == 0x13u && linked[37] == 0xbf820022u && linked[38] == 0xbf078080u && linked[39] == 0xbf820022u);
+    Require(linked[42] == 0xbf85000bu && linked[52] == 0xbf068080u && linked[53] == 0xbf820010u && linked[66] == 0xbf068080u && linked[67] == 0xbf820004u && linked[68] == 0xbf068080u && linked[69] == 0xbf820004u);
+    Require(linked[70] == 0xbb0e0005u && linked[71] == 0xbf82ffc2u && linked[72] == 0xbb0e000eu && linked[73] == 0xbf82ffc0u && linked[74] == 0xbe8e210eu && linked[75] == 0xbf82ffbeu);
+    const std::vector<std::uint32_t> prologueA{0xbe8803ffu, 0x22334455u, 0xbe8903ffu, 0x11u, 0xbe8a03ffu, 0x00c0ffeeu, 0xbe8b03ffu, 0x12u};
+    const std::vector<std::uint32_t> prologueB{0xbe8803ffu, 0x22334455u, 0xbe8903ffu, 0x11u, 0xbe8a03ffu, 0x0badf00du, 0xbe8b03ffu, 0x13u};
+    Require(std::equal(prologueA.begin(), prologueA.end(), linked.begin() + 76) && std::equal(first.begin(), first.end(), linked.begin() + 84));
+    Require(std::equal(prologueB.begin(), prologueB.end(), linked.begin() + 87) && std::equal(first.begin(), first.end(), linked.begin() + 95));
     const auto cfg = BuildCode(linked, swappc);
     const auto block = [&](std::uint32_t word) { return cfg.FindBlockByProgramCounter(word * 4u).id; };
-    Require(cfg.FindBlockByProgramCounter(46u * 4u).terminator.trueBlock == block(52u));
-    Require(cfg.FindBlockByProgramCounter(52u * 4u).terminator.trueBlock == block(47u));
-    Require(cfg.FindBlockByProgramCounter(48u * 4u).terminator.trueBlock == block(55u));
-    Require(cfg.FindBlockByProgramCounter(55u * 4u).terminator.trueBlock == block(49u));
-    Require(cfg.unlinkedCallProgramCounters == std::vector<std::uint32_t>{50u * 4u});
+    Require(cfg.FindBlockByProgramCounter(70u * 4u).terminator.trueBlock == block(76u));
+    Require(cfg.FindBlockByProgramCounter(76u * 4u).terminator.trueBlock == block(71u));
+    Require(cfg.FindBlockByProgramCounter(72u * 4u).terminator.trueBlock == block(87u));
+    Require(cfg.FindBlockByProgramCounter(87u * 4u).terminator.trueBlock == block(73u));
+    Require(cfg.unlinkedCallProgramCounters == std::vector<std::uint32_t>{74u * 4u});
     static_cast<void>(TranslateCode(linked, swappc));
+    const std::vector<std::vector<TableCallee>> shortRecord{{{0x1122334455ull, {0x22334455u, 0x11u, 0x00c0ffeeu}, first}}};
+    ExpectThrow("is not the call's record", [&] { static_cast<void>(LinkCalls(program, {}, {}, calls, shortRecord)); });
+    const std::vector<std::vector<TableCallee>> otherTarget{{{0x1122334455ull, {0x22334456u, 0x11u, 0x00c0ffeeu, 0x12u}, first}}};
+    ExpectThrow("is not the call's record", [&] { static_cast<void>(LinkCalls(program, {}, {}, calls, otherTarget)); });
 
     std::vector<std::uint32_t> large(0x8000u, 0xbf800000u);
-    const std::vector<std::vector<TableCallee>> far{{{0x10ull, large}, {0x20ull, first}}};
+    const std::vector<std::vector<TableCallee>> far{{{0x10ull, {0x10u, 0u, 0u, 0u}, large}, {0x20ull, {0x20u, 0u, 0u, 0u}, first}}};
     ExpectThrow("out of s_call_b64 range", [&] { static_cast<void>(LinkCalls(program, {}, {}, calls, far)); });
 
     const std::vector<std::uint32_t> jumpTable{
