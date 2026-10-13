@@ -39,6 +39,7 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 
 namespace ShaderRecompiler {
 
@@ -116,6 +117,43 @@ static_assert(sizeof(UniformFillPlan) == 64, "UniformFillPlan changed: update th
 #endif
 
 namespace {
+
+struct AnyField {
+    template<typename TField>
+    operator TField() const;
+};
+
+template<typename TStruct, std::size_t... Index>
+constexpr bool bracedWith(std::index_sequence<Index...>) {
+    return requires { TStruct{(static_cast<void>(Index), AnyField{})...}; };
+}
+
+template<typename TStruct, std::size_t Count = 0>
+constexpr std::size_t fieldCount() {
+    if constexpr (bracedWith<TStruct>(std::make_index_sequence<Count + 1>{})) {
+        return fieldCount<TStruct, Count + 1>();
+    } else {
+        return Count;
+    }
+}
+
+static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 35, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
+static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
+static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
+static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
+static_assert(fieldCount<IrResourcePlan>() == 21, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
+static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
+static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 12, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<KeyDomain>() == 5, "KeyDomain changed: update the plan encoder");
+static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
+static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
+static_assert(fieldCount<UniformFill>() == 5, "UniformFill changed: update the plan encoder");
+static_assert(fieldCount<UniformFillPlan>() == 2, "UniformFillPlan changed: update the plan encoder");
 
 constexpr std::uint32_t FileMagic = 0x43535041u;
 
