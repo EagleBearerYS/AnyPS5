@@ -1657,7 +1657,8 @@ void readWrittenStagingTests(const Device& device, Recorder& recorder) {
     Require(!buildInPlace((4u << 20u) / 16u, true), "a dispatch sweeping a read and written 4 MiB element bound it in place");
     Require(buildInPlace(1024, true), "a dispatch touching 16 KiB of a read and written 4 MiB element staged all of it");
     Require(buildInPlace(0, true), "a dispatch of unknown size staged a read and written 4 MiB element");
-    Require(buildInPlace((4u << 20u) / 16u, false), "a dispatch sweeping a written-only 4 MiB element staged it");
+    Require(!buildInPlace((4u << 20u) / 16u, false), "a dispatch sweeping a written-only 4 MiB element bound it in place");
+    Require(buildInPlace(1024, false), "a dispatch touching 16 KiB of a written-only 4 MiB element staged all of it");
     Require(std::all_of(static_cast<const std::byte*>(block), static_cast<const std::byte*>(block) + bytes, [](std::byte value) { return value == std::byte{0x11}; }), "a staged copy-back changed the guest bytes");
     {
         GuestAllocations::Mutation mutation;
@@ -6044,6 +6045,14 @@ int main(int argc, char** argv) {
                 return 77;
             }
             unitShadowTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--written-staging-only") {
+            if (device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, host imports are unavailable\n";
+                return 77;
+            }
+            readWrittenStagingTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--cmask-only") {
