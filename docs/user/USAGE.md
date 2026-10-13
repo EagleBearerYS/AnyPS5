@@ -4,7 +4,7 @@
 
 ## Input and conversion
 
-Use a clean ELF executable. Place its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`. The option accepts absolute paths and paths relative to the current working directory; do not include the `sce_module` directory itself. Only files directly inside the module directories are processed. A bundled module in a SELF container is an error, as the executable is. `prx/` can coexist with either `sce_module/` or `sce_modules/`. Both `sce_module/` and `sce_modules/` present, or all three absent, is an error.
+Use a clean ELF executable. Place its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`. The option accepts absolute paths and paths relative to the current working directory; do not include the `sce_module` directory itself. Only files directly inside the module directories are processed. SELF/fSELF containers are skipped with a warning; unwrap them before relinking if they need to be included. `prx/` can coexist with either `sce_module/` or `sce_modules/`. Both `sce_module/` and `sce_modules/` present, or all three absent, is an error.
 
 ```text
 source/
@@ -177,7 +177,9 @@ python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.
 | `implemented` | A built library exports the NID and its function is not a throwing stub. |
 | `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
 | `absent` | No built library exports the NID: the loader fails. |
-| `module` | The import names a file found in `--modules` (the title's own library); its exports are not checked. |
+| `module` | The import names a file found in `--modules` (the title's own library), which is trusted to provide it. |
+
+Each `--modules` file is also audited itself: its undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries it needs must have a file in `--libs` or `--modules`. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table.
 
 The report also lists needed libraries that have no file in `--libs` or `--modules`, and imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
 

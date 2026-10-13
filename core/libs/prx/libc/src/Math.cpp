@@ -244,6 +244,9 @@ int APS5_VABI abs_nid_postfix(int x) { return x < 0 ? static_cast<int>(0u - stat
 double APS5_VABI trunc_nid_postfix(double x) { return std::trunc(x); }
 double APS5_VABI ceil_nid_postfix(double x) { return std::ceil(x); }
 double APS5_VABI floor_nid_postfix(double x) { return std::floor(x); }
+float APS5_VABI truncf_nid_postfix(float x) { return std::trunc(x); }
+float APS5_VABI ceilf_nid_postfix(float x) { return std::ceil(x); }
+float APS5_VABI floorf_nid_postfix(float x) { return std::floor(x); }
 double APS5_VABI fma_nid_postfix(double x, double y, double z) { return std::fma(x, y, z); }
 long double APS5_VABI acosl_nid_postfix(long double x) { return std::acos(x); }
 
@@ -376,6 +379,18 @@ float APS5_VABI __powisf2_nid_postfix(float base, int exponent) {
     }
     return reciprocal ? 1.0f / result : result;
 }
+double APS5_VABI __powidf2_nid_postfix(double base, int exponent) {
+    const bool reciprocal = exponent < 0;
+    double result = 1.0;
+    unsigned int magnitude = reciprocal ? 0u - static_cast<unsigned int>(exponent) : static_cast<unsigned int>(exponent);
+    while (magnitude != 0u) {
+        if ((magnitude & 1u) != 0u) result *= base;
+        magnitude >>= 1u;
+        if (magnitude == 0u) break;
+        base *= base;
+    }
+    return reciprocal ? 1.0 / result : result;
+}
 float APS5_VABI expf_nid_postfix(float x) { return std::exp(x); }
 float APS5_VABI exp2f_nid_postfix(float x) { return std::exp2(x); }
 float APS5_VABI logf_nid_postfix(float x) { return std::log(x); }
@@ -446,6 +461,8 @@ short APS5_VABI _FDtest_nid_postfix(const float* value) {
 }
 int APS5_VABI __isnanf_nid_postfix(float x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI isnanf_nid_postfix(float x) { return __isnanf_nid_postfix(x); }
+int APS5_VABI isnan_nid_postfix(double x) { return __isnan_nid_postfix(x); }
+int APS5_VABI isinf_nid_postfix(double x) { return __isinf_nid_postfix(x); }
 int APS5_VABI __fpclassifyf_nid_postfix(float x) {
     constexpr int Infinite = 0x01, NotANumber = 0x02, Normal = 0x04, Subnormal = 0x08, Zero = 0x10;
     std::uint32_t bits;
