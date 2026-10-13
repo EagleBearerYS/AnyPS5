@@ -43,10 +43,8 @@ inline constexpr std::uint32_t UserDataCapacity = 128u;
 inline constexpr std::uint32_t BufferCapacity = 128u;
 inline constexpr std::uint32_t BufferAddressDwords = 3u;
 inline constexpr std::uint32_t ImageCapacity = 256u;
-inline constexpr std::uint32_t SampledHeapCapacity = 64u;
 inline constexpr std::uint32_t BindlessTableSlots = 16u;
 inline constexpr std::uint32_t StorageMipSlots = 4u;
-inline constexpr std::uint32_t StorageHeapCapacity = 16u;
 inline constexpr std::uint32_t SamplerHeapCapacity = 32u;
 inline constexpr std::uint32_t StateExportMappings = 0u;
 inline constexpr std::uint32_t StateDwords = 2u;
@@ -84,14 +82,6 @@ inline constexpr std::uint32_t BufferAddressesDword = offsetof(ShaderData, buffe
 inline constexpr std::uint32_t DispatchThreadLimitDword = offsetof(ShaderData, dispatchThreadLimit) / sizeof(std::uint32_t);
 inline constexpr std::uint32_t ExportMappingsDword = offsetof(ShaderData, exportMappings) / sizeof(std::uint32_t);
 inline constexpr std::uint32_t ShaderDataDwords = sizeof(ShaderData) / sizeof(std::uint32_t);
-
-inline std::uint32_t HeapCapacity(Binding binding) {
-    const auto value = static_cast<std::uint32_t>(binding);
-    if (value >= FirstImageBinding && value < FirstStorageImageBinding) return SampledHeapCapacity;
-    if (value >= FirstStorageImageBinding && value < static_cast<std::uint32_t>(Binding::Samplers)) return StorageHeapCapacity;
-    if (binding == Binding::Samplers) return SamplerHeapCapacity;
-    throw std::runtime_error("Shader runtime ABI: binding is not a typed heap");
-}
 
 static_assert(std::is_standard_layout_v<ResourceMetadata> && std::is_trivially_copyable_v<ResourceMetadata> && sizeof(ResourceMetadata) == 48u);
 static_assert(std::is_standard_layout_v<ShaderData> && std::is_trivially_copyable_v<ShaderData> && sizeof(ShaderData) == 16064u);

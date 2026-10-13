@@ -1422,7 +1422,7 @@ private:
                 return i;
             }
         }
-        if (m_info.images.size() >= ShaderInfo::MaxImages) {
+        if (m_info.images.size() >= RuntimeAbi::ImageCapacity) {
             return std::numeric_limits<std::uint32_t>::max();
         }
         ImageResource image;
@@ -1492,9 +1492,6 @@ private:
                 pair.firstUsePc = std::min(pair.firstUsePc, pc);
                 return;
             }
-        }
-        if (m_info.sampledPairs.size() >= ShaderInfo::MaxSampledPairs) {
-            fail("sampled image/sampler pair limit exceeded");
         }
         m_info.sampledPairs.push_back({image, sampler, pc});
     }
