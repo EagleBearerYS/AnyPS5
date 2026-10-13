@@ -154,8 +154,8 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         base = dwordFill->base;
         bytes = dwordFill->bytes;
         pattern = dwordFill->pattern;
-    } else if (MatchesPatternFillKernel(code, userData, compute)) {
-        const auto range = DecodePatternFillRange(userData, packet);
+    } else if (const auto order = MatchPatternFillKernel(code, userData, compute)) {
+        const auto range = DecodePatternFillRange(userData, packet, *order);
         if (!range) return false;
         if (range->invocations == 0) return true;
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Fill);
@@ -164,7 +164,7 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->control), 8)) return false;
         std::array<std::uint32_t, 2> control;
         GuestMemory::Read(range->control, std::as_writable_bytes(std::span(control)), 4);
-        const auto count = range->UniformBytes(control[0], control[1]);
+        const auto count = range->ControlledBytes(control);
         if (!count) return false;
         if (*count == 0) return true;
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->source), 4)) return false;

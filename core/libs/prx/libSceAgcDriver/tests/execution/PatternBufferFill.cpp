@@ -14,6 +14,7 @@ namespace {
 using AgcDriver::Graphics::Require;
 using namespace AgcDriver::DriverDetail;
 alignas(256) constexpr auto Code = PatternFillKernel;
+alignas(256) constexpr auto MaskFirstCode = PatternFillKernelMaskFirst;
 alignas(256) std::array<std::uint32_t, 4> Pattern{0, 0x12345678u, 0xdeadbeefu, 0x7fc12345u};
 alignas(256) std::array<std::uint32_t, 4> Control{};
 alignas(256) std::array<std::uint32_t, 260> Output{};
@@ -55,7 +56,7 @@ void RangeTests() {
     disabled.numThreads[0] = 32;
     Require(!MatchesPatternFillKernel(Code, data, disabled), "different fill group size matched");
     std::array<std::uint32_t, 5> packet{0xc0031500u, 2, 1, 1, 0x41};
-    auto range = DecodePatternFillRange(data, packet);
+    auto range = DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask);
     Require(range && range->UniformBytes(256, 0) == 512, "fill exceeded launched threads");
     Require(range->UniformBytes(80, 0) == 320, "fill exceeded its control count");
     Require(!range->UniformBytes(80, 1), "nonuniform pattern matched a uniform fill");
@@ -63,7 +64,7 @@ void RangeTests() {
     Require(range->UniformBytes(0, 0) == 0, "empty control count was not empty");
     packet[1] = 68;
     packet[4] |= 0x20;
-    range = DecodePatternFillRange(data, packet);
+    range = DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask);
     Require(range && range->UniformBytes(256, 0) == 272, "partial workgroup was rounded up");
     range->records = 64;
     Require(range->UniformBytes(256, 0) == 256, "fill exceeded output descriptor");
@@ -73,16 +74,33 @@ void RangeTests() {
     range->control = range->destination - 4;
     Require(!range->UniformBytes(256, 0), "aliased control was accepted");
     packet[1] = 0;
-    Require(DecodePatternFillRange(data, packet)->invocations == 0, "empty dispatch gained invocations");
+    Require(DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask)->invocations == 0, "empty dispatch gained invocations");
     packet[1] = 0x4000001u;
     packet[4] = 0x41;
-    Require(!DecodePatternFillRange(data, packet), "wrapped thread indices were accepted");
+    Require(!DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask), "wrapped thread indices were accepted");
     packet[1] = 1;
     packet[2] = 2;
-    Require(!DecodePatternFillRange(data, packet), "multidimensional fill was accepted");
+    Require(!DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask), "multidimensional fill was accepted");
 }
 
-std::vector<std::uint32_t> Commands(std::span<const std::uint32_t> data, std::uint32_t threads, std::uint32_t wave, bool partial, bool indirect) {
+void MaskFirstRangeTests() {
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64, 1, 1}, 0, {true, false, false}, false, 1};
+    const auto data = UserData(Output.data(), 256);
+    Require(MatchPatternFillKernel(Code, data, compute) == PatternFillControl::CountThenMask, "the pattern fill kernel that reads its count first was not recognized as such");
+    Require(MatchPatternFillKernel(MaskFirstCode, data, compute) == PatternFillControl::MaskThenCount, "the pattern fill kernel that reads its mask first was not recognized");
+    for (std::size_t word = 0; word < MaskFirstCode.size(); ++word) {
+        auto altered = MaskFirstCode;
+        altered[word] ^= 1;
+        Require(!MatchesPatternFillKernel(altered, data, compute), "a different shader matched the mask-first fill kernel");
+    }
+    const std::array<std::uint32_t, 5> packet{0xc0031500u, 4, 1, 1, 0x41};
+    const auto range = DecodePatternFillRange(data, packet, PatternFillControl::MaskThenCount);
+    Require(range && range->ControlledBytes(std::array<std::uint32_t, 2>{0, 80}) == 320, "the mask-first control block did not give its count");
+    Require(!range->ControlledBytes(std::array<std::uint32_t, 2>{3, 80}), "a nonuniform mask-first fill matched a uniform fill");
+    Require(!range->ControlledBytes(std::array<std::uint32_t, 2>{80, 0}), "the mask-first control block was read count first");
+}
+
+std::vector<std::uint32_t> Commands(std::span<const std::uint32_t> data, std::uint32_t threads, std::uint32_t wave, bool partial, bool indirect, const std::uint32_t* kernel = Code.data()) {
     std::vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
@@ -91,7 +109,7 @@ std::vector<std::uint32_t> Commands(std::span<const std::uint32_t> data, std::ui
     };
     const std::array<std::uint32_t, 3> shape{64, 1, 1};
     registers(0x207, shape);
-    const auto address = reinterpret_cast<std::uintptr_t>(Code.data());
+    const auto address = reinterpret_cast<std::uintptr_t>(kernel);
     const std::array<std::uint32_t, 2> program{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>(address >> 40u)};
     registers(0x20c, program);
     const std::array<std::uint32_t, 1> resource{(12u << 1u) | (1u << 7u)};
@@ -131,17 +149,19 @@ void ExecuteTests() {
         {0x01010101u, 128, 256, 128, 0, false, true},
         {0, 128, 256, 128, 3, false, false}
     }};
-    for (const auto wave : {32u, 64u}) {
-        for (const auto& item : cases) {
-            Output.fill(0xcafebabeu);
-            Pattern[0] = item.pattern;
-            Control = {item.count, item.mask, 0, 0};
-            const auto words = Commands(UserData(Output.data(), item.records), item.threads, wave, item.partial, item.indirect);
-            Submit(words);
-            const auto count = std::min({item.count, item.records, item.threads});
-            for (std::size_t i = 0; i < Output.size(); ++i) {
-                const auto expected = i < count ? Pattern[i & item.mask] : 0xcafebabeu;
-                Require(Output[i] == expected, "pattern fill mismatch at " + std::to_string(i) + " wave " + std::to_string(wave) + " count " + std::to_string(item.count) + " got " + std::to_string(Output[i]) + " expected " + std::to_string(expected));
+    for (const bool maskFirst : {false, true}) {
+        for (const auto wave : {32u, 64u}) {
+            for (const auto& item : cases) {
+                Output.fill(0xcafebabeu);
+                Pattern[0] = item.pattern;
+                Control = maskFirst ? std::array<std::uint32_t, 4>{item.mask, item.count, 0, 0} : std::array<std::uint32_t, 4>{item.count, item.mask, 0, 0};
+                const auto words = Commands(UserData(Output.data(), item.records), item.threads, wave, item.partial, item.indirect, maskFirst ? MaskFirstCode.data() : Code.data());
+                Submit(words);
+                const auto count = std::min({item.count, item.records, item.threads});
+                for (std::size_t i = 0; i < Output.size(); ++i) {
+                    const auto expected = i < count ? Pattern[i & item.mask] : 0xcafebabeu;
+                    Require(Output[i] == expected, "pattern fill mismatch at " + std::to_string(i) + " wave " + std::to_string(wave) + " count " + std::to_string(item.count) + (maskFirst ? " (mask first)" : "") + " got " + std::to_string(Output[i]) + " expected " + std::to_string(expected));
+                }
             }
         }
     }
@@ -209,6 +229,7 @@ void Benchmark() {
 int main(int argc, char** argv) {
     try {
         RangeTests();
+        MaskFirstRangeTests();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
