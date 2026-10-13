@@ -2407,6 +2407,21 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
     for (auto it = state.evictingRefusals.begin(); it != state.evictingRefusals.end();) it = !affected(it->first.first, it->first.second) || (evictingRefusalCurrent(state, it->second, budget) && sameRun(it->second, exactRun(lease, it->first.first, it->first.second))) ? std::next(it) : state.evictingRefusals.erase(it);
 }
 
+std::vector<GuestCopySpan> importSpans(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease) {
+    const auto epoch = state.epoch;
+    std::vector<GuestCopySpan> spans;
+    for (auto cursor = begin; cursor < end;) {
+        const auto* entry = findImport(state, cursor, cursor + 1);
+        if (entry == nullptr && containingRange(lease, cursor, cursor + 1) != nullptr) entry = importAllocation(context, state, cursor, lease, ImportRequester::Build);
+        if (entry == nullptr) return {};
+        const auto last = std::min(end, entry->base + entry->bytes);
+        spans.push_back({entry->buffer, entry->base - entry->lead, cursor, last});
+        cursor = last;
+    }
+    if (state.epoch != epoch) return {};
+    return spans;
+}
+
 const HostImport* peekImport(const HostImports& state, std::uint64_t begin, std::uint64_t end) {
     auto found = state.imports.upper_bound(begin);
     if (found == state.imports.begin()) return nullptr;
@@ -5204,6 +5219,12 @@ bool GuestBufferMemory::copyBehindGpuWork(const Region& region, bool locked) con
     return written || StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(region.begin, bytes);
 }
 
+bool GuestBufferMemory::spanCopyEligible(const Region& region) const {
+    constexpr std::uint64_t SpanCopyLimit = 16ull << 20u;
+    if (!gpuCopiesEnabled() || region.sparse || !(region.hostBacked || region.writable)) return false;
+    return region.end - region.begin <= std::max(gpuCopyLimit(), SpanCopyLimit);
+}
+
 bool GuestBufferMemory::bindableInPlace(std::uint64_t offset, bool addressable) const {
     if (adjustedRegions && !addressable) return offset % 4 == 0;
     return offset % context.limits.minStorageBufferOffsetAlignment == 0;
@@ -5585,6 +5606,8 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
                 if (!covers(entry)) entry = nullptr;
                 runImport = entry != nullptr;
             }
+            region.copySpans.clear();
+            if (entry == nullptr && recorder != nullptr && spanCopyEligible(region)) region.copySpans = importSpans(context, state, region.begin, region.end, importRanges());
             // A staged region (see stagingEligible) is copied out of the import even when aligned;
             // without a recorder to record the copies it binds in place like any other.
             const bool staged = recorder != nullptr && stagingEligible(region, addressable);
@@ -5605,6 +5628,10 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
                 region.deviceLocal = staged;
                 region.copySource = entry->buffer;
                 region.copySourceBase = entry->base - entry->lead;
+            } else if (!region.copySpans.empty()) {
+                copyOnGpu = true;
+                region.deviceLocal = false;
+                region.copySource = VK_NULL_HANDLE;
             }
         }
         if (region.direct != nullptr) {
@@ -5832,7 +5859,11 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
                 expected.assign(snapshotBytes.begin(), snapshotBytes.end());
             }
         }
-        CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        if (inputSnapshot == nullptr && !region->copySpans.empty()) {
+            for (const auto& span : region->copySpans) CopyBuffer(context, commands, span.buffer, span.begin - span.base, region->buffer->Handle(), span.begin - region->begin, span.end - span.begin);
+        } else {
+            CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        }
         if (!expected.empty()) {
             auto readback = std::make_shared<Buffer>(context, expected.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -5935,7 +5966,15 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             }
             // Exactly the sub-range the shader may write, in place in the import: what the shader
             // would have stored there itself had the range been bindable.
-            CopyBuffer(context, commands, region.buffer->Handle(), from - region.begin, region.copySource, from - region.copySourceBase, to - from);
+            if (region.copySpans.empty()) {
+                CopyBuffer(context, commands, region.buffer->Handle(), from - region.begin, region.copySource, from - region.copySourceBase, to - from);
+            } else {
+                for (const auto& span : region.copySpans) {
+                    const auto first = std::max(from, span.begin);
+                    const auto last = std::min(to, span.end);
+                    if (first < last) CopyBuffer(context, commands, region.buffer->Handle(), first - region.begin, span.buffer, first - span.base, last - first);
+                }
+            }
             copiedBytes += to - from;
             recorder.Keep(region.buffer);
             if (profile) {

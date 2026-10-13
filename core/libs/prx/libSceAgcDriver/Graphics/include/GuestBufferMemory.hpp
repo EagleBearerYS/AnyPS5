@@ -295,6 +295,13 @@ private:
     std::atomic<std::uint64_t> largest{0};
 };
 
+struct GuestCopySpan {
+    VkBuffer buffer;
+    std::uint64_t base;
+    std::uint64_t begin;
+    std::uint64_t end;
+};
+
 class GuestBufferMemory {
 public:
     explicit GuestBufferMemory(const Context& context);
@@ -445,6 +452,7 @@ private:
         bool gpuCopy = false;
         VkBuffer copySource = VK_NULL_HANDLE;
         std::uint64_t copySourceBase = 0;
+        std::vector<GuestCopySpan> copySpans;
         bool copiedBack = false;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
@@ -498,6 +506,7 @@ private:
     // APS5_GPU_COPY_MAX_KIB allows, and APS5_CPU_COPIES unset.
     bool gpuCopyEligible(const Region& region) const;
     bool copyBehindGpuWork(const Region& region, bool locked) const;
+    bool spanCopyEligible(const Region& region) const;
     // Whether a region inside a host import is staged in device memory instead of bound in place
     // (see GuestBufferMemory.cpp): staging allowed, not address-based unless an overlay region, a
     // written element inside, and an atomic element or a size within the written-shadow window.
