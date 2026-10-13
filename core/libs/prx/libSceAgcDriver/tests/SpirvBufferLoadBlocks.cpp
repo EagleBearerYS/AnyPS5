@@ -54,7 +54,7 @@ std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code, std::
     request.useCache = false;
     auto result = Recompile(request);
     if (result.spirv.empty()) throw std::runtime_error("the shader did not recompile");
-    return std::move(result.spirv);
+    return result.spirv.Copy();
 }
 
 Added Count(std::span<const std::uint32_t> words) {
