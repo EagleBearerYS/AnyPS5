@@ -19,7 +19,7 @@ using ShaderRecompiler::DescriptorRole;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
-constexpr std::uint32_t PushBuffers = 52;
+constexpr std::uint32_t PushBuffers = 9;
 constexpr std::uint32_t DataBuffers = 124;
 constexpr std::uint32_t MaxBuffers = DataBuffers;
 constexpr std::uint32_t RegionWords = 2u * Threads + 4u;

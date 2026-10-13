@@ -145,7 +145,7 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
 
 void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh;
+    const bool physical = program.Info().usesDma || !program.Info().buffers.empty() || program.Resources().stage == IrShaderStage::Mesh;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
@@ -412,18 +412,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
         };
         switch (binding.kind) {
         case DescriptorBindingKind::Buffers:
-            state.storageBufferVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers");
-            if (state.requirements.coherentBufferAlias) state.storageBufferCoherentVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers_coherent");
-            if (state.requirements.bufferInt64Atomics) state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
-            if (state.storageBufferU64Variable != 0u || state.storageBufferCoherentVariable != 0u) {
-                for (const auto variable : {state.storageBufferVariable, state.storageBufferCoherentVariable, state.storageBufferU64Variable}) {
-                    if (variable != 0u) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
-                }
-            }
-            if (state.requirements.coherentBuffers) {
-                state.module.AddAnnotation(spv::OpDecorate, state.storageBufferCoherentVariable != 0u ? state.storageBufferCoherentVariable : state.storageBufferVariable, spv::DecorationCoherent);
-                if (state.storageBufferU64Variable != 0u) state.module.AddAnnotation(spv::OpDecorate, state.storageBufferU64Variable, spv::DecorationCoherent);
-            }
             break;
         case DescriptorBindingKind::BdaPagetable:
             state.bdaPagetableVariable = Define(StorageBufferBlockType(state), "bda_pagetable");

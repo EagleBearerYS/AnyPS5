@@ -2696,7 +2696,7 @@ VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const
     Require(mock.bufferMemory.contains(info->buffer), "BDA buffer was not bound");
     Require((mock.bufferUsage.at(info->buffer) & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0, "BDA buffer usage is missing");
     Require((mock.allocationFlags.at(mock.bufferMemory.at(info->buffer)) & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT) != 0, "BDA allocation flags are missing");
-    return 0x100000000000ULL + reinterpret_cast<std::uintptr_t>(info->buffer) * 0x10000;
+    return 0x100000000000ULL + (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(info->buffer)) << 32u);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockCreatePipelineLayout(VkDevice, const VkPipelineLayoutCreateInfo* info, const VkAllocationCallbacks*, VkPipelineLayout* layout) {
@@ -2858,6 +2858,7 @@ AgcDriver::Graphics::Context mockContext() {
     context.limits.maxPerStageDescriptorStorageBuffers = 16;
     context.limits.maxPerStageResources = 128;
     context.limits.maxDescriptorSetStorageBuffers = 32;
+    context.bufferDeviceAddress = true;
     return context;
 }
 
@@ -2867,6 +2868,7 @@ using Kind = ShaderRecompiler::DescriptorKind;
 alignas(16) std::array<std::uint32_t, 4> guestFirst{0x11111111, 0x22222222, 0x33333333, 0x44444444};
 alignas(16) std::array<std::uint32_t, 8> guestSecond{1, 2, 3, 4, 5, 6, 7, 8};
 alignas(16) std::array<std::uint32_t, 2> guestThird{0xaaaaaaaa, 0xbbbbbbbb};
+alignas(16) std::array<std::uint32_t, 8192> guestLarge{};
 
 std::vector<std::uint32_t> vsharp(const void* pointer, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
@@ -2880,13 +2882,44 @@ std::vector<std::uint32_t> join(std::vector<std::uint32_t> first, const std::vec
 
 ShaderRecompiler::DescriptorBinding makeBinding(Role role, std::uint32_t binding, std::uint32_t count, std::vector<std::uint32_t> words) {
     ShaderRecompiler::DescriptorBinding result;
-    result.kind = Kind::StorageBuffer;
+    result.kind = role == Role::GuestBuffers ? Kind::DeviceAddress : Kind::StorageBuffer;
     result.role = role;
     result.descriptorSet = 0;
     result.binding = binding;
     result.count = count;
     result.guestDescriptor = std::move(words);
     return result;
+}
+
+void pushBufferData(ShaderRecompiler::RecompileResult& program, std::uint32_t buffers) {
+    program.memoryOffsetDword = 0;
+    program.bufferAddressDword = (buffers + 3u) / 4u;
+    program.pushConstants.assign((program.bufferAddressDword + buffers * ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u, std::byte{0});
+}
+
+struct PatchedBuffer {
+    VkBuffer buffer;
+    std::size_t offset;
+    std::uint32_t bytes;
+
+    bool operator==(const PatchedBuffer&) const = default;
+};
+
+PatchedBuffer patchedBuffer(std::span<const std::byte> data, std::uint32_t dword) {
+    std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::BufferAddressDwords> words{};
+    std::memcpy(words.data(), data.data() + dword * 4u, sizeof(words));
+    const auto relative = ((static_cast<std::uint64_t>(words[1]) << 32u) | words[0]) - 0x100000000000ULL;
+    return {reinterpret_cast<VkBuffer>(static_cast<std::uintptr_t>(relative >> 32u)), static_cast<std::size_t>(relative & 0xffffffffu), words[2] * 4u};
+}
+
+PatchedBuffer patchedBuffer(std::span<const std::byte> push, const AgcDriver::Graphics::CompiledShader& shader, std::uint32_t element) {
+    return patchedBuffer(push.subspan(shader.pushConstantOffset), shader.program->bufferAddressDword + element * ShaderRecompiler::RuntimeAbi::BufferAddressDwords);
+}
+
+PatchedBuffer pushedBuffer(const AgcDriver::Graphics::ShaderResources& resources, const AgcDriver::Graphics::CompiledShader& shader, std::uint32_t element) {
+    std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> push{};
+    resources.PatchPushConstants(push);
+    return patchedBuffer(push, shader, element);
 }
 
 std::vector<std::uint32_t> ShaderDataWords(std::initializer_list<std::uint32_t> userData) {
@@ -2930,6 +2963,7 @@ void expectSingleFailure(const ShaderRecompiler::DescriptorBinding& binding, std
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::RecompileResult fragment;
     vertex.bindings.push_back(binding);
+    if (binding.role == Role::GuestBuffers) pushBufferData(vertex, binding.count);
     expectResourceFailure(vertex, fragment, reason);
 }
 
@@ -2937,6 +2971,7 @@ void expectSingleAccepted(const ShaderRecompiler::DescriptorBinding& binding, st
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::RecompileResult fragment;
     vertex.bindings.push_back(binding);
+    if (binding.role == Role::GuestBuffers) pushBufferData(vertex, binding.count);
     mock = MockVulkan{};
     const auto context = mockContext();
     const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
@@ -2961,7 +2996,6 @@ void descriptorLayoutFlagTests() {
     for (const bool updateAfterBind : {false, true}) {
         mock = MockVulkan{};
         auto context = mockContext();
-        context.emptyBuffer = reinterpret_cast<VkBuffer>(std::uintptr_t{0x1000});
         context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 17;
         context.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
         context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 32;
@@ -2969,6 +3003,9 @@ void descriptorLayoutFlagTests() {
             ShaderRecompiler::RecompileResult program;
             const std::uint32_t count = updateAfterBind ? 17 : 1;
             program.bindings.push_back(makeBinding(Role::GuestBuffers, 0, count, std::vector<std::uint32_t>(4 * count)));
+            program.bindings.push_back(makeBinding(Role::FlattenedSrt, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt), 1, {1u}));
+            pushBufferData(program, count);
+            context.limits.maxPerStageDescriptorStorageBuffers = updateAfterBind ? 0 : 16;
             const AgcDriver::Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
             AgcDriver::Graphics::ShaderResources resources(context, compute);
             const auto flags = resources.LayoutBindingFlags();
@@ -3083,10 +3120,14 @@ void descriptorSnapshotTests() {
             binding.bufferWritten = {false, false};
             vertex.bindings.push_back(binding);
             fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 4, 1, vsharp(guestThird.data(), 8)));
+            pushBufferData(vertex, 2);
+            pushBufferData(fragment, 1);
             const auto state = AgcDriver::Graphics::DecodeState(makeState());
             ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
-            const auto original = findWrite(0).buffers;
-            const auto originalThird = findWrite(4).buffers;
+            const AgcDriver::Graphics::CompiledShader vertexShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0};
+            const AgcDriver::Graphics::CompiledShader fragmentShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, static_cast<std::uint32_t>(vertex.pushConstants.size())};
+            std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> original{};
+            resources.PatchPushConstants(original);
             std::vector<ShaderResources::MovedBuffer> moved;
             for (std::size_t index = 0; index < 2; ++index) {
                 if ((selected & (1u << index)) == 0) continue;
@@ -3096,21 +3137,19 @@ void descriptorSnapshotTests() {
             mock.writes.clear();
             const auto snapshots = resources.PrepareDrawBindings(recorder, moved);
             Require(snapshots != nullptr && snapshots->snapshots.size() == moved.size(), "draw snapshots are missing");
-            Require(mock.copies.empty(), "snapshot descriptor set must be written without descriptor copies");
-            Require(mock.writes.size() == 2, "snapshot update must write every binding once");
-            const auto& write = mock.writes.front();
-            const auto& untouched = mock.writes.back();
-            Require(untouched.binding == 4 && untouched.count == 1 && untouched.buffers[0].buffer == originalThird[0].buffer && untouched.buffers[0].offset == originalThird[0].offset && untouched.buffers[0].range == originalThird[0].range, "snapshot update changed a binding without snapshots");
-            Require(write.binding == 0 && write.arrayElement == 0 && write.count == 2, "snapshot update did not start from array element zero");
+            Require(!snapshots->HasSets() && mock.writes.empty() && mock.copies.empty(), "snapshots of guest buffers read through device addresses wrote a descriptor set");
+            auto patched = original;
+            snapshots->PatchPushConstants(patched);
+            Require(patchedBuffer(patched, fragmentShader, 0) == patchedBuffer(original, fragmentShader, 0), "a snapshot changed the address of a buffer without snapshots");
             std::size_t snapshot = 0;
-            for (std::size_t index = 0; index < 2; ++index) {
-                const auto& descriptor = write.buffers[index];
+            for (std::uint32_t index = 0; index < 2; ++index) {
+                const auto address = patchedBuffer(patched, vertexShader, index);
                 if ((selected & (1u << index)) == 0) {
-                    Require(descriptor.buffer == original[index].buffer && descriptor.offset == original[index].offset && descriptor.range == original[index].range, "snapshot update changed an untouched buffer descriptor");
+                    Require(address == patchedBuffer(original, vertexShader, index), "a snapshot changed an untouched buffer's address");
                 } else {
                     const auto& item = snapshots->snapshots[snapshot];
-                    Require(descriptor.buffer == item.buffer->Handle() && descriptor.offset == 0 && descriptor.range == moved[snapshot].size, "snapshot descriptor used another element's buffer or range");
-                    Require(sameBytes(bufferBytes(descriptor.buffer), moved[snapshot].words.data(), moved[snapshot].size), "snapshot descriptor lost its buffer data");
+                    Require(address.buffer == item.buffer->Handle() && address.offset == 0 && address.bytes == moved[snapshot].size, "a snapshot address names another element's buffer or size");
+                    Require(sameBytes(bufferBytes(address.buffer), moved[snapshot].words.data(), moved[snapshot].size), "a snapshot lost its buffer data");
                     ++snapshot;
                 }
             }
@@ -3131,30 +3170,33 @@ void resourceTests() {
         vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
         vertex.bindings.push_back(makeBinding(Role::ShaderData, 5, 1, ShaderDataWords({7, 8, 9})));
         vertex.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
+        vertex.memoryOffsetDword = ShaderRecompiler::RuntimeAbi::BufferOffsetsDword;
+        vertex.bufferAddressDword = ShaderRecompiler::RuntimeAbi::BufferAddressesDword;
         fragment.bindings.push_back(makeBinding(Role::FlattenedSrt, 43, 1, {1, 2}));
         fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 44, 1, vsharp(guestThird.data(), 8)));
+        pushBufferData(fragment, 1);
         AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
         Require(resources.Layout() != VK_NULL_HANDLE, "descriptor set layout was not created");
-        Require(mock.layoutBindings.size() == 4 && mock.writes.size() == 4, "one layout binding and one write per shader binding are expected");
-        Require(findLayoutBinding(0).descriptorCount == 2 && findLayoutBinding(0).stageFlags == VK_SHADER_STAGE_VERTEX_BIT && findLayoutBinding(0).descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, "guest buffer array layout binding is incorrect");
+        Require(mock.layoutBindings.size() == 2 && mock.writes.size() == 2, "guest buffers read through device addresses must have no layout binding or descriptor write");
         Require(findLayoutBinding(5).descriptorCount == 1 && findLayoutBinding(5).stageFlags == VK_SHADER_STAGE_VERTEX_BIT, "shader data layout binding is incorrect");
         Require(findLayoutBinding(43).descriptorCount == 1 && findLayoutBinding(43).stageFlags == VK_SHADER_STAGE_FRAGMENT_BIT, "flattened SRT layout binding is incorrect");
-        Require(findLayoutBinding(44).descriptorCount == 1 && findLayoutBinding(44).stageFlags == VK_SHADER_STAGE_FRAGMENT_BIT, "fragment guest buffer layout binding is incorrect");
-        Require(mock.poolMaxSets == 1 && mock.poolSizes.size() == 1 && mock.poolSizes[0].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && mock.poolSizes[0].descriptorCount == 5, "descriptor pool must hold one set with every storage descriptor");
-        const auto& array = findWrite(0);
-        Require(array.count == 2 && array.buffers.size() == 2 && array.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, "guest buffer array write is incorrect");
-        Require(array.buffers[0].offset == 0 && array.buffers[0].range == 16 && array.buffers[1].offset == 0 && array.buffers[1].range == 32, "guest buffers must be bound at zero offset with their descriptor size");
-        Require(sameBytes(bufferBytes(array.buffers[0].buffer), guestFirst.data(), 16) && sameBytes(bufferBytes(array.buffers[1].buffer), guestSecond.data(), 32), "guest buffer contents were not uploaded");
+        Require(mock.poolMaxSets == 1 && mock.poolSizes.size() == 1 && mock.poolSizes[0].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && mock.poolSizes[0].descriptorCount == 2, "descriptor pool must hold one set with the two data descriptors");
+        const auto shaderData = mockBufferMemory(findWrite(5).buffers[0].buffer);
+        const auto firstBuffer = patchedBuffer(shaderData, ShaderRecompiler::RuntimeAbi::BufferAddressesDword);
+        const auto secondBuffer = patchedBuffer(shaderData, ShaderRecompiler::RuntimeAbi::BufferAddressesDword + ShaderRecompiler::RuntimeAbi::BufferAddressDwords);
+        const AgcDriver::Graphics::CompiledShader fragmentShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0};
+        const auto thirdBuffer = pushedBuffer(resources, fragmentShader, 0);
+        Require(firstBuffer.offset == 0 && firstBuffer.bytes == 16 && secondBuffer.offset == 0 && secondBuffer.bytes == 32, "guest buffers must be addressed at zero offset with their descriptor size");
+        Require(sameBytes(bufferBytes(firstBuffer.buffer), guestFirst.data(), 16) && sameBytes(bufferBytes(secondBuffer.buffer), guestSecond.data(), 32), "guest buffer contents were not uploaded");
         const auto data = ShaderDataWords({7, 8, 9});
-        Require(findWrite(5).buffers.size() == 1 && findWrite(5).buffers[0].range == data.size() * 4u && sameBytes(bufferBytes(findWrite(5).buffers[0].buffer), data.data(), data.size() * 4u), "shader data buffer is incorrect");
+        Require(findWrite(5).buffers.size() == 1 && findWrite(5).buffers[0].range == data.size() * 4u && sameBytes(shaderData, data.data(), ShaderRecompiler::RuntimeAbi::BufferAddressesDword * 4u), "shader data buffer is incorrect");
         const std::array<std::uint32_t, 2> srt{1, 2};
         Require(findWrite(43).buffers.size() == 1 && findWrite(43).buffers[0].range == 8 && sameBytes(bufferBytes(findWrite(43).buffers[0].buffer), srt.data(), 8), "flattened SRT buffer is incorrect");
-        Require(findWrite(44).buffers.size() == 1 && findWrite(44).buffers[0].range == 8 && sameBytes(bufferBytes(findWrite(44).buffers[0].buffer), guestThird.data(), 8), "fragment guest buffer is incorrect");
+        Require(thirdBuffer.bytes == 8 && sameBytes(bufferBytes(thirdBuffer.buffer).subspan(thirdBuffer.offset), guestThird.data(), 8), "fragment guest buffer is incorrect");
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, VK_NULL_HANDLE);
         Require(mock.boundPoint == VK_PIPELINE_BIND_POINT_GRAPHICS && mock.boundFirst == 0 && mock.boundSets == 1, "exactly one descriptor set must be bound at set zero");
-        auto first = mockBufferMemory(array.buffers[0].buffer);
+        auto first = mockBufferMemory(firstBuffer.buffer);
         std::memset(first.data(), 0xab, 16);
-        auto shaderData = mockBufferMemory(findWrite(5).buffers[0].buffer);
         std::memset(shaderData.data(), 0xcd, 12);
         resources.WriteBack();
         Require(guestFirst[0] == 0xabababab && guestFirst[3] == 0xabababab, "guest buffer was not written back");
@@ -3176,13 +3218,16 @@ void resourceTests() {
     {
         ShaderRecompiler::RecompileResult compute;
         compute.bindings.push_back(makeBinding(Role::GuestBuffers, 3, 1, vsharp(guestThird.data(), 8)));
+        pushBufferData(compute, 1);
         const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
         AgcDriver::Graphics::ShaderResources resources(context, shader);
-        Require(mock.layoutBindings.size() == 1 && findLayoutBinding(3).stageFlags == VK_SHADER_STAGE_COMPUTE_BIT && findLayoutBinding(3).descriptorCount == 1, "compute layout binding is incorrect");
+        Require(mock.layoutBindings.empty() && mock.writes.empty(), "a compute guest buffer read through its device address got a descriptor");
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, VK_NULL_HANDLE);
-        Require(mock.boundPoint == VK_PIPELINE_BIND_POINT_COMPUTE && mock.boundSets == 1, "compute descriptors were bound to the wrong bind point");
+        Require(mock.boundSets == 0, "a compute build without descriptors bound a set");
         guestThird = {0xaaaaaaaa, 0xbbbbbbbb};
-        std::memset(mockBufferMemory(findWrite(3).buffers[0].buffer).data(), 0x5a, 8);
+        const auto buffer = pushedBuffer(resources, shader, 0);
+        Require(buffer.bytes == 8, "the compute guest buffer's size is not its descriptor's");
+        std::memset(mockBufferMemory(buffer.buffer).data() + buffer.offset, 0x5a, 8);
         resources.WriteBack();
         Require(guestThird[0] == 0x5a5a5a5a && guestThird[1] == 0x5a5a5a5a, "compute buffer was not written back");
         guestThird = {0xaaaaaaaa, 0xbbbbbbbb};
@@ -3195,14 +3240,15 @@ void resourceTests() {
         descriptor[3] = 0x0004dfacu;
         ShaderRecompiler::RecompileResult compute;
         compute.bindings.push_back(makeBinding(Role::GuestBuffers, 3, 1, descriptor));
+        pushBufferData(compute, 1);
         const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
         AgcDriver::Graphics::ShaderResources resources(context, shader);
-        const auto& buffer = findWrite(3).buffers.at(0);
-        Require(buffer.range == sizeof(guestSecond), "strided buffer range does not cover every record");
-        Require(sameBytes(bufferBytes(buffer.buffer), guestSecond.data(), sizeof(guestSecond)), "strided buffer contents were not uploaded");
+        const auto buffer = pushedBuffer(resources, shader, 0);
+        Require(buffer.bytes == sizeof(guestSecond), "strided buffer range does not cover every record");
+        Require(sameBytes(bufferBytes(buffer.buffer).subspan(buffer.offset), guestSecond.data(), sizeof(guestSecond)), "strided buffer contents were not uploaded");
         const std::uint32_t changed = 0x12345678u;
         auto bytes = mockBufferMemory(buffer.buffer);
-        std::memcpy(bytes.data() + 16, &changed, sizeof(changed));
+        std::memcpy(bytes.data() + buffer.offset + 16, &changed, sizeof(changed));
         resources.WriteBack();
         Require(guestSecond[4] == changed && guestSecond[0] == 1 && guestSecond[7] == 8, "strided buffer write back changed the wrong record");
         guestSecond[4] = 5;
@@ -3223,9 +3269,9 @@ void resourceTests() {
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::StorageImage; binding.binding = 29u; }), "guest storage image descriptors must contain 8 dwords");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestSamplers; binding.kind = Kind::Sampler; binding.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers); }), "shader sampler descriptors exceed per-stage limits");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::SampledImage; binding.binding = 29u; }), "resource class disagrees");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::Gds; }), "invalid GDS descriptor contract");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::BdaPagetable; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::FaultBuffer; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::Gds; binding.kind = Kind::StorageBuffer; }), "invalid GDS descriptor contract");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::BdaPagetable; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::FaultBuffer; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
     expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::UniformBuffer; }), "unsupported descriptor kind UniformBuffer");
     expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::UniformTexelBuffer; }), "unsupported descriptor kind UniformTexelBuffer");
     expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::StorageTexelBuffer; }), "unsupported descriptor kind StorageTexelBuffer");
@@ -3234,51 +3280,37 @@ void resourceTests() {
     expectSingleFailure(changed([](auto& binding) { binding.readOnly = true; }), "read-only descriptors are unsupported");
     expectSingleFailure(changed([](auto& binding) { binding.count = 0; }), "empty descriptor binding");
     expectSingleFailure(changed([](auto& binding) { binding.count = 2; }), "four DWORDs per array element");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.count = 2; binding.guestDescriptor = {1, 2}; }), "must not be arrays");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.guestDescriptor.clear(); }), "empty shader data descriptor");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; }), "invalid compact shader data size");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.guestDescriptor = ShaderDataWords({}); binding.guestDescriptor.pop_back(); }), "invalid compact shader data size");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::FlattenedSrt; binding.guestDescriptor.clear(); }), "empty shader data descriptor");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.count = 2; binding.guestDescriptor = {1, 2}; }), "must not be arrays");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "empty shader data descriptor");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; }), "invalid compact shader data size");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.guestDescriptor = ShaderDataWords({}); binding.guestDescriptor.pop_back(); }), "invalid compact shader data size");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::FlattenedSrt; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "empty shader data descriptor");
     expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[1] |= 0x40000000u; }), "reserved bits");
     expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[3] |= 0x40000000u; }), "unsupported type");
-    expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[1] |= 0x3fffu << 16u; binding.guestDescriptor[2] = 0xffffffffu; }), "descriptor range limit");
-    expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[2] = 32768; }), "descriptor range limit");
+    expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(guestLarge.data(), static_cast<std::uint32_t>(sizeof(guestLarge))); }), "a guest buffer larger than the storage buffer range limit");
     expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(0x1000), 8); }), "an unmapped V#");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(state.color.address), 64); }), "aliases the render target");
     expectSingleAccepted(changed([](auto& binding) { binding.count = 3; binding.guestDescriptor = join(join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)), vsharp(reinterpret_cast<const void*>(0x1000), 8)); }), "an unmapped V# element");
     expectSingleFailure(changed([&](auto& binding) { binding.count = 2; binding.guestDescriptor = join(vsharp(guestFirst.data(), 16), vsharp(reinterpret_cast<const void*>(state.color.address), 64)); }), "aliases the render target");
-    expectSingleFailure(changed([](auto& binding) { binding.count = 17; binding.guestDescriptor.assign(68, 0); }), "per-stage limits");
+    expectSingleAccepted(changed([](auto& binding) { binding.count = 17; binding.guestDescriptor.assign(68, 0); }), "seventeen guest buffers past the per-stage storage buffer limit");
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
         std::vector<std::uint32_t> words;
         for (int index = 0; index < 17; ++index) words = join(words, vsharp(reinterpret_cast<const void*>(0x1000), 8));
         vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 17, words));
-        auto updateAfterBind = mockContext();
-        updateAfterBind.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 17;
-        updateAfterBind.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
-        updateAfterBind.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 32;
+        pushBufferData(vertex, 17);
         mock = MockVulkan{};
-        {
-            AgcDriver::Graphics::ShaderResources resources(updateAfterBind, vertex, fragment, state.color, 0, 0);
-            Require(mock.layoutFlags == VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT, "buffers above the per-stage limit did not get an update-after-bind layout");
-            Require(mock.layoutBindingFlags.size() == 1 && mock.layoutBindingFlags[0] == VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, "the guest buffers binding is not update-after-bind");
-            Require(mock.poolFlags == VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT, "the update-after-bind set did not come from an update-after-bind pool");
-        }
-        Require(mock.live == 0, "update-after-bind shader resources leaked Vulkan objects");
-        updateAfterBind.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 16;
-        expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(updateAfterBind, vertex, fragment, state.color, 0, 0); }, "shader descriptors exceed per-stage limits");
-        Require(mock.live == 0, "failed update-after-bind shader resources leaked Vulkan objects");
-        mock = MockVulkan{};
-        vertex.bindings.front() = makeBinding(Role::GuestBuffers, 0, 1, vsharp(reinterpret_cast<const void*>(0x1000), 8));
-        { AgcDriver::Graphics::ShaderResources resources(updateAfterBind, vertex, fragment, state.color, 0, 0); }
-        Require(mock.layoutFlags == 0 && mock.layoutBindingFlags.empty() && mock.poolFlags == 0, "buffers within the per-stage limit took the update-after-bind path");
+        { AgcDriver::Graphics::ShaderResources resources(mockContext(), vertex, fragment, state.color, 0, 0); }
+        Require(mock.layoutBindings.empty() && mock.layoutFlags == 0 && mock.layoutBindingFlags.empty() && mock.poolFlags == 0, "guest buffers past the per-stage storage buffer limit took the update-after-bind path");
+        Require(mock.live == 0, "guest buffers past the per-stage storage buffer limit leaked Vulkan objects");
     }
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
         vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
         vertex.bindings.push_back(makeBinding(Role::GuestImages, 1, 1, std::vector<std::uint32_t>(8, 0)));
+        pushBufferData(vertex, 2);
         const auto expectStageResources = [&](Role role, Kind kind, std::uint32_t words, std::uint32_t limit, std::string_view reason) {
             vertex.bindings.back().role = role;
             vertex.bindings.back().kind = kind;
@@ -3290,19 +3322,20 @@ void resourceTests() {
             expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(limited, vertex, fragment, state.color, 0, 0); }, reason);
             Require(mock.live == 0, "failed shader resources leaked Vulkan objects");
         };
-        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 2, "shader descriptors exceed per-stage limits");
-        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 2, "shader descriptors exceed per-stage limits");
-        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 3, "missing an image shape");
-        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 3, "detiler is unavailable");
+        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 0, "shader descriptors exceed per-stage limits");
+        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 0, "shader descriptors exceed per-stage limits");
+        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 1, "missing an image shape");
+        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 1, "detiler is unavailable");
         expectStageResources(Role::GuestSamplers, Kind::Sampler, 4, 2, "shader sampler descriptors exceed per-stage limits");
     }
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
         fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
+        pushBufferData(fragment, 2);
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
         auto limited = mockContext();
-        limited.limits.maxPerStageResources = 2;
+        limited.limits.maxPerStageResources = 1;
         const auto expectAttachments = [&](std::uint32_t attachments, bool accepted, std::string_view what) {
             mock = MockVulkan{};
             if (accepted) {
@@ -3312,10 +3345,10 @@ void resourceTests() {
             }
             Require(mock.live == 0, std::string(what) + " leaked Vulkan objects");
         };
-        expectAttachments(0, true, "a pixel stage at the per-stage limit");
-        expectAttachments(1, false, "a pixel stage over the per-stage limit with its colour attachment");
-        std::swap(vertex.bindings, fragment.bindings);
-        expectAttachments(1, true, "a vertex stage at the per-stage limit");
+        expectAttachments(1, true, "a pixel stage at the per-stage limit with its colour attachment and two guest buffers");
+        expectAttachments(2, false, "a pixel stage over the per-stage limit with its colour attachments");
+        std::swap(vertex, fragment);
+        expectAttachments(1, true, "a vertex stage's guest buffers and the pixel stage's colour attachment");
         expectAttachments(3, false, "colour attachments over the per-stage limit");
     }
     {
@@ -3475,6 +3508,8 @@ void imageTableSnapshotAllocationTests() {
         auto buffer = makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestFirst.data(), 16));
         buffer.bufferWritten = {false};
         vertex.bindings.push_back(buffer);
+        vertex.bindings.push_back(makeBinding(Role::FlattenedSrt, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt), 1, {1, 2, 3, 4}));
+        pushBufferData(vertex, 1);
         auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords));
         map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
         map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
@@ -3486,7 +3521,7 @@ void imageTableSnapshotAllocationTests() {
         const auto state = DecodeState(makeState());
         ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
         const auto originalMap = findWrite(map.binding).buffers.at(0);
-        const std::array<ShaderResources::MovedBuffer, 1> moved{{{0, 0, 16, {11, 22, 33, 44}}}};
+        const std::array<ShaderResources::MovedBuffer, 1> moved{{{1, 0, 16, {11, 22, 33, 44}}}};
         const auto sets = cache.Counters().sets;
         mock.writes.clear();
         mock.variableDescriptorCount.reset();
@@ -3691,21 +3726,25 @@ void misalignedShaderDataTests() {
         compute.bindings.push_back(makeBinding(Role::ShaderData, 1, 1, ShaderDataWords({0x11, 0x22})));
         compute.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
         compute.memoryOffsetDword = ShaderRecompiler::RuntimeAbi::BufferOffsetsDword;
+        compute.bufferAddressDword = ShaderRecompiler::RuntimeAbi::BufferAddressesDword;
         auto live = compute;
         live.bindings[1].guestDescriptor = ShaderDataWords({0x33, 0x44});
         const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
         const AgcDriver::Graphics::CompiledShader liveShader{ShaderRecompiler::ShaderStage::Compute, &live, 0};
         AgcDriver::Graphics::ShaderResources resources(context, shader);
-        const auto& views = findWrite(0);
-        Require(views.buffers.size() == 2 && views.buffers[0].range == 32 && views.buffers[1].range == 12 && views.buffers[1].offset == views.buffers[0].offset, "the misaligned view is not bound from the aligned offset below it");
         const auto data = findWrite(1).buffers.at(0).buffer;
+        const auto first = patchedBuffer(bufferBytes(data), ShaderRecompiler::RuntimeAbi::BufferAddressesDword);
+        const auto second = patchedBuffer(bufferBytes(data), ShaderRecompiler::RuntimeAbi::BufferAddressesDword + ShaderRecompiler::RuntimeAbi::BufferAddressDwords);
+        Require(first.bytes == 32 && second.bytes == 12 && second.buffer == first.buffer && second.offset == first.offset, "the misaligned view is not addressed from the aligned address below it");
+        constexpr auto checked = (ShaderRecompiler::RuntimeAbi::BufferOffsetsDword + 1u) * 4u;
         auto patched = ShaderDataWords({0x11, 0x22});
         patched[ShaderRecompiler::RuntimeAbi::BufferOffsetsDword] = 0x400u;
-        Require(sameBytes(bufferBytes(data), patched.data(), patched.size() * 4u), "the shader data buffer does not hold the misaligned view's offset");
+        Require(sameBytes(bufferBytes(data), patched.data(), checked), "the shader data buffer does not hold the misaligned view's offset");
         Require(resources.RefreshData(commands, liveShader), "a refresh with different words recorded nothing");
         auto refreshed = ShaderDataWords({0x33, 0x44});
         refreshed[ShaderRecompiler::RuntimeAbi::BufferOffsetsDword] = 0x400u;
-        Require(sameBytes(bufferBytes(data), refreshed.data(), refreshed.size() * 4u), "a data refresh dropped the misaligned view's offset");
+        Require(sameBytes(bufferBytes(data), refreshed.data(), checked), "a data refresh dropped the misaligned view's offset");
+        Require(patchedBuffer(bufferBytes(data), ShaderRecompiler::RuntimeAbi::BufferAddressesDword) == first, "a data refresh dropped the guest buffer addresses");
         Require(!resources.DataWordsDiffer(liveShader) && resources.DataWordsHash() == AgcDriver::Graphics::ShaderResources::DataWordsHash(liveShader), "the refreshed template's words are not the dispatch's");
     }
     Require(mock.live == 0, "misaligned shader data resources leaked Vulkan objects");
@@ -4189,11 +4228,10 @@ void copiedWriterIndirectOverlapTests() {
     {
         RecompileResult shader;
         shader.runtimeAbiVersion = RuntimeAbi::Version;
-        auto copiedBinding = makeBinding(Role::GuestBuffers, 0, 1, vsharp(copiedBlock, 1024));
-        copiedBinding.bufferWritten = {true};
-        auto directBinding = makeBinding(Role::GuestBuffers, 1, 1, vsharp(directBlock, 1024));
-        directBinding.bufferWritten = {true};
-        shader.bindings = {copiedBinding, directBinding};
+        auto buffers = makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(copiedBlock, 1024), vsharp(directBlock, 1024)));
+        buffers.bufferWritten = {true, true};
+        shader.bindings = {buffers};
+        pushBufferData(shader, 2);
         CompiledShader compiled{ShaderStage::Compute, &shader, 0};
         auto writer = std::make_shared<ShaderResources>(context, compiled);
 
@@ -4727,51 +4765,47 @@ void stencilRefExportTests() {
     static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
 }
 
-std::set<std::string> bufferViews(std::span<const std::uint32_t> words) {
-    std::set<std::string> views;
+std::size_t storageBufferVariables(std::span<const std::uint32_t> words) {
+    std::size_t variables = 0;
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
-        if (static_cast<spv::Op>(words[at] & 0xffffu) != spv::OpName) continue;
-        const std::string name(reinterpret_cast<const char*>(&words[at + 2]));
-        if (name.starts_with("buffers")) views.insert(name);
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpVariable && words[at + 3] == spv::StorageClassStorageBuffer) ++variables;
     }
-    return views;
+    return variables;
 }
 
-void aliasedBufferViewTests() {
+bool convertsAddresses(std::span<const std::uint32_t> words) {
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpConvertUToPtr) return true;
+    }
+    return false;
+}
+
+void deviceAddressBufferTests() {
     constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityInt64Atomics};
     constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     constexpr std::array<std::uint32_t, 12> userData{0u, 0u, 0u, 0u, 0x10000000u, 0u, 0x1000u, 0x31016facu, 0x20000000u, 0u, 0x1000u, 0x31038facu};
     const auto code = [](std::uint32_t store, std::uint32_t resource) {
         return std::array<std::uint32_t, 9>{0xe0000000u, 0x80010a00u, 0xbf8c3f70u, store, resource, 0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
     };
-    const std::array<std::pair<std::array<std::uint32_t, 9>, std::set<std::string>>, 2> cases{{
-        {code(0xe0104000u, 0x80010a00u), {"buffers", "buffers_coherent"}},
-        {code(0xe1480000u, 0x80010a00u), {"buffers", "buffers_u64"}},
-    }};
+    const std::array<std::array<std::uint32_t, 9>, 2> cases{{code(0xe0104000u, 0x80010a00u), code(0xe1480000u, 0x80010a00u)}};
     AgcDriver::Graphics::State state{};
     state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
     ShaderRecompiler::RecompileResult vertex;
     vertex.spirv = makeModule({});
     const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
-    for (const auto& [words, views] : cases) {
+    for (const auto& words : cases) {
         auto request = orderedPixelRequest(0x20600u, capabilities, words);
         request.target.supportedExtensions = extensions;
         request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
         request.context.userDataBaseRegister = 0;
         request.context.userData = userData;
-        auto pixel = ShaderRecompiler::Recompile(request);
-        const auto declared = bufferViews(pixel.spirv.Words());
-        std::string names;
-        for (const auto& name : declared) names += " " + name;
-        Require(declared == views, "the pixel shader declared the guest buffers as" + names + ", not as the expected " + std::to_string(views.size()) + " aliased variables");
+        const auto pixel = ShaderRecompiler::Recompile(request);
+        const auto buffers = std::find_if(pixel.bindings.begin(), pixel.bindings.end(), [](const auto& binding) { return binding.role == Role::GuestBuffers; });
+        Require(buffers != pixel.bindings.end() && buffers->kind == Kind::DeviceAddress, "the pixel shader's guest buffers are not read through device addresses");
+        const auto storageBindings = static_cast<std::size_t>(std::count_if(pixel.bindings.begin(), pixel.bindings.end(), [](const auto& binding) { return binding.kind == Kind::StorageBuffer; }));
+        Require(storageBufferVariables(pixel.spirv.Words()) == storageBindings && convertsAddresses(pixel.spirv.Words()), "the pixel shader declared its guest buffers as descriptors");
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}}};
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, true);
-        auto unaliased = pixel.spirv.Words();
-        for (std::size_t at = 5; at < unaliased.size() && (unaliased[at] >> 16u) != 0; at += unaliased[at] >> 16u) {
-            if (static_cast<spv::Op>(unaliased[at] & 0xffffu) == spv::OpDecorate && unaliased[at + 2] == spv::DecorationAliased) unaliased[at + 2] = spv::DecorationRestrict;
-        }
-        pixel.spirv = std::move(unaliased);
-        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, true); }, "duplicate SPIR-V resource binding");
     }
 }
 
@@ -5506,7 +5540,7 @@ void validationTests() {
         vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, words));
         return vertex;
     };
-    validate(pushed({.push = true, .bufferArray = 2}), 8);
+    validate(pushed({.push = true}), 8);
     {
         ShaderRecompiler::RecompileResult vertex;
         vertex.spirv = makeModule({.shaderData = true});
@@ -5515,41 +5549,40 @@ void validationTests() {
     }
     {
         ShaderRecompiler::RecompileResult vertex;
-        vertex.spirv = makeModule({.bufferArray = 1, .shaderData = true});
+        vertex.spirv = makeModule({.shaderData = true});
         vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, {1, 2, 3, 4}));
         vertex.bindings.push_back(makeBinding(Role::ShaderData, 5, 1, {1, 2}));
         validate(vertex, 0);
     }
-    expectFailure([&] { validate(pushed({.push = true, .pushLength = 16, .bufferArray = 2}), 8); }, "32 elements");
-    expectFailure([&] { validate(pushed({.push = true, .pushStride = 8, .bufferArray = 2}), 8); }, "ArrayStride of 4");
-    expectFailure([&] { validate(pushed({.push = false, .bufferArray = 2}), 8); }, "push constant metadata disagrees with SPIR-V");
+    expectFailure([&] { validate(pushed({.push = true, .pushLength = 16}), 8); }, "32 elements");
+    expectFailure([&] { validate(pushed({.push = true, .pushStride = 8}), 8); }, "ArrayStride of 4");
+    expectFailure([&] { validate(pushed({.push = false}), 8); }, "push constant metadata disagrees with SPIR-V");
     {
-        auto vertex = pushed({.push = true, .bufferArray = 2});
+        auto vertex = pushed({.push = true});
         vertex.pushConstants.clear();
         expectFailure([&] { validate(vertex, 8); }, "invalid push constant interface");
     }
+    expectFailure([&] { validate(pushed({.push = true, .bufferArray = 2}), 8); }, "disagrees with recompiler binding metadata");
+    expectFailure([&] { validate(pushed({.push = true, .plainBuffer = true}), 8); }, "disagrees with recompiler binding metadata");
     {
-        auto vertex = pushed({.push = true, .bufferArray = 3});
-        expectFailure([&] { validate(vertex, 8); }, "descriptor array length disagrees");
-    }
-    {
-        auto vertex = pushed({.push = true, .plainBuffer = true});
-        expectFailure([&] { validate(vertex, 8); }, "must be declared as a descriptor array");
-    }
-    {
-        auto vertex = pushed({.push = true, .bufferArray = 2});
+        auto vertex = pushed({.push = true});
         vertex.bindings.front().readOnly = true;
         expectFailure([&] { validate(vertex, 8); }, "read-only descriptor metadata is unsupported");
     }
     {
-        auto vertex = pushed({.push = true, .bufferArray = 2});
+        auto vertex = pushed({.push = true});
         vertex.bindings.front().descriptorSet = 1;
         expectFailure([&] { validate(vertex, 8); }, "descriptor set other than its stage's");
     }
     {
-        auto vertex = pushed({.push = true, .bufferArray = 2});
+        auto vertex = pushed({.push = true});
         vertex.bindings.front().kind = Kind::UniformBuffer;
-        expectFailure([&] { validate(vertex, 8); }, "disagrees with recompiler binding metadata");
+        expectFailure([&] { validate(vertex, 8); }, "contains undeclared resources");
+    }
+    {
+        auto vertex = pushed({.push = true});
+        vertex.bindings.front().role = Role::ShaderData;
+        expectFailure([&] { validate(vertex, 8); }, "only guest buffers are read through device addresses");
     }
     {
         ShaderRecompiler::RecompileResult vertex;
@@ -5812,7 +5845,11 @@ int main(int argc, char** argv) {
                 auto context = mockContext();
                 context.limits.maxStorageBufferRange = 1u << 27;
                 passed = RunSparseBufferHoleTests(context, {
-                    [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); }, {}, {}, {}, {}
+                    [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); }, {},
+                    [](VkDeviceAddress address) -> std::span<std::byte> {
+                        const auto relative = address - 0x100000000000ULL;
+                        return mockBufferMemory(reinterpret_cast<VkBuffer>(static_cast<std::uintptr_t>(relative >> 32u))).subspan(static_cast<std::size_t>(relative & 0xffffffffu));
+                    }, {}, {}
                 });
             }
             Require(mock.live == 0, "sparse buffer hole tests leaked Vulkan objects");
@@ -5898,7 +5935,7 @@ int main(int argc, char** argv) {
         earlyFragmentTestsTests();
         orderedPixelShaderTests();
         stencilRefExportTests();
-        aliasedBufferViewTests();
+        deviceAddressBufferTests();
         LineStripTests();
         ProvokingVertexTests();
         ProvokingVertexRenderPassTests();
@@ -5974,8 +6011,8 @@ int main(int argc, char** argv) {
             },
             [](VkDeviceAddress address) {
                 const auto offset = address - 0x100000000000ULL;
-                const auto buffer = reinterpret_cast<VkBuffer>(offset / 0x10000);
-                return mockBufferMemory(buffer).subspan(offset % 0x10000);
+                const auto buffer = reinterpret_cast<VkBuffer>(static_cast<std::uintptr_t>(offset >> 32u));
+                return mockBufferMemory(buffer).subspan(static_cast<std::size_t>(offset & 0xffffffffu));
             },
             [](std::optional<VkDeviceSize> headroom) {
                 mock.memoryLimit = headroom.has_value() ? std::optional<VkDeviceSize>(mock.allocatedBytes + *headroom) : std::nullopt;

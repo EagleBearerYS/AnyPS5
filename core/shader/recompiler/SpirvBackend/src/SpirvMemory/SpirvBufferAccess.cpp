@@ -52,10 +52,18 @@ std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dw
 void EmitMemoryOffsets(SpirvEmitterState& state) {
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     state.memoryByteOffsets.assign(layout.memoryOffsetCount, 0u);
+    state.bufferAddresses.assign(layout.memoryOffsetCount, 0u);
+    state.bufferDwords.assign(layout.memoryOffsetCount, 0u);
     for (std::uint32_t i = 0; i < layout.memoryOffsetCount; i++) {
+        const auto u64 = TypeScalarU64(state);
         const auto word = EmitShaderDataDwordLoad(state, layout.memoryOffsetDword + i / 4u);
         const auto shift = ConstantU32(state, (i % 4u) * 8u);
         state.memoryByteOffsets[i] = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, word, shift), ConstantU32(state, 0xffu));
+        const auto first = layout.BufferAddressDword() + i * RuntimeAbi::BufferAddressDwords;
+        const auto low = Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, first));
+        const auto high = Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, first + 1u));
+        state.bufferAddresses[i] = Binary(state, spv::OpBitwiseOr, u64, low, Binary(state, spv::OpShiftLeftLogical, u64, high, ConstantU32(state, 32u)));
+        state.bufferDwords[i] = EmitShaderDataDwordLoad(state, first + 2u);
     }
 }
 
@@ -178,7 +186,7 @@ std::uint32_t EmitMemoryElementPointer(SpirvEmitterState& state, const MemoryRes
         state.module.AddFunction(spv::OpAccessChain, TypeU32ElementPointer(state, storageClass), pointer, access.objectPointer, index);
         return pointer;
     }
-    return EmitStorageBufferElementPointer(state, access, index, TypeStorageBufferElementPointer(state));
+    return EmitStorageBufferElementPointer(state, access, index, access.alignment != 0u ? TypePhysicalU32Pointer(state) : TypeStorageBufferElementPointer(state));
 }
 
 std::uint32_t EmitStorageBufferElementPointer(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t index, std::uint32_t pointerType) {

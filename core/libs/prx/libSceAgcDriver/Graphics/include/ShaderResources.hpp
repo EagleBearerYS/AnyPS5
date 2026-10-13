@@ -149,6 +149,11 @@ public:
         DescriptorCache::SetAllocation fragmentAllocation;
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
+        bool HasSets() const { return allocation.set != VK_NULL_HANDLE || fragmentAllocation.set != VK_NULL_HANDLE; }
+        void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
+            for (const auto& [position, value] : pushPatches) bytes[position] = static_cast<std::byte>(value);
+        }
         ~DrawBindings();
     };
     struct MovedBuffer {
@@ -296,6 +301,9 @@ private:
         std::int32_t pushByte = -1;
         std::int64_t dataAllocation = -1;
         std::uint32_t dataByte = 0;
+        bool deviceAddressed = false;
+        std::int32_t addressPushByte = -1;
+        std::uint32_t addressDataByte = 0;
     };
     struct DataPatch {
         std::size_t allocation;
@@ -310,6 +318,7 @@ private:
         std::vector<std::size_t> imageAllocations;
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
+        bool addressOnly = false;
     };
 
     struct TableStage {
@@ -408,6 +417,8 @@ private:
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
+    std::pair<VkDeviceAddress, std::uint64_t> bufferAddress(Allocation& allocation);
+    void patchBufferAddress(const Allocation& allocation, VkDeviceAddress address, std::uint64_t bytes);
     void noteReusable();
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)

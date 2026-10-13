@@ -74,20 +74,26 @@ RecompileResult Compile(std::uint32_t mode) {
     auto& module = state.module;
     module.EmitCapability(spv::CapabilityShader);
     module.EmitCapability(spv::CapabilityFloat64);
+    module.EmitCapability(spv::CapabilityInt64);
+    module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
     module.EmitCapability(spv::CapabilitySignedZeroInfNanPreserve);
     module.EmitExtension("SPV_KHR_float_controls");
-    module.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+    module.EmitExtension("SPV_KHR_physical_storage_buffer");
+    module.AddMemoryModel(spv::AddressingModelPhysicalStorageBuffer64, spv::MemoryModelGLSL450);
     const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
     const auto array = module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, u32);
     const auto structure = module.Type(spv::OpTypeStruct, array);
     module.AddAnnotation(spv::OpDecorate, structure, spv::DecorationBlock);
     module.AddAnnotation(spv::OpMemberDecorate, structure, 0u, spv::DecorationOffset, 0u);
-    const auto buffer = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, structure), spv::StorageClassStorageBuffer);
-    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationDescriptorSet, 0u);
-    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationBinding, 0u);
+    const auto pushArray = module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, u32, ConstantU32(state, ShaderRecompiler::RuntimeAbi::PushConstantDwords));
+    const auto pushBlock = module.Type(spv::OpTypeStruct, pushArray);
+    module.AddAnnotation(spv::OpDecorate, pushBlock, spv::DecorationBlock);
+    module.AddAnnotation(spv::OpMemberDecorate, pushBlock, 0u, spv::DecorationOffset, 0u);
+    const auto push = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassPushConstant, pushBlock), spv::StorageClassPushConstant);
     const auto invocation = module.DefineGlobalVariable(TypePointer(state, spv::StorageClassInput, TypeU32Vector(state, 3u)), spv::StorageClassInput);
     module.AddAnnotation(spv::OpDecorate, invocation, spv::DecorationBuiltIn, spv::BuiltInGlobalInvocationId);
-    const auto element = module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, u32);
+    const auto element = module.Type(spv::OpTypePointer, spv::StorageClassPhysicalStorageBuffer, u32);
     const auto main = module.AllocateId();
     const auto voidType = module.Type(spv::OpTypeVoid);
     module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", {invocation});
@@ -100,6 +106,16 @@ RecompileResult Compile(std::uint32_t mode) {
     const auto lane = module.AllocateId();
     module.AddFunction(spv::OpCompositeExtract, u32, lane, id, 0u);
     const auto rowBase = Binary(state, spv::OpIMul, u32, lane, ConstantU32(state, Words));
+    const auto pushWord = [&](std::uint32_t dword) {
+        const auto pointer = module.AllocateId();
+        module.AddFunction(spv::OpAccessChain, module.Type(spv::OpTypePointer, spv::StorageClassPushConstant, u32), pointer, push, ConstantU32(state, 0u), ConstantU32(state, dword));
+        const auto word = module.AllocateId();
+        module.AddFunction(spv::OpLoad, u32, word, pointer);
+        return Unary(state, spv::OpUConvert, u64, word);
+    };
+    const auto deviceAddress = Binary(state, spv::OpBitwiseOr, u64, pushWord(1u), Binary(state, spv::OpShiftLeftLogical, u64, pushWord(2u), ConstantU32(state, 32u)));
+    const auto buffer = module.AllocateId();
+    module.AddFunction(spv::OpConvertUToPtr, module.Type(spv::OpTypePointer, spv::StorageClassPhysicalStorageBuffer, structure), buffer, deviceAddress);
     const auto address = [&](std::uint32_t offset) {
         const auto pointer = module.AllocateId();
         module.AddFunction(spv::OpAccessChain, element, pointer, buffer, ConstantU32(state, 0u), Binary(state, spv::OpIAdd, u32, rowBase, ConstantU32(state, offset)));
@@ -107,7 +123,7 @@ RecompileResult Compile(std::uint32_t mode) {
     };
     const auto load = [&](std::uint32_t offset) {
         const auto word = module.AllocateId();
-        module.AddFunction(spv::OpLoad, u32, word, address(offset));
+        module.AddFunction(spv::OpLoad, u32, word, address(offset), spv::MemoryAccessAlignedMask, 4u);
         return Unary(state, spv::OpBitcast, TypeF32(state), word);
     };
     IrProgram constants;
@@ -120,15 +136,18 @@ RecompileResult Compile(std::uint32_t mode) {
         const auto base = load(op * 3u + 2u);
         const auto value = op == 1u ? EmitFPInterpolateF16(state, delta, coordinate, base, flags) : EmitFPInterpolateF32(state, delta, coordinate, base, flags);
         const auto result = op == 1u ? EmitConvertF16F32(state, value) : Unary(state, spv::OpBitcast, u32, value);
-        module.AddFunction(spv::OpStore, address(9u + op), result);
+        module.AddFunction(spv::OpStore, address(9u + op), result, spv::MemoryAccessAlignedMask, 4u);
     }
     module.AddFunction(spv::OpReturn);
     module.AddFunction(spv::OpFunctionEnd);
     RecompileResult result{};
     result.spirv = module.Finalize();
     const auto base = reinterpret_cast<std::uintptr_t>(Data.data());
-    result.bindings.push_back({DescriptorKind::StorageBuffer, DescriptorRole::GuestBuffers, 0u, 0u, 1u,
+    result.bindings.push_back({DescriptorKind::DeviceAddress, DescriptorRole::GuestBuffers, 0u, 0u, 1u,
         {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Data)), 0x31016facu}, false});
+    result.memoryOffsetDword = 0u;
+    result.bufferAddressDword = 1u;
+    result.pushConstants.assign((1u + ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u, std::byte{0});
     return result;
 }
 

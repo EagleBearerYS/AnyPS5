@@ -35,6 +35,9 @@ struct BufferWrittenCounts {
 BufferWrittenCounts bufferWrittenCounts;
 
 DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
+    if (kind == DescriptorBindingKind::Buffers) {
+        return DescriptorKind::DeviceAddress;
+    }
     if (kind == DescriptorBindingKind::Samplers || kind == DescriptorBindingKind::SamplerTable) {
         return DescriptorKind::Sampler;
     }
@@ -490,7 +493,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     std::set<std::uint32_t> remaining(bindings.begin(), bindings.end());
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
-        if (remaining.erase(binding.descriptor.binding) == 0u) continue;
+        const bool declared = remaining.erase(binding.descriptor.binding) != 0u;
+        if (!declared && binding.descriptor.kind != DescriptorKind::DeviceAddress) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
     }

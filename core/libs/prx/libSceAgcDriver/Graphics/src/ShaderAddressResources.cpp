@@ -36,12 +36,32 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
     }
 }
 
-VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
-    if (allocation.guest) return guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment);
-    if (allocation.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
-        Require(context.emptyBuffer != VK_NULL_HANDLE, "no placeholder buffer for a null V#");
-        return {context.emptyBuffer, 0, allocation.size};
+std::pair<VkDeviceAddress, std::uint64_t> ShaderResources::bufferAddress(Allocation& allocation) {
+    Require(allocation.deviceAddressed, "the allocation is not a guest buffer bound by device address");
+    if (allocation.guest) return guestMemory.Address(allocation.address, allocation.size, allocation.adjustment);
+    return {0, 0};
+}
+
+void ShaderResources::patchBufferAddress(const Allocation& allocation, VkDeviceAddress address, std::uint64_t bytes) {
+    Require(bytes / 4u <= std::numeric_limits<std::uint32_t>::max(), "guest buffer view exceeds the shader's 32-bit dword count");
+    const std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::BufferAddressDwords> words{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), static_cast<std::uint32_t>(bytes / 4u)};
+    const auto raw = std::as_bytes(std::span(words));
+    if (allocation.addressPushByte >= 0) {
+        for (std::size_t byte = 0; byte < raw.size(); ++byte) pushPatches.emplace_back(static_cast<std::uint32_t>(allocation.addressPushByte) + static_cast<std::uint32_t>(byte), static_cast<std::uint32_t>(raw[byte]));
+        return;
     }
+    Require(allocation.dataAllocation >= 0, "a guest buffer bound by device address in a shader without shader data");
+    auto& data = allocations[static_cast<std::size_t>(allocation.dataAllocation)];
+    Require(data.buffer != nullptr && allocation.addressDataByte + raw.size() <= data.size, "guest buffer address lies outside the shader's data buffer");
+    for (std::size_t byte = 0; byte < raw.size(); ++byte) {
+        data.buffer->Bytes()[allocation.addressDataByte + byte] = raw[byte];
+        dataPatches.push_back({static_cast<std::size_t>(allocation.dataAllocation), allocation.addressDataByte + static_cast<std::uint32_t>(byte), static_cast<std::uint32_t>(raw[byte])});
+    }
+}
+
+VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
+    Require(!allocation.deviceAddressed, "a guest buffer read through its device address has no descriptor");
+    if (allocation.guest) return guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment);
     if (allocation.role == ShaderRecompiler::DescriptorRole::BdaPagetable || allocation.role == ShaderRecompiler::DescriptorRole::FaultBuffer) {
         Require(bda != nullptr, "BDA descriptors have no memory owner");
         return allocation.role == ShaderRecompiler::DescriptorRole::BdaPagetable ? bda->Table() : bda->Fault();

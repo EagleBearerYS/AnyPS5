@@ -477,6 +477,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
+    result.bufferAddressDword = bindings.layout.BufferAddressDword();
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
@@ -765,6 +766,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     const auto& artifact = variant.artifact;
     static_cast<CompiledShaderArtifact&>(result) = {
         .memoryOffsetDword = artifact.memoryOffsetDword,
+        .bufferAddressDword = artifact.bufferAddressDword,
         .shaderDataDwords = artifact.shaderDataDwords,
         .imageMetadataDword = artifact.imageMetadataDword,
         .runtimeImageCount = artifact.runtimeImageCount,

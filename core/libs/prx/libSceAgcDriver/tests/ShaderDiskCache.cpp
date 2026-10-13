@@ -846,7 +846,7 @@ void verifyBindingPlanSelection() {
     builder.Populate(full, compiled, plan, 0u, snapshot, {});
     require(full.bindings.size() == 4u, "binding plan lost a descriptor before module selection");
     require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true}, "binding plan lost buffer access metadata");
-    const std::array liveBindings{full.bindings[0].binding, full.bindings[0].binding, full.bindings[3].binding};
+    const std::array liveBindings{full.bindings[3].binding};
     const auto selected = builder.Select(plan, liveBindings);
     snapshot.userData.clear();
     snapshot.flattenedSrt.clear();

@@ -1,5 +1,10 @@
 #version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 layout(local_size_x = 1) in;
-layout(set = 0, binding = 0, std430) buffer Values { uint values[]; };
-layout(push_constant) uniform Update { uint delta; } update;
-void main() { values[gl_GlobalInvocationID.x] += update.delta; }
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Values { uint values[]; };
+layout(push_constant) uniform Update { uint offsets; uint addressLow; uint addressHigh; uint dwords; uint delta; } update;
+void main() {
+    Values values = Values((uint64_t(update.addressHigh) << 32) | uint64_t(update.addressLow));
+    values.values[gl_GlobalInvocationID.x] += update.delta;
+}

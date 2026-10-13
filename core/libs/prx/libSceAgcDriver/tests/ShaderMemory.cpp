@@ -32,6 +32,7 @@
 #include <future>
 #include <memory>
 #include <stdexcept>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -2927,7 +2928,7 @@ void verifySpecializedBufferAtomicBindings() {
         if (opcode == spv::OpFunctionCall && faultFunction != 0 && words[cursor + 3] == faultFunction) ++faultCalls;
         cursor += count;
     }
-    require(!physical, "specialized buffer atomic: the module addresses physical storage without an address access");
+    require(physical, "specialized buffer atomic: the module does not read its V# element through a device address");
     require(int64, "specialized buffer atomic: the fault address is 64-bit and the module does not declare Int64");
     require(faultFunction != 0 && faultCalls == 1, "specialized buffer atomic: an unaligned atomic does not record exactly one fault");
     const std::array<std::uint32_t, 1> shaderOnly{spv::CapabilityShader};
@@ -2980,10 +2981,10 @@ void verifyCoherentBufferAccesses() {
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     struct Module {
-        std::map<std::uint32_t, std::string> names;
-        std::map<std::uint32_t, std::vector<std::uint32_t>> decorations;
-        std::vector<std::string> loads;
-        std::vector<std::string> stores;
+        std::size_t loads = 0;
+        std::size_t stores = 0;
+        std::size_t atomicLoads = 0;
+        std::size_t atomicStores = 0;
     };
     const auto compile = [&](bool invalidate, bool glcLoad, bool glcStore) {
         std::vector<std::uint32_t> code{0x34020082u};
@@ -3006,62 +3007,35 @@ void verifyCoherentBufferAccesses() {
         request.useCache = false;
         const auto words = Recompile(request).spirv;
         Module module;
-        std::map<std::uint32_t, std::uint32_t> bases;
-        const auto base = [&](std::uint32_t pointer) {
-            const auto found = bases.find(pointer);
-            const auto variable = found == bases.end() ? pointer : found->second;
-            const auto name = module.names.find(variable);
-            return name == module.names.end() ? std::string() : name->second;
-        };
+        std::set<std::uint32_t> physical;
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             const auto opcode = words[cursor] & 0xffffu;
             require(count != 0 && count <= words.size() - cursor, "coherent buffers: truncated SPIR-V instruction");
-            if (opcode == spv::OpName) module.names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
-            if (opcode == spv::OpDecorate) module.decorations[words[cursor + 1]].push_back(words[cursor + 2]);
-            if (opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) {
-                const auto found = bases.find(words[cursor + 3]);
-                bases[words[cursor + 2]] = found == bases.end() ? words[cursor + 3] : found->second;
-            }
-            if (opcode == spv::OpLoad && base(words[cursor + 3]).starts_with("buffers")) module.loads.push_back(base(words[cursor + 3]));
-            if (opcode == spv::OpStore && base(words[cursor + 1]).starts_with("buffers")) module.stores.push_back(base(words[cursor + 1]));
+            if (opcode == spv::OpConvertUToPtr) physical.insert(words[cursor + 2]);
+            if ((opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && physical.contains(words[cursor + 3])) physical.insert(words[cursor + 2]);
+            if (opcode == spv::OpLoad && physical.contains(words[cursor + 3])) ++module.loads;
+            if (opcode == spv::OpStore && physical.contains(words[cursor + 1])) ++module.stores;
+            if (opcode == spv::OpAtomicLoad && physical.contains(words[cursor + 3])) ++module.atomicLoads;
+            if (opcode == spv::OpAtomicStore && physical.contains(words[cursor + 1])) ++module.atomicStores;
             cursor += count;
         }
         return module;
     };
-    const auto decorated = [](const Module& module, std::string_view name, spv::Decoration decoration) {
-        for (const auto& [id, variable] : module.names) {
-            if (variable != name) continue;
-            const auto found = module.decorations.find(id);
-            return found != module.decorations.end() && std::ranges::find(found->second, static_cast<std::uint32_t>(decoration)) != found->second.end();
-        }
-        return false;
-    };
-    const auto declared = [](const Module& module, std::string_view name) {
-        return std::ranges::any_of(module.names, [&](const auto& entry) { return entry.second == name; });
-    };
-    const auto only = [](const std::vector<std::string>& accesses, std::string_view name) {
-        return !accesses.empty() && std::ranges::all_of(accesses, [&](const std::string& access) { return access == name; });
-    };
 
     const auto plain = compile(false, false, false);
-    require(!declared(plain, "buffers_coherent") && !decorated(plain, "buffers", spv::DecorationCoherent), "coherent buffers: a program without GLC or DLC accesses declares coherent buffers");
-    require(only(plain.loads, "buffers") && only(plain.stores, "buffers"), "coherent buffers: a program without GLC or DLC accesses does not use the buffer array");
+    require(plain.loads != 0 && plain.stores != 0 && plain.atomicLoads == 0 && plain.atomicStores == 0, "coherent buffers: a program without GLC or DLC accesses makes its buffer accesses coherent");
 
     const auto store = compile(false, false, true);
-    require(declared(store, "buffers_coherent") && decorated(store, "buffers_coherent", spv::DecorationCoherent), "coherent buffers: a GLC store has no coherent buffer array");
-    require(!decorated(store, "buffers", spv::DecorationCoherent), "coherent buffers: a GLC store makes the loads without GLC coherent");
-    require(decorated(store, "buffers", spv::DecorationAliased) && decorated(store, "buffers_coherent", spv::DecorationAliased), "coherent buffers: the two buffer arrays are not decorated Aliased");
-    require(only(store.loads, "buffers"), "coherent buffers: a load without GLC goes through the coherent buffer array");
-    require(only(store.stores, "buffers_coherent"), "coherent buffers: a GLC store goes through the buffer array without Coherent");
+    require(store.atomicStores != 0 && store.stores == 0, "coherent buffers: a GLC store is not a device-coherent store");
+    require(store.loads != 0 && store.atomicLoads == 0, "coherent buffers: a GLC store makes the loads without GLC coherent");
 
     const auto load = compile(false, true, false);
-    require(only(load.loads, "buffers_coherent"), "coherent buffers: a GLC load goes through the buffer array without Coherent");
-    require(only(load.stores, "buffers_coherent"), "coherent buffers: a store in a program with GLC accesses goes through the buffer array without Coherent");
+    require(load.atomicLoads != 0 && load.loads == 0, "coherent buffers: a GLC load is not a device-coherent load");
+    require(load.atomicStores != 0 && load.stores == 0, "coherent buffers: a store in a program with GLC accesses is not device-coherent");
 
     const auto invalidated = compile(true, false, true);
-    require(!declared(invalidated, "buffers_coherent") && decorated(invalidated, "buffers", spv::DecorationCoherent), "coherent buffers: a program that invalidates the vector caches does not keep every buffer access coherent");
-    require(only(invalidated.loads, "buffers") && only(invalidated.stores, "buffers"), "coherent buffers: a program that invalidates the vector caches does not use the coherent buffer array");
+    require(invalidated.atomicLoads != 0 && invalidated.loads == 0 && invalidated.atomicStores != 0 && invalidated.stores == 0, "coherent buffers: a program that invalidates the vector caches does not keep every buffer access coherent");
 }
 
 void verifyUnnormalizedSamplers() {

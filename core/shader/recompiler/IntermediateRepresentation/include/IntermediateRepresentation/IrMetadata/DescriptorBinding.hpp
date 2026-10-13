@@ -47,8 +47,11 @@ struct IrBindingLayout {
     std::vector<std::uint32_t> userDataRegisters;
     std::vector<IrDescriptorBinding> descriptors;
 
-    [[nodiscard]] std::uint32_t DispatchThreadLimitDword() const {
+    [[nodiscard]] std::uint32_t BufferAddressDword() const {
         return memoryOffsetDword + (memoryOffsetCount + 3u) / 4u;
+    }
+    [[nodiscard]] std::uint32_t DispatchThreadLimitDword() const {
+        return BufferAddressDword() + memoryOffsetCount * RuntimeAbi::BufferAddressDwords;
     }
     [[nodiscard]] std::uint32_t ImageMetadataDword() const {
         return DispatchThreadLimitDword() + (dispatchThreadLimit ? 3u : 0u);

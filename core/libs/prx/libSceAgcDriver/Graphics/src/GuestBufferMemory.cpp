@@ -2578,8 +2578,8 @@ std::uint64_t gpuCopyLimit() {
     return limit;
 }
 
-VkBufferUsageFlags gpuCopyUsage(bool addressable) {
-    return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (addressable ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
+VkBufferUsageFlags gpuCopyUsage() {
+    return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 }
 
 // Device-local staging. A written V# element bound in place makes the shader store into host
@@ -2876,7 +2876,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             const bool misaligned = !bindableInPlace(region.begin - entry->base, addressable);
             if (staged) {
                 const auto allocateStart = std::chrono::steady_clock::now();
-                region.buffer = stagingBuffer(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(addressable));
+                region.buffer = stagingBuffer(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage());
                 if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
                 if (region.buffer == nullptr) {
                     // No shadow to be had: in place when aligned, else the host copy below.
@@ -2888,7 +2888,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
                 if (!staged) {
                     if (!gpuCopyEligible(region)) continue;
                     const auto allocateStart = std::chrono::steady_clock::now();
-                    region.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(addressable), copyBufferProperties(false));
+                    region.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(), copyBufferProperties(false));
                     if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
                 }
                 region.deviceLocal = staged;
@@ -3102,7 +3102,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
 void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto bytes = region.end - region.begin;
-    const auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (addressable ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
+    const auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     std::uint64_t readBytes = 0;
     bool inImport = false;
     if (profile && context.hostImportAlignment != 0) {
@@ -3210,12 +3210,12 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         if (region->buffer == nullptr) {
             // Not made by UploadPrepare (the registry was stale then): made here, under the lock.
             const auto allocateStart = std::chrono::steady_clock::now();
-            if (region->deviceLocal) region->buffer = stagingBuffer(context, static_cast<std::size_t>(bytes), gpuCopyUsage(addressable));
+            if (region->deviceLocal) region->buffer = stagingBuffer(context, static_cast<std::size_t>(bytes), gpuCopyUsage());
             if (region->buffer == nullptr) {
                 // Or no shadow to be had: a host copy serves the region instead, aligned or not.
                 region->deviceLocal = false;
                 region->unstaged = true;
-                region->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), gpuCopyUsage(addressable), copyBufferProperties(false));
+                region->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), gpuCopyUsage(), copyBufferProperties(false));
             }
             if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
         }
@@ -3375,6 +3375,35 @@ VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std:
     Require(range <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? region.mirror->buffer->Handle() : region.buffer->Handle();
     return {handle, offset - adjustment, range};
+}
+
+std::pair<VkDeviceAddress, std::uint64_t> GuestBufferMemory::Address(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {
+    Require(uploaded && !committed, "guest GPU memory is not available");
+    Require(bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest buffer view");
+    const auto* found = owner(address);
+    Require(found != nullptr, "guest buffer has no GPU owner");
+    const auto& region = *found;
+    const auto describe = [&](const char* what) {
+        char text[256];
+        std::snprintf(text, sizeof(text), "guest buffer view 0x%llx+0x%llx %s its GPU owner 0x%llx-0x%llx (buffer %d, direct %d, mirror %d)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), what, static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end), region.buffer != nullptr, region.direct != nullptr, region.mirror != nullptr);
+        return std::string(text);
+    };
+    if (!(address >= region.begin && address + bytes <= region.end && (region.buffer != nullptr || region.direct != nullptr || region.mirror != nullptr))) Require(false, describe("exceeds"));
+    const auto base = region.direct != nullptr ? region.direct->base : region.mirror != nullptr ? region.mirror->base : region.begin;
+    const auto offset = address - base;
+    Require(base % 4 == 0, "a guest buffer view in a GPU owner that does not start at a DWORD boundary is not implemented");
+    adjustment = static_cast<std::uint32_t>(offset % AddressAlignment);
+    auto range = ViewBytes(bytes, adjustment);
+    const auto end = region.direct != nullptr ? region.direct->base + region.direct->bytes : servedEnd(region);
+    if (region.direct == nullptr && end < region.end) {
+        Require(address - adjustment < end, "guest buffer view starts past its copy");
+        range = std::min<std::uint64_t>(range, end - (address - adjustment));
+    }
+    if (address - adjustment + range > end) Require(false, describe("rounded up to its view range exceeds"));
+    const auto owned = region.direct != nullptr ? region.direct->address : region.mirror != nullptr ? region.mirror->buffer->DeviceAddress() : region.buffer->DeviceAddress();
+    const auto device = owned + offset - adjustment;
+    Require(device % AddressAlignment == 0, "a guest buffer's GPU owner is not aligned for device address access");
+    return {device, range};
 }
 
 std::uint64_t GuestBufferMemory::ViewBytes(std::uint64_t bytes, std::uint32_t adjustment) {

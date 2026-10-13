@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -83,15 +84,29 @@ public:
             Require(family < count, "no Vulkan compute queue");
             std::printf("Selected GPU name=%s vendor=0x%x device=0x%x subgroup=%u\n", selected.properties.deviceName, selected.properties.vendorID, selected.properties.deviceID, subgroup.subgroupSize);
             std::printf("sparse buffer holes GPU: api=%u.%u.%u; queueFamily=%u\n", VK_API_VERSION_MAJOR(selected.properties.apiVersion), VK_API_VERSION_MINOR(selected.properties.apiVersion), VK_API_VERSION_PATCH(selected.properties.apiVersion), family);
+            const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
+            Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
+            std::vector<VkExtensionProperties> available(count);
+            Check(extensions(context.physical, nullptr, &count, available.data()), "vkEnumerateDeviceExtensionProperties");
+            auto bytes = AgcDriver::QueryBdaByteFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
+            auto address = AgcDriver::QueryBdaFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             const float priority = 1;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
             queue.queueCount = 1;
             queue.pQueuePriorities = &priority;
-            VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+            VkPhysicalDeviceFeatures enabled{};
+            enabled.shaderInt64 = VK_TRUE;
+            address.pNext = &bytes;
+            const std::array<const char*, 2> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
+            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
+            device.ppEnabledExtensionNames = extensionsEnabled.data();
+            device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
+            context.bufferDeviceAddress = true;
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
             function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(context.physical, &context.memory);
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
@@ -323,9 +338,11 @@ void Run(const Context& context, const CopyPipeline& pipeline, bool writable, co
     Buffer readback(context, BufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     std::memset(readback.Bytes().data(), 0xcc, BufferBytes);
     VkBuffer primed = VK_NULL_HANDLE;
+    VkDeviceAddress primedAddress = 0;
     {
-        Buffer earlier(context, BufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer earlier(context, BufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
         primed = earlier.Handle();
+        primedAddress = earlier.DeviceAddress();
         std::memset(earlier.Bytes().data(), 0xa5, BufferBytes);
     }
     GuestBufferMemory memory(context);
@@ -336,10 +353,10 @@ void Run(const Context& context, const CopyPipeline& pipeline, bool writable, co
         memory.Upload(false);
     }
     std::uint32_t adjustment = 0;
-    const auto descriptor = memory.Descriptor(pages.Address(), requested, adjustment);
-    Require(descriptor.buffer == primed && descriptor.offset == 0 && descriptor.range == BufferBytes && adjustment == 0, label + ": the upload did not reuse the primed buffer at the expected extent");
-    std::cout << label << " reused primed buffer; requested=" << requested << "; allocated=" << descriptor.range << '\n';
-    pipeline.Copy(descriptor, readback);
+    const auto view = memory.Address(pages.Address(), requested, adjustment);
+    Require(view.first == primedAddress && view.second == BufferBytes && adjustment == 0, label + ": the upload did not reuse the primed buffer at the expected extent");
+    std::cout << label << " reused primed buffer; requested=" << requested << "; allocated=" << view.second << '\n';
+    pipeline.Copy({primed, 0, view.second}, readback);
     const auto bytes = readback.Bytes();
     std::size_t mismatches = 0;
     std::size_t staleWords = 0;

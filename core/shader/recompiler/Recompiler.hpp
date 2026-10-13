@@ -338,7 +338,8 @@ enum class DescriptorKind {
     StorageTexelBuffer,
     SampledImage,
     StorageImage,
-    Sampler
+    Sampler,
+    DeviceAddress
 };
 
 enum class DescriptorImageShape {
@@ -503,6 +504,7 @@ struct CompiledShaderArtifact {
     std::vector<VertexInputPatch> vertexInputPatches;
     SharedSpirv spirv;
     std::uint32_t memoryOffsetDword = 0;
+    std::uint32_t bufferAddressDword = 0;
     std::uint32_t shaderDataDwords = 0;
     std::uint32_t imageMetadataDword = 0;
     std::uint32_t runtimeImageCount = 0;

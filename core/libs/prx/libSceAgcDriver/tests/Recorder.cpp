@@ -310,6 +310,16 @@ private:
 
 using Kind = Recorder::ReadKind;
 
+void pushBufferData(ShaderRecompiler::RecompileResult& program) {
+    std::uint32_t buffers = 0;
+    for (const auto& binding : program.bindings) {
+        if (binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) buffers += binding.count;
+    }
+    program.memoryOffsetDword = 0;
+    program.bufferAddressDword = (buffers + 3u) / 4u;
+    program.pushConstants.assign((program.bufferAddressDword + buffers * ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u, std::byte{0});
+}
+
 void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     context.nullDescriptors = device.NullDescriptors();
@@ -358,7 +368,7 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     Require(HostImportFor(context, address, bytes) != nullptr, "import copied/direct ordering memory");
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     binding.descriptorSet = 0;
     binding.binding = 0;
@@ -366,12 +376,14 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     binding.guestDescriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, 1024, 0x31000000u};
     binding.bufferWritten = {true};
     program.bindings.push_back(binding);
+    pushBufferData(program);
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     auto direct = std::make_shared<ShaderResources>(context, compute);
     release.layoutOwner = direct;
     Require(!direct->HasCopiedWrites(), "ordering consumer did not bind directly");
     const auto setLayout = direct->Layout();
-    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(std::uint32_t)};
+    constexpr std::uint32_t deltaByte = (1u + ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u;
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, deltaByte + sizeof(std::uint32_t)};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts = &setLayout;
@@ -392,7 +404,10 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, release.pipeline);
         resources->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, release.layout);
-        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, release.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(delta), &delta);
+        std::array<std::byte, PipelinePushConstantBytes> bytes{};
+        resources->PatchPushConstants(bytes);
+        std::memcpy(bytes.data() + deltaByte, &delta, sizeof(delta));
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, release.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, deltaByte + sizeof(delta), bytes.data());
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, count, 1, 1);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
         resources->MarkGpuWrites(recorder);
@@ -1551,7 +1566,7 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
     }
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     binding.descriptorSet = 0;
     binding.binding = 0;
@@ -1559,6 +1574,7 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
     binding.guestDescriptor = {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, elementBytes, 0x31000000u};
     binding.bufferWritten = {false};
     program.bindings.push_back(binding);
+    pushBufferData(program);
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     {
         ShaderResources resources(context, compute);
@@ -1663,7 +1679,7 @@ void readWrittenStagingTests(const Device& device, Recorder& recorder) {
         constexpr std::uint32_t records = (4u << 20u) / stride;
         ShaderRecompiler::RecompileResult program;
         ShaderRecompiler::DescriptorBinding binding;
-        binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+        binding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
         binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
         binding.descriptorSet = 0;
         binding.binding = 0;
@@ -1672,6 +1688,7 @@ void readWrittenStagingTests(const Device& device, Recorder& recorder) {
         binding.bufferWritten = {true};
         binding.bufferRead = {read};
         program.bindings.push_back(binding);
+        pushBufferData(program);
         const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
         ShaderResources resources(context, compute, {}, false, dispatchThreads);
         const auto reads = resources.InPlaceReads();
@@ -1739,7 +1756,7 @@ void misalignedRegionTests(const Device& device, Recorder& recorder) {
     Require((view - import->base) % alignment != 0 && (view - import->base) % 4 == 0, "the test view is not a DWORD-aligned view off the storage buffer offset alignment");
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     binding.descriptorSet = 0;
     binding.binding = 0;
@@ -1747,8 +1764,7 @@ void misalignedRegionTests(const Device& device, Recorder& recorder) {
     binding.guestDescriptor = {static_cast<std::uint32_t>(view), static_cast<std::uint32_t>(view >> 32u) & 0xffffu, static_cast<std::uint32_t>(elementBytes), 0x31000000u};
     binding.bufferWritten = {false};
     vertex.bindings.push_back(binding);
-    vertex.pushConstants.resize(16);
-    vertex.memoryOffsetDword = 0;
+    pushBufferData(vertex);
     const ShaderRecompiler::RecompileResult fragment;
     {
         auto regionContext = context;
@@ -1764,7 +1780,7 @@ void misalignedRegionTests(const Device& device, Recorder& recorder) {
         std::array<std::byte, PipelinePushConstantBytes> push{};
         resources.PatchPushConstants(push);
         const auto adjustment = static_cast<std::uint32_t>(push[0]);
-        Require(adjustment == (view - import->base) % alignment, "the misaligned region's push constant offset is not its distance from the aligned binding offset");
+        Require(adjustment == (view - import->base) % GuestBufferMemory::AddressAlignment, "the misaligned region's push constant offset is not its distance from the aligned device address");
         const auto check = [&] {
             const auto bindings = resources.PrepareDrawBindings(regionRecorder);
             Require(bindings != nullptr && bindings->snapshots.size() == 1, "the read-only misaligned draw input was not snapshotted");
@@ -1827,7 +1843,7 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
     const auto words = [](std::uint64_t at, std::size_t size) { return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(at), static_cast<std::uint32_t>(at >> 32u) & 0xffffu, static_cast<std::uint32_t>(size), 0x31000000u}; };
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     binding.descriptorSet = 0;
     binding.binding = 0;
@@ -1836,8 +1852,7 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
     for (const auto word : words(address + offset, elementBytes)) binding.guestDescriptor.push_back(word);
     binding.bufferWritten = {false, false};
     program.bindings.push_back(binding);
-    program.pushConstants.resize(16);
-    program.memoryOffsetDword = 0;
+    pushBufferData(program);
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     {
         auto snapshotContext = context;
@@ -1996,7 +2011,7 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
     constexpr std::size_t elementBytes = 1024;
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     binding.descriptorSet = 0;
     binding.binding = 0;
@@ -2004,6 +2019,7 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
     binding.guestDescriptor = {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, elementBytes, 0x31000000u};
     binding.bufferWritten = {false};
     program.bindings.push_back(binding);
+    pushBufferData(program);
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     {
         auto snapshotContext = context;
@@ -2091,7 +2107,7 @@ void drawSnapshotPatchTests(const Device& device) {
     const auto element = address + elementOffset;
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     binding.descriptorSet = 0;
     binding.binding = 0;
@@ -2099,6 +2115,7 @@ void drawSnapshotPatchTests(const Device& device) {
     binding.guestDescriptor = {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, static_cast<std::uint32_t>(elementBytes), 0x31000000u};
     binding.bufferWritten = {false};
     program.bindings.push_back(binding);
+    pushBufferData(program);
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     auto snapshotContext = context;
     DescriptorCache cache(snapshotContext);
@@ -2216,23 +2233,16 @@ void drawSnapshotCapTests(const Device& device, Recorder& recorder) {
     constexpr std::size_t largeBytes = 1024 * 1024 + 4096;
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding smallBinding;
-    smallBinding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    smallBinding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     smallBinding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     smallBinding.descriptorSet = 0;
     smallBinding.binding = 0;
-    smallBinding.count = 1;
-    smallBinding.guestDescriptor = {static_cast<std::uint32_t>(smallAddress), static_cast<std::uint32_t>(smallAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(smallBytes), 0x31000000u};
-    smallBinding.bufferWritten = {false};
+    smallBinding.count = 2;
+    smallBinding.guestDescriptor = {static_cast<std::uint32_t>(smallAddress), static_cast<std::uint32_t>(smallAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(smallBytes), 0x31000000u,
+                                    static_cast<std::uint32_t>(largeAddress), static_cast<std::uint32_t>(largeAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(largeBytes), 0x31000000u};
+    smallBinding.bufferWritten = {false, false};
     program.bindings.push_back(smallBinding);
-    ShaderRecompiler::DescriptorBinding largeBinding;
-    largeBinding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
-    largeBinding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
-    largeBinding.descriptorSet = 0;
-    largeBinding.binding = 1;
-    largeBinding.count = 1;
-    largeBinding.guestDescriptor = {static_cast<std::uint32_t>(largeAddress), static_cast<std::uint32_t>(largeAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(largeBytes), 0x31000000u};
-    largeBinding.bufferWritten = {false};
-    program.bindings.push_back(largeBinding);
+    pushBufferData(program);
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     {
         auto snapshotContext = context;
@@ -2265,23 +2275,16 @@ void drawSnapshotCapTests(const Device& device, Recorder& recorder) {
     constexpr std::size_t secondBytes = 600 * 1024;
     ShaderRecompiler::RecompileResult cumulativeProgram;
     ShaderRecompiler::DescriptorBinding firstBinding;
-    firstBinding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    firstBinding.kind = ShaderRecompiler::DescriptorKind::DeviceAddress;
     firstBinding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     firstBinding.descriptorSet = 0;
     firstBinding.binding = 0;
-    firstBinding.count = 1;
-    firstBinding.guestDescriptor = {static_cast<std::uint32_t>(firstAddress), static_cast<std::uint32_t>(firstAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(firstBytes), 0x31000000u};
-    firstBinding.bufferWritten = {false};
+    firstBinding.count = 2;
+    firstBinding.guestDescriptor = {static_cast<std::uint32_t>(firstAddress), static_cast<std::uint32_t>(firstAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(firstBytes), 0x31000000u,
+                                    static_cast<std::uint32_t>(secondAddress), static_cast<std::uint32_t>(secondAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(secondBytes), 0x31000000u};
+    firstBinding.bufferWritten = {false, false};
     cumulativeProgram.bindings.push_back(firstBinding);
-    ShaderRecompiler::DescriptorBinding secondBinding;
-    secondBinding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
-    secondBinding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
-    secondBinding.descriptorSet = 0;
-    secondBinding.binding = 1;
-    secondBinding.count = 1;
-    secondBinding.guestDescriptor = {static_cast<std::uint32_t>(secondAddress), static_cast<std::uint32_t>(secondAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(secondBytes), 0x31000000u};
-    secondBinding.bufferWritten = {false};
-    cumulativeProgram.bindings.push_back(secondBinding);
+    pushBufferData(cumulativeProgram);
     const CompiledShader cumulativeCompute{ShaderRecompiler::ShaderStage::Compute, &cumulativeProgram, 0};
     {
         auto snapshotContext = context;
@@ -2293,7 +2296,7 @@ void drawSnapshotCapTests(const Device& device, Recorder& recorder) {
         const auto bindings = resources.PrepareDrawBindings(snapshotRecorder);
         Require(bindings != nullptr, "read-only draw bindings were not prepared for cumulative test");
         Require(bindings->snapshots.size() == 1, "cumulative cap permitted both inputs to snapshot");
-        Require(bindings->snapshots[0].address == firstAddress, "the earlier binding in the layout was not prioritised for the snapshot budget");
+        Require(bindings->snapshots[0].address == firstAddress, "the earlier element of the binding was not prioritised for the snapshot budget");
         snapshotRecorder.Sync();
     }
     recorder.Activate();
@@ -2944,12 +2947,14 @@ bool writtenBufferOrderTests(const Device& device, Recorder& recorder) {
         memory.AddWritable(address, written, false, false);
         memory.Upload(true);
         std::uint32_t adjustment = 0;
-        const auto view = memory.Descriptor(address, written, adjustment);
+        const auto view = memory.Address(address, written, adjustment);
         Require(adjustment == 0, "the written buffer view is not aligned to its element");
+        const auto* import = HostImportFor(context, address, written);
+        Require(import != nullptr && view.first == import->address + (address - import->base), "the written buffer view is not in place in its host import");
         {
             const auto commands = recorder.Commands();
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, view.buffer, view.offset, written, 0xa5a5a5a5u);
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, address - import->base, written, 0xa5a5a5a5u);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         }
         memory.RecordCopyBacks(recorder);

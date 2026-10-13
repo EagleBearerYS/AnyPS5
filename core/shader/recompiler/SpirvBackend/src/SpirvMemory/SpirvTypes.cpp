@@ -117,6 +117,14 @@ std::uint32_t TypePhysicalU32Pointer(SpirvEmitterState& state) {
     return TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeU32(state));
 }
 
+std::uint32_t TypePhysicalU64Pointer(SpirvEmitterState& state) {
+    return TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeScalarU64(state));
+}
+
+std::uint32_t TypePhysicalBlockPointer(SpirvEmitterState& state, bool wide) {
+    return TypePointer(state, spv::StorageClassPhysicalStorageBuffer, wide ? StorageBufferU64Type(state) : StorageBufferType(state));
+}
+
 std::uint32_t TypePushConstantElementPointer(SpirvEmitterState& state) {
     return TypePointer(state, spv::StorageClassPushConstant, TypeU32(state));
 }

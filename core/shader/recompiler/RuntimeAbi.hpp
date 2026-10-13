@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 12u;
+inline constexpr std::uint32_t Version = 13u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t FragmentDescriptorSet = 1u;
 inline constexpr std::uint32_t StageCount = 4u;
@@ -37,6 +37,7 @@ enum class Stage : std::uint32_t { Main, Fragment, TessellationControl, Tessella
 
 inline constexpr std::uint32_t UserDataCapacity = 128u;
 inline constexpr std::uint32_t BufferCapacity = 128u;
+inline constexpr std::uint32_t BufferAddressDwords = 3u;
 inline constexpr std::uint32_t ImageCapacity = 256u;
 inline constexpr std::uint32_t SampledHeapCapacity = 64u;
 inline constexpr std::uint32_t BindlessTableSlots = 16u;
@@ -66,6 +67,7 @@ struct ShaderData {
     std::uint32_t reserved;
     std::array<std::uint32_t, UserDataCapacity> userData;
     std::array<std::uint32_t, BufferCapacity / 4u> bufferOffsets;
+    std::array<std::uint32_t, BufferCapacity * BufferAddressDwords> bufferAddresses;
     std::array<std::uint32_t, 4> dispatchThreadLimit;
     std::array<ResourceMetadata, ImageCapacity> images;
     std::array<ResourceMetadata, SamplerHeapCapacity> samplers;
@@ -74,6 +76,7 @@ struct ShaderData {
 
 inline constexpr std::uint32_t UserDataDword = offsetof(ShaderData, userData) / sizeof(std::uint32_t);
 inline constexpr std::uint32_t BufferOffsetsDword = offsetof(ShaderData, bufferOffsets) / sizeof(std::uint32_t);
+inline constexpr std::uint32_t BufferAddressesDword = offsetof(ShaderData, bufferAddresses) / sizeof(std::uint32_t);
 inline constexpr std::uint32_t DispatchThreadLimitDword = offsetof(ShaderData, dispatchThreadLimit) / sizeof(std::uint32_t);
 inline constexpr std::uint32_t ExportMappingsDword = offsetof(ShaderData, exportMappings) / sizeof(std::uint32_t);
 inline constexpr std::uint32_t ShaderDataDwords = sizeof(ShaderData) / sizeof(std::uint32_t);
@@ -87,10 +90,10 @@ inline std::uint32_t HeapCapacity(Binding binding) {
 }
 
 static_assert(std::is_standard_layout_v<ResourceMetadata> && std::is_trivially_copyable_v<ResourceMetadata> && sizeof(ResourceMetadata) == 48u);
-static_assert(std::is_standard_layout_v<ShaderData> && std::is_trivially_copyable_v<ShaderData> && sizeof(ShaderData) == 14528u);
-static_assert(UserDataDword == 4u && BufferOffsetsDword == 132u && DispatchThreadLimitDword == 164u);
-static_assert(ExportMappingsDword == 3624u);
-static_assert(offsetof(ResourceMetadata, descriptor) == 16u && offsetof(ShaderData, images) == 672u && offsetof(ShaderData, samplers) == 12960u);
+static_assert(std::is_standard_layout_v<ShaderData> && std::is_trivially_copyable_v<ShaderData> && sizeof(ShaderData) == 16064u);
+static_assert(UserDataDword == 4u && BufferOffsetsDword == 132u && BufferAddressesDword == 164u && DispatchThreadLimitDword == 548u);
+static_assert(ExportMappingsDword == 4008u);
+static_assert(offsetof(ResourceMetadata, descriptor) == 16u && offsetof(ShaderData, images) == 2208u && offsetof(ShaderData, samplers) == 14496u);
 
 inline void RequireVersion(std::uint32_t version) {
     if (version != Version) throw std::runtime_error("Shader runtime ABI: incompatible version");
