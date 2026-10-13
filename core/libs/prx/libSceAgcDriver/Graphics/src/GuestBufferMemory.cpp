@@ -983,6 +983,20 @@ std::uint64_t heapMirrorsBeside(const GuestAllocations::Range& range) {
 
 void sweepMirrors();
 
+VkMemoryPropertyFlags mirrorProperties(const Context& context, std::uint64_t bytes) {
+    static const bool disabled = std::getenv("APS5_NO_DEVICE_MIRRORS") != nullptr;
+    static const std::uint64_t reserve = [] {
+        const char* value = std::getenv("APS5_DEVICE_MIRROR_RESERVE_MIB");
+        return (value ? std::strtoull(value, nullptr, 10) : 1024ull) << 20u;
+    }();
+    if (disabled || context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return MirrorMemoryProperties(context.memory, nullptr, bytes, reserve);
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    properties.pNext = &reported;
+    context.memoryProperties2(context.physical, &properties);
+    return MirrorMemoryProperties(context.memory, &reported, bytes, reserve);
+}
+
 bool sameRange(const std::weak_ptr<const GuestAllocations::Range>& mirrored, const std::shared_ptr<const GuestAllocations::Range>& range) {
     return !mirrored.owner_before(range) && !range.owner_before(mirrored);
 }
@@ -1407,7 +1421,14 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         }
     }
     try {
-        mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        const auto placement = heap ? mirrorProperties(context, mirror->bytes) : VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        try {
+            mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), usage, placement);
+        } catch (const std::runtime_error&) {
+            if ((placement & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0) throw;
+            mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), usage);
+        }
     } catch (const std::runtime_error& error) {
         if (heap) throw std::runtime_error(heapMirrorError(*range, heapMirrorsBeside(*range), error.what()));
         std::fprintf(stderr, "[gpu] image mirror of 0x%llx+0x%llx failed: %s; falling back to copies\n", static_cast<unsigned long long>(range->address), static_cast<unsigned long long>(range->bytes), error.what());
@@ -1774,6 +1795,25 @@ std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t l
         message += text;
     }
     return message;
+}
+
+VkMemoryPropertyFlags MirrorMemoryProperties(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* budget, std::uint64_t bytes, std::uint64_t reserve) {
+    constexpr VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    constexpr VkMemoryPropertyFlags device = host | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    if (budget == nullptr) return host;
+    VkDeviceSize largest = 0;
+    for (std::uint32_t heap = 0; heap < memory.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        if ((memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) largest = std::max(largest, memory.memoryHeaps[heap].size);
+    }
+    for (std::uint32_t index = 0; index < memory.memoryTypeCount && index < VK_MAX_MEMORY_TYPES; ++index) {
+        const auto& type = memory.memoryTypes[index];
+        if ((type.propertyFlags & device) != device) continue;
+        const auto heap = type.heapIndex;
+        if (heap >= memory.memoryHeapCount || memory.memoryHeaps[heap].size < largest) return host;
+        const auto available = budget->heapBudget[heap] > budget->heapUsage[heap] ? budget->heapBudget[heap] - budget->heapUsage[heap] : 0;
+        return available > reserve && available - reserve > bytes ? device : host;
+    }
+    return host;
 }
 
 MirrorStats MirrorCounters() {

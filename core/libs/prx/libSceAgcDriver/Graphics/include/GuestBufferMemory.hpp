@@ -161,6 +161,7 @@ struct MirrorStats {
     std::uint64_t sparseBinds = 0;
 };
 MirrorStats MirrorCounters();
+VkMemoryPropertyFlags MirrorMemoryProperties(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* budget, std::uint64_t bytes, std::uint64_t reserve);
 void ClearImageMirrors(VkDevice device);
 void ClearHostImports(VkDevice device);
 

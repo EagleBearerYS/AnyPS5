@@ -419,6 +419,54 @@ void importWatchTests() {
 #endif
 }
 
+void mirrorPlacementTests() {
+    constexpr VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    constexpr VkMemoryPropertyFlags device = host | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    constexpr VkDeviceSize gib = VkDeviceSize{1} << 30u;
+    constexpr std::uint64_t reserve = std::uint64_t{1} << 30u;
+    constexpr std::uint64_t bytes = std::uint64_t{64} << 20u;
+    VkPhysicalDeviceMemoryProperties rebar{};
+    rebar.memoryHeapCount = 2;
+    rebar.memoryHeaps[0] = {8 * gib, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    rebar.memoryHeaps[1] = {8 * gib, 0};
+    rebar.memoryTypeCount = 4;
+    rebar.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    rebar.memoryTypes[1] = {host, 1};
+    rebar.memoryTypes[2] = {host | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 1};
+    rebar.memoryTypes[3] = {device, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    budget.heapBudget[0] = 7 * gib;
+    budget.heapUsage[0] = 2 * gib;
+    budget.heapBudget[1] = 7 * gib;
+    budget.heapUsage[1] = 6 * gib;
+    Require(MirrorMemoryProperties(rebar, &budget, bytes, reserve) == device, "a mirror was not placed in host-visible video memory although the device-local heap has room");
+    budget.heapUsage[0] = 6 * gib;
+    Require(MirrorMemoryProperties(rebar, &budget, bytes, reserve) == host, "a mirror was placed in video memory that the reserve keeps for textures");
+    budget.heapUsage[0] = 8 * gib;
+    Require(MirrorMemoryProperties(rebar, &budget, bytes, reserve) == host, "a mirror was placed in a device-local heap past its budget");
+    Require(MirrorMemoryProperties(rebar, nullptr, bytes, reserve) == host, "a mirror was placed in video memory without a memory budget to check");
+    auto window = rebar;
+    window.memoryHeapCount = 3;
+    window.memoryHeaps[2] = {256ull << 20u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    window.memoryTypes[3] = {device, 2};
+    budget.heapUsage[0] = 2 * gib;
+    budget.heapBudget[2] = 256ull << 20u;
+    budget.heapUsage[2] = 0;
+    Require(MirrorMemoryProperties(window, &budget, bytes, 0) == host, "a mirror was placed in the small BAR window instead of host memory");
+    VkPhysicalDeviceMemoryProperties unified{};
+    unified.memoryHeapCount = 1;
+    unified.memoryHeaps[0] = {16 * gib, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    unified.memoryTypeCount = 1;
+    unified.memoryTypes[0] = {device | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT shared{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    shared.heapBudget[0] = 12 * gib;
+    shared.heapUsage[0] = 4 * gib;
+    Require(MirrorMemoryProperties(unified, &shared, bytes, reserve) == device, "a mirror on a device with one host-visible device-local heap left its only heap");
+    VkPhysicalDeviceMemoryProperties discrete = rebar;
+    discrete.memoryTypeCount = 3;
+    Require(MirrorMemoryProperties(discrete, &budget, bytes, reserve) == host, "a mirror was placed in video memory the CPU cannot map");
+}
+
 void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
         std::cout << "guest arena unavailable or not write-watched: heap mirrors not tested\n";
@@ -1240,6 +1288,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     failedImportRemapTests(context, access);
     spaceImportRunTests(context);
     importWindowTests(context);
+    mirrorPlacementTests();
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();
