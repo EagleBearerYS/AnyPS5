@@ -901,6 +901,11 @@ bool AsyncRegistrationPrepare() {
     return !sync;
 }
 
+bool LazyPreparation() {
+    static const bool lazy = std::getenv("APS5_RE8_LAZY_PREPARE") != nullptr;
+    return lazy;
+}
+
 void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan) {
     const auto* preparedKey = snapshot->prepared.get();
     SubmitRegistrationPreparation([snapshot = std::move(snapshot), plan = std::move(plan)] {
@@ -1022,6 +1027,10 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     PerformanceTimer timing("Shader.ResolveGraphicsStagesAbi");
     ShaderPreparationTransaction transaction;
     CheckFailure();
+    if (LazyPreparation()) {
+        transaction.Commit();
+        return true;
+    }
     require(!stages.empty(), "graphics ABI has no shader headers");
     QueueState state{};
     std::shared_ptr<const ShaderRegistry> registry;
@@ -1098,6 +1107,10 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     PerformanceTimer timing("Shader.ResolveAbi");
     ShaderPreparationTransaction transaction;
     CheckFailure();
+    if (LazyPreparation()) {
+        transaction.Commit();
+        return;
+    }
     const auto fields = GuestShaderFields(shader);
     if (fields.type != 0 && fields.type != 1) {
         const std::array<const Shader*, 1> stages{shader};
@@ -1321,7 +1334,8 @@ void Driver::RegisterShader(const Shader* shader) {
     registered.context = snapshot.registeredState->context;
     registered.userConfig = snapshot.registeredState->userConfig;
     std::shared_ptr<RegisteredPreparation> preparation;
-    if (AsyncRegistrationPrepare()) {
+    if (LazyPreparation()) {
+    } else if (AsyncRegistrationPrepare()) {
         preparation = PlanRegistered(snapshot, *localDevice, registered, true, &snapshot.prepared->deferred);
         if (preparation != nullptr) preparation->prebuildDevice = localDevice;
         if (preparation != nullptr && (snapshot.type == 0 || snapshot.type == 1)) BuildRegisteredAbiKey(registered, *localDevice, preparation->abiKey);
