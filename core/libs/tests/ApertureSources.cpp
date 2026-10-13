@@ -1,8 +1,10 @@
+#include "ApertureLayout.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaScalarOpDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -28,27 +30,12 @@ void Require(bool value, const std::string& message) {
     if (!value) throw std::runtime_error(message);
 }
 
-// The refusal must name the source it refused: a bare "not modelled" cannot be told from a decode gap.
-template <typename Fn>
-void ExpectRefusal(const char* source, Fn translate) {
-    try {
-        translate();
-    } catch (const std::exception& error) {
-        if (std::string(error.what()).find(source) == std::string::npos) {
-            throw std::runtime_error(std::string("the refusal does not name ") + source + ": " + error.what());
-        }
-        return;
-    }
-    throw std::runtime_error(std::string("reading ") + source + " was accepted");
-}
-
-// s_mov_b32 s0, <source>: SOP1, format 0x7d, opcode 0x03, the source code in the low byte.
-RdnaInstruction ScalarMove(std::uint32_t source) {
-    const std::array<std::uint32_t, 2> words{0x80000000u | (0x7du << 23u) | (0x03u << 8u) | source, 0u};
+RdnaInstruction ScalarMove(std::uint32_t opcode, std::uint32_t source) {
+    const std::array<std::uint32_t, 2> words{0x80000000u | (0x7du << 23u) | (opcode << 8u) | source, 0u};
     return DecodeRdnaSop1(0u, words, 0u);
 }
 
-void Translate(const RdnaInstruction& instruction) {
+std::array<std::uint64_t, 2> TranslatedWords(const RdnaInstruction& instruction) {
     IrProgram program;
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
@@ -56,6 +43,16 @@ void Translate(const RdnaInstruction& instruction) {
     program.Metadata().blockInfo.resize(1);
     TranslationContext context(program, block, 256);
     context.TranslateInstruction(instruction);
+    std::array<std::uint64_t, 2> words{~0ull, ~0ull};
+    for (const auto* value : block.Instructions()) {
+        if (value->Opcode() != IrOpcode::SetScalarRegister) continue;
+        const auto reg = value->Argument(0)->Register();
+        const auto* written = value->Argument(1)->Resolve();
+        Require(reg.bank == RegisterBank::Scalar && reg.index < 2u, "the move wrote another register");
+        Require(written->HasImmediate(), "the move wrote a value that is not a constant");
+        words[reg.index] = written->ImmediateU32();
+    }
+    return words;
 }
 
 void CheckDecode() {
@@ -68,14 +65,20 @@ void CheckDecode() {
     }
 }
 
-// Translating the move reads the source as a value, which is the path a title that carries the
-// aperture into an address does not take and one that reads it does.
-void CheckReadRefuses() {
+void CheckReadValues() {
     for (const auto& source : ApertureSources) {
-        const RdnaInstruction move = ScalarMove(source.code);
-        Require(move.op == RdnaOpcode::SMovB32, "the scalar move decoded to another opcode");
-        Require(move.source0.kind == source.kind, "the scalar move decodes source0 as the wrong operand kind");
-        ExpectRefusal(source.name, [&] { Translate(move); });
+        const bool base = source.kind == RdnaOperandKind::SrcSharedBase || source.kind == RdnaOperandKind::SrcPrivateBase;
+        const bool shared = source.kind == RdnaOperandKind::SrcSharedBase || source.kind == RdnaOperandKind::SrcSharedLimit;
+        const std::uint32_t low = base ? 0u : 0xffffffffu;
+        const std::uint32_t high = shared ? ApertureLayout::SharedHigh : ApertureLayout::PrivateHigh;
+        const RdnaInstruction move32 = ScalarMove(0x03u, source.code);
+        Require(move32.op == RdnaOpcode::SMovB32 && move32.source0.kind == source.kind, std::string("s_mov_b32 of ") + source.name + " decoded wrongly");
+        const auto words32 = TranslatedWords(move32);
+        Require(words32[0] == low && words32[1] == ~0ull, std::string("s_mov_b32 of ") + source.name + " did not read the window's low word");
+        const RdnaInstruction move64 = ScalarMove(0x04u, source.code);
+        Require(move64.op == RdnaOpcode::SMovB64 && move64.source0.kind == source.kind, std::string("s_mov_b64 of ") + source.name + " decoded wrongly");
+        const auto words64 = TranslatedWords(move64);
+        Require(words64[0] == low && words64[1] == high, std::string("s_mov_b64 of ") + source.name + " did not read the window of the flat routing");
     }
 }
 
@@ -83,7 +86,7 @@ void CheckReadRefuses() {
 
 int main() {
     CheckDecode();
-    CheckReadRefuses();
+    CheckReadValues();
     std::puts("aperture sources tests passed");
     return 0;
 }

@@ -1,3 +1,4 @@
+#include "ApertureLayout.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvRuntimeBuffer.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
@@ -336,8 +337,8 @@ const MemoryInfo& SharedMemory(SpirvValueEmitContext& ctx, const IrValue& inst) 
     return mem;
 }
 
-constexpr std::uint32_t SharedApertureHigh = 0x80000000u;
-constexpr std::uint32_t PrivateApertureHigh = 0x70000000u;
+constexpr std::uint32_t SharedApertureHigh = ApertureLayout::SharedHigh;
+constexpr std::uint32_t PrivateApertureHigh = ApertureLayout::PrivateHigh;
 
 bool RoutesApertures(const SpirvEmitterState& state, const MemoryInfo& mem) {
     return mem.kind == ResourceKind::Flat && state.program.Resources().stage == IrShaderStage::Compute;
