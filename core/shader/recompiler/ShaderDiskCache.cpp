@@ -30,6 +30,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -37,6 +38,7 @@
 #include <system_error>
 #include <thread>
 #include <type_traits>
+#include <unordered_map>
 
 namespace ShaderRecompiler {
 
@@ -100,6 +102,17 @@ static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: u
 static_assert(sizeof(BindingAllocationResult) == 152, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(CompiledBindingLayout) == 80, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
+static_assert(sizeof(IrResourcePlan) == 584, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
+static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
+static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 128, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(TableColumn) == 56, "TableColumn changed: update the plan encoder");
+static_assert(sizeof(KeyDomain) == 16, "KeyDomain changed: update the plan encoder");
+static_assert(sizeof(ResourceBlock) == 80, "ResourceBlock changed: update the plan encoder");
+static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
+static_assert(sizeof(UniformFill) == 28, "UniformFill changed: update the plan encoder");
+static_assert(sizeof(UniformFillPlan) == 64, "UniformFillPlan changed: update the plan encoder");
 #endif
 
 namespace {
@@ -207,6 +220,14 @@ public:
         for (const bool flag : flags) Value(flag);
     }
 
+    void Compact(std::uint64_t value) {
+        while (value >= 0x80u) {
+            Raw(static_cast<std::uint8_t>(value | 0x80u));
+            value >>= 7u;
+        }
+        Raw(static_cast<std::uint8_t>(value));
+    }
+
     void Text(const std::string& text) {
         Value<std::uint64_t>(text.size());
         const auto bytes = std::as_bytes(std::span(text.data(), text.size()));
@@ -236,6 +257,22 @@ public:
 
     [[nodiscard]] bool Ok() const { return ok; }
     [[nodiscard]] bool Done() const { return ok && position == bytes.size(); }
+    [[nodiscard]] std::size_t Remaining() const { return ok ? bytes.size() - position : 0; }
+    void Fail() { ok = false; }
+
+    [[nodiscard]] std::uint64_t Compact() {
+        std::uint64_t value = 0;
+        for (std::uint32_t shift = 0; shift < 64u; shift += 7u) {
+            const auto byte = Raw<std::uint8_t>();
+            if (!ok) return 0;
+            value |= static_cast<std::uint64_t>(byte & 0x7fu) << shift;
+            if ((byte & 0x80u) != 0u) continue;
+            if ((byte == 0u && shift != 0u) || (shift == 63u && byte > 1u)) ok = false;
+            return ok ? value : 0;
+        }
+        ok = false;
+        return 0;
+    }
 
     template<typename TValue>
     void Value(TValue& value) requires (std::is_integral_v<TValue> || std::is_enum_v<TValue>) {
@@ -822,6 +859,344 @@ void decodeAllocation(Reader& reader, CompiledBindingLayout& allocation) {
     reader.Value(allocation.pushConstantSizeBytes);
 }
 
+constexpr std::uint32_t PlanEntryKind = 0x4e414c50u;
+constexpr std::uint32_t NoPlanIndex = std::numeric_limits<std::uint32_t>::max();
+
+void encodeMemoryInfo(Writer& out, const MemoryInfo& memory) {
+    out.Value(memory.kind);
+    out.Value(memory.resource);
+    out.Value(memory.sampler);
+    out.Value(memory.offset);
+    out.Value(memory.secondaryOffset);
+    out.Value(memory.dmask);
+    out.Value(memory.dataDwords);
+    out.Value(memory.dataBits);
+    out.Value(memory.componentIndex);
+    out.Value(memory.componentCount);
+    out.Value(memory.dataFormat);
+    out.Value(memory.numberFormat);
+    out.Value(memory.imageSampleFlags);
+    out.Value(memory.imageDimension);
+    out.Value(memory.imageAddressComponents);
+    out.Value(memory.addressIsFull);
+    out.Value(memory.dataSigned);
+    out.Value(memory.typed);
+    out.Value(memory.formatted);
+    out.Value(memory.d16);
+    out.Value(memory.imageHasMip);
+    out.Value(memory.imageR128);
+    out.Value(memory.imagePacked);
+    out.Value(memory.imageByElements);
+    out.Value(memory.idxen);
+    out.Value(memory.offen);
+    out.Value(memory.planningOnly);
+    out.Value(memory.coherent);
+    out.Value(memory.gpuDescriptor);
+    out.Value(memory.flushDenormals);
+}
+
+void decodeMemoryInfo(Reader& in, MemoryInfo& memory) {
+    in.Value(memory.kind);
+    in.Value(memory.resource);
+    in.Value(memory.sampler);
+    in.Value(memory.offset);
+    in.Value(memory.secondaryOffset);
+    in.Value(memory.dmask);
+    in.Value(memory.dataDwords);
+    in.Value(memory.dataBits);
+    in.Value(memory.componentIndex);
+    in.Value(memory.componentCount);
+    in.Value(memory.dataFormat);
+    in.Value(memory.numberFormat);
+    in.Value(memory.imageSampleFlags);
+    in.Value(memory.imageDimension);
+    in.Value(memory.imageAddressComponents);
+    in.Value(memory.addressIsFull);
+    in.Value(memory.dataSigned);
+    in.Value(memory.typed);
+    in.Value(memory.formatted);
+    in.Value(memory.d16);
+    in.Value(memory.imageHasMip);
+    in.Value(memory.imageR128);
+    in.Value(memory.imagePacked);
+    in.Value(memory.imageByElements);
+    in.Value(memory.idxen);
+    in.Value(memory.offen);
+    in.Value(memory.planningOnly);
+    in.Value(memory.coherent);
+    in.Value(memory.gpuDescriptor);
+    in.Value(memory.flushDenormals);
+}
+
+bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
+    if (std::ranges::any_of(plan.valueStorage, [](const auto& value) { return value == nullptr; }) || std::ranges::any_of(plan.blockStorage, [](const auto& block) { return block == nullptr; })) return false;
+    std::unordered_map<const IrValue*, std::uint32_t> values;
+    std::unordered_map<const IrBlock*, std::uint32_t> blocks;
+    values.reserve(plan.valueStorage.size());
+    blocks.reserve(plan.blockStorage.size());
+    for (std::size_t index = 0; index < plan.valueStorage.size(); ++index) values.emplace(plan.valueStorage[index].get(), static_cast<std::uint32_t>(index));
+    for (std::size_t index = 0; index < plan.blockStorage.size(); ++index) blocks.emplace(plan.blockStorage[index].get(), static_cast<std::uint32_t>(index));
+    bool owned = values.size() == plan.valueStorage.size() && blocks.size() == plan.blockStorage.size();
+    std::uint32_t current = 0;
+    const auto valueIndex = [&](const IrValue* value) {
+        if (value == nullptr) return NoPlanIndex;
+        const auto found = values.find(value);
+        if (found == values.end()) {
+            owned = false;
+            return NoPlanIndex;
+        }
+        return found->second;
+    };
+    writer.Value(plan.stage);
+    writer.Value(plan.shaderHash);
+    writer.Value(plan.userDataBase);
+    writer.Value(plan.userDataCount);
+    writer.Value(plan.srgbDecodeFormats);
+    writer.List(plan.blockStorage, [](Writer& out, const std::unique_ptr<IrBlock>& block) { out.Value(block->Id()); });
+    writer.List(plan.valueStorage, [&](Writer& out, const std::unique_ptr<IrValue>& value) {
+        const auto bank = static_cast<std::uint32_t>(value->Register().bank);
+        if (bank > 0xfu) owned = false;
+        out.Compact(static_cast<std::uint32_t>(value->Opcode()));
+        out.Compact(static_cast<std::uint32_t>(value->Type()));
+        out.Compact(value->Id());
+        out.Compact(value->Flags<std::uint64_t>());
+        out.Compact((static_cast<std::uint64_t>(value->Register().index) << 4u) | (bank & 0xfu));
+        out.Compact((static_cast<std::uint64_t>(value->ArgumentCount()) << 1u) | (value->HasImmediate() ? 1u : 0u));
+        if (value->HasImmediate()) out.Compact(value->ImmediateU64());
+        for (const auto* argument : value->Arguments()) {
+            const auto index = valueIndex(argument);
+            const auto delta = static_cast<std::int64_t>(index) - static_cast<std::int64_t>(current);
+            out.Compact(argument == nullptr ? 0u : ((static_cast<std::uint64_t>(delta) << 1u) ^ static_cast<std::uint64_t>(delta >> 63)) + 1u);
+        }
+        if (value->IsPhi() && value->PhiBlockCount() != value->ArgumentCount()) owned = false;
+        for (std::size_t operand = 0; value->IsPhi() && operand < value->ArgumentCount(); ++operand) {
+            const auto found = operand < value->PhiBlockCount() ? blocks.find(value->PhiBlock(operand)) : blocks.end();
+            if (found == blocks.end()) owned = false;
+            out.Compact(found != blocks.end() ? found->second : 0u);
+        }
+        ++current;
+    });
+    writer.List(plan.memoryInfo, encodeMemoryInfo);
+    writer.List(plan.descriptorSources, [&](Writer& out, const DescriptorSource& source) {
+        for (const auto* dword : source.dwords) out.Value(valueIndex(dword));
+        out.Value(source.dwordCount);
+        const auto column = source.tableColumn.value_or(TableColumn{});
+        out.Value(source.tableColumn.has_value());
+        out.Value(column.heapSource);
+        out.Value(column.stride);
+        out.Value(column.addend);
+        out.Value(column.offset);
+        out.Value(column.dwordCount);
+        out.Value(column.maxKey);
+        out.Value(column.sampler);
+        out.Value(column.address);
+        out.Value(column.indirect);
+        out.Value(column.indirectOffset);
+        out.Value(column.indirectImmediate);
+        const auto domain = column.keyDomain.value_or(KeyDomain{});
+        out.Value(column.keyDomain.has_value());
+        out.Value(domain.source);
+        out.Value(domain.offset);
+        out.Value(domain.stride);
+        out.Value(domain.value);
+        out.Value(domain.values);
+    });
+    writer.List(plan.controlFlow, [&](Writer& out, const ResourceBlock& block) {
+        out.Value(valueIndex(block.condition));
+        out.Values(std::span<const std::uint32_t>(block.successors));
+        out.Values(std::span<const std::uint32_t>(block.sources));
+        out.Values(std::span<const std::uint32_t>(block.images));
+    });
+    writer.Values(std::span<const std::uint32_t>(plan.materializationSources));
+    writer.List(plan.srtReads, [&](Writer& out, const SrtRead& read) {
+        out.Value(valueIndex(read.value));
+        out.Value(read.flatOffset);
+    });
+    writer.Values(std::span<const std::uint32_t>(plan.guardedSrtSlots));
+    writer.Value(plan.srtGuardOffset);
+    writer.Values(std::span<const std::uint8_t>(plan.cleanFlatSlots));
+    writer.Values(std::span<const std::uint8_t>(plan.pureFlatSlots));
+    writer.Value(plan.requiresSpecializationMemory);
+    writer.Value(plan.srtPlanComplete);
+    writer.Value(plan.resourceTrackingComplete);
+    encodeShaderInfo(writer, plan.info);
+    const auto& fill = plan.uniformFill.fill;
+    writer.Value(fill.kind);
+    writer.Value(fill.resource);
+    for (const auto stride : fill.groupStride) writer.Value(stride);
+    writer.Value(fill.words);
+    writer.Value(fill.value);
+    for (const auto* value : plan.uniformFill.values) writer.Value(valueIndex(value));
+    return owned;
+}
+
+struct PlanValueRecord {
+    IrOpcode opcode = IrOpcode::Identity;
+    IrType type = IrType::Void;
+    std::uint32_t id = 0;
+    std::uint64_t flags = 0;
+    bool hasImmediate = false;
+    std::uint64_t immediate = 0;
+    GuestRegister registerValue{};
+    std::vector<std::uint32_t> arguments;
+    std::vector<std::uint32_t> phiBlocks;
+};
+
+bool decodePlan(Reader& reader, IrResourcePlan& plan) {
+    reader.Value(plan.stage);
+    reader.Value(plan.shaderHash);
+    reader.Value(plan.userDataBase);
+    reader.Value(plan.userDataCount);
+    reader.Value(plan.srgbDecodeFormats);
+    std::vector<std::uint32_t> blockIds;
+    reader.Values(blockIds);
+    std::vector<PlanValueRecord> records;
+    std::uint32_t current = 0;
+    reader.List(records, 6, [&](Reader& in, PlanValueRecord& record) {
+        constexpr std::uint64_t Word = std::numeric_limits<std::uint32_t>::max();
+        const auto opcode = in.Compact();
+        const auto type = in.Compact();
+        const auto id = in.Compact();
+        record.flags = in.Compact();
+        const auto registerValue = in.Compact();
+        const auto shape = in.Compact();
+        const auto arguments = shape >> 1u;
+        if (opcode >= static_cast<std::uint64_t>(IrOpcode::Count) || type > Word || id > Word || (registerValue >> 4u) > Word || arguments > in.Remaining()) {
+            in.Fail();
+            return;
+        }
+        record.opcode = static_cast<IrOpcode>(opcode);
+        record.type = static_cast<IrType>(type);
+        record.id = static_cast<std::uint32_t>(id);
+        record.registerValue = {static_cast<RegisterBank>(registerValue & 0xfu), static_cast<std::uint32_t>(registerValue >> 4u)};
+        record.hasImmediate = (shape & 1u) != 0u;
+        if (record.hasImmediate) record.immediate = in.Compact();
+        record.arguments.resize(static_cast<std::size_t>(arguments));
+        for (auto& argument : record.arguments) {
+            const auto code = in.Compact();
+            if (code == 0u) {
+                argument = NoPlanIndex;
+                continue;
+            }
+            const auto zigzag = code - 1u;
+            const auto delta = static_cast<std::int64_t>(zigzag >> 1u) ^ -static_cast<std::int64_t>(zigzag & 1u);
+            const auto index = static_cast<std::int64_t>(current) + delta;
+            if (index < 0 || index >= static_cast<std::int64_t>(records.size())) {
+                in.Fail();
+                return;
+            }
+            argument = static_cast<std::uint32_t>(index);
+        }
+        if (record.opcode == IrOpcode::Phi) {
+            record.phiBlocks.resize(record.arguments.size());
+            for (auto& block : record.phiBlocks) {
+                const auto index = in.Compact();
+                block = index < blockIds.size() ? static_cast<std::uint32_t>(index) : NoPlanIndex;
+                if (block == NoPlanIndex) in.Fail();
+            }
+        }
+        ++current;
+    });
+    if (!reader.Ok()) return false;
+    plan.blockStorage.reserve(blockIds.size());
+    for (const auto id : blockIds) plan.blockStorage.push_back(std::make_unique<IrBlock>(id));
+    plan.valueStorage.reserve(records.size());
+    for (const auto& record : records) {
+        auto value = std::make_unique<IrValue>(record.opcode, record.type, record.id);
+        value->SetFlags(record.flags);
+        if (record.hasImmediate) value->SetImmediateU64(record.immediate);
+        value->SetRegister(record.registerValue);
+        plan.valueStorage.push_back(std::move(value));
+    }
+    bool valid = true;
+    const auto valueAt = [&](std::uint32_t index) -> IrValue* {
+        if (index == NoPlanIndex) return nullptr;
+        if (index >= plan.valueStorage.size()) {
+            valid = false;
+            return nullptr;
+        }
+        return plan.valueStorage[index].get();
+    };
+    for (std::size_t index = 0; index < records.size(); ++index) {
+        const auto& record = records[index];
+        auto& value = *plan.valueStorage[index];
+        for (std::size_t operand = 0; operand < record.arguments.size(); ++operand) {
+            auto* argument = valueAt(record.arguments[operand]);
+            if (value.IsPhi()) {
+                value.AddPhiOperand(plan.blockStorage[record.phiBlocks[operand]].get(), argument);
+            } else {
+                value.AddArgument(argument);
+            }
+        }
+    }
+    reader.List(plan.memoryInfo, 78, decodeMemoryInfo);
+    reader.List(plan.descriptorSources, 87, [&](Reader& in, DescriptorSource& source) {
+        for (auto& dword : source.dwords) dword = valueAt(in.Get<std::uint32_t>());
+        in.Value(source.dwordCount);
+        const bool tabled = in.Get<bool>();
+        TableColumn column;
+        in.Value(column.heapSource);
+        in.Value(column.stride);
+        in.Value(column.addend);
+        in.Value(column.offset);
+        in.Value(column.dwordCount);
+        in.Value(column.maxKey);
+        in.Value(column.sampler);
+        in.Value(column.address);
+        in.Value(column.indirect);
+        in.Value(column.indirectOffset);
+        in.Value(column.indirectImmediate);
+        const bool domained = in.Get<bool>();
+        KeyDomain domain;
+        in.Value(domain.source);
+        in.Value(domain.offset);
+        in.Value(domain.stride);
+        in.Value(domain.value);
+        in.Value(domain.values);
+        column.keyDomain = domained ? std::optional(domain) : std::nullopt;
+        source.tableColumn = tabled ? std::optional(column) : std::nullopt;
+    });
+    reader.List(plan.controlFlow, 28, [&](Reader& in, ResourceBlock& block) {
+        block.condition = valueAt(in.Get<std::uint32_t>());
+        in.Values(block.successors);
+        in.Values(block.sources);
+        in.Values(block.images);
+    });
+    reader.Values(plan.materializationSources);
+    reader.List(plan.srtReads, 8, [&](Reader& in, SrtRead& read) {
+        read.value = valueAt(in.Get<std::uint32_t>());
+        in.Value(read.flatOffset);
+    });
+    reader.Values(plan.guardedSrtSlots);
+    reader.Value(plan.srtGuardOffset);
+    reader.Values(plan.cleanFlatSlots);
+    reader.Values(plan.pureFlatSlots);
+    reader.Value(plan.requiresSpecializationMemory);
+    reader.Value(plan.srtPlanComplete);
+    reader.Value(plan.resourceTrackingComplete);
+    decodeShaderInfo(reader, plan.info);
+    auto& fill = plan.uniformFill.fill;
+    reader.Value(fill.kind);
+    reader.Value(fill.resource);
+    for (auto& stride : fill.groupStride) reader.Value(stride);
+    reader.Value(fill.words);
+    reader.Value(fill.value);
+    for (auto& value : plan.uniformFill.values) value = valueAt(reader.Get<std::uint32_t>());
+    if (!valid || !reader.Done() || fill.words > plan.uniformFill.values.size()) return false;
+    const auto knownSource = [&](std::uint32_t source) { return source < plan.descriptorSources.size(); };
+    if (!std::ranges::all_of(plan.materializationSources, knownSource)) return false;
+    if (!std::ranges::all_of(plan.descriptorSources, [](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size(); })) return false;
+    if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
+    if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;
+    if (!std::ranges::all_of(plan.info.samplers, [&](const SamplerResource& sampler) { return knownSource(sampler.source); })) return false;
+    return std::ranges::all_of(plan.controlFlow, [&](const ResourceBlock& block) {
+        return (block.condition == nullptr || block.successors.size() == 2u) &&
+               std::ranges::all_of(block.successors, [&](std::uint32_t successor) { return successor < plan.controlFlow.size(); }) &&
+               std::ranges::all_of(block.sources, knownSource) &&
+               std::ranges::all_of(block.images, [&](std::uint32_t image) { return image < plan.info.images.size(); });
+    });
+}
+
 constexpr std::string_view NeutralSwitches[] = {
     "APS5_PROFILE_DRAW",
     "APS5_DUMP_IR",
@@ -898,51 +1273,19 @@ public:
     [[nodiscard]] const std::filesystem::path& Directory() const { return directory; }
 
     bool Load(std::span<const std::byte> key, CompiledVariant& variant) {
-        const auto started = std::chrono::steady_clock::now();
-        const auto name = EntryName(key);
-        thread_local std::vector<std::byte>* fileSlot = nullptr;
-        auto& file = ThreadOwned(fileSlot);
-        bool loaded = false;
-        std::span<const std::byte> bytes;
-        std::shared_ptr<const void> owner;
-        if (auto mapped = MapFile(directory / name)) {
-            bytes = mapped->Bytes();
-            owner = std::move(mapped);
-        }
-        const bool present = owner != nullptr || ReadWholeFile(directory / name, file);
-        if (owner == nullptr) bytes = file;
-        if (!present) {
-            misses.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            switch (DecodeEntry(bytes, key, variant, std::move(owner))) {
-                case LoadStatus::Loaded:
-                    hits.fetch_add(1, std::memory_order_relaxed);
-                    bytesRead.fetch_add(bytes.size(), std::memory_order_relaxed);
-                    loaded = true;
-                    break;
-                case LoadStatus::Absent:
-                case LoadStatus::KeyMismatch:
-                    misses.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case LoadStatus::Rejected: {
-                    const auto failures = loadFailures.fetch_add(1, std::memory_order_relaxed);
-                    if (failures < 8) std::fprintf(stderr, "[shader-disk-cache] rejected %s (%zu bytes): truncated, corrupt or another format; recompiling\n", name.c_str(), bytes.size());
-                    break;
-                }
-            }
-        }
-        if (file.capacity() > (4u << 20u)) std::vector<std::byte>().swap(file);
-        loadNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
-        report(false);
-        return loaded;
+        return load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void> owner) { return DecodeEntry(file, key, variant, std::move(owner)); }, hits, misses, loadFailures);
+    }
+
+    bool LoadPlan(std::span<const std::byte> key, IrResourcePlan& plan) {
+        return load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void>) { return DecodePlanEntry(file, key, plan); }, planHits, planMisses, planLoadFailures);
     }
 
     void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> variant) {
-        {
-            std::lock_guard lock(mutex);
-            jobs.push_back({std::move(key), std::move(variant)});
-        }
-        wake.notify_one();
+        enqueue({std::move(key), std::move(variant), nullptr});
+    }
+
+    void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan> plan) {
+        enqueue({std::move(key), nullptr, std::move(plan)});
     }
 
     std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant) {
@@ -975,6 +1318,10 @@ public:
         counters.writeFailures = writeFailures.load(std::memory_order_relaxed);
         counters.bytesRead = bytesRead.load(std::memory_order_relaxed);
         counters.bytesWritten = bytesWritten.load(std::memory_order_relaxed);
+        counters.planHits = planHits.load(std::memory_order_relaxed);
+        counters.planMisses = planMisses.load(std::memory_order_relaxed);
+        counters.planWrites = planWrites.load(std::memory_order_relaxed);
+        counters.planLoadFailures = planLoadFailures.load(std::memory_order_relaxed);
         return counters;
     }
 
@@ -982,7 +1329,57 @@ private:
     struct Job {
         std::vector<std::byte> key;
         std::shared_ptr<const CompiledVariant> variant;
+        std::shared_ptr<const IrResourcePlan> plan;
     };
+
+    template<typename TDecode>
+    bool load(std::span<const std::byte> key, TDecode&& decode, std::atomic<std::uint64_t>& hitCount, std::atomic<std::uint64_t>& missCount, std::atomic<std::uint64_t>& failureCount) {
+        const auto started = std::chrono::steady_clock::now();
+        const auto name = EntryName(key);
+        thread_local std::vector<std::byte>* fileSlot = nullptr;
+        auto& file = ThreadOwned(fileSlot);
+        bool loaded = false;
+        std::span<const std::byte> bytes;
+        std::shared_ptr<const void> owner;
+        if (auto mapped = MapFile(directory / name)) {
+            bytes = mapped->Bytes();
+            owner = std::move(mapped);
+        }
+        const bool present = owner != nullptr || ReadWholeFile(directory / name, file);
+        if (owner == nullptr) bytes = file;
+        if (!present) {
+            missCount.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            switch (decode(bytes, std::move(owner))) {
+                case LoadStatus::Loaded:
+                    hitCount.fetch_add(1, std::memory_order_relaxed);
+                    bytesRead.fetch_add(bytes.size(), std::memory_order_relaxed);
+                    loaded = true;
+                    break;
+                case LoadStatus::Absent:
+                case LoadStatus::KeyMismatch:
+                    missCount.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case LoadStatus::Rejected: {
+                    const auto failures = failureCount.fetch_add(1, std::memory_order_relaxed);
+                    if (failures < 8) std::fprintf(stderr, "[shader-disk-cache] rejected %s (%zu bytes): truncated, corrupt or another format; recompiling\n", name.c_str(), bytes.size());
+                    break;
+                }
+            }
+        }
+        if (file.capacity() > (4u << 20u)) std::vector<std::byte>().swap(file);
+        loadNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        report(false);
+        return loaded;
+    }
+
+    void enqueue(Job job) {
+        {
+            std::lock_guard lock(mutex);
+            jobs.push_back(std::move(job));
+        }
+        wake.notify_one();
+    }
 
     void run() {
         std::fprintf(stderr, "[shader-disk-cache] %s (source version %s, format %u)\n", directory.string().c_str(), hex(SourceVersion()).c_str(), FormatVersion);
@@ -1008,9 +1405,9 @@ private:
     }
 
     void write(const Job& job) {
-        const auto file = EncodeEntry(job.key, *job.variant);
-        if (WriteFileAtomically(directory / EntryName(job.key), file)) {
-            writes.fetch_add(1, std::memory_order_relaxed);
+        const auto file = job.plan != nullptr ? EncodePlanEntry(job.key, *job.plan) : EncodeEntry(job.key, *job.variant);
+        if (!file.empty() && WriteFileAtomically(directory / EntryName(job.key), file)) {
+            (job.plan != nullptr ? planWrites : writes).fetch_add(1, std::memory_order_relaxed);
             bytesWritten.fetch_add(file.size(), std::memory_order_relaxed);
         } else {
             const auto failures = writeFailures.fetch_add(1, std::memory_order_relaxed);
@@ -1060,11 +1457,13 @@ private:
         const auto totals = Totals();
         const auto loadNs = loadNanoseconds.load(std::memory_order_relaxed);
         const auto delta = [](std::uint64_t after, std::uint64_t before) { return static_cast<unsigned long long>(after - before); };
-        if (totals.hits == reported.hits && totals.misses == reported.misses && totals.writes == reported.writes && totals.loadFailures == reported.loadFailures && totals.writeFailures == reported.writeFailures) return;
-        std::fprintf(stderr, "[shader-disk-cache] (10 s): %llu hits, %llu misses, %llu writes (%.1f MiB), %llu load failures, %llu write failures; %.1f MiB read in %.1f ms (totals: %llu hits, %llu misses, %llu writes)\n",
+        if (totals.hits == reported.hits && totals.misses == reported.misses && totals.writes == reported.writes && totals.loadFailures == reported.loadFailures && totals.writeFailures == reported.writeFailures && totals.planHits == reported.planHits && totals.planMisses == reported.planMisses && totals.planWrites == reported.planWrites && totals.planLoadFailures == reported.planLoadFailures) return;
+        std::fprintf(stderr, "[shader-disk-cache] (10 s): %llu hits, %llu misses, %llu writes (%.1f MiB), %llu load failures, %llu write failures; resource plans: %llu hits, %llu misses, %llu writes, %llu load failures; %.1f MiB read in %.1f ms (totals: %llu hits, %llu misses, %llu writes; plans %llu hits, %llu misses)\n",
                      delta(totals.hits, reported.hits), delta(totals.misses, reported.misses), delta(totals.writes, reported.writes), static_cast<double>(totals.bytesWritten - reported.bytesWritten) / (1024.0 * 1024.0),
-                     delta(totals.loadFailures, reported.loadFailures), delta(totals.writeFailures, reported.writeFailures), static_cast<double>(totals.bytesRead - reported.bytesRead) / (1024.0 * 1024.0), static_cast<double>(loadNs - reportedLoadNs) / 1e6,
-                     static_cast<unsigned long long>(totals.hits), static_cast<unsigned long long>(totals.misses), static_cast<unsigned long long>(totals.writes));
+                     delta(totals.loadFailures, reported.loadFailures), delta(totals.writeFailures, reported.writeFailures),
+                     delta(totals.planHits, reported.planHits), delta(totals.planMisses, reported.planMisses), delta(totals.planWrites, reported.planWrites), delta(totals.planLoadFailures, reported.planLoadFailures),
+                     static_cast<double>(totals.bytesRead - reported.bytesRead) / (1024.0 * 1024.0), static_cast<double>(loadNs - reportedLoadNs) / 1e6,
+                     static_cast<unsigned long long>(totals.hits), static_cast<unsigned long long>(totals.misses), static_cast<unsigned long long>(totals.writes), static_cast<unsigned long long>(totals.planHits), static_cast<unsigned long long>(totals.planMisses));
         reported = totals;
         reportedLoadNs = loadNs;
     }
@@ -1077,6 +1476,7 @@ private:
     std::deque<Job> jobs;
     bool writing = false;
     std::atomic<std::uint64_t> hits{0}, misses{0}, writes{0}, loadFailures{0}, writeFailures{0}, bytesRead{0}, bytesWritten{0}, loadNanoseconds{0};
+    std::atomic<std::uint64_t> planHits{0}, planMisses{0}, planWrites{0}, planLoadFailures{0};
     std::atomic<std::int64_t> lastReport{0};
     std::mutex reportMutex;
     Counters reported;
@@ -1110,6 +1510,23 @@ void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, s
     writer.Value(request.layout.firstBinding);
     writer.Value(request.layout.pushConstantOffsetBytes);
     writer.Value(request.layout.pushConstantSizeBytes);
+    const auto& switches = switchKey();
+    key.insert(key.end(), switches.begin(), switches.end());
+}
+
+void BuildPlanKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key) {
+    key.clear();
+    Writer writer(key);
+    writer.Value(FileMagic);
+    writer.Value(FormatVersion);
+    writer.Value(SourceVersion());
+    writer.Value(PlanEntryKind);
+    thread_local std::vector<std::uint64_t>* memoryKeySlot = nullptr;
+    auto& memoryKey = ThreadOwned(memoryKeySlot);
+    RecompileCacheKey::Build(request, memoryKey);
+    writer.Values(std::span<const std::uint64_t>(memoryKey));
+    writer.Values(request.shader.code);
+    writer.Value(hostSubgroupSize);
     const auto& switches = switchKey();
     key.insert(key.end(), switches.begin(), switches.end());
 }
@@ -1160,6 +1577,32 @@ LoadStatus DecodeEntry(std::span<const std::byte> file, std::span<const std::byt
     return LoadStatus::Loaded;
 }
 
+bool EncodePlan(const IrResourcePlan& plan, std::vector<std::byte>& out) {
+    Writer writer(out);
+    return encodePlan(writer, plan);
+}
+
+bool DecodePlan(std::span<const std::byte> bytes, IrResourcePlan& plan) {
+    Reader reader(bytes);
+    IrResourcePlan decoded;
+    if (!decodePlan(reader, decoded)) return false;
+    plan = std::move(decoded);
+    return true;
+}
+
+std::vector<std::byte> EncodePlanEntry(std::span<const std::byte> key, const IrResourcePlan& plan) {
+    std::vector<std::byte> payload;
+    if (!EncodePlan(plan, payload)) return {};
+    return wrapEntry(key, payload);
+}
+
+LoadStatus DecodePlanEntry(std::span<const std::byte> file, std::span<const std::byte> key, IrResourcePlan& plan) {
+    std::span<const std::byte> payload;
+    const auto status = unwrapEntry(file, key, payload);
+    if (status != LoadStatus::Loaded) return status;
+    return DecodePlan(payload, plan) ? LoadStatus::Loaded : LoadStatus::Rejected;
+}
+
 bool Enabled() {
     return store().Enabled();
 }
@@ -1181,6 +1624,16 @@ void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> va
 std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant) {
     auto& instance = store();
     return instance.Enabled() ? instance.Persist(key, variant) : nullptr;
+}
+
+bool LoadPlan(std::span<const std::byte> key, IrResourcePlan& plan) {
+    auto& instance = store();
+    return instance.Enabled() && instance.LoadPlan(key, plan);
+}
+
+void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan> plan) {
+    auto& instance = store();
+    if (instance.Enabled() && plan != nullptr) instance.StorePlan(std::move(key), std::move(plan));
 }
 
 void Flush() {
