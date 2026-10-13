@@ -803,6 +803,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(!result.customSampleLocations, "dithered alpha-to-coverage with custom sample locations is unsupported");
     }
     std::string depthSampleRefusal;
+    std::string colorSampleRefusal;
+    std::uint32_t reducedColorSamples = 0;
     if (result.depth && result.depth->samples != result.samples) {
         char text[320];
         const auto value = [&](std::uint32_t offset) { const auto found = find(cx, offset); return found != cx.end() ? found->second : 0xdeadbeefu; };
@@ -884,7 +886,14 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.customSampleLocations = true;
             result.sampleLocations.fill(0);
         }
-        Require(color.samples == result.samples, "a color target's sample count differs from the rasterizer's");
+        if (color.samples != result.samples) {
+            static const bool strictColors = std::getenv("APS5_RE8_STRICT_COLOR_SAMPLES") != nullptr;
+            char text[256];
+            std::snprintf(text, sizeof(text), "AGC graphics: a color target's sample count differs from the rasterizer's (color %u in slot %u, raster %u, CB_COLOR_INFO 0x%08x, CB_COLOR_ATTRIB 0x%08x, depth %u)", color.samples, slot, result.samples, read(cx, 0x31c + slot * 0xfu), read(cx, 0x31d + slot * 0xfu), result.depth ? result.depth->samples : 0u);
+            if (strictColors || color.samples > result.samples || (reducedColorSamples != 0 && reducedColorSamples != color.samples)) throw std::runtime_error(text);
+            if (reducedColorSamples == 0) colorSampleRefusal = text;
+            reducedColorSamples = color.samples;
+        }
         APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
         if (result.colors.empty()) {
             result.renderExtent = color.extent;
@@ -893,11 +902,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         result.colors.push_back(color);
     }
-    if (!depthSampleRefusal.empty()) {
-        if (result.hasColorTarget) throw std::runtime_error(depthSampleRefusal);
+    if (!depthSampleRefusal.empty() || reducedColorSamples != 0) {
+        const auto target = reducedColorSamples != 0 ? reducedColorSamples : result.depth->samples;
+        const bool colorsAgree = std::all_of(result.colors.begin(), result.colors.end(), [&](const auto& color) { return color.samples == target; });
+        if (!colorsAgree || (result.depth && result.depth->samples != target)) throw std::runtime_error(!depthSampleRefusal.empty() ? depthSampleRefusal : colorSampleRefusal);
         static std::atomic<unsigned> reported{0};
-        if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[re8-depth-samples] a depth-only pass rasterized with %u samples into a %u-sample depth target is rasterized with %u\n", result.samples, result.depth->samples, result.depth->samples);
-        result.samples = result.depth->samples;
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 6) std::fprintf(stderr, "[re8-target-samples] a pass rasterized with %u samples into %zu color target(s) and %s depth target of %u sample(s) is rasterized with %u%s%s\n", result.samples, result.colors.size(), result.depth ? "a" : "no", target, target, colorSampleRefusal.empty() ? "" : "; ", colorSampleRefusal.c_str());
+        result.samples = target;
         result.customSampleLocations = false;
         result.sampleLocations.fill(0);
     }
