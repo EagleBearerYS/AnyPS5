@@ -1310,6 +1310,7 @@ std::vector<PlanFixture> planFixtures() {
     chained[7] = static_cast<std::uint32_t>(PlanPointerAddress >> 32u);
     add("guarded pointer chain", 64, {0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u, 0xbf8cc07fu, 0xbf068008u, 0xbf850006u, 0xf4040385u, 0xfa000000u, 0xbf8cc07fu, 0xf4000307u, 0xfa000000u, 0xbf8cc07fu, 0x7e02020cu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, chained}, {PlanPayloadAddress, payload}, {PlanPointerAddress, {static_cast<std::uint32_t>(PlanPayloadAddress), static_cast<std::uint32_t>(PlanPayloadAddress >> 32u)}}});
     add("descriptor through a pointer", 64, {0xf4040280u, 0xfa000018u, 0xbf8cc07fu, 0xf4080105u, 0xfa000000u, 0xbf8cc07fu, 0x34040082u, 0xe0701000u, 0x80010002u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, chained}, {PlanPointerAddress, bufferWords(PlanOutputAddress, 0u, 256u, 0x30027facu)}});
+    add("descriptor invariant phi", 32, {0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000000u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, phis}});
 
     PlanFixture fragment;
     fragment.name = "fragment parameters";
