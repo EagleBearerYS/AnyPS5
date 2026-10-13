@@ -16,7 +16,7 @@ namespace PipelineSpecialization {
 
 inline constexpr std::uint32_t CompareBase = 49152u;
 inline constexpr std::uint32_t CompareWords = 6u;
-inline constexpr std::uint32_t BufferBase = 0u;
+inline constexpr std::uint32_t BufferBase = 1u << 24u;
 inline constexpr std::uint32_t BufferWords = 4u;
 inline constexpr std::uint32_t ImageBase = 1024u;
 inline constexpr std::uint32_t ImageWords = 5u;
@@ -34,6 +34,8 @@ inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
 inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
+
+static_assert(BufferBase > UnnormalizedBaseLevelBase && BufferBase > CompareBase && BufferBase > DescriptorIndexBase, "buffer specialization IDs must be above every bounded range");
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;

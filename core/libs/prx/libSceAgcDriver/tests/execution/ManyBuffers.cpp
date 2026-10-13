@@ -21,7 +21,8 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t PushBuffers = 9;
 constexpr std::uint32_t DataBuffers = 124;
-constexpr std::uint32_t MaxBuffers = DataBuffers;
+constexpr std::uint32_t LargeBuffers = 300;
+constexpr std::uint32_t MaxBuffers = LargeBuffers;
 constexpr std::uint32_t RegionWords = 2u * Threads + 4u;
 constexpr std::uint32_t RangeBytes = (RegionWords + 4u) * 4u;
 constexpr std::uint32_t TableRegister = 0;
@@ -81,6 +82,7 @@ constexpr std::array<std::uint32_t, CodeWords(Buffers)> BuildCode() {
 
 alignas(256) constexpr std::array<std::uint32_t, CodeWords(PushBuffers)> PushCode = BuildCode<PushBuffers>();
 alignas(256) constexpr std::array<std::uint32_t, CodeWords(DataBuffers)> DataCode = BuildCode<DataBuffers>();
+alignas(256) constexpr std::array<std::uint32_t, CodeWords(LargeBuffers)> LargeCode = BuildCode<LargeBuffers>();
 
 std::uint32_t BufferBase(std::uint32_t buffer) {
     return buffer * RegionWords + buffer % 4u;
@@ -147,6 +149,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device, PushCode, PushBuffers, false);
         Run(*device, DataCode, DataBuffers, true);
+        Run(*device, LargeCode, LargeBuffers, true);
         std::puts("many buffers tests passed");
         return 0;
     } catch (const std::exception& error) {
