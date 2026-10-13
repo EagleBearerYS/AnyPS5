@@ -5530,15 +5530,15 @@ void atomicViewTests(const Device& device, Recorder& recorder) {
         if (format == 56u) {
             bool refused = false;
             try {
-                static_cast<void>(image->AtomicView(0, false));
+                static_cast<void>(image->AtomicView(0, StorageTexture::LayersOf(resource, false)));
             } catch (const std::exception&) {
                 refused = true;
             }
             Require(refused, "an 8_8_8_8 storage image has an atomic view");
             continue;
         }
-        const auto atomic = image->AtomicView(0, false);
-        Require(atomic != VK_NULL_HANDLE && atomic == image->AtomicView(0, false), "atomic storage views are not reused");
+        const auto atomic = image->AtomicView(0, StorageTexture::LayersOf(resource, false));
+        Require(atomic != VK_NULL_HANDLE && atomic == image->AtomicView(0, StorageTexture::LayersOf(resource, false)), "atomic storage views are not reused");
         Require((atomic == image->View(0)) == (format == 20u), "only a 32_UINT storage image serves atomics through its own view");
     }
 }

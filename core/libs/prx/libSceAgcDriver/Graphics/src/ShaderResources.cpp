@@ -797,11 +797,20 @@ std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::li
     return texture;
 }
 
+bool ArraySliceViews(const GuestTextureResource& resource) {
+    return resource.dimension == TextureDimension::k2DArray || resource.dimension == TextureDimension::k1DArray;
+}
+
 // Storage images are shared by every descriptor of one surface (address, extent, layers, format, tile
 // mode): the image holds the whole mip chain, and render targets in the same memory attach to it.
 std::array<std::uint32_t, 8> SurfaceKey(const Context& context, const GuestTextureResource& resource) {
+    const bool slices = ArraySliceViews(resource);
     // Guest formats that store in the same Vulkan format share the image (views carry the difference).
-    return {static_cast<std::uint32_t>(resource.baseAddress | resource.pipeBankXor), static_cast<std::uint32_t>(resource.baseAddress >> 32u), resource.width, resource.height, (resource.depthOrLastArray << 16u) | (resource.mipCount & 0xffffu), (static_cast<std::uint32_t>(resource.tileMode) << 12u) | (static_cast<std::uint32_t>(resource.dimension) << 20u), resource.baseArray, static_cast<std::uint32_t>(StorageFormatForGuest(context, resource.format))};
+    return {static_cast<std::uint32_t>(resource.baseAddress | resource.pipeBankXor), static_cast<std::uint32_t>(resource.baseAddress >> 32u), resource.width, resource.height, ((slices ? 0u : resource.depthOrLastArray) << 16u) | (resource.mipCount & 0xffffu), (static_cast<std::uint32_t>(resource.tileMode) << 12u) | (static_cast<std::uint32_t>(resource.dimension) << 20u), slices ? 0u : resource.baseArray, static_cast<std::uint32_t>(StorageFormatForGuest(context, resource.format))};
+}
+
+bool HoldsSlices(const StorageTexture& image, const GuestTextureResource& resource) {
+    return image.Descriptor().depthOrLastArray >= resource.depthOrLastArray;
 }
 
 struct ExtendedSurfaces {
@@ -820,10 +829,11 @@ std::uint32_t AllocatedLevels(const GuestTextureResource& resource) {
 }
 
 GuestTextureResource StorageSurface(const Context& context, const GuestTextureResource& viewed) {
+    auto surface = viewed;
+    if (ArraySliceViews(viewed)) surface.baseArray = 0;
     auto& surfaces = ExtendedChains();
     const bool extended = viewed.mipCount > AllocatedLevels(viewed);
-    if (!extended && !surfaces.any.load(std::memory_order_acquire)) return viewed;
-    auto surface = viewed;
+    if (!extended && !surfaces.any.load(std::memory_order_acquire)) return surface;
     surface.mipCount = AllocatedLevels(viewed);
     const auto identity = SurfaceKey(context, surface);
     std::lock_guard lock(surfaces.mutex);
@@ -864,7 +874,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, allocated)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
         }
         auto it = findStorage(cache, key);
-        if (it != cache.entries.end() && MetadataMoved(*it->texture, resource)) {
+        if (it != cache.entries.end() && (MetadataMoved(*it->texture, resource) || !HoldsSlices(*it->texture, resource))) {
             evicted.push_back(evictStorage(cache, it));
             it = cache.entries.end();
         }
@@ -1887,7 +1897,7 @@ void ShaderResources::buildComplete() {
                         write.pImageInfo = images.data() + images.size();
                         for (const auto index : binding.imageAllocations) {
                             if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
-                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index]), VK_IMAGE_LAYOUT_GENERAL});
+                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
                         }
                         Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
                         break;
@@ -2493,7 +2503,7 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         const bool imported = SampledFromStorageEligible(context, surface.resource, surface.bytes);
-        overlap.sourceEligible = imported && SurfaceKey(context, source->Descriptor()) == SurfaceKey(context, surface.resource);
+        overlap.sourceEligible = imported && SurfaceKey(context, source->Descriptor()) == SurfaceKey(context, surface.resource) && HoldsSlices(*source, surface.resource);
         auto found = StorageTexture::FindPending(address, surface.bytes);
         if (found != nullptr && !Texture::CanCopyFrom(*found, surface.resource)) found.reset();
         if (found != nullptr) {
@@ -3707,7 +3717,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         else storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes));
         storageMips.push_back(mip);
         storageKeys.push_back(resource.dccAddress);
-        storageFirstLayer.push_back(firstLayer);
+        storageLayers.push_back(StorageTexture::LayersOf(resource, firstLayer));
         // Images the shader only reads have nothing to store back.
         storageWritten.push_back(element >= binding.imageWritten.size() || binding.imageWritten[element]);
         storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);

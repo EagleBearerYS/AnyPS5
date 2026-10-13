@@ -504,7 +504,7 @@ private:
     std::vector<std::shared_ptr<StorageTexture>> storageTextures;
     std::vector<std::uint32_t> storageMips;
     std::vector<std::uint64_t> storageKeys;
-    std::vector<bool> storageFirstLayer;
+    std::vector<StorageTexture::ViewLayers> storageLayers;
     std::vector<bool> storageWritten;
     std::vector<bool> storageAtomic;
     std::vector<bool> storageAtomic64;
