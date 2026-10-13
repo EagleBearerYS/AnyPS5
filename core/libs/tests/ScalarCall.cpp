@@ -187,8 +187,9 @@ static ControlFlowGraph BuildCode(std::span<const std::uint32_t> code, const Swa
     return GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(code), &swappc);
 }
 
-static IrProgram TranslateCode(std::span<const std::uint32_t> code, const SwappcInfo& swappc) {
-    const auto program = RdnaInstructionDecoder{}.Decode(code);
+static IrProgram TranslateCode(std::span<const std::uint32_t> code, const SwappcInfo& swappc, std::span<const std::uint32_t> linkedLiterals = {}) {
+    auto program = RdnaInstructionDecoder{}.Decode(code);
+    LinkRdnaLiterals(program, linkedLiterals);
     const auto cfg = GraphBuilder{}.Build(program, &swappc);
     ShaderComputeInputInfo computeInfo{};
     TranslateOptions options{};
@@ -238,15 +239,16 @@ static void CheckTableCalls() {
 
     const std::vector<std::uint32_t> first{0xbf068000u, 0x4a020285u, 0xbe80200eu};
     const std::vector<std::vector<TableCallee>> callees{{{0x1122334455ull, {0x22334455u, 0x11u, 0x00c0ffeeu, 0x12u}, first}, {0x1122334455ull, {0x22334455u, 0x11u, 0x0badf00du, 0x13u}, first}}};
-    const auto linked = LinkCalls(program, {}, {}, calls, callees);
+    const auto linkedCode = LinkCalls(program, {}, {}, calls, callees);
+    const auto& linked = linkedCode.code;
     Require(linked.size() == 99u && linked[9] == 0xbf820001u && linked[11] == 0xbf85001cu && linked[98] == 0xbf9f0000u);
     Require(linked[12] == 0xbf07ff0eu && linked[13] == 0x22334455u && linked[14] == 0xbf85000au && linked[15] == 0xbf07ff0fu && linked[16] == 0x11u && linked[17] == 0xbf850007u);
-    Require(linked[18] == 0xbf07ff0au && linked[19] == 0x00c0ffeeu && linked[20] == 0xbf850004u && linked[21] == 0xbf07ff0bu && linked[22] == 0x12u && linked[23] == 0xbf850001u && linked[24] == 0xbf82002du);
-    Require(linked[31] == 0xbf07ff0au && linked[32] == 0x0badf00du && linked[34] == 0xbf07ff0bu && linked[35] == 0x13u && linked[37] == 0xbf820022u && linked[38] == 0xbf078080u && linked[39] == 0xbf820022u);
+    Require(linked[18] == 0xbf07ff0au && linked[19] == 0u && linked[20] == 0xbf850004u && linked[21] == 0xbf07ff0bu && linked[22] == 1u && linked[23] == 0xbf850001u && linked[24] == 0xbf82002du);
+    Require(linked[31] == 0xbf07ff0au && linked[32] == 2u && linked[34] == 0xbf07ff0bu && linked[35] == 3u && linked[37] == 0xbf820022u && linked[38] == 0xbf078080u && linked[39] == 0xbf820022u);
     Require(linked[42] == 0xbf85000bu && linked[52] == 0xbf068080u && linked[53] == 0xbf820010u && linked[66] == 0xbf068080u && linked[67] == 0xbf820004u && linked[68] == 0xbf068080u && linked[69] == 0xbf820004u);
     Require(linked[70] == 0xbb0e0005u && linked[71] == 0xbf82ffc2u && linked[72] == 0xbb0e000eu && linked[73] == 0xbf82ffc0u && linked[74] == 0xbe8e210eu && linked[75] == 0xbf82ffbeu);
-    const std::vector<std::uint32_t> prologueA{0xbe8803ffu, 0x22334455u, 0xbe8903ffu, 0x11u, 0xbe8a03ffu, 0x00c0ffeeu, 0xbe8b03ffu, 0x12u};
-    const std::vector<std::uint32_t> prologueB{0xbe8803ffu, 0x22334455u, 0xbe8903ffu, 0x11u, 0xbe8a03ffu, 0x0badf00du, 0xbe8b03ffu, 0x13u};
+    const std::vector<std::uint32_t> prologueA{0xbe8803ffu, 0x22334455u, 0xbe8903ffu, 0x11u, 0xbe8a03ffu, 0u, 0xbe8b03ffu, 1u};
+    const std::vector<std::uint32_t> prologueB{0xbe8803ffu, 0x22334455u, 0xbe8903ffu, 0x11u, 0xbe8a03ffu, 2u, 0xbe8b03ffu, 3u};
     Require(std::equal(prologueA.begin(), prologueA.end(), linked.begin() + 76) && std::equal(first.begin(), first.end(), linked.begin() + 84));
     Require(std::equal(prologueB.begin(), prologueB.end(), linked.begin() + 87) && std::equal(first.begin(), first.end(), linked.begin() + 95));
     const auto cfg = BuildCode(linked, swappc);
@@ -256,7 +258,17 @@ static void CheckTableCalls() {
     Require(cfg.FindBlockByProgramCounter(72u * 4u).terminator.trueBlock == block(87u));
     Require(cfg.FindBlockByProgramCounter(87u * 4u).terminator.trueBlock == block(73u));
     Require(cfg.unlinkedCallProgramCounters == std::vector<std::uint32_t>{74u * 4u});
+    Require(linkedCode.linkedWords == std::vector<std::uint32_t>{0x00c0ffeeu, 0x12u, 0x0badf00du, 0x13u});
+    const std::vector<std::uint32_t> literals{18u * 4u, 21u * 4u, 31u * 4u, 34u * 4u, 46u * 4u, 49u * 4u, 60u * 4u, 63u * 4u, 80u * 4u, 82u * 4u, 91u * 4u, 93u * 4u};
+    Require(linkedCode.linkedLiterals == literals);
+    const std::vector<std::vector<TableCallee>> otherArguments{{{0x1122334455ull, {0x22334455u, 0x11u, 0x00fa5e00u, 0x14u}, first}, {0x1122334455ull, {0x22334455u, 0x11u, 0x00bea500u, 0x15u}, first}}};
+    const auto relinked = LinkCalls(program, {}, {}, calls, otherArguments);
+    Require(relinked.code == linked && relinked.linkedLiterals == literals && relinked.linkedWords == std::vector<std::uint32_t>{0x00fa5e00u, 0x14u, 0x00bea500u, 0x15u});
     static_cast<void>(TranslateCode(linked, swappc));
+    const auto words = ProgramToString(TranslateCode(linked, swappc, literals));
+    std::size_t reads = 0;
+    for (auto at = words.find("GetLinkedWord"); at != std::string::npos; at = words.find("GetLinkedWord", at + 1u)) ++reads;
+    Require(reads == literals.size());
     const std::vector<std::vector<TableCallee>> shortRecord{{{0x1122334455ull, {0x22334455u, 0x11u, 0x00c0ffeeu}, first}}};
     ExpectThrow("is not the call's record", [&] { static_cast<void>(LinkCalls(program, {}, {}, calls, shortRecord)); });
     const std::vector<std::vector<TableCallee>> otherTarget{{{0x1122334455ull, {0x22334456u, 0x11u, 0x00c0ffeeu, 0x12u}, first}}};

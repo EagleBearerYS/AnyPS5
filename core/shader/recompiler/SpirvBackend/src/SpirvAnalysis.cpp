@@ -15,6 +15,7 @@ bool UniformSource(const IrValue& value) {
     case IrOpcode::ReadFirstLane:
     case IrOpcode::ReadLane:
     case IrOpcode::GetUserData:
+    case IrOpcode::GetLinkedWord:
     case IrOpcode::GetShaderBase:
     case IrOpcode::ReadConst:
     case IrOpcode::ReadConstBuffer:

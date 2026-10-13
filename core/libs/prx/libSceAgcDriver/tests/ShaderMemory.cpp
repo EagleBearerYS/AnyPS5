@@ -2270,13 +2270,29 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel = ShaderPixelStageInfo{};
     minimal.context.pixel->rasterPrimitive = RasterPrimitive::Rectangle;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQRYAAAA=", "new requests did not use serialization version 22");
+    require(requestPrefix(encoded, 8u) == "NVNQQRcAAAA=", "new requests did not use serialization version 23");
     require(serializer.Deserialize(encoded).request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle, "the pixel primitive class did not round-trip");
+    const std::array<std::uint32_t, 2> linkedLiterals{0x10u, 0x18u};
+    const std::array<std::uint32_t, 3> linkedWords{0x1234u, 0x5678u, 0x9abcu};
+    auto linked = minimal;
+    linked.shader.linkedLiterals = linkedLiterals;
+    linked.context.linkedWords = linkedWords;
+    const auto linkedReplay = serializer.Deserialize(serializer.Serialize(linked));
+    require(std::ranges::equal(linkedReplay.request.shader.linkedLiterals, linkedLiterals) && std::ranges::equal(linkedReplay.request.context.linkedWords, linkedWords), "linked literals or words were lost in serialization");
+    std::vector<std::uint64_t> minimalKey;
+    std::vector<std::uint64_t> linkedKey;
+    RecompileCacheKey::Build(minimal, minimalKey);
+    RecompileCacheKey::Build(linked, linkedKey);
+    require(minimalKey != linkedKey, "linked literals did not change the shader identity");
+    const std::array<std::uint32_t, 3> otherWords{0x4321u, 0x8765u, 0xcba9u};
+    linked.context.linkedWords = otherWords;
+    RecompileCacheKey::Build(linked, minimalKey);
+    require(minimalKey == linkedKey, "linked words changed the shader identity");
     constexpr std::size_t mappingOffset = 8u + 37u + 18u + 163u;
     for (std::size_t bytes = 0; bytes < 21u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag or primitive class was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRcAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRgAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{

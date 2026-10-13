@@ -38,6 +38,7 @@ struct ShaderBinary {
     std::span<const std::uint32_t> code;
     std::uint64_t headerAddress;
     std::span<const std::byte> header;
+    std::span<const std::uint32_t> linkedLiterals;
 };
 
 struct ShaderComputeStageInfo {
@@ -197,6 +198,7 @@ struct GuestContext {
     std::optional<ShaderVertexStageInfo> vertex;
     std::span<const MemoryRegion> memory;
     std::optional<ShaderFloatMode> floatMode;
+    std::span<const std::uint32_t> linkedWords;
 };
 
 struct MeshTargetLimits {

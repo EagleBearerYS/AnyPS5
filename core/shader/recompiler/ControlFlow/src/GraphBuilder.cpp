@@ -1407,7 +1407,7 @@ std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t>
 }
 
 std::vector<std::uint32_t> LinkUserDataCalls(const RdnaProgram& program, std::span<const UserDataCall> calls, std::span<const std::vector<std::uint32_t>> callees) {
-    return LinkCalls(program, calls, callees, {}, {});
+    return LinkCalls(program, calls, callees, {}, {}).code;
 }
 
 std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcInfo& swappc) {
@@ -1460,7 +1460,7 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
     return calls;
 }
 
-std::vector<std::uint32_t> LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> userDataCalls, std::span<const std::vector<std::uint32_t>> userDataCallees,
+LinkedCode LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> userDataCalls, std::span<const std::vector<std::uint32_t>> userDataCallees,
     std::span<const TableCall> tableCalls, std::span<const std::vector<TableCallee>> tableCallees) {
     if (userDataCalls.size() != userDataCallees.size()) throw std::logic_error("user-data calls and callees differ in number");
     if (tableCalls.size() != tableCallees.size()) throw std::logic_error("table calls and callees differ in number");
@@ -1471,7 +1471,9 @@ std::vector<std::uint32_t> LinkCalls(const RdnaProgram& program, std::span<const
         }
     }
     const auto end = instructionEndProgramCounter(program.instructions.back()) / 4u;
-    std::vector<std::uint32_t> linked(program.code.begin(), program.code.begin() + end);
+    LinkedCode result;
+    auto& linked = result.code;
+    linked.assign(program.code.begin(), program.code.begin() + end);
     const auto callWord = [&](std::uint32_t programCounter, const char* kind) {
         const auto index = instructionIndexOfProgramCounter(program, programCounter);
         if (index == InvalidControlFlowId || program.instructions[index].op != RdnaOpcode::SSwappcB64 || program.instructions[index].wordCount != 1u) {
@@ -1503,6 +1505,20 @@ std::vector<std::uint32_t> LinkCalls(const RdnaProgram& program, std::span<const
                 throw std::logic_error(at + " name a record that is not the call's record");
             }
         }
+        const auto targetWord = [&](std::uint32_t dword) { return dword == targetDword || dword == targetDword + 1u; };
+        std::vector<std::vector<std::uint32_t>> wordIndex(callees.size(), std::vector<std::uint32_t>(table.recordDwords, UINT32_MAX));
+        for (std::size_t callee = 0; callee < callees.size(); ++callee) {
+            for (const auto& held : table.recordRegisters) {
+                if (targetWord(held.dword) || wordIndex[callee][held.dword] != UINT32_MAX) continue;
+                wordIndex[callee][held.dword] = static_cast<std::uint32_t>(result.linkedWords.size());
+                result.linkedWords.push_back(callees[callee].record[held.dword]);
+            }
+        }
+        const auto literal = [&](std::size_t callee, std::uint32_t dword, std::uint32_t instruction) {
+            if (targetWord(dword)) return callees[callee].record[dword];
+            result.linkedLiterals.push_back(instruction * 4u);
+            return wordIndex[callee][dword];
+        };
         const auto original = linked[word];
         const auto count = callees.size();
         const auto chain = 3u * (2u + compared.size()) + 1u;
@@ -1517,13 +1533,14 @@ std::vector<std::uint32_t> LinkCalls(const RdnaProgram& program, std::span<const
         for (const bool sccOne : {false, true}) {
             for (std::size_t callee = 0; callee < count; ++callee) {
                 const auto next = linked.size() + chain + (sccOne ? 1u : 0u);
-                const auto compare = [&](std::uint32_t reg, std::uint32_t value) {
-                    linked.insert(linked.end(), {0xbf07ff00u | reg, value});
+                const auto compare = [&](std::uint32_t reg, std::uint32_t dword) {
+                    const auto at = static_cast<std::uint32_t>(linked.size());
+                    linked.insert(linked.end(), {0xbf07ff00u | reg, literal(callee, dword, at)});
                     branch(0xbf850000u, next);
                 };
-                compare(table.targetRegister, static_cast<std::uint32_t>(callees[callee].target));
-                compare(table.targetRegister + 1u, static_cast<std::uint32_t>(callees[callee].target >> 32u));
-                for (const auto& held : compared) compare(held.reg, callees[callee].record[held.dword]);
+                compare(table.targetRegister, targetDword);
+                compare(table.targetRegister + 1u, targetDword + 1u);
+                for (const auto& held : compared) compare(held.reg, held.dword);
                 if (sccOne) linked.push_back(0xbf068080u);
                 branch(0xbf820000u, calls + callee * 2u);
             }
@@ -1541,12 +1558,15 @@ std::vector<std::uint32_t> LinkCalls(const RdnaProgram& program, std::span<const
             const auto offset = static_cast<std::int64_t>(linked.size()) - static_cast<std::int64_t>(site) - 1;
             if (offset > 0x7fff) throw std::invalid_argument(at + " land out of s_call_b64 range");
             linked[site] = 0xbb000000u | (table.linkRegister << 16u) | static_cast<std::uint32_t>(offset);
-            for (const auto& held : table.recordRegisters) linked.insert(linked.end(), {0xbe8003ffu | (held.reg << 16u), callees[callee].record[held.dword]});
+            for (const auto& held : table.recordRegisters) {
+                const auto at = static_cast<std::uint32_t>(linked.size());
+                linked.insert(linked.end(), {0xbe8003ffu | (held.reg << 16u), literal(callee, held.dword, at)});
+            }
             linked.insert(linked.end(), callees[callee].code.begin(), callees[callee].code.end());
         }
     }
     linked.push_back(0xbf9f0000u);
-    return linked;
+    return result;
 }
 
 ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInfo* swappc) const {

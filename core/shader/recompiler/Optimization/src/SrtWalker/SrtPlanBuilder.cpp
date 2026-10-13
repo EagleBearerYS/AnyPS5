@@ -38,6 +38,9 @@ void PlanBuilder::Run() {
             if (inst->Opcode() == IrOpcode::LoadAddressU32 && IsRawRead(_program.Resources(), *inst) && inst->Argument(1)->Resolve()->HasImmediate() && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst)) {
                 Collect(inst, inst->Flags<MemoryFlags>().pc);
             }
+            if (inst->Opcode() == IrOpcode::GetLinkedWord) {
+                Collect(inst, 0);
+            }
         }
     }
     PatchReads();
@@ -87,10 +90,11 @@ void PlanBuilder::Collect(IrValue* raw, std::uint32_t usePc) {
 }
 
 void PlanBuilder::Record(IrValue* inst) {
-    if (!IsRawRead(_program.Resources(), *inst)) {
+    const bool linked = inst->Opcode() == IrOpcode::GetLinkedWord;
+    if (!linked && !IsRawRead(_program.Resources(), *inst)) {
         return;
     }
-    IrValue* offset = inst->Argument(1)->Resolve();
+    IrValue* offset = inst->Argument(linked ? 0u : 1u)->Resolve();
     const auto foldable = offset->HasImmediate() && offset->Type() == IrType::U32 && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst);
     if (!foldable) {
         if (std::find(_program.Metadata().dynamicReads.begin(), _program.Metadata().dynamicReads.end(), inst) == _program.Metadata().dynamicReads.end()) {
@@ -134,9 +138,8 @@ void PlanBuilder::PatchReads() {
             }
         }
         if (patch.keep) {
-            const auto memory = patch.inst->Flags<MemoryFlags>().index;
-            if (memory < _program.Resources().memoryInfo.size()) {
-                _program.Resources().memoryInfo[memory].planningOnly = true;
+            if (IsRawRead(_program.Resources(), *patch.inst)) {
+                _program.Resources().memoryInfo[patch.inst->Flags<MemoryFlags>().index].planningOnly = true;
             }
             const auto& irVal = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {patch.inst});
         }

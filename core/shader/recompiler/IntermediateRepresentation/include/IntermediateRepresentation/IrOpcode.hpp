@@ -75,6 +75,7 @@ enum class IrOpcode : std::uint16_t {
     ReferenceU32,
     UnlinkedCall,
     GetUserData,
+    GetLinkedWord,
     GetShaderBase,
     ShaderClock,
     RealtimeClock,

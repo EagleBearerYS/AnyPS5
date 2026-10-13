@@ -299,6 +299,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     const auto started = std::chrono::steady_clock::now();
     ShaderRecompiler::SrtRuntime runtime;
     runtime.userData = request.context.userData;
+    runtime.linkedWords = request.context.linkedWords;
     runtime.shaderBase = request.shader.codeAddress;
     runtime.userContext = this;
     runtime.readMemory = &read;

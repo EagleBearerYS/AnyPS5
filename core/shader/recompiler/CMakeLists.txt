@@ -237,6 +237,7 @@ function(add_shader_recompiler target runtimeTarget)
             RecompileResult
             PrepareShader
             GetPreparedCode
+            GetPreparedLinkedLiterals
             PreparedShaderInvocation::TryCreate
             MatchesPreparedShader
             GetPreparedArtifact

@@ -27,6 +27,8 @@ namespace ShaderRecompiler {
     struct DeserializedRequest {
         std::vector<std::uint32_t> shaderCode;
         std::vector<std::byte> shaderHeader;
+        std::vector<std::uint32_t> linkedLiterals;
+        std::vector<std::uint32_t> linkedWords;
         std::vector<std::uint32_t> userData;
         std::optional<ShaderComputeStageInfo> compute;
         std::optional<ShaderPixelStageInfo> pixel;

@@ -193,6 +193,14 @@ bool Evaluator::EvaluateInst(IrValue& inst, std::uint64_t& result) {
             result = _runtime.userData[reg - _program.userDataBase];
             return true;
         }
+        case IrOpcode::GetLinkedWord: {
+            const IrValue* index = inst.Argument(0)->Resolve();
+            if (!index->HasImmediate() || index->ImmediateU32() >= _runtime.linkedWords.size()) {
+                return false;
+            }
+            result = _runtime.linkedWords[index->ImmediateU32()];
+            return true;
+        }
         case IrOpcode::GetShaderBase: result = _runtime.shaderBase; return true;
         case IrOpcode::Phi: return EvaluatePhi(inst, result);
         case IrOpcode::ReadFirstLane: {
