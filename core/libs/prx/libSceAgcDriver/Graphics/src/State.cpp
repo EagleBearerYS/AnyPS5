@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <bitset>
 #include <cmath>
@@ -442,7 +443,12 @@ void decodeSampleLocations(const Registers& cx, State& state) {
                     std::snprintf(text, sizeof(text), " %08x", read(cx, 0x2fe + index));
                     words += text;
                 }
-                throw std::runtime_error("AGC graphics: nonstandard sample locations varying between pixels are unsupported (samples " + std::to_string(samples) + ", PA_SC_AA_SAMPLE_LOCS_PIXEL_*:" + words + ")");
+                static const bool strict = std::getenv("APS5_RE8_STRICT_SAMPLE_LOCATIONS") != nullptr;
+                if (strict) throw std::runtime_error("AGC graphics: nonstandard sample locations varying between pixels are unsupported (samples " + std::to_string(samples) + ", PA_SC_AA_SAMPLE_LOCS_PIXEL_*:" + words + ")");
+                static std::atomic<unsigned> reported{0};
+                if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[re8-sample-locations] pixel (0,0) locations used for every pixel of a 2x2 pattern (samples %u,%s)\n", samples, words.c_str());
+                state.customSampleLocations = true;
+                return;
             }
         }
     }
