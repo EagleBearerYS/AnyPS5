@@ -1155,6 +1155,29 @@ private:
         m_memoryUsers.clear();
     }
 
+    static bool SelectedPerLane(IrValue* root) {
+        std::vector<IrValue*> pending{root->Resolve()};
+        std::unordered_set<const IrValue*> visited;
+        while (!pending.empty() && visited.size() < 4096u) {
+            IrValue* value = pending.back();
+            pending.pop_back();
+            if (value == nullptr || value->HasImmediate() || !visited.insert(value).second) continue;
+            if (value->Opcode() == IrOpcode::ReadLane) return true;
+            for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+                if (IrValue* argument = value->Argument(index)) pending.push_back(argument->Resolve());
+            }
+        }
+        return false;
+    }
+
+    IrValue& Zero() {
+        if (m_zero == nullptr) {
+            m_zero = &m_program.CreateValue(IrOpcode::Void, IrType::U32);
+            m_zero->SetImmediateU32(0u);
+        }
+        return *m_zero;
+    }
+
     void GetHandle(IrValue* value, IrOpcode expected, std::uint32_t width, IrValue*& handle, std::uint32_t& source, bool sampler = false, bool sampleAdjust = false) {
         handle = value->Resolve();
         if (handle->Opcode() != expected) {
@@ -1164,7 +1187,11 @@ private:
         MakeSource(*handle, width, sampler, sampleAdjust, descriptor);
         std::uint32_t badDword = 0;
         if (!ValidateSource(descriptor, badDword)) {
-            fail(std::string(IrOpcodeName(expected)) + " dword " + std::to_string(badDword) + " is not a valid runtime value; chain: " + describeValueChain(descriptor.dwords[badDword], 8u));
+            if (expected != IrOpcode::GetImageResource || !SelectedPerLane(descriptor.dwords[badDword])) {
+                fail(std::string(IrOpcodeName(expected)) + " dword " + std::to_string(badDword) + " is not a valid runtime value; chain: " + describeValueChain(descriptor.dwords[badDword], 8u));
+            }
+            std::fprintf(stderr, "[re8-null-image] a T# selected per lane is planned as a null image: %s\n", describeValueChain(descriptor.dwords[badDword], 3u).c_str());
+            for (std::uint32_t dword = 0; dword < descriptor.dwordCount; dword++) descriptor.dwords[dword] = &Zero();
         }
         source = InternSource(descriptor);
     }
@@ -1481,6 +1508,7 @@ private:
     }
 
     IrProgram& m_program;
+    IrValue* m_zero = nullptr;
     ShaderInfo m_info;
     IrBuilder m_builder;
     std::vector<DescriptorSource> m_sources;
