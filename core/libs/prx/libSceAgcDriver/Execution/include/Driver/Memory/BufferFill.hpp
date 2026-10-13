@@ -47,21 +47,37 @@ inline bool MatchesPatternFillKernel(std::span<const std::uint32_t> code, std::s
     return MatchPatternFillKernel(code, userData, compute).has_value();
 }
 
+inline constexpr std::uint32_t PatternFillLargestMask = 3;
+
 struct PatternFillRange {
     std::uint64_t source, destination, control, invocations;
-    std::uint32_t records;
+    std::uint32_t records, sourceRecords;
     PatternFillControl order;
 
-    [[nodiscard]] std::optional<std::size_t> UniformBytes(std::uint32_t count, std::uint32_t mask) const {
-        if (mask != 0) return std::nullopt;
+    [[nodiscard]] std::uint32_t SourceWords(std::uint32_t mask) const {
+        return std::min(mask + 1u, sourceRecords);
+    }
+
+    [[nodiscard]] std::optional<std::size_t> PatternBytes(std::uint32_t count, std::uint32_t mask) const {
+        if (mask > PatternFillLargestMask) return std::nullopt;
         const auto bytes = std::min({invocations, std::uint64_t{count}, std::uint64_t{records}}) * 4u;
         if (destination % 16 != 0 || bytes % 16 != 0) return std::nullopt;
-        if (bytes != 0 && ((source < destination + bytes && destination < source + 4) || (control < destination + bytes && destination < control + 8))) return std::nullopt;
+        if (bytes != 0 && ((source < destination + bytes && destination < source + SourceWords(mask) * 4u) || (control < destination + bytes && destination < control + 8))) return std::nullopt;
         return static_cast<std::size_t>(bytes);
     }
 
+    [[nodiscard]] std::uint32_t Mask(std::span<const std::uint32_t, 2> control) const {
+        return order == PatternFillControl::CountThenMask ? control[1] : control[0];
+    }
+
     [[nodiscard]] std::optional<std::size_t> ControlledBytes(std::span<const std::uint32_t, 2> control) const {
-        return order == PatternFillControl::CountThenMask ? UniformBytes(control[0], control[1]) : UniformBytes(control[1], control[0]);
+        return PatternBytes(order == PatternFillControl::CountThenMask ? control[0] : control[1], Mask(control));
+    }
+
+    [[nodiscard]] static std::array<std::uint32_t, 4> Pattern(std::span<const std::uint32_t> words, std::uint32_t mask) {
+        std::array<std::uint32_t, 4> pattern{};
+        for (std::uint32_t k = 0; k < pattern.size(); ++k) pattern[k] = (k & mask) < words.size() ? words[k & mask] : 0u;
+        return pattern;
     }
 };
 
@@ -71,7 +87,7 @@ inline std::optional<PatternFillRange> DecodePatternFillRange(std::span<const st
     if (invocations > (std::uint64_t{1} << 32u)) return std::nullopt;
     const auto base = [&](std::size_t word) { return userData[word] | (static_cast<std::uint64_t>(userData[word + 1] & 0xffffu) << 32u); };
     if (base(0) % 4 != 0 || base(8) % 4 != 0) return std::nullopt;
-    return PatternFillRange{base(0), base(4), base(8), invocations, userData[6], order};
+    return PatternFillRange{base(0), base(4), base(8), invocations, userData[6], userData[2], order};
 }
 
 }

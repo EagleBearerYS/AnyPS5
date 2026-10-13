@@ -167,9 +167,12 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         const auto count = range->ControlledBytes(control);
         if (!count) return false;
         if (*count == 0) return true;
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->source), 4)) return false;
-        GuestMemory::Read(range->source, std::as_writable_bytes(std::span(pattern).first(1)), 4);
-        std::fill(pattern.begin() + 1, pattern.end(), pattern[0]);
+        const auto mask = range->Mask(control);
+        const auto words = range->SourceWords(mask);
+        std::array<std::uint32_t, 4> source{};
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->source), words * 4u)) return false;
+        GuestMemory::Read(range->source, std::as_writable_bytes(std::span(source).first(words)), 4);
+        pattern = PatternFillRange::Pattern(std::span(source).first(words), mask);
         base = range->destination;
         bytes = *count;
     } else {

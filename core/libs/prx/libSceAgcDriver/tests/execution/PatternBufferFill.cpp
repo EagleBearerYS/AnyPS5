@@ -57,22 +57,34 @@ void RangeTests() {
     Require(!MatchesPatternFillKernel(Code, data, disabled), "different fill group size matched");
     std::array<std::uint32_t, 5> packet{0xc0031500u, 2, 1, 1, 0x41};
     auto range = DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask);
-    Require(range && range->UniformBytes(256, 0) == 512, "fill exceeded launched threads");
-    Require(range->UniformBytes(80, 0) == 320, "fill exceeded its control count");
-    Require(!range->UniformBytes(80, 1), "nonuniform pattern matched a uniform fill");
-    Require(!range->UniformBytes(79, 0), "partial 16-byte fill matched");
-    Require(range->UniformBytes(0, 0) == 0, "empty control count was not empty");
+    Require(range && range->PatternBytes(256, 0) == 512, "fill exceeded launched threads");
+    Require(range->PatternBytes(80, 0) == 320, "fill exceeded its control count");
+    for (const auto mask : {1u, 2u, 3u}) Require(range->PatternBytes(80, mask) == 320, "a fill whose pattern repeats every 16 bytes was refused");
+    Require(!range->PatternBytes(80, 4), "a pattern longer than 16 bytes matched");
+    Require(!range->PatternBytes(80, 7), "a pattern longer than 16 bytes matched");
+    Require(!range->PatternBytes(79, 0), "partial 16-byte fill matched");
+    Require(range->PatternBytes(0, 0) == 0, "empty control count was not empty");
     packet[1] = 68;
     packet[4] |= 0x20;
     range = DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask);
-    Require(range && range->UniformBytes(256, 0) == 272, "partial workgroup was rounded up");
+    Require(range && range->PatternBytes(256, 0) == 272, "partial workgroup was rounded up");
     range->records = 64;
-    Require(range->UniformBytes(256, 0) == 256, "fill exceeded output descriptor");
+    Require(range->PatternBytes(256, 0) == 256, "fill exceeded output descriptor");
     range->source = range->destination + 16;
-    Require(!range->UniformBytes(256, 0), "aliased pattern was accepted");
+    Require(!range->PatternBytes(256, 0), "aliased pattern was accepted");
+    range->source = range->destination - 8;
+    Require(range->PatternBytes(256, 1) == 256 && !range->PatternBytes(256, 3), "the pattern words a mask reads were not checked against the destination");
     range->source = 0x1000;
     range->control = range->destination - 4;
-    Require(!range->UniformBytes(256, 0), "aliased control was accepted");
+    Require(!range->PatternBytes(256, 0), "aliased control was accepted");
+    const std::array<std::uint32_t, 4> words{0x11u, 0x22u, 0x33u, 0x44u};
+    Require(PatternFillRange::Pattern(words, 0) == std::array<std::uint32_t, 4>{0x11u, 0x11u, 0x11u, 0x11u}, "mask 0 did not repeat the first pattern word");
+    Require(PatternFillRange::Pattern(words, 1) == std::array<std::uint32_t, 4>{0x11u, 0x22u, 0x11u, 0x22u}, "mask 1 did not repeat two pattern words");
+    Require(PatternFillRange::Pattern(words, 2) == std::array<std::uint32_t, 4>{0x11u, 0x11u, 0x33u, 0x33u}, "mask 2 did not select pattern words 0 and 2");
+    Require(PatternFillRange::Pattern(words, 3) == std::array<std::uint32_t, 4>{0x11u, 0x22u, 0x33u, 0x44u}, "mask 3 did not take four pattern words");
+    Require(PatternFillRange::Pattern(std::span(words).first(2), 3) == std::array<std::uint32_t, 4>{0x11u, 0x22u, 0u, 0u}, "pattern words past the source's records were not zero");
+    range->sourceRecords = 2;
+    Require(range->SourceWords(3) == 2 && range->SourceWords(0) == 1, "the pattern words read were not bounded by the source's records");
     packet[1] = 0;
     Require(DecodePatternFillRange(data, packet, PatternFillControl::CountThenMask)->invocations == 0, "empty dispatch gained invocations");
     packet[1] = 0x4000001u;
@@ -96,7 +108,8 @@ void MaskFirstRangeTests() {
     const std::array<std::uint32_t, 5> packet{0xc0031500u, 4, 1, 1, 0x41};
     const auto range = DecodePatternFillRange(data, packet, PatternFillControl::MaskThenCount);
     Require(range && range->ControlledBytes(std::array<std::uint32_t, 2>{0, 80}) == 320, "the mask-first control block did not give its count");
-    Require(!range->ControlledBytes(std::array<std::uint32_t, 2>{3, 80}), "a nonuniform mask-first fill matched a uniform fill");
+    Require(range->ControlledBytes(std::array<std::uint32_t, 2>{3, 80}) == 320, "a mask-first fill of a 16-byte pattern was refused");
+    Require(!range->ControlledBytes(std::array<std::uint32_t, 2>{4, 80}), "a mask-first fill of a pattern longer than 16 bytes matched");
     Require(!range->ControlledBytes(std::array<std::uint32_t, 2>{80, 0}), "the mask-first control block was read count first");
 }
 
@@ -150,9 +163,25 @@ void SelectTests() {
     }
 }
 
+void ShortSourceTests() {
+    for (const auto wave : {32u, 64u}) {
+        Output.fill(0xcafebabeu);
+        Pattern = {0x01020304u, 0x05060708u, 0x090a0b0cu, 0x0d0e0f10u};
+        Control = {160, 3, 0, 0};
+        auto data = UserData(Output.data(), 256);
+        data[2] = 2;
+        Submit(Commands(data, 256, wave, false, false));
+        for (std::size_t i = 0; i < Output.size(); ++i) {
+            const auto expected = i < 160 ? ((i & 3u) < 2 ? Pattern[i & 3u] : 0u) : 0xcafebabeu;
+            Require(Output[i] == expected, "fill from a pattern source of two records mismatched at " + std::to_string(i) + " wave " + std::to_string(wave));
+        }
+    }
+    Pattern = {0, 0x12345678u, 0xdeadbeefu, 0x7fc12345u};
+}
+
 void ExecuteTests() {
     struct Case { std::uint32_t pattern, count, records, threads, mask; bool partial, indirect; };
-    constexpr std::array<Case, 11> cases{{
+    constexpr std::array<Case, 13> cases{{
         {0, 256, 256, 256, 0, false, false},
         {0xffffffffu, 256, 256, 128, 0, false, false},
         {0x7fc12345u, 80, 256, 256, 0, false, false},
@@ -163,7 +192,9 @@ void ExecuteTests() {
         {0xffffffffu, 1, 256, 64, 0, false, false},
         {0, 256, 7, 64, 0, false, false},
         {0x01010101u, 128, 256, 128, 0, false, true},
-        {0, 128, 256, 128, 3, false, false}
+        {0, 128, 256, 128, 3, false, false},
+        {0, 200, 256, 256, 1, false, false},
+        {0, 96, 256, 128, 2, false, false}
     }};
     for (const bool maskFirst : {false, true}) {
         for (const auto wave : {32u, 64u}) {
@@ -253,6 +284,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark") Benchmark();
         else {
             SelectTests();
+            ShortSourceTests();
             ExecuteTests();
             PartialGroupTests();
         }
