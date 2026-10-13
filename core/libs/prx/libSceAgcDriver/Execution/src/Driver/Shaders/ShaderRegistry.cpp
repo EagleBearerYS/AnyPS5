@@ -871,10 +871,11 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
             APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
         }
     }
-    if (request.context.compute) {
+    static const bool eager = std::getenv("APS5_RE8_EAGER_VARIANTS") != nullptr;
+    if (eager && request.context.compute) {
         request.context.compute->partialThreads = {1, 1, 1};
         append();
-    } else if (request.context.pixel) {
+    } else if (eager && request.context.pixel) {
         request.layout.pushConstantSizeBytes = 0;
         append();
     }
