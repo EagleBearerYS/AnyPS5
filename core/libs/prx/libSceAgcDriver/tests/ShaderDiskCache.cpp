@@ -848,7 +848,7 @@ void verifyBindingPlanSelection() {
     require(full.bindings.size() == 4u, "binding plan lost a descriptor before module selection");
     require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true}, "binding plan lost buffer access metadata");
     const std::array liveBindings{full.bindings[3].binding};
-    const auto selected = builder.Select(plan, liveBindings, false);
+    const auto selected = builder.Select(plan, liveBindings, false, false);
     snapshot.userData.clear();
     snapshot.flattenedSrt.clear();
     snapshot.buffers[0].dwords[0] += 0x10000u;
@@ -861,7 +861,7 @@ void verifyBindingPlanSelection() {
     expected.guestDescriptor[6] = 128u;
     require(sameBinding(expected, populated.bindings[0]) && sameBinding(full.bindings[3], populated.bindings[1]), "selected plan changed binding order or reused stale buffer data");
     bool rejected = false;
-    try { static_cast<void>(builder.Select(plan, std::array{UINT32_MAX}, false)); }
+    try { static_cast<void>(builder.Select(plan, std::array{UINT32_MAX}, false, false)); }
     catch (const std::runtime_error&) { rejected = true; }
     require(rejected, "module selection accepted an unknown binding");
     snapshot.buffers[0].dwordCount = 3u;

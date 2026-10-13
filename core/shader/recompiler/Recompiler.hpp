@@ -395,6 +395,7 @@ struct DescriptorBinding {
     std::vector<bool> samplerUnnormalized;
     std::vector<bool> samplerIntegerBorder;
     std::vector<bool> samplerUsed;
+    std::vector<std::uint32_t> imageSlotDwords;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
     std::vector<std::uint64_t> imageSamplers;

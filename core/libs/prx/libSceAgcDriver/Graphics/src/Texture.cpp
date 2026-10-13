@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -708,7 +709,18 @@ VkImageView Texture::BaseLevelView() const {
     return baseLevelView;
 }
 
+std::uint32_t Texture::SampledSlot(VkImageView imageView) const {
+    Require(imageView != VK_NULL_HANDLE && context.descriptorHeap != nullptr, "a sampled image slot needs a view and the descriptor heap");
+    std::lock_guard lock(slotMutex);
+    if (const auto found = sampledSlots.find(imageView); found != sampledSlots.end()) return found->second;
+    const auto slot = context.descriptorHeap->AllocateImage(DescriptorHeap::Array::SampledImages, imageView, layout);
+    sampledSlots.emplace(imageView, slot);
+    return slot;
+}
+
 void Texture::release() noexcept {
+    for (const auto& [imageView, slot] : sampledSlots) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::SampledImages, slot);
+    sampledSlots.clear();
     upload.reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     view = VK_NULL_HANDLE;
@@ -4428,7 +4440,18 @@ StorageTexture::~StorageTexture() {
     release();
 }
 
+std::uint32_t StorageTexture::StorageSlot(VkImageView imageView) {
+    Require(imageView != VK_NULL_HANDLE && context.descriptorHeap != nullptr, "a storage image slot needs a view and the descriptor heap");
+    std::lock_guard lock(slotMutex);
+    if (const auto found = storageSlots.find(imageView); found != storageSlots.end()) return found->second;
+    const auto slot = context.descriptorHeap->AllocateImage(DescriptorHeap::Array::StorageImages, imageView, VK_IMAGE_LAYOUT_GENERAL);
+    storageSlots.emplace(imageView, slot);
+    return slot;
+}
+
 void StorageTexture::release() noexcept {
+    for (const auto& [imageView, slot] : storageSlots) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot);
+    storageSlots.clear();
     for (const auto& [mip, extra] : extraViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);
     extraViews.clear();
     for (const auto& [mip, extra] : firstLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);

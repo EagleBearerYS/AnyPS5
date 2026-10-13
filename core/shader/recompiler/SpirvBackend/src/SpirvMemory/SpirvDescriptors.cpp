@@ -47,10 +47,14 @@ std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t r
     if (variableId == 0) {
         ExitDescriptorBindingFailure(state, kind, resource, variableName);
     }
+    const IrBindingLayout& layout = state.program.Metadata().bindings;
+    const auto binding = std::find_if(layout.descriptors.begin(), layout.descriptors.end(), [&](const IrDescriptorBinding& descriptor) { return descriptor.kind == kind; });
+    if (binding == layout.descriptors.end()) ExitDescriptorBindingFailure(state, kind, resource, "descriptor group was not allocated");
+    const auto first = static_cast<std::uint32_t>(std::find(binding->resources.begin(), binding->resources.end(), resource) - binding->resources.begin());
+    if (first > arrayIndex || arrayIndex - first >= RuntimeAbi::StorageMipSlots) ExitDescriptorBindingFailure(state, kind, resource, "image element lies outside its resource's slots");
+    const auto slot = EmitShaderDataDwordLoad(state, layout.ImageSlotDword() + layout.imageSlotBases.at(resource) + arrayIndex - first);
     const auto pointer = state.module.AllocateId();
-    const bool heap = kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(kind) != ImageResourceClass::None;
-    const auto index = heap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(kind), arrayIndex), arrayIndex) : ConstantU32(state, arrayIndex);
-    state.module.AddFunction(spv::OpAccessChain, resultPtrType, pointer, variableId, index);
+    state.module.AddFunction(spv::OpAccessChain, resultPtrType, pointer, variableId, slot);
     return pointer;
 }
 

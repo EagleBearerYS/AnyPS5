@@ -319,6 +319,10 @@ private:
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
         bool noDescriptor = false;
+        bool imageSlots = false;
+        std::vector<std::uint32_t> slotDwords;
+        std::int32_t slotPushOffset = -1;
+        std::int64_t slotDataAllocation = -1;
     };
 
     struct TableStage {
@@ -372,7 +376,7 @@ private:
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
-    void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
+    void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader);
     void addGuestSamplers(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader);
     // Stage A: one record per planned image element (ImageRecord), in plan order: the decoded
     // descriptor and its surface size (computed once for the build), the write watch walked so stage

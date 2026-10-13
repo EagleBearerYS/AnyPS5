@@ -55,6 +55,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -252,6 +253,7 @@ public:
             VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT, address.pNext};
             indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
             indexing.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            indexing.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
             indexing.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
             indexing.descriptorBindingPartiallyBound = VK_TRUE;
             indexing.runtimeDescriptorArray = VK_TRUE;
@@ -278,7 +280,9 @@ public:
             pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
-            heap = std::make_unique<DescriptorHeap>(context, 1024u);
+            auto heapContext = context;
+            heapContext.nullDescriptors = nullDescriptors;
+            heap = std::make_unique<DescriptorHeap>(heapContext, DescriptorHeap::Capacities{1024u, 4096u, 1024u});
             context.descriptorHeap = heap.get();
         } catch (...) {
             release();
@@ -331,6 +335,15 @@ void pushBufferData(ShaderRecompiler::RecompileResult& program) {
     program.memoryOffsetDword = 0;
     program.bufferAddressDword = (buffers + 3u) / 4u;
     program.pushConstants.assign((program.bufferAddressDword + buffers * ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u, std::byte{0});
+}
+
+std::uint32_t pushedImageSlot(const ShaderResources& resources, std::uint32_t dword) {
+    std::array<std::byte, PipelinePushConstantBytes> push;
+    push.fill(std::byte{0xff});
+    resources.PatchPushConstants(push);
+    std::uint32_t slot = 0;
+    std::memcpy(&slot, push.data() + dword * 4u, sizeof(slot));
+    return slot;
 }
 
 void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
@@ -501,7 +514,9 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
         imageBinding.imageSamplers = {0};
         imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
         imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+        imageBinding.imageSlotDwords = {0u};
         imageProgram.bindings.push_back(imageBinding);
+        imageProgram.pushConstants.assign(sizeof(std::uint32_t), std::byte{0});
         const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
         auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
         recorder.Sync();
@@ -517,6 +532,8 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
             else Require(sampled->Revalidate(std::span(&imageCompute, 1)), "sampled image template did not revalidate");
             const auto images = sampled->StorageImages();
             Require(images.size() == 1, "sampled image did not use imported texture storage");
+            const auto& sampledTexture = *sampled->SampledTextures().front();
+            Require(pushedImageSlot(*sampled, 0) != 0 && pushedImageSlot(*sampled, 0) == sampledTexture.SampledSlot(sampledTexture.View()), "the sampled image's descriptor heap slot was not pushed to the shader");
             const auto commands = recorder.Commands();
             recorder.Keep(sampled);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -555,6 +572,8 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
             else Require(sampled->Revalidate(std::span(&imageCompute, 1)), "metadata-only producer invalidated the sampled template");
             const auto images = sampled->StorageImages();
             Require(images.size() == 1, "metadata texture is not resident");
+            const auto& metadataTexture = *sampled->SampledTextures().front();
+            Require(pushedImageSlot(*sampled, 0) != 0 && pushedImageSlot(*sampled, 0) == metadataTexture.SampledSlot(metadataTexture.View()), "the metadata texture's descriptor heap slot was not pushed to the shader");
             const auto commands = recorder.Commands();
             recorder.Keep(sampled);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -567,6 +586,25 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
             std::uint32_t value = 0;
             std::memcpy(&value, readback.Bytes().data(), sizeof(value));
             Require(value == 0xff000000, "cached sampled image ignored copied compression-metadata writes");
+        }
+        sampled.reset();
+        ClearCachedTextures(context.device);
+        for (const bool presentFirst : {true, false}) {
+            ShaderRecompiler::RecompileResult sharedProgram;
+            auto sharedBinding = imageBinding;
+            sharedBinding.count = 2;
+            sharedBinding.guestDescriptor.assign(16u, 0u);
+            std::copy(imageBinding.guestDescriptor.begin(), imageBinding.guestDescriptor.end(), sharedBinding.guestDescriptor.begin() + (presentFirst ? 0 : 8));
+            sharedBinding.imageSamplers = {0u, 0u};
+            sharedBinding.imageSlotDwords = {0u, 0u};
+            sharedProgram.bindings.push_back(sharedBinding);
+            sharedProgram.pushConstants.assign(sizeof(std::uint32_t), std::byte{0});
+            const CompiledShader sharedCompute{ShaderRecompiler::ShaderStage::Compute, &sharedProgram, 0};
+            ShaderResources shared(imageContext, sharedCompute);
+            Require(shared.SampledTextures().size() == 1, "an absent image element took a texture");
+            const auto& texture = *shared.SampledTextures().front();
+            const auto slot = pushedImageSlot(shared, 0);
+            Require(slot != 0 && slot == texture.SampledSlot(texture.View()), presentFirst ? "an absent element after the present one overwrote their shared slot dword" : "an absent element before the present one overwrote their shared slot dword");
         }
     }
     std::cout << "Copied producers precede fresh and reused direct consumers\n";
@@ -1956,27 +1994,27 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
         images.guestDescriptor.resize(16);
         images.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
         images.imageSamplers = {0u, 0u};
+        images.imageSlotDwords = {0u, 1u};
         program.bindings.push_back(images);
+        program.pushConstants.assign(images.count * sizeof(std::uint32_t), std::byte{0});
         const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
         ShaderResources resources(context, shader);
         Require(updates.calls.size() == 1, "building resources did not write one descriptor set");
         const auto original = updates.calls.front();
-        Require(original.buffers.size() == 2 && original.images.size() == 2, "descriptor test lacks mixed bindings and an image array");
+        Require(original.buffers.size() == 2 && original.images.empty(), "descriptor test lacks mixed bindings, or an image array took descriptors in the set");
+        for (std::uint32_t element = 0; element < images.count; ++element) Require(pushedImageSlot(resources, element) == 0xffffffffu, "an absent image wrote its slot dword");
         for (std::size_t allocation = 0; allocation < 2; ++allocation) {
             const ShaderResources::MovedBuffer moved{allocation, 0, 16, {5, 6, 7, 8}};
             const auto draw = resources.PrepareDrawBindings(snapshots, std::span(&moved, 1));
             Require(draw != nullptr && draw->snapshots.size() == 1, "moved shader data did not create a draw snapshot");
             Require(updates.calls.size() == allocation + 2 && updates.copies == 0, "draw descriptors copied GPU memory or needed multiple updates");
             const auto& actual = updates.calls.back();
-            Require(actual.buffers.size() == original.buffers.size() && actual.images.size() == original.images.size(), "snapshot update omitted unchanged descriptors");
+            Require(actual.buffers.size() == original.buffers.size() && actual.images.empty(), "snapshot update omitted unchanged descriptors, or wrote image descriptors");
+            for (std::uint32_t element = 0; element < images.count; ++element) Require(pushedImageSlot(resources, element) == 0xffffffffu, "snapshot update wrote an image slot");
             for (const auto& [key, before] : original.buffers) {
                 const auto after = actual.buffers.at(key);
                 const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
                 Require(after.buffer == expected && after.offset == before.offset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
-            }
-            for (const auto& [key, before] : original.images) {
-                const auto after = actual.images.at(key);
-                Require(after.sampler == before.sampler && after.imageView == before.imageView && after.imageLayout == before.imageLayout, "snapshot update changed an image descriptor");
             }
         }
         snapshots.Sync();
@@ -4960,7 +4998,9 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     binding.count = 1;
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
     binding.imageSamplers = {0u};
+    binding.imageSlotDwords = {0u};
     program.bindings.push_back(binding);
+    program.pushConstants.assign(4u * sizeof(std::uint32_t), std::byte{0});
     const CompiledShader compiled{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     std::vector<std::shared_ptr<Texture>> kept;
     const auto sample = [&](const std::uint8_t* surface) {
@@ -4989,6 +5029,8 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
         for (const auto& words : elements) program.bindings[0].guestDescriptor.insert(program.bindings[0].guestDescriptor.end(), words.begin(), words.end());
         program.bindings[0].imageDepthCompare = std::move(depthCompare);
         program.bindings[0].imageSamplers.assign(elements.size(), 0u);
+        program.bindings[0].imageSlotDwords.resize(elements.size());
+        std::iota(program.bindings[0].imageSlotDwords.begin(), program.bindings[0].imageSlotDwords.end(), 0u);
         ShaderResources resources(context, compiled);
         Require(resources.SampledTextures().size() == elements.size(), "the build has the wrong number of sampled textures");
         kept.insert(kept.end(), resources.SampledTextures().begin(), resources.SampledTextures().end());
@@ -4999,6 +5041,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     program.bindings[0].count = 1;
     program.bindings[0].imageDepthCompare.clear();
     program.bindings[0].imageSamplers.assign(1, 0u);
+    program.bindings[0].imageSlotDwords.assign(1, 0u);
     recorder.Submit();
     device.WaitQueue();
     recorder.Sync();
@@ -5136,6 +5179,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     binding.count = 1;
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
     binding.imageSamplers = {0};
+    binding.imageSlotDwords = {0u};
     binding.guestDescriptor = {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (((side - 1u) & 3u) << 30u),
@@ -5147,6 +5191,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         0u,
     };
     program.bindings.push_back(binding);
+    program.pushConstants.assign(sizeof(std::uint32_t), std::byte{0});
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     refused([&] {
         std::lock_guard gpu(GpuMutex());
@@ -5254,6 +5299,7 @@ void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
     binding.count = 1;
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
     binding.imageSamplers = {0};
+    binding.imageSlotDwords = {0u};
     binding.guestDescriptor = {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (22u << 20u) | (((side - 1u) & 3u) << 30u),
@@ -5265,6 +5311,7 @@ void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
         0u,
     };
     program.bindings.push_back(binding);
+    program.pushConstants.assign(sizeof(std::uint32_t), std::byte{0});
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     bool reusable = false;
     std::array<bool, 2> proved{};

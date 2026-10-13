@@ -3265,6 +3265,8 @@ void verifyUnusedUnnormalizedSampler() {
         shader.runtimeImageModes = {ResourceMaterializer::RuntimeImageModes(shader.images[0])};
         BindingAllocationResult allocation;
         allocation.layout.descriptors = {{DescriptorBindingForImage(shader.images[0]), {0u}}, {DescriptorBindingKind::Samplers, {0u}}};
+        allocation.layout.imageSlotBases = {0u};
+        allocation.layout.imageSlotCount = shader.images[0].table == NoTable ? 1u : 0u;
         DescriptorBindingBuilder{}.Populate(allocation, shader, IrShaderStage::Compute, 0u, snapshot, {});
         return allocation.bindings;
     };

@@ -114,8 +114,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
     }
-    const auto pushSize = layout.pushConstantSizeBytes / 4u;
-    next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
 
     if (!info.buffers.empty()) {
         std::vector<std::uint32_t> resources(info.buffers.size());
@@ -137,8 +135,11 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
             imageGroups[group].insert(imageGroups[group].end(), count, i);
         }
     };
+    next.imageSlotBases.assign(info.images.size(), 0u);
     for (std::uint32_t i = 0; i < info.images.size(); i++) {
         if (info.images[i].table == NoTable) {
+            next.imageSlotBases[i] = next.imageSlotCount;
+            next.imageSlotCount += info.images[i].mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
             place(i);
         }
     }
@@ -148,6 +149,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
             addBinding(next, static_cast<DescriptorBindingKind>(FirstImageBinding + i), std::move(imageGroups[i]));
         }
     }
+    const auto pushSize = layout.pushConstantSizeBytes / 4u;
+    next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
 
     std::vector<std::uint32_t> samplers;
     for (std::uint32_t i = 0; i < info.samplers.size(); i++) {

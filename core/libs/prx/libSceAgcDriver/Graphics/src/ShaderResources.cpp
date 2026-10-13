@@ -1480,6 +1480,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             std::int64_t shaderData = -1;
             const auto firstSampler = samplers.size();
             const auto firstSlotPatch = samplerSlotPatches.size();
+            const auto firstBinding = bindings.size();
             const auto firstDeferred = deferredImages.size();
             const auto requireStageLimits = [&] {
                 if (stageStorageBuffers <= context.limits.maxPerStageDescriptorStorageBuffers && stageResources <= context.limits.maxPerStageResources) return;
@@ -1557,9 +1558,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 const bool addressRole = binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer;
                 const bool bufferRole = addressRole || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
                 if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) {
-                    stageResources += binding.count;
-                    requireStageLimits();
-                    addImageBinding(binding, flags);
+                    addImageBinding(binding, shader);
                     continue;
                 }
                 if (!bufferRole) Require(false, std::string("unsupported descriptor role ") + roleName(binding.role));
@@ -1593,6 +1592,9 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             }
             for (const auto index : offsetsInData) allocations[index].dataAllocation = shaderData;
             for (auto index = firstSlotPatch; index < samplerSlotPatches.size(); ++index) samplerSlotPatches[index].dataAllocation = shaderData;
+            for (auto index = firstBinding; index < bindings.size(); ++index) {
+                if (bindings[index].imageSlots) bindings[index].slotDataAllocation = shaderData;
+            }
             for (auto index = firstDeferred; index < deferredImages.size(); ++index) {
                 deferredImages[index].firstSampler = firstSampler;
                 deferredImages[index].samplerCount = samplers.size() - firstSampler;
@@ -1720,8 +1722,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             std::vector<VkDescriptorPoolSize> sizes;
             if (storageBuffers != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<std::uint32_t>(storageBuffers)});
             const auto tableDescriptors = tableBindings[0] != std::numeric_limits<std::size_t>::max() ? tableDescriptorCount(0) : 0u;
-            if (plannedSampledImages + tableDescriptors != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, plannedSampledImages + tableDescriptors});
-            if (plannedStorageImages != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, plannedStorageImages});
+            if (tableDescriptors != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, tableDescriptors});
             const auto variableCount = tableVariableCount(0);
             if (context.descriptorCache != nullptr && !noPoolCache) {
                 const auto allocated = context.descriptorCache->Allocate(_layout, sizes, updateAfterBind, variableCount);
@@ -1780,8 +1781,8 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
                 tableFlags[split && shader.stage == ShaderRecompiler::ShaderStage::Fragment ? 1 : 0] |= flags;
                 continue;
             }
-            const bool image = binding.role == ShaderRecompiler::DescriptorRole::GuestImages;
-            const auto type = !image ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : binding.kind == ShaderRecompiler::DescriptorKind::StorageImage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) continue;
+            const auto type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             stageResources += binding.count;
             if (type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
                 stageStorageBuffers += binding.count;
@@ -1858,11 +1859,6 @@ void ShaderResources::buildComplete() {
             images.reserve(imageCount);
             auto& writes = descriptorWrites;
             writes.reserve(bindings.size());
-            const auto absentImage = [this](std::uint32_t binding) {
-                constexpr auto bindingCount = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
-                const auto view = context.nullDescriptors ? VK_NULL_HANDLE : context.placeholderImages->View(binding % bindingCount);
-                return VkDescriptorImageInfo{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
-            };
             for (const auto& binding : bindings) {
                 if (binding.noDescriptor) continue;
                 if (binding.flags != 0) {
@@ -1901,22 +1897,6 @@ void ShaderResources::buildComplete() {
                             buffers.push_back(descriptor(allocations[index]));
                         }
                         break;
-                    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-                        write.pImageInfo = images.data() + images.size();
-                        for (const auto index : binding.imageAllocations) {
-                            if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
-                            else images.push_back({VK_NULL_HANDLE, textureBaseLevel[index] ? textures[index]->BaseLevelView() : textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
-                        }
-                        Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
-                        break;
-                    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                        write.pImageInfo = images.data() + images.size();
-                        for (const auto index : binding.imageAllocations) {
-                            if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
-                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
-                        }
-                        Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
-                        break;
                     default: throw std::runtime_error("AGC graphics: ShaderResources encountered an unknown descriptor type while writing the descriptor set");
                 }
                 writes.push_back(write);
@@ -1938,6 +1918,24 @@ void ShaderResources::buildComplete() {
             Require(data.buffer != nullptr && allocation.dataByte < data.size, "guest buffer offset lies outside the shader's data buffer");
             data.buffer->Bytes()[allocation.dataByte] = static_cast<std::byte>(allocation.adjustment);
             dataPatches.push_back({static_cast<std::size_t>(allocation.dataAllocation), allocation.dataByte, allocation.adjustment});
+        }
+        for (const auto& binding : bindings) {
+            if (!binding.imageSlots) continue;
+            Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "image slot allocations disagree with the binding");
+            for (std::size_t element = 0; element < binding.imageAllocations.size(); ++element) {
+                const auto index = binding.imageAllocations[element];
+                if (index == std::numeric_limits<std::size_t>::max()) continue;
+                std::array<std::uint32_t, 1> slot{};
+                if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
+                    auto& image = *storageTextures[index];
+                    slot[0] = image.StorageSlot(storageAtomic64[index] ? image.Atomic64View(storageMips[index], storageLayers[index]) : storageAtomic[index] ? image.AtomicView(storageMips[index], storageLayers[index]) : image.StorageView(storageMips[index], storageLayers[index]));
+                } else {
+                    const auto& texture = *textures[index];
+                    slot[0] = texture.SampledSlot(textureBaseLevel[index] ? texture.BaseLevelView() : textureFirstLayer[index] ? texture.FirstLayerView() : texture.View());
+                }
+                const auto position = binding.slotDwords[element] * 4u;
+                patchShaderData(binding.slotPushOffset >= 0 ? binding.slotPushOffset + static_cast<std::int32_t>(position) : -1, binding.slotDataAllocation, position, slot);
+            }
         }
         for (const auto& patch : samplerSlotPatches) {
             const std::array<std::uint32_t, 1> slot{patch.sampler == std::numeric_limits<std::size_t>::max() ? 0u : samplers[patch.sampler]->Slot()};
@@ -2084,6 +2082,8 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         packBits(binding.samplerUnnormalized);
         packBits(binding.samplerIntegerBorder);
         packBits(binding.samplerUsed);
+        visit(static_cast<std::uint32_t>(binding.imageSlotDwords.size()));
+        for (const auto dword : binding.imageSlotDwords) visit(dword);
         packBits(binding.imageUnnormalized);
         packBits(binding.imageUnnormalizedBaseLevel);
         // Read-only elements are bound without a write set: an object built for one written set
@@ -3422,7 +3422,7 @@ void ShaderResources::PrecollectSurfaces() const {
     for (const auto& range : describedRanges) GuestMemory::CollectWrites(range.address, static_cast<std::size_t>(range.bytes));
 }
 
-void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags) {
+void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader) {
     Require(binding.count != 0, "empty descriptor binding");
     const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding.binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
     const auto capacity = binding.count;
@@ -3431,16 +3431,27 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
     const bool sampledHeap = localBinding >= ShaderRecompiler::RuntimeAbi::FirstImageBinding && localBinding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
     const bool storageHeap = localBinding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding && localBinding < static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     Require((binding.kind == ShaderRecompiler::DescriptorKind::SampledImage && sampledHeap) || (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage && storageHeap), "resource class disagrees with typed descriptor heap");
-    Require(context.nullDescriptors || context.placeholderImages != nullptr, "typed image heaps require nullDescriptor or placeholder images");
+    const auto& push = shader.program->pushConstants;
+    const auto slotted = [&](VkDescriptorType type) {
+        Require(binding.imageSlotDwords.size() == binding.count, "guest image binding is missing its elements' slot dwords");
+        Binding item{{binding.binding, type, capacity, 0, nullptr}, {}, {}};
+        item.noDescriptor = true;
+        item.imageSlots = true;
+        item.slotDwords = binding.imageSlotDwords;
+        if (!push.empty()) {
+            Require(std::ranges::all_of(item.slotDwords, [&](std::uint32_t dword) { return (dword + 1u) * 4u <= push.size(); }), "a guest image slot lies outside the shader's push constants");
+            item.slotPushOffset = static_cast<std::int32_t>(shader.pushConstantOffset);
+        }
+        bindings.push_back(std::move(item));
+        deferredImages.push_back({&binding, bindings.size() - 1});
+    };
     if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
         // Storage images are guest textures the shader writes (looked up in stage B).
         Require(binding.role == ShaderRecompiler::DescriptorRole::GuestImages, "storage image binding has a non-image role");
         Require(binding.guestDescriptor.size() == static_cast<std::size_t>(binding.count) * 8u, "guest storage image descriptors must contain 8 dwords each");
         Require(context.detiler != nullptr, "device texture detiler is unavailable");
-        Require(capacity <= context.limits.maxPerStageDescriptorStorageImages, "shader storage-image descriptors exceed per-stage limits");
-        bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, capacity, flags, nullptr}, {}, {}});
         plannedStorageImages += binding.count;
-        deferredImages.push_back({&binding, bindings.size() - 1});
+        slotted(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
         return;
     }
     if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) Require(false, std::string("unsupported descriptor kind ") + kindName(binding.kind) + " for role " + roleName(binding.role));
@@ -3449,11 +3460,8 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
     Require(binding.imageShape.has_value(), "guest image binding is missing an image shape");
     Require(context.detiler != nullptr, "device texture detiler is unavailable");
     Require(context.textureCache != nullptr, "device texture cache is unavailable");
-    Require(capacity <= context.limits.maxPerStageDescriptorSampledImages, "shader sampled-image descriptors exceed per-stage limits");
     plannedSampledImages += binding.count;
-    Require(plannedSampledImages <= context.limits.maxDescriptorSetSampledImages, "pipeline sampled-image descriptors exceed device limits");
-    bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, capacity, flags, nullptr}, {}, {}});
-    deferredImages.push_back({&binding, bindings.size() - 1});
+    slotted(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
 }
 
 void ShaderResources::addGuestSamplers(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader) {

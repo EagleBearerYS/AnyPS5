@@ -367,6 +367,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         IrDescriptorBinding compact{logical.kind, {}};
         std::vector<std::uint32_t> originals;
         std::vector<bool> inactive;
+        std::vector<std::uint32_t> slotDwords;
         std::uint32_t previous = UINT32_MAX;
         std::uint32_t mip = 0;
         for (std::uint32_t element = 0; element < logical.resources.size(); ++element) {
@@ -378,6 +379,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 const auto& mode = info.runtimeImageModes.at(resource).at(imageModes[resource]);
                 mip = previous == resource ? mip + 1u : 0u;
                 previous = resource;
+                slotDwords.push_back(layout.ImageSlotDword() + layout.imageSlotBases.at(resource) + mip);
                 {
                     const auto word = snapshot.images.at(resource).dwords[3];
                     active = DescriptorBindingForImage(mode) == logical.kind && mode.packedFormat != IrBufferFormat::Fmask8_S2_F1 && !mode.constantSwizzle && (image.mipMode != ImageMipMode::DynamicStorage || mip <= ((word >> 16u) & 0xfu) - ((word >> 12u) & 0xfu));
@@ -385,15 +387,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             } else if (samplerHeap) {
                 active = (samplerModes.at(resource) & (1u << (element & 1u))) != 0u;
             }
-            if (imageHeap && !registrationModules) plan.specialization.push_back({PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(logical.kind), element), active ? static_cast<std::uint32_t>(compact.resources.size()) : 0u});
-            if (active || samplerHeap || (imageHeap && registrationModules)) {
+            if (active || samplerHeap || imageHeap) {
                 compact.resources.push_back(resource);
                 originals.push_back(element);
                 inactive.push_back(!active);
             }
         }
-        if (imageHeap && !registrationModules) plan.specialization.push_back({PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(logical.kind), std::max(1u, static_cast<std::uint32_t>(compact.resources.size()))});
         if ((imageHeap || samplerHeap) && compact.resources.empty()) continue;
+        if (imageHeap && std::ranges::all_of(inactive, [](bool unused) { return unused; })) continue;
         PreparedDescriptorBinding entry{};
         auto& physical = entry.descriptor;
         physical.descriptorSet = fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
@@ -401,6 +402,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         physical.count = compact.resources.empty() ? 1u : static_cast<std::uint32_t>(compact.resources.size());
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
+        if (imageHeap) physical.imageSlotDwords = std::move(slotDwords);
         if (physical.role == DescriptorRole::GuestBuffers) {
             for (const auto resource : compact.resources) {
                 const auto& buffer = info.buffers.at(resource);
@@ -447,7 +449,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         }
         plan.storageData |= physical.role == DescriptorRole::ShaderData;
         entry.resources = std::move(compact.resources);
-        if ((registrationModules && imageHeap) || samplerHeap) entry.inactive = std::move(inactive);
+        if (imageHeap || samplerHeap) entry.inactive = std::move(inactive);
         plan.bindings.push_back(std::move(entry));
     }
     for (std::uint32_t resource = 0; resource < info.images.size() && registrationModules && layout.runtimeImageCount != 0u; ++resource) {
@@ -489,13 +491,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     return plan;
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings, bool samplerHeap) const {
+DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings, bool samplerHeap, bool imageHeap) const {
     DescriptorBindingPlan selected;
     std::set<std::uint32_t> remaining(bindings.begin(), bindings.end());
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
         const bool declared = remaining.erase(binding.descriptor.binding) != 0u;
-        if (binding.descriptor.kind == DescriptorKind::SamplerSlot ? !samplerHeap : !declared && binding.descriptor.kind != DescriptorKind::DeviceAddress) continue;
+        const bool kept = binding.descriptor.kind == DescriptorKind::SamplerSlot ? samplerHeap : binding.descriptor.role == DescriptorRole::GuestImages ? imageHeap : declared || binding.descriptor.kind == DescriptorKind::DeviceAddress;
+        if (!kept) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
     }

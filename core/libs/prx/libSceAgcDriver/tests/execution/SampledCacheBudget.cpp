@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -25,6 +26,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -104,6 +106,27 @@ public:
             }
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            VkPhysicalDeviceRobustness2FeaturesEXT robustness{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
+            VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT};
+            if (resourceImages) {
+                Require(hasExtension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME) && hasExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME), "the descriptor heap needs robustness2 and descriptor indexing");
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &robustness};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                Require(robustness.nullDescriptor == VK_TRUE, "the descriptor heap needs nullDescriptor");
+                robustness = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
+                robustness.nullDescriptor = VK_TRUE;
+                robustness.pNext = address.pNext;
+                indexing.pNext = &robustness;
+                extensionsEnabled.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+                extensionsEnabled.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+                indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+                indexing.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+                indexing.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+                indexing.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+                indexing.descriptorBindingPartiallyBound = VK_TRUE;
+                indexing.runtimeDescriptorArray = VK_TRUE;
+                address.pNext = &indexing;
+            }
             if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
                 extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
                 VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
@@ -131,6 +154,12 @@ public:
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
+            if (resourceImages) {
+                auto heapContext = context;
+                heapContext.nullDescriptors = true;
+                heap = std::make_unique<DescriptorHeap>(heapContext, DescriptorHeap::Capacities{1024u, 4096u, 1024u});
+                context.descriptorHeap = heap.get();
+            }
         } catch (...) {
             release();
             throw;
@@ -149,6 +178,7 @@ private:
     }
 
     void release() noexcept {
+        heap.reset();
         if (context.pool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.pool, nullptr);
         context.bufferPool.reset();
         if (context.device != VK_NULL_HANDLE) function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
@@ -160,6 +190,7 @@ private:
     PFN_vkGetInstanceProcAddr instanceProc = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
+    std::unique_ptr<DescriptorHeap> heap;
 };
 
 class Block {
@@ -223,6 +254,8 @@ std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Bl
     binding.descriptorSet = 0;
     binding.binding = (sampled ? ShaderRecompiler::RuntimeAbi::FirstImageBinding : ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding) + PlaceholderDimensionsPerClass + 2u;
     binding.count = count;
+    binding.imageSlotDwords.resize(count);
+    std::iota(binding.imageSlotDwords.begin(), binding.imageSlotDwords.end(), 0u);
     binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
     binding.imageWritten.assign(count, false);
     binding.imageSamplers.assign(count, 0u);
@@ -232,6 +265,7 @@ std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Bl
     }
     ShaderRecompiler::RecompileResult program;
     program.bindings.push_back(std::move(binding));
+    program.pushConstants.assign(count * 4u, std::byte{0});
     const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     return std::make_shared<ShaderResources>(context, shader);
 }

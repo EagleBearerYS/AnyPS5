@@ -414,12 +414,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
             state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(stage, binding.kind));
             return variable;
         };
-        const auto ArrayType = [&](std::uint32_t type) {
-            const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
-            const auto count = static_cast<std::uint32_t>(binding.resources.size());
-            const auto length = heap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
-            return state.module.Type(spv::OpTypeArray, type, length);
-        };
         switch (binding.kind) {
         case DescriptorBindingKind::Buffers:
             break;
@@ -471,8 +465,15 @@ void DefineDescriptors(SpirvEmitterState& state) {
             const auto selected = std::ranges::find_if(modes, [&](const ImageResource& mode) { return DescriptorBindingForImage(mode) == binding.kind; });
             if (selected == modes.end()) FailEmit("static image heap has no runtime mode");
             const auto& image = *selected;
-            const auto name = "image_" + std::to_string(static_cast<std::uint32_t>(binding.kind));
-            state.imageVariables.at(ImageBindingIndex(binding.kind)) = Define(ArrayType(ImageType(state, image)), name.c_str(), spv::StorageClassUniformConstant);
+            const bool storage = image.resourceClass == ImageResourceClass::Storage;
+            RequireTableIndexing(state);
+            if (storage) state.module.EmitCapability(spv::CapabilityStorageImageArrayDynamicIndexing);
+            const auto type = state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, image));
+            const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
+            state.module.AddName(variable, ("image_" + std::to_string(static_cast<std::uint32_t>(binding.kind))).c_str());
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::HeapDescriptorSet);
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, storage ? RuntimeAbi::HeapStorageImageBinding : RuntimeAbi::HeapSampledImageBinding);
+            state.imageVariables.at(ImageBindingIndex(binding.kind)) = variable;
             if (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray) {
                 state.module.EmitCapability(image.resourceClass == ImageResourceClass::Sampled ? spv::CapabilitySampled1D : spv::CapabilityImage1D);
             }

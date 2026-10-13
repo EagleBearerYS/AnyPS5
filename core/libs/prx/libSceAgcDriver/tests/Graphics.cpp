@@ -5,6 +5,7 @@
 #include "MockDescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -3377,8 +3378,8 @@ void resourceTests() {
             expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(limited, vertex, fragment, state.color, 0, 0); }, reason);
             Require(mock.live == 0, "failed shader resources leaked Vulkan objects");
         };
-        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 0, "shader descriptors exceed per-stage limits");
-        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 0, "shader descriptors exceed per-stage limits");
+        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 0, "missing an image shape");
+        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 0, "detiler is unavailable");
         expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 1, "missing an image shape");
         expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 1, "detiler is unavailable");
     }
@@ -3700,6 +3701,110 @@ void guestSamplerSlotTests() {
             Require(mock.live == 0 && mock.samplerFlags.empty(), "guest sampler slots leaked Vulkan objects");
         }
     }
+}
+
+void guestImageSlotTests() {
+    constexpr std::uint32_t count = 3u;
+    constexpr std::uint32_t untouched = 0xffffffffu;
+    constexpr std::uint32_t dataBase = ShaderRecompiler::RuntimeAbi::UserDataDword + 4u;
+    const std::array<std::vector<std::uint32_t>, 2> layouts{{{2u, 3u, 4u}, {2u, 2u, 3u}}};
+    for (const bool pushed : {true, false}) {
+        for (const bool sampled : {true, false}) {
+            for (const auto& offsets : layouts) {
+                mock = MockVulkan{};
+                auto context = mockContext();
+                context.limits.maxPerStageResources = pushed ? 0u : 1u;
+                context.limits.maxPerStageDescriptorSampledImages = 0;
+                context.limits.maxPerStageDescriptorStorageImages = 0;
+                context.limits.maxDescriptorSetSampledImages = 0;
+                AgcDriver::Graphics::TextureDetiler detiler(context);
+                context.detiler = &detiler;
+                AgcDriver::Graphics::TextureCache textures(context);
+                context.textureCache = &textures;
+                const auto live = mock.live;
+                ShaderRecompiler::RecompileResult program;
+                ShaderRecompiler::DescriptorBinding images{};
+                images.kind = sampled ? Kind::SampledImage : Kind::StorageImage;
+                images.role = Role::GuestImages;
+                images.descriptorSet = 0;
+                images.binding = sampled ? ShaderRecompiler::RuntimeAbi::FirstImageBinding : ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
+                images.count = count;
+                images.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+                images.imageWritten.assign(count, false);
+                images.imageSamplers.assign(count, 0u);
+                images.guestDescriptor.assign(count * 8u, 0u);
+                std::uint32_t dataBinding = 0;
+                if (pushed) {
+                    images.imageSlotDwords = offsets;
+                    program.pushConstants.assign((*std::ranges::max_element(offsets) + 1u) * 4u, std::byte{0});
+                } else {
+                    for (const auto offset : offsets) images.imageSlotDwords.push_back(dataBase + offset);
+                    program.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
+                    auto data = makeBinding(Role::ShaderData, 2, 1, ShaderDataWords({}));
+                    std::fill_n(data.guestDescriptor.begin() + dataBase, 8u, untouched);
+                    dataBinding = data.binding;
+                    program.bindings.push_back(data);
+                }
+                program.bindings.push_back(images);
+                const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+                {
+                    AgcDriver::Graphics::ShaderResources resources(context, shader);
+                    std::array<std::uint32_t, count> slots{};
+                    for (std::uint32_t element = 0; element < count; ++element) {
+                        const auto dword = images.imageSlotDwords[element];
+                        if (pushed) {
+                            std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> push{};
+                            push.fill(std::byte{0xff});
+                            resources.PatchPushConstants(push);
+                            std::memcpy(&slots[element], push.data() + shader.pushConstantOffset + dword * 4u, sizeof(std::uint32_t));
+                        } else {
+                            const auto& write = findWrite(dataBinding).buffers.at(0);
+                            std::memcpy(&slots[element], bufferBytes(write.buffer).data() + write.offset + dword * 4u, sizeof(std::uint32_t));
+                        }
+                    }
+                    Require(std::all_of(slots.begin(), slots.end(), [](std::uint32_t slot) { return slot == untouched; }), "an absent guest image element wrote its slot dword");
+                    Require(std::none_of(mock.layoutBindings.begin(), mock.layoutBindings.end(), [](const auto& item) { return item.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || item.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }), "guest images took layout bindings in the shader's set");
+                    Require(std::none_of(mock.writes.begin(), mock.writes.end(), [](const auto& write) { return write.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || write.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }), "guest images took descriptors in the shader's set");
+                    Require(resources.SampledTextures().empty() && resources.StorageImages().empty(), "an absent guest image resolved to a texture");
+                }
+                Require(mock.live == live, "guest image slots leaked Vulkan objects");
+                if (pushed) {
+                    program.pushConstants.resize(*std::ranges::max_element(offsets) * 4u + 3u);
+                    expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, shader); }, "outside the shader's push constants");
+                    program.pushConstants.resize((*std::ranges::max_element(offsets) + 1u) * 4u);
+                    program.bindings.back().imageSlotDwords.pop_back();
+                    expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, shader); }, "missing its elements' slot dwords");
+                }
+            }
+        }
+    }
+}
+
+void descriptorHeapImageSlotTests() {
+    using Heap = AgcDriver::Graphics::DescriptorHeap;
+    const auto handle = [](std::uintptr_t value) { return reinterpret_cast<VkImageView>(value); };
+    Heap heap(MockHeapContext(), {2u, 3u, 2u});
+    const auto graphics = heap.Set(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    const auto first = heap.AllocateImage(Heap::Array::SampledImages, handle(0x7100), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    const auto compute = heap.Set(VK_SHADER_STAGE_COMPUTE_BIT);
+    for (const auto set : {graphics, compute}) {
+        const auto empty = MockHeapEntry(set, 1u, 0u);
+        const auto storageEmpty = MockHeapEntry(set, 2u, 0u);
+        Require(empty.imageView == VK_NULL_HANDLE && storageEmpty.imageView == VK_NULL_HANDLE && storageEmpty.imageLayout == VK_IMAGE_LAYOUT_GENERAL, "the descriptor heap's slot 0 is not a null image descriptor");
+        const auto entry = MockHeapEntry(set, 1u, first);
+        Require(first == 1u && entry.imageView == handle(0x7100) && entry.imageLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, "a sampled image slot did not reach a stage view, or one created after it");
+    }
+    const auto storage = heap.AllocateImage(Heap::Array::StorageImages, handle(0x7200), VK_IMAGE_LAYOUT_GENERAL);
+    Require(storage == 1u && MockHeapEntry(graphics, 2u, storage).imageView == handle(0x7200) && MockHeapEntry(compute, 2u, storage).imageView == handle(0x7200), "a storage image slot did not reach every stage view");
+    expectFailure([&] { static_cast<void>(heap.AllocateImage(Heap::Array::StorageImages, handle(0x7300), VK_IMAGE_LAYOUT_GENERAL)); }, "no free storage image slot");
+    const auto second = heap.AllocateImage(Heap::Array::SampledImages, handle(0x7400), VK_IMAGE_LAYOUT_GENERAL);
+    heap.ReleaseImage(Heap::Array::SampledImages, first);
+    const auto reused = heap.AllocateImage(Heap::Array::SampledImages, handle(0x7500), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    Require(second == 2u && reused == first && MockHeapEntry(graphics, 1u, reused).imageView == handle(0x7500) && MockHeapEntry(compute, 1u, second).imageLayout == VK_IMAGE_LAYOUT_GENERAL, "a released image slot was not reused, or a slot was written with the wrong view or layout");
+    expectFailure([&] { static_cast<void>(heap.AllocateImage(Heap::Array::Samplers, handle(0x7600), VK_IMAGE_LAYOUT_GENERAL)); }, "needs an image view");
+    AgcDriver::Graphics::Context withoutNull = MockHeapContext();
+    withoutNull.nullDescriptors = false;
+    expectFailure([&] { Heap rejected(withoutNull, {2u, 2u, 2u}); }, "nullDescriptor");
 }
 
 void samplerTableDeviceLimitTests(std::optional<std::uint32_t> selected = std::nullopt) {
@@ -6086,6 +6191,8 @@ int main(int argc, char** argv) {
         samplerTableNonSeamlessCubeTests();
         samplerTableDeviceLimitTests();
         guestSamplerSlotTests();
+        guestImageSlotTests();
+        descriptorHeapImageSlotTests();
         misalignedShaderDataTests();
         debugBranchTests();
         textureCacheBudgetTests();

@@ -1435,11 +1435,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->descriptorBindingPartiallyBound = descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE;
         state->descriptorBindingVariableDescriptorCount = descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount == VK_TRUE;
         state->runtimeDescriptorArray = descriptorIndexingFeatures.runtimeDescriptorArray == VK_TRUE;
-        state->descriptorHeapFeatures = descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE && descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending == VK_TRUE && state->descriptorBindingPartiallyBound && state->runtimeDescriptorArray && descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
+        state->descriptorHeapFeatures = descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE && descriptorIndexingFeatures.descriptorBindingStorageImageUpdateAfterBind == VK_TRUE && descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending == VK_TRUE && state->descriptorBindingPartiallyBound && state->runtimeDescriptorArray && descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
         VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &state->descriptorIndexingProperties};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
     }
-    if (!state->descriptorHeapFeatures) throw std::runtime_error("Vulkan device: the descriptor heap needs VK_EXT_descriptor_indexing with descriptorBindingSampledImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, descriptorBindingPartiallyBound, runtimeDescriptorArray and shaderSampledImageArrayNonUniformIndexing");
+    if (!state->descriptorHeapFeatures) throw std::runtime_error("Vulkan device: the descriptor heap needs VK_EXT_descriptor_indexing with descriptorBindingSampledImageUpdateAfterBind, descriptorBindingStorageImageUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending, descriptorBindingPartiallyBound, runtimeDescriptorArray and shaderSampledImageArrayNonUniformIndexing");
     descriptorIndexingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT};
     if (state->descriptorIndexing || state->storageBufferUpdateAfterBind || state->descriptorBindingPartiallyBound || state->descriptorBindingVariableDescriptorCount || state->runtimeDescriptorArray) deviceExtensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
     if (state->descriptorIndexing) {
@@ -1452,6 +1452,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     descriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = state->storageBufferUpdateAfterBind ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+    descriptorIndexingFeatures.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
     descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
     descriptorIndexingFeatures.descriptorBindingPartiallyBound = state->descriptorBindingPartiallyBound ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = state->descriptorBindingVariableDescriptorCount ? VK_TRUE : VK_FALSE;
@@ -1653,7 +1654,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
     state->descriptorCache = std::make_unique<Graphics::DescriptorCache>(graphicsContext());
-    state->descriptorHeap = std::make_unique<Graphics::DescriptorHeap>(graphicsContext(), Graphics::DescriptorHeap::SamplerSlots(graphicsContext()));
+    state->descriptorHeap = std::make_unique<Graphics::DescriptorHeap>(graphicsContext(), Graphics::DescriptorHeap::DeviceCapacities(graphicsContext()));
     state->computeHeapSet = state->descriptorHeap->Set(VK_SHADER_STAGE_COMPUTE_BIT);
     state->samplerCache = std::make_unique<Graphics::SamplerCache>();
     state->CreateWorkgroupMemoryLayout();
@@ -4273,7 +4274,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
             capture.sets.push_back(std::move(resourcesLayout));
             if (shader.workgroupMemoryDwords != 0) capture.sets.push_back({0, {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}}});
             else capture.sets.push_back({0, {}});
-            capture.sets.push_back({VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT, {{ShaderRecompiler::RuntimeAbi::HeapSamplerBinding, VK_DESCRIPTOR_TYPE_SAMPLER, state->descriptorHeap->SamplerCapacity(), VK_SHADER_STAGE_COMPUTE_BIT, VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT}}});
+            capture.sets.push_back({VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT, {{0, VK_DESCRIPTOR_TYPE_SAMPLER, state->descriptorHeap->Capacity(Graphics::DescriptorHeap::Array::Samplers), VK_SHADER_STAGE_COMPUTE_BIT, VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT}, {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, state->descriptorHeap->Capacity(Graphics::DescriptorHeap::Array::SampledImages), VK_SHADER_STAGE_COMPUTE_BIT, VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT}, {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, state->descriptorHeap->Capacity(Graphics::DescriptorHeap::Array::StorageImages), VK_SHADER_STAGE_COMPUTE_BIT, VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT}}});
             if (pushStages != 0) capture.pushConstants.push_back(push);
             for (const auto& value : shader.specialization) capture.specialization.push_back({value.id, value.value});
             capture.requiredSubgroupSize = subgroupSize;

@@ -5,22 +5,43 @@
 
 namespace AgcDriver::Graphics {
 
-std::uint32_t DescriptorHeap::SamplerSlots(const Context& context) {
-    const auto& limits = context.descriptorIndexingLimits;
-    return std::min({limits.maxDescriptorSetUpdateAfterBindSamplers, limits.maxPerStageDescriptorUpdateAfterBindSamplers, context.limits.maxSamplerAllocationCount});
+namespace {
+
+constexpr std::array<const char*, 3> ArrayNames{"sampler", "sampled image", "storage image"};
+constexpr std::uint32_t SampledImageSlots = 1u << 18u;
+constexpr std::uint32_t StorageImageSlots = 1u << 16u;
+constexpr std::uint32_t ReservedStageResources = 1u << 12u;
+
 }
 
-DescriptorHeap::DescriptorHeap(const Context& context, std::uint32_t samplers) : context(context), samplerCapacity(samplers) {
-    Require(samplers > 1u, "the descriptor heap needs room for its null sampler and one guest sampler");
+DescriptorHeap::Capacities DescriptorHeap::DeviceCapacities(const Context& context) {
+    const auto& limits = context.descriptorIndexingLimits;
+    const auto samplers = std::min({limits.maxDescriptorSetUpdateAfterBindSamplers, limits.maxPerStageDescriptorUpdateAfterBindSamplers, context.limits.maxSamplerAllocationCount});
+    const auto storage = std::min({limits.maxDescriptorSetUpdateAfterBindStorageImages, limits.maxPerStageDescriptorUpdateAfterBindStorageImages, StorageImageSlots});
+    const auto resources = limits.maxPerStageUpdateAfterBindResources > storage + ReservedStageResources ? limits.maxPerStageUpdateAfterBindResources - storage - ReservedStageResources : 0u;
+    const auto sampled = std::min({limits.maxDescriptorSetUpdateAfterBindSampledImages, limits.maxPerStageDescriptorUpdateAfterBindSampledImages, SampledImageSlots, resources});
+    return {samplers, sampled, storage};
+}
+
+DescriptorHeap::DescriptorHeap(const Context& context, Capacities capacities) : context(context) {
+    Require(capacities.samplers > 1u && capacities.sampledImages > 1u && capacities.storageImages > 1u, "the descriptor heap needs room for its null descriptors and one guest descriptor of each type");
+    Require(context.nullDescriptors, "the descriptor heap's null image descriptors need VK_EXT_robustness2 nullDescriptor");
+    arrays[static_cast<std::size_t>(Array::Samplers)].capacity = capacities.samplers;
+    arrays[static_cast<std::size_t>(Array::Samplers)].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    arrays[static_cast<std::size_t>(Array::SampledImages)].capacity = capacities.sampledImages;
+    arrays[static_cast<std::size_t>(Array::SampledImages)].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    arrays[static_cast<std::size_t>(Array::StorageImages)].capacity = capacities.storageImages;
+    arrays[static_cast<std::size_t>(Array::StorageImages)].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     try {
         const VkDescriptorSetLayoutCreateInfo emptyInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &emptyInfo, nullptr, &empty), "vkCreateDescriptorSetLayout empty");
-        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_SAMPLER, samplers * MaxViews};
+        std::array<VkDescriptorPoolSize, static_cast<std::size_t>(Array::Count)> sizes{};
+        for (std::size_t index = 0; index < arrays.size(); ++index) sizes[index] = {arrays[index].type, arrays[index].capacity * MaxViews};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
         poolInfo.maxSets = MaxViews;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &size;
+        poolInfo.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+        poolInfo.pPoolSizes = sizes.data();
         Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool), "vkCreateDescriptorPool descriptor heap");
         VkSamplerCreateInfo nullInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         nullInfo.magFilter = VK_FILTER_NEAREST;
@@ -28,7 +49,9 @@ DescriptorHeap::DescriptorHeap(const Context& context, std::uint32_t samplers) :
         nullInfo.addressModeU = nullInfo.addressModeV = nullInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         nullInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
         Check(context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &nullInfo, nullptr, &nullSampler), "vkCreateSampler descriptor heap null sampler");
-        slotSamplers.push_back(nullSampler);
+        arrays[static_cast<std::size_t>(Array::Samplers)].entries.push_back({nullSampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
+        arrays[static_cast<std::size_t>(Array::SampledImages)].entries.push_back({VK_NULL_HANDLE, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        arrays[static_cast<std::size_t>(Array::StorageImages)].entries.push_back({VK_NULL_HANDLE, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL});
     } catch (...) {
         release();
         throw;
@@ -50,18 +73,16 @@ void DescriptorHeap::release() noexcept {
     nullSampler = VK_NULL_HANDLE;
 }
 
-void DescriptorHeap::writeSamplers(const View& target, std::uint32_t first, std::uint32_t count) {
-    std::vector<VkDescriptorImageInfo> infos;
-    infos.reserve(count);
-    for (std::uint32_t slot = first; slot < first + count; ++slot) infos.push_back({slotSamplers[slot] != VK_NULL_HANDLE ? slotSamplers[slot] : nullSampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = target.set;
-    write.dstBinding = ShaderRecompiler::RuntimeAbi::HeapSamplerBinding;
-    write.dstArrayElement = first;
-    write.descriptorCount = count;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-    write.pImageInfo = infos.data();
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
+void DescriptorHeap::write(const View& target, Array array, std::uint32_t first, std::uint32_t count) {
+    const auto& slots = arrays[static_cast<std::size_t>(array)];
+    VkWriteDescriptorSet update{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    update.dstSet = target.set;
+    update.dstBinding = static_cast<std::uint32_t>(array);
+    update.dstArrayElement = first;
+    update.descriptorCount = count;
+    update.descriptorType = slots.type;
+    update.pImageInfo = slots.entries.data() + first;
+    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &update, 0, nullptr);
 }
 
 const DescriptorHeap::View& DescriptorHeap::view(VkShaderStageFlags stages) {
@@ -70,15 +91,19 @@ const DescriptorHeap::View& DescriptorHeap::view(VkShaderStageFlags stages) {
     }
     Require(views.size() < MaxViews, "the descriptor heap has a view for every one of " + std::to_string(MaxViews) + " stage combinations");
     View created{stages, VK_NULL_HANDLE, VK_NULL_HANDLE};
-    const VkDescriptorSetLayoutBinding binding{ShaderRecompiler::RuntimeAbi::HeapSamplerBinding, VK_DESCRIPTOR_TYPE_SAMPLER, samplerCapacity, stages, nullptr};
-    const VkDescriptorBindingFlags flags = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    std::array<VkDescriptorSetLayoutBinding, static_cast<std::size_t>(Array::Count)> bindings{};
+    std::array<VkDescriptorBindingFlags, static_cast<std::size_t>(Array::Count)> flags{};
+    for (std::size_t index = 0; index < arrays.size(); ++index) {
+        bindings[index] = {static_cast<std::uint32_t>(index), arrays[index].type, arrays[index].capacity, stages, nullptr};
+        flags[index] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    }
     VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    bindingFlags.bindingCount = 1;
-    bindingFlags.pBindingFlags = &flags;
+    bindingFlags.bindingCount = static_cast<std::uint32_t>(flags.size());
+    bindingFlags.pBindingFlags = flags.data();
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &bindingFlags};
     layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &binding;
+    layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
     Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &created.layout), "vkCreateDescriptorSetLayout descriptor heap");
     VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocation.descriptorPool = pool;
@@ -89,7 +114,7 @@ const DescriptorHeap::View& DescriptorHeap::view(VkShaderStageFlags stages) {
         Check(result, "vkAllocateDescriptorSets descriptor heap");
     }
     const auto& added = views.emplace_back(created);
-    writeSamplers(added, 0, static_cast<std::uint32_t>(slotSamplers.size()));
+    for (std::size_t index = 0; index < arrays.size(); ++index) write(added, static_cast<Array>(index), 0, static_cast<std::uint32_t>(arrays[index].entries.size()));
     return added;
 }
 
@@ -98,30 +123,49 @@ VkDescriptorSetLayout DescriptorHeap::Layout(VkShaderStageFlags stages) {
     return view(stages).layout;
 }
 
-std::uint32_t DescriptorHeap::AllocateSampler(VkSampler sampler) {
-    std::lock_guard lock(mutex);
-    std::uint32_t slot = static_cast<std::uint32_t>(slotSamplers.size());
-    if (!freeSamplers.empty()) {
-        slot = freeSamplers.back();
-        freeSamplers.pop_back();
-        slotSamplers[slot] = sampler;
-    } else {
-        Require(slot < samplerCapacity, "the descriptor heap has no free sampler slot: " + std::to_string(samplerCapacity) + " samplers are live");
-        slotSamplers.push_back(sampler);
-    }
-    for (const auto& item : views) writeSamplers(item, slot, 1);
-    return slot;
-}
-
-void DescriptorHeap::ReleaseSampler(std::uint32_t slot) noexcept {
-    std::lock_guard lock(mutex);
-    slotSamplers[slot] = VK_NULL_HANDLE;
-    freeSamplers.push_back(slot);
-}
-
 VkDescriptorSet DescriptorHeap::Set(VkShaderStageFlags stages) {
     std::lock_guard lock(mutex);
     return view(stages).set;
+}
+
+std::uint32_t DescriptorHeap::allocate(Array array, const VkDescriptorImageInfo& entry) {
+    std::lock_guard lock(mutex);
+    auto& slots = arrays[static_cast<std::size_t>(array)];
+    std::uint32_t slot = static_cast<std::uint32_t>(slots.entries.size());
+    if (!slots.free.empty()) {
+        slot = slots.free.back();
+        slots.free.pop_back();
+        slots.entries[slot] = entry;
+    } else {
+        Require(slot < slots.capacity, std::string("the descriptor heap has no free ") + ArrayNames[static_cast<std::size_t>(array)] + " slot: " + std::to_string(slots.capacity) + " are live");
+        slots.entries.push_back(entry);
+    }
+    for (const auto& item : views) write(item, array, slot, 1);
+    return slot;
+}
+
+void DescriptorHeap::release(Array array, std::uint32_t slot) noexcept {
+    std::lock_guard lock(mutex);
+    auto& slots = arrays[static_cast<std::size_t>(array)];
+    slots.entries[slot] = slots.entries[0];
+    slots.free.push_back(slot);
+}
+
+std::uint32_t DescriptorHeap::AllocateSampler(VkSampler sampler) {
+    return allocate(Array::Samplers, {sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
+}
+
+void DescriptorHeap::ReleaseSampler(std::uint32_t slot) noexcept {
+    release(Array::Samplers, slot);
+}
+
+std::uint32_t DescriptorHeap::AllocateImage(Array array, VkImageView view, VkImageLayout layout) {
+    Require(array != Array::Samplers && view != VK_NULL_HANDLE, "an image slot needs an image view");
+    return allocate(array, {VK_NULL_HANDLE, view, layout});
+}
+
+void DescriptorHeap::ReleaseImage(Array array, std::uint32_t slot) noexcept {
+    release(array, slot);
 }
 
 void DescriptorHeap::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, VkDescriptorSet set) const {

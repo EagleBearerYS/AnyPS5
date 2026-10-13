@@ -9,11 +9,13 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 14u;
+inline constexpr std::uint32_t Version = 15u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t FragmentDescriptorSet = 1u;
 inline constexpr std::uint32_t HeapDescriptorSet = 2u;
 inline constexpr std::uint32_t HeapSamplerBinding = 0u;
+inline constexpr std::uint32_t HeapSampledImageBinding = 1u;
+inline constexpr std::uint32_t HeapStorageImageBinding = 2u;
 inline constexpr std::uint32_t StageCount = 4u;
 inline constexpr std::uint32_t PushConstantDwords = 32u;
 inline constexpr std::uint32_t FirstImageBinding = 1u;

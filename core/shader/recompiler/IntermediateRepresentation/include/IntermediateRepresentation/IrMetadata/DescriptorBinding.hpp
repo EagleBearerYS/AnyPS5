@@ -42,6 +42,8 @@ struct IrBindingLayout {
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t memoryOffsetCount = 0;
     std::uint32_t samplerSlotCount = 0;
+    std::uint32_t imageSlotCount = 0;
+    std::vector<std::uint32_t> imageSlotBases;
     bool dispatchThreadLimit = false;
     std::uint32_t runtimeImageCount = 0;
     std::uint32_t runtimeStateDwords = 0;
@@ -54,8 +56,11 @@ struct IrBindingLayout {
     [[nodiscard]] std::uint32_t SamplerSlotDword() const {
         return BufferAddressDword() + memoryOffsetCount * RuntimeAbi::BufferAddressDwords;
     }
-    [[nodiscard]] std::uint32_t DispatchThreadLimitDword() const {
+    [[nodiscard]] std::uint32_t ImageSlotDword() const {
         return SamplerSlotDword() + samplerSlotCount;
+    }
+    [[nodiscard]] std::uint32_t DispatchThreadLimitDword() const {
+        return ImageSlotDword() + imageSlotCount;
     }
     [[nodiscard]] std::uint32_t ImageMetadataDword() const {
         return DispatchThreadLimitDword() + (dispatchThreadLimit ? 3u : 0u);

@@ -1,12 +1,14 @@
 #include "MockDescriptorHeap.hpp"
 #include <map>
+#include <stdexcept>
+#include <tuple>
 #include <string_view>
 #include <type_traits>
 
 namespace {
 
 std::uint64_t nextHandle = 1ull << 40u;
-std::map<std::uint32_t, VkSampler> slots;
+std::map<std::tuple<VkDescriptorSet, std::uint32_t, std::uint32_t>, VkDescriptorImageInfo> slots;
 
 template<typename THandle>
 THandle handle() {
@@ -36,7 +38,9 @@ VKAPI_ATTR VkResult VKAPI_CALL createSampler(VkDevice, const VkSamplerCreateInfo
 }
 
 VKAPI_ATTR void VKAPI_CALL updateSets(VkDevice, std::uint32_t count, const VkWriteDescriptorSet* writes, std::uint32_t, const VkCopyDescriptorSet*) {
-    for (std::uint32_t index = 0; index < count; ++index) slots[writes[index].dstArrayElement] = writes[index].pImageInfo->sampler;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        for (std::uint32_t element = 0; element < writes[index].descriptorCount; ++element) slots[{writes[index].dstSet, writes[index].dstBinding, writes[index].dstArrayElement + element}] = writes[index].pImageInfo[element];
+    }
 }
 
 VKAPI_ATTR void VKAPI_CALL destroySetLayout(VkDevice, VkDescriptorSetLayout, const VkAllocationCallbacks*) {}
@@ -62,15 +66,25 @@ PFN_vkVoidFunction VKAPI_CALL heapProc(VkDevice, const char* name) {
 
 }
 
+AgcDriver::Graphics::Context MockHeapContext() {
+    AgcDriver::Graphics::Context context{};
+    context.deviceProc = heapProc;
+    context.nullDescriptors = true;
+    return context;
+}
+
 AgcDriver::Graphics::DescriptorHeap& MockDescriptorHeap() {
-    static AgcDriver::Graphics::DescriptorHeap heap([] {
-        AgcDriver::Graphics::Context context{};
-        context.deviceProc = heapProc;
-        return context;
-    }(), 4096u);
+    static AgcDriver::Graphics::DescriptorHeap heap(MockHeapContext(), AgcDriver::Graphics::DescriptorHeap::Capacities{4096u, 4096u, 1024u});
     return heap;
 }
 
 VkSampler MockHeapSampler(std::uint32_t slot) {
-    return slots.at(slot);
+    for (const auto& [key, info] : slots) {
+        if (std::get<1>(key) == 0u && std::get<2>(key) == slot) return info.sampler;
+    }
+    throw std::out_of_range("no sampler was written to the mock descriptor heap slot");
+}
+
+VkDescriptorImageInfo MockHeapEntry(VkDescriptorSet set, std::uint32_t binding, std::uint32_t slot) {
+    return slots.at({set, binding, slot});
 }

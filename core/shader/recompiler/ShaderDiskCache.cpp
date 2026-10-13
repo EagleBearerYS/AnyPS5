@@ -270,6 +270,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageUnnormalizedBaseLevel);
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerUsed);
+    writer.Values(std::span<const std::uint32_t>(binding.imageSlotDwords));
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
 }
@@ -298,6 +299,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageUnnormalizedBaseLevel);
     reader.Flags(binding.samplerIntegerBorder);
     reader.Flags(binding.samplerUsed);
+    reader.Values(binding.imageSlotDwords);
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
 }
@@ -473,6 +475,8 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.memoryOffsetDword);
     writer.Value(layout.memoryOffsetCount);
     writer.Value(layout.samplerSlotCount);
+    writer.Value(layout.imageSlotCount);
+    writer.Values(std::span<const std::uint32_t>(layout.imageSlotBases));
     writer.Value(layout.dispatchThreadLimit);
     writer.Value(layout.runtimeImageCount);
     writer.Value(layout.runtimeStateDwords);
@@ -488,6 +492,8 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.memoryOffsetDword);
     reader.Value(layout.memoryOffsetCount);
     reader.Value(layout.samplerSlotCount);
+    reader.Value(layout.imageSlotCount);
+    reader.Values(layout.imageSlotBases);
     reader.Value(layout.dispatchThreadLimit);
     reader.Value(layout.runtimeImageCount);
     reader.Value(layout.runtimeStateDwords);

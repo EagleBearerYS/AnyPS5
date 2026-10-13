@@ -81,6 +81,7 @@ public:
     VkImageView View() const;
     VkImageView FirstLayerView() const { return firstLayerView; }
     VkImageView BaseLevelView() const;
+    std::uint32_t SampledSlot(VkImageView view) const;
     struct ViewRange {
         VkImageViewType type;
         std::uint32_t levels;
@@ -122,6 +123,8 @@ private:
     std::optional<VkImageViewCreateInfo> baseLevelInfo;
     mutable std::mutex baseLevelMutex;
     mutable VkImageView baseLevelView = VK_NULL_HANDLE;
+    mutable std::mutex slotMutex;
+    mutable std::map<VkImageView, std::uint32_t> sampledSlots;
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;
@@ -166,6 +169,7 @@ public:
     VkImageView ElementView();
     VkImageView AtomicView(std::uint32_t mip, ViewLayers layers);
     VkImageView Atomic64View(std::uint32_t mip, ViewLayers layers);
+    std::uint32_t StorageSlot(VkImageView view);
     // Render targets live in the same images: draws attach mip 0 through a view of the color
     // buffer's format and mark the image dirty like a storage write.
     bool Attachable() const { return attachable; }
@@ -535,6 +539,8 @@ private:
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize memoryBytes = 0;
     VkImageView view = VK_NULL_HANDLE;
+    std::mutex slotMutex;
+    std::map<VkImageView, std::uint32_t> storageSlots;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;
     std::map<std::uint32_t, VkImageView> firstLayerViews;
