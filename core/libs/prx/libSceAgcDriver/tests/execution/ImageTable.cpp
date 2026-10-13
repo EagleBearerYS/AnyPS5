@@ -237,6 +237,13 @@ alignas(256) constexpr std::array<std::uint32_t, 25> ReadPointerCode{
     0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 30> SplitRecordCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0x8f108202u, 0xf4200444u,
+    0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u, 0xf4280a02u, 0x24000020u, 0x360200bfu, 0x7e020d01u,
+    0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u, 0x01090401u, 0x7e120202u,
+    0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 32> IndirectRecordCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u, 0xf4240b02u, 0x24000008u, 0xf40c0916u, 0xfa000020u,
@@ -1099,6 +1106,29 @@ void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
     RequireRed(changed, 1, Lanes, texels[0], "float texels after the T# behind record 1's pointer changed");
 }
 
+void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    const auto uintImage = Image(UintTexels.data(), Format32UInt);
+    const auto sintImage = Image(SintTexels.data(), Format32SInt);
+    const std::array<std::array<std::uint32_t, 4>, 3> images{floatImage, uintImage, sintImage};
+    const std::array<std::function<std::uint32_t(std::uint32_t)>, 3> texels{
+        [](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[x]); },
+        [](std::uint32_t x) { return UintTexels[x]; },
+        [](std::uint32_t x) { return static_cast<std::uint32_t>(SintTexels[x]); },
+    };
+    const std::array<const char*, 3> names{"float", "uint", "sint"};
+
+    Table = {};
+    for (std::uint32_t record = 0; record < 3; ++record) SetRecord(record, PointClamp, images[record]);
+    Keys = {};
+    for (std::uint32_t group = 0; group < 3; ++group) Keys[group] = 2u - group;
+    const auto split = Run(device, SplitRecordCode, 3, Lanes, 64);
+    Require(!Faulted(split), "image table: a T# read by two loads of its record faulted:\n" + split.log);
+    Require(split.imageTableCount == 3u, "image table: a T# read by two loads of its record does not hold one element per distinct T# (" + std::to_string(split.imageTableCount) + ")");
+    for (std::uint32_t group = 0; group < 3; ++group) RequireRed(split, group, Lanes, texels[2u - group], std::string(names[2u - group]) + " texels of a T# read by two loads of its record");
+}
+
 void RunPointerStorageWriteTests(AgcDriver::VulkanDevice& device) {
     alignas(256) static std::array<std::uint32_t, 256u * 8u> records{};
     alignas(256) static std::array<std::uint32_t, 256u * 8u> otherRecords{};
@@ -1299,6 +1329,7 @@ int main() {
         RunStoreTests(*device);
         RunPointerTests(*device);
         RunPointerRecordTests(*device);
+        RunSplitRecordTests(*device);
         RunPointerStorageWriteTests(*device);
         RunGraphicsTests(*device);
         std::puts("image table tests passed");
