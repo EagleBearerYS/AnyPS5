@@ -36,10 +36,13 @@ alignas(256) constexpr std::array<std::uint32_t, 12> LoadThroughArgumentBuffer{
     0xf0000108u, 0x00090205u, 0xbf8c3f70u, 0xbe80200eu};
 alignas(256) std::array<std::uint32_t, Width * Height> FirstTexels{};
 alignas(256) std::array<std::uint32_t, Width * Height> SecondTexels{};
+alignas(256) std::array<std::uint32_t, Width * Height> ThirdTexels{};
 alignas(256) std::array<std::uint32_t, 12> FirstArgument{};
 alignas(256) std::array<std::uint32_t, 12> SecondArgument{};
+alignas(256) std::array<std::uint32_t, 12> ThirdArgument{};
 alignas(256) std::array<std::uint32_t, 16> FirstHeap{};
 alignas(256) std::array<std::uint32_t, 16> SecondHeap{};
+alignas(256) std::array<std::uint32_t, 16> ThirdHeap{};
 alignas(256) std::array<std::uint32_t, 16> Table{};
 alignas(256) std::array<std::uint32_t, 8> Srt{};
 alignas(256) std::array<std::uint32_t, Threads> Output{};
@@ -112,22 +115,29 @@ int main() {
         for (std::uint32_t texel = 0; texel < Width * Height; ++texel) {
             FirstTexels[texel] = 0x1000u + texel;
             SecondTexels[texel] = 0x2000u + texel;
+            ThirdTexels[texel] = 0x3000u + texel;
         }
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(FirstTexels.data(), sizeof(FirstTexels), true, true, true);
             mutation.Add(SecondTexels.data(), sizeof(SecondTexels), true, true, true);
+            mutation.Add(ThirdTexels.data(), sizeof(ThirdTexels), true, true, true);
         }
         const auto first = Image(FirstTexels.data());
         const auto second = Image(SecondTexels.data());
+        const auto third = Image(ThirdTexels.data());
         std::copy(first.begin(), first.end(), FirstArgument.begin());
         std::copy(second.begin(), second.end(), SecondArgument.begin());
+        std::copy(third.begin(), third.end(), ThirdArgument.begin());
         std::copy(first.begin(), first.end(), FirstHeap.begin() + 8);
         std::copy(second.begin(), second.end(), SecondHeap.begin() + 8);
+        std::copy(third.begin(), third.end(), ThirdHeap.begin() + 8);
         const auto firstHeap = Buffer(FirstHeap.data(), static_cast<std::uint32_t>(sizeof(FirstHeap)));
         const auto secondHeap = Buffer(SecondHeap.data(), static_cast<std::uint32_t>(sizeof(SecondHeap)));
+        const auto thirdHeap = Buffer(ThirdHeap.data(), static_cast<std::uint32_t>(sizeof(ThirdHeap)));
         std::copy(firstHeap.begin(), firstHeap.end(), FirstArgument.begin() + 8);
         std::copy(secondHeap.begin(), secondHeap.end(), SecondArgument.begin() + 8);
+        std::copy(thirdHeap.begin(), thirdHeap.end(), ThirdArgument.begin() + 8);
         const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table)));
         const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
         std::copy(table.begin(), table.end(), Srt.begin());
@@ -142,10 +152,14 @@ int main() {
         SetRecord(2, LoadThroughArgument.data(), SecondArgument.data());
         SetRecord(3, LoadThroughArgument.data(), FirstArgument.data());
         Check(SecondTexels, FirstTexels, "the records' arguments swapped");
+        SetRecord(1, LoadThroughArgumentBuffer.data(), ThirdArgument.data());
+        SetRecord(3, LoadThroughArgument.data(), ThirdArgument.data());
+        Check(SecondTexels, ThirdTexels, "two records given an argument no copy was linked for");
         {
             GuestAllocations::Mutation mutation;
             mutation.Remove(FirstTexels.data());
             mutation.Remove(SecondTexels.data());
+            mutation.Remove(ThirdTexels.data());
         }
         AgcDriverShutdown_nid_postfix();
         std::puts("compute table call tests passed");

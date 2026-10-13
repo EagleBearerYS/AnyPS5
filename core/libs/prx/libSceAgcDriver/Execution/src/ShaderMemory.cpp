@@ -238,6 +238,10 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
     return true;
 }
 
+bool ShaderMemory::ReadWords(std::uint64_t address, std::span<std::uint32_t> values) {
+    return readWords(this, address, values.data(), values.size());
+}
+
 bool ShaderMemory::accessible(void* context, std::uint64_t address, std::uint64_t bytes) {
     auto& self = *static_cast<ShaderMemory*>(context);
     if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;

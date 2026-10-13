@@ -486,26 +486,31 @@ std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32
     throw std::runtime_error("its callee at " + hexText(address) + " does not return within " + std::to_string(limitWords * 4u) + " bytes");
 }
 
-std::vector<std::uint8_t> ReadGuestBytes(std::uint64_t address, std::uint64_t bytes, const char* what) {
-    if (address > UINTPTR_MAX - bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), static_cast<std::size_t>(bytes))) {
-        throw std::runtime_error(std::string("its ") + what + " at " + hexText(address) + " + " + hexText(bytes) + " is not readable");
+std::vector<std::uint32_t> ReadScalarWords(std::uint64_t address, std::uint64_t count, const char* what, ShaderMemory* memory) {
+    const auto aligned = address & ~std::uint64_t{3u};
+    const auto bytes = count * sizeof(std::uint32_t);
+    const auto unreadable = [&] { return std::runtime_error(std::string("its ") + what + " at " + hexText(address) + " + " + hexText(bytes) + " is not readable"); };
+    if (aligned > UINTPTR_MAX - bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(aligned)), static_cast<std::size_t>(bytes))) throw unreadable();
+    std::vector<std::uint32_t> words(static_cast<std::size_t>(count));
+    if (memory == nullptr) {
+        GuestMemory::Read(aligned, std::as_writable_bytes(std::span(words)));
+    } else if (!memory->ReadWords(aligned, words)) {
+        throw unreadable();
     }
-    std::vector<std::uint8_t> data(static_cast<std::size_t>(bytes));
-    GuestMemory::Read(address, std::as_writable_bytes(std::span(data)));
-    return data;
+    return words;
 }
 
-std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCall& call) {
+std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCall& call, ShaderMemory* memory) {
     constexpr std::uint64_t limitBytes = 64u << 20u;
     constexpr std::size_t limitCallees = 64u;
     const auto slot = call.userDataRegister - request.context.userDataBaseRegister;
     const auto pointer = static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
-    const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor");
+    const auto words = ReadScalarWords(pointer + call.descriptorOffset, 4u, "call table descriptor", memory);
     ShaderRecompiler::ShaderBufferResource descriptor{};
-    std::memcpy(descriptor.fields.data(), words.data(), words.size());
+    std::memcpy(descriptor.fields.data(), words.data(), sizeof(descriptor.fields));
     const auto bytes = descriptor.GetSize();
     if (bytes > limitBytes) throw std::runtime_error("its call table of " + std::to_string(bytes) + " bytes is larger than the " + std::to_string(limitBytes) + " bytes that are searched for callees");
-    const auto table = bytes == 0u ? std::vector<std::uint8_t>{} : ReadGuestBytes(descriptor.Base48(), bytes, "call table");
+    const auto table = bytes < sizeof(std::uint32_t) ? std::vector<std::uint32_t>{} : ReadScalarWords(descriptor.Base48(), bytes / sizeof(std::uint32_t), "call table", memory);
     const auto targetDword = (call.entryOffset - call.recordOffset) / 4u;
     std::vector<bool> held(call.recordDwords, false);
     held[targetDword] = held[targetDword + 1u] = true;
@@ -514,7 +519,7 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     for (std::uint64_t offset = call.recordOffset; offset + (targetDword + 2u) * 4u <= bytes; offset += call.entryStride) {
         std::vector<std::uint32_t> record(call.recordDwords, 0u);
         for (std::uint32_t dword = 0; dword < call.recordDwords; ++dword) {
-            if (held[dword] && offset + (dword + 1u) * 4u <= bytes) std::memcpy(&record[dword], table.data() + offset + dword * 4u, sizeof(record[dword]));
+            if (held[dword] && offset / 4u + dword < table.size()) record[dword] = table[offset / 4u + dword];
         }
         const auto target = static_cast<std::uint64_t>(record[targetDword + 1u]) << 32u | record[targetDword];
         if (target != 0u) records.emplace(std::move(record), target);
@@ -531,7 +536,7 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     return callees;
 }
 
-std::vector<std::uint32_t> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
+std::vector<std::uint32_t> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory) {
     if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return {};
     const auto code = request.shader.code;
     if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return {};
@@ -554,7 +559,7 @@ std::vector<std::uint32_t> LinkUserDataCallees(const ShaderRecompiler::Recompile
     std::vector<std::vector<ShaderRecompiler::TableCallee>> tableCallees;
     for (const auto& call : tableCalls) {
         try {
-            tableCallees.push_back(ReadTableCallees(request, call));
+            tableCallees.push_back(ReadTableCallees(request, call, memory));
         } catch (const std::exception& error) {
             throw std::runtime_error("AGC driver: compute shader " + hexText(request.shader.codeAddress) + " calls a target loaded from a table at program counter " + hexText(call.programCounter) + ", but " + error.what());
         }
@@ -564,11 +569,11 @@ std::vector<std::uint32_t> LinkUserDataCallees(const ShaderRecompiler::Recompile
 
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
-    const auto linked = LinkUserDataCallees(request);
+    const auto linked = LinkUserDataCallees(request, memory);
     auto source = request;
     if (!linked.empty()) source.shader.code = linked;
     auto invocationRequest = source;
