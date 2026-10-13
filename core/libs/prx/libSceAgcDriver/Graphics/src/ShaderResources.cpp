@@ -1604,7 +1604,6 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             }
         }
         splitSets = SplitsSets(context, shaders);
-        std::array<VkShaderStageFlags, 2> tableFlags{};
         for (auto& table : tableStages) {
             Require(table.mapAllocation != std::numeric_limits<std::size_t>::max(), "an image table stage has no map");
             const auto& map = table.map;
@@ -1614,20 +1613,9 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             const auto faults = map[ShaderRecompiler::ImageTableAbi::HeaderElementFaults];
             const auto samplerFaults = map[ShaderRecompiler::ImageTableAbi::HeaderSamplerFaults];
             const auto samplerSlots = map[ShaderRecompiler::ImageTableAbi::HeaderSamplerSlots];
-            Require(static_cast<std::uint64_t>(faults) + elements <= map.size() && static_cast<std::uint64_t>(samplerFaults) + map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount] / ShaderRecompiler::ImageTableAbi::SamplerEntryElements <= map.size() && static_cast<std::uint64_t>(samplerSlots) + map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount] <= map.size(), "image table map is truncated");
+            const auto imageSlots = map[ShaderRecompiler::ImageTableAbi::HeaderImageSlots];
+            Require(static_cast<std::uint64_t>(faults) + elements <= map.size() && static_cast<std::uint64_t>(samplerFaults) + map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount] / ShaderRecompiler::ImageTableAbi::SamplerEntryElements <= map.size() && static_cast<std::uint64_t>(samplerSlots) + map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount] <= map.size() && static_cast<std::uint64_t>(imageSlots) + elements <= map.size(), "image table map is truncated");
             Require(table.samplerSlots.size() == map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount], "image table map disagrees with its sampler table");
-            if (table.images == nullptr) continue;
-            table.set = splitSets && table.stage == ShaderRecompiler::ShaderStage::Fragment ? 1u : 0u;
-            table.elementBase = tableElements[table.set];
-            table.map[ShaderRecompiler::ImageTableAbi::HeaderElementBase] = table.elementBase;
-            tableElements[table.set] += elements;
-            tableFlags[table.set] |= VulkanStage(table.stage);
-        }
-        for (std::uint32_t set = 0; set < tableFlags.size(); ++set) {
-            if (tableFlags[set] == 0) continue;
-            Require(context.imageTableCapacity != 0, "image tables need runtimeDescriptorArray, descriptorBindingPartiallyBound and descriptorBindingVariableDescriptorCount, which the device lacks");
-            bindings.push_back({{ShaderRecompiler::RuntimeAbi::ImageTableBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, context.imageTableCapacity, tableFlags[set], nullptr}, {}, {}, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT, static_cast<std::int32_t>(set)});
-            tableBindings[set] = bindings.size() - 1u;
         }
         if (storageBuffers > context.limits.maxDescriptorSetStorageBuffers) {
             Require(storageBuffers <= context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers, "pipeline descriptors exceed device limits");
@@ -1656,25 +1644,18 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         }
         static const bool noLayoutCache = std::getenv("APS5_NO_LAYOUT_CACHE") != nullptr;
         static const bool noPoolCache = std::getenv("APS5_NO_POOL_CACHE") != nullptr;
-        const auto tableDescriptorCount = [&](std::size_t set) { return std::max(1u, std::min(tableElements[set], context.imageTableCapacity)); };
-        const auto tableVariableCount = [&](std::size_t set) { return tableBindings[set] != std::numeric_limits<std::size_t>::max() ? std::optional<std::uint32_t>(tableDescriptorCount(set)) : std::nullopt; };
         const auto splitPoolSizes = [&](std::size_t set) {
             std::map<VkDescriptorType, std::uint32_t> counts;
             for (std::size_t index = 0; index < bindings.size(); ++index) {
                 if (bindings[index].noDescriptor || setOf(bindings[index]) != set) continue;
-                counts[bindings[index].layout.descriptorType] += index == tableBindings[set] ? tableDescriptorCount(set) : bindings[index].layout.descriptorCount;
+                counts[bindings[index].layout.descriptorType] += bindings[index].layout.descriptorCount;
             }
             std::vector<VkDescriptorPoolSize> sizes;
             for (const auto& [type, count] : counts) sizes.push_back({type, count});
             return sizes;
         };
-        const auto allocateVariableSet = [&](VkDescriptorPool from, VkDescriptorSetLayout layout, std::optional<std::uint32_t> variableCount) {
-            const std::uint32_t variable = variableCount.value_or(0u);
-            VkDescriptorSetVariableDescriptorCountAllocateInfoEXT variableInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO_EXT};
-            variableInfo.descriptorSetCount = 1;
-            variableInfo.pDescriptorCounts = &variable;
+        const auto allocateSet = [&](VkDescriptorPool from, VkDescriptorSetLayout layout) {
             VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-            allocation.pNext = variableCount.has_value() ? &variableInfo : nullptr;
             allocation.descriptorPool = from;
             allocation.descriptorSetCount = 1;
             allocation.pSetLayouts = &layout;
@@ -1693,27 +1674,25 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             fragment.layout = createLayout(fragmentLayoutKey, descriptions[1], fragmentBindingFlags, fragment.ownsLayout);
             {
                 const auto sizes = splitPoolSizes(1);
-                const auto variableCount = tableVariableCount(1);
                 if (context.descriptorCache != nullptr && !noPoolCache) {
-                    fragment.cacheAllocation = context.descriptorCache->Allocate(fragment.layout, sizes, updateAfterBind, variableCount);
+                    fragment.cacheAllocation = context.descriptorCache->Allocate(fragment.layout, sizes, updateAfterBind, std::nullopt);
                     fragment.set = fragment.cacheAllocation.set;
                 }
                 if (fragment.set == VK_NULL_HANDLE) {
                     fragment.pool = CreateSetPool(context, sizes, updateAfterBind);
-                    fragment.set = allocateVariableSet(fragment.pool, fragment.layout, variableCount);
+                    fragment.set = allocateSet(fragment.pool, fragment.layout);
                 }
             }
         }
         if (splitSets) {
             const auto sizes = splitPoolSizes(0);
-            const auto variableCount = tableVariableCount(0);
             if (context.descriptorCache != nullptr && !noPoolCache) {
-                cacheAllocation = context.descriptorCache->Allocate(_layout, sizes, updateAfterBind, variableCount);
+                cacheAllocation = context.descriptorCache->Allocate(_layout, sizes, updateAfterBind, std::nullopt);
                 _set = cacheAllocation.set;
             }
             if (_set == VK_NULL_HANDLE) {
                 pool = CreateSetPool(context, sizes, updateAfterBind);
-                _set = allocateVariableSet(pool, _layout, variableCount);
+                _set = allocateSet(pool, _layout);
             }
         }
         if (!splitSets && std::any_of(bindings.begin(), bindings.end(), [](const Binding& binding) { return !binding.noDescriptor; })) {
@@ -1721,26 +1700,14 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             // when stage B looks it up.
             std::vector<VkDescriptorPoolSize> sizes;
             if (storageBuffers != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<std::uint32_t>(storageBuffers)});
-            const auto tableDescriptors = tableBindings[0] != std::numeric_limits<std::size_t>::max() ? tableDescriptorCount(0) : 0u;
-            if (tableDescriptors != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, tableDescriptors});
-            const auto variableCount = tableVariableCount(0);
             if (context.descriptorCache != nullptr && !noPoolCache) {
-                const auto allocated = context.descriptorCache->Allocate(_layout, sizes, updateAfterBind, variableCount);
+                const auto allocated = context.descriptorCache->Allocate(_layout, sizes, updateAfterBind, std::nullopt);
                 _set = allocated.set;
                 cacheAllocation = allocated;
             }
             if (_set == VK_NULL_HANDLE) {
                 pool = CreateSetPool(context, sizes, updateAfterBind);
-                const std::uint32_t variable = variableCount.value_or(0u);
-                VkDescriptorSetVariableDescriptorCountAllocateInfoEXT variableInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO_EXT};
-                variableInfo.descriptorSetCount = 1;
-                variableInfo.pDescriptorCounts = &variable;
-                VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-                allocation.pNext = variableCount.has_value() ? &variableInfo : nullptr;
-                allocation.descriptorPool = pool;
-                allocation.descriptorSetCount = 1;
-                allocation.pSetLayouts = &_layout;
-                Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &_set), "vkAllocateDescriptorSets");
+                _set = allocateSet(pool, _layout);
             }
         }
         timing.descriptorsMs = phase(BuildPhase::Descriptors);
@@ -1766,7 +1733,6 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     std::array<std::vector<VkDescriptorSetLayoutBinding>, 2> descriptions;
     const bool split = SplitsSets(context, shaders);
     std::array<std::vector<VkDescriptorBindingFlags>, 2> bindingFlags;
-    std::array<VkShaderStageFlags, 2> tableFlags{};
     bool updateAfterBind = false;
     std::uint64_t storageBuffers = 0;
     for (const auto& shader : shaders) {
@@ -1777,11 +1743,7 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
         for (const auto& binding : shader.program->bindings) {
             const auto set = binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet ? 1 : 0;
             if (binding.kind == ShaderRecompiler::DescriptorKind::DeviceAddress || binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) continue;
-            if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) {
-                tableFlags[split && shader.stage == ShaderRecompiler::ShaderStage::Fragment ? 1 : 0] |= flags;
-                continue;
-            }
-            if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) continue;
+            if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
             const auto type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             stageResources += binding.count;
             if (type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
@@ -1792,11 +1754,6 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
             descriptions[set].push_back({binding.binding, type, binding.count, flags, nullptr});
             bindingFlags[set].push_back(0);
         }
-    }
-    for (std::size_t set = 0; set < tableFlags.size(); ++set) {
-        if (tableFlags[set] == 0) continue;
-        descriptions[set].push_back({ShaderRecompiler::RuntimeAbi::ImageTableBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, context.imageTableCapacity, tableFlags[set], nullptr});
-        bindingFlags[set].push_back(VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT);
     }
     if (storageBuffers > context.limits.maxDescriptorSetStorageBuffers) updateAfterBind = true;
     for (std::size_t set = 0; set < descriptions.size(); ++set) {
@@ -1848,43 +1805,13 @@ void ShaderResources::buildComplete() {
             // One update call for the whole set: the info arrays are sized up front so every write's
             // pointer into them stays valid until the call.
             std::size_t bufferCount = 0;
-            std::size_t imageCount = 0;
-            for (const auto& binding : bindings) {
-                bufferCount += binding.allocations.size();
-                if (binding.layout.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) imageCount += binding.flags != 0 ? binding.imageAllocations.size() : binding.layout.descriptorCount;
-            }
+            for (const auto& binding : bindings) bufferCount += binding.allocations.size();
             auto& buffers = descriptorBuffers;
-            auto& images = descriptorImages;
             buffers.reserve(bufferCount);
-            images.reserve(imageCount);
             auto& writes = descriptorWrites;
             writes.reserve(bindings.size());
             for (const auto& binding : bindings) {
                 if (binding.noDescriptor) continue;
-                if (binding.flags != 0) {
-                    for (std::size_t first = 0; first < binding.imageAllocations.size();) {
-                        if (binding.imageAllocations[first] == std::numeric_limits<std::size_t>::max()) {
-                            ++first;
-                            continue;
-                        }
-                        auto last = first;
-                        while (last < binding.imageAllocations.size() && binding.imageAllocations[last] != std::numeric_limits<std::size_t>::max()) ++last;
-                        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                        write.dstSet = setOf(binding) == 0 ? _set : fragment.set;
-                        write.dstBinding = binding.layout.binding;
-                        write.dstArrayElement = static_cast<std::uint32_t>(first);
-                        write.descriptorCount = static_cast<std::uint32_t>(last - first);
-                        write.descriptorType = binding.layout.descriptorType;
-                        write.pImageInfo = images.data() + images.size();
-                        for (auto element = first; element < last; ++element) {
-                            const auto index = binding.imageAllocations[element];
-                            images.push_back({VK_NULL_HANDLE, textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
-                        }
-                        writes.push_back(write);
-                        first = last;
-                    }
-                    continue;
-                }
                 VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
                 write.dstSet = setOf(binding) == 0 ? _set : fragment.set;
                 write.dstBinding = binding.layout.binding;
@@ -3764,19 +3691,6 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
     }
 }
 
-std::uint32_t ImageTableCapacity(const Context& context) {
-    if (!context.runtimeDescriptorArray || !context.partiallyBound || !context.variableDescriptorCount || !context.descriptorIndexing) return 0u;
-    constexpr std::uint64_t sampledHeaps = static_cast<std::uint64_t>(ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding - ShaderRecompiler::RuntimeAbi::FirstImageBinding) * ShaderRecompiler::RuntimeAbi::SampledHeapCapacity;
-    constexpr std::uint64_t storageHeaps = static_cast<std::uint64_t>(static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers) - ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding) * ShaderRecompiler::RuntimeAbi::StorageHeapCapacity;
-    constexpr std::uint64_t buffers = 8u;
-    const auto room = [](std::uint64_t limit, std::uint64_t reserve) { return limit > reserve ? limit - reserve : 0u; };
-    std::uint64_t capacity = static_cast<std::uint64_t>(ShaderRecompiler::RuntimeAbi::StageCount) * ShaderRecompiler::ImageTableAbi::ImageElementBudget;
-    capacity = std::min(capacity, room(context.limits.maxPerStageDescriptorSampledImages, sampledHeaps));
-    capacity = std::min(capacity, room(context.limits.maxPerStageResources, sampledHeaps + storageHeaps + buffers));
-    capacity = std::min(capacity, room(context.limits.maxDescriptorSetSampledImages, sampledHeaps * ShaderRecompiler::RuntimeAbi::StageCount));
-    return static_cast<std::uint32_t>(capacity);
-}
-
 ShaderResources::TableStage& ShaderResources::tableStage(const CompiledShader& shader) {
     for (auto& table : tableStages) {
         if (table.program == shader.program) return table;
@@ -3849,19 +3763,13 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
 }
 
 void ShaderResources::resolveImageTables() {
-    if (tableBindings[0] == std::numeric_limits<std::size_t>::max() && tableBindings[1] == std::numeric_limits<std::size_t>::max()) return;
     auto& counters = TextureCounts();
-    for (std::size_t set = 0; set < tableBindings.size(); ++set) {
-        if (tableBindings[set] != std::numeric_limits<std::size_t>::max()) bindings[tableBindings[set]].imageAllocations.assign(std::min(tableElements[set], context.imageTableCapacity), std::numeric_limits<std::size_t>::max());
-    }
     for (auto& table : tableStages) {
         if (table.images == nullptr) continue;
-        auto& item = bindings[tableBindings[table.set]];
         const auto& binding = *table.images;
         const auto faults = table.map[ShaderRecompiler::ImageTableAbi::HeaderElementFaults];
         const auto stageSamplers = std::span<const std::shared_ptr<Sampler>>(samplers).subspan(table.firstSampler, table.samplerCount);
         table.elementTextures.assign(binding.count, std::numeric_limits<std::size_t>::max());
-        const auto capacityMessage = [&] { return "the image table exceeds the device's capacity of " + std::to_string(context.imageTableCapacity) + " images"; };
         const auto bind = [&](std::uint32_t element, std::span<const std::uint32_t> words, std::shared_ptr<Texture> texture, const GuestTextureResource& resource, std::uint64_t guestBytes, bool firstLayer) {
             try {
                 RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers.at(element), stageSamplers);
@@ -3885,7 +3793,6 @@ void ShaderResources::resolveImageTables() {
             textureFirstLayer.push_back(firstLayer);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             table.elementTextures[element] = textures.size() - 1u;
-            item.imageAllocations[static_cast<std::size_t>(table.elementBase) + element] = textures.size() - 1u;
         };
         const auto state = CurrentTableState();
         std::vector<std::shared_ptr<Texture>> cached;
@@ -3894,10 +3801,7 @@ void ShaderResources::resolveImageTables() {
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                 const auto& entry = reused->elements[element];
-                if (static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) {
-                    if (!entry.rejected) ++next;
-                    table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
-                } else if (entry.rejected) {
+                if (entry.rejected) {
                     table.map[faults + element] = rejectTableElement(table, words, entry.message);
                 } else {
                     CompletePendingCpuWrites(context, entry.resource.baseAddress, static_cast<std::size_t>(entry.guestBytes));
@@ -3911,12 +3815,6 @@ void ShaderResources::resolveImageTables() {
         bool reusable = state.epoch != 0;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-            const auto absolute = static_cast<std::uint64_t>(table.elementBase) + element;
-            if (absolute >= context.imageTableCapacity) {
-                table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
-                reusable = false;
-                continue;
-            }
             GuestTextureResource resource{};
             std::uint64_t guestBytes = 0;
             bool firstLayer = false;
@@ -3986,6 +3884,12 @@ void ShaderResources::finishImageTables() {
         auto& map = table.map;
         for (const auto& [entry, code] : table.samplerRejections) map[map[Abi::HeaderSamplerFaults] + entry] = code;
         for (std::size_t element = 0; element < table.samplerSlots.size(); ++element) map[map[Abi::HeaderSamplerSlots] + element] = table.samplerSlots[element] == std::numeric_limits<std::size_t>::max() ? 0u : samplers[table.samplerSlots[element]]->Slot();
+        for (std::size_t element = 0; element < table.elementTextures.size(); ++element) {
+            const auto index = table.elementTextures[element];
+            if (index == std::numeric_limits<std::size_t>::max()) continue;
+            const auto& texture = *textures[index];
+            map[map[Abi::HeaderImageSlots] + element] = texture.SampledSlot(textureFirstLayer[index] ? texture.FirstLayerView() : texture.View());
+        }
         for (std::uint32_t index = 0; index < map[Abi::HeaderTableCount]; ++index) {
             const auto header = Abi::TableHeader(index);
             if (map[header + Abi::TableFault] != 0u) continue;
@@ -4279,14 +4183,13 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         }
         return sizes;
     };
-    const auto variableOf = [&](std::size_t set) { return tableBindings[set] != std::numeric_limits<std::size_t>::max() ? std::optional<std::uint32_t>(std::max(1u, static_cast<std::uint32_t>(bindings[tableBindings[set]].imageAllocations.size()))) : std::nullopt; };
     result->cache = context.descriptorCache;
     if (!descriptions[0].empty() || splitSets) {
-        result->allocation = result->cache->Allocate(_layout, sizesOf(0), updateAfterBind, variableOf(0));
+        result->allocation = result->cache->Allocate(_layout, sizesOf(0), updateAfterBind, std::nullopt);
         Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
     if (!descriptions[1].empty() || splitSets) {
-        result->fragmentAllocation = result->cache->Allocate(fragment.layout, sizesOf(1), updateAfterBind, variableOf(1));
+        result->fragmentAllocation = result->cache->Allocate(fragment.layout, sizesOf(1), updateAfterBind, std::nullopt);
         Require(result->fragmentAllocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
     auto buffers = descriptorBuffers;

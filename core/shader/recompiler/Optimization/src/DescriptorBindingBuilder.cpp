@@ -497,7 +497,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
         const bool declared = remaining.erase(binding.descriptor.binding) != 0u;
-        const bool kept = binding.descriptor.kind == DescriptorKind::SamplerSlot ? samplerHeap : binding.descriptor.role == DescriptorRole::GuestImages ? imageHeap : declared || binding.descriptor.kind == DescriptorKind::DeviceAddress;
+        const bool kept = binding.descriptor.kind == DescriptorKind::SamplerSlot ? samplerHeap : binding.descriptor.role == DescriptorRole::GuestImages || binding.descriptor.role == DescriptorRole::ImageTable ? imageHeap : declared || binding.descriptor.kind == DescriptorKind::DeviceAddress;
         if (!kept) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);

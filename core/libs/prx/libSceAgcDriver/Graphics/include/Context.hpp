@@ -165,7 +165,6 @@ struct Context {
     bool runtimeDescriptorArray = false;
     bool partiallyBound = false;
     bool variableDescriptorCount = false;
-    std::uint32_t imageTableCapacity = 0;
     bool geometryShader = false;
     bool sampleRateShading = false;
     bool shaderClipDistance = false;
@@ -236,7 +235,6 @@ inline void EndRenderPass(const Context& context, VkCommandBuffer commands) {
     else context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
 }
 
-std::uint32_t ImageTableCapacity(const Context& context);
 
 }
 

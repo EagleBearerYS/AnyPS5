@@ -539,21 +539,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const bool storage = *decoration.binding == ShaderRecompiler::RuntimeAbi::HeapStorageImageBinding && opcode == spv::OpTypeImage && element.size() >= 9 && element[7] == 2u;
             Require(sampler || sampled || storage, "a descriptor heap array holds another type than its binding's samplers, sampled images or storage images");
         } else if (variable.storage == spv::StorageClassUniformConstant) {
-            Require(decoration.set && decoration.binding, "unbound shader resource");
-            const auto key = std::make_pair(*decoration.set, *decoration.binding);
-            const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
-            Require(descriptors.insert(key).second || (binding != shader.bindings.end() && binding->role == ShaderRecompiler::DescriptorRole::ImageTable), "duplicate SPIR-V resource binding");
-            Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
-            Require(binding->kind == ShaderRecompiler::DescriptorKind::Sampler || binding->kind == ShaderRecompiler::DescriptorKind::SampledImage || binding->kind == ShaderRecompiler::DescriptorKind::StorageImage, "SPIR-V descriptor type disagrees with recompiler binding metadata");
-            if (binding->role == ShaderRecompiler::DescriptorRole::ImageTable || binding->role == ShaderRecompiler::DescriptorRole::SamplerTable) {
-                Require(type.size() == 3 && (type[0] & 0xffffu) == spv::OpTypeRuntimeArray, "image table must be declared as a runtime descriptor array");
-                continue;
-            }
-            Require(type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray, "typed heap must be declared as a descriptor array");
-            const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding->binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
-            const auto capacity = ShaderRecompiler::RuntimeAbi::HeapCapacity(heap);
-            const auto count = module.constants.find(type[3]);
-            Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
+            Require(false, "an image or sampler is declared outside the descriptor heap");
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
@@ -593,7 +579,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         Require(binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers, "only guest buffers are read through device addresses");
         Require(!binding.readOnly, "read-only descriptor metadata is unsupported because the recompiler emits no NonWritable decoration");
     }
-    Require(descriptors.size() == static_cast<std::size_t>(std::count_if(shader.bindings.begin(), shader.bindings.end(), [](const auto& binding) { return binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress && binding.kind != ShaderRecompiler::DescriptorKind::SamplerSlot && binding.role != ShaderRecompiler::DescriptorRole::GuestImages; })), "recompiler binding metadata contains undeclared resources");
+    Require(descriptors.size() == static_cast<std::size_t>(std::count_if(shader.bindings.begin(), shader.bindings.end(), [](const auto& binding) { return binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress && binding.kind != ShaderRecompiler::DescriptorKind::SamplerSlot && binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::ImageTable; })), "recompiler binding metadata contains undeclared resources");
     Require(push == (!shader.pushConstants.empty() || mesh || (control && !rectListControl)), "recompiler push constant metadata disagrees with SPIR-V");
     for (const auto id : module.interface) Require(module.variables.contains(id), "entry point interface contains an unknown variable");
     if (mesh) Require(module.primitiveIndices, "mesh shader does not export primitive indices");

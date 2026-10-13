@@ -1677,7 +1677,8 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;
-        state.tableAccess.element = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        const auto slot = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderImageSlots)), element), ConstantU32(state, 0u)));
+        state.tableAccess.element = Select(state, u32, checked, slot, ConstantU32(state, 0u));
         DecorateTableNonUniform(state, state.tableAccess.element);
         state.tableAccess.dword3 = dword3;
     }

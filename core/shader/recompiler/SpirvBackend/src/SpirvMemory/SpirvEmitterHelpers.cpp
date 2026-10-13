@@ -445,8 +445,11 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     if (!TableModeEmitted(mode)) continue;
                     const auto kind = DescriptorBindingForImage(mode);
                     if (std::any_of(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
-                    const auto name = "table_images_" + std::to_string(static_cast<std::uint32_t>(kind));
-                    state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
+                    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode))), spv::StorageClassUniformConstant);
+                    state.module.AddName(variable, ("table_images_" + std::to_string(static_cast<std::uint32_t>(kind))).c_str());
+                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::HeapDescriptorSet);
+                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, RuntimeAbi::HeapSampledImageBinding);
+                    state.tableImageVariables.push_back({kind, variable});
                     if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(spv::CapabilitySampled1D);
                 }
             }

@@ -3155,7 +3155,6 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.runtimeDescriptorArray = state->runtimeDescriptorArray;
     context.partiallyBound = state->descriptorBindingPartiallyBound;
     context.variableDescriptorCount = state->descriptorBindingVariableDescriptorCount;
-    context.imageTableCapacity = ImageTableCapacity(context);
     context.geometryShader = state->geometryShader;
     context.sampleRateShading = state->sampleRateShading;
     context.shaderClipDistance = state->shaderClipDistance;

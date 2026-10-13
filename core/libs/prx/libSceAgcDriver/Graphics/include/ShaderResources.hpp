@@ -333,8 +333,6 @@ private:
         std::vector<std::uint32_t> map;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
         std::vector<std::string> messages;
-        std::uint32_t elementBase = 0;
-        std::uint32_t set = 0;
         std::size_t firstSampler = 0;
         std::size_t samplerCount = 0;
         std::vector<std::size_t> elementTextures;
@@ -342,8 +340,6 @@ private:
         std::vector<std::size_t> samplerSlots;
     };
     std::vector<TableStage> tableStages;
-    std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
-    std::array<std::uint32_t, 2> tableElements{};
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
     std::uint32_t rejectTableElement(TableStage& table, std::span<const std::uint32_t> words, const std::string& message);
@@ -509,7 +505,6 @@ private:
     std::uint32_t setOf(const Binding& binding) const;
     std::vector<Allocation> allocations;
     std::vector<VkDescriptorBufferInfo> descriptorBuffers;
-    std::vector<VkDescriptorImageInfo> descriptorImages;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
