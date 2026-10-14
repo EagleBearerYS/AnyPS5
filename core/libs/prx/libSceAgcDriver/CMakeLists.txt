@@ -125,6 +125,23 @@ foreach(agcPresentationStage IN ITEMS Vert Frag)
     )
     list(APPEND agcPresentationShaderHeaders ${agcPresentationShaderHeader})
 endforeach()
+set(agcFsrIncludeDir ${CMAKE_SOURCE_DIR}/3rdparty/FidelityFX-FSR/ffx-fsr)
+foreach(agcFsrFilter IN ITEMS Easu Rcas)
+    string(TOUPPER "${agcFsrFilter}" agcFsrSymbol)
+    set(agcFsrShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/Fsr${agcFsrFilter}.frag)
+    set(agcFsrShaderSpv ${agcTextureDetileGeneratedDir}/Fsr${agcFsrFilter}Frag.spv)
+    set(agcFsrShaderHeader ${agcTextureDetileGeneratedDir}/Fsr${agcFsrFilter}Frag_spv.h)
+    add_custom_command(
+            OUTPUT "${agcFsrShaderHeader}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 "-I${agcFsrIncludeDir}" -o "${agcFsrShaderSpv}" "${agcFsrShaderSource}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${agcFsrShaderSpv} -DOUTPUT=${agcFsrShaderHeader}
+            -DSYMBOL=FSR_${agcFsrSymbol}_FRAG_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${agcFsrShaderSource}" "${agcFsrIncludeDir}/ffx_a.h" "${agcFsrIncludeDir}/ffx_fsr1.h" glslang-standalone
+            VERBATIM
+    )
+    list(APPEND agcPresentationShaderHeaders ${agcFsrShaderHeader})
+endforeach()
 
 set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
@@ -194,6 +211,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationUpscaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DepthSurface.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTarget.cpp
