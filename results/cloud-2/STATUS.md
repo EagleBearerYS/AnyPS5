@@ -1,11 +1,4 @@
-READY
-RESULT:
-- Last task: PRM-005 (FSR 1 test pattern, bilinear against EASU, as PNG), done: results/cloud-2/PRM-005.md. Before it: PRM-004 (results/cloud-2/PRM-004.md), PM-003 (results/cloud-2/PM-003.md), PRM-002 (results/cloud-2/PRM-002.md).
-- Tree: /home/user/AnyPS5 detached at feat/agc-fsr1-presentation-upscaling fea68147a (upstream e34c479210 + 3 commits), clean, recursive submodules. In build/, libSceAgcDriver and agc_driver_presentation_pass_tests are built at fea68147a; everything else was last fully built at the overlay branch (98b9b57ef/7126e05ca), so the next full build is incremental. Configured with CI's Linux flags.
-- Machine: host vm, 4 vCPU Intel Xeon (1 thread/core, AVX2/AVX-512F), now reported as 2.80 GHz (lscpu said 2.10 GHz at setup; the VM appears to have been resumed on a different host model, so build times from before and after may not compare), 15 GiB RAM, no swap, about 28 GB disk free. Ubuntu 24.04.5, kernel booted with ipv6.disable=1, no udmabuf.
-- Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1, Python 3.13.16, git 2.43.0, lavapipe from mesa-vulkan-drivers 25.2.8 (LLVM 20.1.2), libvulkan1 1.3.275; Xvfb and vulkan-validationlayers 1.3.275 for display tests.
-- Build times: cold full build 1105 s; incremental 446-1018 s depending on what changed; no-op rebuild about 1 s.
-- Tests run as an unprivileged user, as on CI.
-- Full-suite baseline (CI's ctest step) on upstream main a453108cf7: 1170 tests, 1107 passed, 58 skipped, 5 failed; on the overlay branch: 1176 tests, 1113 passed, 58 skipped, 5 failed. The 5 failures are guest_datagram_recv, guest_datagram_recvfrom, guest_datagram_sceNetRecv, guest_datagram_sceNetRecvfrom and guest_tcp, all from IPv6 being off; check_skips also flags guest_sce_net for the same reason. guest_avplayer is intermittent on the other workers but has not failed here. Anything beyond these is a real change.
-- Remotes: upstream = boykopovar/AnyPS5 (fetch only, push disabled); origin and fork = EagleBearerYS/AnyPS5.
-- Board watcher: skips open tasks whose for: names cloud-1 or cloud-3, so a task left for another worker doesn't wake it in a loop. An hourly check-in (trig_01HhjrdD6JFV26ZRvjq2Jzbt, about :35 UTC) restarts the watcher if the VM is recycled while idle.
+BUSY BF-003
+since: 2026-10-14T17:54:38Z
+claimed: tasks/claimed/BF-003.md (cloud-tasks b4a400f4b)
+previous: PRM-005 done, results/cloud-2/PRM-005.md
