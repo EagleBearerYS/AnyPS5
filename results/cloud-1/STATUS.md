@@ -1,4 +1,4 @@
-READY
+BUSY GAC-005 (claimed 2026-10-14T22:30:57Z)
 RESULT:
 - Last task: PM-020 (per-draw analysis: Resources.Complete self and CompareBlocks after cut #1; candidate test/agc-image-mirror-epoch-compare at ce6959aba on the fork, red/green), done: results/cloud-1/PM-020.md. Before it: PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
