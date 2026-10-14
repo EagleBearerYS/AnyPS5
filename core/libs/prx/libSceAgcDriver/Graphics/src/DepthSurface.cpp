@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -1107,6 +1108,8 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         recordPlaneCopy(context, plane, destination, source.extent);
     }
     destination->MarkDirty();
+    const auto bytes = static_cast<std::size_t>(destination->GuestBytes());
+    if (HostImportFor(context, pass.destination, bytes) != nullptr) StorageTexture::FlushPending(pass.destination, bytes, nullptr, "DB expand");
     static bool reported[3] = {};
     if (!std::exchange(reported[static_cast<int>(read)], true)) {
         const auto address = static_cast<unsigned long long>(source.address);
