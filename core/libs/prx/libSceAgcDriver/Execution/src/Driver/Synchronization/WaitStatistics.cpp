@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -27,6 +28,7 @@ EpochBumps& Driver::epochBumps() {
 void Driver::bumpEpoch(std::uint64_t EpochBumps::*counter) {
     GuestMemory::BumpCollectEpoch();
     ++(epochBumps().*counter);
+    if (auto* residency = Graphics::ResidencyDriver::Active()) residency->OrderingPoint();
 }
 
 bool Driver::packetEpoch() {

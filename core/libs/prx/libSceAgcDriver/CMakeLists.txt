@@ -227,6 +227,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Residency.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyMirrors.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyDriver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
@@ -1363,8 +1364,10 @@ add_custom_command(
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ResidencyRead.comp" glslang-standalone
     VERBATIM
 )
-target_sources(agc_driver_residency_mirrors_tests PRIVATE ${agcResidencyReadHeader})
-target_include_directories(agc_driver_residency_mirrors_tests PRIVATE ${agcTestShaderGeneratedRoot})
+foreach(agcResidencyTest IN ITEMS agc_driver_residency_mirrors_tests agc_driver_residency_driver_tests)
+    target_sources(${agcResidencyTest} PRIVATE ${agcResidencyReadHeader})
+    target_include_directories(${agcResidencyTest} PRIVATE ${agcTestShaderGeneratedRoot})
+endforeach()
 if(WIN32)
     target_link_libraries(agc_driver_residency_mirrors_tests PRIVATE psapi)
 endif()
