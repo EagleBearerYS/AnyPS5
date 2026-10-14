@@ -5,6 +5,7 @@
 #define VK_NO_PROTOTYPES
 #endif
 #include <vulkan/vulkan.h>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -100,6 +101,8 @@ inline std::uint64_t& DeviceProcLookups() {
 }
 
 
+inline constexpr std::size_t MaxRecorderStreams = 16;
+
 struct Context {
     VkDevice device;
     VkPhysicalDevice physical;
@@ -187,6 +190,8 @@ struct Context {
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;
     VkSampleCountFlags sampleLocationSampleCounts = 0;
+    std::array<VkQueue, MaxRecorderStreams> streamQueues{};
+    std::uint32_t streamQueueCount = 0;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

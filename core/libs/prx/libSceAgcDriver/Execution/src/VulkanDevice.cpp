@@ -247,6 +247,8 @@ struct VulkanDevice::State {
     VkDevice device = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;
+    std::array<VkQueue, Graphics::MaxRecorderStreams> streamQueues{};
+    std::uint32_t streamQueueCount = 1;
     VkCommandPool pool = VK_NULL_HANDLE;
     void* window = nullptr;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -970,6 +972,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     devices.resize(count);
     VkPhysicalDevice selected = VK_NULL_HANDLE;
     std::uint32_t family = 0;
+    std::uint32_t familyQueues = 1;
     int selectedRank = -1;
     const char* requestedName = std::getenv("ANYPS5_GPU");
     if (requestedName != nullptr && *requestedName == '\0') requestedName = nullptr;
@@ -1033,6 +1036,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                 }
                 selected = physical;
                 family = i;
+                familyQueues = queues[i].queueCount;
                 selectedRank = rank;
                 break;
             }
@@ -1390,11 +1394,12 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->capabilities.push_back(5283);
         state->spirvExtensions.push_back("SPV_EXT_mesh_shader");
     }
-    const float priority = 1.0f;
+    std::array<float, Graphics::MaxRecorderStreams> priorities{};
+    priorities.fill(1.0f);
     VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
     queueInfo.queueFamilyIndex = family;
     queueInfo.queueCount = 1;
-    queueInfo.pQueuePriorities = &priority;
+    queueInfo.pQueuePriorities = priorities.data();
     VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     deviceInfo.queueCreateInfoCount = 1;
     deviceInfo.pQueueCreateInfos = &queueInfo;
@@ -1661,6 +1666,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     }
     deviceInfo.pNext = &bdaFeatures;
+    queueInfo.queueCount = state->timelineSemaphores ? std::clamp<std::uint32_t>(familyQueues, 1, static_cast<std::uint32_t>(Graphics::MaxRecorderStreams)) : 1;
     auto shaderProfile = std::make_unique<const ShaderDeviceProfile>(buildTarget(), deviceInfo, state->properties.limits);
     check(state->InstanceFunction<PFN_vkCreateDevice>("vkCreateDevice")(selected, &deviceInfo, nullptr, &state->device), "vkCreateDevice");
     state->shaderProfile = std::move(shaderProfile);
@@ -1685,7 +1691,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
-    APS5_LOG_OUT("Vulkan device ready device=%p queue=%p family=%u", reinterpret_cast<void*>(state->device), reinterpret_cast<void*>(state->queue), family);
+    state->streamQueueCount = queueInfo.queueCount;
+    state->streamQueues[0] = state->queue;
+    for (std::uint32_t index = 1; index < state->streamQueueCount; ++index) state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, index, &state->streamQueues[index]);
+    APS5_LOG_OUT("Vulkan device ready device=%p queue=%p family=%u queues=%u", reinterpret_cast<void*>(state->device), reinterpret_cast<void*>(state->queue), family, state->streamQueueCount);
     VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = family;
@@ -2911,6 +2920,23 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     submit.pCommandBuffers = &commands;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &rendered;
+    const auto queuePoints = state->recorder ? state->recorder->OtherQueuePoints() : std::vector<Graphics::Recorder::QueuePoint>{};
+    std::vector<VkSemaphore> waitSemaphores;
+    std::vector<std::uint64_t> waitValues;
+    for (const auto& point : queuePoints) {
+        waitSemaphores.push_back(point.timeline);
+        waitValues.push_back(point.value);
+    }
+    const std::vector<VkPipelineStageFlags> waitStages(waitSemaphores.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    VkTimelineSemaphoreSubmitInfoKHR timelineWaits{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
+    if (!waitSemaphores.empty()) {
+        timelineWaits.waitSemaphoreValueCount = static_cast<std::uint32_t>(waitValues.size());
+        timelineWaits.pWaitSemaphoreValues = waitValues.data();
+        submit.pNext = &timelineWaits;
+        submit.waitSemaphoreCount = static_cast<std::uint32_t>(waitSemaphores.size());
+        submit.pWaitSemaphores = waitSemaphores.data();
+        submit.pWaitDstStageMask = waitStages.data();
+    }
     timing.Mark("command_record_scale");
     // The slot's fence signaled (retired above) or was never used: the reset cannot block.
     check(state->DeviceFunction<PFN_vkResetFences>("vkResetFences")(state->device, 1, &slot.fence), "vkResetFences present");
@@ -3187,6 +3213,8 @@ Graphics::Context VulkanDevice::buildContext() const {
         state->hostImportAlignment
     };
     context.dmaBufImport = state->dmaBufImport;
+    context.streamQueues = state->streamQueues;
+    context.streamQueueCount = state->streamQueueCount;
     context.recorder = state->recorder.get();
     context.descriptorCache = state->descriptorCache.get();
     context.samplerCache = state->samplerCache.get();
