@@ -214,6 +214,23 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     });
 }
 
+std::uint32_t mergeWriter(SpirvEmitterState& state, std::uint32_t word, std::uint32_t byte) {
+    const auto& capabilities = state.supportedCapabilities;
+    const bool ballot = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformBallot)) != capabilities.end();
+    if (state.program.Resources().stage != IrShaderStage::Compute || HostSubgroupSingleLane(state) || !ballot) return ConstantBool(state, true);
+    state.module.EmitCapability(spv::CapabilityGroupNonUniform);
+    state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
+    const auto first = [&](std::uint32_t value) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, TypeU32(state), result, ConstantU32(state, spv::ScopeSubgroup), value);
+        return result;
+    };
+    const auto shared = both(state, equal(state, word, first(word)), equal(state, byte, first(byte)));
+    const auto elected = state.module.AllocateId();
+    EmitSubgroupElect(state, elected);
+    return Binary(state, spv::OpLogicalOr, TypeBool(state), Unary(state, spv::OpLogicalNot, TypeBool(state), shared), elected);
+}
+
 bool byteStores(SpirvEmitterState& state) {
     if (state.program.Resources().stage != IrShaderStage::Compute) return false;
     if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityStorageBuffer8BitAccess)) == state.supportedCapabilities.end()) return false;
@@ -272,11 +289,13 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
             });
         }
         EmitIfCondition(state, bits == 32u ? unaligned : ConstantBool(state, true), [&] {
-            const auto shift = Binary(state, spv::OpShiftLeftLogical, u32, misalignment, ConstantU32(state, 3u));
-            update(index, Binary(state, spv::OpShiftLeftLogical, u32, mask, shift), Binary(state, spv::OpShiftLeftLogical, u32, masked, shift));
-            EmitIfCondition(state, unaligned, [&] {
-                const auto remaining = Binary(state, spv::OpISub, u32, ConstantU32(state, 32u), shift);
-                update(next, Binary(state, spv::OpShiftRightLogical, u32, mask, remaining), Binary(state, spv::OpShiftRightLogical, u32, masked, remaining));
+            EmitIfCondition(state, mergeWriter(state, index, EmitAndConstant(state, address, 3u)), [&] {
+                const auto shift = Binary(state, spv::OpShiftLeftLogical, u32, misalignment, ConstantU32(state, 3u));
+                update(index, Binary(state, spv::OpShiftLeftLogical, u32, mask, shift), Binary(state, spv::OpShiftLeftLogical, u32, masked, shift));
+                EmitIfCondition(state, unaligned, [&] {
+                    const auto remaining = Binary(state, spv::OpISub, u32, ConstantU32(state, 32u), shift);
+                    update(next, Binary(state, spv::OpShiftRightLogical, u32, mask, remaining), Binary(state, spv::OpShiftRightLogical, u32, masked, remaining));
+                });
             });
         });
     });
