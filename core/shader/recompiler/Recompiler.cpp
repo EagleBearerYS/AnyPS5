@@ -503,6 +503,17 @@ std::uint64_t nextVariantId() {
     return variants.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
+std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> vertexClassesOf(std::span<const PipelineSpecializationConstant> constants) {
+    constexpr auto first = PipelineSpecialization::VertexBase;
+    constexpr auto words = PipelineSpecialization::VertexWords;
+    std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> classes{};
+    for (const auto& constant : constants) {
+        if (constant.id < first || constant.id >= first + classes.size() * words || (constant.id - first) % words != 5u) continue;
+        classes[(constant.id - first) / words] = constant.value;
+    }
+    return classes;
+}
+
 CompiledVariant compileVariant(const RecompileRequest& request, IrProgram program, std::exception_ptr* emissionFailure = nullptr) try {
     const auto inputInfo = RequestInputInfo(request);
     constexpr DeadCodeEliminator deadCodeEliminator;
@@ -892,7 +903,6 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         if (variant.info.info.layerExported) moduleKey.push_back(request.context.pixel->layerExported ? 1u : 0u);
     }
     result.vertexAttributes.reserve(result.vertexInputs.size());
-    std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> vertexClasses{};
     std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources / RuntimeAbi::VertexSelectorsPerDword> runtimeSelectors{};
     for (const auto& input : result.vertexInputs) {
         if (!request.context.vertex || input.location >= request.context.vertex->resourcesNum || input.location >= request.context.vertex->resources.size()) throw std::runtime_error("Shader cache: invalid vertex attribute metadata");
@@ -905,7 +915,6 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             const auto numeric = registrationDefaults && format == IrBufferFormat::Invalid ? IrTextureNumericClass::Float : VertexInputNumericClass(format);
             if (numeric == IrTextureNumericClass::Unsupported) throw std::runtime_error("unsupported prepared vertex format");
             const auto kind = numeric == IrTextureNumericClass::Float ? 0u : numeric == IrTextureNumericClass::Sint ? 1u : 2u;
-            vertexClasses.at(input.location) = kind;
             std::uint32_t selectors = kind << 12u;
             auto& formatComponents = result.vertexAttributes.back().formatComponents;
             formatComponents = 1u;
@@ -949,6 +958,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                     constants.push_back({first + 5u, kind});
                 }
             }
+            const auto vertexClasses = vertexClassesOf(constants);
             const auto module = artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
             if (variant.bindings.layout.UsesPushData() && !module->pushData) throw std::runtime_error("specialization removed the prepared push constant interface");
             auto selected = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings, module->samplerHeap, module->imageHeap);
@@ -1446,14 +1456,19 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
 std::shared_ptr<RecompileResult> SpecializedComputeResult(const RecompileRequest& request, const SourceHandle& handle, std::span<const PipelineSpecializationConstant> constants) {
     if (handle.artifact == nullptr || !MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
     if (request.shader.stage != ShaderStage::Compute) throw std::runtime_error("ShaderRecompiler: a recorded module specialization is replayed for compute programs only");
+    auto result = SpecializedStageResult(handle, constants, request.target);
+    if (handle.artifact->bindings.layout.UsesPushData()) result->pushConstants.resize(request.layout.pushConstantSizeBytes);
+    return result;
+}
+
+std::shared_ptr<RecompileResult> SpecializedStageResult(const SourceHandle& handle, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    if (handle.artifact == nullptr) throw std::runtime_error("ShaderRecompiler: prepared artifact is missing");
     const auto& variant = *handle.artifact;
     auto result = std::make_shared<RecompileResult>();
     static_cast<CompiledShaderArtifact&>(*result) = variant.artifact;
     result->workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
-    if (variant.bindings.layout.UsesPushData()) result->pushConstants.resize(request.layout.pushConstantSizeBytes);
     if (!constants.empty()) {
-        const std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> classes{};
-        const auto module = specializeModule(variant.artifact, classes, constants, request.target);
+        const auto module = specializeModule(variant.artifact, vertexClassesOf(constants), constants, target);
         result->spirv = module->spirv;
         result->specializationId = module->specializationId;
         result->moduleConstants = module->constants;

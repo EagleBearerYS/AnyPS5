@@ -1,7 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineDescription.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -13,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <future>
 #include <list>
 #include <mutex>
@@ -993,6 +996,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         }
     }
     building.set_value(pipeline);
+    if (!CreationAhead::Active() && context.pipelineRecorder != nullptr) context.pipelineRecorder->Created(context, state, vertexInput, resources, shaders, attachmentLayout);
     return pipeline;
 }
 
@@ -1008,6 +1012,202 @@ void ClearCachedPipelines(VkDevice device) {
         it = store.entries.erase(it);
     }
     ClearPipelineLibraries(device);
+}
+
+namespace {
+
+constexpr std::uint32_t DescriptionVersion = 1;
+
+class DescriptionWriter {
+public:
+    explicit DescriptionWriter(std::vector<std::byte>& out) : out(out) {}
+
+    template<typename TValue>
+    void Value(const TValue& value) {
+        static_assert(std::is_trivially_copyable_v<TValue>);
+        const auto bytes = std::as_bytes(std::span(&value, 1));
+        out.insert(out.end(), bytes.begin(), bytes.end());
+    }
+
+    void Flag(bool value) { Value(static_cast<std::uint8_t>(value ? 1u : 0u)); }
+
+    template<typename TValue>
+    void Optional(const std::optional<TValue>& value) {
+        Flag(value.has_value());
+        if (value) Value(*value);
+    }
+
+    template<typename TValue, typename TWrite>
+    void List(const std::vector<TValue>& values, TWrite&& write) {
+        Value(static_cast<std::uint32_t>(values.size()));
+        for (const auto& value : values) write(value);
+    }
+
+private:
+    std::vector<std::byte>& out;
+};
+
+class DescriptionReader {
+public:
+    explicit DescriptionReader(std::span<const std::byte> bytes) : bytes(bytes) {}
+
+    template<typename TValue>
+    bool Value(TValue& value) {
+        static_assert(std::is_trivially_copyable_v<TValue>);
+        if (bytes.size() - offset < sizeof(TValue)) return false;
+        std::memcpy(&value, bytes.data() + offset, sizeof(TValue));
+        offset += sizeof(TValue);
+        return true;
+    }
+
+    bool Flag(bool& value) {
+        std::uint8_t raw = 0;
+        if (!Value(raw) || raw > 1u) return false;
+        value = raw != 0u;
+        return true;
+    }
+
+    template<typename TValue>
+    bool Optional(std::optional<TValue>& value) {
+        bool present = false;
+        if (!Flag(present)) return false;
+        if (!present) {
+            value.reset();
+            return true;
+        }
+        TValue read{};
+        if (!Value(read)) return false;
+        value = read;
+        return true;
+    }
+
+    template<typename TValue, typename TRead>
+    bool List(std::vector<TValue>& values, std::size_t minimumBytes, TRead&& read) {
+        std::uint32_t count = 0;
+        if (!Value(count) || count > (bytes.size() - offset) / minimumBytes) return false;
+        values.resize(count);
+        for (auto& value : values) {
+            if (!read(value)) return false;
+        }
+        return true;
+    }
+
+    bool Done() const { return offset == bytes.size(); }
+
+private:
+    std::span<const std::byte> bytes;
+    std::size_t offset = 0;
+};
+
+}
+
+std::vector<std::byte> EncodePipelineDescription(const State& state, const VertexInputLayout& vertexInput, VkImageLayout attachmentLayout) {
+    std::vector<std::byte> out;
+    DescriptionWriter writer(out);
+    writer.Value(DescriptionVersion);
+    writer.Value(state.stages.path);
+    writer.Value(state.stages.registerValue);
+    writer.Value(state.stages.vertexWaveSize);
+    writer.Value(state.stages.fragmentWaveSize);
+    writer.Optional(state.stages.mesh);
+    writer.Optional(state.stages.tessellation);
+    writer.Value(state.stages.minTessellationLevel);
+    writer.Value(state.stages.maxTessellationLevel);
+    writer.Flag(state.depth.has_value());
+    if (state.depth) {
+        writer.Value(state.depth->format);
+        writer.Value(state.depth->samples);
+    }
+    writer.Flag(state.depthTest);
+    writer.Flag(state.depthWrite);
+    writer.Value(state.depthCompare);
+    writer.Flag(state.depthBoundsTest);
+    writer.Value(state.minDepthBounds);
+    writer.Value(state.maxDepthBounds);
+    writer.Flag(state.depthBias);
+    writer.Value(state.depthBiasConstant);
+    writer.Value(state.depthBiasSlope);
+    writer.Value(state.depthBiasClamp);
+    writer.Flag(state.depthBiasPerFace);
+    writer.Value(state.backDepthBiasConstant);
+    writer.Value(state.backDepthBiasSlope);
+    writer.Flag(state.stencilTest);
+    writer.Value(state.stencilFront);
+    writer.Value(state.stencilBack);
+    writer.List(state.colors, [&](const ColorTarget& color) {
+        writer.Value(color.format);
+        writer.Value(color.componentMapping);
+        writer.Value(color.exportIndex);
+        writer.Value(color.samples);
+        writer.Value(color.packing);
+        writer.Flag(color.uintExport);
+    });
+    writer.List(state.blends, [&](const VkPipelineColorBlendAttachmentState& blend) { writer.Value(blend); });
+    writer.Flag(state.hasColorTarget);
+    writer.Flag(state.rectList);
+    writer.Flag(state.dualSourceBlend);
+    writer.Value(state.renderLayers);
+    writer.Value(state.layerExports);
+    writer.Value(state.topology);
+    writer.Flag(state.primitiveRestart);
+    writer.Flag(state.negativeOneToOne);
+    writer.Flag(state.depthClamp);
+    writer.Flag(state.alphaToCoverage);
+    writer.Value(state.conservativeRasterization);
+    writer.Value(state.cullMode);
+    writer.Value(state.frontFace);
+    writer.Value(state.provokingVertexMode);
+    writer.Value(state.blendConstants);
+    writer.Value(state.samples);
+    writer.Value(state.sampleLocations);
+    writer.Flag(state.customSampleLocations);
+    writer.Value(state.paClVsOutCntl);
+    writer.List(vertexInput.bindings, [&](const VkVertexInputBindingDescription& binding) { writer.Value(binding); });
+    writer.List(vertexInput.attributes, [&](const VkVertexInputAttributeDescription& attribute) { writer.Value(attribute); });
+    writer.Value(attachmentLayout);
+    return out;
+}
+
+std::optional<PipelineDescription> DecodePipelineDescription(std::span<const std::byte> bytes) {
+    DescriptionReader reader(bytes);
+    PipelineDescription result;
+    auto& state = result.state;
+    std::uint32_t version = 0;
+    if (!reader.Value(version) || version != DescriptionVersion) return std::nullopt;
+    bool depth = false;
+    bool ok = reader.Value(state.stages.path) && reader.Value(state.stages.registerValue) && reader.Value(state.stages.vertexWaveSize) && reader.Value(state.stages.fragmentWaveSize)
+        && reader.Optional(state.stages.mesh) && reader.Optional(state.stages.tessellation) && reader.Value(state.stages.minTessellationLevel) && reader.Value(state.stages.maxTessellationLevel)
+        && reader.Flag(depth);
+    if (ok && depth) {
+        DepthTarget target{};
+        ok = reader.Value(target.format) && reader.Value(target.samples);
+        state.depth = target;
+    }
+    ok = ok && reader.Flag(state.depthTest) && reader.Flag(state.depthWrite) && reader.Value(state.depthCompare) && reader.Flag(state.depthBoundsTest) && reader.Value(state.minDepthBounds) && reader.Value(state.maxDepthBounds)
+        && reader.Flag(state.depthBias) && reader.Value(state.depthBiasConstant) && reader.Value(state.depthBiasSlope) && reader.Value(state.depthBiasClamp) && reader.Flag(state.depthBiasPerFace)
+        && reader.Value(state.backDepthBiasConstant) && reader.Value(state.backDepthBiasSlope) && reader.Flag(state.stencilTest) && reader.Value(state.stencilFront) && reader.Value(state.stencilBack)
+        && reader.List(state.colors, 15u, [&](ColorTarget& color) {
+               color = ColorTarget{};
+               return reader.Value(color.format) && reader.Value(color.componentMapping) && reader.Value(color.exportIndex) && reader.Value(color.samples) && reader.Value(color.packing) && reader.Flag(color.uintExport);
+           })
+        && reader.List(state.blends, sizeof(VkPipelineColorBlendAttachmentState), [&](VkPipelineColorBlendAttachmentState& blend) { return reader.Value(blend); })
+        && reader.Flag(state.hasColorTarget) && reader.Flag(state.rectList) && reader.Flag(state.dualSourceBlend) && reader.Value(state.renderLayers) && reader.Value(state.layerExports)
+        && reader.Value(state.topology) && reader.Flag(state.primitiveRestart) && reader.Flag(state.negativeOneToOne) && reader.Flag(state.depthClamp) && reader.Flag(state.alphaToCoverage)
+        && reader.Value(state.conservativeRasterization) && reader.Value(state.cullMode) && reader.Value(state.frontFace) && reader.Value(state.provokingVertexMode) && reader.Value(state.blendConstants)
+        && reader.Value(state.samples) && reader.Value(state.sampleLocations) && reader.Flag(state.customSampleLocations) && reader.Value(state.paClVsOutCntl)
+        && reader.List(result.vertexInput.bindings, sizeof(VkVertexInputBindingDescription), [&](VkVertexInputBindingDescription& binding) { return reader.Value(binding); })
+        && reader.List(result.vertexInput.attributes, sizeof(VkVertexInputAttributeDescription), [&](VkVertexInputAttributeDescription& attribute) { return reader.Value(attribute); })
+        && reader.Value(result.attachmentLayout);
+    if (!ok || !reader.Done()) return std::nullopt;
+    return result;
+}
+
+bool SamePipelineKey(const Context& context, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, const PipelineDescription& left, const PipelineDescription& right) {
+    std::vector<std::byte> leftKey;
+    std::vector<std::byte> rightKey;
+    pipelineKey(leftKey, context, left.state, left.vertexInput, resources, shaders, left.attachmentLayout);
+    pipelineKey(rightKey, context, right.state, right.vertexInput, resources, shaders, right.attachmentLayout);
+    return !leftKey.empty() && leftKey == rightKey;
 }
 
 }

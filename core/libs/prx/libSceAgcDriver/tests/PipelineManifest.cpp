@@ -14,7 +14,7 @@ void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-std::vector<AgcDriver::ComputePipelineRecord> Records() {
+std::vector<AgcDriver::ComputePipelineRecord> ComputeRecords() {
     AgcDriver::ComputePipelineRecord first;
     first.program = {0x1111222233334444ull, 0x5555666677778888ull};
     first.constants = {{16777219u, 0u}, {8188u, 0u}};
@@ -24,6 +24,20 @@ std::vector<AgcDriver::ComputePipelineRecord> Records() {
     AgcDriver::ComputePipelineRecord third;
     third.program = {1u, 2u};
     return {first, second, third};
+}
+
+std::vector<AgcDriver::GraphicsPipelineRecord> GraphicsRecords() {
+    AgcDriver::GraphicsPipelineRecord first;
+    first.stages.push_back({1u, 0u, {0xaaaau, 0xbbbbu}, {{4096u + 5u, 2u}, {8188u, 4u}}, 64u, {{1u, 7u, 0u, 3u, 1u, 0u}}});
+    first.stages.push_back({5u, 128u, {0xccccu, 0xddddu}, {{8224u, 1u}}, 0u, {{1u, 0u, 1u, 0u, 4u, 1u}, {8u, 2u, 1u, 9u, 1u, 0u}}});
+    first.description = {std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0x37}};
+    auto second = first;
+    second.description.back() = std::byte{0x38};
+    return {first, second};
+}
+
+AgcDriver::ManifestRecords Records() {
+    return {ComputeRecords(), GraphicsRecords()};
 }
 
 void Codec() {
@@ -42,27 +56,34 @@ void Codec() {
     corrupt[42] = std::byte{0xff};
     corrupt[43] = std::byte{0x7f};
     Require(!AgcDriver::PipelineManifest::Decode(corrupt, 77u).has_value(), "a manifest whose constant count exceeds its bytes was accepted");
+    auto older = bytes;
+    older[8] = std::byte{1};
+    Require(!AgcDriver::PipelineManifest::Decode(older, 77u).has_value(), "a manifest of the format without graphics records was accepted");
 }
 
 void File() {
     const auto directory = std::filesystem::temp_directory_path() / ("aps5-manifest-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(directory);
-    const auto path = directory / "compute.manifest";
-    const auto records = Records();
+    const auto path = directory / "pipelines.manifest";
+    const auto compute = ComputeRecords();
+    const auto graphics = GraphicsRecords();
     {
         AgcDriver::PipelineManifest manifest(path, 77u);
         Require(manifest.Loaded() == 0u && manifest.Size() == 0u, "a manifest without a file has records");
-        for (const auto& record : records) Require(manifest.Record(record), "a new record was refused");
-        Require(!manifest.Record(records[1]), "a record seen before was recorded again");
-        Require(manifest.Records(records[0].program).size() == 2u && manifest.Records(records[2].program).size() == 1u && manifest.Records({9u, 9u}).empty(), "the records of a program are not the records recorded for it");
+        for (const auto& record : compute) Require(manifest.Record(record), "a new compute record was refused");
+        for (const auto& record : graphics) Require(manifest.Record(record), "a new graphics record was refused");
+        Require(!manifest.Record(compute[1]) && !manifest.Record(graphics[1]), "a record seen before was recorded again");
+        Require(manifest.Records(compute[0].program).size() == 2u && manifest.Records(compute[2].program).size() == 1u && manifest.Records({9u, 9u}).empty(), "the records of a program are not the records recorded for it");
+        Require(manifest.GraphicsRecords() == graphics, "the graphics records are not the ones recorded");
     }
     {
         AgcDriver::PipelineManifest manifest(path, 77u);
-        Require(manifest.Loaded() == 3u && manifest.Records(records[0].program) == std::vector<AgcDriver::ComputePipelineRecord>{records[0], records[1]}, "a manifest did not load the records the previous one saved");
+        Require(manifest.Loaded() == 5u && manifest.Records(compute[0].program) == std::vector<AgcDriver::ComputePipelineRecord>{compute[0], compute[1]}, "a manifest did not load the compute records the previous one saved");
+        Require(manifest.GraphicsRecords() == graphics && manifest.LoadedRecords().graphics == graphics, "a manifest did not load the graphics records the previous one saved");
     }
     {
         AgcDriver::PipelineManifest manifest(path, 78u);
-        Require(manifest.Loaded() == 0u && manifest.Records(records[0].program).empty(), "a manifest of another recompiler build was loaded");
+        Require(manifest.Loaded() == 0u && manifest.Records(compute[0].program).empty() && manifest.GraphicsRecords().empty(), "a manifest of another recompiler build was loaded");
     }
     std::error_code error;
     std::filesystem::remove_all(directory, error);

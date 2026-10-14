@@ -24,6 +24,8 @@ struct SourceHandle;
 
 namespace AgcDriver {
 
+class PipelineReplay;
+
 namespace Graphics {
 class StorageTexture;
 }
@@ -322,6 +324,7 @@ public:
     bool PrepareComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
     bool RecordComputePipeline(const ShaderRecompiler::RecompileResult& shader);
     std::size_t PrepareRecordedComputePipelines(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle);
+    PipelineReplay* Replay() const;
 
 private:
     VulkanDevice(const PresentationWindow* window, bool compileOnly);

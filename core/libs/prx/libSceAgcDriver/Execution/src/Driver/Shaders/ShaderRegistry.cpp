@@ -4,6 +4,8 @@
 #include "ControlFlow/GraphBuilder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineReplay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
@@ -880,6 +882,14 @@ bool AsyncRegistrationPrepare() {
     return !sync;
 }
 
+void OfferPreparedArtifacts(const std::shared_ptr<VulkanDevice>& device, std::span<const PreparedShaders::Entry> entries) {
+    auto* replay = device != nullptr ? device->Replay() : nullptr;
+    if (replay == nullptr) return;
+    for (const auto& entry : entries) {
+        for (auto& job : replay->Prepared(entry.handle)) SubmitLibraryPrebuild([device, job = std::move(job)] { job(); });
+    }
+}
+
 void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan) {
     const auto* preparedKey = snapshot->prepared.get();
     SubmitRegistrationPreparation([snapshot = std::move(snapshot), plan = std::move(plan)] {
@@ -904,6 +914,7 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
             prepared.pending = false;
         }
         prepared.settled.notify_all();
+        if (failure == nullptr) OfferPreparedArtifacts(plan->prebuildDevice, published);
         if (failure != nullptr || plan->prebuildDevice == nullptr || plan->request->shader.stage != ShaderRecompiler::ShaderStage::Compute) return;
         SubmitLibraryPrebuild([snapshot, plan, published] {
             try {
@@ -1062,6 +1073,8 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     decoded.state.stages = Graphics::DecodeShaderStages(state, VertexWorkgroupRequired(state, *registry));
     DecodeGraphicsPrograms(decoded, state, *registry, true, false);
     auto prepared = PrepareGraphicsStages(decoded, localDevice->Target());
+    std::vector<PreparedShaders::Entry> offered;
+    for (const auto& stage : prepared) offered.push_back(stage.entry);
     for (auto& stage : prepared) {
         const auto& entries = transaction.Read(*stage.snapshot).entries;
         const auto duplicate = std::ranges::any_of(entries, [&](const auto& existing) { return existing.codeOffset == stage.entry.codeOffset && existing.handle->artifact == stage.entry.handle->artifact; });
@@ -1082,6 +1095,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     std::erase_if(graphicsAbis, [](const auto& entry) { return entry.registry.expired(); });
     graphicsAbis.push_back(std::move(abi));
     transaction.Commit();
+    OfferPreparedArtifacts(localDevice, offered);
 }
 
 void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
@@ -1130,6 +1144,7 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         return;
     }
     if (committedAbi) entries = prepare();
+    const auto offered = entries;
     auto& prepared = transaction.Edit(*snapshot);
     for (auto& entry : entries) {
         const auto duplicate = std::ranges::any_of(prepared.entries, [&](const auto& existing) { return existing.handle->artifact == entry.handle->artifact; });
@@ -1137,6 +1152,7 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     }
     prepared.registeredAbis.push_back(key);
     transaction.Commit();
+    OfferPreparedArtifacts(localDevice, offered);
 }
 
 alignas(256) static const std::uint32_t NullPixelCode[64] = {0xbf810000u};
@@ -1344,11 +1360,16 @@ void Driver::RegisterShader(const Shader* shader) {
     std::lock_guard lock(mutex);
     rethrowFailure();
     PublishRegisteredShader(shaders, published);
+    std::vector<PreparedShaders::Entry> offered;
+    if (preparation == nullptr) offered = published->prepared->entries;
     if (shaders->find(NullPixelProgramAddress()) == shaders->end()) {
-        PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareNullPixelProgram(*localDevice)));
+        const auto null = std::make_shared<const ShaderSnapshot>(PrepareNullPixelProgram(*localDevice));
+        offered.insert(offered.end(), null->prepared->entries.begin(), null->prepared->entries.end());
+        PublishRegisteredShader(shaders, null);
     }
     transaction.Commit();
     if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));
+    OfferPreparedArtifacts(localDevice, offered);
 }
 
 }

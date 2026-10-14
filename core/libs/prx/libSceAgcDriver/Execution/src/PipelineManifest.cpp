@@ -10,7 +10,7 @@ namespace AgcDriver {
 namespace {
 
 constexpr std::uint64_t Magic = 0x314d504335535041ull;
-constexpr std::uint32_t FormatVersion = 1;
+constexpr std::uint32_t FormatVersion = 2;
 
 class Writer {
 public:
@@ -20,6 +20,19 @@ public:
     void Value(T value) {
         const auto bytes = std::as_bytes(std::span(&value, 1));
         out.insert(out.end(), bytes.begin(), bytes.end());
+    }
+
+    template <typename T, typename TWrite>
+    void List(const std::vector<T>& values, TWrite&& write) {
+        Value(static_cast<std::uint32_t>(values.size()));
+        for (const auto& value : values) write(value);
+    }
+
+    void Constants(const std::vector<ShaderRecompiler::PipelineSpecializationConstant>& constants) {
+        List(constants, [&](const ShaderRecompiler::PipelineSpecializationConstant& constant) {
+            Value(constant.id);
+            Value(constant.value);
+        });
     }
 
 private:
@@ -38,6 +51,21 @@ public:
         return true;
     }
 
+    template <typename T, typename TRead>
+    bool List(std::vector<T>& values, std::size_t minimumBytes, TRead&& read) {
+        std::uint32_t size = 0;
+        if (!Value(size) || size > Remaining() / minimumBytes) return false;
+        values.resize(size);
+        for (auto& value : values) {
+            if (!read(value)) return false;
+        }
+        return true;
+    }
+
+    bool Constants(std::vector<ShaderRecompiler::PipelineSpecializationConstant>& constants) {
+        return List(constants, 8u, [&](ShaderRecompiler::PipelineSpecializationConstant& constant) { return Value(constant.id) && Value(constant.value); });
+    }
+
     std::size_t Remaining() const { return bytes.size() - offset; }
 
 private:
@@ -52,11 +80,10 @@ PipelineManifest::PipelineManifest(std::filesystem::path path, std::uint64_t sou
     std::vector<std::byte> file;
     if (ShaderRecompiler::ReadWholeFile(this->path, file)) {
         if (auto decoded = Decode(file, sourceVersion)) {
-            for (auto& record : *decoded) {
-                records[record.program].push_back(std::move(record));
-                ++count;
-            }
-            loaded = count;
+            loaded = std::move(*decoded);
+            for (const auto& record : loaded.compute) compute[record.program].push_back(record);
+            graphics = loaded.graphics;
+            count = loaded.compute.size() + loaded.graphics.size();
         } else {
             std::fprintf(stderr, "[pipeline-manifest] ignoring %s: it is not a manifest of this build\n", this->path.string().c_str());
         }
@@ -78,7 +105,7 @@ PipelineManifest::~PipelineManifest() {
 
 bool PipelineManifest::Record(ComputePipelineRecord record) {
     std::lock_guard lock(mutex);
-    auto& program = records[record.program];
+    auto& program = compute[record.program];
     if (std::ranges::find(program, record) != program.end()) return false;
     program.push_back(std::move(record));
     ++count;
@@ -86,10 +113,24 @@ bool PipelineManifest::Record(ComputePipelineRecord record) {
     return true;
 }
 
+bool PipelineManifest::Record(GraphicsPipelineRecord record) {
+    std::lock_guard lock(mutex);
+    if (std::ranges::find(graphics, record) != graphics.end()) return false;
+    graphics.push_back(std::move(record));
+    ++count;
+    dirty = true;
+    return true;
+}
+
 std::vector<ComputePipelineRecord> PipelineManifest::Records(const std::array<std::uint64_t, 2>& program) const {
     std::lock_guard lock(mutex);
-    const auto found = records.find(program);
-    return found != records.end() ? found->second : std::vector<ComputePipelineRecord>{};
+    const auto found = compute.find(program);
+    return found != compute.end() ? found->second : std::vector<ComputePipelineRecord>{};
+}
+
+std::vector<GraphicsPipelineRecord> PipelineManifest::GraphicsRecords() const {
+    std::lock_guard lock(mutex);
+    return graphics;
 }
 
 std::size_t PipelineManifest::Size() const {
@@ -99,11 +140,12 @@ std::size_t PipelineManifest::Size() const {
 
 void PipelineManifest::Save() {
     if (path.empty()) return;
-    std::vector<ComputePipelineRecord> all;
+    ManifestRecords all;
     {
         std::lock_guard lock(mutex);
         if (!dirty) return;
-        for (const auto& [program, list] : records) all.insert(all.end(), list.begin(), list.end());
+        for (const auto& [program, list] : compute) all.compute.insert(all.compute.end(), list.begin(), list.end());
+        all.graphics = graphics;
         dirty = false;
     }
     const auto bytes = Encode(sourceVersion, all);
@@ -125,56 +167,64 @@ void PipelineManifest::run() {
     }
 }
 
-std::vector<std::byte> PipelineManifest::Encode(std::uint64_t sourceVersion, std::span<const ComputePipelineRecord> records) {
+std::vector<std::byte> PipelineManifest::Encode(std::uint64_t sourceVersion, const ManifestRecords& records) {
     std::vector<std::byte> out;
     Writer writer(out);
     writer.Value(Magic);
     writer.Value(FormatVersion);
     writer.Value(sourceVersion);
-    writer.Value(static_cast<std::uint32_t>(records.size()));
-    for (const auto& record : records) {
+    writer.List(records.compute, [&](const ComputePipelineRecord& record) {
         writer.Value(record.program[0]);
         writer.Value(record.program[1]);
-        writer.Value(static_cast<std::uint32_t>(record.constants.size()));
-        for (const auto& constant : record.constants) {
-            writer.Value(constant.id);
-            writer.Value(constant.value);
-        }
-        writer.Value(static_cast<std::uint32_t>(record.bindings.size()));
-        for (const auto& [binding, elements] : record.bindings) {
-            writer.Value(binding);
-            writer.Value(elements);
-        }
-    }
+        writer.Constants(record.constants);
+        writer.List(record.bindings, [&](const std::pair<std::uint32_t, std::uint32_t>& binding) {
+            writer.Value(binding.first);
+            writer.Value(binding.second);
+        });
+    });
+    writer.List(records.graphics, [&](const GraphicsPipelineRecord& record) {
+        writer.List(record.stages, [&](const GraphicsStageRecord& stage) {
+            writer.Value(stage.stage);
+            writer.Value(stage.pushOffset);
+            writer.Value(stage.program[0]);
+            writer.Value(stage.program[1]);
+            writer.Constants(stage.constants);
+            writer.Value(stage.pushBytes);
+            writer.List(stage.bindings, [&](const GraphicsBindingShape& binding) {
+                writer.Value(binding.kind);
+                writer.Value(binding.role);
+                writer.Value(binding.descriptorSet);
+                writer.Value(binding.binding);
+                writer.Value(binding.count);
+                writer.Value(binding.written);
+            });
+        });
+        writer.List(record.description, [&](std::byte value) { writer.Value(value); });
+    });
     return out;
 }
 
-std::optional<std::vector<ComputePipelineRecord>> PipelineManifest::Decode(std::span<const std::byte> bytes, std::uint64_t sourceVersion) {
+std::optional<ManifestRecords> PipelineManifest::Decode(std::span<const std::byte> bytes, std::uint64_t sourceVersion) {
     Reader reader(bytes);
     std::uint64_t magic = 0;
     std::uint32_t version = 0;
     std::uint64_t source = 0;
-    std::uint32_t size = 0;
-    if (!reader.Value(magic) || !reader.Value(version) || !reader.Value(source) || !reader.Value(size)) return std::nullopt;
+    if (!reader.Value(magic) || !reader.Value(version) || !reader.Value(source)) return std::nullopt;
     if (magic != Magic || version != FormatVersion || source != sourceVersion) return std::nullopt;
-    std::vector<ComputePipelineRecord> records;
-    for (std::uint32_t index = 0; index < size; ++index) {
-        ComputePipelineRecord record;
-        std::uint32_t constants = 0;
-        if (!reader.Value(record.program[0]) || !reader.Value(record.program[1]) || !reader.Value(constants) || constants > reader.Remaining() / 8u) return std::nullopt;
-        record.constants.resize(constants);
-        for (auto& constant : record.constants) {
-            if (!reader.Value(constant.id) || !reader.Value(constant.value)) return std::nullopt;
-        }
-        std::uint32_t bindings = 0;
-        if (!reader.Value(bindings) || bindings > reader.Remaining() / 8u) return std::nullopt;
-        record.bindings.resize(bindings);
-        for (auto& [binding, elements] : record.bindings) {
-            if (!reader.Value(binding) || !reader.Value(elements)) return std::nullopt;
-        }
-        records.push_back(std::move(record));
-    }
-    if (reader.Remaining() != 0) return std::nullopt;
+    ManifestRecords records;
+    const bool compute = reader.List(records.compute, 24u, [&](ComputePipelineRecord& record) {
+        return reader.Value(record.program[0]) && reader.Value(record.program[1]) && reader.Constants(record.constants)
+            && reader.List(record.bindings, 8u, [&](std::pair<std::uint32_t, std::uint32_t>& binding) { return reader.Value(binding.first) && reader.Value(binding.second); });
+    });
+    const bool graphics = compute && reader.List(records.graphics, 8u, [&](GraphicsPipelineRecord& record) {
+        return reader.List(record.stages, 36u, [&](GraphicsStageRecord& stage) {
+            return reader.Value(stage.stage) && reader.Value(stage.pushOffset) && reader.Value(stage.program[0]) && reader.Value(stage.program[1]) && reader.Constants(stage.constants) && reader.Value(stage.pushBytes)
+                && reader.List(stage.bindings, 24u, [&](GraphicsBindingShape& binding) {
+                       return reader.Value(binding.kind) && reader.Value(binding.role) && reader.Value(binding.descriptorSet) && reader.Value(binding.binding) && reader.Value(binding.count) && reader.Value(binding.written);
+                   });
+        }) && reader.List(record.description, 1u, [&](std::byte& value) { return reader.Value(value); });
+    });
+    if (!graphics || reader.Remaining() != 0) return std::nullopt;
     return records;
 }
 

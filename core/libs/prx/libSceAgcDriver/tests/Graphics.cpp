@@ -5,6 +5,7 @@
 #include "MockDescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineDescription.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
@@ -4538,6 +4539,128 @@ void cachedPipelineConcurrencyTests() {
     Require(mock.live == 0, "cached pipeline concurrency tests leaked Vulkan objects");
 }
 
+void pipelineDescriptionTests() {
+    using namespace AgcDriver::Graphics;
+    auto context = mockContext();
+    context.depthClamp = true;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 1;
+    fragment.variantId = 2;
+    fragment.pushConstants.resize(16);
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    std::array<std::uint32_t, 4> mainKey{1, 7, 1, 1}, fragmentKey{2, 7, 1, 16};
+    const PipelineSetLayouts resources{VK_NULL_HANDLE, VK_NULL_HANDLE, true, mainKey, fragmentKey};
+    State base{};
+    base.stages.path = ShaderPath::Vertex;
+    base.stages.vertexWaveSize = 32;
+    base.stages.fragmentWaveSize = 64;
+    base.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    base.primitiveRestart = true;
+    base.hasColorTarget = true;
+    ColorTarget first{};
+    first.format = VK_FORMAT_R8G8B8A8_UNORM;
+    first.exportIndex = 0;
+    first.componentMapping = 0xe4u;
+    ColorTarget second = first;
+    second.format = VK_FORMAT_R32_UINT;
+    second.exportIndex = 2;
+    second.packing = ShaderRecompiler::ColorExportPacking::Unorm10_11_11;
+    base.colors = {first, second};
+    VkPipelineColorBlendAttachmentState blend{};
+    blend.blendEnable = VK_TRUE;
+    blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend.colorWriteMask = 15;
+    base.blends = {blend, VkPipelineColorBlendAttachmentState{}, blend};
+    base.blends[2].colorWriteMask = 1;
+    base.blendConstants = {0.25f, 0.5f, 0.75f, 1.0f};
+    base.samples = 4;
+    base.customSampleLocations = true;
+    base.sampleLocations = {0x11u, 0x2fu, 0xe3u, 0x74u, 0, 0, 0, 0};
+    DepthTarget depth{};
+    depth.format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    depth.samples = 4;
+    base.depth = depth;
+    base.depthTest = true;
+    base.depthWrite = true;
+    base.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    base.depthBoundsTest = true;
+    base.depthBias = true;
+    base.depthBiasClamp = 0.5f;
+    base.stencilTest = true;
+    base.stencilFront = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_INCREMENT_AND_CLAMP, VK_STENCIL_OP_ZERO, VK_COMPARE_OP_EQUAL, 0xff, 0x0f, 3};
+    base.stencilBack = {VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_INVERT, VK_COMPARE_OP_LESS, 0x7f, 0xf0, 9};
+    base.cullMode = VK_CULL_MODE_BACK_BIT;
+    base.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    base.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    base.negativeOneToOne = true;
+    base.depthClamp = true;
+    base.conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
+    VertexInputLayout input;
+    input.bindings = {{0, 16, VK_VERTEX_INPUT_RATE_VERTEX}, {1, 8, VK_VERTEX_INPUT_RATE_INSTANCE}};
+    input.attributes = {{0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0}, {3, 1, VK_FORMAT_R16G16_UNORM, 0}};
+    auto tessellated = base;
+    tessellated.stages.path = ShaderPath::Tessellation;
+    tessellated.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 4, 1, 2, 2, 64};
+    auto meshed = base;
+    meshed.stages.path = ShaderPath::Geometry;
+    meshed.stages.mesh = ShaderRecompiler::MeshConfiguration{4, 1, 3, 3, 1, 64, 128, 0, 4};
+    const auto described = [&](const State& state, const VertexInputLayout& layout, VkImageLayout attachments) { return PipelineDescription{state, layout, attachments}; };
+    const auto roundTrip = [&](const PipelineDescription& description) {
+        const auto decoded = DecodePipelineDescription(EncodePipelineDescription(description.state, description.vertexInput, description.attachmentLayout));
+        Require(decoded.has_value(), "a pipeline description did not decode");
+        return *decoded;
+    };
+    for (const auto* state : {&base, &tessellated, &meshed}) {
+        const auto original = described(*state, input, VK_IMAGE_LAYOUT_GENERAL);
+        Require(SamePipelineKey(context, resources, shaders, original, roundTrip(original)), "a decoded pipeline description has another pipeline key");
+        const auto bytes = EncodePipelineDescription(original.state, original.vertexInput, original.attachmentLayout);
+        for (std::size_t size = 0; size < bytes.size(); ++size) Require(!DecodePipelineDescription(std::span(bytes).first(size)).has_value(), "a pipeline description cut to " + std::to_string(size) + " bytes decoded");
+    }
+    using Change = std::function<void(PipelineDescription&)>;
+    const std::vector<std::pair<const char*, Change>> changes{
+        {"samples", [](PipelineDescription& d) { d.state.samples = 2; d.state.depth->samples = 2; }},
+        {"custom sample locations", [](PipelineDescription& d) { d.state.customSampleLocations = false; }},
+        {"a sample location", [](PipelineDescription& d) { d.state.sampleLocations[1] = 0x33u; }},
+        {"a color format", [](PipelineDescription& d) { d.state.colors[0].format = VK_FORMAT_R16G16B16A16_SFLOAT; }},
+        {"an export index", [](PipelineDescription& d) { d.state.colors[1].exportIndex = 1; }},
+        {"a blend", [](PipelineDescription& d) { d.state.blends[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE; }},
+        {"the blend constants", [](PipelineDescription& d) { d.state.blendConstants[2] = 0.0f; }},
+        {"the color target flag", [](PipelineDescription& d) { d.state.hasColorTarget = false; }},
+        {"the depth format", [](PipelineDescription& d) { d.state.depth->format = VK_FORMAT_D16_UNORM; }},
+        {"the depth target", [](PipelineDescription& d) { d.state.depth.reset(); }},
+        {"the depth test", [](PipelineDescription& d) { d.state.depthTest = false; }},
+        {"depth writes", [](PipelineDescription& d) { d.state.depthWrite = false; }},
+        {"the depth compare", [](PipelineDescription& d) { d.state.depthCompare = VK_COMPARE_OP_LESS; }},
+        {"the depth bounds test", [](PipelineDescription& d) { d.state.depthBoundsTest = false; }},
+        {"depth bias", [](PipelineDescription& d) { d.state.depthBias = false; }},
+        {"per-face depth bias", [](PipelineDescription& d) { d.state.depthBiasPerFace = true; }},
+        {"the stencil test", [](PipelineDescription& d) { d.state.stencilTest = false; }},
+        {"a front stencil op", [](PipelineDescription& d) { d.state.stencilFront.passOp = VK_STENCIL_OP_DECREMENT_AND_WRAP; }},
+        {"a back stencil mask", [](PipelineDescription& d) { d.state.stencilBack.writeMask = 1; }},
+        {"the topology", [](PipelineDescription& d) { d.state.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; }},
+        {"primitive restart", [](PipelineDescription& d) { d.state.primitiveRestart = false; }},
+        {"the cull mode", [](PipelineDescription& d) { d.state.cullMode = VK_CULL_MODE_NONE; }},
+        {"the front face", [](PipelineDescription& d) { d.state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; }},
+        {"the provoking vertex", [](PipelineDescription& d) { d.state.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT; }},
+        {"negative-one-to-one depth", [](PipelineDescription& d) { d.state.negativeOneToOne = false; }},
+        {"depth clamp", [](PipelineDescription& d) { d.state.depthClamp = false; }},
+        {"conservative rasterization", [](PipelineDescription& d) { d.state.conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT; }},
+        {"rect lists", [](PipelineDescription& d) { d.state.rectList = true; }},
+        {"tessellation", [](PipelineDescription& d) { d.state.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 3, 1, 2, 2, 64}; }},
+        {"mesh shading", [](PipelineDescription& d) { d.state.stages.mesh = ShaderRecompiler::MeshConfiguration{4, 1, 3, 3, 1, 64, 128, 0, 4}; }},
+        {"a vertex binding stride", [](PipelineDescription& d) { d.vertexInput.bindings[1].stride = 12; }},
+        {"a vertex attribute format", [](PipelineDescription& d) { d.vertexInput.attributes[1].format = VK_FORMAT_R16G16_SNORM; }},
+        {"the attachment layout", [](PipelineDescription& d) { d.attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; }},
+    };
+    const auto original = described(base, input, VK_IMAGE_LAYOUT_GENERAL);
+    for (const auto& [field, change] : changes) {
+        auto changed = original;
+        change(changed);
+        Require(!SamePipelineKey(context, resources, shaders, original, roundTrip(changed)), std::string("a pipeline description lost ") + field);
+    }
+}
+
 void largeCreationThreadTests() {
     using namespace AgcDriver::Graphics;
     using AgcDriver::CreationAhead;
@@ -6426,6 +6549,7 @@ int main(int argc, char** argv) {
         pipelineLibraryConcurrencyTests();
         cachedPipelineConcurrencyTests();
         largeCreationThreadTests();
+        pipelineDescriptionTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
         hardwareScreenOffsetTests();

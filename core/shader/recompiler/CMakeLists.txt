@@ -251,6 +251,7 @@ function(add_shader_recompiler target runtimeTarget)
             MaterializeShader
             RegistrationResult
             SpecializedComputeResult
+            SpecializedStageResult
             ShaderDiskCache::SourceVersion
             ResolveSource
             ResourceMaterializer::BindsDecodedCopy

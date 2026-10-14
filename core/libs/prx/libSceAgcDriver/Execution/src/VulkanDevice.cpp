@@ -14,6 +14,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineManifest.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineReplay.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "ShaderDiskCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
@@ -361,6 +362,7 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::TextureCache> textureCache;
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
     std::unique_ptr<PipelineManifest> pipelineManifest;
+    std::unique_ptr<PipelineReplay> pipelineReplay;
     std::unique_ptr<Graphics::DescriptorCache> descriptorCache;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
     std::unique_ptr<Graphics::DescriptorHeap> descriptorHeap;
@@ -715,6 +717,7 @@ struct VulkanDevice::State {
             colorTransfer.reset();
             scaler.reset();
             pipelineCache.reset();
+            pipelineReplay.reset();
             pipelineManifest.reset();
             context.bufferPool.reset();
             bufferPool.reset();
@@ -1700,9 +1703,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, state->pipelineCreationCacheControl);
     if (const auto directory = ShaderRecompiler::ShaderCacheDirectory(); !directory.empty()) {
         char name[96];
-        std::snprintf(name, sizeof(name), "compute-pipelines-%04x-%04x.manifest", state->properties.vendorID, state->properties.deviceID);
+        std::snprintf(name, sizeof(name), "pipelines-%04x-%04x.manifest", state->properties.vendorID, state->properties.deviceID);
         state->pipelineManifest = std::make_unique<PipelineManifest>(directory / name, ShaderRecompiler::ShaderDiskCache::SourceVersion());
-        std::fprintf(stderr, "[pipeline-manifest] %zu compute pipelines recorded by earlier runs in %s\n", state->pipelineManifest->Loaded(), (directory / name).string().c_str());
+        state->pipelineReplay = std::make_unique<PipelineReplay>(*state->pipelineManifest, [this] { return graphicsContext(); }, [this] { return Target(); });
+        std::fprintf(stderr, "[pipeline-manifest] %zu compute and %zu graphics pipelines recorded by earlier runs in %s\n", state->pipelineManifest->LoadedRecords().compute.size(), state->pipelineManifest->LoadedRecords().graphics.size(), (directory / name).string().c_str());
     }
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
@@ -3192,6 +3196,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.samplerCache = state->samplerCache.get();
     context.descriptorHeap = state->descriptorHeap.get();
     context.deviceImages = state->deviceImages.get();
+    context.pipelineRecorder = state->pipelineReplay.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;
     context.dualSrcBlend = state->dualSrcBlend;
@@ -4182,6 +4187,10 @@ bool VulkanDevice::RecordComputePipeline(const ShaderRecompiler::RecompileResult
         record.bindings.emplace_back(binding.binding, binding.count);
     }
     return state->pipelineManifest->Record(std::move(record));
+}
+
+PipelineReplay* VulkanDevice::Replay() const {
+    return state->pipelineReplay.get();
 }
 
 std::size_t VulkanDevice::PrepareRecordedComputePipelines(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle) {
