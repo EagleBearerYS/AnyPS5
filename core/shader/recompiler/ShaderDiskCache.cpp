@@ -952,6 +952,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
     writer.Value(plan.userDataBase);
     writer.Value(plan.userDataCount);
     writer.Value(plan.srgbDecodeFormats);
+    for (const auto threads : plan.workgroupThreads) writer.Value(threads);
     writer.List(plan.blockStorage, [](Writer& out, const std::unique_ptr<IrBlock>& block) { out.Value(block->Id()); });
     writer.List(plan.valueStorage, [&](Writer& out, const std::unique_ptr<IrValue>& value) {
         const auto bank = static_cast<std::uint32_t>(value->Register().bank);
@@ -1048,6 +1049,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     reader.Value(plan.userDataBase);
     reader.Value(plan.userDataCount);
     reader.Value(plan.srgbDecodeFormats);
+    for (auto& threads : plan.workgroupThreads) reader.Value(threads);
     std::vector<std::uint32_t> blockIds;
     reader.Values(blockIds);
     std::vector<PlanValueRecord> records;

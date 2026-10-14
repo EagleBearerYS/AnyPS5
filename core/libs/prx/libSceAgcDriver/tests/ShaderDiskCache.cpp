@@ -1375,6 +1375,7 @@ IrResourcePlan handBuiltPlan() {
     plan.userDataBase = 2u;
     plan.userDataCount = 4u;
     plan.srgbDecodeFormats = 5u;
+    plan.workgroupThreads = {64u, 2u, 3u};
     MemoryInfo memory;
     memory.kind = ResourceKind::Image;
     memory.resource = 1u;
@@ -1589,6 +1590,7 @@ void verifyPlanRoundTrip() {
     require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
     require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
     require(handDecoded.descriptorSources[1].tableColumn == handBuilt.descriptorSources[1].tableColumn && handDecoded.memoryInfo == handBuilt.memoryInfo && handDecoded.info == handBuilt.info, "the decoded plan lost plain data");
+    require(handDecoded.workgroupThreads == handBuilt.workgroupThreads, "the decoded plan lost the workgroup threads");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);
