@@ -1902,6 +1902,22 @@ bool VulkanDevice::RecordedWritesSettled(std::uint64_t address, std::size_t byte
     return Graphics::Recorder::PendingCompletionLabels() == 0 || !recorder.CompletionLabelIn(address, bytes);
 }
 
+bool VulkanDevice::SeparateQueues() const {
+    return state->recorder && state->recorder->Streams() > 1;
+}
+
+void VulkanDevice::OrderAfterLabel(std::uint64_t address, std::size_t bytes) {
+    if (state->recorder) state->recorder->OrderAfterLabel(address, bytes);
+}
+
+void VulkanDevice::OrderAfterValue(std::uint64_t address, std::size_t bytes) {
+    if (state->recorder) state->recorder->OrderAfterValue(address, bytes);
+}
+
+void VulkanDevice::OrderAfterQueue(std::uint32_t queue) {
+    if (state->recorder) state->recorder->OrderAfterQueue(queue);
+}
+
 bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) const {
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
     if (Graphics::StorageTexture::AnyPendingOverlaps(range) || Graphics::AnyShadowedOverlaps(range) || state->CopiedWriterOverlaps(address, bytes)) return true;
@@ -2097,6 +2113,8 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
             auto seed = std::make_shared<Graphics::Buffer>(context, 16, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(seed->Bytes().data(), pattern.data(), 16);
             recorder.Keep(seed);
+            const std::array<Graphics::Recorder::SectionObject, 1> written{{{patternBuffer.get(), true}}};
+            recorder.DeclareSection(written);
             const auto chain = recorder.Commands();
             const auto copyBuffer = context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
             const VkBufferCopy first{0, 0, 16};
@@ -2116,6 +2134,8 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     }
     // A queued label store over the range lands before the fill (program order).
     recorder.FlushStoresOverlapping(address, bytes);
+    const std::array<Graphics::Recorder::SectionObject, 1> patternRead{{{patternBuffer.get(), false}}};
+    recorder.DeclareSection(std::span(patternRead).first(patternBuffer != nullptr ? 1 : 0));
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     const auto timing = recorder.BeginGpuTiming(CommandClass::Fill);
@@ -2371,6 +2391,7 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     // A queued label store in either range lands before the transfer reads or writes it.
     recorder.FlushStoresOverlapping(source, bytes);
     recorder.FlushStoresOverlapping(destination, bytes);
+    recorder.DeclareSection({});
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     // The class range covers the barriers too; the program-keyed range inside it is the transfer.
@@ -4036,6 +4057,17 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         Graphics::Require(context.deviceImages != nullptr, "a dispatch reading images through the device image table needs the device's table");
         context.deviceImages->BeforeDispatch(context, recorder);
     }
+    const auto workgroupDwords = record.shader->program->workgroupMemoryDwords;
+    auto workgroupMemory = workgroupDwords != 0 ? state->WorkgroupMemoryFor(context, record.x, record.y, record.z, workgroupDwords) : nullptr;
+    if (recorder.Streams() > 1 && !resources.HoldsLease() && !resources.UsesAddressTable()) {
+        std::vector<Graphics::Recorder::SectionObject> objects{{record.resources.get(), true}};
+        if (workgroupMemory != nullptr) objects.push_back({workgroupMemory.get(), true});
+        for (const auto& [image, written] : resources.StorageImages()) objects.push_back({image, written});
+        for (const auto& texture : resources.SampledTextures()) {
+            if (texture != nullptr && texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
+        }
+        recorder.DeclareSection(objects);
+    }
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     recordStep(PhaseRecordCommands);
@@ -4093,10 +4125,9 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->pipeline);
     resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout);
     context.descriptorHeap->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, state->computeHeapSet);
-    if (const auto dwords = record.shader->program->workgroupMemoryDwords; dwords != 0) {
-        auto memory = state->WorkgroupMemoryFor(context, record.x, record.y, record.z, dwords);
-        context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &memory->set, 0, nullptr);
-        recorder.Keep(std::move(memory));
+    if (workgroupMemory != nullptr) {
+        context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &workgroupMemory->set, 0, nullptr);
+        recorder.Keep(std::move(workgroupMemory));
     }
     if (record.pushStages != 0) {
         context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, record.pushBytes->data());

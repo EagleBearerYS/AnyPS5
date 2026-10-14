@@ -1695,6 +1695,17 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
     const PassAccess passAccess{passReads, resources.GpuWrites(), passImages, passAttachments, unknownMemory, unknownMemory};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    if (recorder->Streams() > 1 && !unknownMemory && !capture) {
+        std::vector<Recorder::SectionObject> objects{{record.resources.get(), true}};
+        for (const auto& [image, written] : passImages) objects.push_back({image, written});
+        for (const auto& [image, written] : passAttachments) objects.push_back({image, written});
+        for (const auto view : record.targetViews) objects.push_back({view, true});
+        for (const auto& proxy : record.proxies) objects.push_back({proxy->Image(), true});
+        for (const auto& texture : resources.SampledTextures()) {
+            if (texture != nullptr && texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
+        }
+        recorder->DeclareSection(objects);
+    }
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect, fenced, passAccess);
     const bool continued = start.continued;
     outcome.passContinued = continued;

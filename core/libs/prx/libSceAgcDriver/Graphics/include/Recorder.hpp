@@ -17,6 +17,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -185,6 +186,19 @@ public:
         std::uint64_t value;
     };
     std::vector<QueuePoint> OtherQueuePoints() const;
+    struct SectionObject {
+        const void* object;
+        bool written;
+    };
+    void DeclareSection(std::span<const SectionObject> objects);
+    void OrderAfterLabel(std::uint64_t address, std::size_t bytes);
+    void OrderAfterValue(std::uint64_t address, std::size_t bytes);
+    void OrderAfterQueue(std::uint32_t queue);
+    using Token = std::array<std::uint64_t, MaxRecorderStreams>;
+    Token CallerToken();
+    Token AllToken() const;
+    bool Reached(const Token& token) const;
+    void WaitToken(const Token& token);
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
     // HasTimeline(); the debug switch APS5_NO_TIMELINE makes the device create the recorder without one.
@@ -786,7 +800,26 @@ private:
         std::uint64_t opened = 0;
         std::uint64_t submitted = 0;
         std::uint64_t finished = 0;
+        std::uint64_t barrier = 0;
+        Batch* newest = nullptr;
     };
+    struct ObjectUse {
+        std::array<std::uint64_t, MaxRecorderStreams> read{};
+        std::array<std::uint64_t, MaxRecorderStreams> written{};
+    };
+    std::unordered_map<const void*, ObjectUse> objectUses;
+    static constexpr std::size_t ObjectSweepMinimum = 4096;
+    std::size_t objectSweepAt = ObjectSweepMinimum;
+    std::vector<SectionObject> declaredObjects;
+    bool sectionDeclared = false;
+    using Epoch = std::array<std::uint64_t, MaxRecorderStreams>;
+    void dependOn(std::uint32_t other, std::uint64_t value);
+    void keepOnOtherStreams(const std::shared_ptr<void>& object);
+    void sweepObjectUses();
+    void closeEpoch(Epoch& epoch) const;
+    void finishEpoch(Epoch epoch, int source);
+    Epoch syncTargets(std::uint64_t address, std::uint64_t end);
+    bool epochUnsignaled(const Epoch& epoch) const;
     std::vector<Stream> streams;
     mutable std::array<std::uint8_t, 0x58> queueStreams{};
     mutable std::uint32_t nextStream = 1;

@@ -60,6 +60,8 @@ public:
         return word;
     }
 
+    std::uint64_t Tail(std::size_t tail) const { return Address() + RegionBytes - (tail + 1) * TailBytes; }
+
 private:
     std::uint8_t* region = nullptr;
 };
@@ -68,6 +70,8 @@ std::array<std::uint32_t, 4> Pattern(std::uint32_t word) {
     return {word, word, word, word};
 }
 
+constexpr std::array<std::uint32_t, 4> Repeated{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
+
 }
 
 int main() {
@@ -75,12 +79,11 @@ int main() {
         GuestRegion region;
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto tail = region.Address() + RegionBytes - TailBytes;
         bool imported = true;
         std::thread compute([&] {
             AgcDriver::GuestMemory::TagGpuLockThread(ComputeQueue);
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-            imported = device->FillBuffer(region.Address(), RegionBytes, Pattern(0xaaaaaaaau)) && device->FillBuffer(tail, TailBytes, Pattern(0xbbbbbbbbu));
+            imported = device->FillBuffer(region.Address(), RegionBytes - 2 * TailBytes, Pattern(0xaaaaaaaau)) && device->FillBuffer(region.Tail(1), TailBytes, Repeated);
         });
         compute.join();
         if (!imported) {
@@ -90,15 +93,15 @@ int main() {
         std::size_t streams = 0;
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-            Require(device->FillBuffer(tail, TailBytes, Pattern(0x55555555u)), "stream order: the graphics queue's fill was not recorded on the GPU");
+            Require(device->FillBuffer(region.Tail(0), TailBytes, Repeated), "stream order: the graphics queue's fill was not recorded on the GPU");
             device->SubmitRecorded(false);
             device->WaitIdle();
             streams = AgcDriver::Graphics::Recorder::Active()->Streams();
         }
         for (std::size_t index = 0; index < TailBytes / 4; ++index) {
-            if (region.TailWord(index) == 0x55555555u) continue;
+            if (region.TailWord(index) == Repeated[index % 4]) continue;
             std::array<char, 256> message{};
-            std::snprintf(message.data(), message.size(), "stream order: word %zu of the range both queues filled holds 0x%08x, not the later fill's 0x55555555 (%zu recorder streams)", index, region.TailWord(index), streams);
+            std::snprintf(message.data(), message.size(), "stream order: word %zu of the fill that reuses another queue's pattern buffer holds 0x%08x, not 0x%08x (%zu recorder streams)", index, region.TailWord(index), Repeated[index % 4], streams);
             Require(false, message.data());
         }
         std::printf("stream order tests passed (%zu recorder streams)\n", streams);
