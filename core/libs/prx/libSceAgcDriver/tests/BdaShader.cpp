@@ -194,6 +194,77 @@ std::vector<std::uint32_t> MakeBdaStoreTestShader(std::uint64_t address, std::ui
     return shader;
 }
 
+std::vector<std::uint32_t> MakeBdaLaneStoreTestShader(std::uint64_t address, std::uint64_t stride, std::uint64_t active, BdaLaneStore store) {
+    using namespace ShaderRecompiler;
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::Compute;
+    program.Info().usesDma = true;
+    program.Info().bdaWrites = true;
+    SpirvEmitterState state(program, {});
+    EmitBaseHeader(state.module, program);
+    const auto define = [&](std::uint32_t binding) {
+        const auto variable = state.module.DefineGlobalVariable(TypeStorageBufferPointer(state), spv::StorageClassStorageBuffer);
+        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, 0u);
+        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, binding);
+        return variable;
+    };
+    state.bdaPagetableVariable = define(0);
+    state.faultBufferVariable = define(1);
+    define(2);
+    const auto invocation = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassInput, TypeU32Vector(state, 3)), spv::StorageClassInput);
+    state.module.AddAnnotation(spv::OpDecorate, invocation, spv::DecorationBuiltIn, spv::BuiltInGlobalInvocationId);
+    state.bdaStopsInvocations = false;
+    DefineGetBdaPointer(state);
+    const auto main = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunction, TypeVoid(state), main, spv::FunctionControlMaskNone, TypeFunction(state));
+    EmitLabel(state, state.module.AllocateId());
+    SpirvValueEmitContext ctx(state);
+    auto& instruction = program.CreateValue(IrOpcode::StoreAddressU32, IrType::Void);
+    MemoryFlags flags{};
+    flags.pc = 0x1234;
+    instruction.SetFlags(flags);
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto ids = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32Vector(state, 3), ids, invocation);
+    const auto lane = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, u32, lane, ids, 0u);
+    const auto wide = Unary(state, spv::OpUConvert, u64, lane);
+    const auto enabled = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u64, Binary(state, spv::OpShiftRightLogical, u64, BdaConstant(state, active), wide), BdaConstant(state, 1u)), BdaConstant(state, 0u));
+    EmitIfCondition(state, enabled, [&] {
+        const auto target = Binary(state, spv::OpIAdd, u64, BdaConstant(state, address), Binary(state, spv::OpIMul, u64, wide, BdaConstant(state, stride)));
+        const auto value = ConstantU32(state, BdaLaneStoreValue);
+        switch (store) {
+            case BdaLaneStore::Byte: EmitBdaStore(ctx, instruction, target, value, 8u); break;
+            case BdaLaneStore::Short: EmitBdaStore(ctx, instruction, target, value, 16u); break;
+            case BdaLaneStore::Dword: EmitBdaStore(ctx, instruction, target, value, 32u); break;
+            case BdaLaneStore::RuntimeDword: EmitBdaWrite(ctx, instruction, target, value, 32u); break;
+            case BdaLaneStore::Dwordx4: {
+                const auto vector = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), vector, value, value, value, value);
+                EmitBdaDwordWrites(ctx, instruction, target, 0u, 4u, vector);
+                break;
+            }
+            case BdaLaneStore::Atomic:
+                EmitBdaAtomic(ctx, instruction, target, 4u, [&](std::uint32_t pointer) {
+                    const auto old = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpAtomicIAdd, u32, old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), value);
+                    return old;
+                });
+                break;
+        }
+    });
+    state.module.AddFunction(spv::OpReturn);
+    state.module.AddFunction(spv::OpFunctionEnd);
+    state.module.AddExecutionMode(main, spv::ExecutionModeLocalSize, 64u, 1u, 1u);
+    state.module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", std::vector<std::uint32_t>{invocation});
+    auto shader = Structured(state.module.Finalize());
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    shader = ValidateAndOptimizeSpirv(shader, VK_API_VERSION_1_1, shader[1], false, false);
+#endif
+    return shader;
+}
+
 std::vector<std::uint32_t> MakeBdaWriteTestShader(std::uint64_t address, std::uint32_t value, std::uint32_t bits, bool coherent) {
     using namespace ShaderRecompiler;
     auto shader = MakeShader(address, coherent, true, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {

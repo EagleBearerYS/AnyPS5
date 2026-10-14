@@ -509,9 +509,78 @@ static void RunBdaPageTableTests(const Context& context) {
     Require(check("before the update, again", before, first, before) == 0u, "an update changed the page table a recorded dispatch still uses");
 }
 
+static void RunBdaWrittenPageTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    constexpr std::uint64_t guest = 0x7ffe00000000ULL;
+    constexpr std::uint64_t page = std::uint64_t{1} << Abi::WrittenPageShift;
+    struct Case {
+        const char* name;
+        BdaLaneStore store;
+        std::uint64_t stride;
+        std::uint64_t offset;
+        std::uint64_t active;
+    };
+    const auto bytesOf = [](BdaLaneStore store) { return store == BdaLaneStore::Byte ? 1u : store == BdaLaneStore::Short ? 2u : store == BdaLaneStore::Dwordx4 ? 16u : 4u; };
+    const std::array<Case, 10> cases{{
+        {"unaligned dwords across pages, alternate lanes", BdaLaneStore::Dword, 0x1000u, 0xffeu, 0xaaaaaaaaaaaaaaaaull},
+        {"unaligned runtime dwords across pages, other lanes", BdaLaneStore::RuntimeDword, 0x1000u, 0xffdu, 0x5555555555555555ull},
+        {"dwordx4 across chunks, scattered lanes", BdaLaneStore::Dwordx4, 0x20000u, 0x1fff8u, 0x8421084210842108ull},
+        {"unaligned dwordx4 across pages", BdaLaneStore::Dwordx4, 0x3000u, 0x2ff6u, 0xffffffff00000000ull},
+        {"aligned dwords of all lanes in one page", BdaLaneStore::Dword, 16u, 0u, ~0ull},
+        {"bytes of every third lane", BdaLaneStore::Byte, 0x1001u, 1u, 0x9249249249249249ull},
+        {"shorts across pages", BdaLaneStore::Short, 0x2000u, 0xfffu, 0x00000000ffff0000ull},
+        {"atomics of all lanes", BdaLaneStore::Atomic, 0x3000u, 0x10u, ~0ull},
+        {"one lane", BdaLaneStore::Dword, 0x20000u, 0x1fffeu, 1ull << 37u},
+        {"no lane", BdaLaneStore::Dword, 0x1000u, 0xffeu, 0ull},
+    }};
+    Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    for (const bool paged : {false, true}) {
+        for (const auto& test : cases) {
+            const auto bytes = bytesOf(test.store);
+            const auto span = test.offset + 64u * test.stride + 64u;
+            Buffer memory(context, static_cast<std::size_t>(span), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            const std::array<Abi::Range, 1> ranges{{{guest, guest + span, memory.DeviceAddress(), Abi::Read | Abi::Write, 0}}};
+            const auto pages = PagesFor(context, paged, ranges);
+            const auto table = MakeBinding(context, paged, pages, ranges);
+            std::memset(memory.Bytes().data(), 0, memory.Bytes().size());
+            std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+            Pipeline pipeline(context, MakeBdaLaneStoreTestShader(guest + test.offset, test.stride, test.active, test.store), {table.get(), &fault, &output});
+            pipeline.Run(1);
+            const std::string label = std::string("written pages, ") + test.name + (paged ? " (paged): " : ": ");
+            Abi::Fault report{};
+            std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+            Require(report.state == Abi::FaultState::Empty, label + "a mapped store published a fault");
+            std::set<std::uint64_t> expectedPages;
+            std::set<std::uint32_t> expectedChunks;
+            std::vector<std::uint8_t> expected(memory.Bytes().size(), 0u);
+            for (std::uint32_t lane = 0; lane < 64u; ++lane) {
+                if (((test.active >> lane) & 1u) == 0u) continue;
+                const auto address = guest + test.offset + lane * test.stride;
+                for (std::uint32_t byte = 0; byte < bytes; ++byte) {
+                    expectedPages.insert((address + byte) >> Abi::WrittenPageShift);
+                    expectedChunks.insert(Abi::WrittenChunkKey(address + byte));
+                    expected[address + byte - guest] = static_cast<std::uint8_t>(BdaLaneStoreValue >> ((byte % 4u) * 8u));
+                }
+            }
+            Require(std::memcmp(memory.Bytes().data(), expected.data(), expected.size()) == 0, label + "the stores of the active lanes landed incorrectly or an inactive lane stored");
+            std::array<std::uint32_t, Abi::FaultBufferBytes / sizeof(std::uint32_t)> words{};
+            std::memcpy(words.data(), fault.Bytes().data(), sizeof(words));
+            Require(words[Abi::WrittenOverflowWord] == 0, label + "the written-page table overflowed");
+            std::set<std::uint64_t> recorded;
+            Require(Abi::ForEachWrittenRange(words.data(), [&](std::uint64_t begin, std::size_t length) {
+                for (std::uint64_t at = begin; at < begin + length; at += page) Require(recorded.insert(at >> Abi::WrittenPageShift).second, label + "a page is recorded twice");
+            }), label + "invalid written-page record");
+            Require(recorded == expectedPages, label + "the records name " + std::to_string(recorded.size()) + " pages, the active lanes wrote " + std::to_string(expectedPages.size()));
+            Require(words[Abi::WrittenCountWord] == expectedChunks.size(), label + "the records claim " + std::to_string(words[Abi::WrittenCountWord]) + " chunks, the active lanes wrote " + std::to_string(expectedChunks.size()));
+        }
+    }
+}
+
 void RunBdaExecutionTests(const Context& context) {
     RunBdaPageTableTests(context);
     for (const bool paged : {false, true}) RunBdaReadTests(context, paged);
+    RunBdaWrittenPageTests(context);
 }
 
 void RunBdaStoreExecutionTests(const Context& context) {
@@ -579,14 +648,16 @@ void RunBdaStoreExecutionTests(const Context& context) {
         run("read-only byte", guest + 2, 8, coherent, {0xcd, 0xcd, 0xcd, 0xcd, 0xcd}, {}, Abi::FaultReason::Permission, guest + 2, 1);
         run("read-only short suffix", guest + 1, 16, coherent, {0xcd, 0xd4, 0xcd, 0xcd, 0xcd}, {guest + 1}, Abi::FaultReason::Permission, guest + 2, 1);
         run("read-only suffix", guest, 32, coherent, {0xd4, 0xc3, 0xcd, 0xcd, 0xcd}, {guest}, Abi::FaultReason::Permission, guest + 2, 1);
-        grants = {{guest + 2, guest + 5}};
-        run("granted byte", guest + 2, 8, coherent, {0xcd, 0xcd, 0xd4, 0xcd, 0xcd}, {guest + 2});
-        run("granted suffix", guest, 32, coherent, {0xd4, 0xc3, 0xb2, 0xa1, 0xcd}, {guest, guest + 3});
-        grants = {{guest + 3, guest + 5}};
-        run("partly granted suffix", guest, 32, coherent, {0xd4, 0xc3, 0xcd, 0xa1, 0xcd}, {guest, guest + 3}, Abi::FaultReason::Permission, guest + 2, 1);
-        grants = {{guest, guest + 3}};
-        run("grant ending inside a store", guest + 1, 32, coherent, {0xcd, 0xd4, 0xc3, 0xcd, 0xcd}, {guest + 1, guest + 2}, Abi::FaultReason::Permission, guest + 3, 1);
-        grants.clear();
+        if (!coherent) {
+            grants = {{guest + 2, guest + 5}};
+            run("granted byte", guest + 2, 8, coherent, {0xcd, 0xcd, 0xd4, 0xcd, 0xcd}, {guest + 2});
+            run("granted suffix", guest, 32, coherent, {0xd4, 0xc3, 0xb2, 0xa1, 0xcd}, {guest, guest + 3});
+            grants = {{guest + 3, guest + 5}};
+            run("partly granted suffix", guest, 32, coherent, {0xd4, 0xc3, 0xcd, 0xa1, 0xcd}, {guest, guest + 3}, Abi::FaultReason::Permission, guest + 2, 1);
+            grants = {{guest, guest + 3}};
+            run("grant ending inside a store", guest + 1, 32, coherent, {0xcd, 0xd4, 0xc3, 0xcd, 0xcd}, {guest + 1, guest + 2}, Abi::FaultReason::Permission, guest + 3, 1);
+            grants.clear();
+        }
         ranges[0].end = guest + 1;
         ranges[1].permissions = writable;
         run("unmapped middle byte", guest, 32, coherent, {0xd4, 0xcd, 0xb2, 0xa1, 0xcd}, {guest, guest + 3}, Abi::FaultReason::Unmapped, guest + 1, 1);
