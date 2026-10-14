@@ -180,6 +180,16 @@ F10 shows or hides a performance overlay over the presented image; `ANYPS5_OVERL
 
 Times are shown with one decimal below 100 and as whole numbers above, up to 9999. While the overlay is hidden the presentation records nothing for it and the presented image is unchanged; while it is shown, one small render pass draws it over each presented frame.
 
+### Upscaling
+
+The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. When it is the same size or smaller, the image is scaled as without FSR and only RCAS sharpens it.
+
+`ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`.
+
+FSR works on SDR and HDR10 output alike, on the values the display receives: sRGB-encoded for SDR, PQ code values for HDR10. Sharpening never takes them out of the signal range. Each presentation in flight keeps two more images, one of the display buffer's size and one of the fitted image's size, and each frame takes two full-window passes.
+
+An empty value of either variable is the same as an unset one. The start fails on any other value of `ANYPS5_UPSCALE` than `fsr`, and on an `ANYPS5_FSR_SHARPNESS` that is not a number from 0.0 to 2.0.
+
 ### Storing GPU results at each flip
 
 GPU results in storage images and render targets stay on the GPU until something reads their memory. A title that frees such an image after waiting for its GPU work and reuses the memory can have its new data overwritten when the results are stored later ([TechnicalDebt](../dev/TechnicalDebt.md)). `APS5_STORE_AT_FLIP=1` stores every pending result when a display buffer is flipped, at the cost of one write-back per pending image and frame. Any other value stops the title at its first flip.
