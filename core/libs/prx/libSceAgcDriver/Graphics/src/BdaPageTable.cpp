@@ -163,6 +163,15 @@ VkDeviceAddress BdaPageTable::LeafAddress(std::uint32_t window) const {
     return leaf != nullptr ? leaf->buffer->DeviceAddress() : 0u;
 }
 
+std::optional<Abi::Range> BdaPageTable::Find(std::uint64_t address) const {
+    if (address >= Abi::PageTableEnd) return std::nullopt;
+    const auto leaf = find(static_cast<std::uint32_t>(address >> Abi::WindowShift));
+    if (leaf == nullptr) return std::nullopt;
+    const auto found = std::upper_bound(leaf->ranges.begin(), leaf->ranges.end(), address, [](std::uint64_t value, const Abi::Range& range) { return value < range.begin; });
+    if (found == leaf->ranges.begin() || address >= std::prev(found)->end) return std::nullopt;
+    return *std::prev(found);
+}
+
 std::shared_ptr<const BdaPageTable::Leaf> BdaPageTable::find(std::uint32_t window) const {
     const auto found = std::lower_bound(leaves.begin(), leaves.end(), window, [](const auto& leaf, std::uint32_t value) { return leaf->window < value; });
     return found != leaves.end() && (*found)->window == window ? *found : nullptr;

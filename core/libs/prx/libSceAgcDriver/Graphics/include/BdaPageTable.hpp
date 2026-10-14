@@ -5,6 +5,7 @@
 #include "BdaAbi.hpp"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -28,6 +29,7 @@ public:
     static Counts Totals();
     VkDeviceAddress Address() const;
     VkDeviceAddress LeafAddress(std::uint32_t window) const;
+    std::optional<ShaderRecompiler::BdaAbi::Range> Find(std::uint64_t address) const;
 
 private:
     struct Leaf {

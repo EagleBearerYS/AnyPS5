@@ -8,130 +8,14 @@
 #include <atomic>
 #include <bit>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
-#include <list>
-#include <mutex>
+#include <optional>
 #include <iomanip>
 #include <sstream>
 
 namespace AgcDriver::Graphics {
-
-namespace {
-
-// The page tables built per device, reused by a build whose ranges (guest ranges, device
-// addresses, permissions) equal one of them: consecutive address-based builds map the same registered
-// set through the same imports and mirrors, so the ~1200-entry table repeats. The shader only reads
-// the table (its lookup keeps its state in function variables), and a batch in flight keeps its
-// BdaResources, so sharing the buffer is safe. The cache holds the tables weakly: they never outlive
-// the builds that own them (a static owner would destroy the buffer after its device, at exit or on
-// device replacement, and would fail the tests' leak check), and with deferred lease release the
-// previous builds are still in flight when the next one asks, which is what makes the hit rate.
-// One table was enough while every build repeated the last one exactly; now the misaligned
-// descriptor sub-ranges the GPU copies out of imports sit in pool staging buffers whose device
-// addresses cycle through the few buffers the batches in flight leave free, and the three
-// address-based programs of one queue interleave with the lease draws, so a table differs from the
-// previous one and comes back a few builds later (69% misses in the wave-8 run, 4% before the GPU
-// copies). Hence several recent tables, most recently used first, matched by a word hash before
-// the byte compare. APS5_BDA_TABLE_CACHE_ENTRIES sets how many (default 8; 1 is the previous
-// behaviour); APS5_NO_BDA_TABLE_CACHE=1 builds every table.
-// A table built for (or found equal to) the cached address space's ranges carries the space's
-// serial: a build served by that space alone binds it by the serial, with no hash and no compare.
-struct TableEntry {
-    std::uint64_t hash;
-    std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
-    std::vector<ShaderRecompiler::BdaAbi::Grant> grants;
-    std::weak_ptr<Buffer> buffer;
-    std::uint64_t spaceSerial = 0;
-    std::uint64_t pageTable = 0;
-};
-
-struct TableCache {
-    std::mutex mutex;
-    VkDevice device = VK_NULL_HANDLE;
-    std::list<TableEntry> entries;
-    std::uint64_t hits = 0;
-    std::uint64_t misses = 0;
-    BdaResources::TableCacheStats classes;
-};
-
-bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const std::vector<ShaderRecompiler::BdaAbi::Range>& right);
-
-// APS5_PROFILE_DRAW: why the most recently used entry did not serve this build (see
-// TableCacheStats). Under the cache mutex.
-void classifyFirstEntry(TableCache& cache, std::uint64_t hash, const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges) {
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (!profile) return;
-    auto& classes = cache.classes;
-    if (cache.entries.empty()) {
-        ++classes.firstEmpty;
-        return;
-    }
-    const auto& first = cache.entries.front();
-    if (first.hash == hash) {
-        if (first.buffer.expired()) ++classes.firstExpired;
-        else if (!sameRanges(first.ranges, ranges)) ++classes.firstSameHash;
-        return;
-    }
-    if (first.buffer.expired()) {
-        ++classes.firstExpired;
-        return;
-    }
-    const auto common = std::min(first.ranges.size(), ranges.size());
-    std::size_t at = 0;
-    while (at < common && std::memcmp(&first.ranges[at], &ranges[at], sizeof(ranges[at])) == 0) ++at;
-    const auto begin = at < ranges.size() ? ranges[at].begin : at < first.ranges.size() ? first.ranges[at].begin : 0;
-    ++(begin < 0x10000000ull ? classes.firstDiffersLow : classes.firstDiffersHeap);
-}
-
-TableCache& Tables() {
-    static TableCache cache;
-    return cache;
-}
-
-bool tableCacheEnabled() {
-    static const bool disabled = std::getenv("APS5_NO_BDA_TABLE_CACHE") != nullptr;
-    return !disabled;
-}
-
-std::size_t tableCacheEntries() {
-    static const std::size_t entries = [] {
-        const char* value = std::getenv("APS5_BDA_TABLE_CACHE_ENTRIES");
-        const auto parsed = value != nullptr ? std::strtoull(value, nullptr, 10) : 8ull;
-        return static_cast<std::size_t>(std::clamp<unsigned long long>(parsed, 1, 64));
-    }();
-    return entries;
-}
-
-template<typename TElement>
-bool sameElements(const std::vector<TElement>& left, const std::vector<TElement>& right) {
-    return left.size() == right.size() && (left.empty() || std::memcmp(left.data(), right.data(), left.size() * sizeof(left.front())) == 0);
-}
-
-bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const std::vector<ShaderRecompiler::BdaAbi::Range>& right) {
-    return sameElements(left, right);
-}
-
-// A 64-bit mix of the table's words: a table is ~1200 ranges of four words, and comparing the bytes
-// against every held table would cost as much as building it.
-template<typename TElement>
-std::uint64_t hashElements(std::uint64_t hash, const std::vector<TElement>& elements) {
-    static_assert(sizeof(TElement) % sizeof(std::uint64_t) == 0);
-    hash ^= elements.size();
-    for (const auto& element : elements) {
-        std::uint64_t words[sizeof(element) / sizeof(std::uint64_t)];
-        std::memcpy(words, &element, sizeof(element));
-        for (const auto word : words) {
-            hash ^= word;
-            hash *= 0xff51afd7ed558ccdull;
-            hash ^= hash >> 33u;
-        }
-    }
-    return hash;
-}
-
-}
 
 BdaResources::BdaResources(const Context& context) : deviceImages(context.deviceImages) {
     static_assert(std::endian::native == std::endian::little);
@@ -141,103 +25,23 @@ BdaResources::BdaResources(const Context& context) : deviceImages(context.device
 }
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory) : BdaResources(context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
     pages = memory.PageTable(context);
-    const std::uint64_t pageTable = pages != nullptr ? pages->Address() : 0u;
-    const auto cached = memory.CachedAddressTable();
-    std::vector<ShaderRecompiler::BdaAbi::Range> built;
-    if (!cached.has_value()) built = memory.AddressRanges();
-    const auto& ranges = cached.has_value() ? *cached->ranges : built;
-    const auto serial = cached.has_value() ? cached->serial : 0;
+    ownRanges = memory.OwnRanges();
     writeGrants = memory.WriteGrants();
-    const auto& grants = writeGrants;
-    Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max() && grants.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
-    Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / (sizeof(ShaderRecompiler::BdaAbi::Range) + sizeof(ShaderRecompiler::BdaAbi::Grant)) && grants.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / (sizeof(ShaderRecompiler::BdaAbi::Range) + sizeof(ShaderRecompiler::BdaAbi::Grant)), "BDA table size overflow");
-    tableBytes = sizeof(ShaderRecompiler::BdaAbi::Header) + ranges.size() * sizeof(ShaderRecompiler::BdaAbi::Range) + grants.size() * sizeof(ShaderRecompiler::BdaAbi::Grant);
-    Require(tableBytes <= context.limits.maxStorageBufferRange && ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA descriptors exceed storage buffer range limit");
-    auto& cache = Tables();
-    std::uint64_t hash = 0;
-    if (tableCacheEnabled()) {
-        std::lock_guard lock(cache.mutex);
-        // Another device's tables are not this one's (their buffers are dead or foreign).
-        if (cache.device != context.device) {
-            cache.entries.clear();
-            cache.device = context.device;
-        }
-        if (serial != 0) {
-            for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-                if (it->spaceSerial != serial || it->pageTable != pageTable || !sameElements(it->grants, grants)) continue;
-                if (auto shared = it->buffer.lock(); shared != nullptr) {
-                    ++cache.hits;
-                    ++cache.classes.spaceTables;
-                    table = std::move(shared);
-                    cache.entries.splice(cache.entries.begin(), cache.entries, it);
-                    return;
-                }
-                cache.entries.erase(it);
-                break;
-            }
-        }
-        hash = hashElements(hashElements(0x9e3779b97f4a7c15ull, ranges), grants) ^ pageTable;
-        classifyFirstEntry(cache, hash, ranges);
-        for (auto it = cache.entries.begin(); it != cache.entries.end();) {
-            // Compare the hash before taking a strong reference: locking a non-matching entry's
-            // buffer could make this thread its last owner (a concurrent reap releasing it) and
-            // run the pool release under the cache mutex; expired() takes no reference.
-            if (it->hash != hash) {
-                if (it->buffer.expired()) {
-                    it = cache.entries.erase(it);
-                } else {
-                    ++it;
-                }
-                continue;
-            }
-            auto shared = it->buffer.lock();
-            if (shared == nullptr) {
-                // Every build that owned the table is gone, and its buffer with it.
-                it = cache.entries.erase(it);
-                continue;
-            }
-            if (it->pageTable == pageTable && sameRanges(it->ranges, ranges) && sameElements(it->grants, grants)) {
-                ++cache.hits;
-                // An equal table of an earlier space (a rebuild that mapped the same ranges the
-                // same way): the next build of this space binds it by the serial.
-                if (serial != 0) it->spaceSerial = serial;
-                table = std::move(shared);
-                cache.entries.splice(cache.entries.begin(), cache.entries, it);
-                return;
-            }
-            ++it;
-        }
-    }
-    for (const auto& range : ranges) Require((range.permissions & ShaderRecompiler::BdaAbi::Write) == 0 || range.end <= ShaderRecompiler::BdaAbi::WrittenAddressLimit, "a writable BDA range ends past the addresses the written-page record can hold");
-    for (const auto& grant : grants) Require(grant.end <= ShaderRecompiler::BdaAbi::WrittenAddressLimit, "a BDA write grant ends past the addresses the written-page record can hold");
-    ValidateBdaRangeList(ranges);
-    ValidateBdaGrants(grants);
-    table = std::make_shared<Buffer>(context, tableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const ShaderRecompiler::BdaAbi::Header header{ShaderRecompiler::BdaAbi::TableVersion, static_cast<std::uint32_t>(ranges.size()), static_cast<std::uint32_t>(grants.size()), 0, pageTable, 0};
-    std::memcpy(table->Bytes().data(), &header, sizeof(header));
-    if (!ranges.empty()) std::memcpy(table->Bytes().data() + sizeof(header), ranges.data(), ranges.size() * sizeof(ranges.front()));
-    if (!grants.empty()) std::memcpy(table->Bytes().data() + sizeof(header) + ranges.size() * sizeof(ranges.front()), grants.data(), grants.size() * sizeof(grants.front()));
-    if (tableCacheEnabled()) {
-        std::lock_guard lock(cache.mutex);
-        ++cache.misses;
-        if (cache.device != context.device) {
-            cache.entries.clear();
-            cache.device = context.device;
-        }
-        cache.entries.push_front({hash, cached.has_value() ? ranges : std::move(built), grants, table, serial, pageTable});
-        while (cache.entries.size() > tableCacheEntries()) cache.entries.pop_back();
-    }
-}
-
-BdaResources::TableCacheStats BdaResources::TableCacheCounters() {
-    auto& cache = Tables();
-    std::lock_guard lock(cache.mutex);
-    auto stats = cache.classes;
-    stats.hits = cache.hits;
-    stats.misses = cache.misses;
-    stats.held = cache.entries.size();
-    return stats;
+    Require(ownRanges.size() <= std::numeric_limits<std::uint32_t>::max() && writeGrants.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
+    tableBytes = sizeof(Abi::Header) + ownRanges.size() * sizeof(Abi::Range) + writeGrants.size() * sizeof(Abi::Grant);
+    Require(tableBytes <= context.limits.maxStorageBufferRange, "BDA descriptors exceed storage buffer range limit");
+    for (const auto& range : ownRanges) Require((range.permissions & Abi::Write) == 0 || range.end <= Abi::WrittenAddressLimit, "a writable BDA range ends past the addresses the written-page record can hold");
+    for (const auto& grant : writeGrants) Require(grant.end <= Abi::WrittenAddressLimit, "a BDA write grant ends past the addresses the written-page record can hold");
+    ValidateBdaRangeList(ownRanges);
+    ValidateBdaGrants(writeGrants);
+    table = std::make_unique<Buffer>(context, tableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Abi::Header header{Abi::TableVersion, static_cast<std::uint32_t>(ownRanges.size()), static_cast<std::uint32_t>(writeGrants.size()), 0, pages != nullptr ? pages->Address() : 0u, 0};
+    auto* bytes = table->Bytes().data();
+    std::memcpy(bytes, &header, sizeof(header));
+    if (!ownRanges.empty()) std::memcpy(bytes + sizeof(header), ownRanges.data(), ownRanges.size() * sizeof(Abi::Range));
+    if (!writeGrants.empty()) std::memcpy(bytes + sizeof(header) + ownRanges.size() * sizeof(Abi::Range), writeGrants.data(), writeGrants.size() * sizeof(Abi::Grant));
 }
 
 VkDescriptorBufferInfo BdaResources::Table() const {
@@ -313,16 +117,12 @@ void BdaResources::CheckFault() const {
     }
     message << "BDA access failed: address=0x" << std::hex << report.address << " instruction=0x" << report.instruction << std::dec << " bytes=" << report.bytes << " stage=" << report.stage << " reason=" << static_cast<std::uint32_t>(report.reason);
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Permission && table != nullptr) {
-        const auto bytes = table->Bytes();
-        ShaderRecompiler::BdaAbi::Header header{};
-        std::memcpy(&header, bytes.data(), sizeof(header));
-        for (std::uint32_t index = 0; index < header.count; ++index) {
-            ShaderRecompiler::BdaAbi::Range range{};
-            std::memcpy(&range, bytes.data() + sizeof(header) + index * sizeof(range), sizeof(range));
-            if (report.address < range.begin || report.address >= range.end) continue;
-            message << std::hex << "; the store hit 0x" << range.begin << "+0x" << range.end - range.begin << ", read-only in the BDA table: stores through GPU-selected descriptors and FLAT/GLOBAL addresses reach only writable ranges imported in place, not ones served by a mirror or a copy (past APS5_HOST_IMPORT_MIB, or refused by the driver)";
-            break;
+        auto range = pages != nullptr ? pages->Find(report.address) : std::nullopt;
+        if (!range.has_value()) {
+            const auto found = std::upper_bound(ownRanges.begin(), ownRanges.end(), report.address, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& candidate) { return value < candidate.begin; });
+            if (found != ownRanges.begin() && report.address < std::prev(found)->end) range = *std::prev(found);
         }
+        if (range.has_value()) message << std::hex << "; the store hit 0x" << range->begin << "+0x" << range->end - range->begin << ", read-only in the BDA table: stores through GPU-selected descriptors and FLAT/GLOBAL addresses reach only writable ranges imported in place, not ones served by a mirror or a copy (past APS5_HOST_IMPORT_MIB, or refused by the driver)";
         message << std::dec << "; this dispatch's write grants: " << writeGrants.size() << std::hex;
         for (std::size_t index = 0; index < writeGrants.size() && index < 8u; ++index) message << " 0x" << writeGrants[index].begin << "-0x" << writeGrants[index].end;
     }

@@ -92,7 +92,6 @@ struct GuestBufferMemory::AddressSpace {
     std::uint64_t generation = 0;
     std::uint64_t importsEpoch = 0;
     VkDevice device = VK_NULL_HANDLE;
-    // Identity for the life of this space (see CachedAddressTable).
     std::uint64_t serial = 0;
     GuestAllocations::Lease lease;
     std::vector<Region> base;
@@ -1097,7 +1096,7 @@ struct AddressBuildTotals {
     std::uint64_t builds = 0;
     AddressBuildTiming sums;
     double snapshotsUs = 0;
-    BdaResources::TableCacheStats tableSeen;
+    BdaPageTable::Counts tableSeen;
     AddressSpaceStats spaceSeen;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
@@ -1898,16 +1897,12 @@ void CountLeaseOutcome(bool synced, std::uint64_t batchSerial) {
     std::lock_guard lock(state.mutex);
     ++(synced ? state.stats.synced : state.stats.deferred);
     if (!profile) return;
-    // APS5_PROFILE_DRAW: the leases (dispatches and draws) deferred and synced, the guest's
-    // pin-contention waits and the BDA table cache, every 10 s (cumulative counts, like the
-    // [recorder] line's), printed by whichever path counts a lease.
     const auto now = std::chrono::steady_clock::now();
     if (now - state.lastReport < std::chrono::seconds(10)) return;
     state.lastReport = now;
     const auto& stats = state.stats;
-    const auto table = BdaResources::TableCacheCounters();
     const auto& snapshots = Snapshots();
-    AgcDriver::ProfilePrint_nid_no_patch("[address-sync] leases: %llu released at completion, %llu synced at once; %llu pin-contention waits by guest threads (%llu finished the lease batch, %llu drained the recorder, %llu cache-only drops) %.1f s; BDA table cache %llu hits / %llu misses (%zu tables held); snapshot compares: %llu skipped (live-backed region), %llu made\n", static_cast<unsigned long long>(stats.deferred), static_cast<unsigned long long>(stats.synced), static_cast<unsigned long long>(stats.contentionWaits), static_cast<unsigned long long>(stats.contentionSyncs), static_cast<unsigned long long>(stats.contentionDrains), static_cast<unsigned long long>(stats.cacheDrops), stats.contentionMs / 1000, static_cast<unsigned long long>(table.hits), static_cast<unsigned long long>(table.misses), table.held, static_cast<unsigned long long>(snapshots.skipped.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshots.checked.load(std::memory_order_relaxed)));
+    AgcDriver::ProfilePrint_nid_no_patch("[address-sync] leases: %llu released at completion, %llu synced at once; %llu pin-contention waits by guest threads (%llu finished the lease batch, %llu drained the recorder, %llu cache-only drops) %.1f s; snapshot compares: %llu skipped (live-backed region), %llu made\n", static_cast<unsigned long long>(stats.deferred), static_cast<unsigned long long>(stats.synced), static_cast<unsigned long long>(stats.contentionWaits), static_cast<unsigned long long>(stats.contentionSyncs), static_cast<unsigned long long>(stats.contentionDrains), static_cast<unsigned long long>(stats.cacheDrops), stats.contentionMs / 1000, static_cast<unsigned long long>(snapshots.skipped.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshots.checked.load(std::memory_order_relaxed)));
 }
 
 LeaseStats LeaseCounters() {
@@ -2269,12 +2264,12 @@ void GuestBufferMemory::CountAddressBuild(double snapshotsUs) {
     if (now - totals.lastReport < std::chrono::seconds(10)) return;
     totals.lastReport = now;
     const auto per = [&](double us) { return us / static_cast<double>(totals.builds); };
-    const auto table = BdaResources::TableCacheCounters();
+    const auto table = BdaPageTable::Totals();
     const auto& seen = totals.tableSeen;
     const auto delta = [](std::uint64_t now, std::uint64_t before) { return static_cast<unsigned long long>(now - before); };
     const auto space = AddressSpaceCounters();
     const auto& spaceSeen = totals.spaceSeen;
-    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
+    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu%s; [bda-table] page table versions %llu (windows encoded %llu, shared %llu)\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), space.enabled ? "" : " (cache off)", delta(table.tables, seen.tables), delta(table.encodedWindows, seen.encodedWindows), delta(table.sharedWindows, seen.sharedWindows));
     totals.tableSeen = table;
     totals.spaceSeen = space;
     totals.builds = 0;
@@ -3667,18 +3662,32 @@ std::vector<ShaderRecompiler::BdaAbi::Grant> GuestBufferMemory::WriteGrants() co
     return grants;
 }
 
-std::optional<GuestBufferMemory::CachedTable> GuestBufferMemory::CachedAddressTable() const {
-    if (space == nullptr || !regions.empty()) return std::nullopt;
+bool GuestBufferMemory::mappedInPlace(const Region& region) const {
+    return space == nullptr && (region.direct != nullptr || region.mirror != nullptr);
+}
+
+std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::OwnRanges() const {
     Require(uploaded && !committed, "guest GPU address ranges are not available");
-    return CachedTable{space->serial, &space->ranges};
+    std::vector<ShaderRecompiler::BdaAbi::Range> own;
+    for (const auto& region : regions) {
+        if (!mappedInPlace(region)) own.push_back(addressRange(region));
+    }
+    return own;
 }
 
 std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& context) const {
-    if (space == nullptr || space->ranges.empty()) return nullptr;
     Require(uploaded && !committed, "guest GPU address ranges are not available");
-    std::lock_guard lock(space->tableMutex);
-    if (space->pageTable == nullptr) space->pageTable = BdaPageTable::Build(context, space->ranges);
-    return space->pageTable;
+    if (space != nullptr) {
+        if (space->ranges.empty()) return nullptr;
+        std::lock_guard lock(space->tableMutex);
+        if (space->pageTable == nullptr) space->pageTable = BdaPageTable::Build(context, space->ranges);
+        return space->pageTable;
+    }
+    std::vector<ShaderRecompiler::BdaAbi::Range> mapped;
+    for (const auto& region : regions) {
+        if (mappedInPlace(region)) mapped.push_back(addressRange(region));
+    }
+    return mapped.empty() ? nullptr : BdaPageTable::Build(context, mapped);
 }
 
 bool GuestBufferMemory::HasCopiedWrites() const {
