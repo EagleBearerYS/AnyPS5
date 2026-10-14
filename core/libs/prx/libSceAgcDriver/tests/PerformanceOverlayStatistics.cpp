@@ -276,7 +276,7 @@ void layoutTests() {
 
     bool refused = false;
     try {
-        static_cast<void>(AgcDriver::OverlayGlyph('q'));
+        static_cast<void>(AgcDriver::OverlayGlyph('~'));
     } catch (const std::exception&) {
         refused = true;
     }
