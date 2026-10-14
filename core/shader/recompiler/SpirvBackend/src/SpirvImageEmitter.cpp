@@ -721,9 +721,6 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto sint = SintStorageFormat(access.image);
-    if (sint.format != IrBufferFormat::Invalid && mem.dataBits == 16u) {
-        ctx.Fail(access.inst, "stores 16-bit data to an image of a SINT format");
-    }
     std::uint32_t values[4] = {};
     const auto dmask = EffectiveDmask(mem);
     for (std::uint32_t component = 0; component < 4u; component++) {
@@ -740,7 +737,13 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
                 if ((packedIndex & 1u) != 0u) {
                     candidate = Binary(state, spv::OpShiftRightLogical, TypeU32(state), candidate, ConstantU32(state, 16u));
                 }
-                candidate = Binary(state, spv::OpBitwiseAnd, TypeU32(state), candidate, ConstantU32(state, 0xffffu));
+                if (sint.format != IrBufferFormat::Invalid) {
+                    const auto extended = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpBitFieldSExtract, TypeU32(state), extended, candidate, ConstantU32(state, 0u), ConstantU32(state, 16u));
+                    candidate = extended;
+                } else {
+                    candidate = Binary(state, spv::OpBitwiseAnd, TypeU32(state), candidate, ConstantU32(state, 0xffffu));
+                }
             }
             raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidate, raw);
         }

@@ -55,9 +55,15 @@ alignas(256) constexpr std::array<std::uint32_t, 9> LoadCode{
     0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 5> D16Code{0x7e3c0300, 0x7e3e0280, 0xf0201108, 0x8001141e, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 12> D16Code{
+    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0201108, 0x8001141e,
+    0x7e3e0281, 0xf0201308, 0x8001141e, 0xbf810000,
+};
 alignas(256) constexpr std::array<std::uint32_t, 5> PackedCode{0x7e3c0300, 0x7e3e0280, 0xf0281108, 0x0001141e, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 7> AtomicD16Code{0x7e3c0300, 0x7e3e0280, 0xf0441108, 0x0001141e, 0xf0201108, 0x8001141e, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 11> AtomicD16Code{
+    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0441108, 0x0001141e,
+    0xf0201108, 0x8001141e, 0xbf810000,
+};
 alignas(256) constexpr std::array<std::uint32_t, 9> PackedWideCode{0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0281308, 0x0001141e, 0xbf810000};
 alignas(256) constexpr std::array<std::uint32_t, 5> AtomicCode{0x7e3c0300, 0x7e3e0280, 0xf0441108, 0x0001141e, 0xbf810000};
 
@@ -118,11 +124,14 @@ constexpr std::array<Format, 8> Formats{{
 struct Write {
     std::uint32_t row;
     std::uint32_t dmask;
+    bool d16 = false;
 };
 
 constexpr std::array<Write, 2> StoreWrites{{{0u, 0xfu}, {1u, 0x5u}}};
 constexpr std::array<Write, 1> TitleWrites{{{0u, 0x1u}}};
 constexpr std::array<Write, 1> PackedWideWrites{{{0u, 0x3u}}};
+constexpr std::array<Write, 2> D16Writes{{{0u, 0x1u, true}, {1u, 0x3u, true}}};
+constexpr std::array<Write, 1> AtomicD16Writes{{{0u, 0x1u, true}}};
 
 std::string Hex(std::uint32_t value) {
     char text[16];
@@ -174,11 +183,12 @@ std::vector<std::uint8_t> Initial() {
     return bytes;
 }
 
-std::uint32_t StoredComponent(const Format& format, std::uint32_t tid, std::uint32_t dmask, std::uint32_t component) {
+std::uint32_t StoredComponent(const Format& format, std::uint32_t tid, std::uint32_t dmask, std::uint32_t component, bool d16 = false) {
     if (((dmask >> component) & 1u) == 0u) return 0u;
     std::uint32_t index = 0;
     for (std::uint32_t lower = 0; lower < component; ++lower) index += (dmask >> lower) & 1u;
-    return Saturate(Value(tid, index), format.bits);
+    const auto value = d16 ? SignExtend((Value(tid, index / 2u) >> (16u * (index & 1u))) & 0xffffu, 16u) : Value(tid, index);
+    return Saturate(value, format.bits);
 }
 
 std::vector<std::uint8_t> Expected(const Format& format, std::span<const Write> writes) {
@@ -187,7 +197,7 @@ std::vector<std::uint8_t> Expected(const Format& format, std::span<const Write> 
         for (const auto& write : writes) {
             auto* texel = bytes.data() + TexelOffset(format, tid, write.row);
             for (std::uint32_t component = 0; component < format.components; ++component) {
-                const auto value = StoredComponent(format, tid, write.dmask, component);
+                const auto value = StoredComponent(format, tid, write.dmask, component, write.d16);
                 std::memcpy(texel + component * format.bits / 8u, &value, format.bits / 8u);
             }
         }
@@ -297,8 +307,10 @@ int main() {
         }
         Store(*device, texels, TitleCode, Formats[0].format, TitleSwizzle);
         CheckTexels(texels, Formats[0], TitleWrites, "image_store dmask:0x1 glc with DST_SEL X,1,1,1");
-        RequireRefused(*device, texels, D16Code, 12u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 16_SINT");
-        RequireRefused(*device, texels, D16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 32_SINT");
+        for (const auto& format : Formats) {
+            Store(*device, texels, D16Code, format.format, SwizzleOf(format));
+            CheckTexels(texels, format, D16Writes, "image_store d16");
+        }
         RequireRefused(*device, texels, PackedCode, 12u, "storage image descriptor uses an unsupported format", "image_store_pck of 16_SINT");
         RequireRefused(*device, texels, AtomicCode, 12u, "atomic image descriptor uses an unsupported format 12", "image_atomic_add of 16_SINT");
         RequireRefused(*device, texels, StoreCode, 73u, "storage image descriptor uses an unsupported format", "image_store of 32_32_32_SINT");
@@ -306,7 +318,8 @@ int main() {
             Store(*device, texels, PackedWideCode, Formats[index].format, SwizzleOf(Formats[index]));
             CheckTexels(texels, Formats[index], PackedWideWrites, "image_store_pck dmask:0x3");
         }
-        RequireRefused(*device, texels, AtomicD16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of an atomically updated 32_SINT image");
+        Store(*device, texels, AtomicD16Code, Formats[2].format, SwizzleOf(Formats[2]));
+        CheckTexels(texels, Formats[2], AtomicD16Writes, "image_store d16 after image_atomic_add");
         std::puts("image store sint tests passed");
         return 0;
     } catch (const std::exception& error) {
