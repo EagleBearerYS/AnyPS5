@@ -33,8 +33,8 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
     Io::WriteU32(result, optionalOffset + 60, LoadRva);
     Io::WriteU16(result, optionalOffset + 68, windowsGui ? 2 : 3);
     Io::WriteU16(result, optionalOffset + 70, directories[5].Size == 0 ? 0x100 : 0x140);
-    Io::WriteU64(result, optionalOffset + 72, 0x210000);
-    Io::WriteU64(result, optionalOffset + 80, 0x200000);
+    Io::WriteU64(result, optionalOffset + 72, MainThreadStackReserve);
+    Io::WriteU64(result, optionalOffset + 80, ThreadStackCommit);
     Io::WriteU64(result, optionalOffset + 88, 0x100000);
     Io::WriteU64(result, optionalOffset + 96, 0x1000);
     Io::WriteU32(result, optionalOffset + 108, static_cast<std::uint32_t>(directories.size()));

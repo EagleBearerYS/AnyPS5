@@ -15,6 +15,9 @@ inline constexpr std::uint64_t ImageBase = 0x140000000;
 inline constexpr std::uint32_t SectionRead = 0x40000000;
 inline constexpr std::uint32_t SectionWrite = 0x80000000;
 inline constexpr std::uint32_t SectionExecute = 0x20000000;
+inline constexpr std::uint64_t MainThreadStackReserve = 0x210000;
+inline constexpr std::uint32_t MainThreadGuestStack = 0x200000;
+inline constexpr std::uint64_t ThreadStackCommit = 0x1000;
 
 struct PeSection {
     std::string Name;

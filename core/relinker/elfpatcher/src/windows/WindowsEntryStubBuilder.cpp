@@ -14,6 +14,7 @@ namespace Elfpatcher::Windows {
 
 namespace {
 
+constexpr std::uint32_t PageBytes = 0x1000;
 constexpr std::uint32_t PathCapacity = 32768;
 constexpr std::uint32_t ErrorMessageCapacity = 32768;
 constexpr std::uint32_t ArgumentCapacity = 32768;
@@ -236,6 +237,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     errors.push_back("FAIL: cannot make the executable directory the current directory\n");
     const auto traceError = errors.size();
     errors.push_back("FAIL: libc.prx does not export TraceImport_nid_no_patch\n");
+    const auto stackError = errors.size();
+    errors.push_back("FAIL: cannot commit the main thread stack\n");
     std::vector<std::uint32_t> errorRvas;
     for (const auto& error : errors)
         errorRvas.push_back(addString(error));
@@ -394,6 +397,31 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     };
 
     code.Emit({0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x48, 0x83, 0xec, 0x60});
+    const auto stackBaseMinus = [&](const std::uint32_t bytes) {
+        code.Emit({0x65, 0x48, 0x8b, 0x0c, 0x25, 0x08, 0, 0, 0, 0x48, 0x81, 0xe9});
+        code.U32(bytes);
+    };
+    stackBaseMinus(MainThreadGuestStack);
+    code.Emit({0xba});
+    code.U32(MainThreadGuestStack);
+    code.Emit({0x41, 0xb8, 0, 0x10, 0, 0, 0x41, 0xb9, 4, 0, 0, 0});
+    call("VirtualAlloc");
+    requireNonzero(stackError, 0xc0000017u);
+    stackBaseMinus(MainThreadGuestStack);
+    code.Emit({0xba});
+    code.U32(MainThreadGuestStack);
+    code.Emit({0x41, 0xb8, 4, 0, 0, 0, 0x4c, 0x8d, 0x4c, 0x24, 0x58});
+    call("VirtualProtect");
+    requireNonzero(stackError, 0xc0000017u);
+    stackBaseMinus(MainThreadGuestStack + PageBytes);
+    code.Emit({0xba});
+    code.U32(PageBytes);
+    code.Emit({0x41, 0xb8, 0, 0x10, 0, 0, 0x41, 0xb9, 4, 1, 0, 0});
+    call("VirtualAlloc");
+    requireNonzero(stackError, 0xc0000017u);
+    code.Emit({0x65, 0x48, 0x8b, 0x04, 0x25, 0x08, 0, 0, 0, 0x48, 0x2d});
+    code.U32(MainThreadGuestStack);
+    code.Emit({0x65, 0x48, 0x89, 0x04, 0x25, 0x10, 0, 0, 0});
     code.Emit({0x31, 0xc9});
     code.Rip({0x48, 0x8d, 0x15}, programPath);
     code.Emit({0x41, 0xb8});
