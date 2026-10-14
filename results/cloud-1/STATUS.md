@@ -1,21 +1,23 @@
-BUSY GAC-007 (claimed 2026-10-14T23:16:59Z)
+READY
 RESULT:
-- GAC-007 Part A is done, in results/cloud-1/GAC-007.md. Parts B and C are in progress.
-  - Merge a5c72131df = upstream 6239ceffc8 + fork 7ae42fd181. It builds with CI's flags.
-  - `^agc`: 571 tests, 0 failed, 41 skipped (all expected).
-  - The three expand tests passed 10 of 10 each.
-  - Full suite: 6 of 1220 failed. Plain 6239ceffc8 fails the same 6 of 1218 (agc_driver_preparation_scope_settle, the four guest_datagram tests, guest_tcp), so none comes from the merge.
-- Last task: GAC-006 (depth expand reads of a non-imported write base: not reproduced at e1a94e7735 in 11 variants; green coverage test on fix/agc-db-depth-expand-noimport at 984604118; separate abort found for window imports inside heap-mirrored ranges), done: results/cloud-1/GAC-006.md. Before it: GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
+- Last task: GAC-007, done: results/cloud-1/GAC-007.md.
+  - Part A: merge a5c72131df (upstream 6239ceffc8 + fork 7ae42fd181) builds with CI's flags. `^agc` has 571 tests, 0 failed, 41 skipped (all expected). The three expand tests passed 10 of 10 each. The full suite fails 6 of 1220, the same 6 that fail on plain 6239ceffc8.
+  - Part B: red at 7ae42fd181, fixed on fork branch fix/agc-db-depth-expand-partial-import, head 4eb20800d8.
+    - The red is a plane across the edge of two registered ranges imported apart (or one imported, one mirrored or copied): copies hold 0 or 3072 of 15360 texels. Window imports of one range over 64 MiB are green in every variant, apart from GAC-006's unwatch-mode aborts.
+    - The fix (681fcee86e) stores a plane when any import overlaps it. The new cases hold 15360 of 15360.
+    - `^agc` at the head: 558 tests, 1 known flake, 40 skipped. Conventions pass.
+  - Part C: #5851's section alias does not hide the import from `StoreDepthExpandWrites`. Imports are matched by guest address, so the store and the build use the same import. The ranking puts the Part B range edge first.
+- Before it: GAC-006, GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
   - /home/user/AnyPS5/build at upstream a453108cf7
-  - /home/user/trees/prm-003/build at prm-003 de032afb91
+  - /home/user/trees/prm-003/build at upstream 6239ceffc8, detached (the prm-003 branch de032afb91 is kept)
   - /home/user/trees/{B,C,D}/build-{B,C,D}
   - /home/user/trees/fsr/build at feat/agc-fsr1-presentation-upscaling fea68147a (the old submodule head stays as local branch pm004-submodule-245f786b0)
   - /home/user/trees/overlay/build at feat/videoout-overlay-more-stats ce8e338cf
   - /home/user/trees/depth-alias/build at test/depth-alias-red b3c988d36 (upstream bebff8b0e plus the test)
-  - /home/user/trees/expand/build at fix/agc-db-depth-expand-noimport 984604118 (e1a94e7735 plus one test commit; fix/agc-db-depth-expand-pr fdf07837b4 is a local branch there too)
+  - /home/user/trees/expand/build at fix/agc-db-depth-expand-partial-import 4eb20800d8 (7ae42fd181 plus three commits; fix/agc-db-depth-expand-noimport 984604118 and fix/agc-db-depth-expand-pr fdf07837b4 are local branches there too)
   - /home/user/trees/trophy/build at feat/np-trophy-stats 954118b81 (PM-016's d04a01659 on upstream f785b88a6, plus five commits)
-  - /home/user/trees/perdraw/build at test/agc-image-mirror-epoch-compare ce6959aba (upstream 153d5d469 plus three commits)
+  - /home/user/trees/perdraw/build at gac007-merge a5c72131df (local only: upstream 6239ceffc8 merged with fork 7ae42fd181; test/agc-image-mirror-epoch-compare ce6959aba is a local branch there too)
   - one shared ccache
 - Machine: host vm, Intel Xeon Processor @ 2.10 GHz since the VM restarted at 15:19 UTC today (2.80 GHz before), 4 cores (no SMT, AVX2/AVX-512), 15.7 GiB RAM, no swap, about 9 GB disk free. Ubuntu 24.04.5, kernel 6.18 booted with ipv6.disable=1 and without udmabuf.
 - Toolchain: gcc/g++ 13.3.0, binutils 2.42, glibc 2.39, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1, Python 3.13.16, git 2.43.0, lavapipe from mesa-vulkan-drivers 25.2.8 (LLVM 20.1.2), libvulkan1 1.3.275, vulkan-validationlayers 1.3.275 (installed for PM-004), Xvfb 21.1.12 (VideoOut tests run under it with SDL_VIDEODRIVER=x11).
@@ -23,7 +25,7 @@ RESULT:
 - Tests run as an unprivileged user, as on CI; as root, permission tests behave differently.
 - Full-suite baseline on upstream main (1110 tests at setup, 1170 at a453108cf7, 1174 at e34c47921):
   - 5 failures from IPv6 being off: guest_datagram_recv, guest_datagram_recvfrom, guest_datagram_sceNetRecv, guest_datagram_sceNetRecvfrom, guest_tcp
-  - guest_sce_net skipped (IPv6 checks)
+  - guest_sce_net skipped (IPv6 checks), which `tools/check_skips.py` reports as unexpected
   - guest_avplayer intermittent, 1 failure in 3 full runs ("enable video failed")
   - agc_driver_preparation_scope_settle intermittent in full parallel runs (passes alone)
   - guest_user_service fails on trees based on upstream f785b88a6 (event-polling checks from 741b34e45, reverted upstream in fad72c5ef)
