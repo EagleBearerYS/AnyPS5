@@ -96,8 +96,14 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         std::vector<Domain::ProgramHeader> codeSegments;
         for (const auto& header : Relinker::ElfReader(sourceBytes).ReadProgramHeaders()) if (header.Type == 1 && (header.Flags & 1) != 0) codeSegments.push_back(header);
         Codegen::RedZoneFrameReport report;
-        auto framed = Codegen::FrameRedZoneFunctions(sourceBytes, codeSegments, trampolines, report);
-        { std::ostringstream message; message << "Red-zone framing: " << report.Functions << " functions, " << report.RedZoneFunctions << " leaf functions keep values below RSP, " << report.Framed << " framed (" << report.Exits << " exits)\n"; inputProgress.Message(message.str()); }
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        auto framed = Codegen::FrameRedZoneFunctions(sourceBytes, codeSegments, trampolines, report, displacements);
+        for (const auto& moved : displacements) {
+            if (moved.Offset > sourceBytes.size() || moved.Bytes.size() > sourceBytes.size() - moved.Offset)
+                throw Domain::RelinkerException("Red-zone displacement exceeds source image", moved.Offset);
+            std::copy(moved.Bytes.begin(), moved.Bytes.end(), sourceBytes.begin() + static_cast<std::ptrdiff_t>(moved.Offset));
+        }
+        { std::ostringstream message; message << "Red-zone framing: " << report.Functions << " functions, " << report.RedZoneFunctions << " leaf functions keep values below RSP, " << report.Framed << " framed (" << report.FramedWithoutFramePointer << " without a frame pointer, " << report.MovedOperands << " rsp operands moved; " << report.Exits << " exits)\n"; inputProgress.Message(message.str()); }
         for (const auto& [reason, count] : report.Skipped) { std::ostringstream message; message << "Red-zone framing: skipped " << count << ": " << reason << '\n'; inputProgress.Message(message.str()); }
         trampolines.insert(trampolines.end(), std::make_move_iterator(framed.begin()), std::make_move_iterator(framed.end()));
     }

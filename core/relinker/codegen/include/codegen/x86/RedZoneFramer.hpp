@@ -15,15 +15,23 @@ struct RedZoneFrameReport {
     std::size_t Functions = 0;
     std::size_t RedZoneFunctions = 0;
     std::size_t Framed = 0;
+    std::size_t FramedWithoutFramePointer = 0;
     std::size_t Exits = 0;
+    std::size_t MovedOperands = 0;
     std::map<std::string, std::size_t> Skipped;
+};
+
+struct RedZoneDisplacement {
+    Domain::FileByteOffset Offset;
+    std::vector<std::uint8_t> Bytes;
 };
 
 std::vector<TrampolineSite> FrameRedZoneFunctions(
     const std::vector<std::uint8_t>& fileBytes,
     const std::vector<Domain::ProgramHeader>& codeSegments,
     const std::vector<TrampolineSite>& existing,
-    RedZoneFrameReport& report
+    RedZoneFrameReport& report,
+    std::vector<RedZoneDisplacement>& displacements
 );
 
 }
