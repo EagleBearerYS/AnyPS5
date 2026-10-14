@@ -184,22 +184,18 @@ void EmitIfCondition(SpirvEmitterState& state, std::uint32_t condition, TFunctio
 
 template<typename TFunction>
 std::uint32_t EmitValueOrDefaultIfCondition(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t type, std::uint32_t defaultValue, TFunction&& function) {
+    const auto header = state.currentLabel;
     const auto thenLabel = state.module.AllocateId();
-    const auto thenExit = state.module.AllocateId();
-    const auto elseLabel = state.module.AllocateId();
     const auto mergeLabel = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
-    state.module.AddFunction(spv::OpBranchConditional, condition, thenLabel, elseLabel);
+    state.module.AddFunction(spv::OpBranchConditional, condition, thenLabel, mergeLabel);
     EmitLabel(state, thenLabel);
     const auto thenValue = function();
-    state.module.AddFunction(spv::OpBranch, thenExit);
-    EmitLabel(state, thenExit);
-    state.module.AddFunction(spv::OpBranch, mergeLabel);
-    EmitLabel(state, elseLabel);
+    const auto thenExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, mergeLabel);
     EmitLabel(state, mergeLabel);
     const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpPhi, type, value, thenValue, thenExit, defaultValue, elseLabel);
+    state.module.AddFunction(spv::OpPhi, type, value, thenValue, thenExit, defaultValue, header);
     return value;
 }
 
