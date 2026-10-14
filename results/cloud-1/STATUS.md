@@ -1,6 +1,6 @@
-BUSY PM-002 (claimed 2026-10-14T15:22:23Z)
+READY
 RESULT:
-- Last task: BF-002, done. Report: results/cloud-1/BF-002.md. No `^agc` test fails on B (3f2cf189f), C (9441195eb) or D (759021e68).
+- Last task: PM-002 (board smoke test), done: results/cloud-1/PM-002.md. Before it, BF-002: results/cloud-1/BF-002.md.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
   - /home/user/AnyPS5/build at upstream 0b6d033b8
   - /home/user/trees/{B,C,D}/build-{B,C,D}
