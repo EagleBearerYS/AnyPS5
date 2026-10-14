@@ -285,8 +285,107 @@ void testFoldingLeavesNoDeadBlocksOrConstants() {
     checkFoldedSwitch(foldedSwitchModule(32u, {15u, 16u, 1u}), 32u, "the OpTypeInt width and the LocalSize literals equal the dead ids");
 }
 
+std::vector<std::uint32_t> internedConstantsModule(std::uint32_t selector) {
+    const auto op = [](std::uint32_t count, spv::Op code) { return (count << 16u) | static_cast<std::uint32_t>(code); };
+    return {
+        spv::MagicNumber, 0x00010300u, 0u, 50u, 0u,
+        op(2, spv::OpCapability), spv::CapabilityShader,
+        op(3, spv::OpMemoryModel), spv::AddressingModelLogical, spv::MemoryModelGLSL450,
+        op(5, spv::OpEntryPoint), spv::ExecutionModelGLCompute, 30u, 0x6e69616du, 0u,
+        op(6, spv::OpExecutionMode), 30u, spv::ExecutionModeLocalSize, 1u, 1u, 1u,
+        op(3, spv::OpDecorate), 13u, spv::DecorationRelaxedPrecision,
+        op(2, spv::OpTypeVoid), 1u,
+        op(4, spv::OpTypeInt), 2u, 32u, 0u,
+        op(4, spv::OpTypeInt), 3u, 32u, 1u,
+        op(2, spv::OpTypeBool), 4u,
+        op(4, spv::OpTypePointer), 5u, spv::StorageClassPrivate, 2u,
+        op(4, spv::OpTypePointer), 6u, spv::StorageClassPrivate, 3u,
+        op(4, spv::OpTypePointer), 7u, spv::StorageClassPrivate, 4u,
+        op(3, spv::OpTypeFunction), 8u, 1u,
+        op(4, spv::OpConstant), 2u, 9u, 1u,
+        op(4, spv::OpConstant), 2u, 10u, 2u,
+        op(4, spv::OpConstant), 2u, 11u, 3u,
+        op(4, spv::OpConstant), 3u, 12u, 1u,
+        op(4, spv::OpConstant), 2u, 13u, 3u,
+        op(4, spv::OpConstant), 2u, 14u, selector,
+        op(4, spv::OpVariable), 5u, 15u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 5u, 16u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 5u, 17u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 5u, 18u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 6u, 19u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 7u, 20u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 7u, 21u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 5u, 22u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 5u, 23u, spv::StorageClassPrivate,
+        op(4, spv::OpVariable), 5u, 24u, spv::StorageClassPrivate,
+        op(5, spv::OpFunction), 1u, 30u, 0u, 8u,
+        op(2, spv::OpLabel), 31u,
+        op(4, spv::OpLoad), 2u, 40u, 24u,
+        op(5, spv::OpIAdd), 2u, 41u, 40u, 11u,
+        op(3, spv::OpStore), 24u, 41u,
+        op(5, spv::OpIAdd), 2u, 32u, 9u, 10u,
+        op(5, spv::OpIMul), 2u, 33u, 11u, 9u,
+        op(5, spv::OpISub), 2u, 34u, 11u, 10u,
+        op(5, spv::OpIAdd), 2u, 35u, 10u, 10u,
+        op(5, spv::OpShiftLeftLogical), 2u, 36u, 9u, 10u,
+        op(5, spv::OpIMul), 3u, 37u, 12u, 12u,
+        op(5, spv::OpULessThan), 4u, 38u, 9u, 10u,
+        op(5, spv::OpIEqual), 4u, 39u, 14u, 14u,
+        op(3, spv::OpStore), 15u, 32u,
+        op(3, spv::OpStore), 16u, 33u,
+        op(3, spv::OpStore), 17u, 34u,
+        op(3, spv::OpStore), 18u, 35u,
+        op(3, spv::OpStore), 22u, 36u,
+        op(3, spv::OpStore), 19u, 37u,
+        op(3, spv::OpStore), 20u, 38u,
+        op(3, spv::OpStore), 21u, 39u,
+        op(3, spv::OpStore), 23u, 13u,
+        op(1, spv::OpReturn),
+        op(1, spv::OpFunctionEnd),
+    };
+}
+
+void testFoldedValuesShareConstants() {
+    const auto specialized = ShaderRecompiler::SpecializeSpirv(internedConstantsModule(4u));
+    struct Constant {
+        std::uint32_t opcode;
+        std::uint32_t type;
+        std::uint32_t value;
+    };
+    std::map<std::uint32_t, Constant> constants;
+    std::map<std::uint32_t, std::uint32_t> stored;
+    std::set<std::vector<std::uint32_t>> keys;
+    bool shared = true;
+    for (std::size_t cursor = 5; cursor < specialized.size(); cursor += specialized[cursor] >> 16u) {
+        if ((specialized[cursor] >> 16u) == 0u) break;
+        const auto opcode = specialized[cursor] & 0xffffu;
+        if (opcode == spv::OpConstant || opcode == spv::OpConstantTrue || opcode == spv::OpConstantFalse) {
+            const auto value = opcode == spv::OpConstant ? specialized[cursor + 3u] : 0u;
+            constants.emplace(specialized[cursor + 2u], Constant{opcode, specialized[cursor + 1u], value});
+            if (specialized[cursor + 2u] != 13u) shared &= keys.insert({opcode, specialized[cursor + 1u], value}).second;
+        }
+        if (opcode == spv::OpStore) stored[specialized[cursor + 1u]] = specialized[cursor + 2u];
+    }
+    const auto holds = [&](std::uint32_t variable, std::uint32_t opcode, std::uint32_t type, std::uint32_t value) {
+        const auto id = stored.find(variable);
+        const auto constant = id == stored.end() ? constants.end() : constants.find(id->second);
+        return constant != constants.end() && constant->second.opcode == opcode && constant->second.type == type && constant->second.value == value;
+    };
+    check(shared, "a folded value declared another constant of a type and value the module already has");
+    check(constants.size() == 6u, "the specialized module does not declare exactly one constant per type and value");
+    check(holds(15u, spv::OpConstant, 2u, 3u) && holds(16u, spv::OpConstant, 2u, 3u) && holds(17u, spv::OpConstant, 2u, 1u), "a store lost the folded value it writes");
+    check(stored.at(15u) == 11u && stored.at(16u) == 11u, "a folded value did not reuse the module constant of its type and value");
+    check(holds(18u, spv::OpConstant, 2u, 4u) && holds(22u, spv::OpConstant, 2u, 4u) && stored.at(18u) == stored.at(22u), "two folds of one new value did not share its constant");
+    check(holds(19u, spv::OpConstant, 3u, 1u), "a signed folded value shares a constant of the unsigned type");
+    check(holds(20u, spv::OpConstantTrue, 4u, 0u) && holds(21u, spv::OpConstantTrue, 4u, 0u), "a folded comparison lost its value");
+    check(stored.at(23u) == 13u, "a store of a decorated constant was moved to an undecorated one");
+    check(specialized == ShaderRecompiler::SpecializeSpirv(internedConstantsModule(5u)), "variants that differ only in a constant the folding consumes specialized to different SPIR-V");
+    check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "constant interning is not stable");
+}
+
 int main() {
     testFoldingLeavesNoDeadBlocksOrConstants();
+    testFoldedValuesShareConstants();
     testStructExtractsAreNotShuffled();
     testRepeatedTypesShareOneId();
     testOperandShapesDoNotCollide();

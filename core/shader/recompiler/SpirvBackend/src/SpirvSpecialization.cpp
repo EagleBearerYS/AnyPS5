@@ -462,6 +462,7 @@ public:
         removeDeadComputations();
         removeUnreachableBlocks();
         removeUnusedConstants();
+        internConstants();
         orderPhis();
         std::vector<std::uint32_t> words = header;
         bool inserted = false;
@@ -732,6 +733,12 @@ private:
 
     std::set<std::uint32_t> referencedIds() const {
         std::set<std::uint32_t> referenced;
+        visitReferences([&](std::uint32_t id) { referenced.insert(id); });
+        return referenced;
+    }
+
+    template<typename TVisitor>
+    void visitReferences(const TVisitor& visit) const {
         for (const auto& instruction : instructions) {
             if (instruction.empty()) continue;
             std::uint32_t switchLiteralWords = 1u;
@@ -739,9 +746,8 @@ private:
                 const auto selectorType = resultTypes.find(instruction[1]);
                 if (selectorType != resultTypes.end() && types.contains(selectorType->second) && types.at(selectorType->second).width == 64u) switchLiteralWords = 2u;
             }
-            VisitIdOperands(instruction, switchLiteralWords, [&](std::size_t index) { referenced.insert(instruction[index]); });
+            VisitIdOperands(instruction, switchLiteralWords, [&](std::size_t index) { visit(instruction[index]); });
         }
-        return referenced;
     }
 
     void removeUnreachableBlocks() {
@@ -788,6 +794,59 @@ private:
                 instruction.clear();
                 changed = true;
             }
+        }
+    }
+
+    void internConstants() {
+        std::set<std::uint32_t> decorated;
+        for (const auto& instruction : instructions) {
+            const auto op = Opcode(instruction);
+            if ((op == spv::OpDecorate || op == spv::OpDecorateId || op == spv::OpDecorateString) && instruction.size() > 1u) decorated.insert(instruction[1]);
+            if (op == spv::OpGroupDecorate && instruction.size() > 2u) decorated.insert(instruction.begin() + 2, instruction.end());
+        }
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> interned;
+        std::vector<std::uint32_t> shared(header.at(3), 0u);
+        bool repeated = false;
+        const auto intern = [&](const Instruction& constant) {
+            const auto op = Opcode(constant);
+            if (op != spv::OpConstant && op != spv::OpConstantTrue && op != spv::OpConstantFalse) return;
+            const auto known = values.find(Result(constant));
+            if (known == values.end() || decorated.contains(known->first)) return;
+            const auto [found, inserted] = interned.try_emplace({constant.at(1), known->second}, known->first);
+            if (inserted) return;
+            shared.at(known->first) = found->second;
+            repeated = true;
+        };
+        for (const auto& instruction : instructions) {
+            if (Opcode(instruction) == spv::OpFunction) break;
+            intern(instruction);
+        }
+        for (const auto& constant : constants) intern(constant);
+        if (!repeated) return;
+        bool function = false;
+        for (auto& instruction : instructions) {
+            const auto op = Opcode(instruction);
+            if (op == spv::OpFunction) function = true;
+            if (op == spv::OpFunctionEnd) function = false;
+            if (!function) continue;
+            VisitInputs(instruction, [&](std::size_t index) {
+                if (instruction[index] < shared.size() && shared[instruction[index]] != 0u) instruction[index] = shared[instruction[index]];
+            });
+        }
+        std::vector<bool> used(shared.size());
+        visitReferences([&](std::uint32_t id) {
+            if (id < used.size()) used[id] = true;
+        });
+        const auto unused = [&](const Instruction& constant) {
+            const auto id = Result(constant);
+            if (id >= shared.size() || shared[id] == 0u || used[id]) return false;
+            removed.insert(id);
+            return true;
+        };
+        std::erase_if(constants, unused);
+        for (auto& instruction : instructions) {
+            if (Opcode(instruction) == spv::OpFunction) break;
+            if (unused(instruction)) instruction.clear();
         }
     }
 
