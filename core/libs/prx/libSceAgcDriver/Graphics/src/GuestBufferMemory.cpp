@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -1410,9 +1411,13 @@ void syncRange(std::uint64_t address, std::uint64_t bytes) {
     // recorded work notes a write inside the range (a descriptor written inside a writable exe
     // range; the lease itself maps the range read-only). The access is the whole range.
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::MirrorRefresh);
-    GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
+    {
+        AgcDriver::TracyZone zone{"Mirrors.FlushGpuWrites"};
+        GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
+    }
     auto& state = Mirrors();
     if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(address, static_cast<std::size_t>(bytes))) {
+        AgcDriver::TracyZone zone{"Mirrors.SyncPendingWrite"};
         Recorder::CountSync(4);
         ++state.syncs;
         recorder->Sync();
@@ -1444,6 +1449,7 @@ void appendBlocks(std::vector<RefreshBlock>& blocks, ImageMirror& mirror, std::u
 // Compares the gathered blocks (of one or many mirrors) and counts them.
 void compareBlocks(std::span<const RefreshBlock> blocks) {
     if (blocks.empty()) return;
+    AgcDriver::TracyZone zone{"Mirrors.CompareBlocks"};
     const auto copied = RefreshPool::Get().Run(blocks);
     auto& state = Mirrors();
     state.blocksCompared += blocks.size();
@@ -1481,6 +1487,7 @@ void appendChangedBlocks(std::span<ImageMirror* const> mirrors, std::uint64_t ge
 }
 
 void refreshHeapMirrors(std::vector<ImageMirror*>& mirrors, std::vector<RefreshBlock>& blocks) {
+    AgcDriver::TracyZone zone{"Mirrors.RefreshHeapMirrors"};
     std::sort(mirrors.begin(), mirrors.end(), [](const ImageMirror* left, const ImageMirror* right) { return left->base < right->base; });
     for (std::size_t first = 0; first < mirrors.size();) {
         auto last = first + 1;
@@ -1488,8 +1495,13 @@ void refreshHeapMirrors(std::vector<ImageMirror*>& mirrors, std::vector<RefreshB
         const auto begin = mirrors[first]->base;
         const auto bytes = mirrors[last - 1]->base + mirrors[last - 1]->bytes - begin;
         prepareRange(begin, bytes);
-        const auto generation = GuestMemory::CollectWrites(begin, static_cast<std::size_t>(bytes));
+        std::uint64_t generation = 0;
+        {
+            AgcDriver::TracyZone collect{"Mirrors.CollectWrites"};
+            generation = GuestMemory::CollectWrites(begin, static_cast<std::size_t>(bytes));
+        }
         Require(generation != 0, "a heap mirror's range is no longer write-watched");
+        AgcDriver::TracyZone changed{"Mirrors.ChangedBlocks"};
         appendChangedBlocks(std::span<ImageMirror* const>(mirrors).subspan(first, last - first), generation, blocks);
         first = last;
     }
@@ -1620,14 +1632,20 @@ void planSpaceMirrors(GuestBufferMemory::AddressSpace& space) {
 }
 
 std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBufferMemory::AddressSpace& space, std::vector<RefreshBlock>& blocks) {
+    AgcDriver::TracyZone zone{"Mirrors.RefreshHeapRuns"};
     std::vector<std::pair<std::size_t, std::uint64_t>> checked;
     checked.reserve(space.heapRuns.size());
     for (std::size_t index = 0; index < space.heapRuns.size(); ++index) {
         const auto& run = space.heapRuns[index];
         prepareRange(run.begin, run.bytes);
-        const auto generation = GuestMemory::CollectWrites(run.begin, static_cast<std::size_t>(run.bytes));
+        std::uint64_t generation = 0;
+        {
+            AgcDriver::TracyZone collect{"Mirrors.CollectWrites"};
+            generation = GuestMemory::CollectWrites(run.begin, static_cast<std::size_t>(run.bytes));
+        }
         Require(generation != 0, "a heap mirror's range is no longer write-watched");
         const auto since = space.verified[index].load(std::memory_order_relaxed);
+        AgcDriver::TracyZone changed{"Mirrors.ChangedBlocks"};
         if (since == 0 || !GuestMemory::UnchangedSince(run.begin, static_cast<std::size_t>(run.bytes), since)) appendChangedBlocks(std::span<ImageMirror* const>(space.heapMirrors).subspan(run.first, run.last - run.first), generation, blocks);
         checked.emplace_back(index, generation);
     }
@@ -2480,10 +2498,12 @@ void GuestBufferMemory::AcquireRegistered() {
             // before any of them is dereferenced.
             served = true;
             mirrored = space->mirrored;
+            AgcDriver::TracyZone writableZone{"Mirrors.PrepareWritable"};
             for (const auto index : space->writableMirrors) {
                 const auto& region = space->base[index];
                 if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
             }
+            writableZone.End();
             lap(timing.mirrorsUs, at);
         }
     }
@@ -2530,7 +2550,10 @@ void GuestBufferMemory::AcquireRegistered() {
                 continue;
             }
             if (mirrorsEnabled()) {
-                region.mirror = acquireMirror(context, range, blocks, range->releasable);
+                {
+                    AgcDriver::TracyZone acquire{"Mirrors.Acquire"};
+                    region.mirror = acquireMirror(context, range, blocks, range->releasable);
+                }
                 lap(timing.mirrorsUs, at);
                 if (region.mirror != nullptr) {
                     mirrored = true;
@@ -3113,6 +3136,7 @@ bool GuestBufferMemory::stagingEligible(const Region& region, bool addressable) 
 }
 
 void GuestBufferMemory::UploadPrepare(bool addressable) {
+    AgcDriver::TracyZone zone{"Upload.Prepare"};
     Require(!prepared && !uploaded, "guest memory was already uploaded");
     prepared = true;
     std::vector<std::uint32_t> order(regions.size());
@@ -3282,13 +3306,16 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
 }
 
 void GuestBufferMemory::UploadFinish(bool addressable) {
+    AgcDriver::TracyZone zone{"Upload.Finish"};
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
+    AgcDriver::TracyZone pending{"Upload.CompletePendingCpuWrites"};
     for (const auto& region : regions) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
     if (space != nullptr) {
         for (const auto& region : space->base) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
     }
+    pending.End();
     uploaded = true;
     for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
     if (context.hostImportAlignment != 0) {
