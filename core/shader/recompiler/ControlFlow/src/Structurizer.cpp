@@ -928,6 +928,10 @@ std::string cloneRefusal(const ControlFlowGraph& graph, std::uint32_t header, co
         if (block.terminator.kind == TerminatorKind::IndirectBranch || block.terminator.kind == TerminatorKind::Unsupported) {
             return "block " + std::to_string(blockId) + " ends in an indirect or unsupported branch";
         }
+        const auto call = std::find_if(graph.calls.begin(), graph.calls.end(), [&](const GuestCall& candidate) { return block.instructionEnd > block.instructionBegin && candidate.callInstruction == block.instructionEnd - 1u; });
+        if (call != graph.calls.end()) {
+            return "block " + std::to_string(blockId) + " makes the guest call at program counter " + toHexString(call->programCounter) + ", whose callee is a function of its own";
+        }
     }
     for (const auto& loop : graph.naturalLoops) {
         const bool headerCloned = contains(blocks, loop.headerBlock);

@@ -1,15 +1,22 @@
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <span>
 #include <string>
 #include <spirv/unified1/spirv.hpp>
 #include <cstdint>
 #include <stdexcept>
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace ShaderRecompiler {
 namespace {
@@ -88,6 +95,10 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
             const auto hash = state.program.Resources().shaderHash;
             RecordBdaFaultWords(state, ConstantU32(state, static_cast<std::uint32_t>(hash)), ConstantU32(state, static_cast<std::uint32_t>(hash >> 32u)), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
         });
+    }
+    if (state.calleeStopValue != 0u) {
+        state.module.AddFunction(spv::OpReturnValue, state.calleeStopValue);
+        return;
     }
     if (OrderedPixelShader(state)) {
         state.module.AddFunction(spv::OpEndInvocationInterlockEXT);
@@ -795,6 +806,358 @@ bool CommunicatesThroughMemory(IrOpcode opcode) {
     return SharedAccessOf(opcode) != SharedAccess::None || buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || address == AddressAccess::Write || address == AddressAccess::Atomic || image == ImageAccess::Write || image == ImageAccess::Atomic;
 }
 
+struct FunctionLayout {
+    std::vector<std::vector<std::size_t>> blocks;
+    std::vector<std::uint32_t> callee;
+    std::vector<std::size_t> callBlock;
+    std::vector<std::size_t> exitBlock;
+    std::vector<const IrBlock*> entry;
+    std::vector<const IrBlock*> continuation;
+};
+
+struct CalleeValue {
+    const IrValue* value = nullptr;
+    std::uint32_t half = 0;
+    std::uint32_t slot = 0;
+};
+
+struct CalleeExit {
+    std::vector<CalleeValue> outputs;
+    bool status = false;
+};
+
+struct CalleeSignature {
+    std::uint32_t id = 0;
+    std::uint32_t type = 0;
+    std::vector<CalleeValue> inputs;
+    std::vector<std::uint32_t> pointers;
+    CalleeExit exit;
+};
+
+std::uint32_t CalleeSlot(SpirvEmitterState& state, std::uint32_t type, std::map<std::uint32_t, std::uint32_t>& used) {
+    auto& slots = state.calleeSlots[type];
+    const auto index = used[type]++;
+    while (slots.size() <= index) slots.push_back(state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, type), spv::StorageClassPrivate));
+    return slots[index];
+}
+
+struct CalleeStateScope {
+    explicit CalleeStateScope(SpirvEmitterState& state)
+        : state(state), currentLabel(state.currentLabel), currentBlock(state.currentBlock), continueTarget(state.continueTarget), bdaStopsInvocations(state.bdaStopsInvocations),
+          bdaStopValue(state.bdaStopValue), bdaPcOverride(state.bdaPcOverride), calleeStopValue(state.calleeStopValue), memoryByteOffsets(state.memoryByteOffsets),
+          bufferAddresses(state.bufferAddresses), bufferDwords(state.bufferDwords), ldsBufferBase(state.ldsBufferBase), gdsLength(state.gdsLength),
+          scratchVariable(state.scratchVariable), vectorWindowVariable(state.vectorWindowVariable), ldsVariable(state.ldsVariable), laneHalf(state.laneHalf) {
+    }
+    CalleeStateScope(const CalleeStateScope&) = delete;
+    CalleeStateScope& operator=(const CalleeStateScope&) = delete;
+    ~CalleeStateScope() {
+        state.currentLabel = currentLabel;
+        state.currentBlock = currentBlock;
+        state.continueTarget = continueTarget;
+        state.bdaStopsInvocations = bdaStopsInvocations;
+        state.bdaStopValue = bdaStopValue;
+        state.bdaPcOverride = bdaPcOverride;
+        state.calleeStopValue = calleeStopValue;
+        state.memoryByteOffsets = std::move(memoryByteOffsets);
+        state.bufferAddresses = std::move(bufferAddresses);
+        state.bufferDwords = std::move(bufferDwords);
+        state.ldsBufferBase = ldsBufferBase;
+        state.gdsLength = gdsLength;
+        state.scratchVariable = scratchVariable;
+        state.vectorWindowVariable = vectorWindowVariable;
+        state.ldsVariable = ldsVariable;
+        state.laneHalf = laneHalf;
+    }
+
+    SpirvEmitterState& state;
+    std::uint32_t currentLabel;
+    const IrBlock* currentBlock;
+    bool continueTarget;
+    bool bdaStopsInvocations;
+    std::uint32_t bdaStopValue;
+    std::uint32_t bdaPcOverride;
+    std::uint32_t calleeStopValue;
+    std::vector<std::uint32_t> memoryByteOffsets;
+    std::vector<std::uint32_t> bufferAddresses;
+    std::vector<std::uint32_t> bufferDwords;
+    std::uint32_t ldsBufferBase;
+    std::uint32_t gdsLength;
+    std::array<std::uint32_t, 2> scratchVariable;
+    std::array<std::uint32_t, 2> vectorWindowVariable;
+    std::uint32_t ldsVariable;
+    std::uint32_t laneHalf;
+};
+
+FunctionLayout PlanFunctions(SpirvValueEmitContext& ctx, const IrProgram& program) {
+    auto& state = ctx.state;
+    const auto& blocks = program.BlockOrder();
+    const auto& infos = program.Metadata().blockInfo;
+    const auto& functions = program.Metadata().callFunctions;
+    if (blocks.size() != infos.size()) ctx.Fail("SPIR-V control flow block metadata is inconsistent");
+    const auto count = functions.size() + 1u;
+    FunctionLayout layout;
+    layout.blocks.resize(count);
+    layout.callee.assign(blocks.size(), 0u);
+    layout.callBlock.assign(count, 0u);
+    layout.exitBlock.assign(count, 0u);
+    layout.entry.assign(count, nullptr);
+    layout.continuation.assign(count, nullptr);
+    for (std::size_t index = 0; index < blocks.size(); ++index) {
+        if (blocks[index] == nullptr) ctx.Fail("structured control flow contains a null block");
+        if (infos[index].function >= count) ctx.Fail("a block belongs to a callee function the program does not have");
+        layout.blocks[infos[index].function].push_back(index);
+    }
+    if (functions.empty()) return layout;
+    if (program.Resources().stage != IrShaderStage::Compute) ctx.Fail("guest callees become functions only in compute programs");
+    std::unordered_map<std::uint32_t, std::size_t> positions;
+    std::uint32_t lastId = 0;
+    for (std::size_t index = 0; index < blocks.size(); ++index) {
+        positions.emplace(infos[index].id, index);
+        lastId = std::max(lastId, blocks[index]->Id());
+    }
+    state.blockFunctions.assign(lastId + 1u, 0u);
+    for (std::size_t index = 0; index < blocks.size(); ++index) state.blockFunctions[blocks[index]->Id()] = infos[index].function;
+    const auto position = [&](std::uint32_t id) {
+        const auto found = positions.find(id);
+        if (found == positions.end()) ctx.Fail("a callee function names a block the program does not have");
+        return found->second;
+    };
+    state.functionParents.assign(count, 0u);
+    for (std::uint32_t function = 1u; function < count; ++function) {
+        const auto& call = functions[function - 1u];
+        if (call.parent >= count || call.parent == function) ctx.Fail("a callee function names a parent the program does not have");
+        state.functionParents[function] = call.parent;
+        const auto callIndex = position(call.callBlock);
+        const auto exitIndex = position(call.exitBlock);
+        const auto& callInfo = infos[callIndex];
+        const auto& exitInfo = infos[exitIndex];
+        if (callInfo.function != call.parent || exitInfo.function != function || callInfo.terminator.kind != TerminatorKind::Branch || exitInfo.terminator.kind != TerminatorKind::Branch ||
+            exitInfo.terminator.trueBlock != call.continuationBlock || infos[position(callInfo.terminator.trueBlock)].function != function || infos[position(call.continuationBlock)].function != call.parent) {
+            ctx.Fail("a callee function does not match its call and return blocks");
+        }
+        if (layout.callee[callIndex] != 0u) ctx.Fail("a block calls two callee functions");
+        layout.callee[callIndex] = function;
+        layout.callBlock[function] = callIndex;
+        layout.exitBlock[function] = exitIndex;
+        layout.entry[function] = TargetBlock(program, callInfo.terminator.trueBlock);
+        layout.continuation[function] = blocks[position(call.continuationBlock)];
+    }
+    return layout;
+}
+
+std::vector<const IrValue*> CalleeLiveOuts(SpirvEmitterState& state, const IrProgram& program, std::uint32_t function) {
+    const auto inside = [&](const IrBlock* block) {
+        return block != nullptr && block->Id() < state.blockFunctions.size() && EnclosesFunction(state, function, state.blockFunctions[block->Id()]);
+    };
+    const auto usedOutside = [&](const auto& self, const IrValue* value) -> bool {
+        for (const IrValue* user : value->Uses()) {
+            if (user->IsIdentity()) {
+                if (self(self, user)) return true;
+            } else if (user->Parent() != nullptr && !inside(user->Parent())) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<const IrValue*> values;
+    std::unordered_set<const IrValue*> added;
+    const auto add = [&](const auto& self, const IrValue* value) -> void {
+        if (value == nullptr) return;
+        const IrValue* resolved = value->Resolve();
+        if (resolved->HasImmediate() || !inside(resolved->Parent()) || !added.insert(resolved).second) return;
+        if (TypeId(state, resolved->Type()) == 0u) {
+            for (const IrValue* argument : resolved->Arguments()) self(self, argument);
+            return;
+        }
+        values.push_back(resolved);
+    };
+    for (const IrBlock* block : program.BlockOrder()) {
+        if (!inside(block)) continue;
+        for (const IrValue* value : block->Instructions()) {
+            if (value->HasUses() && usedOutside(usedOutside, value)) add(add, value);
+        }
+    }
+    return values;
+}
+
+bool CalleeStops(const SpirvEmitterState& state, const IrProgram& program, const FunctionLayout& layout, std::uint32_t function) {
+    if (state.programStopsInvocations) return true;
+    const auto& infos = program.Metadata().blockInfo;
+    for (std::size_t index = 0; index < infos.size(); ++index) {
+        const auto owner = infos[index].function;
+        if (!EnclosesFunction(state, function, owner) || layout.callee[index] != 0u || (owner != 0u && index == layout.exitBlock[owner])) continue;
+        const auto kind = infos[index].terminator.kind;
+        if (kind != TerminatorKind::Branch && kind != TerminatorKind::ConditionalBranch) return true;
+    }
+    return false;
+}
+
+void EmitFunctionBlocks(SpirvValueEmitContext& context, StructuredFunctionState& functionState, const IrProgram& program, const FunctionLayout& layout, std::uint32_t function, const CalleeExit* calleeExit);
+
+void EmitCalleeExit(SpirvValueEmitContext& context, const CalleeExit& calleeExit) {
+    auto& state = context.state;
+    for (const auto& output : calleeExit.outputs) state.module.AddFunction(spv::OpStore, output.slot, (output.half == 0u ? context : *context.otherHalf).Def(output.value));
+    if (calleeExit.status) state.module.AddFunction(spv::OpReturnValue, ConstantU32(state, 1u));
+    else state.module.AddFunction(spv::OpReturn);
+}
+
+CalleeSignature EmitCalleeFunction(SpirvValueEmitContext& caller, const IrProgram& program, const FunctionLayout& layout, std::uint32_t function) {
+    auto& state = caller.state;
+    CalleeSignature signature;
+    std::map<std::uint32_t, std::uint32_t> outputSlots;
+    for (const IrValue* value : CalleeLiveOuts(state, program, function)) {
+        for (std::uint32_t half = 0; half < state.laneCount; ++half) signature.exit.outputs.push_back({value, half, CalleeSlot(state, TypeId(state, value->Type()), outputSlots)});
+    }
+    signature.exit.status = CalleeStops(state, program, layout, function);
+    signature.type = signature.exit.status ? TypeU32(state) : TypeVoid(state);
+    struct Pointer {
+        std::uint32_t* slot;
+        std::uint32_t type;
+    };
+    std::vector<Pointer> pointers;
+    if (state.requirements.functionScratch) {
+        for (std::uint32_t half = 0; half < state.laneCount; ++half) pointers.push_back({&state.scratchVariable.at(half), TypeU32ArrayPointer(state, spv::StorageClassFunction, state.program.Info().scratchDwords)});
+    }
+    if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
+        const auto array = state.module.Type(spv::OpTypeArray, TypeU32(state), ConstantU32(state, window));
+        for (std::uint32_t half = 0; half < state.laneCount; ++half) pointers.push_back({&state.vectorWindowVariable.at(half), TypePointer(state, spv::StorageClassFunction, array)});
+    }
+    if (state.requirements.functionLds) pointers.push_back({&state.ldsVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, LdsDwordCount(state))});
+    signature.id = state.module.AllocateId();
+    const CalleeStateScope scope(state);
+    std::vector<std::uint32_t> pointerParameters;
+    for (auto& pointer : pointers) {
+        signature.pointers.push_back(*pointer.slot);
+        *pointer.slot = state.module.AllocateId();
+        pointerParameters.push_back(*pointer.slot);
+    }
+    const auto& blocks = program.BlockOrder();
+    const auto start = state.module.FunctionWordCount();
+    EmitLabel(state, state.module.AllocateId());
+    SpirvValueEmitContext low(state);
+    SpirvValueEmitContext high(state);
+    std::vector<SpirvValueEmitContext*> lanes{&low};
+    if (state.laneCount == 2u) {
+        low.otherHalf = &high;
+        high.otherHalf = &low;
+        high.half = 1u;
+        lanes.push_back(&high);
+    }
+    const bool swizzles = std::ranges::any_of(layout.blocks[function], [&](std::size_t index) {
+        return std::ranges::any_of(blocks[index]->Instructions(), [](const IrValue* inst) { return inst->Opcode() == IrOpcode::SwizzleU32; });
+    });
+    for (auto* lane : lanes) {
+        lane->functionScope = true;
+        lane->function = function;
+        if (swizzles) {
+            lane->scratchU32Variable = state.module.AllocateId();
+            state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), lane->scratchU32Variable, spv::StorageClassFunction);
+        }
+    }
+    EmitMemoryOffsets(state);
+    EmitLdsBufferBase(state);
+    if (state.gdsVariable != 0u) {
+        state.gdsLength = state.module.AllocateId();
+        state.module.AddFunction(spv::OpArrayLength, TypeU32(state), state.gdsLength, state.gdsVariable, 0u);
+    }
+    state.calleeStopValue = signature.exit.status ? ConstantU32(state, 0u) : 0u;
+    state.bdaStopValue = state.calleeStopValue;
+    state.bdaPcOverride = 0u;
+    StructuredFunctionState functionState;
+    functionState.blockExitLabels.emplace(blocks[layout.callBlock[function]], state.currentLabel);
+    const auto prologue = state.module.FunctionWordCount() - start;
+    state.module.AddFunction(spv::OpBranch, low.Label(layout.entry[function]));
+    EmitFunctionBlocks(low, functionState, program, layout, function, &signature.exit);
+    PatchStructuredPhis(low, functionState);
+    const auto words = state.module.TakeFunctionWords(start);
+    std::map<std::uint32_t, std::uint32_t> inputSlots;
+    std::vector<std::uint32_t> loads;
+    for (const auto* lane : lanes) {
+        for (const auto& [value, id] : lane->inputs) {
+            const auto type = TypeId(state, value->Type());
+            const auto slot = CalleeSlot(state, type, inputSlots);
+            signature.inputs.push_back({value, lane->half, slot});
+            loads.insert(loads.end(), {4u << spv::WordCountShift | spv::OpLoad, type, id, slot});
+        }
+    }
+    std::vector<std::uint32_t> types{signature.type};
+    std::vector<std::uint32_t> ids;
+    for (std::size_t index = 0; index < pointers.size(); ++index) {
+        types.push_back(pointers[index].type);
+        ids.push_back(pointerParameters[index]);
+    }
+    state.module.BeginHelperFunction();
+    state.module.AddFunction(spv::OpFunction, signature.type, signature.id, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, std::span<const std::uint32_t>(types)));
+    for (std::size_t index = 0; index < ids.size(); ++index) state.module.AddFunction(spv::OpFunctionParameter, types[index + 1u], ids[index]);
+    state.module.AppendFunctionWords(std::span(words).first(prologue));
+    state.module.AppendFunctionWords(loads);
+    state.module.AppendFunctionWords(std::span(words).subspan(prologue));
+    state.module.AddFunction(spv::OpFunctionEnd);
+    state.module.EndHelperFunction();
+    char name[32];
+    std::snprintf(name, sizeof(name), "guest_callee_%x", BlockInfoFor(program, layout.entry[function])->startPc);
+    state.module.AddName(signature.id, name);
+    return signature;
+}
+
+void EmitGuestCall(SpirvValueEmitContext& caller, StructuredFunctionState& functionState, const IrProgram& program, const FunctionLayout& layout, std::uint32_t function, const BlockInfo& info) {
+    auto& state = caller.state;
+    if (info.terminator.loopHeader) {
+        state.module.AddFunction(spv::OpLoopMerge, caller.Label(TargetBlock(program, info.terminator.mergeBlock)), caller.Label(TargetBlock(program, info.terminator.continueBlock)), spv::LoopControlMaskNone);
+    }
+    const auto callLabel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBranch, callLabel);
+    EmitLabel(state, callLabel);
+    const auto signature = EmitCalleeFunction(caller, program, layout, function);
+    const auto lane = [&](std::uint32_t half) -> SpirvValueEmitContext& { return half == 0u ? caller : *caller.otherHalf; };
+    for (const auto& input : signature.inputs) state.module.AddFunction(spv::OpStore, input.slot, lane(input.half).Def(input.value));
+    const auto result = state.module.AllocateId();
+    std::vector<std::uint32_t> call{spv::OpFunctionCall, signature.type, result, signature.id};
+    call.insert(call.end(), signature.pointers.begin(), signature.pointers.end());
+    state.module.AddFunction(std::span<const std::uint32_t>(call));
+    for (const auto& output : signature.exit.outputs) {
+        const auto loaded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeId(state, output.value->Type()), loaded, output.slot);
+        lane(output.half).Define(*output.value, loaded);
+    }
+    if (signature.exit.status) {
+        const auto stopped = Binary(state, spv::OpIEqual, TypeBool(state), result, ConstantU32(state, 0u));
+        const auto stop = state.module.AllocateId();
+        const auto next = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, stopped, stop, next);
+        EmitLabel(state, stop);
+        if (state.calleeStopValue != 0u) state.module.AddFunction(spv::OpReturnValue, state.calleeStopValue);
+        else state.module.AddFunction(spv::OpReturn);
+        EmitLabel(state, next);
+    }
+    functionState.blockExitLabels.emplace(program.BlockOrder()[layout.exitBlock[function]], state.currentLabel);
+    state.module.AddFunction(spv::OpBranch, caller.Label(layout.continuation[function]));
+}
+
+void EmitFunctionBlocks(SpirvValueEmitContext& context, StructuredFunctionState& functionState, const IrProgram& program, const FunctionLayout& layout, std::uint32_t function, const CalleeExit* calleeExit) {
+    auto& state = context.state;
+    const auto& blocks = program.BlockOrder();
+    const auto& infos = program.Metadata().blockInfo;
+    for (const auto index : layout.blocks[function]) {
+        const IrBlock* block = blocks[index];
+        const BlockInfo& info = infos[index];
+        state.continueTarget = IsContinueTarget(program, info.id);
+        state.bdaStopsInvocations = state.programStopsInvocations && !state.continueTarget;
+        EmitStructuredBlock(context, functionState, block);
+        functionState.blockExitLabels.emplace(block, state.currentLabel);
+        if (layout.callee[index] != 0u) {
+            EmitGuestCall(context, functionState, program, layout, layout.callee[index], info);
+        } else if (calleeExit != nullptr && index == layout.exitBlock[function]) {
+            EmitCalleeExit(context, *calleeExit);
+        } else {
+            EmitStructuredTerminator(context, program, info);
+        }
+        state.bdaStopsInvocations = state.programStopsInvocations;
+        state.continueTarget = false;
+    }
+}
+
 }
 
 void EmitControlFlow(SpirvModule& module, const IrProgram& program) {
@@ -826,23 +1189,13 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
                          byId ? static_cast<int>(byId->terminator.kind) : -1, byId ? byId->terminator.trueBlock : 0u, byId ? byId->terminator.falseBlock : 0u);
         }
     }
-    for (const IrBlock* block : blocks) {
-        if (block == nullptr) {
-            context.Fail("structured control flow contains a null block");
-        }
-        const BlockInfo* info = BlockInfoFor(program, block);
-        if (info == nullptr) {
-            context.Fail("structured control flow block has no terminator metadata");
-        }
-        const bool stops = state.bdaStopsInvocations;
-        state.continueTarget = IsContinueTarget(program, info->id);
-        state.bdaStopsInvocations = stops && !state.continueTarget;
-        EmitStructuredBlock(context, functionState, block);
-        functionState.blockExitLabels.emplace(block, state.currentLabel);
-        EmitStructuredTerminator(context, program, *info);
-        state.bdaStopsInvocations = stops;
-        state.continueTarget = false;
+    const auto layout = PlanFunctions(context, program);
+    if (!state.functionParents.empty()) {
+        context.functionScope = true;
+        if (context.otherHalf != nullptr) context.otherHalf->functionScope = true;
     }
+    state.programStopsInvocations = state.bdaStopsInvocations;
+    EmitFunctionBlocks(context, functionState, program, layout, 0u, nullptr);
     PatchStructuredPhis(context, functionState);
 }
 

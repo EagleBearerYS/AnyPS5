@@ -1581,6 +1581,8 @@ ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInf
         if (call.fetch) {
             graph.hasFetchCall = true;
             graph.fetchCallProgramCounter = program.instructions[call.callIndex].programCounter;
+        } else if (swappc != nullptr && swappc->callFunctions) {
+            graph.calls.push_back({program.instructions[call.callIndex].programCounter, call.callIndex, call.returnIndex});
         }
     }
     const auto originalSize = graph.blocks.size();

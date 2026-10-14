@@ -17,6 +17,7 @@ struct BlockInfo {
     Terminator terminator;
     IrValue* condition = nullptr;
     IrValue* indirectTarget = nullptr;
+    std::uint32_t function = 0;
 };
 
 struct KeyDomain {

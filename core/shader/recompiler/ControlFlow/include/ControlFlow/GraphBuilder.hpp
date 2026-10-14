@@ -15,6 +15,7 @@ struct SwappcInfo {
     std::uint32_t userDataBaseRegister = 0;
     std::uint32_t userDataCount = 0;
     std::uint32_t waveSize = 0;
+    bool callFunctions = false;
 };
 
 struct SwappcCall {

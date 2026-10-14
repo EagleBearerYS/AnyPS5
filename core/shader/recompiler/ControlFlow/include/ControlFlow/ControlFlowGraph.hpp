@@ -73,6 +73,20 @@ struct BasicBlock {
     std::vector<std::uint32_t> dominators;
     std::vector<std::uint32_t> postDominators;
     Terminator terminator;
+    std::uint32_t function = 0;
+};
+
+struct GuestCall {
+    std::uint32_t programCounter = 0;
+    std::uint32_t callInstruction = 0;
+    std::uint32_t returnInstruction = 0;
+};
+
+struct CallFunction {
+    std::uint32_t parent = 0;
+    std::uint32_t callBlock = InvalidControlFlowId;
+    std::uint32_t exitBlock = InvalidControlFlowId;
+    std::uint32_t continuationBlock = InvalidControlFlowId;
 };
 
 struct NaturalLoop {
@@ -108,6 +122,8 @@ struct ControlFlowGraph {
     std::vector<std::uint32_t> codeTableLoadProgramCounters;
     std::vector<CodeTableLoad> codeTableLoads;
     std::vector<std::uint32_t> unlinkedCallProgramCounters;
+    std::vector<GuestCall> calls;
+    std::vector<CallFunction> functions;
     std::uint32_t entryBlock = InvalidControlFlowId;
     bool hasFetchCall = false;
     std::uint32_t fetchCallProgramCounter = 0;

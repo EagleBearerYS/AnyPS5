@@ -204,6 +204,11 @@ struct SpirvEmitterState {
     std::vector<SpirvOutputBinding> outputs;
     std::vector<std::uint32_t> interfaceVariables;
     std::unordered_map<const IrBlock*, std::uint32_t> labels;
+    std::vector<std::uint32_t> blockFunctions;
+    std::vector<std::uint32_t> functionParents;
+    std::map<std::uint32_t, std::vector<std::uint32_t>> calleeSlots;
+    bool programStopsInvocations = false;
+    std::uint32_t calleeStopValue = 0;
 };
 
 struct SpirvValueEmitContext {
@@ -231,7 +236,12 @@ struct SpirvValueEmitContext {
     std::uint32_t scratchU32Variable = 0;
     SpirvValueEmitContext* otherHalf = nullptr;
     std::uint32_t half = 0;
+    bool functionScope = false;
+    std::uint32_t function = 0;
+    std::vector<std::pair<const IrValue*, std::uint32_t>> inputs;
 };
+
+[[nodiscard]] bool EnclosesFunction(const SpirvEmitterState& state, std::uint32_t outer, std::uint32_t inner);
 
 struct SpirvDeferredPhiPatch {
     SpirvDeferredPhi phi;

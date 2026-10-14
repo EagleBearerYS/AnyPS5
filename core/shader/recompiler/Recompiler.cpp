@@ -21,6 +21,7 @@
 #include <new>
 #include <shared_mutex>
 #include <unordered_map>
+#include "ControlFlow/include/ControlFlow/CallFunctions.hpp"
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/include/ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
@@ -160,6 +161,7 @@ struct PreparedControlFlow {
           linkedLiterals(request.shader.linkedLiterals.begin(), request.shader.linkedLiterals.end()),
           decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, linkedLiterals)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
+        AssignCallFunctions(cfg);
     }
 
     PreparedControlFlow(const PreparedControlFlow&) = delete;
@@ -181,7 +183,8 @@ struct PreparedControlFlow {
 
 std::shared_ptr<const PreparedControlFlow> ShaderPreparationContext::AcquireFrontend(const RecompileRequest& request) {
     const auto inputInfo = RequestInputInfo(request);
-    const SwappcInfo swappc{inputInfo.vertex != nullptr, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size())};
+    SwappcInfo swappc{inputInfo.vertex != nullptr, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size())};
+    swappc.callFunctions = request.shader.stage == ShaderStage::Compute;
     static const bool reuse = std::getenv("APS5_NO_PERF_FRONTEND_PAIR") == nullptr;
     if (reuse && frontend != nullptr && frontend->Matches(request, swappc)) {
         return frontend;

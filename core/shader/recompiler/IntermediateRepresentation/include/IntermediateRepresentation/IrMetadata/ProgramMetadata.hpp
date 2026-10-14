@@ -16,6 +16,7 @@ struct IrProgramMetadata {
     FailureKind cfgFailureKind = FailureKind::None;
     std::string failureReason;
     std::vector<BlockInfo> blockInfo;
+    std::vector<CallFunction> callFunctions;
     std::vector<ExportInfo> exportInfo;
     std::uint32_t pixelLinearInputs = 0;
     std::uint32_t pixelPerspectiveInputs = 0;

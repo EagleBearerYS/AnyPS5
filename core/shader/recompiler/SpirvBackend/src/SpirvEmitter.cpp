@@ -103,7 +103,30 @@ std::uint32_t SpirvValueEmitContext::Def(const IrValue* value) {
             break;
         }
     }
+    if (functionScope && !definitions.contains(resolved)) {
+        const IrBlock* block = resolved->Parent();
+        const bool placed = block != nullptr && block->Id() < state.blockFunctions.size();
+        const auto owner = placed ? state.blockFunctions[block->Id()] : 0u;
+        if (!placed || owner != function) {
+            if (placed && EnclosesFunction(state, function, owner)) Fail(*resolved, "is read outside the callee function that defines it, which does not return it");
+            if (function != 0u) {
+                const auto type = TypeId(state, resolved->Type());
+                if (type == 0u) Fail(*resolved, "crosses a callee function boundary without a SPIR-V type");
+                const auto id = state.module.AllocateId();
+                definitions.emplace(resolved, id);
+                inputs.emplace_back(resolved, id);
+                return id;
+            }
+        }
+    }
     return Result(*resolved);
+}
+
+bool EnclosesFunction(const SpirvEmitterState& state, std::uint32_t outer, std::uint32_t inner) {
+    for (auto function = inner; function != 0u; function = state.functionParents.at(function)) {
+        if (function == outer) return true;
+    }
+    return outer == 0u;
 }
 
 std::uint32_t SpirvValueEmitContext::Arg(const IrValue& inst, std::size_t index) {

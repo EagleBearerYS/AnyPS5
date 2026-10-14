@@ -497,7 +497,9 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         }
         blocks.push_back(&program.CreateBlock());
         blockInfos.push_back(BlockInfo{sourceBlock.id, sourceBlock.startProgramCounter, sourceBlock.endProgramCounter, sourceBlock.terminator});
+        blockInfos.back().function = sourceBlock.function;
     }
+    program.Metadata().callFunctions = cfg.functions;
 
     for (const auto& sourceBlock : cfg.blocks) {
         const auto sourceIndex = blockIndices.at(sourceBlock.id);
