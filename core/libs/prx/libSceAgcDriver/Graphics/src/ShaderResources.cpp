@@ -4055,6 +4055,7 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
 }
 
 void ShaderResources::resolveImageTables() {
+    AgcDriver::TracyZone zone{"Tables.Resolve"};
     if (tableBindings[0] == std::numeric_limits<std::size_t>::max() && tableBindings[1] == std::numeric_limits<std::size_t>::max()) return;
     auto& counters = TextureCounts();
     for (std::size_t set = 0; set < tableBindings.size(); ++set) {
@@ -4183,6 +4184,7 @@ ImageTableReuseCounts ImageTableReuses() {
 }
 
 void ShaderResources::finishImageTables() {
+    AgcDriver::TracyZone zone{"Tables.Finish"};
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     if (tableStages.empty()) return;
     const auto overlaps = [](std::uint64_t base, std::uint64_t size, std::uint64_t address, std::uint64_t bytes) { return size != 0 && bytes != 0 && (base <= address ? address - base < size : base - address < bytes); };
