@@ -5,7 +5,21 @@
 #include <string>
 
 #include "prx/libSceNpTrophy2/include/NpTrophy2.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+void fillData(int context, int trophyId, NpTrophy2Data* data) {
+    std::memset(data, 0, sizeof(*data));
+    const auto tick = NpTrophy2::ContextUnlockTick(context, trophyId);
+    data->trophy_id = trophyId;
+    data->unlocked = tick.has_value();
+    data->progress.value = NP_TROPHY2_PROGRESS_VALUE_NONE;
+    data->timestamp_tick = tick.value_or(0);
+}
+
+}
 
 extern "C" {
 
@@ -13,7 +27,6 @@ int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, 
     if (details == nullptr && data == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    (void)context;
     (void)handle;
     if (details != nullptr) {
         std::memset(details, 0, sizeof(*details));
@@ -27,13 +40,7 @@ int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, 
         std::strncpy(details->description, NP_TROPHY2_TROPHY_DESCRIPTION, sizeof(details->description) - 1);
         std::strncpy(details->reward, NP_TROPHY2_TROPHY_REWARD, sizeof(details->reward) - 1);
     }
-    if (data != nullptr) {
-        std::memset(data, 0, sizeof(*data));
-        data->trophy_id = trophy_id;
-        data->unlocked = false;
-        data->progress.value = NP_TROPHY2_PROGRESS_VALUE_NONE;
-        data->timestamp_tick = 0;
-    }
+    if (data != nullptr) fillData(context, trophy_id, data);
     return SCE_NP_TROPHY2_OK;
 }
 
@@ -41,7 +48,6 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t o
     if (count == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    (void)context;
     (void)handle;
     const uint32_t out_count = (offset == 0 && limit != 0 ? 1u : 0u);
     *count = out_count;
@@ -57,13 +63,7 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t o
         std::strncpy(details_array->description, NP_TROPHY2_TROPHY_DESCRIPTION, sizeof(details_array->description) - 1);
         std::strncpy(details_array->reward, NP_TROPHY2_TROPHY_REWARD, sizeof(details_array->reward) - 1);
     }
-    if (out_count != 0 && data_array != nullptr) {
-        std::memset(data_array, 0, sizeof(*data_array));
-        data_array->trophy_id = NP_TROPHY2_TROPHY_ID_DEFAULT;
-        data_array->unlocked = false;
-        data_array->progress.value = NP_TROPHY2_PROGRESS_VALUE_NONE;
-        data_array->timestamp_tick = 0;
-    }
+    if (out_count != 0 && data_array != nullptr) fillData(context, NP_TROPHY2_TROPHY_ID_DEFAULT, data_array);
     return SCE_NP_TROPHY2_OK;
 }
 
