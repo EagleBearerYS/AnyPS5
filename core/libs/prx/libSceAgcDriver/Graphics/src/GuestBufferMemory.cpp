@@ -112,7 +112,6 @@ struct GuestBufferMemory::AddressSpace {
     // The BDA table entries of `base`, in its order.
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     mutable std::mutex tableMutex;
-    mutable std::map<std::vector<std::pair<std::uint64_t, std::uint64_t>>, std::pair<std::uint64_t, std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>>>> writeTables;
     mutable std::shared_ptr<const BdaPageTable> pageTable;
 };
 
@@ -3640,64 +3639,38 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::AddressRanges() 
         std::merge(space->ranges.begin(), space->ranges.end(), result.begin(), result.end(), std::back_inserter(combined), [](const auto& left, const auto& right) { return left.begin < right.begin; });
         result = std::move(combined);
     }
-    if (writes.empty()) return result;
-    auto sortedWrites = writes;
-    std::sort(sortedWrites.begin(), sortedWrites.end());
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> intervals;
-    for (const auto& interval : sortedWrites) {
-        if (!intervals.empty() && interval.first <= intervals.back().second) intervals.back().second = std::max(intervals.back().second, interval.second);
-        else intervals.push_back(interval);
+    return result;
+}
+
+std::vector<ShaderRecompiler::BdaAbi::Grant> GuestBufferMemory::WriteGrants() const {
+    Require(uploaded && !committed, "guest GPU write grants are not available");
+    auto sorted = writes;
+    std::sort(sorted.begin(), sorted.end());
+    std::vector<ShaderRecompiler::BdaAbi::Grant> grants;
+    for (const auto& [begin, end] : sorted) {
+        if (!grants.empty() && begin <= grants.back().end) grants.back().end = std::max(grants.back().end, end);
+        else grants.push_back({begin, end});
     }
-    std::vector<ShaderRecompiler::BdaAbi::Range> merged;
-    merged.reserve(result.size() + intervals.size() * 2u);
-    std::size_t firstWrite = 0;
-    for (const auto& range : result) {
-        if ((range.permissions & ShaderRecompiler::BdaAbi::Write) != 0u) {
-            merged.push_back(range);
-            continue;
-        }
-        while (firstWrite < intervals.size() && intervals[firstWrite].second <= range.begin) ++firstWrite;
-        auto cursor = range.begin;
-        const auto append = [&](std::uint64_t end, bool written) {
-            if (cursor == end) return;
-            auto part = range;
-            part.begin = cursor;
-            part.end = end;
-            part.deviceAddress += cursor - range.begin;
-            if (written) {
-                const auto* region = owner(cursor);
-                Require(region != nullptr && region->writable && (region->mirror == nullptr || region->mirror->writable), "runtime buffer write has no writable GPU owner");
-                part.permissions |= ShaderRecompiler::BdaAbi::Write;
+    const auto check = [&](const std::vector<Region>& list) {
+        for (const auto& grant : grants) {
+            auto found = std::upper_bound(list.begin(), list.end(), grant.begin, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+            if (found != list.begin()) --found;
+            for (; found != list.end() && found->begin < grant.end; ++found) {
+                const auto range = addressRange(*found);
+                if (range.end <= grant.begin || (range.permissions & ShaderRecompiler::BdaAbi::Write) != 0u) continue;
+                Require(found->writable && (found->mirror == nullptr || found->mirror->writable), "runtime buffer write has no writable GPU owner");
             }
-            merged.push_back(part);
-            cursor = end;
-        };
-        for (auto index = firstWrite; index < intervals.size() && intervals[index].first < range.end; ++index) {
-            append(std::max(cursor, intervals[index].first), false);
-            append(std::min(range.end, intervals[index].second), true);
         }
-        append(range.end, false);
-    }
-    return merged;
+    };
+    check(regions);
+    if (space != nullptr) check(space->base);
+    return grants;
 }
 
 std::optional<GuestBufferMemory::CachedTable> GuestBufferMemory::CachedAddressTable() const {
     if (space == nullptr || !regions.empty()) return std::nullopt;
     Require(uploaded && !committed, "guest GPU address ranges are not available");
-    if (writes.empty()) return CachedTable{space->serial, &space->ranges};
-    if (writeTableRanges != nullptr) return CachedTable{writeTableSerial, writeTableRanges.get()};
-    std::lock_guard lock(space->tableMutex);
-    const auto found = space->writeTables.find(writes);
-    if (found != space->writeTables.end()) {
-        writeTableSerial = found->second.first;
-        writeTableRanges = found->second.second;
-    } else {
-        writeTableRanges = std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(AddressRanges());
-        writeTableSerial = Spaces().serials.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (space->writeTables.size() >= 64u) space->writeTables.erase(space->writeTables.begin());
-        space->writeTables.emplace(writes, std::pair{writeTableSerial, writeTableRanges});
-    }
-    return CachedTable{writeTableSerial, writeTableRanges.get()};
+    return CachedTable{space->serial, &space->ranges};
 }
 
 std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& context) const {

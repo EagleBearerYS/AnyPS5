@@ -717,18 +717,9 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
         const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address; });
         Require(found != ranges.end() && found->deviceAddress != 0u, "the heap range is missing from the BDA table");
         const auto device = found->deviceAddress;
-        auto cursor = address;
-        std::uint64_t writableBytes = 0;
-        for (auto part = found; cursor < address + bytes && part != ranges.end(); ++part) {
-            Require(part->begin == cursor && part->end > cursor && part->end <= address + bytes, "heap BDA ranges have gaps or overlap");
-            Require(part->deviceAddress == device + cursor - address, "heap BDA ranges are not contiguous on the device");
-            const bool writable = written != 0u && part->begin >= written && part->end <= written + 32u;
-            const auto permissions = ShaderRecompiler::BdaAbi::Read | (writable ? ShaderRecompiler::BdaAbi::Write : 0u);
-            Require(part->permissions == permissions, "heap BDA range has incorrect permissions");
-            if (writable) writableBytes += part->end - part->begin;
-            cursor = part->end;
-        }
-        Require(cursor == address + bytes && writableBytes == (written != 0u ? 32u : 0u), "heap BDA coverage or writable extent is incorrect");
+        Require(found->end == address + bytes && found->permissions == ShaderRecompiler::BdaAbi::Read, "the heap BDA range does not cover the heap read-only");
+        const auto grants = leased.WriteGrants();
+        Require(written == 0u ? grants.empty() : grants.size() == 1u && grants[0].begin == written && grants[0].end == written + 32u, "the heap write grant is incorrect");
         if (gpu) gpu(leased);
         leased.WriteBack();
         return device;
@@ -1347,9 +1338,12 @@ static void pageTableRootTests(const Context& shared, const BdaTestAccess& acces
         const auto root = access.bytes(bda.Table().buffer);
         Abi::Header header{};
         std::memcpy(&header, root.data(), sizeof(header));
-        Require(header.version == Abi::TableVersion && header.entryBytes == sizeof(Abi::Range) && header.pageTable != 0u, "an address-based build over a registered heap bound no page table");
+        Require(header.version == Abi::TableVersion && header.grants == 1u && header.pageTable != 0u, "an address-based build over a registered heap bound no page table or no write grant");
         std::vector<Abi::Range> list(header.count);
         std::memcpy(list.data(), root.data() + sizeof(header), list.size() * sizeof(Abi::Range));
+        std::vector<Abi::Grant> grants(header.grants);
+        std::memcpy(grants.data(), root.data() + sizeof(header) + list.size() * sizeof(Abi::Range), grants.size() * sizeof(Abi::Grant));
+        Require(grants.size() == 1u && grants[0].begin == address + 16u && grants[0].end == address + 48u, "the write interval is not the build's write grant");
         const auto first = access.addressBytes(header.pageTable);
         Ref::Leaves leaves;
         for (std::uint32_t window = 0; window < Abi::WindowCount; ++window) {
@@ -1361,24 +1355,23 @@ static void pageTableRootTests(const Context& shared, const BdaTestAccess& acces
             std::memcpy(decoded.data(), entries.data(), decoded.size() * sizeof(Abi::PageEntry));
             leaves.emplace(window, std::move(decoded));
         }
-        const auto piece = std::find_if(list.begin(), list.end(), [&](const auto& range) { return range.begin == address; });
-        Require(piece != list.end() && piece->end == address + 16u && piece->permissions == Abi::Read, "the write interval did not split the heap's read-only range");
-        const auto device = piece->deviceAddress;
-        Require(Ref::LookupList(list, address + 8u, 64u, Abi::Read) == Ref::Fault(Abi::FaultReason::Unmapped), "the split list did not fault a read across its split point");
-        Require(Ref::Translate(leaves, list, address + 8u, 64u, Abi::Read) == Ref::Translation{device + 8u, 0u}, "a 64-byte read across the write-split point of one read-only range faulted");
-        for (const std::uint64_t offset : {0u, 15u, 16u, 47u, 48u, 65532u, 65536u, static_cast<unsigned>(bytes) - 4u}) {
-            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Read) == Ref::Translation{device + offset, 0u}, "the page table alone did not translate the registered heap at +" + std::to_string(offset));
-            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write) == Ref::Fault(Abi::FaultReason::Unmapped), "the page table alone granted a write to the read-only mirror at +" + std::to_string(offset));
+        const auto heap = std::find_if(list.begin(), list.end(), [&](const auto& range) { return range.begin <= address && address < range.end; });
+        Require(heap != list.end() && heap->end >= address + bytes && heap->permissions == Abi::Read, "the write interval split the heap's read-only range");
+        const auto device = heap->deviceAddress + (address - heap->begin);
+        Require(Ref::Translate(leaves, list, address + 8u, 64u, Abi::Read, grants) == Ref::Translation{device + 8u, 0u}, "a 64-byte read across the write grant of one read-only range faulted");
+        for (const std::uint64_t offset : {0u, 15u, 16u, 44u, 45u, 48u, 65532u, 65536u, static_cast<unsigned>(bytes) - 4u}) {
+            const bool granted = offset >= 16u && offset + 4u <= 48u;
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Read, grants) == Ref::Translation{device + offset, 0u}, "the page table alone did not translate the registered heap at +" + std::to_string(offset));
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write) == Ref::Fault(Abi::FaultReason::Permission), "the page table alone let a store reach the read-only mirror at +" + std::to_string(offset));
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write, grants) == (granted ? Ref::Translation{device + offset, 0u} : Ref::Fault(Abi::FaultReason::Permission)), "the write grant did not decide a store to the mirror at +" + std::to_string(offset));
         }
         const Ref::Leaves none;
         for (const auto probe : Ref::Probes(list)) {
             for (const auto size : Ref::ProbeBytes) {
                 for (const auto permission : {Abi::Read, Abi::Write, Abi::Read | Abi::Write}) {
-                    const auto actual = Ref::Translate(leaves, list, probe, size, permission);
-                    const bool inside = probe >= address && probe < address + bytes && size <= address + bytes - probe;
-                    const bool crosses = inside && permission == Abi::Read && ((probe < address + 16u && address + 16u < probe + size) || (probe < address + 48u && address + 48u < probe + size));
-                    const auto expected = crosses ? Ref::Translation{device + (probe - address), 0u} : Ref::Translate(none, list, probe, size, permission);
-                    Require(actual == expected, "the page table of a split heap translated 0x" + std::to_string(probe) + " (" + std::to_string(size) + " bytes, permission " + std::to_string(permission) + ") unlike the range list");
+                    const auto actual = Ref::Translate(leaves, list, probe, size, permission, grants);
+                    const auto expected = Ref::Translate(none, list, probe, size, permission, grants);
+                    Require(actual == expected, "the page table of a granted heap translated 0x" + std::to_string(probe) + " (" + std::to_string(size) + " bytes, permission " + std::to_string(permission) + ") unlike its ranges");
                 }
             }
         }
@@ -1433,7 +1426,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     Require(alias.first + adjustment == first.first + 16 && alias.second == 16 + adjustment, "aliased guest buffers have different owners");
     const auto ranges = memory.AddressRanges();
     Require(ranges.size() == 1 && ranges[0].begin == address && ranges[0].end == address + sizeof(guest), "incorrect BDA range bounds");
-    Require(ranges[0].deviceAddress != 0 && ranges[0].permissions == (ShaderRecompiler::BdaAbi::Read | ShaderRecompiler::BdaAbi::Write), "incorrect BDA address or permissions");
+    Require(ranges[0].deviceAddress != 0 && ranges[0].permissions == ShaderRecompiler::BdaAbi::Read, "incorrect BDA address or permissions");
+    const auto grants = memory.WriteGrants();
+    Require(grants.size() == 1 && grants[0].begin == address && grants[0].end == address + sizeof(guest), "the written descriptors are not one write grant");
     std::uint32_t changed = 321;
     std::memcpy(access.addressBytes(alias.first + adjustment).data(), &changed, sizeof(changed));
     memory.WriteBack();
@@ -1503,7 +1498,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         ShaderRecompiler::BdaAbi::Header header{};
         ShaderRecompiler::BdaAbi::Range range{};
         std::memcpy(&header, table.data(), sizeof(header));
-        Require(header.version == ShaderRecompiler::BdaAbi::TableVersion && header.count == 1 && header.entryBytes == sizeof(range) && header.reserved == 0 && header.pageTable == 0 && header.unused == 0, "BDA header layout mismatch: version " + std::to_string(header.version) + ", " + std::to_string(header.count) + " ranges of " + std::to_string(header.entryBytes) + " bytes, page table " + std::to_string(header.pageTable));
+        Require(header.version == ShaderRecompiler::BdaAbi::TableVersion && header.count == 1 && header.grants == 0 && header.reserved == 0 && header.pageTable == 0 && header.unused == 0, "BDA header layout mismatch: version " + std::to_string(header.version) + ", " + std::to_string(header.count) + " ranges, " + std::to_string(header.grants) + " write grants, page table " + std::to_string(header.pageTable));
         std::memcpy(&range, table.data() + sizeof(header), sizeof(range));
         Require(range.begin == snapshots[0].address && range.end == range.begin + source.size(), "64-bit guest address was truncated");
         const auto fault = access.bytes(access.descriptor(5).buffer);

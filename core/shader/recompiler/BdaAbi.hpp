@@ -9,21 +9,25 @@
 namespace ShaderRecompiler::BdaAbi {
 
 inline constexpr std::uint32_t Version = 1;
-inline constexpr std::uint32_t TableVersion = 2;
+inline constexpr std::uint32_t TableVersion = 3;
 inline constexpr std::uint32_t Read = 1;
 inline constexpr std::uint32_t Write = 2;
 
 struct Header {
     std::uint32_t version;
     std::uint32_t count;
-    std::uint32_t entryBytes;
+    std::uint32_t grants;
     std::uint32_t reserved;
     std::uint64_t pageTable;
     std::uint64_t unused;
 };
 
 inline constexpr std::uint32_t HeaderWords = 8;
+inline constexpr std::uint32_t CountWord = 1;
+inline constexpr std::uint32_t GrantsWord = 2;
 inline constexpr std::uint32_t PageTableWord = 4;
+inline constexpr std::uint32_t RangeWords = 8;
+inline constexpr std::uint32_t GrantWords = 4;
 inline constexpr std::uint32_t PageShift = 16;
 inline constexpr std::uint32_t WindowShift = 32;
 inline constexpr std::uint32_t AddressBits = 47;
@@ -78,6 +82,11 @@ struct Range {
     std::uint32_t reserved;
 };
 
+struct Grant {
+    std::uint64_t begin;
+    std::uint64_t end;
+};
+
 enum class FaultState : std::uint32_t { Empty, Writing, Ready };
 enum class FaultReason : std::uint32_t { Unmapped = 1, Permission, Overflow, InvalidTable, InvalidRectangle, LoopLimit, Unaligned, InvalidDescriptor, ImageTable, UnlinkedCall };
 
@@ -95,8 +104,10 @@ static_assert(std::is_standard_layout_v<Header> && std::is_trivially_copyable_v<
 static_assert(offsetof(Header, pageTable) == PageTableWord * sizeof(std::uint32_t));
 static_assert(std::is_standard_layout_v<PageEntry> && std::is_trivially_copyable_v<PageEntry> && sizeof(PageEntry) == 16);
 static_assert(PageShift % SplitShift == 0 && FirstMask >= (1u << PageShift) && LimitMax > (std::uint64_t{1} << PageShift) + 0xffffffffull);
-static_assert(std::is_standard_layout_v<Range> && std::is_trivially_copyable_v<Range> && sizeof(Range) == 32);
+static_assert(offsetof(Header, count) == CountWord * sizeof(std::uint32_t) && offsetof(Header, grants) == GrantsWord * sizeof(std::uint32_t));
+static_assert(std::is_standard_layout_v<Range> && std::is_trivially_copyable_v<Range> && sizeof(Range) == RangeWords * sizeof(std::uint32_t));
 static_assert(offsetof(Range, deviceAddress) == 16 && offsetof(Range, permissions) == 24);
+static_assert(std::is_standard_layout_v<Grant> && std::is_trivially_copyable_v<Grant> && sizeof(Grant) == GrantWords * sizeof(std::uint32_t));
 static_assert(std::is_standard_layout_v<Fault> && std::is_trivially_copyable_v<Fault> && sizeof(Fault) == 32);
 static_assert(offsetof(Fault, address) == 8 && offsetof(Fault, instruction) == 24);
 

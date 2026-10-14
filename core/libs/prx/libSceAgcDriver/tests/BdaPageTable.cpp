@@ -29,8 +29,8 @@ Ref::Leaves Encode(std::span<const Abi::Range> ranges) {
     return Ref::EncodeLeaves(ranges, [](std::uint32_t window, std::span<const Abi::Range> held) { return EncodeBdaWindow(window, held); });
 }
 
-Ref::Translation Walked(const Ref::Leaves& leaves, std::uint64_t address, std::uint32_t bytes, std::uint32_t permission = Abi::Read) {
-    const auto walked = Ref::WalkPages(leaves, address, bytes, permission);
+Ref::Translation Walked(const Ref::Leaves& leaves, std::uint64_t address, std::uint32_t bytes, std::uint32_t permission = Abi::Read, std::span<const Abi::Grant> grants = {}) {
+    const auto walked = Ref::WalkPages(leaves, address, bytes, permission, grants);
     return walked.value_or(Ref::Translation{~std::uint64_t{0}, ~0u});
 }
 
@@ -40,16 +40,17 @@ Ref::Translation Mapped(std::uint64_t device) {
     return {device, 0u};
 }
 
-void ExpectSame(const Ref::Leaves& leaves, std::span<const Abi::Range> list, std::span<const Abi::Range> held, const std::string& name) {
+void ExpectSame(const Ref::Leaves& leaves, std::span<const Abi::Range> list, std::span<const Abi::Range> held, const std::string& name, std::span<const Abi::Grant> grants = {}) {
     const Ref::Leaves none;
+    const auto own = Ref::Without(list, held);
     for (const auto address : Ref::Probes(list)) {
         for (const auto bytes : Ref::ProbeBytes) {
             for (const auto permission : {Abi::Read, Abi::Write, Abi::Read | Abi::Write}) {
-                const auto expected = Ref::Translate(none, list, address, bytes, permission);
-                const auto actual = Ref::Translate(leaves, list, address, bytes, permission);
+                const auto expected = Ref::Translate(none, list, address, bytes, permission, grants);
+                const auto actual = Ref::Translate(leaves, own, address, bytes, permission, grants);
                 Expect(actual == expected, name + ": " + Hex(address) + " bytes " + std::to_string(bytes) + " permission " + std::to_string(permission) + " gave " + Hex(actual.device) + " reason " + std::to_string(actual.reason) + ", the list " + Hex(expected.device) + " reason " + std::to_string(expected.reason));
-                const auto alone = Ref::Translate(leaves, {}, address, bytes, permission);
-                Expect(alone == Ref::PagesAlone(held, address, bytes, permission), name + ": the page table alone translated " + Hex(address) + " bytes " + std::to_string(bytes) + " permission " + std::to_string(permission) + " unlike its ranges");
+                const auto alone = Ref::Translate(leaves, {}, address, bytes, permission, grants);
+                Expect(alone == Ref::Translate(none, held, address, bytes, permission, grants), name + ": the page table alone translated " + Hex(address) + " bytes " + std::to_string(bytes) + " permission " + std::to_string(permission) + " unlike its ranges");
             }
         }
     }
@@ -120,11 +121,20 @@ void PermissionTests() {
     constexpr std::uint64_t base = 0x7ff600000000ull;
     const std::vector<Abi::Range> ranges{{base, base + 0x20000u, 0x8000000000ull, Abi::Read, 0u}, {base + 0x20000u, base + 0x30000u, 0x9000000000ull, 0u, 0u}, {base + 0x30000u, base + 0x40000u, 0xa000000000ull, Abi::Read | Abi::Write, 0u}};
     const auto leaves = Encode(ranges);
-    Expect(Walked(leaves, base + 8u, 4u, Abi::Write) == Missed, "a read-only page answered a write");
-    Expect(Walked(leaves, base + 0x20000u, 1u) == Missed, "a page without permissions answered a read");
+    Expect(Walked(leaves, base + 8u, 4u, Abi::Write) == Ref::Fault(Abi::FaultReason::Permission), "a write to a read-only page was not a permission fault");
+    Expect(Walked(leaves, base + 0x20000u, 1u) == Ref::Fault(Abi::FaultReason::Permission), "a read of a page without permissions was not a permission fault");
     Expect(Walked(leaves, base + 0x30000u, 8u, Abi::Read | Abi::Write) == Mapped(0xa000000000ull), "a writable page did not answer an atomic");
-    Expect(Ref::Translate(leaves, ranges, base + 8u, 4u, Abi::Write) == Ref::Fault(Abi::FaultReason::Permission), "a write to a read-only page was not a permission fault");
     ExpectSame(leaves, ranges, "permissions");
+    const std::vector<Abi::Grant> grants{{base + 0x10u, base + 0x1010u}, {base + 0x1fff0u, base + 0x30010u}};
+    Expect(Walked(leaves, base + 0x10u, 4u, Abi::Write, grants) == Mapped(0x8000000010ull), "a write grant did not let a read-only page take a store");
+    Expect(Walked(leaves, base + 0x100cu, 4u, Abi::Read | Abi::Write, grants) == Mapped(0x800000100cull), "a write grant did not let a read-only page take an atomic");
+    Expect(Walked(leaves, base + 0x100eu, 4u, Abi::Write, grants) == Ref::Fault(Abi::FaultReason::Permission), "a store past the end of its write grant was permitted");
+    Expect(Walked(leaves, base + 0xcu, 8u, Abi::Write, grants) == Ref::Fault(Abi::FaultReason::Permission), "a store from before its write grant was permitted");
+    Expect(Walked(leaves, base + 0x20000u, 4u, Abi::Write, grants) == Mapped(0x9000000000ull), "a write grant did not add the write permission to a page without permissions");
+    Expect(Walked(leaves, base + 0x20000u, 4u, Abi::Read, grants) == Ref::Fault(Abi::FaultReason::Permission), "a write grant made a page without permissions readable");
+    Expect(Walked(leaves, base + 0x20000u, 4u, Abi::Read | Abi::Write, grants) == Ref::Fault(Abi::FaultReason::Permission), "a write grant made a page without permissions take an atomic");
+    Expect(Walked(leaves, base + 0x1fffcu, 4u, Abi::Write, grants) == Mapped(0x800001fffcull), "a write grant over a range's end did not cover the range's last bytes");
+    ExpectSame(leaves, ranges, ranges, "permissions with write grants", grants);
 }
 
 void WindowTests() {
@@ -211,8 +221,34 @@ void RandomTests() {
         const auto base = (static_cast<std::uint64_t>(random() % 0x7fffu) << Abi::WindowShift) + (round % 3u == 0u ? 0xffff0000ull : (random() % 0x10000u) << Abi::PageShift);
         const auto table = Ref::RandomTable(random, base, 1u + random() % 40u);
         if (table.list.back().end > Abi::PageTableEnd) continue;
-        ExpectSame(Encode(table.pages), table.list, table.pages, "random table " + std::to_string(round));
+        const auto grants = round % 2u == 0u ? std::vector<Abi::Grant>{} : Ref::RandomGrants(random, table.list, 1u + random() % 6u);
+        ExpectSame(Encode(table.pages), table.list, table.pages, "random table " + std::to_string(round), grants);
     }
+}
+
+void GrantValidationTests() {
+    const auto rejects = [](std::vector<Abi::Grant> grants, const char* what) {
+        bool thrown = false;
+        try {
+            ValidateBdaGrants(grants);
+        } catch (const std::runtime_error&) {
+            thrown = true;
+        }
+        Expect(thrown, what);
+    };
+    constexpr std::uint64_t base = 0x500000000ull;
+    rejects({{base, base}}, "an empty write grant was accepted");
+    rejects({{base, base + 0x20u}, {base + 0x10u, base + 0x30u}}, "overlapping write grants were accepted");
+    rejects({{base, base + 0x20u}, {base + 0x20u, base + 0x30u}}, "touching write grants were accepted");
+    rejects({{base + 0x40u, base + 0x50u}, {base, base + 0x10u}}, "unsorted write grants were accepted");
+    bool accepted = true;
+    try {
+        ValidateBdaGrants(std::vector<Abi::Grant>{{base, base + 0x20u}, {base + 0x21u, base + 0x30u}});
+        ValidateBdaGrants({});
+    } catch (const std::runtime_error&) {
+        accepted = false;
+    }
+    Expect(accepted, "sorted, disjoint write grants were refused");
 }
 
 }
@@ -226,6 +262,7 @@ int main() {
         WindowTests();
         UpdateTests();
         ValidationTests();
+        GrantValidationTests();
         RandomTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

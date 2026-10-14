@@ -59,6 +59,13 @@ void ValidateBdaRangeList(std::span<const Abi::Range> ranges) {
     for (std::size_t index = 1; index < ranges.size(); ++index) Require(ranges[index - 1].end <= ranges[index].begin, "BDA ranges are unsorted or overlap");
 }
 
+void ValidateBdaGrants(std::span<const Abi::Grant> grants) {
+    for (std::size_t index = 0; index < grants.size(); ++index) {
+        Require(grants[index].begin < grants[index].end, "a BDA write grant is empty");
+        Require(index == 0 || grants[index - 1].end < grants[index].begin, "BDA write grants are unsorted, overlap or touch");
+    }
+}
+
 void ValidateBdaPageRanges(std::span<const Abi::Range> ranges) {
     ValidateBdaRangeList(ranges);
     for (const auto& range : ranges) {

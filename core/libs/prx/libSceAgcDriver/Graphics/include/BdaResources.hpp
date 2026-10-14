@@ -53,6 +53,7 @@ private:
     // BdaResources.cpp, which refers to it weakly).
     void markWrittenPages() const;
     std::shared_ptr<const BdaPageTable> pages;
+    std::vector<ShaderRecompiler::BdaAbi::Grant> writeGrants;
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
     std::size_t tableBytes = 0;

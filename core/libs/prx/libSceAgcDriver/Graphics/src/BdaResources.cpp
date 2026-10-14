@@ -41,6 +41,7 @@ namespace {
 struct TableEntry {
     std::uint64_t hash;
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
+    std::vector<ShaderRecompiler::BdaAbi::Grant> grants;
     std::weak_ptr<Buffer> buffer;
     std::uint64_t spaceSerial = 0;
     std::uint64_t pageTable = 0;
@@ -103,18 +104,24 @@ std::size_t tableCacheEntries() {
     return entries;
 }
 
-bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const std::vector<ShaderRecompiler::BdaAbi::Range>& right) {
+template<typename TElement>
+bool sameElements(const std::vector<TElement>& left, const std::vector<TElement>& right) {
     return left.size() == right.size() && (left.empty() || std::memcmp(left.data(), right.data(), left.size() * sizeof(left.front())) == 0);
+}
+
+bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const std::vector<ShaderRecompiler::BdaAbi::Range>& right) {
+    return sameElements(left, right);
 }
 
 // A 64-bit mix of the table's words: a table is ~1200 ranges of four words, and comparing the bytes
 // against every held table would cost as much as building it.
-std::uint64_t hashRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges) {
-    static_assert(sizeof(ShaderRecompiler::BdaAbi::Range) % sizeof(std::uint64_t) == 0);
-    std::uint64_t hash = 0x9e3779b97f4a7c15ull ^ ranges.size();
-    for (const auto& range : ranges) {
-        std::uint64_t words[sizeof(range) / sizeof(std::uint64_t)];
-        std::memcpy(words, &range, sizeof(range));
+template<typename TElement>
+std::uint64_t hashElements(std::uint64_t hash, const std::vector<TElement>& elements) {
+    static_assert(sizeof(TElement) % sizeof(std::uint64_t) == 0);
+    hash ^= elements.size();
+    for (const auto& element : elements) {
+        std::uint64_t words[sizeof(element) / sizeof(std::uint64_t)];
+        std::memcpy(words, &element, sizeof(element));
         for (const auto word : words) {
             hash ^= word;
             hash *= 0xff51afd7ed558ccdull;
@@ -141,9 +148,11 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     if (!cached.has_value()) built = memory.AddressRanges();
     const auto& ranges = cached.has_value() ? *cached->ranges : built;
     const auto serial = cached.has_value() ? cached->serial : 0;
-    Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
-    Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / sizeof(ShaderRecompiler::BdaAbi::Range), "BDA table size overflow");
-    tableBytes = sizeof(ShaderRecompiler::BdaAbi::Header) + ranges.size() * sizeof(ShaderRecompiler::BdaAbi::Range);
+    writeGrants = memory.WriteGrants();
+    const auto& grants = writeGrants;
+    Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max() && grants.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
+    Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / (sizeof(ShaderRecompiler::BdaAbi::Range) + sizeof(ShaderRecompiler::BdaAbi::Grant)) && grants.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / (sizeof(ShaderRecompiler::BdaAbi::Range) + sizeof(ShaderRecompiler::BdaAbi::Grant)), "BDA table size overflow");
+    tableBytes = sizeof(ShaderRecompiler::BdaAbi::Header) + ranges.size() * sizeof(ShaderRecompiler::BdaAbi::Range) + grants.size() * sizeof(ShaderRecompiler::BdaAbi::Grant);
     Require(tableBytes <= context.limits.maxStorageBufferRange && ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA descriptors exceed storage buffer range limit");
     auto& cache = Tables();
     std::uint64_t hash = 0;
@@ -156,7 +165,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
         if (serial != 0) {
             for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-                if (it->spaceSerial != serial || it->pageTable != pageTable) continue;
+                if (it->spaceSerial != serial || it->pageTable != pageTable || !sameElements(it->grants, grants)) continue;
                 if (auto shared = it->buffer.lock(); shared != nullptr) {
                     ++cache.hits;
                     ++cache.classes.spaceTables;
@@ -168,7 +177,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
                 break;
             }
         }
-        hash = hashRanges(ranges) ^ pageTable;
+        hash = hashElements(hashElements(0x9e3779b97f4a7c15ull, ranges), grants) ^ pageTable;
         classifyFirstEntry(cache, hash, ranges);
         for (auto it = cache.entries.begin(); it != cache.entries.end();) {
             // Compare the hash before taking a strong reference: locking a non-matching entry's
@@ -188,7 +197,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
                 it = cache.entries.erase(it);
                 continue;
             }
-            if (it->pageTable == pageTable && sameRanges(it->ranges, ranges)) {
+            if (it->pageTable == pageTable && sameRanges(it->ranges, ranges) && sameElements(it->grants, grants)) {
                 ++cache.hits;
                 // An equal table of an earlier space (a rebuild that mapped the same ranges the
                 // same way): the next build of this space binds it by the serial.
@@ -201,11 +210,14 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
     }
     for (const auto& range : ranges) Require((range.permissions & ShaderRecompiler::BdaAbi::Write) == 0 || range.end <= ShaderRecompiler::BdaAbi::WrittenAddressLimit, "a writable BDA range ends past the addresses the written-page record can hold");
+    for (const auto& grant : grants) Require(grant.end <= ShaderRecompiler::BdaAbi::WrittenAddressLimit, "a BDA write grant ends past the addresses the written-page record can hold");
     ValidateBdaRangeList(ranges);
+    ValidateBdaGrants(grants);
     table = std::make_shared<Buffer>(context, tableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const ShaderRecompiler::BdaAbi::Header header{ShaderRecompiler::BdaAbi::TableVersion, static_cast<std::uint32_t>(ranges.size()), sizeof(ShaderRecompiler::BdaAbi::Range), 0, pageTable, 0};
+    const ShaderRecompiler::BdaAbi::Header header{ShaderRecompiler::BdaAbi::TableVersion, static_cast<std::uint32_t>(ranges.size()), static_cast<std::uint32_t>(grants.size()), 0, pageTable, 0};
     std::memcpy(table->Bytes().data(), &header, sizeof(header));
     if (!ranges.empty()) std::memcpy(table->Bytes().data() + sizeof(header), ranges.data(), ranges.size() * sizeof(ranges.front()));
+    if (!grants.empty()) std::memcpy(table->Bytes().data() + sizeof(header) + ranges.size() * sizeof(ranges.front()), grants.data(), grants.size() * sizeof(grants.front()));
     if (tableCacheEnabled()) {
         std::lock_guard lock(cache.mutex);
         ++cache.misses;
@@ -213,7 +225,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             cache.entries.clear();
             cache.device = context.device;
         }
-        cache.entries.push_front({hash, cached.has_value() ? ranges : std::move(built), table, serial, pageTable});
+        cache.entries.push_front({hash, cached.has_value() ? ranges : std::move(built), grants, table, serial, pageTable});
         while (cache.entries.size() > tableCacheEntries()) cache.entries.pop_back();
     }
 }
@@ -311,6 +323,8 @@ void BdaResources::CheckFault() const {
             message << std::hex << "; the store hit 0x" << range.begin << "+0x" << range.end - range.begin << ", read-only in the BDA table: stores through GPU-selected descriptors and FLAT/GLOBAL addresses reach only writable ranges imported in place, not ones served by a mirror or a copy (past APS5_HOST_IMPORT_MIB, or refused by the driver)";
             break;
         }
+        message << std::dec << "; this dispatch's write grants: " << writeGrants.size() << std::hex;
+        for (std::size_t index = 0; index < writeGrants.size() && index < 8u; ++index) message << " 0x" << writeGrants[index].begin << "-0x" << writeGrants[index].end;
     }
     throw std::runtime_error(message.str());
 }

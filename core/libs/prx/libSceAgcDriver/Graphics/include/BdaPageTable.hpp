@@ -13,6 +13,7 @@ namespace AgcDriver::Graphics {
 class Buffer;
 
 void ValidateBdaRangeList(std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
+void ValidateBdaGrants(std::span<const ShaderRecompiler::BdaAbi::Grant> grants);
 void ValidateBdaPageRanges(std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
 std::vector<ShaderRecompiler::BdaAbi::PageEntry> EncodeBdaWindow(std::uint32_t window, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
 

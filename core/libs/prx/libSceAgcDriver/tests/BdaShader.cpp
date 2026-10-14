@@ -3,11 +3,28 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
+#include <stdexcept>
+#include <string>
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
 
 namespace {
+
+std::vector<std::uint32_t> Structured(std::vector<std::uint32_t> words) {
+    for (std::size_t at = 5; at < words.size();) {
+        const auto opcode = words[at] & 0xffffu;
+        const auto count = words[at] >> 16u;
+        if (count == 0u || at + count > words.size()) throw std::runtime_error("a BDA test module has a malformed instruction");
+        if (opcode == spv::OpLoopMerge || opcode == spv::OpSelectionMerge) {
+            const auto next = at + count < words.size() ? words[at + count] & 0xffffu : 0u;
+            const bool branch = opcode == spv::OpLoopMerge ? next == spv::OpBranch || next == spv::OpBranchConditional : next == spv::OpBranchConditional || next == spv::OpSwitch;
+            if (!branch) throw std::runtime_error("a BDA test module has a merge instruction that does not immediately precede its branch, at word " + std::to_string(at));
+        }
+        at += count;
+    }
+    return words;
+}
 
 template<typename TEmit>
 std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool stops, const TEmit& emit, std::uint32_t extracted = 0, bool writes = false) {
@@ -66,7 +83,7 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
     state.module.AddFunction(spv::OpFunctionEnd);
     state.module.AddExecutionMode(main, spv::ExecutionModeLocalSize, 1u, 1u, 1u);
     state.module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", interfaceVariables);
-    return state.module.Finalize();
+    return Structured(state.module.Finalize());
 }
 
 }
@@ -76,6 +93,7 @@ std::vector<std::uint32_t> MakeBdaTranslateTestShader(std::uint32_t count) {
     IrProgram program;
     program.Resources().stage = IrShaderStage::Compute;
     program.Info().usesDma = true;
+    program.Info().bdaWrites = true;
     SpirvEmitterState state(program, {});
     EmitBaseHeader(state.module, program);
     const auto define = [&](std::uint32_t binding) {
@@ -122,7 +140,7 @@ std::vector<std::uint32_t> MakeBdaTranslateTestShader(std::uint32_t count) {
     state.module.AddFunction(spv::OpFunctionEnd);
     state.module.AddExecutionMode(main, spv::ExecutionModeLocalSize, 64u, 1u, 1u);
     state.module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", std::vector<std::uint32_t>{invocation});
-    return state.module.Finalize();
+    return Structured(state.module.Finalize());
 }
 
 std::vector<std::uint32_t> MakeBdaTestShader(std::uint64_t address, std::uint32_t bits, std::int64_t offset) {
