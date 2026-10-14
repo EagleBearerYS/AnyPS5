@@ -183,20 +183,28 @@ void EmitIfCondition(SpirvEmitterState& state, std::uint32_t condition, TFunctio
 }
 
 template<typename TFunction>
-std::uint32_t EmitValueOrDefaultIfCondition(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t type, std::uint32_t defaultValue, TFunction&& function) {
+std::array<std::uint32_t, 4> EmitValuesOrDefaultIfCondition(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t type, std::uint32_t defaultValue, std::uint32_t count, TFunction&& function) {
     const auto header = state.currentLabel;
     const auto thenLabel = state.module.AllocateId();
     const auto mergeLabel = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, condition, thenLabel, mergeLabel);
     EmitLabel(state, thenLabel);
-    const auto thenValue = function();
+    const std::array<std::uint32_t, 4> thenValues = function();
     const auto thenExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, mergeLabel);
     EmitLabel(state, mergeLabel);
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpPhi, type, value, thenValue, thenExit, defaultValue, header);
-    return value;
+    std::array<std::uint32_t, 4> values{};
+    for (std::uint32_t index = 0; index < count; ++index) {
+        values[index] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpPhi, type, values[index], thenValues[index], thenExit, defaultValue, header);
+    }
+    return values;
+}
+
+template<typename TFunction>
+std::uint32_t EmitValueOrDefaultIfCondition(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t type, std::uint32_t defaultValue, TFunction&& function) {
+    return EmitValuesOrDefaultIfCondition(state, condition, type, defaultValue, 1u, [&] { return std::array<std::uint32_t, 4>{function()}; })[0];
 }
 
 template<typename TFunction>
