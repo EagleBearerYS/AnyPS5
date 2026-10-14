@@ -113,6 +113,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DominatorTree.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/FloatIdioms.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/NanCheckEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/OperandIdiomMerger.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtAddressArithmetic.cpp

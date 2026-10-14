@@ -23,26 +23,30 @@ using ShaderRecompiler::ShaderFloatMode;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
-constexpr std::uint32_t Inputs = 4;
-constexpr std::uint32_t Results = 24;
+constexpr std::uint32_t Inputs = 8;
+constexpr std::uint32_t Operands = 4;
+constexpr std::uint32_t Results = 32;
+constexpr std::array<std::uint32_t, Inputs - Operands> Constants{0x3f000000u, 0x3f800000u, 0x40000000u, 0x00000000u};
 constexpr std::uint32_t Sets = 8;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Merged{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Reloaded{};
 
-alignas(256) constexpr std::array<std::uint32_t, 60> MergedCode{
-    0x34020084u, 0x160600ffu, 0x00000060u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x06140b04u, 0x10160d04u,
+alignas(256) constexpr std::array<std::uint32_t, 73> MergedCode{
+    0x34020085u, 0x160600ffu, 0x00000080u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x06140b04u, 0x10160d04u,
     0xd54b000cu, 0x041a0b04u, 0xd504020du, 0x20020904u, 0x201c0f04u, 0xd508000fu, 0x08020b04u, 0x7e20810fu,
     0xd5038011u, 0x00020d04u, 0x7e244511u, 0x7e264104u, 0x7e284905u, 0x0e2a2714u, 0x0e2c0f0au, 0xd54b0017u,
     0x0412150cu, 0x7c020b04u, 0x02300905u, 0x7e321b18u, 0x7e340307u, 0x7e360306u, 0x7e3c0305u, 0x7e3e0307u,
     0xbe94037eu, 0x7c220f06u, 0x06340904u, 0x1036350au, 0xbefe0314u, 0x7e38491au, 0x7e3a7f1bu, 0xbe95037eu,
-    0x7c220f04u, 0xbf880002u, 0x063c0f04u, 0x103e091eu, 0xbefe0315u, 0x7e40451eu, 0x7e421b1fu, 0xe0781000u,
-    0x80010a03u, 0xe0781010u, 0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u, 0xe0781040u,
-    0x80011a03u, 0xe0781050u, 0x80011e03u, 0xbf810000u,
+    0x7c220f04u, 0xbf880002u, 0x063c0f04u, 0x103e091eu, 0xbefe0315u, 0x7e40451eu, 0x7e421b1fu, 0x7e440d07u,
+    0x104644f0u, 0x064808f2u, 0xd54b0025u, 0x03c9e904u, 0x104c0880u, 0x064e4523u, 0x7e504923u, 0x08524504u,
+    0xe0781000u, 0x80010a03u, 0xe0781010u, 0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u,
+    0xe0781040u, 0x80011a03u, 0xe0781050u, 0x80011e03u, 0xe0781060u, 0x80012203u, 0xe0781070u, 0x80012603u,
+    0xbf810000u,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 230> ReloadedCode{
-    0x34020084u, 0x160600ffu, 0x00000060u, 0xe0301000u, 0x80000401u, 0xe0301004u, 0x80000501u, 0xbf8c3f70u,
+alignas(256) constexpr std::array<std::uint32_t, 293> ReloadedCode{
+    0x34020085u, 0x160600ffu, 0x00000080u, 0xe0301000u, 0x80000401u, 0xe0301004u, 0x80000501u, 0xbf8c3f70u,
     0x06140b04u, 0xe0701000u, 0x80010a03u, 0xe0301000u, 0x80000401u, 0xe0301008u, 0x80000601u, 0xbf8c3f70u,
     0x10160d04u, 0xe0701004u, 0x80010b03u, 0xe0301000u, 0x80000401u, 0xe0301004u, 0x80000501u, 0xe0301008u,
     0x80000601u, 0xbf8c3f70u, 0xd54b000cu, 0x041a0b04u, 0xe0701008u, 0x80010c03u, 0xe0301000u, 0x80000401u,
@@ -70,7 +74,15 @@ alignas(256) constexpr std::array<std::uint32_t, 230> ReloadedCode{
     0xe0301000u, 0x80000401u, 0xe030100cu, 0x80000701u, 0xbf8c3f70u, 0x063c0f04u, 0xe0701050u, 0x80011e03u,
     0xe0301050u, 0x80011e03u, 0xe0301000u, 0x80000401u, 0xbf8c3f70u, 0x103e091eu, 0xe0701054u, 0x80011f03u,
     0xbefe0315u, 0xe0301050u, 0x80011e03u, 0xbf8c3f70u, 0x7e40451eu, 0xe0701058u, 0x80012003u, 0xe0301054u,
-    0x80011f03u, 0xbf8c3f70u, 0x7e421b1fu, 0xe070105cu, 0x80012103u, 0xbf810000u,
+    0x80011f03u, 0xbf8c3f70u, 0x7e421b1fu, 0xe070105cu, 0x80012103u, 0xe030100cu, 0x80000701u, 0xbf8c3f70u,
+    0x7e440d07u, 0xe0701060u, 0x80012203u, 0xe0301060u, 0x80012203u, 0xe0301010u, 0x80002a01u, 0xbf8c3f70u,
+    0x1046452au, 0xe0701064u, 0x80012303u, 0xe0301000u, 0x80000401u, 0xe0301014u, 0x80002b01u, 0xbf8c3f70u,
+    0x0648092bu, 0xe0701068u, 0x80012403u, 0xe0301000u, 0x80000401u, 0xe0301014u, 0x80002b01u, 0xe0301018u,
+    0x80002c01u, 0xbf8c3f70u, 0xd54b0025u, 0x04ae5904u, 0xe070106cu, 0x80012503u, 0xe0301000u, 0x80000401u,
+    0xe030101cu, 0x80002d01u, 0xbf8c3f70u, 0x104c092du, 0xe0701070u, 0x80012603u, 0xe0301060u, 0x80012203u,
+    0xe0301064u, 0x80012303u, 0xbf8c3f70u, 0x064e4523u, 0xe0701074u, 0x80012703u, 0xe0301064u, 0x80012303u,
+    0xbf8c3f70u, 0x7e504923u, 0xe0701078u, 0x80012803u, 0xe0301060u, 0x80012203u, 0xe0301000u, 0x80000401u,
+    0xbf8c3f70u, 0x08524504u, 0xe070107cu, 0x80012903u, 0xbf810000u,
 };
 
 constexpr const char* Names[Results] = {
@@ -98,6 +110,14 @@ constexpr const char* Names[Results] = {
     "v_mul_f32 v31, v30, v4 in a branch under v4 < v7",
     "v_ceil_f32 v32, v30",
     "v_cvt_flr_i32_f32 v33, v31",
+    "v_cvt_f32_u32 v34, v7",
+    "v_mul_f32 v35, 0.5, v34",
+    "v_add_f32 v36, 1.0, v4",
+    "v_fma_f32 v37, v4, 2.0, 1.0",
+    "v_mul_f32 v38, 0, v4",
+    "v_add_f32 v39, v35, v34",
+    "v_floor_f32 v40, v35",
+    "v_sub_f32 v41, v4, v34",
 };
 
 constexpr std::array<std::uint32_t, 32> Values{
@@ -175,8 +195,9 @@ void FillInputs(std::uint32_t set) {
             row[2] = Values[(lane * 11u + set * 5u + 2u) % Values.size()];
             row[3] = Values[(lane * 13u + set * 9u + 3u) % Values.size()];
         } else {
-            for (std::uint32_t input = 0; input < Inputs; ++input) row[input] = mixed();
+            for (std::uint32_t input = 0; input < Operands; ++input) row[input] = mixed();
         }
+        std::copy(Constants.begin(), Constants.end(), row + Operands);
     }
 }
 

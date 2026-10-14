@@ -36,7 +36,7 @@ IrValue* QuietedF32Source(const IrValue& value) {
     return MaskedOperand(value, IrOpcode::BitwiseOr32, 0x00400000u);
 }
 
-IrValue* MagnitudeSource(IrValue& value) {
+IrValue* MagnitudeSource(const IrValue& value) {
     IrValue* current = value.Resolve();
     while (true) {
         IrValue* inner = MaskedOperand(*current, IrOpcode::BitwiseAnd32, 0x7fffffffu);

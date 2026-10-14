@@ -10,7 +10,7 @@ namespace ShaderRecompiler {
 [[nodiscard]] IrValue* FlushedF32Source(const IrValue& value);
 [[nodiscard]] IrValue* NanTestedF32Source(const IrValue& value);
 [[nodiscard]] IrValue* QuietedF32Source(const IrValue& value);
-[[nodiscard]] IrValue* MagnitudeSource(IrValue& value);
+[[nodiscard]] IrValue* MagnitudeSource(const IrValue& value);
 
 }
 
