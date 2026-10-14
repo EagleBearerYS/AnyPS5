@@ -80,6 +80,7 @@ struct RegisteredPiece {
     bool writable;
     bool gpu;
 };
+bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes);
 // Whether a readable registered allocation contains [address, address + bytes) right now (one
 // registry lease): a storage image whose memory was freed or re-registered has nothing to store to.
 bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes, std::vector<RegisteredPiece>* pieces = nullptr);
