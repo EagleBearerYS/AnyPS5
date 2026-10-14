@@ -72,7 +72,7 @@ std::uint32_t RuntimeMipCount(SpirvEmitterState& state, std::uint32_t resource) 
 }
 
 void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id) {
-    if (!state.tableIndexNonUniform) return;
+    if (!state.tableIndexNonUniform && !state.tableAccess.laneKeyed) return;
     state.module.EmitCapability(spv::CapabilityShaderNonUniform);
     state.module.EmitCapability(spv::CapabilitySampledImageArrayNonUniformIndexing);
     state.module.AddAnnotation(spv::OpDecorate, id, spv::DecorationNonUniform);

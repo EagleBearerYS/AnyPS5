@@ -541,7 +541,23 @@ private:
         }
         records.base = heap.Base48();
         records.size = heap.GetSize();
-        records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset, records.size);
+        std::uint32_t recordStride = column.stride;
+        std::uint32_t recordAddend = column.addend;
+        if (column.indexed) {
+            recordStride = heap.Stride();
+            recordAddend = 0u;
+            if (heap.NumRecords() != 0u && (heap.SwizzleEnabled() || heap.AddTid() || heap.OutOfBounds() > 1u || recordStride < column.offset + column.dwordCount * 4u)) {
+                records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::UnsupportedOperation));
+                return records;
+            }
+            if (heap.NumRecords() > ImageTableAbi::MaxKeys) {
+                records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Budget));
+                return records;
+            }
+            records.records = heap.NumRecords();
+        } else {
+            records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset, records.size);
+        }
         records.keys = std::min(records.records, ImageTableAbi::MaxKeys);
         records.outside = records.keys < records.records;
         if (records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
@@ -577,7 +593,7 @@ private:
         const auto last = (column.dwordCount - 1u) * 4u;
         for (std::uint32_t record = 0; record < records.keys; record++) {
             if (records.states[record] != RecordState::Read) continue;
-            const auto offset = column.addend + record * column.stride;
+            const auto offset = recordAddend + record * recordStride;
             const auto head = ImageTableAbi::ScalarBufferDword(offset, column.offset, records.size);
             const auto tail = ImageTableAbi::ScalarBufferDword(offset, column.offset + last, records.size);
             if (head.has_value() && tail.has_value() && *tail - *head == last && accessible(records.base + *head) && accessible(records.base + *tail)) {
@@ -635,6 +651,7 @@ private:
         out.keys = records.keys;
         out.fault = records.fault;
         out.outside = records.outside;
+        out.singleMode = column.laneKey && column.implicitDerivatives;
         out.codes.assign(records.keys, 0u);
         TableTrace trace{records.base, records.size, records.records, records.keys, 0u, records.narrowed};
         auto& counters = tableCounters();
@@ -1043,6 +1060,20 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 }
             }
             out.map[mapStart + key] = mapped;
+        }
+        if (!sampler && column.singleMode && out.map[header + Abi::TableFault] == 0u) {
+            std::optional<std::uint32_t> mode;
+            bool mixed = false;
+            for (std::uint32_t key = 0; key < column.keys && !mixed; key++) {
+                const auto mapped = out.map[mapStart + key];
+                if (mapped == Abi::NullCode || (mapped & Abi::PoisonFlag) != 0u) continue;
+                const auto flags = out.map[mapped + Abi::ImageRecordFlags];
+                if ((flags & Abi::PoisonFlag) != 0u) continue;
+                const auto current = (flags >> Abi::ModeShift) & Abi::ModeMask;
+                mixed = mode.has_value() && *mode != current;
+                mode = current;
+            }
+            if (mixed) out.map[header + Abi::TableFault] = poison(resource, PoisonReason::MixedModes, nullptr);
         }
         if (sampler && out.map[header + Abi::TableFault] == 0u) {
             DescriptorValue zero;

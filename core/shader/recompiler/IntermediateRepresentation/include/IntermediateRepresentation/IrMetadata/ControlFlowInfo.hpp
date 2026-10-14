@@ -37,9 +37,12 @@ struct TableColumn {
     bool sampler = false;
     std::vector<KeyDomain> keyDomains;
     bool unkeyed = false;
+    bool laneKey = false;
+    bool indexed = false;
+    bool implicitDerivatives = false;
 
     bool operator==(const TableColumn& other) const {
-        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler;
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && laneKey == other.laneKey && indexed == other.indexed;
     }
 };
 

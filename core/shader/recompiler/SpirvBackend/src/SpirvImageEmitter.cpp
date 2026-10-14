@@ -1568,6 +1568,30 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     const auto baseHigh = field(ImageTableAbi::TableBaseHigh);
     const auto outsideCode = field(ImageTableAbi::TableOutsideCode);
     const auto tableFault = field(ImageTableAbi::TableFault);
+    if (column.indexed) {
+        const auto inMap = Binary(state, spv::OpULessThan, boolean, offset, keys);
+        const auto mapped = LoadTableMap(state, Select(state, u32, inMap, Binary(state, spv::OpIAdd, u32, mapStart, offset), ConstantU32(state, 0u)));
+        TableWord word;
+        word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outsideCode));
+        const auto extract = [&](std::uint32_t pair, std::uint32_t index) {
+            const auto id = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, u32, id, pair, index);
+            return id;
+        };
+        const auto divisor = Select(state, u32, Binary(state, spv::OpIEqual, boolean, keys, ConstantU32(state, 0u)), ConstantU32(state, 1u), keys);
+        const auto stride = Binary(state, spv::OpUDiv, u32, sizeLow, divisor);
+        const auto product = state.module.AllocateId();
+        state.module.AddFunction(spv::OpUMulExtended, TypeU32Pair(state), product, offset, stride);
+        const auto entry = state.module.AllocateId();
+        state.module.AddFunction(spv::OpIAddCarry, TypeU32Pair(state), entry, extract(product, 0u), ConstantU32(state, column.offset));
+        const auto low = state.module.AllocateId();
+        state.module.AddFunction(spv::OpIAddCarry, TypeU32Pair(state), low, baseLow, extract(entry, 0u));
+        word.addressLow = extract(low, 0u);
+        const auto carries = Binary(state, spv::OpIAdd, u32, extract(entry, 1u), extract(low, 1u));
+        word.addressHigh = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIAdd, u32, baseHigh, extract(product, 1u)), carries);
+        word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
+        return word;
+    }
     const auto relative = Binary(state, spv::OpISub, u32, offset, ConstantU32(state, column.addend));
     const auto record = Binary(state, spv::OpUDiv, u32, relative, ConstantU32(state, column.stride));
     const auto remainder = Binary(state, spv::OpISub, u32, relative, Binary(state, spv::OpIMul, u32, record, ConstantU32(state, column.stride)));
@@ -1626,6 +1650,9 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
     result.valid = ConstantBool(state, true);
     auto live = ConstantBool(state, true);
     state.tableAccess = {};
+    const auto& tableSources = state.program.Resources().descriptorSources;
+    const auto laneKeyed = [&](std::uint32_t source) { return source < tableSources.size() && tableSources[source].tableColumn.has_value() && tableSources[source].tableColumn->laneKey; };
+    state.tableAccess.laneKeyed = (base.table != NoTable && laneKeyed(base.source)) || (tableSampler && laneKeyed(state.program.Info().samplers.at(memory.sampler).source));
     if (base.table != NoTable) {
         const auto word = EmitTableWord(ctx, inst, base.source, base.table, 0u);
         EmitTableFault(ctx, inst, word, word.code, both(exec, word.poisoned));

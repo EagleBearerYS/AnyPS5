@@ -142,7 +142,7 @@ static_assert(fieldCount<IrResourcePlan>() == 21, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 8, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 11, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -918,6 +918,9 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(column.offset);
         out.Value(column.dwordCount);
         out.Value(column.sampler);
+        out.Value(column.laneKey);
+        out.Value(column.indexed);
+        out.Value(column.implicitDerivatives);
         out.List(column.keyDomains, [](Writer& domains, const KeyDomain& domain) {
             domains.Value(domain.source);
             domains.Value(domain.offset);
@@ -1066,6 +1069,9 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.offset);
         in.Value(column.dwordCount);
         in.Value(column.sampler);
+        in.Value(column.laneKey);
+        in.Value(column.indexed);
+        in.Value(column.implicitDerivatives);
         in.List(column.keyDomains, 13, [](Reader& domains, KeyDomain& domain) {
             domains.Value(domain.source);
             domains.Value(domain.offset);

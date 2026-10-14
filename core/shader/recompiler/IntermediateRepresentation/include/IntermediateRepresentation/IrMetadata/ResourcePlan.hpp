@@ -42,6 +42,7 @@ struct ImageTableColumnSnapshot {
     std::uint32_t keys = 0;
     std::uint32_t fault = 0;
     bool outside = false;
+    bool singleMode = false;
     std::vector<std::uint32_t> codes;
 
     bool operator==(const ImageTableColumnSnapshot& other) const = default;

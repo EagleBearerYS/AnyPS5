@@ -75,6 +75,7 @@ enum class PoisonReason : std::uint32_t {
     HeapWritten,
     DriverRejected,
     UnsupportedOperation,
+    MixedModes,
     Count
 };
 
@@ -101,6 +102,7 @@ constexpr std::string_view PoisonReasonName(PoisonReason reason) {
         case PoisonReason::HeapWritten: return "table written by its dispatch";
         case PoisonReason::DriverRejected: return "rejected by the driver";
         case PoisonReason::UnsupportedOperation: return "unsupported operation";
+        case PoisonReason::MixedModes: return "images of different runtime modes keyed per lane under implicit derivatives";
         case PoisonReason::Count: break;
     }
     return "unknown";
