@@ -89,6 +89,10 @@ constexpr std::array<std::uint32_t, 13> AddressBasedCopyCode{
     0xd7460001u, 0x04011410u, 0x34020282u, 0xe0301000u, 0x80000201u, 0x7e060280u, 0xdc308000u, 0x03080003u, 0xbf8c3f70u, 0x4a040702u, 0xe0701000u, 0x80010201u, 0xbf810000u,
 };
 
+constexpr std::array<std::uint32_t, 9> PointerCopyCode{
+    0xd7460001u, 0x04011410u, 0x34020282u, 0xdc308000u, 0x02000001u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 17> HtileClearCode{
     0xd7460000u, 0x04010c06u, 0x34000084u, 0xdc388000u, 0x04020000u, 0xbf8c3f70u, 0xd7710008u, 0x00120805u, 0xd7710009u,
     0x00120a05u, 0xd771000au, 0x00120c05u, 0xd771000bu, 0x00120e05u, 0xdc788000u, 0x00020800u, 0xbf810000u,
@@ -128,7 +132,7 @@ std::uint8_t* NewWatchedBlock(std::size_t bytes) {
     return block;
 }
 
-std::uint8_t* NewBlock(std::size_t bytes) {
+std::uint8_t* AllocateBlock(std::size_t bytes) {
 #ifdef _WIN32
     auto* block = WatchedBlocks ? NewWatchedBlock(bytes) : static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
@@ -136,7 +140,19 @@ std::uint8_t* NewBlock(std::size_t bytes) {
 #endif
     Require(block != nullptr, "depth expand: cannot allocate a guest block");
     std::memset(block, 0, bytes);
+    return block;
+}
+
+std::uint8_t* NewBlock(std::size_t bytes) {
+    auto* block = AllocateBlock(bytes);
     GuestAllocations::Mutation().Add(block, bytes, true, true, true);
+    return block;
+}
+
+std::uint8_t* NewSplitBlock(std::size_t first, std::size_t second) {
+    auto* block = AllocateBlock(first + second);
+    GuestAllocations::Mutation().Add(block, first, true, true, true);
+    GuestAllocations::Mutation().Add(block + first, second, true, true, true);
     return block;
 }
 
@@ -280,11 +296,12 @@ std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool
 class TexelReader {
 public:
     TexelReader()
-        : kernel(NewBlock(Block)), copyKernel(NewBlock(Block)), addressBasedCopyKernel(NewBlock(Block)), htileKernel(NewBlock(Block)), coordinates(NewBlock(Block)), output(NewBlock(Block)), zero(NewBlock(Block)) {
+        : kernel(NewBlock(Block)), copyKernel(NewBlock(Block)), addressBasedCopyKernel(NewBlock(Block)), htileKernel(NewBlock(Block)), pointerCopyKernel(NewBlock(Block)), coordinates(NewBlock(Block)), output(NewBlock(Block)), zero(NewBlock(Block)) {
         std::memcpy(kernel, LoadCode.data(), sizeof(LoadCode));
         std::memcpy(copyKernel, BufferCopyCode.data(), sizeof(BufferCopyCode));
         std::memcpy(addressBasedCopyKernel, AddressBasedCopyCode.data(), sizeof(AddressBasedCopyCode));
         std::memcpy(htileKernel, HtileClearCode.data(), sizeof(HtileClearCode));
+        std::memcpy(pointerCopyKernel, PointerCopyCode.data(), sizeof(PointerCopyCode));
     }
 
     std::vector<std::uint32_t> Read(std::uint64_t surface, const std::string& what) {
@@ -324,6 +341,15 @@ public:
         Dispatch(addressBased ? addressBasedCopyKernel : copyKernel, userData, Threads, bytes / 4u / Threads, true, what);
     }
 
+    void CopyThroughPointer(std::uint64_t source, std::uint64_t destination, std::uint32_t bytes, const std::string& what) {
+        std::array<std::uint32_t, 16> userData{};
+        userData[0] = static_cast<std::uint32_t>(source);
+        userData[1] = static_cast<std::uint32_t>(source >> 32u);
+        const auto written = BufferDescriptor(destination, bytes);
+        std::copy(written.begin(), written.end(), userData.begin() + 4);
+        Dispatch(pointerCopyKernel, userData, Threads, bytes / 4u / Threads, true, what);
+    }
+
     void ClearHtile(std::uint64_t htile, std::uint32_t bytes, const std::string& what) {
         const std::array<std::uint32_t, 6> userData{0u, 0u, static_cast<std::uint32_t>(htile), static_cast<std::uint32_t>(htile >> 32u), 0u, 0x00000ff0u};
         Dispatch(htileKernel, userData, 64u, bytes / 1024u, true, what);
@@ -334,6 +360,7 @@ private:
     std::uint8_t* copyKernel;
     std::uint8_t* addressBasedCopyKernel;
     std::uint8_t* htileKernel;
+    std::uint8_t* pointerCopyKernel;
     std::uint8_t* coordinates;
     std::uint8_t* output;
     std::uint8_t* zero;
@@ -552,6 +579,48 @@ bool RunUnimportedBufferRead(TexelReader& reader, bool watched) {
     return copied && (mirrors != 0) == watched;
 }
 
+enum class SecondHalf { Imported, Mirrored, Copied };
+
+bool RunSplitRead(TexelReader& reader, SecondHalf second, bool pointer) {
+    const char* const served[] = {"imported apart", "heap-mirrored", "copied"};
+    const auto name = std::string(pointer ? "an address-based pointer copy" : "address-based buffer copies, one a range,") + " of a write base across two registered ranges, the first imported and the second " + served[static_cast<int>(second)];
+    if (second == SecondHalf::Mirrored && !AgcDriver::GuestMemory::WriteWatched()) {
+        std::printf("%s: skipped, guest memory is not write-watched here\n", name.c_str());
+        return true;
+    }
+    struct Split {
+        explicit Split(bool watched) { WatchedBlocks = watched; }
+        ~Split() {
+            SetHostImportBudget(0);
+            WatchedBlocks = false;
+        }
+    } split(second == SecondHalf::Mirrored);
+    constexpr std::size_t RangeBytes = std::size_t{16} << 20u;
+    const auto half = PlaneBytes() / 2;
+    auto surfaces = NewSurfaces();
+    const auto copy = Address(NewBlock(PlaneBytes()));
+    const auto ranges = Address(NewSplitBlock(RangeBytes, RangeBytes));
+    surfaces.written = ranges + RangeBytes - half;
+    if (second != SecondHalf::Imported) SetHostImportBudget(HostImportLiveBytes() + RangeBytes + RangeBytes / 2);
+    const auto mirrorsBefore = MirrorCounters().heapMirrors;
+    std::printf("%s: read base 0x%llx, write base 0x%llx, ranges 0x%llx and 0x%llx, copy at 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written), static_cast<unsigned long long>(ranges), static_cast<unsigned long long>(ranges + RangeBytes), static_cast<unsigned long long>(copy));
+    Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
+    const auto before = DepthExpandCounts().stored;
+    Submit(DepthDraw(surfaces, true, true), name + ": DB expand from the read base to the write base");
+    if (pointer) {
+        reader.CopyThroughPointer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), name + ": pointer copy of the write base");
+    } else {
+        reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(half), true, name + ": buffer copy of the write base's half in the first range");
+        reader.CopyBuffer(surfaces.written + half, copy + half, static_cast<std::uint32_t>(half), true, name + ": buffer copy of the write base's half in the second range");
+    }
+    const auto stored = DepthExpandCounts().stored - before;
+    const auto mirrors = MirrorCounters().heapMirrors - mirrorsBefore;
+    std::printf("  expanded planes stored ahead of the copies: %llu (expected 1); heap mirrors made: %llu\n", static_cast<unsigned long long>(stored), static_cast<unsigned long long>(mirrors));
+    const auto depth = DrawnDepth(reader, surfaces, name);
+    const bool copied = Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels;
+    return copied && stored == 1 && (second != SecondHalf::Mirrored || mirrors != 0);
+}
+
 bool RunRepeatedExpand(TexelReader& reader) {
     const auto name = std::string("the game's expand repeated");
     const auto surfaces = NewSurfaces();
@@ -615,6 +684,10 @@ int main(int argc, char** argv) {
             {"address-based-buffer-read", [](TexelReader& reader) { return RunBufferRead(reader, true); }, "depth expand: an address-based buffer copy of the write base right after the DB expand does not hold the read surface's depth"},
             {"unimported-mirrored-buffer-read", [](TexelReader& reader) { return RunUnimportedBufferRead(reader, true); }, "depth expand: an address-based buffer copy of a heap-mirrored write base no host import serves does not hold the read surface's depth"},
             {"unimported-copied-buffer-read", [](TexelReader& reader) { return RunUnimportedBufferRead(reader, false); }, "depth expand: an address-based buffer copy of a copied write base no host import serves does not hold the read surface's depth"},
+            {"split-imported-buffer-read", [](TexelReader& reader) { return RunSplitRead(reader, SecondHalf::Imported, false); }, "depth expand: address-based buffer copies of a write base across two host imports do not hold the read surface's depth"},
+            {"split-imported-pointer-read", [](TexelReader& reader) { return RunSplitRead(reader, SecondHalf::Imported, true); }, "depth expand: an address-based pointer copy of a write base across two host imports does not hold the read surface's depth"},
+            {"split-mirrored-buffer-read", [](TexelReader& reader) { return RunSplitRead(reader, SecondHalf::Mirrored, false); }, "depth expand: address-based buffer copies of a write base imported in part and heap-mirrored in part do not hold the read surface's depth"},
+            {"split-copied-buffer-read", [](TexelReader& reader) { return RunSplitRead(reader, SecondHalf::Copied, false); }, "depth expand: address-based buffer copies of a write base imported in part and copied in part do not hold the read surface's depth"},
             {"repeated-expand", RunRepeatedExpand, "depth expand: a repeated DB expand wrote the plane when nothing changed, or did not write it after a change"},
         };
         const std::string_view only = argc == 2 ? std::string_view(argv[1]) : std::string_view();
