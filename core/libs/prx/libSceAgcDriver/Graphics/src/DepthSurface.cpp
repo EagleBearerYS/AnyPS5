@@ -1143,7 +1143,7 @@ void StoreDepthExpandWrites(const Context& context) {
         }
     }
     for (const auto& [address, bytes] : planes) {
-        if (HostImportFor(context, address, bytes) == nullptr) continue;
+        if (HostImportFor(context, address, bytes) == nullptr && !HostImportOverlaps(context, address, bytes)) continue;
         if (StorageTexture::FlushPending(address, bytes, nullptr, "DB expand")) expandsStored.fetch_add(1, std::memory_order_relaxed);
     }
 }
