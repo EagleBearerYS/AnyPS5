@@ -2,9 +2,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <cmath>
 
 #include "SceTypes.hpp"
@@ -17,9 +20,30 @@
 static constexpr std::uint32_t VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD = 0x00FF0000;
 static constexpr std::size_t VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD = 3;
 
+std::optional<VideoOutOutputResolution> ParseVideoOutOutputResolution_nid_no_patch(const char* value) {
+    if (value == nullptr || *value == '\0') return std::nullopt;
+    const std::string_view text(value);
+    if (text == "1280x720") return VideoOutOutputResolution{1280, 720};
+    if (text == "1920x1080") return VideoOutOutputResolution{1920, 1080};
+    if (text == "2560x1440") return VideoOutOutputResolution{2560, 1440};
+    if (text == "3840x2160") return VideoOutOutputResolution{3840, 2160};
+    throw std::runtime_error("VideoOut: ANYPS5_OUTPUT_RESOLUTION must be 1280x720, 1920x1080, 2560x1440 or 3840x2160");
+}
+
+std::optional<VideoOutOutputResolution> ConfiguredVideoOutOutputResolution_nid_no_patch() {
+    static const auto configured = ParseVideoOutOutputResolution_nid_no_patch(std::getenv("ANYPS5_OUTPUT_RESOLUTION"));
+    return configured;
+}
+
+static VideoOutOutputResolution reportedResolution(const VideoOutConfig& cfg) {
+    if (const auto configured = ConfiguredVideoOutOutputResolution_nid_no_patch()) return *configured;
+    return {cfg.width, cfg.height};
+}
+
 static VideoOutOutputStatus outputStatus(const auto& cfg) {
     VideoOutOutputStatus status{};
-    status.resolution = (cfg.width >= 3840 || cfg.height >= 2160) ? 2u : 1u;
+    const auto resolution = reportedResolution(cfg);
+    status.resolution = (resolution.width >= 3840 || resolution.height >= 2160) ? 2u : 1u;
     const bool hdr = AgcDriver::CurrentHostHdr().available;
     status.dynamicRange = hdr ? VIDEO_OUT_DYNAMIC_RANGE_HDR : VIDEO_OUT_DYNAMIC_RANGE_SDR;
     status.refreshRate = (cfg.outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
@@ -80,6 +104,7 @@ static void validateOpenParam(const void* param) {
 extern "C" {
 
 int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param) try {
+    static_cast<void>(ConfiguredVideoOutOutputResolution_nid_no_patch());
     validateOpenParam(param);
     if (userId != 255 && userId != 0) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
@@ -201,11 +226,12 @@ int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatu
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
+    const auto resolution = reportedResolution(*cfg);
     *status = VideoOutResolutionStatus{};
-    status->fullWidth = cfg->width;
-    status->fullHeight = cfg->height;
-    status->paneWidth = cfg->width;
-    status->paneHeight = cfg->height;
+    status->fullWidth = resolution.width;
+    status->fullHeight = resolution.height;
+    status->paneWidth = resolution.width;
+    status->paneHeight = resolution.height;
     status->refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
     return 0;
 } catch (const ProcessShutdown&) {

@@ -1,3 +1,5 @@
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -6,8 +8,20 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+
+static void reportRegisteredSize(const VideoOutConfig& cfg, std::uint32_t width, std::uint32_t height) {
+    const auto reported = ConfiguredVideoOutOutputResolution_nid_no_patch();
+    if (!reported || cfg.busType != VIDEO_OUT_BUS_TYPE_MAIN) return;
+    const bool follows = width == reported->width && height == reported->height;
+    static std::atomic<bool> followed{false};
+    static std::atomic<bool> differed{false};
+    if ((follows ? followed : differed).exchange(true)) return;
+    if (follows) std::fprintf(stderr, "[videoout] display buffers registered at %ux%u, as ANYPS5_OUTPUT_RESOLUTION reports\n", width, height);
+    else std::fprintf(stderr, "[videoout] display buffers registered at %ux%u although ANYPS5_OUTPUT_RESOLUTION reports %ux%u; they are presented and scaled to the window as before\n", width, height, reported->width, reported->height);
+}
 
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group) {
     const auto& attribute = group.attribute;
@@ -117,6 +131,7 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
     cfg->groups[setIndex] = group;
     cfg->width = attribute->width;
     cfg->height = attribute->height;
+    reportRegisteredSize(*cfg, attribute->width, attribute->height);
     for (int i = 0; i < bufferNum; i++) {
         cfg->buffers[bufferIndexStart + i] = registered[i];
         auto& label = cfg->bufferLabels[bufferIndexStart + i];
@@ -155,6 +170,7 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, 
         AgcDriverCheckGuestMemory_nid_postfix(reinterpret_cast<const void*>(display.address), AgcDriverDisplayBufferSize_nid_postfix(display), 65536);
     }
     cfg->groups[setIndex] = group;
+    reportRegisteredSize(*cfg, attribute->width, attribute->height);
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
