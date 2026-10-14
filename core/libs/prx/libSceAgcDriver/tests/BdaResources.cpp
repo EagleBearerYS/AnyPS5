@@ -454,6 +454,44 @@ void importAtMapOverBudgetTests(const Context& context) {
     for (auto* block : {kept, used, mapped}) ::operator delete(block, std::align_val_t{bytes});
 }
 
+void importEvictionTests(const Context& context) {
+    constexpr std::size_t bytes = 65536;
+    auto importing = context;
+    importing.hostImportAlignment = bytes;
+    void* idle = ::operator new(bytes, std::align_val_t{bytes});
+    void* used = ::operator new(bytes, std::align_val_t{bytes});
+    void* fresh = ::operator new(bytes, std::align_val_t{bytes});
+    const auto change = [&](void* block, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    for (auto* block : {idle, used, fresh}) change(block, true);
+    const auto idleAddress = reinterpret_cast<std::uintptr_t>(idle);
+    const auto usedAddress = reinterpret_cast<std::uintptr_t>(used);
+    const auto freshAddress = reinterpret_cast<std::uintptr_t>(fresh);
+    Require(HostImportFor(importing, idleAddress, 16) != nullptr, "the idle import was not made");
+    for (int use = 0; use < 300; ++use) Require(HostImportFor(importing, usedAddress, 16) != nullptr, "the import in use was not made");
+    {
+        GuestBufferMemory leased(importing);
+        leased.AddReadable(usedAddress, 16);
+        leased.Upload(false);
+        leased.WriteBack();
+    }
+    const auto live = HostImportLiveBytes();
+    const auto budget = live + bytes - 1;
+    SetHostImportBudget(budget);
+    const auto* made = HostImportFor(importing, freshAddress, 16);
+    const auto after = HostImportLiveBytes();
+    SetHostImportBudget(0);
+    Require(made != nullptr, "an import past the budget was refused instead of retiring an import nothing used recently");
+    Require(after <= budget, "an import past the budget left the live imports over the budget");
+    Require(HostImportCovers(importing, usedAddress, 16), "an import past the budget retired the import the last build used");
+    for (auto* block : {idle, used, fresh}) change(block, false);
+    for (auto* block : {idle, used, fresh}) ::operator delete(block, std::align_val_t{bytes});
+}
+
 ShaderRecompiler::DescriptorBinding binding(Role role, std::uint32_t slot) {
     return {role == Role::GuestBuffers ? ShaderRecompiler::DescriptorKind::DeviceAddress : ShaderRecompiler::DescriptorKind::StorageBuffer, role, 0, slot, 1, {}, false};
 }
@@ -1479,6 +1517,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importRefusedWholeRangeTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
+    importEvictionTests(context);
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();
