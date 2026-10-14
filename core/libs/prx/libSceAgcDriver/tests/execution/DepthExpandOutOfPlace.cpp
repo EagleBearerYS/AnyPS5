@@ -2,17 +2,22 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -116,11 +121,27 @@ struct RegisteredShader {
 RegisteredShader VertexShader{};
 RegisteredShader PixelShader{};
 
+bool WatchedBlocks = false;
+
+std::uint8_t* NewWatchedBlock(std::size_t bytes) {
+#ifdef _WIN32
+    auto* block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
+    Require(block != nullptr, "depth expand: cannot allocate a write-watched guest block");
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+#else
+    void* raw = mmap(nullptr, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(raw != MAP_FAILED, "depth expand: cannot map a write-watched guest block");
+    auto* block = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(raw) + Block - 1) & ~std::uintptr_t{Block - 1});
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
+#endif
+    return block;
+}
+
 std::uint8_t* NewBlock(std::size_t bytes) {
 #ifdef _WIN32
-    auto* block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    auto* block = WatchedBlocks ? NewWatchedBlock(bytes) : static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-    auto* block = static_cast<std::uint8_t*>(std::aligned_alloc(Block, bytes));
+    auto* block = WatchedBlocks ? NewWatchedBlock(bytes) : static_cast<std::uint8_t*>(std::aligned_alloc(Block, bytes));
 #endif
     Require(block != nullptr, "depth expand: cannot allocate a guest block");
     std::memset(block, 0, bytes);
@@ -530,6 +551,38 @@ bool RunBufferRead(TexelReader& reader, bool addressBased) {
     return copied && atExpand == 0 && byCopy == (addressBased ? 1u : 0u);
 }
 
+bool RunUnimportedBufferRead(TexelReader& reader, bool watched) {
+    const auto name = std::string(watched ? "an address-based buffer copy of a heap-mirrored write base no host import serves" : "an address-based buffer copy of a copied write base no host import serves");
+    if (watched && !AgcDriver::GuestMemory::WriteWatched()) {
+        std::printf("%s: skipped, guest memory is not write-watched here\n", name.c_str());
+        return true;
+    }
+    struct Unimported {
+        explicit Unimported(bool watched) {
+            WatchedBlocks = watched;
+            SetHostImportBudget(1);
+        }
+        ~Unimported() {
+            SetHostImportBudget(0);
+            WatchedBlocks = false;
+        }
+    } unimported(watched);
+    const auto mirrorsBefore = MirrorCounters().heapMirrors;
+    const auto surfaces = NewSurfaces();
+    const auto copy = Address(NewBlock(PlaneBytes()));
+    std::printf("%s: read base 0x%llx, write base 0x%llx, copy at 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written), static_cast<unsigned long long>(copy));
+    Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
+    reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": copy of the write base before the expand");
+    Fill(copy, PlaneBytes(), 0xffffffffu);
+    Submit(DepthDraw(surfaces, true, true), name + ": DB expand from the read base to the write base");
+    reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": raw buffer copy of the write base");
+    const auto mirrors = MirrorCounters().heapMirrors - mirrorsBefore;
+    std::printf("  heap mirrors made for the case's blocks: %llu (expected %s)\n", static_cast<unsigned long long>(mirrors), watched ? "some" : "none");
+    const auto depth = DrawnDepth(reader, surfaces, name);
+    const bool copied = Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  buffer copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels;
+    return copied && (mirrors != 0) == watched;
+}
+
 // The game's expand repeated into one write base. An expand of a surface nothing wrote since the previous expand, into an
 // image nothing changed since, would write what the image holds, and is skipped: reads of the write base (sampled, raw and
 // by an address-based copy) in between change neither. A redraw of the surface, or a CPU write to the write base, makes the
@@ -595,6 +648,8 @@ int main(int argc, char** argv) {
             {"guest-read-base", RunGuestReadBase, "depth expand: the write base does not hold the read base's guest bytes after the DB expand of a read base without a depth surface"},
             {"buffer-read", [](TexelReader& reader) { return RunBufferRead(reader, false); }, "depth expand: a buffer copy of the write base right after the DB expand does not hold the read surface's depth"},
             {"address-based-buffer-read", [](TexelReader& reader) { return RunBufferRead(reader, true); }, "depth expand: an address-based buffer copy of the write base right after the DB expand does not hold the read surface's depth"},
+            {"unimported-mirrored-buffer-read", [](TexelReader& reader) { return RunUnimportedBufferRead(reader, true); }, "depth expand: an address-based buffer copy of a heap-mirrored write base no host import serves does not hold the read surface's depth"},
+            {"unimported-copied-buffer-read", [](TexelReader& reader) { return RunUnimportedBufferRead(reader, false); }, "depth expand: an address-based buffer copy of a copied write base no host import serves does not hold the read surface's depth"},
             {"repeated-expand", RunRepeatedExpand, "depth expand: a repeated DB expand wrote the plane when nothing changed, or did not write it after a change"},
         };
         // A case name runs that case alone.
