@@ -9,6 +9,8 @@
 
 namespace ShaderRecompiler {
 
+bool ReducesBetweenTexels(std::uint32_t word0, std::uint32_t filter);
+DescriptorImageShape ImageShapeForResource(const ImageResource& image);
 std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter);
 struct PreparedDescriptorBinding {
     DescriptorBinding descriptor;

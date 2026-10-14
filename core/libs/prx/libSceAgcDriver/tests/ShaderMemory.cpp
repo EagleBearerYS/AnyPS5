@@ -874,9 +874,10 @@ std::vector<std::uint32_t> TableLoadCode(std::vector<std::uint32_t> code) {
     return code;
 }
 
-ShaderRecompiler::RecompileRequest TableRequest(const std::vector<std::uint32_t>& code, const std::array<std::uint32_t, 2>& userData, std::uint32_t subgroupSize = 32u, bool groupId = false) {
+ShaderRecompiler::RecompileRequest TableRequest(const std::vector<std::uint32_t>& code, const std::array<std::uint32_t, 2>& userData, std::uint32_t subgroupSize = 32u, bool groupId = false, bool deviceTables = true) {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    static constexpr std::array<std::uint32_t, 2> snapshotCapabilities{29u, spv::CapabilityInt64};
     static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     std::uint64_t hash = 0xcbf29ce484222325ull;
     for (const auto word : code) hash = (hash ^ word) * 0x100000001b3ull;
@@ -889,7 +890,7 @@ ShaderRecompiler::RecompileRequest TableRequest(const std::vector<std::uint32_t>
     request.target.vulkanVersion = 0x00401000u;
     request.target.spirvVersion = 0x00010300u;
     request.target.subgroupSize = subgroupSize;
-    request.target.supportedCapabilities = capabilities;
+    request.target.supportedCapabilities = deviceTables ? std::span<const std::uint32_t>(capabilities) : std::span<const std::uint32_t>(snapshotCapabilities);
     request.target.supportedExtensions = extensions;
     request.target.bdaAbiVersion = BdaAbi::Version;
     request.target.fragmentShaderBarycentricEnabled = false;
@@ -948,34 +949,42 @@ void verifyImageTableKeys() {
     large[5] = TableT(textures[3].bytes.data(), 0u, TableType2D);
     for (std::uint32_t entry = 6; entry < Entries; entry++) large[entry] = TableT(textures[entry % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, entry);
     const auto userData = TableUserData(guest);
-    for (const auto& code : {TableMaterialCode, TableWholeCode, TableLoadCode(TableMaterialCode), TableLoadCode(TableWholeCode)}) {
-        const auto request = TableRequest(code, userData, 32u, true);
-        guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 2u, 0u, 0u}}};
-        FillTableSrt(guest, guest.heap.data(), 32u, 3u);
-        const auto first = CompileTable(request);
-        guest.materials = {{{0u, 3u, 0u, 0u}, {0u, 4u, 0u, 0u}, {0u, 2999u, 0u, 0u}}};
-        FillTableSrt(guest, large.data(), 32u, Entries);
-        const auto second = CompileTable(request);
-        const auto& a = *first.result;
-        const auto& b = *second.result;
-        require(a.variantId == b.variantId, "image table keys: the table contents changed the compiled artifact");
-        require(a.PipelineVariantId() == b.PipelineVariantId() && a.specializationId == b.specializationId && a.specialization == b.specialization, "image table keys: the table contents changed the specialization");
-        require(a.spirv == b.spirv, "image table keys: the table contents changed the module");
-        require(first.key == second.key, "image table keys: the table contents changed the cache key");
-        require(TableMap(a) != TableMap(b), "image table keys: the maps do not differ");
-        const auto* tableA = TableBinding(a, DescriptorRole::ImageTable);
-        const auto* tableB = TableBinding(b, DescriptorRole::ImageTable);
-        require(tableA != nullptr && tableB != nullptr && tableA->binding == tableB->binding && tableA->guestDescriptor != tableB->guestDescriptor, "image table keys: the image table bindings are missing or equal");
-        require(a.bindings.size() == b.bindings.size(), "image table keys: the table contents changed the binding list");
-        for (std::size_t index = 0; index < a.bindings.size(); index++) {
-            require(a.bindings[index].role == b.bindings[index].role && a.bindings[index].binding == b.bindings[index].binding && a.bindings[index].kind == b.bindings[index].kind, "image table keys: the table contents changed a binding");
-        }
-        const auto& mapB = TableMap(b);
-        require(mapB[Abi::HeaderTableCount] == 1u && mapB[Abi::TableHeader(0) + Abi::TableKeyCount] == Entries, "image table keys: the large table was not snapshotted whole");
-        if (code.size() == TableWholeCode.size()) require(mapB[Abi::HeaderElementCount] > 2000u, "image table keys: the large table's entries were not bound");
+    for (const bool device : {false, true}) {
+        for (const auto& code : {TableMaterialCode, TableWholeCode, TableLoadCode(TableMaterialCode), TableLoadCode(TableWholeCode)}) {
+            const auto request = TableRequest(code, userData, 32u, true, device);
+            guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 2u, 0u, 0u}}};
+            FillTableSrt(guest, guest.heap.data(), 32u, 3u);
+            const auto first = CompileTable(request);
+            guest.materials = {{{0u, 3u, 0u, 0u}, {0u, 4u, 0u, 0u}, {0u, 2999u, 0u, 0u}}};
+            FillTableSrt(guest, large.data(), 32u, Entries);
+            const auto second = CompileTable(request);
+            const auto& a = *first.result;
+            const auto& b = *second.result;
+            require(a.variantId == b.variantId, "image table keys: the table contents changed the compiled artifact");
+            require(a.PipelineVariantId() == b.PipelineVariantId() && a.specializationId == b.specializationId && a.specialization == b.specialization, "image table keys: the table contents changed the specialization");
+            require(a.spirv == b.spirv, "image table keys: the table contents changed the module");
+            require(first.key == second.key, "image table keys: the table contents changed the cache key");
+            const auto* tableA = TableBinding(a, DescriptorRole::ImageTable);
+            const auto* tableB = TableBinding(b, DescriptorRole::ImageTable);
+            require(tableA != nullptr && tableB != nullptr && tableA->binding == tableB->binding, "image table keys: the image table bindings are missing");
+            require(a.bindings.size() == b.bindings.size(), "image table keys: the table contents changed the binding list");
+            for (std::size_t index = 0; index < a.bindings.size(); index++) {
+                require(a.bindings[index].role == b.bindings[index].role && a.bindings[index].binding == b.bindings[index].binding && a.bindings[index].kind == b.bindings[index].kind, "image table keys: the table contents changed a binding");
+            }
+            if (device) {
+                require(TableMap(a) == TableMap(b) && tableA->count == 0u && tableB->count == 0u, "image table keys: the table contents changed a device-table map or bound table elements");
+                require(first.capture->snapshot.tables == second.capture->snapshot.tables && second.capture->snapshot.tables.words.empty() && second.capture->snapshot.tables.ranges.empty(), "image table keys: a device-table capture read table records");
+            } else {
+                require(TableMap(a) != TableMap(b), "image table keys: the maps do not differ");
+                require(tableA->guestDescriptor != tableB->guestDescriptor, "image table keys: the image table bindings are equal");
+                const auto& mapB = TableMap(b);
+                require(mapB[Abi::HeaderTableCount] == 1u && mapB[Abi::TableHeader(0) + Abi::TableKeyCount] == Entries, "image table keys: the large table was not snapshotted whole");
+                if (code.size() == TableWholeCode.size()) require(mapB[Abi::HeaderElementCount] > 2000u, "image table keys: the large table's entries were not bound");
+            }
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(a.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+            static_cast<void>(ValidateAndOptimizeSpirv(a.spirv, request.target.vulkanVersion, request.target.spirvVersion));
 #endif
+        }
     }
 }
 
@@ -1037,7 +1046,7 @@ void verifyImageTableBulkReads() {
         FillTableSrt(guest, words.data() + firstWord, 32u, records);
     };
     const auto userData = TableUserData(guest);
-    const auto request = TableRequest(TableWholeCode, userData, 32u, true);
+    const auto request = TableRequest(TableWholeCode, userData, 32u, true, false);
     place(512u, Records);
     CountingMemory byWordReads{reinterpret_cast<std::uintptr_t>(words.data() + 512u), reinterpret_cast<std::uintptr_t>(words.data() + 512u + Records * 8u)};
     CountingMemory byRunReads = byWordReads;
@@ -1046,6 +1055,9 @@ void verifyImageTableBulkReads() {
     require(byWordReads.wordReads == Records * 8u && byWordReads.bulkCalls == 0u, "image table bulk reads: without a bulk reader the records were not read word by word once");
     require(byRunReads.wordReads == 0u && byRunReads.bulkCalls == 1u && byRunReads.bulkWords == Records * 8u, "image table bulk reads: the contiguous records across a page boundary were not read in one run");
     require(byRun->snapshot.tables == byWord->snapshot.tables && byRun->snapshot.tables.tables.at(0).keys == Records, "image table bulk reads: reading in runs changed the snapshot");
+    CountingMemory deviceReads{byWordReads.begin, byWordReads.end};
+    const auto device = capture(TableRequest(TableWholeCode, userData, 32u, true), deviceReads, false);
+    require(deviceReads.wordReads == 0u && device->snapshot.tables.words.empty() && device->snapshot.tables.ranges.empty(), "image table bulk reads: a capture of a table read through the device image table read its records");
     AgcDriver::ShaderMemory memory({});
     const auto captured = memory.Capture(request);
     require(captured->snapshot.tables == byWord->snapshot.tables && TableCovered(memory.Regions(), words.data() + 512u, Records * 32u), "image table bulk reads: the shader memory's run reads changed the snapshot or its captured regions");
@@ -1090,7 +1102,7 @@ LaneKeyCapture CaptureLaneKeys(const std::vector<std::uint32_t>& code, LaneKeyGu
     std::copy(elementsV.begin(), elementsV.end(), guest.srt.begin() + 4);
     std::copy(outputV.begin(), outputV.end(), guest.srt.begin() + 8);
     const auto srt = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.srt.data()));
-    auto request = TableRequest(code, {static_cast<std::uint32_t>(srt), static_cast<std::uint32_t>(srt >> 32u)}, 64u);
+    auto request = TableRequest(code, {static_cast<std::uint32_t>(srt), static_cast<std::uint32_t>(srt >> 32u)}, 64u, false, false);
     request.context.compute->groupIdEnable = {groupId, false, false};
     AgcDriver::ShaderMemory memory({});
     LaneKeyCapture out;
@@ -1130,7 +1142,7 @@ void verifyImageTables() {
     materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u, 0u, 0u}}};
     FillTableSrt(guest, heap.data(), 32u, 4u);
     const auto userData = TableUserData(guest);
-    auto request = TableRequest(TableMaterialCode, userData);
+    auto request = TableRequest(TableMaterialCode, userData, 32u, false, false);
 
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && plan->info.images[0].tableOperation == TableOperation::Supported, "image tables: the T# was not planned as a table");
@@ -1176,7 +1188,7 @@ void verifyImageTables() {
     static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
 #endif
 
-    const auto split = CompileTable(TableRequest(TableMaterialCode, userData, 64u));
+    const auto split = CompileTable(TableRequest(TableMaterialCode, userData, 64u, false, false));
     const auto splitScan = ScanTableSpirv(split.result->spirv);
     require(splitScan.shaderNonUniform && splitScan.nonUniform, "image tables: a split wave's table index is not decorated NonUniform");
 
@@ -1194,10 +1206,10 @@ void verifyImageTables() {
 
     std::vector<std::uint32_t> latchCode(TableWholeCode.begin(), TableWholeCode.begin() + 12);
     latchCode.insert(latchCode.end(), {0xbea80380u, 0xf09c0f08u, 0x00450000u, 0x80288128u, 0xbf0a8428u, 0xbf85fffbu, 0xe0700000u, 0x80070000u, 0xbf810000u});
-    const auto latch = CompileTable(TableRequest(latchCode, userData, 32u, true));
+    const auto latch = CompileTable(TableRequest(latchCode, userData, 32u, true, false));
     require(!latch.result->spirv.empty(), "image tables: a sample in a loop latch did not compile");
 
-    const auto whole = CompileTable(TableRequest(TableWholeCode, userData, 32u, true));
+    const auto whole = CompileTable(TableRequest(TableWholeCode, userData, 32u, true, false));
     const auto& wholePlan = *whole.capture->plan;
     const auto& wholeDomain = wholePlan.descriptorSources.at(wholePlan.info.images.at(0).source).tableColumn->keyDomain;
     require(!wholeDomain.has_value() || wholeDomain->values, "image tables: a key domain was recorded without a material read");
@@ -1206,7 +1218,7 @@ void verifyImageTables() {
 
     for (std::uint32_t entry = 4; entry < 100u; entry++) heap[entry] = TableT(textures[entry % 2u].bytes.data(), entry % 3u == 0u ? TableFormat32UInt : TableFormat8888UNorm, TableType2D, entry);
     FillTableSrt(guest, heap.data(), 32u, 100u);
-    const auto wide = CompileTable(TableRequest(TableWholeCode, userData, 32u, true));
+    const auto wide = CompileTable(TableRequest(TableWholeCode, userData, 32u, true, false));
     const auto& wideMap = TableMap(*wide.result);
     require(wideMap[Abi::TableHeader(0) + Abi::TableKeyCount] == 100u && wideMap[Abi::HeaderElementCount] == 98u && wide.result->variantId == whole.result->variantId, "image tables: a wide table was not bound in full");
     for (std::uint32_t entry = 4; entry < 100u; entry++) heap[entry] = {};
@@ -1251,7 +1263,7 @@ void verifyImageTables() {
 #endif
     require(reserved != nullptr, "image tables: cannot reserve an inaccessible page");
     FillTableSrt(guest, reserved, 32u, 4u);
-    const auto unmapped = CompileTable(TableRequest(TableWholeCode, userData, 32u, true));
+    const auto unmapped = CompileTable(TableRequest(TableWholeCode, userData, 32u, true, false));
     const auto unmappedCodes = unmapped.capture->snapshot.tables.tables.at(0).codes;
     require(unmappedCodes.size() == 4u && std::all_of(unmappedCodes.begin(), unmappedCodes.end(), [](std::uint32_t code) { return code == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)); }), "image tables: an unmapped table is not Unmapped poison");
     const auto unmappedRange = std::any_of(unmapped.regions.begin(), unmapped.regions.end(), [&](const MemoryRegion& region) { const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(reserved)); return region.guestAddress < address + 4096u && address < region.guestAddress + region.bytes.size(); });
@@ -1265,7 +1277,7 @@ void verifyImageTables() {
 
     alignas(4096) static std::array<std::array<std::uint32_t, 8>, 70000> capped{};
     FillTableSrt(guest, capped.data(), 32u, static_cast<std::uint32_t>(capped.size()));
-    const auto cappedResult = CompileTable(TableRequest(TableWholeCode, userData, 32u, true));
+    const auto cappedResult = CompileTable(TableRequest(TableWholeCode, userData, 32u, true, false));
     const auto& cappedColumn = cappedResult.capture->snapshot.tables.tables.at(0);
     require(cappedColumn.keys == Abi::MaxKeys && cappedColumn.records == capped.size() && cappedColumn.outside && cappedResult.result->imageTableFaults == 1u, "image tables: the key cap did not mark the table's tail outside the snapshot");
     FillTableSrt(guest, heap.data(), 32u, 4u);
@@ -1276,6 +1288,65 @@ void verifyImageTables() {
     const auto typedFault = typedMap[Abi::TableHeader(0) + Abi::TableFault];
     require((typedFault & Abi::PoisonFlag) != 0u && typed.result->imageTablePoison.at(typedFault & ~Abi::PoisonFlag).reason == static_cast<std::uint32_t>(Abi::PoisonReason::NotBuffer), "image tables: a typed table V# was not a whole-table fault");
     FillTableSrt(guest, heap.data(), 32u, 4u);
+}
+
+bool SpirvNames(std::span<const std::uint32_t> words, std::string_view name) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0 && count <= words.size() - cursor, "device image tables: truncated SPIR-V instruction");
+        if ((words[cursor] & 0xffffu) == spv::OpName && count > 2u) {
+            const auto* text = reinterpret_cast<const char*>(words.data() + cursor + 2u);
+            if (std::string_view(text, std::min<std::size_t>((count - 2u) * 4u, std::strlen(text))) == name) return true;
+        }
+        cursor += count;
+    }
+    return false;
+}
+
+void verifyDeviceImageTables() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    guest.heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    guest.heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 1u, 0u, 0u}}};
+    FillTableSrt(guest, guest.heap.data(), 32u, 4u);
+    const auto userData = TableUserData(guest);
+    const auto countPlanningReads = [](const IrResourcePlan& plan) {
+        return std::count_if(plan.memoryInfo.begin(), plan.memoryInfo.end(), [](const MemoryInfo& memory) { return memory.planningOnly && memory.kind == ResourceKind::ScalarBuffer; });
+    };
+    const auto snapshotPlan = GetResourcePlan(TableRequest(TableMaterialCode, userData, 32u, false, false));
+    require(snapshotPlan->info.images.size() == 1u && !snapshotPlan->info.images[0].deviceTable && countPlanningReads(*snapshotPlan) != 0, "device image tables: a target without physical addresses did not keep the snapshot path");
+    const auto request = TableRequest(TableMaterialCode, userData);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && plan->info.images[0].deviceTable, "device image tables: a sampled table T# with a direct sampler was not resolved through the device table");
+    const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.has_value() && !column->keyDomain.has_value() && countPlanningReads(*plan) == 0, "device image tables: the column kept a key domain or the T# loads were removed");
+    require(plan->info.buffers.size() == snapshotPlan->info.buffers.size() + 1u && !plan->requiresSpecializationMemory, "device image tables: the heap V# is not read as a buffer, or the plan still needs table memory");
+    const auto compiled = CompileTable(request);
+    const auto& result = *compiled.result;
+    const auto* images = TableBinding(result, DescriptorRole::ImageTable);
+    const auto& map = TableMap(result);
+    require(images != nullptr && images->count == 0u && map[Abi::HeaderSamplerClasses] != 0u && map[Abi::HeaderDeviceLow] == 0u && map[Abi::HeaderDeviceHigh] == 0u, "device image tables: the build bound table elements or has no sampler classes");
+    require(compiled.capture->snapshot.tables.words.empty() && compiled.capture->snapshot.tables.ranges.empty(), "device image tables: the capture read table records");
+    require(SpirvNames(result.spirv.Words(), "device_image_lookup") && SpirvNames(result.spirv.Words(), "table_image_0"), "device image tables: the module has no device lookup or no mode-switch function");
+    auto program = PrepareResourceProgram(request);
+    ResourceMaterializer{}.ApplyStaticInterface(program, false);
+    const auto& info = program.Resources().info;
+    const auto id = ResourceMaterializer::DeviceImageInterfaceId(info.images.at(0), info.runtimeImageModes.at(0));
+    const auto registered = ResourceMaterializer::FindDeviceImageInterface(id);
+    require(registered != nullptr && registered->modes.size() == info.runtimeImageModes.at(0).size() && registered->image.deviceTable, "device image tables: the materialized result did not register its image interface");
+    auto other = info.images.at(0);
+    other.depthCompare = !other.depthCompare;
+    require(ResourceMaterializer::DeviceImageInterfaceId(other, info.runtimeImageModes.at(0)) != id, "device image tables: two interfaces share an id");
+    guest.heap[1] = TableT(textures[0].bytes.data(), TableFormat32UInt, TableType2D, 2u);
+    const auto changed = CompileTable(request);
+    require(changed.result->spirv == result.spirv && TableMap(*changed.result) == map, "device image tables: other table contents changed the module or the map");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
 }
 
 const std::vector<std::uint32_t> TableTwoSampleCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x7e020d00u, 0x100402f0u, 0x060602f2u, 0xf09c0f08u, 0x00450401u, 0xf09c0f08u, 0x00450802u, 0xe0700000u, 0x80070400u, 0xe0700004u, 0x80070800u, 0xbf810000u};
@@ -1348,7 +1419,7 @@ void verifyImageTableSrtKey() {
     FillTableSrt(guest, heap.data(), 32u, 4u);
     guest.srt[16] = 2u;
     const auto userData = TableUserData(guest);
-    const auto request = TableRequest(TableSrtKeyCode, userData);
+    const auto request = TableRequest(TableSrtKeyCode, userData, 32u, false, false);
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "image table SRT key: the T# was not planned as a table");
     const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
@@ -1467,7 +1538,7 @@ void verifyPointerImageTable() {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root));
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
     const auto request = [&](const std::vector<std::uint32_t>& code, std::uint64_t at, bool groupId = false) {
-        auto made = TableRequest(code, userData, 32u, groupId);
+        auto made = TableRequest(code, userData, 32u, groupId, false);
         made.shader.codeAddress = at;
         return made;
     };
@@ -4284,6 +4355,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--bindless") {
             verifyImageTableKeys();
             verifyImageTables();
+            verifyDeviceImageTables();
             verifyImageTableFunctions();
             verifyImageTableBulkReads();
             verifyLaneKeyBound();
@@ -4311,6 +4383,7 @@ int main(int argc, char** argv) {
         verifyGuardedDescriptorSources();
         verifyImageTableKeys();
         verifyImageTables();
+        verifyDeviceImageTables();
         verifyImageTableFunctions();
         verifyImageTableRegistration();
         verifyScalarAddressRule();

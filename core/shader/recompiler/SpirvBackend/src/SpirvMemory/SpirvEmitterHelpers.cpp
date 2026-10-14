@@ -155,7 +155,8 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
 
 void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || !program.Info().buffers.empty() || program.Resources().stage == IrShaderStage::Mesh;
+    const bool deviceImages = std::any_of(program.Info().images.begin(), program.Info().images.end(), [](const ImageResource& image) { return image.deviceTable; });
+    const bool physical = program.Info().usesDma || !program.Info().buffers.empty() || program.Resources().stage == IrShaderStage::Mesh || deviceImages;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);

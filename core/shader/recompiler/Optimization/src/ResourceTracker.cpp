@@ -97,7 +97,7 @@ std::uint32_t byteExtent(const MemoryInfo& memory) {
 
 class Tracker {
 public:
-    explicit Tracker(IrProgram& program) : m_program(program), m_info(program.Resources().info), m_builder(program) {
+    Tracker(IrProgram& program, bool deviceImageTables) : m_program(program), m_info(program.Resources().info), m_builder(program), m_deviceImageTables(deviceImageTables) {
         m_info.buffers.clear();
         m_info.images.clear();
         m_info.samplers.clear();
@@ -146,6 +146,7 @@ public:
         }
         std::vector<const IrValue*> referenced;
         for (const auto& plan : m_tableColumns) {
+            if (DeviceColumn(plan)) continue;
             for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
                 plan.handle->ReplaceArgument(argument, plan.offset);
             }
@@ -1239,11 +1240,14 @@ private:
                 }
             }
         }
+        PlanDeviceColumns();
         for (const auto& plan : m_tableColumns) {
+            if (DeviceColumn(plan)) continue;
             for (std::size_t index = 0; index < plan.reads.size(); index++) {
                 const IrValue* read = plan.reads[index];
                 const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return FindTableColumn(*user) != nullptr;
+                    const auto* column = FindTableColumn(*user);
+                    return column != nullptr && !DeviceColumn(*column);
                 });
                 if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
                     m_tablePlanningReads.push_back(read);
@@ -1253,6 +1257,51 @@ private:
         }
         m_memoryUsersIndexed = false;
         m_memoryUsers.clear();
+    }
+
+    bool DeviceAccess(const IrValue& inst) {
+        switch (inst.Opcode()) {
+            case IrOpcode::ImageSampleRaw:
+            case IrOpcode::ImageGatherRaw:
+            case IrOpcode::ImageRead:
+            case IrOpcode::ImageQueryDimensions:
+            case IrOpcode::ImageQueryLod:
+                break;
+            default:
+                return false;
+        }
+        const auto flags = inst.Flags<MemoryFlags>();
+        if (flags.index >= m_program.Resources().memoryInfo.size()) return false;
+        const auto& memory = m_program.Resources().memoryInfo[flags.index];
+        if (memory.imagePacked || memory.imageByElements != 0u) return false;
+        if (!ImageOpcodeInfoOf(inst.Opcode()).needsSampler) return true;
+        return inst.ArgumentCount() > 1u && DirectSampler(*inst.Argument(1)->Resolve());
+    }
+
+    void PlanDeviceColumns() {
+        m_deviceSources.assign(m_sources.size(), 0u);
+        if (!m_deviceImageTables || m_program.Resources().stage != IrShaderStage::Compute) return;
+        for (const auto& plan : m_tableColumns) {
+            if (!m_sources[plan.source].tableColumn->sampler) m_deviceSources[plan.source] = 1u;
+        }
+        for (auto& block : m_program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (ImageOpcodeInfoOf(inst->Opcode()).access == ImageAccess::None || inst->ArgumentCount() == 0u) continue;
+                const auto* column = FindTableColumn(*inst->Argument(0)->Resolve());
+                if (column != nullptr && !DeviceAccess(*inst)) m_deviceSources[column->source] = 0u;
+            }
+        }
+        for (std::uint32_t source = 0; source < m_sources.size(); ++source) {
+            if (m_deviceSources[source] != 0u) m_sources[source].tableColumn->keyDomain.reset();
+        }
+    }
+
+    bool DeviceSource(std::uint32_t source) const {
+        return source < m_deviceSources.size() && m_deviceSources[source] != 0u;
+    }
+
+    bool DeviceColumn(const TableColumnPlan& plan) const {
+        return DeviceSource(plan.source);
     }
 
     void KeepSourceAlive(IrValue& position, const DescriptorSource& source, std::vector<const IrValue*>& referenced) {
@@ -1306,6 +1355,7 @@ private:
                 continue;
             }
             image.table = next++;
+            image.deviceTable = DeviceSource(image.source);
             const bool storage = image.resourceClass == ImageResourceClass::Storage || image.written || image.atomic;
             if (storage || image.packed || image.byElements != 0u) {
                 image.tableOperation = TableOperation::Unsupported;
@@ -1665,6 +1715,8 @@ private:
     std::unordered_map<std::uint32_t, std::vector<const IrValue*>> m_memoryUsers;
     bool m_memoryUsersIndexed = false;
     std::vector<TableColumnPlan> m_tableColumns;
+    std::vector<std::uint8_t> m_deviceSources;
+    bool m_deviceImageTables = false;
     std::vector<const IrValue*> m_tablePlanningReads;
     std::vector<std::uint32_t> m_tablePlanningMemory;
     struct EdgeSelectorEntry {
@@ -1677,8 +1729,8 @@ private:
 
 }
 
-void ResourceTracker::Track(IrProgram& program) const {
-    Tracker(program).Run();
+void ResourceTracker::Track(IrProgram& program, bool deviceImageTables) const {
+    Tracker(program, deviceImageTables).Run();
 }
 
 }

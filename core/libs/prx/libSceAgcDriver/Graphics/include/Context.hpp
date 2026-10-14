@@ -27,6 +27,7 @@ class Recorder;
 class DescriptorCache;
 class SamplerCache;
 class DescriptorHeap;
+class DeviceImageTable;
 class ShaderResources;
 class PlaceholderImages;
 
@@ -139,6 +140,7 @@ struct Context {
     DescriptorCache* descriptorCache = nullptr;
     SamplerCache* samplerCache = nullptr;
     DescriptorHeap* descriptorHeap = nullptr;
+    DeviceImageTable* deviceImages = nullptr;
     // Indirect draw features of the device: records with a non-zero first instance, several records
     // per call, and a GPU-side draw count (VK_KHR_draw_indirect_count).
     bool drawIndirectFirstInstance = false;

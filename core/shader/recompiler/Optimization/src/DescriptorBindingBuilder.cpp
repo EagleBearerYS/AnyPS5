@@ -97,26 +97,6 @@ DescriptorRole RoleFor(DescriptorBindingKind kind) {
     fail("DescriptorBindingBuilder::Populate binding kind has no descriptor role");
 }
 
-DescriptorImageShape ImageShapeForResource(const ImageResource& image) {
-    const RdnaImageDimensionInfo& info = RdnaImageDimensionInfoFor(image.dimension);
-    if (info.multisampled != 0u) {
-        fail("DescriptorBindingBuilder::Populate multisampled image resources have no descriptor image shape");
-    }
-    if (info.spirvDimension == spv::Dim1D) {
-        return info.arrayed != 0u ? DescriptorImageShape::Image1DArray : DescriptorImageShape::Image1D;
-    }
-    if (info.spirvDimension == spv::Dim3D) {
-        return DescriptorImageShape::Image3D;
-    }
-    if (info.spirvDimension == spv::Dim2D) {
-        if (image.cube && info.arrayed == 0u) {
-            fail("DescriptorBindingBuilder::Populate cube image resource is not arrayed");
-        }
-        return info.arrayed != 0u ? DescriptorImageShape::Image2DArray : DescriptorImageShape::Image2D;
-    }
-    fail("DescriptorBindingBuilder::Populate image resource dimension has no descriptor image shape");
-}
-
 std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
     std::vector<std::uint32_t> result;
     result.reserve(resources.size() * 4u);
@@ -254,6 +234,26 @@ std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, st
     return result;
 }
 
+}
+
+DescriptorImageShape ImageShapeForResource(const ImageResource& image) {
+    const RdnaImageDimensionInfo& info = RdnaImageDimensionInfoFor(image.dimension);
+    if (info.multisampled != 0u) {
+        fail("DescriptorBindingBuilder::Populate multisampled image resources have no descriptor image shape");
+    }
+    if (info.spirvDimension == spv::Dim1D) {
+        return info.arrayed != 0u ? DescriptorImageShape::Image1DArray : DescriptorImageShape::Image1D;
+    }
+    if (info.spirvDimension == spv::Dim3D) {
+        return DescriptorImageShape::Image3D;
+    }
+    if (info.spirvDimension == spv::Dim2D) {
+        if (image.cube && info.arrayed == 0u) {
+            fail("DescriptorBindingBuilder::Populate cube image resource is not arrayed");
+        }
+        return info.arrayed != 0u ? DescriptorImageShape::Image2DArray : DescriptorImageShape::Image2D;
+    }
+    fail("DescriptorBindingBuilder::Populate image resource dimension has no descriptor image shape");
 }
 
 bool ReducesBetweenTexels(std::uint32_t word0, std::uint32_t filter) {
@@ -577,6 +577,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageSamplers.push_back(std::move(samplers));
             }
             physical.count = static_cast<std::uint32_t>(tables->elements.size());
+            physical.tableSamplerElements = entry.tableSamplerElements;
             break;
         case DescriptorRole::SamplerTable:
             if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");

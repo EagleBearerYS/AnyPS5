@@ -323,7 +323,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     dumpIr("srt");
 
     constexpr ResourceTracker resourceTracker;
-    resourceTracker.Track(program);
+    resourceTracker.Track(program, supports(spv::CapabilityInt64) && supports(spv::CapabilityPhysicalStorageBufferAddresses));
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
@@ -972,6 +972,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         result.spirv = artifact.spirv;
     }
     const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
+    ResourceMaterializer::RegisterDeviceImageInterfaces(variant.info.info);
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);

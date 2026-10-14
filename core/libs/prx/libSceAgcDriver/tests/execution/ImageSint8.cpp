@@ -217,6 +217,10 @@ void CheckTable(AgcDriver::VulkanDevice& device) {
         const auto result = ShaderRecompiler::Recompile(request);
         device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
+        Require(Tables.output[0] == 0u, "8_SINT image table entry " + std::to_string(key) + ": the first sample of the T# read " + Hex(Tables.output[0]) + ", expected the zeros of a device image table miss");
+        Tables.output.fill(0xdeadbeefu);
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.WaitIdle();
         const auto expected = key == 0u ? 0xffffff80u : 0xffffffffu;
         Require(Tables.output[0] == expected, "8_SINT image table entry " + std::to_string(key) + ": image_sample_lz read " + Hex(Tables.output[0]) + ", expected " + Hex(expected));
     }

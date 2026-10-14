@@ -113,6 +113,25 @@ struct ImageTableReuseCounts {
 };
 ImageTableReuseCounts ImageTableReuses();
 
+struct DeviceTableView {
+    ShaderRecompiler::DescriptorImageShape shape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    bool depthCompare = false;
+    bool identitySwizzle = false;
+    bool decodedCopy = false;
+};
+
+struct DeviceTableTexture {
+    std::shared_ptr<Texture> texture;
+    std::uint32_t slot = 0;
+    std::uint64_t address = 0;
+    std::uint64_t guestBytes = 0;
+    std::uint64_t generation = 0;
+    bool snapshot = false;
+};
+
+DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass);
+std::uint32_t DeviceTableSamplerClass(const Sampler* sampler, std::span<const std::uint32_t, 4> words, bool unnormalized, bool integerBorder);
+
 class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
@@ -177,6 +196,7 @@ public:
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool UsesAddressTable() const { return usesBda; }
+    bool UsesDeviceImages() const { return deviceImages; }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
@@ -486,6 +506,7 @@ private:
     bool usesBda = false;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
+    bool deviceImages = false;
     VkDescriptorSetLayout _layout = VK_NULL_HANDLE;
     // Whether the layout is this object's own (no cache) and destroyed with it.
     bool ownsLayout = false;

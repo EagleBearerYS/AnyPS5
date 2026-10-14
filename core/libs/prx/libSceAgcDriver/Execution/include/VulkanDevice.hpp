@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ComputePipelineCapture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <chrono>
@@ -231,6 +232,7 @@ public:
         double gpuBusyMs, gpuGapMs, lastSubmitAfterFlipMs, blitSubmitAfterFlipMs;
     };
     static PresentStatistics PresentCounts();
+    Graphics::DeviceImageTable::Counts DeviceImageCounts() const;
     // Stage A of a dispatch's resource build, run WITHOUT GuestMemory::GpuMutex before Dispatch or
     // DispatchIndirect: the binding plan, data buffers, imports already serving the guest buffers,
     // read-only copies and the descriptor set (see ShaderResources). The dispatch completes it

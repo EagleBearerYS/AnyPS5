@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -24,7 +25,9 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         usesBda = usesBda || tables != 0;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
-        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || loopGuarded));
+        const bool device = UsesDeviceImageTable(*shader.program);
+        deviceImages = deviceImages || device;
+        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || device || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || loopGuarded));
     }
     if (usesBda) {
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");

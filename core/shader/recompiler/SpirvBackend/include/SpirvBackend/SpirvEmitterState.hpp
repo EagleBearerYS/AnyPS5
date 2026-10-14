@@ -178,6 +178,7 @@ struct SpirvEmitterState {
     std::vector<SpirvTableImageVariable> tableImageVariables;
     std::vector<SpirvTableImageFunction> tableImageFunctions;
     std::uint32_t tableMapVariable = 0;
+    std::uint32_t deviceImageLookupFunction = 0;
     std::uint32_t mainFunc = 0;
     std::uint32_t meshGuestFunc = 0;
     std::uint32_t meshAllocation = 0;

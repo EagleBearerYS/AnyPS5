@@ -402,6 +402,7 @@ struct DescriptorBinding {
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
     std::vector<std::vector<std::uint32_t>> imageSamplers;
+    std::vector<std::vector<std::uint32_t>> tableSamplerElements;
     std::vector<bool> bufferRead;
 };
 

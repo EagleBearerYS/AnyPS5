@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "BdaAbi.hpp"
@@ -363,6 +364,7 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::DescriptorCache> descriptorCache;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
     std::unique_ptr<Graphics::DescriptorHeap> descriptorHeap;
+    std::unique_ptr<Graphics::DeviceImageTable> deviceImages;
     VkDescriptorSet computeHeapSet = VK_NULL_HANDLE;
     Graphics::ResourceCache& resourceCache = Graphics::SharedResourceCache();
     // Recorded dispatches that write a copied buffer (their results reach guest memory by a CPU
@@ -697,6 +699,7 @@ struct VulkanDevice::State {
             // sets and samplers they borrowed can go.
             copiedWriters->clear();
             resourceCache.Clear();
+            deviceImages.reset();
             Graphics::ClearCachedTextures(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
@@ -1707,6 +1710,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->descriptorCache = std::make_unique<Graphics::DescriptorCache>(graphicsContext());
     state->descriptorHeap = std::make_unique<Graphics::DescriptorHeap>(graphicsContext(), Graphics::DescriptorHeap::DeviceCapacities(graphicsContext()));
     state->computeHeapSet = state->descriptorHeap->Set(VK_SHADER_STAGE_COMPUTE_BIT);
+    if (graphicsContext().bufferDeviceAddress) state->deviceImages = std::make_unique<Graphics::DeviceImageTable>(graphicsContext());
     state->samplerCache = std::make_unique<Graphics::SamplerCache>();
     state->CreateWorkgroupMemoryLayout();
     if (!state->shaderProfile->NullDescriptors()) {
@@ -2966,6 +2970,10 @@ VulkanDevice::PresentStatistics VulkanDevice::PresentCounts() {
     return presentCounters;
 }
 
+Graphics::DeviceImageTable::Counts VulkanDevice::DeviceImageCounts() const {
+    return state->deviceImages != nullptr ? state->deviceImages->Totals() : Graphics::DeviceImageTable::Counts{};
+}
+
 bool VulkanDevice::PresentWaitsForSlots(const DisplayBuffer* buffer) const {
     if (buffer == nullptr || !state->SharedSlotInFlight()) return false;
     if (buffer->tilingMode == 1) return true;
@@ -3183,6 +3191,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.descriptorCache = state->descriptorCache.get();
     context.samplerCache = state->samplerCache.get();
     context.descriptorHeap = state->descriptorHeap.get();
+    context.deviceImages = state->deviceImages.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;
     context.dualSrcBlend = state->dualSrcBlend;
@@ -3995,6 +4004,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     };
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
+    if (resources.UsesDeviceImages()) {
+        Graphics::Require(context.deviceImages != nullptr, "a dispatch reading images through the device image table needs the device's table");
+        context.deviceImages->BeforeDispatch(context, recorder);
+    }
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     recordStep(PhaseRecordCommands);

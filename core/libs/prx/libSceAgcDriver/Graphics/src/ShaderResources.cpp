@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -28,7 +29,9 @@
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
+#include "Optimization/DescriptorBindingBuilder.hpp"
 #include <cstring>
 #include <limits>
 #include <list>
@@ -3886,6 +3889,60 @@ ImageTableReuseCounts ImageTableReuses() {
     return {counters.tablesReused.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed)};
 }
 
+DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass) {
+    namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
+    std::array<std::uint32_t, 8> words{};
+    std::copy(descriptor.begin(), descriptor.end(), words.begin());
+    if (view.identitySwizzle) words[3] = (words[3] & ~0xfffu) | ShaderRecompiler::ShaderImageIdentitySwizzle;
+    const auto resource = DecodeTextureResource(words);
+    const bool firstLayer = view.shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray;
+    if (!firstLayer && !MatchesGuestDimension(view.shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(view.shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
+    const auto guestBytes = DescribeSurface(resource).guestBytes;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(guestBytes) + " bytes) is not mapped");
+    static_cast<void>(ResolveTextureFormat(resource.format));
+    CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
+    auto texture = cachedTexture(context, words, resource, SampledViewComponents(resource, view.decodedCopy), guestBytes, view.depthCompare, view.decodedCopy);
+    const auto& log = lookupLog();
+    const auto* looked = !log.empty() && log.back().object == texture.get() ? &log.back() : nullptr;
+    if (looked != nullptr && looked->depth) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " is a depth surface, which the device image table does not serve: a dispatch sampling it through the table would need the depth image's layout transitions");
+    if (texture->CopyKind() != Texture::PerUseCopy::None) throw std::runtime_error("AGC graphics: the table entry's texture at 0x" + HexText(resource.baseAddress) + " is a copy remade per use, which the device image table does not serve");
+    if ((samplerClass & Abi::SamplerFilterMinmax) != 0u) {
+        VkFormatProperties properties{};
+        context.formatProperties(context.physical, texture->ViewFormat(), &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT) == 0) throw std::runtime_error("a sampled texture whose format " + std::to_string(texture->ViewFormat()) + " does not support min/max filtering is sampled through a min or max reduction sampler with linear filtering");
+    }
+    if ((samplerClass & Abi::SamplerOpaqueBlackBorder) != 0u && resource.bcSwizzle != 0u && resource.bcSwizzle != 4u) throw std::runtime_error("a sampled texture whose BC swizzle " + std::to_string(resource.bcSwizzle) + " moves the alpha channel is sampled through an opaque black border, which is not implemented");
+    if ((samplerClass & Abi::SamplerNonSeamlessCube) != 0u && resource.dimension == TextureDimension::kCube) throw std::runtime_error("a cube texture is sampled through a sampler that disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+    const auto numeric = ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) != 0u ? ShaderRecompiler::IrTextureNumericClass::Float : ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(resource.format));
+    const bool integerImage = numeric == ShaderRecompiler::IrTextureNumericClass::Uint || numeric == ShaderRecompiler::IrTextureNumericClass::Sint;
+    if (((samplerClass & Abi::SamplerFloatBorder) != 0u && integerImage) || ((samplerClass & Abi::SamplerIntegerBorder) != 0u && !integerImage)) throw std::runtime_error("an image table entry's sampler border color numeric class disagrees with its sampled image class, which needs dynamic pairing and is not implemented");
+    if ((samplerClass & Abi::SamplerAnisoOverride) != 0u) throw std::runtime_error("an image table entry paired with anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing, which is not implemented");
+    DeviceTableTexture result;
+    result.slot = texture->SampledSlot(firstLayer ? texture->FirstLayerView() : texture->View());
+    result.address = resource.baseAddress;
+    result.guestBytes = guestBytes;
+    result.snapshot = looked != nullptr && looked->source == nullptr && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0 && looked->generation != 0;
+    result.generation = result.snapshot ? looked->generation : GuestMemory::CollectWrites(resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    result.texture = std::move(texture);
+    return result;
+}
+
+std::uint32_t DeviceTableSamplerClass(const Sampler* sampler, std::span<const std::uint32_t, 4> words, bool unnormalized, bool integerBorder) {
+    namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
+    if (sampler == nullptr) return 0u;
+    std::uint32_t bits = 0u;
+    if (sampler->RequiresFilterMinmax()) bits |= Abi::SamplerFilterMinmax;
+    if (sampler->ReadsOpaqueBlackBorder()) bits |= Abi::SamplerOpaqueBlackBorder;
+    if (sampler->RequiresNonSeamlessCube()) bits |= Abi::SamplerNonSeamlessCube;
+    const auto descriptor = DecodeSamplerResource(words, unnormalized, true, integerBorder);
+    const bool border = descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    if (border) bits |= integerBorder ? Abi::SamplerIntegerBorder : Abi::SamplerFloatBorder;
+    if (SingleLevelSamplerWords(words, true, false).has_value()) bits |= Abi::SamplerAnisoOverride;
+    if (ShaderRecompiler::ReducesBetweenTexels(words[0], words[2])) bits |= Abi::SamplerReduction;
+    return bits;
+}
+
 void ShaderResources::finishImageTables() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     if (tableStages.empty()) return;
@@ -3901,6 +3958,25 @@ void ShaderResources::finishImageTables() {
             if (index == std::numeric_limits<std::size_t>::max()) continue;
             const auto& texture = *textures[index];
             map[map[Abi::HeaderImageSlots] + element] = texture.SampledSlot(textureFirstLayer[index] ? texture.FirstLayerView() : texture.View());
+        }
+        if (map[Abi::HeaderSamplerClasses] != 0u) {
+            Require(context.deviceImages != nullptr, "a program reading images through the device image table needs the device's table");
+            const auto header = context.deviceImages->HeaderAddress();
+            map[Abi::HeaderDeviceLow] = static_cast<std::uint32_t>(header);
+            map[Abi::HeaderDeviceHigh] = static_cast<std::uint32_t>(header >> 32u);
+            if (table.images != nullptr) {
+                const auto& samplerElements = table.images->tableSamplerElements;
+                for (std::size_t sampler = 0; sampler < samplerElements.size(); ++sampler) {
+                    std::uint32_t bits = 0u;
+                    for (const auto element : samplerElements[sampler]) {
+                        Require(element < table.samplerCount, "a device-table image is paired with sampler element " + std::to_string(element) + ", which its shader does not bind");
+                        const auto& source = samplerSources.at(table.firstSampler + element);
+                        bits |= DeviceTableSamplerClass(samplers[table.firstSampler + element].get(), source.words, source.unnormalized, source.integerBorder);
+                    }
+                    Require(map[Abi::HeaderSamplerClasses] + sampler < map.size(), "image table map has no room for its sampler classes");
+                    map[map[Abi::HeaderSamplerClasses] + sampler] = bits;
+                }
+            }
         }
         for (std::uint32_t index = 0; index < map[Abi::HeaderTableCount]; ++index) {
             const auto header = Abi::TableHeader(index);

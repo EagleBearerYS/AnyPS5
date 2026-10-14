@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "ImageTableAbi.hpp"
+#include "DeviceImageTableAbi.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <atomic>
@@ -122,7 +124,7 @@ std::uint64_t hashRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& ran
 
 }
 
-BdaResources::BdaResources(const Context& context) {
+BdaResources::BdaResources(const Context& context) : deviceImages(context.deviceImages) {
     static_assert(std::endian::native == std::endian::little);
     Require(ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
     fault = std::make_unique<Buffer>(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -259,7 +261,20 @@ void BdaResources::CheckFault() const {
         const auto table = std::find_if(imageTables.begin(), imageTables.end(), [&](const ImageTableFaults& candidate) { return candidate.stage == report.stage; });
         const auto* tables = table != imageTables.end() ? &*table : imageTables.size() == 1 ? &imageTables.front() : nullptr;
         std::ostringstream message;
-        message << "image table: shader 0x" << std::hex << (tables != nullptr ? tables->shader : 0u) << std::dec << " stage " << report.stage << " pc 0x" << std::hex << report.instruction << " selected the descriptor at 0x" << report.address << std::dec;
+        message << "image table: shader 0x" << std::hex << (tables != nullptr ? tables->shader : 0u) << std::dec << " stage " << report.stage << " pc 0x" << std::hex << report.instruction;
+        if ((report.bytes & ShaderRecompiler::DeviceImageTableAbi::FaultFlag) != 0u) {
+            const auto rejection = deviceImages != nullptr ? deviceImages->FindRejection(report.bytes & ~ShaderRecompiler::DeviceImageTableAbi::FaultFlag) : std::nullopt;
+            message << " selected a descriptor the device image table rejected" << std::dec;
+            if (rejection.has_value()) {
+                message << " (words";
+                for (const auto word : rejection->words) message << ' ' << std::hex << std::setw(8) << std::setfill('0') << word;
+                message << std::dec << "): " << ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(rejection->reason)) << ": " << rejection->message;
+            } else {
+                message << ": rejection " << (report.bytes & ~ShaderRecompiler::DeviceImageTableAbi::FaultFlag);
+            }
+            throw std::runtime_error(message.str());
+        }
+        message << " selected the descriptor at 0x" << report.address << std::dec;
         if (tables != nullptr && report.bytes < tables->poison.size()) {
             const auto& poison = tables->poison[report.bytes];
             if (poison.dwordCount != 0) {
