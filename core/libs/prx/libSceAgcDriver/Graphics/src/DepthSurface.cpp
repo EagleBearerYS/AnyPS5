@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -231,6 +232,11 @@ public:
             throw std::runtime_error(text);
         }
         return false;
+    }
+
+    void CopyDepthTo(const std::shared_ptr<StorageTexture>& storage) {
+        ApplyFastClear();
+        copyPlane(depthPlane, storage, false, true);
     }
 
     bool StoreBackCovering(const StorageTexture& candidate) {
@@ -974,6 +980,44 @@ bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage
 bool DepthSurfaceAt(std::uint64_t address) {
     std::lock_guard lock(surfacesMutex());
     return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->target.address == address || surface->target.stencilAddress == address; });
+}
+
+void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
+    const auto& source = pass.source;
+    const auto failure = [&](const char* what) {
+        char text[288];
+        std::snprintf(text, sizeof(text), "AGC graphics: an out-of-place DB expand from 0x%llx (%ux%u) to 0x%llx %s is not implemented", static_cast<unsigned long long>(source.address), source.extent.width, source.extent.height, static_cast<unsigned long long>(pass.destination), what);
+        return std::runtime_error(text);
+    };
+    if (DepthSurfaceAt(pass.destination)) throw failure("into a live depth surface");
+    GuestTextureResource plane{};
+    plane.baseAddress = pass.destination;
+    plane.width = source.extent.width;
+    plane.height = source.extent.height;
+    plane.mipCount = 1;
+    plane.tileMode = TextureTileMode::kZ64KBX;
+    plane.dimension = TextureDimension::k2D;
+    plane.format = FindGuestColorTargetFormat(VK_FORMAT_R32_SFLOAT, 4u).value();
+    plane.dstSelX = 4;
+    plane.dstSelY = 5;
+    plane.dstSelZ = 6;
+    plane.dstSelW = 7;
+    const auto destination = CachedStorageSurface(context, plane);
+    if (destination == nullptr) throw failure("without a storage image of the write base");
+    std::lock_guard lock(surfacesMutex());
+    const auto owner = depthOwners().find({context.device, source.address});
+    auto* surface = owner != depthOwners().end() ? owner->second.surface : nullptr;
+    if (surface == nullptr) throw failure("without a depth surface at the read base");
+    const auto& target = surface->target;
+    const bool float32 = target.format == VK_FORMAT_D32_SFLOAT || target.format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+    if (!float32 || surface->hostFormat != target.format || target.samples != 1 || target.extent.width != source.extent.width || target.extent.height != source.extent.height) throw failure("from a depth surface of another extent, format or sample count");
+    surface->CopyDepthTo(destination);
+    destination->MarkDirty();
+    static bool reported = false;
+    if (!reported) {
+        reported = true;
+        std::fprintf(stderr, "[gpu] DB expand: the depth plane of 0x%llx (%ux%u) is written at 0x%llx\n", static_cast<unsigned long long>(source.address), source.extent.width, source.extent.height, static_cast<unsigned long long>(pass.destination));
+    }
 }
 
 }

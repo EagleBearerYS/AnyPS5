@@ -153,6 +153,13 @@ struct ColorMetadataPass {
     std::optional<ColorTarget> source;
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
+// A DB expand that writes the read surface's depth plane, uncompressed and in the same swizzle, at
+// another address (DB_RENDER_CONTROL compress-disable bits with DB_Z_WRITE_BASE != DB_Z_READ_BASE).
+struct DepthExpandPass {
+    DepthTarget source;
+    std::uint64_t destination;
+};
+std::optional<DepthExpandPass> DecodeDepthExpandPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
 bool DepthResummarizeDrawsNothing(const QueueState& queue);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
