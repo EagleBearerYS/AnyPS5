@@ -6,6 +6,7 @@
 #include <thread>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -123,6 +124,17 @@ bool gdsRange(std::uint64_t offset, std::size_t bytes) {
 
 std::vector<std::byte> dmaSourceBytes(std::span<const std::uint32_t> packet) {
     const std::size_t bytes = packet[6] & 0x3ffffffu;
+    static const bool traceDma = std::getenv("APS5_RE8_TRACE_DMA") != nullptr;
+    if (traceDma && bytes >= 0x10000u) {
+        const auto source = dmaSource(packet) == DmaSelectGds ? GdsAddress() + packet[2] : address(packet[2], packet[3]);
+        const auto destination = address(packet[4], packet[5]);
+        std::vector<std::byte> head(64);
+        if (dmaSource(packet) != 2) GuestMemory::Read(source, head);
+        std::size_t nonzero = 0;
+        for (const auto b : head) nonzero += b != std::byte{0};
+        std::fprintf(stderr, "[dma] DMA_DATA 0x%llx -> 0x%llx bytes 0x%zx (source select %u, first 64 bytes %zu nonzero)
+", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, dmaSource(packet), nonzero);
+    }
     if (dmaSource(packet) != DmaSelectGds) return copySource(address(packet[2], packet[3]), bytes, dmaSource(packet) == 2);
     return copySource(GdsAddress() + packet[2], bytes, false);
 }
