@@ -165,6 +165,16 @@ Do not disable Dozen if it is the only Vulkan driver available; the application 
 
 HDR output is available on Windows only. Titles see it when the monitor showing the window runs in HDR mode (Settings > Display > Use HDR), the window's Vulkan surface offers an HDR10 (`VK_COLOR_SPACE_HDR10_ST2084_EXT`) swapchain in a 10-bit format, the instance has `VK_EXT_swapchain_colorspace` and the device `VK_EXT_hdr_metadata`. The monitor's luminance comes from DXGI; a monitor that reports no peak luminance is taken as 1000 nits peak and full-frame, 0 nits black. On Linux and other hosts the output is always SDR, because the surface's formats do not show whether the display is in HDR. A title's BT.2100 PQ display buffers then reach the display unchanged; without HDR output they are converted to SDR.
 
+### Upscaling
+
+The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. When it is the same size or smaller, the image is scaled as without FSR and only RCAS sharpens it.
+
+`ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`.
+
+FSR works on SDR and HDR10 output alike, on the values the display receives: sRGB-encoded for SDR, PQ code values for HDR10. Sharpening never takes them out of the signal range. Each presentation in flight keeps two more images, one of the display buffer's size and one of the fitted image's size, and each frame takes two full-window passes.
+
+An empty value of either variable is the same as an unset one. The start fails on any other value of `ANYPS5_UPSCALE` than `fsr`, and on an `ANYPS5_FSR_SHARPNESS` that is not a number from 0.0 to 2.0.
+
 ### Storing GPU results at each flip
 
 GPU results in storage images and render targets stay on the GPU until something reads their memory. A title that frees such an image after waiting for its GPU work and reuses the memory can have its new data overwritten when the results are stored later ([TechnicalDebt](../dev/TechnicalDebt.md)). `APS5_STORE_AT_FLIP=1` stores every pending result when a display buffer is flipped, at the cost of one write-back per pending image and frame. Any other value stops the title at its first flip.
