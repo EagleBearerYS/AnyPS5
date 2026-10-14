@@ -21,6 +21,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -357,13 +358,16 @@ struct PageSpan {
     std::size_t size = 0;
     // Per page: access flags, zero while unknown.
     std::uint8_t* pages = nullptr;
+    std::unique_ptr<std::atomic<std::uint64_t>[]> committedChunks;
 
-    // Reserves and commits the table; untouched table pages cost nothing until a guest page is recorded.
+    static constexpr std::size_t TableChunkBytes = 64u * 1024u;
+
     bool allocate() {
         if (size == 0) return false;
-        const auto count = (size / PageBytes + 8) & ~static_cast<std::size_t>(7);
+        const auto count = ((size / PageBytes + 8) + TableChunkBytes - 1) / TableChunkBytes * TableChunkBytes;
 #ifdef _WIN32
-        pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, count, MEM_RESERVE, PAGE_READWRITE));
+        if (pages != nullptr) committedChunks = std::make_unique<std::atomic<std::uint64_t>[]>((count / TableChunkBytes + 63) / 64);
 #else
         pages = static_cast<std::uint8_t*>(std::calloc(count, 1));
 #endif
@@ -371,16 +375,42 @@ struct PageSpan {
         return pages != nullptr;
     }
 
+    bool committed(std::size_t index) const {
+#ifdef _WIN32
+        const auto chunk = index / TableChunkBytes;
+        return ((committedChunks[chunk / 64].load(std::memory_order_acquire) >> (chunk % 64)) & 1u) != 0;
+#else
+        static_cast<void>(index);
+        return true;
+#endif
+    }
+
+    void commit(std::size_t index) {
+#ifdef _WIN32
+        if (committed(index)) return;
+        const auto chunk = index / TableChunkBytes;
+        if (VirtualAlloc(pages + chunk * TableChunkBytes, TableChunkBytes, MEM_COMMIT, PAGE_READWRITE) == nullptr) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Committing the guest page-state table");
+        committedChunks[chunk / 64].fetch_or(std::uint64_t{1} << (chunk % 64), std::memory_order_release);
+#else
+        static_cast<void>(index);
+#endif
+    }
+
     bool covers(std::uintptr_t address) const {
         return size != 0 && address >= base && address - base < size;
     }
 
     std::uint8_t load(std::uintptr_t address) const {
-        return std::atomic_ref<const std::uint8_t>(pages[(address - base) / PageBytes]).load(std::memory_order_relaxed);
+        const auto index = (address - base) / PageBytes;
+        if (!committed(index)) return 0;
+        return std::atomic_ref<const std::uint8_t>(pages[index]).load(std::memory_order_relaxed);
     }
 
     void store(std::uintptr_t address, std::uint8_t value) {
-        std::atomic_ref<std::uint8_t>(pages[(address - base) / PageBytes]).store(value, std::memory_order_relaxed);
+        const auto index = (address - base) / PageBytes;
+        if (value == 0 && !committed(index)) return;
+        commit(index);
+        std::atomic_ref<std::uint8_t>(pages[index]).store(value, std::memory_order_relaxed);
     }
 
     // End of the run of pages equal to `value` that starts at `address`, at most `limit`.
@@ -388,7 +418,9 @@ struct PageSpan {
         auto index = (address - base) / PageBytes;
         const auto stop = std::min<std::uintptr_t>((std::min(limit, base + size) - base + PageBytes - 1) / PageBytes, size / PageBytes);
         const std::uint64_t wide = 0x0101010101010101ull * value;
+        const auto first = index;
         while (index < stop) {
+            if ((index == first || index % TableChunkBytes == 0) && !committed(index)) break;
             if (index % 8 == 0 && index + 8 <= stop && std::atomic_ref<const std::uint64_t>(*reinterpret_cast<const std::uint64_t*>(pages + index)).load(std::memory_order_relaxed) == wide) {
                 index += 8;
                 continue;
@@ -403,7 +435,14 @@ struct PageSpan {
         if (size == 0 || bytes == 0 || address >= base + size || address + bytes <= base) return;
         const auto first = (std::max(address, base) - base) / PageBytes;
         const auto last = (std::min(address + bytes, base + size) - 1 - base) / PageBytes;
-        for (auto page = first; page <= last; ++page) std::atomic_ref<std::uint8_t>(pages[page]).store(0, std::memory_order_relaxed);
+        for (auto page = first; page <= last;) {
+            if (!committed(page)) {
+                page = (page / TableChunkBytes + 1) * TableChunkBytes;
+                continue;
+            }
+            std::atomic_ref<std::uint8_t>(pages[page]).store(0, std::memory_order_relaxed);
+            ++page;
+        }
     }
 };
 
