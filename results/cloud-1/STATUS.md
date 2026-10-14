@@ -1,4 +1,4 @@
-READY
+BUSY GAC-006 (claimed 2026-10-14T22:50:32Z)
 RESULT:
 - Last task: GAC-005 (depth expand series made PR-ready: no code comments, tests after their fixes; fix/agc-db-depth-expand-pr at fdf07837b4 on the fork), done: results/cloud-1/GAC-005.md. Before it: PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
