@@ -153,7 +153,9 @@ A game unlocks a trophy by posting a `_UnlockTrophy` event with an int32 `_troph
 
 `APS5_TRACE_UDS=1` prints every posted event, such as `[uds] context 1 posted _UnlockTrophy {"_trophy_id":12}`. A trophy event that is not stored prints the reason in a `[trophy] ignored` line: an `_UnlockTrophy` event without an int32 `_trophy_id` of 0 or more, or posted to a context that does not exist, and the first `_UpdateTrophyProgress` event of each trophy, because trophy progress is not stored.
 
-The trophy data in `sce_sys/trophy2/` is not read. Trophy names, grades, groups and icons, the number of trophies and the grade counts are placeholders, and trophies that a game unlocks through the statistics rules in `sce_sys/uds/` instead of `_UnlockTrophy` stay locked. No notification is shown, and callbacks registered with `sceNpTrophy2RegisterUnlockCallback` are not called.
+Each new unlock shows a pop-up for 5 seconds: `TROPHY UNLOCKED` over `TROPHY <id>`, in the [performance overlay](#performance-overlay)'s font, scale and brightness (203 nits on an HDR10 swapchain). It goes in the corner opposite the overlay's, bottom right by default, whether or not the overlay is shown. Unlocks that arrive together are shown one after another. While no pop-up is shown the presentation records nothing for it. `ANYPS5_TROPHY_POPUP=0` turns the pop-up off, and `tl`, `tr`, `bl` or `br` puts it in that corner; an empty value or `1` keeps the default, and any other value stops the game when its window is created, with an error that names the variable.
+
+The trophy data in `sce_sys/trophy2/` is not read. Trophy names, grades, groups and icons, the number of trophies and the grade counts are placeholders, and trophies that a game unlocks through the statistics rules in `sce_sys/uds/` instead of `_UnlockTrophy` stay locked. Callbacks registered with `sceNpTrophy2RegisterUnlockCallback` are not called.
 
 ### GPU selection
 
