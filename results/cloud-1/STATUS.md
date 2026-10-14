@@ -1,4 +1,4 @@
-READY
+BUSY PM-008 (claimed 2026-10-14T17:27:07Z)
 RESULT:
 - Last task: PM-006 (FSR 1 headers vendored instead of the submodule; feat/agc-fsr1-presentation-upscaling force-pushed to fea68147a on the fork), done: results/cloud-1/PM-006.md. Before it: PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
