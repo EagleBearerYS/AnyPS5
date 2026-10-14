@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
@@ -5,13 +6,17 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 #ifdef _WIN32
@@ -46,6 +51,7 @@ alignas(256) std::array<std::uint32_t, Width * Height> PackedTexels{};
 alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
 alignas(256) std::array<std::uint32_t, 64> Keys{};
 alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
+alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> OtherOutput{};
 alignas(256) std::array<std::uint32_t, 32> Srt{};
 alignas(256) std::array<std::uint32_t, 5 * Width * Height> RuntimeTexels{};
 std::vector<std::uint32_t> RuntimeBlocks(0x8000u);
@@ -194,10 +200,9 @@ struct Outcome {
     AgcDriver::Graphics::DeviceImageTable::Counts after;
 };
 
-Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t groups) {
+ShaderRecompiler::RecompileResult Compile(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, std::span<const ShaderRecompiler::MemoryRegion> memory) {
     const auto rootAddress = reinterpret_cast<std::uintptr_t>(Srt.data());
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
-    std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(span.data()), span, 0, {}},
@@ -205,7 +210,12 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
         device.Target(),
         {0, 0, 0, 128}
     };
-    const auto result = ShaderRecompiler::Recompile(request);
+    return ShaderRecompiler::Recompile(request);
+}
+
+Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t groups) {
+    std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
+    const auto result = Compile(device, span, memory);
     Outcome outcome;
     outcome.variantId = result.PipelineVariantId();
     outcome.tableRanges = result.imageTableRanges.size();
@@ -229,10 +239,10 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
 }
 
 template <std::size_t CodeWords>
-Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups, bool tableInMemory = true) {
+std::vector<ShaderRecompiler::MemoryRegion> TableMemory(const std::array<std::uint32_t, CodeWords>& code, bool tableInMemory, std::span<std::uint32_t> written = Output) {
     const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table)));
     const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
-    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto output = Buffer(written.data(), static_cast<std::uint32_t>(written.size_bytes()));
     std::copy(table.begin(), table.end(), Srt.begin());
     std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
@@ -244,7 +254,13 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
         {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
     };
     if (tableInMemory) memory.push_back({reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))});
-    return Execute(device, span, memory, groups);
+    return memory;
+}
+
+template <std::size_t CodeWords>
+Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups, bool tableInMemory = true) {
+    const auto memory = TableMemory(code, tableInMemory);
+    return Execute(device, std::span<const std::uint32_t>(code), memory, groups);
 }
 
 template <std::size_t CodeWords>
@@ -489,6 +505,49 @@ void RunRejections(AgcDriver::VulkanDevice& device) {
 
 }
 
+void RunTwoQueues(AgcDriver::VulkanDevice& device) {
+    Fill();
+    Table = {};
+    const std::array<std::array<std::uint32_t, 4>, 5> images{
+        Image(PackedTexels.data(), Format32UInt),
+        Image(SintTexels.data(), Format32UInt),
+        Image(FloatTexels.data(), Format32UInt),
+        Image(OtherFloatTexels.data(), Format32UInt),
+        Image(UintTexels.data(), Format32SInt),
+    };
+    for (std::uint32_t record = 0; record < images.size(); ++record) SetRecord(record, images[record]);
+    Keys = {};
+    for (std::uint32_t group = 0; group < images.size(); ++group) Keys[group] = group;
+    std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
+    std::fill(OtherOutput.begin(), OtherOutput.end(), 0xdeadbeefu);
+    const std::span<const std::uint32_t> span(LoadTableCode);
+    const auto program = reinterpret_cast<std::uintptr_t>(span.data());
+    const auto groups = static_cast<std::uint32_t>(images.size());
+    const auto first = Compile(device, span, TableMemory(LoadTableCode, true));
+    const auto before = device.DeviceImageCounts();
+    std::exception_ptr failure;
+    std::thread compute([&] {
+        try {
+            AgcDriver::GuestMemory::TagGpuLockThread(0x20);
+            device.Dispatch(first, groups, 1, 1, {}, program);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    compute.join();
+    if (failure) std::rethrow_exception(failure);
+    const auto second = Compile(device, span, TableMemory(LoadTableCode, true, OtherOutput));
+    device.Dispatch(second, groups, 1, 1, {}, program);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        device.ReapRecorded();
+    }
+    device.WaitIdle();
+    const auto after = device.DeviceImageCounts();
+    Require(after.misses - before.misses == 2u * groups * Lanes, "device image table: two queues' dispatches reaped one after the other drained " + std::to_string(after.misses - before.misses) + " miss records, not " + std::to_string(2u * groups * Lanes));
+}
+
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
@@ -497,6 +556,7 @@ int main() {
         RunChanges(*device);
         RunRejections(*device);
         RunRuntimeDescriptors(*device);
+        RunTwoQueues(*device);
         std::puts("device image table tests passed");
         return 0;
     } catch (const std::exception& error) {

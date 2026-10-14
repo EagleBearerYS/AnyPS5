@@ -227,8 +227,8 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
 }
 
 void DeviceImageTable::record(Recorder& recorder) {
-    const auto serial = recorder.Submissions() + 1u;
-    const bool assign = ring == nullptr || ringBatch != serial;
+    const auto batch = recorder.CallerToken();
+    const bool assign = ring == nullptr || ringBatch != batch;
     const bool grown = table == nullptr || keys.Buckets() != tableBuckets;
     const bool rebuilt = grown || keys.Rebuilt();
     const auto changed = keys.TakeChanged();
@@ -263,7 +263,7 @@ void DeviceImageTable::record(Recorder& recorder) {
             ring = std::move(freeRings.back());
             freeRings.pop_back();
             std::memset(ring->Bytes().data(), 0, Abi::RingRecordsWord * sizeof(std::uint32_t));
-            ringBatch = serial;
+            ringBatch = batch;
             recorder.OnComplete([this, held = ring] { drain(held); });
         }
         std::array<std::uint32_t, Abi::HeaderWords> fields{};

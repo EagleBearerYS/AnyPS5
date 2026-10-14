@@ -91,7 +91,7 @@ private:
     std::uint32_t tableBuckets = 0;
     std::shared_ptr<Buffer> ring;
     std::vector<std::shared_ptr<Buffer>> freeRings;
-    std::uint64_t ringBatch = 0;
+    std::array<std::uint64_t, MaxRecorderStreams> ringBatch{};
     std::vector<DeviceImageMiss> pending;
     std::vector<Rejection> rejections;
     std::map<std::tuple<DeviceImageKeys::Key, std::uint32_t, std::string>, std::uint32_t> rejectionIndex;
