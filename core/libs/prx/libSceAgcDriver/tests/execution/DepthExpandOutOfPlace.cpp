@@ -488,10 +488,15 @@ bool RunBufferRead(TexelReader& reader, bool addressBased) {
     Fill(copy, PlaneBytes(), 0xffffffffu);
     std::printf("%s: read base 0x%llx, write base 0x%llx, copy at 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written), static_cast<unsigned long long>(copy));
     Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
+    const auto before = DepthExpandCounts().stored;
     Submit(DepthDraw(surfaces, true, true), name + ": DB expand from the read base to the write base");
+    const auto atExpand = DepthExpandCounts().stored - before;
     reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), addressBased, name + ": raw buffer copy of the write base");
+    const auto byCopy = DepthExpandCounts().stored - before - atExpand;
+    std::printf("  expanded planes stored for address-based builds: %llu at the expand, %llu ahead of the copy (expected 0 and %u)\n", static_cast<unsigned long long>(atExpand), static_cast<unsigned long long>(byCopy), addressBased ? 1u : 0u);
     const auto depth = DrawnDepth(reader, surfaces, name);
-    return Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  buffer copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels;
+    const bool copied = Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  buffer copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels;
+    return copied && atExpand == 0 && byCopy == (addressBased ? 1u : 0u);
 }
 
 bool RunRepeatedExpand(TexelReader& reader) {
