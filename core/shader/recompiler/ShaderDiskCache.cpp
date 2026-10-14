@@ -1160,14 +1160,15 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     for (std::size_t index = 0; index < records.size(); ++index) {
         const auto& record = records[index];
         auto& value = *plan.valueStorage[index];
+        std::vector<IrValue*> operands;
+        std::vector<IrBlock*> predecessors;
+        operands.reserve(record.arguments.size());
+        if (value.IsPhi()) predecessors.reserve(record.arguments.size());
         for (std::size_t operand = 0; operand < record.arguments.size(); ++operand) {
-            auto* argument = valueAt(record.arguments[operand]);
-            if (value.IsPhi()) {
-                value.AddPhiOperand(plan.blockStorage[record.phiBlocks[operand]].get(), argument);
-            } else {
-                value.AddArgument(argument);
-            }
+            operands.push_back(valueAt(record.arguments[operand]));
+            if (value.IsPhi()) predecessors.push_back(plan.blockStorage[record.phiBlocks[operand]].get());
         }
+        value.SetOperandsWithoutUses(std::move(operands), std::move(predecessors));
     }
     reader.List(plan.memoryInfo, 78, decodeMemoryInfo);
     reader.List(plan.descriptorSources, 87, [&](Reader& in, DescriptorSource& source) {
