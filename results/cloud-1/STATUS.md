@@ -1,4 +1,4 @@
-READY
+BUSY GAC-007 (claimed 2026-10-14T23:16:59Z)
 RESULT:
 - Last task: GAC-006 (depth expand reads of a non-imported write base: not reproduced at e1a94e7735 in 11 variants; green coverage test on fix/agc-db-depth-expand-noimport at 984604118; separate abort found for window imports inside heap-mirrored ranges), done: results/cloud-1/GAC-006.md. Before it: GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
