@@ -194,11 +194,13 @@ public:
     void OrderAfterLabel(std::uint64_t address, std::size_t bytes);
     void OrderAfterValue(std::uint64_t address, std::size_t bytes);
     void OrderAfterQueue(std::uint32_t queue);
+    void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     using Token = std::array<std::uint64_t, MaxRecorderStreams>;
     Token CallerToken();
     Token AllToken() const;
     bool Reached(const Token& token) const;
     void WaitToken(const Token& token);
+    bool TokenSignaled(const Token& token) const;
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
     // HasTimeline(); the debug switch APS5_NO_TIMELINE makes the device create the recorder without one.
@@ -278,50 +280,29 @@ public:
     // (stamped) BEFORE the label was recorded may take the value from the table instead of waiting
     // for the GPU: any CPU store the game ordered before that submit call precedes the label in
     // program order exactly as on hardware, and later recorded work follows the label in queue
-    // order. Entries recorded before the submission (the previous frame's label at the same address)
-    // are trusted only under the late rule below (APS5_LABEL_TRUST_LATE=0 never trusts them).
-    // Entries leave the table with their batch (a memory bound only). The note also enters the
     // label's range as a pending write of the open batch (the flush hook syncs CPU reads), marked
-    // as the label's own so it does not count as an overwrite of the entry.
     static constexpr std::size_t LabelTableBytes = 64;
     void NoteLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
-    // Late rule: an entry whose stamp is not newer than the wait's submission is still the value
-    // memory will hold, unless a CPU store touched the dword since it was recorded (the table
-    // cannot see CPU stores; the title recycles label slots by CPU writes) or a later recorded
-    // non-label GPU write covers it. The table refuses a queued entry, one flagged `overwritten`
-    // (noteWrite), and one whose record group has not closed (generation 0); the caller checks the
-    // CPU side with GuestMemory::UnchangedSinceCollected against the hit's generation. Labels are
-    // noted in groups (a worker's deferred labels recorded back to back, or one immediate label
-    // or store): CloseLabelGroup, called by the recording thread after the group's last
-    // MarkWritten, stamps the group's entries with the write tracker's generation at that point;
-    // per-entry capture would fail, as the next label of the group stamps the shared 64 KiB block
-    // newer. A generation of 0 leaves the entries unclosed (a failed record), as does a batch
-    // already submitted at the close (its value may have landed before the generation was taken).
-    static void CloseLabelGroup(std::uint64_t trackerGeneration);
-    static bool LateTrust();
-    struct LabelHit {
-        std::uint64_t value;
-        // The recording queue of the first dword, and its record stamp.
+    struct LabelWriter {
+        std::uint32_t stream;
+        std::uint64_t batch;
         std::uint32_t queue;
         std::uint64_t stamp;
-        // Taken under the late rule: `generation` is the oldest group generation of the dwords.
-        bool late;
-        std::uint64_t generation;
+        std::uint32_t value;
+        bool behindCompletion = false;
     };
-    // Why a lookup refused a late candidate (an entry with stamp <= afterStamp), for the trace.
-    // BehindCompletion replaces the other reasons when the refused entry's value reaches memory
-    // only through a completion action of its batch (AfterCompletions: the GPU has no view of the
-    // range, or a write-back overwrote the GPU's store): a poller must reap that batch to converge.
-    enum class LabelRefusal : std::uint8_t { None = 0, TrustOff, Queued, Overwritten, Unclosed, BehindCompletion };
-    // Per calling thread (lookups run on the waiting worker): late candidates seen, in both modes,
-    // and the refusals by reason ([packets] line deltas).
-    struct LateStatistics {
-        std::uint64_t candidates, queued, overwritten, unclosed;
+    struct LabelHit {
+        std::uint64_t value;
+        std::uint32_t queue;
+        std::uint64_t stamp;
+        std::uint32_t stream;
+        std::uint64_t batch;
     };
-    static LateStatistics LateCounts();
-    // The 4- or 8-byte value the table holds for `address` when every dword is present with a stamp
-    // newer than `afterStamp`, or trustable under the late rule.
-    std::optional<LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal = nullptr) const;
+    using LabelAccepts = std::function<bool(std::uint64_t)>;
+    static std::optional<LabelHit> SelectLabelWriter(std::span<const std::vector<LabelWriter>> dwords, std::uint32_t ownStream, std::uint64_t afterStamp, const LabelAccepts& accepts);
+    std::optional<LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const LabelAccepts& accepts, bool* behindCompletion = nullptr) const;
+    bool LabelPendingAt(std::uint64_t address) const;
+    Token LabelWriterBatches(std::uint64_t address, std::size_t bytes) const;
     std::size_t PendingLabels() const;
     // Whether any tracked label dword (recorded, or queued by a worker and not recorded yet) lies
     // inside [address, address + bytes): a range query for large ranges (a fill of megabytes),
@@ -331,9 +312,8 @@ public:
     // PendingLabel of the active recorder WITHOUT GuestMemory::GpuMutex: the table has a small mutex
     // of its own (every mutation holds both), so a WAIT_REG_MEM consults it without queueing behind
     // device work. Nothing is done under the table mutex but the lookup (it never takes the GPU mutex).
-    static std::optional<LabelHit> LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal = nullptr);
-    // The value alone, for callers asking whether any label is pending in a dword (afterStamp 0).
-    static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp);
+    static std::optional<LabelHit> LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const LabelAccepts& accepts, bool* behindCompletion = nullptr);
+    static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes);
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
     static bool PendingLabelsMatchMemory(std::uint64_t address, std::size_t bytes);
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
@@ -345,10 +325,7 @@ public:
     // the table mutex only. The queued entries live apart from the recorded ones: a recorded
     // label of the same dword (an older store still pending on the GPU) keeps serving the other
     // queues' waits and the driver's pending-label checks until the queued one is recorded.
-    // Debug aid: APS5_NO_SEPARATE_QUEUED_LABELS=1 lets a queued entry replace the recorded one.
     static void NoteQueuedLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
-    // After the calling worker recorded (or dropped) its queued labels: its ranges are cleared and
-    // the entries of its dwords still without a batch (stored by the CPU, or dropped) leave the table.
     static void ForgetQueuedLabels();
     // The function the flush hook calls, on the accessing thread (which may hold the GPU mutex),
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
@@ -665,20 +642,6 @@ private:
         };
         std::vector<KeyStore> keyStores;
     };
-    struct LabelEntry {
-        std::uint32_t value;
-        std::uint32_t queue;
-        std::uint64_t stamp;
-        // Null for a queued label (NoteQueuedLabel): not recorded yet, so no batch removes it.
-        const Batch* batch;
-        // Write-tracker generation at the close of the entry's record group (CloseLabelGroup);
-        // 0 while the group is open. A recorded non-label GPU write over the dword noted after the
-        // entry sets `overwritten`: memory will not end with `value`. Both serve the late rule only.
-        std::uint64_t generation = 0;
-        bool overwritten = false;
-        // The value lands in memory only when the batch's completion actions run (LabelRefusal::BehindCompletion).
-        bool behindCompletion = false;
-    };
     void readGpuTiming(Batch& batch);
     void beginSamples(Batch& batch);
     void readSamples(Batch& batch);
@@ -779,8 +742,6 @@ private:
     void noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool behindCompletion = false);
     // Flags the recorded entries of `batch` over [begin, end) as stored by a completion action.
     void markBehindCompletion(const Batch& batch, std::uint64_t begin, std::uint64_t end);
-    // Flags the recorded entries of the dwords overlapping [address, end) as overwritten.
-    void markOverwritten(std::uint64_t address, std::uint64_t end);
     // Whether a write-back noted after `sequence` overlapped [begin, end); true when the ring no
     // longer reaches back to `sequence` (conservative: the store runs as before).
     bool writtenBackSince(std::uint64_t sequence, std::uint64_t begin, std::uint64_t end);
@@ -788,7 +749,8 @@ private:
     std::deque<std::array<std::uint64_t, 3>> writtenBack;
     std::uint64_t writtenBackSequence = 0;
     // PendingLabel without the table mutex (the caller holds it, or the GPU mutex).
-    std::optional<LabelHit> lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const;
+    std::optional<LabelHit> lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const LabelAccepts& accepts, bool* behindCompletion) const;
+    std::uint32_t knownStreamOfCaller() const;
     // Whether the in-flight batch with that serial has not signaled its fence (false when it is
     // not in flight any more): what makes a wait for it a real GPU wait (ThreadHookWaits).
     bool unsignaled(std::uint64_t serial) const;
@@ -851,10 +813,10 @@ private:
     // Every access holds the table mutex (Recorder.cpp): the recorded entries are mutated under
     // GuestMemory::GpuMutex as well, the queued ones (NoteQueuedLabel) under the table mutex alone.
     // Ordered, so a range (a noted write, PendingLabelIn) finds its dwords by lower_bound.
-    std::map<std::uint64_t, LabelEntry> labels;
+    std::map<std::uint64_t, std::vector<LabelWriter>> labels;
     // The queued entries (batch always null), by dword; a lookup on the noting queue's thread
     // prefers them (its newest store in program order), every other lookup sees `labels` alone.
-    std::map<std::uint64_t, LabelEntry> queuedLabels;
+    std::map<std::uint64_t, LabelWriter> queuedLabels;
     std::multimap<std::uint64_t, WideLabel> wideLabels;
     std::uint64_t wideLabelBytes = 0;
     bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;

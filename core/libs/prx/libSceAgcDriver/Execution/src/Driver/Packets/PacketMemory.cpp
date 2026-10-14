@@ -41,10 +41,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 const auto stamp = ++eventSerial;
                 reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
                 if (reason == 1) GuestMemory::Write(label->address, bytes, 4);
-                if (reason == 0 || reason == 1 || reason == 5) {
-                    noteLabelStore(label->address, bytes, stamp, submission.queue);
-                    Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
-                }
+                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(label->address, bytes, stamp, submission.queue);
                 countLabelOutcome(reason);
                 ++immediateLabels;
             } else {
@@ -96,7 +93,6 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                     wroteOnGpu = true;
                 }
                 if (wroteOnGpu) noteLabelStore(label->address, bytes, stamp, submission.queue);
-                Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
                 countLabelOutcome(reason);
                 ++immediateLabels;
             }
@@ -141,7 +137,6 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                     wroteOnGpu = true;
                     drained = false;
                 }
-                Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
             }
         }
         if (drained && opcode == 0x50) {

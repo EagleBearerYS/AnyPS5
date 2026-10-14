@@ -15,11 +15,6 @@ WaitOutcomes& Driver::waitOutcomes() {
     return outcomes;
 }
 
-Graphics::Recorder::LateStatistics& Driver::lateCountsSeen() {
-    static thread_local Graphics::Recorder::LateStatistics seen{};
-    return seen;
-}
-
 EpochBumps& Driver::epochBumps() {
     static thread_local EpochBumps bumps;
     return bumps;

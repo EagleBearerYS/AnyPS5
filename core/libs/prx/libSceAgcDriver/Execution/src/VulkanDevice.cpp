@@ -1892,9 +1892,22 @@ void VulkanDevice::ReapRecorded() {
     if (state->recorder) state->recorder->Reap();
 }
 
-std::optional<Graphics::Recorder::LabelHit> VulkanDevice::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, Graphics::Recorder::LabelRefusal* refusal) const {
+std::optional<Graphics::Recorder::LabelHit> VulkanDevice::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const Graphics::Recorder::LabelAccepts& accepts, bool* behindCompletion) const {
+    if (behindCompletion != nullptr) *behindCompletion = false;
     if (!state->recorder) return std::nullopt;
-    return state->recorder->PendingLabel(address, bytes, afterStamp, refusal);
+    return state->recorder->PendingLabel(address, bytes, afterStamp, accepts, behindCompletion);
+}
+
+bool VulkanDevice::LabelPendingAt(std::uint64_t address) const {
+    return state->recorder && state->recorder->LabelPendingAt(address);
+}
+
+Graphics::Recorder::Token VulkanDevice::LabelWriterBatches(std::uint64_t address, std::size_t bytes) const {
+    return state->recorder ? state->recorder->LabelWriterBatches(address, bytes) : Graphics::Recorder::Token{};
+}
+
+bool VulkanDevice::TokenSignaled(const Graphics::Recorder::Token& token) const {
+    return !state->recorder || state->recorder->TokenSignaled(token);
 }
 
 bool VulkanDevice::OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
@@ -1922,6 +1935,10 @@ void VulkanDevice::OrderAfterValue(std::uint64_t address, std::size_t bytes) {
 
 void VulkanDevice::OrderAfterQueue(std::uint32_t queue) {
     if (state->recorder) state->recorder->OrderAfterQueue(queue);
+}
+
+void VulkanDevice::OrderAfterBatch(std::uint32_t stream, std::uint64_t value) {
+    if (state->recorder) state->recorder->OrderAfterBatch(stream, value);
 }
 
 bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) const {
@@ -3983,7 +4000,7 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
     // to the CPU, as ~5 such labels are pending per frame. Stamp 0 matches every live entry.
     const auto labelPending = [&] {
         for (std::uint64_t dword = arguments; dword < arguments + 12; dword += 4) {
-            if (recorder.PendingLabel(dword, 4, 0).has_value()) return true;
+            if (recorder.LabelPendingAt(dword)) return true;
         }
         return false;
     };

@@ -19,7 +19,7 @@ bool DeferLabels() {
 }
 
 bool QueuedLabelTable() {
-    static const bool enabled = std::getenv("APS5_NO_QUEUED_LABELS") == nullptr && std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
+    static const bool enabled = std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
     return enabled;
 }
 
@@ -103,9 +103,6 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
             const bool failed = std::uncaught_exceptions() != 0;
             if (failed) std::fprintf(stderr, "[gpu] queue 0x%x dropped %zu queued labels: their record failed\n", queue, labels.size());
             labels.clear();
-
-            Graphics::Recorder::CloseLabelGroup(failed ? 0 : GuestMemory::TrackerGeneration());
-
             Graphics::Recorder::ForgetQueuedLabels();
             queuedLabelsNoted() = 0;
         }

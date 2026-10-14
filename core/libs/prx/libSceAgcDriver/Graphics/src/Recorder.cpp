@@ -542,22 +542,6 @@ Recorder* labelTableOwner = nullptr;
 struct QueuedLabelRangesTag {};
 auto& QueuedLabelRanges() { return HostThreadLocal<std::vector<std::pair<std::uint64_t, std::uint64_t>>, QueuedLabelRangesTag>(); }
 std::atomic<void (*)()> queuedLabelRecorder{nullptr};
-// The dwords (with their stamps) this thread noted since its last CloseLabelGroup (see Recorder::CloseLabelGroup).
-struct LabelGroupDwordsTag {};
-auto& LabelGroupDwords() { return HostThreadLocal<std::vector<std::pair<std::uint64_t, std::uint64_t>>, LabelGroupDwordsTag>(); }
-// Late-rule counters (Recorder::LateCounts), per thread: lookups run on the waiting worker.
-thread_local Recorder::LateStatistics lateCounts{};
-
-// APS5_LABEL_TRUST_LATE=1 trusts entries with stamp <= afterStamp under the late rule; off by
-// default until the frame-rate collapse it produced at the video stage (lt_on: 119 -> 25 presents
-// per 10 s with 0 late-trusted waits) is understood.
-bool LateTrustEnabled() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("APS5_LABEL_TRUST_LATE");
-        return value != nullptr && std::strcmp(value, "0") != 0;
-    }();
-    return enabled;
-}
 // Store-run and queued-label counters (Recorder::StoreCounts), relaxed: they are only reported.
 std::atomic<std::uint64_t> storeCount{0}, storeRuns{0}, storesJoined{0}, storesReplaced{0}, storeWawBarriers{0}, storeJoinsRefused{0};
 std::atomic<std::uint64_t> keyStoreCount{0}, keyStoreRuns{0}, keyStoreRunsForWriter{0}, keyStoresJoined{0};
@@ -603,13 +587,6 @@ std::atomic<std::uint64_t> storeRunsAtSubmit{0}, storeRunsForced{0};
 bool JoinWawCheck() {
     static const bool check = std::getenv("APS5_NO_JOIN_WAW_CHECK") == nullptr;
     return check;
-}
-
-// APS5_NO_SEPARATE_QUEUED_LABELS=1: a queued label enters the recorded table and replaces a
-// recorded entry of its dword, as before (see NoteQueuedLabel).
-bool SeparateQueuedLabels() {
-    static const bool separate = std::getenv("APS5_NO_SEPARATE_QUEUED_LABELS") == nullptr;
-    return separate;
 }
 
 bool QueuedLabelOverlaps(std::uint64_t address, std::size_t bytes) {
@@ -1236,10 +1213,11 @@ void Recorder::Activate() {
     GuestMemory::SetFlushHook(&FlushForAccess);
 }
 
-std::optional<Recorder::LabelHit> Recorder::LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) {
+std::optional<Recorder::LabelHit> Recorder::LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const LabelAccepts& accepts, bool* behindCompletion) {
     std::lock_guard tableLock(labelTableMutex);
+    if (behindCompletion != nullptr) *behindCompletion = false;
     if (labelTableOwner == nullptr) return std::nullopt;
-    return labelTableOwner->lookupLabel(address, bytes, afterStamp, refusal);
+    return labelTableOwner->lookupLabel(address, bytes, afterStamp, accepts, behindCompletion);
 }
 
 bool Recorder::WideLabelIn(std::uint64_t address, std::size_t bytes) {
@@ -1264,18 +1242,22 @@ bool Recorder::PendingLabelsMatchMemory(std::uint64_t address, std::size_t bytes
 bool Recorder::labelsMatchMemoryLocked(std::uint64_t address, std::size_t bytes) const {
     if (bytes == 0) return true;
     const auto end = address + bytes;
-    const auto overlapsTable = [&](const std::map<std::uint64_t, LabelEntry>& table) {
+    const auto overlapsTable = [&](const auto& table) {
         const auto first = table.lower_bound(address >= 3 ? address - 3 : 0);
         return first != table.end() && first->first < end;
     };
     const bool tabled = overlapsTable(labels) || overlapsTable(queuedLabels);
     if (!tabled && !wideLabelInLocked(address, bytes)) return true;
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address & ~3ull), static_cast<std::size_t>(((end + 3) & ~3ull) - (address & ~3ull)))) return false;
-    for (const auto* table : {&labels, &queuedLabels}) {
-        for (auto it = table->lower_bound(address >= 3 ? address - 3 : 0); it != table->end() && it->first < end; ++it) {
-            if (it->first + 4 <= address) continue;
-            if (std::memcmp(&it->second.value, reinterpret_cast<const void*>(it->first), 4) != 0) return false;
+    const auto matches = [](std::uint64_t dword, const LabelWriter& writer) { return std::memcmp(&writer.value, reinterpret_cast<const void*>(dword), 4) == 0; };
+    for (auto it = labels.lower_bound(address >= 3 ? address - 3 : 0); it != labels.end() && it->first < end; ++it) {
+        if (it->first + 4 <= address) continue;
+        for (const auto& writer : it->second) {
+            if (!matches(it->first, writer)) return false;
         }
+    }
+    for (auto it = queuedLabels.lower_bound(address >= 3 ? address - 3 : 0); it != queuedLabels.end() && it->first < end; ++it) {
+        if (it->first + 4 > address && !matches(it->first, it->second)) return false;
     }
     if (!wideLabels.empty()) {
         for (auto it = wideLabels.lower_bound(address >= wideLabelBytes ? address - wideLabelBytes + 1 : 0); it != wideLabels.end() && it->first < end; ++it) {
@@ -1288,38 +1270,26 @@ bool Recorder::labelsMatchMemoryLocked(std::uint64_t address, std::size_t bytes)
     return true;
 }
 
-std::optional<std::uint64_t> Recorder::LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp) {
-    const auto hit = LookupLabel(address, bytes, afterStamp);
-    if (!hit.has_value()) return std::nullopt;
-    return hit->value;
-}
-
-bool Recorder::LateTrust() {
-    return LateTrustEnabled();
-}
-
-Recorder::LateStatistics Recorder::LateCounts() {
-    return lateCounts;
-}
-
-void Recorder::CloseLabelGroup(std::uint64_t trackerGeneration) {
-    if (LabelGroupDwords().empty()) return;
-    auto group = std::move(LabelGroupDwords());
-    LabelGroupDwords().clear();
-    if (trackerGeneration == 0) return;
+std::optional<std::uint64_t> Recorder::LookupLabelValue(std::uint64_t address, std::size_t bytes) {
     std::lock_guard tableLock(labelTableMutex);
-    if (labelTableOwner == nullptr) return;
-    auto& recorded = labelTableOwner->labels;
-    for (const auto& [dword, stamp] : group) {
-        // Only an entry still ours (stamps are unique): a later note of the dword has its own group.
-        // And only while its batch is unsubmitted: a submitted one (a drain or APS5_LABEL_SUBMIT_NOW
-        // inside the group) may have landed the value already, and a CPU store between that and
-        // this close is not newer than the generation.
-        const auto found = recorded.find(dword);
-        if (found != recorded.end() && found->second.stamp == stamp && found->second.batch != nullptr && !found->second.batch->submitted) found->second.generation = trackerGeneration;
+    if (labelTableOwner == nullptr || (bytes != 4 && bytes != 8) || address % 4 != 0) return std::nullopt;
+    const auto tag = GuestMemory::GpuLockThreadTag();
+    const auto& queued = labelTableOwner->queuedLabels;
+    const auto& recorded = labelTableOwner->labels;
+    std::uint64_t value = 0;
+    for (std::size_t offset = 0; offset < bytes; offset += 4) {
+        const LabelWriter* newest = nullptr;
+        if (const auto own = queued.find(address + offset); own != queued.end() && own->second.queue == tag) {
+            newest = &own->second;
+        } else if (const auto found = recorded.find(address + offset); found != recorded.end()) {
+            for (const auto& writer : found->second) {
+                if (newest == nullptr || writer.stamp > newest->stamp) newest = &writer;
+            }
+        }
+        if (newest == nullptr) return std::nullopt;
+        value |= static_cast<std::uint64_t>(newest->value) << (offset * 8u);
     }
-    // A poller that refused the group as unclosed re-consults the table on the next generation.
-    writeGeneration.fetch_add(1, std::memory_order_release);
+    return value;
 }
 
 void Recorder::NoteQueuedLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
@@ -1330,15 +1300,13 @@ void Recorder::NoteQueuedLabel(std::uint64_t address, std::span<const std::byte>
     queuedLabelsNoted.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard tableLock(labelTableMutex);
     if (labelTableOwner == nullptr) return;
-    auto& recorded = labelTableOwner->labels;
-    auto& table = SeparateQueuedLabels() ? labelTableOwner->queuedLabels : recorded;
+    const auto& recorded = labelTableOwner->labels;
     for (std::size_t offset = 0; offset + 4 <= bytes.size(); offset += 4) {
         std::uint32_t value = 0;
         std::memcpy(&value, bytes.data() + offset, 4);
-        if (const auto found = recorded.find(address + offset); found != recorded.end() && found->second.batch != nullptr) queuedLabelsOverRecorded.fetch_add(1, std::memory_order_relaxed);
-        table.insert_or_assign(address + offset, LabelEntry{value, queue, stamp, nullptr});
+        if (recorded.contains(address + offset)) queuedLabelsOverRecorded.fetch_add(1, std::memory_order_relaxed);
+        labelTableOwner->queuedLabels.insert_or_assign(address + offset, LabelWriter{NoStream, 0, queue, stamp, value});
     }
-    labelTableOwner->recordedLabels.store(recorded.size(), std::memory_order_relaxed);
 }
 
 void Recorder::ForgetQueuedLabels() {
@@ -1347,17 +1315,13 @@ void Recorder::ForgetQueuedLabels() {
     QueuedLabelRanges().clear();
     std::lock_guard tableLock(labelTableMutex);
     if (labelTableOwner == nullptr) return;
-    auto& recorded = labelTableOwner->labels;
     auto& queued = labelTableOwner->queuedLabels;
     const auto tag = GuestMemory::GpuLockThreadTag();
     for (const auto& [begin, end] : ranges) {
         for (auto dword = begin; dword + 4 <= end; dword += 4) {
             if (const auto own = queued.find(dword); own != queued.end() && own->second.queue == tag) queued.erase(own);
-            const auto found = recorded.find(dword);
-            if (found != recorded.end() && found->second.batch == nullptr) recorded.erase(found);
         }
     }
-    labelTableOwner->recordedLabels.store(recorded.size(), std::memory_order_relaxed);
 }
 
 void Recorder::SetQueuedLabelRecorder(void (*recorder)()) {
@@ -1486,8 +1450,10 @@ void Recorder::OrderAfterLabel(std::uint64_t address, std::size_t bytes) {
         std::lock_guard tableLock(labelTableMutex);
         for (auto dword = address & ~std::uint64_t{3}; dword < address + bytes; dword += 4) {
             const auto found = labels.find(dword);
-            if (found == labels.end() || found->second.batch == nullptr || found->second.batch->stream == stream) continue;
-            after[found->second.batch->stream] = std::max(after[found->second.batch->stream], found->second.batch->value);
+            if (found == labels.end()) continue;
+            for (const auto& writer : found->second) {
+                if (writer.stream != stream) after[writer.stream] = std::max(after[writer.stream], writer.batch);
+            }
         }
     }
     bool any = false;
@@ -1520,6 +1486,22 @@ bool Recorder::Reached(const Token& token) const {
     return true;
 }
 
+void Recorder::OrderAfterBatch(std::uint32_t stream, std::uint64_t value) {
+    if (streams.size() == 1 || stream >= streams.size() || stream == streamOfCaller() || value <= streams[stream].finished) return;
+    ensureOpen();
+    dependOn(stream, value);
+}
+
+bool Recorder::TokenSignaled(const Token& token) const {
+    const auto counter = context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR");
+    for (std::uint32_t stream = 0; stream < streams.size(); ++stream) {
+        if (token[stream] == 0) continue;
+        std::uint64_t value = 0;
+        if (streams[stream].timeline == VK_NULL_HANDLE || counter(context.device, streams[stream].timeline, &value) != VK_SUCCESS || value < token[stream]) return false;
+    }
+    return true;
+}
+
 void Recorder::OrderAfterQueue(std::uint32_t queue) {
     if (streams.size() == 1) return;
     const std::uint32_t other = queue == 0 || queue >= queueStreams.size() || queueStreams[queue] == 0 ? 0 : queueStreams[queue] - 1u;
@@ -1540,10 +1522,12 @@ void Recorder::OrderAfterValue(std::uint64_t address, std::size_t bytes) {
         std::lock_guard tableLock(labelTableMutex);
         for (auto dword = address & ~std::uint64_t{3}; dword < end; dword += 4) {
             const auto found = labels.find(dword);
-            if (found == labels.end() || found->second.batch == nullptr || found->second.batch->stream == stream) continue;
-            const auto* writer = found->second.batch;
-            labelled[writer->stream] = true;
-            if (std::memcmp(&found->second.value, reinterpret_cast<const void*>(dword), 4) == 0) after[writer->stream] = std::max(after[writer->stream], writer->value);
+            if (found == labels.end()) continue;
+            for (const auto& writer : found->second) {
+                if (writer.stream == stream) continue;
+                labelled[writer.stream] = true;
+                if (std::memcmp(&writer.value, reinterpret_cast<const void*>(dword), 4) == 0) after[writer.stream] = std::max(after[writer.stream], writer.batch);
+            }
         }
     }
     const auto unlabelled = [&](const Batch& batch) { return batch.stream != stream && !labelled[batch.stream] && overlaps(batch, address, end); };
@@ -2931,7 +2915,6 @@ bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel
     open->writes.emplace_back(address, end);
     open->writeNotes.push_back(++writeNoteCount);
     open->writeValues.push_back(static_cast<std::int16_t>(value));
-    if (!ownLabel) markOverwritten(address, end);
     // A poller waiting on this range learns that the open batch may now hold its producer.
     if (activeRecorder == this) writeGeneration.fetch_add(1, std::memory_order_release);
     // Consecutive dispatches write the same output buffers: a range the snapshot already contains
@@ -2958,17 +2941,9 @@ void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t byte
     batch.writes.emplace_back(address, address + bytes);
     batch.writeNotes.push_back(++writeNoteCount);
     batch.writeValues.push_back(-1);
-    if (!ownLabel) markOverwritten(address, address + bytes);
     if (activeRecorder == this) writeGeneration.fetch_add(1, std::memory_order_release);
     if (!SnapshotCovers(address, address + bytes)) publishPendingWrites();
     std::atomic_thread_fence(std::memory_order_seq_cst);
-}
-
-void Recorder::markOverwritten(std::uint64_t address, std::uint64_t end) {
-    if (recordedLabels.load(std::memory_order_relaxed) == 0) return;
-    std::lock_guard tableLock(labelTableMutex);
-    // A dword overlaps the range when it starts before the end and ends after the start.
-    for (auto it = labels.lower_bound(address >= 3 ? address - 3 : 0); it != labels.end() && it->first < end; ++it) it->second.overwritten = true;
 }
 
 void Recorder::NotePendingWrite(std::uint64_t address, std::size_t bytes) {
@@ -3213,16 +3188,17 @@ bool Recorder::HasCompletions() const {
 }
 
 void Recorder::noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool behindCompletion) {
-    // One entry per dword; a label overlapping older entries (a 4-byte store inside an 8-byte one or
-    // the reverse) replaces exactly the dwords it stores, so a lookup composes what memory will hold.
     std::lock_guard tableLock(labelTableMutex);
     for (std::size_t offset = 0; offset + 4 <= bytes.size(); offset += 4) {
         std::uint32_t value = 0;
         std::memcpy(&value, bytes.data() + offset, 4);
         const auto dword = address + offset;
-        labels.insert_or_assign(dword, LabelEntry{value, queue, stamp, &batch, 0, false, behindCompletion});
+        auto& writers = labels[dword];
+        const LabelWriter entry{batch.stream, batch.value, queue, stamp, value, behindCompletion};
+        const auto found = std::find_if(writers.begin(), writers.end(), [&](const LabelWriter& writer) { return writer.stream == batch.stream; });
+        if (found != writers.end()) *found = entry;
+        else writers.push_back(entry);
         batch.labelDwords.push_back(dword);
-        LabelGroupDwords().emplace_back(dword, stamp);
     }
     recordedLabels.store(labels.size(), std::memory_order_relaxed);
 }
@@ -3230,7 +3206,9 @@ void Recorder::noteLabelOn(Batch& batch, std::uint64_t address, std::span<const 
 void Recorder::markBehindCompletion(const Batch& batch, std::uint64_t begin, std::uint64_t end) {
     std::lock_guard tableLock(labelTableMutex);
     for (auto it = labels.lower_bound(begin); it != labels.end() && it->first < end; ++it) {
-        if (it->second.batch == &batch) it->second.behindCompletion = true;
+        for (auto& writer : it->second) {
+            if (writer.stream == batch.stream && writer.batch == batch.value) writer.behindCompletion = true;
+        }
     }
 }
 
@@ -3255,10 +3233,28 @@ void Recorder::NoteLabel(std::uint64_t address, std::span<const std::byte> bytes
     noteWriteOn(*open, address, bytes.size(), true);
 }
 
-std::optional<Recorder::LabelHit> Recorder::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const {
+std::optional<Recorder::LabelHit> Recorder::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const LabelAccepts& accepts, bool* behindCompletion) const {
     // Under the GPU mutex; the table mutex is taken too so this one path serves both lock regimes.
     std::lock_guard tableLock(labelTableMutex);
-    return lookupLabel(address, bytes, afterStamp, refusal);
+    return lookupLabel(address, bytes, afterStamp, accepts, behindCompletion);
+}
+
+bool Recorder::LabelPendingAt(std::uint64_t address) const {
+    std::lock_guard tableLock(labelTableMutex);
+    if (labels.contains(address)) return true;
+    const auto queued = queuedLabels.find(address);
+    return queued != queuedLabels.end() && queued->second.queue == GuestMemory::GpuLockThreadTag();
+}
+
+Recorder::Token Recorder::LabelWriterBatches(std::uint64_t address, std::size_t bytes) const {
+    Token token{};
+    std::lock_guard tableLock(labelTableMutex);
+    for (auto dword = address & ~std::uint64_t{3}; dword < address + bytes; dword += 4) {
+        const auto found = labels.find(dword);
+        if (found == labels.end()) continue;
+        for (const auto& writer : found->second) token[writer.stream] = std::max(token[writer.stream], writer.batch);
+    }
+    return token;
 }
 
 std::size_t Recorder::PendingLabels() const {
@@ -3284,59 +3280,72 @@ bool Recorder::CompletionLabelIn(std::uint64_t address, std::size_t bytes) const
     if (bytes == 0) return false;
     const auto end = address + bytes;
     for (auto it = labels.lower_bound(address); it != labels.end() && it->first < end; ++it) {
-        if (it->second.behindCompletion) return true;
+        if (std::any_of(it->second.begin(), it->second.end(), [](const LabelWriter& writer) { return writer.behindCompletion; })) return true;
     }
     if (const auto first = queuedLabels.lower_bound(address); first != queuedLabels.end() && first->first < end) return true;
     return false;
 }
 
-std::optional<Recorder::LabelHit> Recorder::lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const {
-    if (refusal != nullptr) *refusal = LabelRefusal::None;
-    if ((labels.empty() && queuedLabels.empty()) || (bytes != 4 && bytes != 8) || address % 4 != 0) return std::nullopt;
-    LabelHit hit{0, 0, 0, false, std::numeric_limits<std::uint64_t>::max()};
-    bool queued = false;
-    bool candidate = false;
+std::uint32_t Recorder::knownStreamOfCaller() const {
+    if (streams.size() == 1) return 0;
     const auto tag = GuestMemory::GpuLockThreadTag();
-    const auto refuse = [&](LabelRefusal reason, std::uint64_t LateStatistics::*counter, const LabelEntry& entry) {
-        if (refusal != nullptr) *refusal = entry.behindCompletion ? LabelRefusal::BehindCompletion : reason;
-        if (counter != nullptr) ++(lateCounts.*counter);
-        return std::nullopt;
-    };
-    for (std::size_t offset = 0; offset < bytes; offset += 4) {
-        const auto dword = address + offset;
-        const LabelEntry* entry = nullptr;
-        // A queued label is only good for its own queue's wait (see NoteQueuedLabel), where it is
-        // that queue's newest store of the dword; everyone else sees the recorded entry.
-        if (const auto own = queuedLabels.find(dword); own != queuedLabels.end() && own->second.queue == tag) {
-            entry = &own->second;
-            queued = true;
-        } else if (const auto found = labels.find(dword); found != labels.end()) {
-            entry = &found->second;
-            if (entry->batch == nullptr) {
-                if (entry->queue != tag) return std::nullopt;
-                queued = true;
-            }
+    if (tag == 0 || tag >= queueStreams.size()) return 0;
+    const auto slot = queueStreams[tag];
+    return slot == 0 ? NoStream : slot - 1u;
+}
+
+std::optional<Recorder::LabelHit> Recorder::SelectLabelWriter(std::span<const std::vector<LabelWriter>> dwords, std::uint32_t ownStream, std::uint64_t afterStamp, const LabelAccepts& accepts) {
+    if (dwords.empty()) return std::nullopt;
+    std::optional<LabelHit> best;
+    bool bestOwn = false;
+    for (const auto& first : dwords.front()) {
+        const auto stream = first.stream;
+        LabelHit hit{0, first.queue, 0, stream, 0};
+        bool complete = true;
+        for (std::size_t index = 0; index < dwords.size() && complete; ++index) {
+            const auto found = std::find_if(dwords[index].begin(), dwords[index].end(), [&](const LabelWriter& writer) { return writer.stream == stream; });
+            complete = found != dwords[index].end() && found->stamp > afterStamp;
+            if (!complete) break;
+            hit.value |= static_cast<std::uint64_t>(found->value) << (index * 32u);
+            hit.stamp = std::max(hit.stamp, found->stamp);
+            hit.batch = std::max(hit.batch, found->batch);
         }
-        if (entry == nullptr) return std::nullopt;
-        if (entry->stamp <= afterStamp) {
-            // The late rule (see NoteLabel): counted in both modes, so a control run shows the population.
-            if (!candidate) ++lateCounts.candidates;
-            candidate = true;
-            if (!LateTrustEnabled()) return refuse(LabelRefusal::TrustOff, nullptr, *entry);
-            if (entry->batch == nullptr) return refuse(LabelRefusal::Queued, &LateStatistics::queued, *entry);
-            if (entry->overwritten) return refuse(LabelRefusal::Overwritten, &LateStatistics::overwritten, *entry);
-            if (entry->generation == 0) return refuse(LabelRefusal::Unclosed, &LateStatistics::unclosed, *entry);
-            hit.late = true;
-            hit.generation = std::min(hit.generation, entry->generation);
-        }
-        hit.value |= static_cast<std::uint64_t>(entry->value) << (offset * 8u);
-        if (offset == 0) {
-            hit.queue = entry->queue;
-            hit.stamp = entry->stamp;
+        if (!complete || !accepts(hit.value)) continue;
+        const bool own = stream == ownStream;
+        if (!best.has_value() || (own && !bestOwn) || (own == bestOwn && hit.stamp < best->stamp)) {
+            best = hit;
+            bestOwn = own;
         }
     }
-    if (!hit.late) hit.generation = 0;
-    if (queued) queuedLabelHits.fetch_add(1, std::memory_order_relaxed);
+    return best;
+}
+
+std::optional<Recorder::LabelHit> Recorder::lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const LabelAccepts& accepts, bool* behindCompletion) const {
+    if (behindCompletion != nullptr) *behindCompletion = false;
+    if ((labels.empty() && queuedLabels.empty()) || (bytes != 4 && bytes != 8) || address % 4 != 0) return std::nullopt;
+    const auto tag = GuestMemory::GpuLockThreadTag();
+    const auto known = knownStreamOfCaller();
+    const auto own = known != NoStream ? known : static_cast<std::uint32_t>(MaxRecorderStreams);
+    std::array<std::vector<LabelWriter>, 2> dwords;
+    for (std::size_t index = 0; index * 4 < bytes; ++index) {
+        const auto dword = address + index * 4;
+        auto& writers = dwords[index];
+        if (const auto found = labels.find(dword); found != labels.end()) {
+            for (const auto& writer : found->second) {
+                if (behindCompletion != nullptr && writer.behindCompletion) *behindCompletion = true;
+                writers.push_back(writer);
+            }
+        }
+        if (const auto queued = queuedLabels.find(dword); queued != queuedLabels.end() && queued->second.queue == tag) {
+            std::erase_if(writers, [&](const LabelWriter& writer) { return writer.stream == own; });
+            auto entry = queued->second;
+            entry.stream = own;
+            entry.batch = 0;
+            writers.push_back(entry);
+        }
+    }
+    const auto hit = SelectLabelWriter(std::span<const std::vector<LabelWriter>>(dwords).first(bytes / 4), own, afterStamp, accepts);
+    if (hit.has_value() && hit->batch == 0) queuedLabelHits.fetch_add(1, std::memory_order_relaxed);
     return hit;
 }
 
@@ -4115,7 +4124,9 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
         std::lock_guard tableLock(labelTableMutex);
         for (const auto dword : batch->labelDwords) {
             const auto found = labels.find(dword);
-            if (found != labels.end() && found->second.batch == batch.get()) labels.erase(found);
+            if (found == labels.end()) continue;
+            std::erase_if(found->second, [&](const LabelWriter& writer) { return writer.stream == batch->stream && writer.batch == batch->value; });
+            if (found->second.empty()) labels.erase(found);
         }
         for (const auto entry : batch->wideLabels) wideLabels.erase(entry);
         recordedLabels.store(labels.size(), std::memory_order_relaxed);

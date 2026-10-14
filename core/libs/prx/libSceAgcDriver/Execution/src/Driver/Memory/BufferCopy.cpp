@@ -128,7 +128,7 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
 
     const auto labelPending = [&](std::uint64_t address, std::size_t bytes) {
         for (auto dword = address & ~std::uint64_t{3}; dword < address + bytes; dword += 4) {
-            if (localDevice->PendingLabel(dword, 4, 0).has_value()) return true;
+            if (localDevice->LabelPendingAt(dword)) return true;
         }
         return false;
     };
@@ -206,7 +206,7 @@ void Driver::traceCopyPending(const char* what, std::uint64_t address, std::size
     }
     std::uint32_t labels = 0;
     for (auto dword = address & ~std::uint64_t{3}; dword < address + bytes; dword += 4) {
-        if (localDevice->PendingLabel(dword, 4, 0).has_value()) ++labels;
+        if (localDevice->LabelPendingAt(dword)) ++labels;
     }
     std::fprintf(stderr, "[copyhle] %s 0x%llx+0x%zx pending (copy 0x%llx -> 0x%llx, 0x%zx bytes):%s; label dwords %u; writers:%s\n", what, static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), copyBytes, pending, labels, describeWriters(address, address + bytes).c_str());
 }

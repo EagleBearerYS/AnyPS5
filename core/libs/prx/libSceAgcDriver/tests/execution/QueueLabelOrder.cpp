@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -145,9 +146,11 @@ void OpenDriverDevice() {
     Require(AgcDriver::Graphics::Recorder::Active() != nullptr, "queue label order: the driver opened no Vulkan device");
 }
 
-std::vector<std::uint32_t> SlowWrites(const GuestRegion& region, std::uint64_t target) {
+std::vector<std::uint32_t> SlowWrites(const GuestRegion& region, std::uint64_t target, std::size_t rounds = 1) {
     std::vector<std::uint32_t> words;
-    for (std::size_t copy = 0; copy < Copies; ++copy) DmaCopy(words, region.Destination(copy), region.Source(copy), CopyBytes);
+    for (std::size_t round = 0; round < rounds; ++round) {
+        for (std::size_t copy = 0; copy < Copies; ++copy) DmaCopy(words, region.Destination(copy), region.Source(copy), CopyBytes);
+    }
     WriteData(words, target, {Earlier, Earlier, Earlier, Earlier});
     return words;
 }
@@ -210,6 +213,37 @@ void ArrivalOrderCase(const GuestRegion& region, std::size_t slot) {
     RequireLater(region, target, "a wait-free submission of another queue after queue 0's earlier submission");
 }
 
+void LandingCase(const GuestRegion& region, std::size_t slot) {
+    const auto label = region.Slot(slot);
+    const auto condition = label + 16;
+    const auto flag = label + 32;
+    SetLabel(region, label, 0);
+    region.Words(condition)[0] = 0;
+    region.Words(flag)[0] = 0;
+    auto writer = SlowWrites(region, label + 48, 12);
+    WriteData(writer, label, {1});
+    std::vector<std::uint32_t> waiter;
+    Wait(waiter, label, {"landing", false, 3, 0, 1, 1, 0xffffffffu});
+    waiter.insert(waiter.end(), {0xc0032200u, Low(condition), High(condition), 0u, 5u});
+    WriteData(waiter, flag, {1});
+    Submit(WriterQueue, waiter);
+    Submit(0, writer);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    AgcDriver::GuestMemory::TagGpuLockThread(0x7f);
+    while (AgcDriver::Graphics::Recorder::LookupLabelValue(label, 4) != std::optional<std::uint64_t>{1}) {
+        Require(std::chrono::steady_clock::now() < deadline, "queue label order: the writer's label was never recorded");
+        std::this_thread::yield();
+    }
+    AgcDriver::GuestMemory::TagGpuLockThread(0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const bool landedEarly = region.Words(label)[0] == 1;
+    region.Words(condition)[0] = 1;
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(flag, 4);
+    if (landedEarly) Failures().emplace_back("queue label order: the landing case's writer finished before the CPU's store, so it tests nothing");
+    else if (region.Words(flag)[0] != 1) Failures().emplace_back("queue label order: a COND_EXEC behind a wait on another queue's recorded label read its condition before the label landed, and missed the CPU's store made after the submission (" + std::to_string(RecorderStreams()) + " recorder streams)");
+}
+
 void CpuValueCase(const GuestRegion& region, std::size_t slot) {
     const auto label = region.Slot(slot);
     const auto flag = label + 16;
@@ -252,6 +286,7 @@ int main() {
         LabelWaitCase(region, slot++, forms[2], true);
         LabelWaitCase(region, slot++, forms[6], true);
         ArrivalOrderCase(region, slot++);
+        LandingCase(region, slot++);
         CpuValueCase(region, slot++);
         for (const auto& failure : Failures()) std::cerr << failure << '\n';
         Require(Failures().empty(), "queue label order: " + std::to_string(Failures().size()) + " cases failed");

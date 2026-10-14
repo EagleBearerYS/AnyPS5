@@ -96,13 +96,17 @@ public:
     int WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst = true);
     bool AfterRecordedWork(std::function<void()> action, bool reapFirst);
     // Pending-label table lookup and open-batch overlap test for WAIT_REG_MEM (see Recorder).
-    std::optional<Graphics::Recorder::LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, Graphics::Recorder::LabelRefusal* refusal = nullptr) const;
+    std::optional<Graphics::Recorder::LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, const Graphics::Recorder::LabelAccepts& accepts, bool* behindCompletion = nullptr) const;
+    bool LabelPendingAt(std::uint64_t address) const;
+    Graphics::Recorder::Token LabelWriterBatches(std::uint64_t address, std::size_t bytes) const;
+    bool TokenSignaled(const Graphics::Recorder::Token& token) const;
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     bool RecordedWritesSettled(std::uint64_t address, std::size_t bytes) const;
     bool SeparateQueues() const;
     void OrderAfterLabel(std::uint64_t address, std::size_t bytes);
     void OrderAfterValue(std::uint64_t address, std::size_t bytes);
     void OrderAfterQueue(std::uint32_t queue);
+    void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     bool StoresPendingOver(std::uint64_t address, std::size_t bytes) const;
     // Fills [address, address + bytes) of host-imported guest memory with a repeating 16-byte pattern,
     // recorded behind the open batch; false when the range is not imported (the caller stores it).

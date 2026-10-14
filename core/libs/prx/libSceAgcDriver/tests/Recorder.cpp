@@ -677,23 +677,19 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     Require(Recorder::PendingCompletionLabels() == registered, "a GPU-stored completion label counts before any write-back");
     recorder.AfterCompletions(base + 0x40, value, 5, 0, false);
     Require(Recorder::PendingCompletionLabels() == registered + 1, "a label the GPU has no view of is not pending");
-    // A late lookup (stamp <= afterStamp) of a label whose value reaches memory only through the
-    // batch's completion action is refused as BehindCompletion (a poller reaps for it); a GPU-stored
-    // one keeps the ordinary reason (unclosed group, or trust off) until a write-back overlaps it.
-    using Refusal = Recorder::LabelRefusal;
-    const Refusal ordinary = Recorder::LateTrust() ? Refusal::Unclosed : Refusal::TrustOff;
-    Refusal refusal{};
-    Require(!Recorder::LookupLabel(base + 0x40, 4, 5, &refusal).has_value() && refusal == Refusal::BehindCompletion, "a not-imported completion label is not refused as behind a completion");
-    Require(!Recorder::LookupLabel(base, 4, 3, &refusal).has_value() && refusal == (countAll ? Refusal::BehindCompletion : ordinary), "a GPU-stored label is refused as behind a completion before any write-back");
-    Require(Recorder::LookupLabel(base, 4, 2, &refusal).has_value() && refusal == Refusal::None, "an early lookup of a completion label is refused");
+    const Recorder::LabelAccepts any = [](std::uint64_t) { return true; };
+    bool behind = false;
+    Require(!Recorder::LookupLabel(base + 0x40, 4, 5, any, &behind).has_value() && behind, "a not-imported completion label is not reported behind a completion");
+    Require(!Recorder::LookupLabel(base, 4, 3, any, &behind).has_value() && behind == countAll, "a GPU-stored label is reported behind a completion before any write-back");
+    Require(Recorder::LookupLabel(base, 4, 2, any, &behind).has_value(), "an early lookup of a completion label is refused");
     Recorder::NoteWrittenBack(base + 0x80, 0x40);
     Require(Recorder::PendingCompletionLabels() == registered + 1, "a disjoint write-back counted a label");
     Recorder::NoteWrittenBack(base, 4);
     Recorder::NoteWrittenBack(base + 2, 4);
     const std::uint64_t counted = countAll ? 3 : 2;
     Require(Recorder::PendingCompletionLabels() == counted, "a write-back over a GPU-stored label did not count it exactly once");
-    Require(!Recorder::LookupLabel(base, 4, 3, &refusal).has_value() && refusal == Refusal::BehindCompletion, "a written-back GPU-stored label is not refused as behind a completion");
-    Require(!Recorder::LookupLabel(base + 8, 4, 4, &refusal).has_value() && refusal == (countAll ? Refusal::BehindCompletion : ordinary), "an untouched GPU-stored label became behind a completion");
+    Require(!Recorder::LookupLabel(base, 4, 3, any, &behind).has_value() && behind, "a written-back GPU-stored label is not reported behind a completion");
+    Require(!Recorder::LookupLabel(base + 8, 4, 4, any, &behind).has_value() && behind == countAll, "an untouched GPU-stored label became behind a completion");
     recorder.Submit();
     device.WaitQueue();
     Require(Recorder::PendingCompletionLabels() == counted && Recorder::PendingWriteBackCompletions() == 1, "counts dropped before the batch finished");
@@ -807,80 +803,63 @@ void labelTests(Recorder& recorder) {
     Require(!recorder.PendingLabelIn(0x60000, 0x100), "a recorded label outlived its batch");
 }
 
-// The late rule (Recorder::NoteLabel): an entry with stamp <= afterStamp is served once its group
-// closed, unless a non-label write covered it, it is queued, or APS5_LABEL_TRUST_LATE=0 (run the
-// binary with that set for the switch-off case).
-void lateLabelTests(Recorder& recorder) {
-    using Refusal = Recorder::LabelRefusal;
+void labelRegistryTests(Recorder& recorder) {
+    using Writer = Recorder::LabelWriter;
+    const Recorder::LabelAccepts any = [](std::uint64_t) { return true; };
+    const auto equals = [](std::uint64_t expected) { return Recorder::LabelAccepts([expected](std::uint64_t value) { return value == expected; }); };
+    {
+        const std::array<std::vector<Writer>, 1> dwords{std::vector<Writer>{{1, 10, 0x20, 50, 1}, {2, 4, 0x28, 60, 2}}};
+        auto hit = Recorder::SelectLabelWriter(dwords, 0, 40, equals(1));
+        Require(hit.has_value() && hit->stream == 1 && hit->batch == 10 && hit->value == 1 && hit->queue == 0x20 && hit->stamp == 50, "(1) the older satisfying writer of another stream is not chosen when a newer one fails the compare");
+        hit = Recorder::SelectLabelWriter(dwords, 0, 40, any);
+        Require(hit.has_value() && hit->stream == 1, "(2) the earliest satisfying writer is not chosen");
+        hit = Recorder::SelectLabelWriter(dwords, 2, 40, any);
+        Require(hit.has_value() && hit->stream == 2 && hit->batch == 4, "(3) the caller's own stream is not preferred");
+        hit = Recorder::SelectLabelWriter(dwords, 0, 50, any);
+        Require(hit.has_value() && hit->stream == 2, "(4) a writer recorded before the wait was received was taken");
+        Require(!Recorder::SelectLabelWriter(dwords, 0, 60, any).has_value(), "(4) writers recorded before the wait was received satisfied it");
+        Require(!Recorder::SelectLabelWriter(dwords, 0, 0, equals(3)).has_value(), "(5) a writer whose value fails the compare was taken");
+    }
+    {
+        const std::array<std::vector<Writer>, 2> dwords{std::vector<Writer>{{1, 12, 0x20, 70, 5}, {2, 3, 0x28, 65, 9}}, std::vector<Writer>{{1, 11, 0x20, 66, 7}}};
+        const auto hit = Recorder::SelectLabelWriter(dwords, 0, 0, any);
+        Require(hit.has_value() && hit->stream == 1 && hit->value == 0x700000005ull && hit->batch == 12 && hit->stamp == 70, "(6) a 64-bit value is not composed from one stream at its newest batch");
+        Require(!Recorder::SelectLabelWriter(dwords, 0, 0, equals(0x700000009ull)).has_value(), "(6) dwords of two streams were composed into one value");
+    }
     const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
     const std::array<std::byte, 4> two{std::byte{2}, std::byte{0}, std::byte{0}, std::byte{0}};
     const std::array<std::byte, 8> pair{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{2}, std::byte{0}, std::byte{0}, std::byte{0}};
     const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
-    constexpr std::uint64_t a = 0x70000, b = 0x70100, c = 0x70200, d = 0x70300;
-    Refusal refusal{};
-    const auto before = Recorder::LateCounts();
+    constexpr std::uint64_t a = 0x70000, b = 0x70100, c = 0x70200;
     recorder.NoteLabel(a, one, 10, 0);
-    const auto early = Recorder::LookupLabel(a, 4, 5, &refusal);
-    Require(early.has_value() && !early->late && early->value == 1 && early->queue == 0 && early->stamp == 10 && early->generation == 0 && refusal == Refusal::None, "an early lookup is wrong");
-    auto late = Recorder::LookupLabel(a, 4, 10, &refusal);
-    if (!Recorder::LateTrust()) {
-        Require(!late.has_value() && refusal == Refusal::TrustOff, "(1) a late lookup is not refused with the switch off");
-        Require(Recorder::LateCounts().candidates == before.candidates + 1, "(1) the late candidate is not counted with the switch off");
-        Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
-        Require(!Recorder::LookupLabel(a, 4, 10, &refusal).has_value() && refusal == Refusal::TrustOff, "(1) a closed group is served with the switch off");
-        Require(Recorder::LookupLabel(a, 4, 5).has_value(), "(1) the early lookup broke with the switch off");
-        recorder.Sync();
-        Require(!Recorder::LookupLabel(a, 4, 5).has_value(), "(7) the entry outlived its batch");
-        std::cout << "late label tests ran with APS5_LABEL_TRUST_LATE=0\n";
-        return;
-    }
-    Require(!late.has_value() && refusal == Refusal::Unclosed, "(2) an unclosed group is served");
-    Require(Recorder::LateCounts().candidates == before.candidates + 1 && Recorder::LateCounts().unclosed == before.unclosed + 1, "(2) the unclosed refusal is not counted");
-    const auto generation = AgcDriver::GuestMemory::TrackerGeneration();
-    Recorder::CloseLabelGroup(generation);
-    late = Recorder::LookupLabel(a, 4, 10, &refusal);
-    Require(late.has_value() && late->late && late->value == 1 && late->generation == generation && late->stamp == 10 && refusal == Refusal::None, "(2) a closed group is not served");
-    Require(Recorder::LookupLabel(a, 4, 9)->late == false, "(2) an early lookup became late");
-    // (3) A disjoint write leaves the entry alone; an overlapping non-label write refuses the late
-    // lookup only (the early one still composes what memory will hold in order).
-    recorder.NotePendingWrite(a + 4, 16);
-    Require(Recorder::LookupLabel(a, 4, 10).has_value(), "(3) a disjoint write flagged the entry");
-    recorder.NotePendingWrite(a - 8, 12);
-    late = Recorder::LookupLabel(a, 4, 10, &refusal);
-    Require(!late.has_value() && refusal == Refusal::Overwritten, "(3) an overwritten entry is served late");
-    Require(Recorder::LookupLabel(a, 4, 5).has_value(), "(3) an overwrite refused the early lookup");
-    // The label's own note (inside NoteLabel) is no overwrite: an 8-byte label closed as a group.
-    recorder.NoteLabel(b, pair, 20, 0);
-    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
-    const auto wide = Recorder::LookupLabel(b, 8, 20, &refusal);
-    Require(wide.has_value() && wide->late && wide->value == 0x200000001ull && refusal == Refusal::None, "(3) the label's own note refused it");
-    // (4) A later label on the dword replaces the entry: unclosed until its own group closes.
-    recorder.NoteLabel(a, two, 30, 0);
-    Require(!Recorder::LookupLabel(a, 4, 40, &refusal).has_value() && refusal == Refusal::Unclosed, "(4) a replaced entry kept the old close or flag");
-    const auto replaced = Recorder::LookupLabel(a, 4, 25);
-    Require(replaced.has_value() && !replaced->late && replaced->value == 2 && replaced->stamp == 30, "(4) the replaced entry's early lookup is wrong");
-    const auto generation2 = AgcDriver::GuestMemory::TrackerGeneration();
-    Recorder::CloseLabelGroup(generation2);
-    late = Recorder::LookupLabel(a, 4, 40, &refusal);
-    Require(late.has_value() && late->late && late->value == 2 && late->generation == generation2, "(4) the replaced entry is not late-trustable after its close");
-    // (5) Queued entries: another queue's is never seen, this queue's is early-only.
+    auto hit = Recorder::LookupLabel(a, 4, 5, any);
+    Require(hit.has_value() && hit->value == 1 && hit->stamp == 10 && hit->batch != 0, "(7) a recorded label is not served");
+    Require(!Recorder::LookupLabel(a, 4, 10, any).has_value(), "(7) a label recorded before the wait was received is served");
+    Require(!Recorder::LookupLabel(a, 4, 5, equals(2)).has_value(), "(7) a label whose value fails the compare is served");
+    recorder.NoteLabel(a, two, 20, 0);
+    hit = Recorder::LookupLabel(a, 4, 5, any);
+    Require(hit.has_value() && hit->value == 2 && hit->stamp == 20, "(7) a later label of the same stream does not replace its entry");
+    Require(!Recorder::LookupLabel(a, 4, 5, equals(1)).has_value(), "(7) a replaced value of the same stream is still served");
     const std::uint32_t other = tag == 7 ? 8 : 7;
-    Recorder::NoteQueuedLabel(d, one, 50, other);
-    Require(!Recorder::LookupLabel(d, 4, 60, &refusal).has_value() && refusal == Refusal::None && !Recorder::LookupLabel(d, 4, 40).has_value(), "(5) another queue's queued label is served");
-    Recorder::NoteQueuedLabel(d, one, 51, tag);
+    Recorder::NoteQueuedLabel(b, one, 30, other);
+    Require(!Recorder::LookupLabel(b, 4, 0, any).has_value(), "(8) another queue's queued label is served");
+    Recorder::NoteQueuedLabel(b, one, 31, tag);
     Recorder::ForgetQueuedLabels();
-    Recorder::NoteQueuedLabel(c, one, 50, tag);
-    Require(Recorder::LookupLabel(c, 4, 40).has_value() && !Recorder::LookupLabel(c, 4, 40)->late, "(5) this queue's queued label is not served early");
-    Require(!Recorder::LookupLabel(c, 4, 60, &refusal).has_value() && refusal == Refusal::Queued, "(5) a queued entry is late-trusted");
-    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
-    Require(!Recorder::LookupLabel(c, 4, 60, &refusal).has_value() && refusal == Refusal::Queued, "(5) a close closed a queued entry");
+    Recorder::NoteQueuedLabel(c, two, 40, tag);
+    hit = Recorder::LookupLabel(c, 4, 35, any);
+    Require(hit.has_value() && hit->value == 2 && hit->batch == 0, "(8) this queue's queued label is not served");
+    Require(!Recorder::LookupLabel(c, 4, 40, any).has_value(), "(8) a queued label noted before the wait was received is served");
     Recorder::ForgetQueuedLabels();
-    Require(!Recorder::LookupLabel(c, 4, 40).has_value(), "(5) a forgotten queued entry is still served");
-    const auto after = Recorder::LateCounts();
-    Require(after.queued == before.queued + 2 && after.overwritten == before.overwritten + 1 && after.unclosed == before.unclosed + 2 && after.candidates >= before.candidates + 6, "late counters are off");
-    // (7) Entries leave the table with their batch.
+    Require(!Recorder::LookupLabel(c, 4, 0, any).has_value(), "(8) a forgotten queued label is still served");
+    Recorder::NoteQueuedLabel(a, one, 50, tag);
+    hit = Recorder::LookupLabel(a, 4, 5, any);
+    Require(hit.has_value() && hit->value == 1 && hit->batch == 0, "(8) this queue's queued label does not take precedence over its recorded one");
+    Recorder::ForgetQueuedLabels();
+    recorder.NoteLabel(b, pair, 60, 0);
+    hit = Recorder::LookupLabel(b, 8, 0, equals(0x200000001ull));
+    Require(hit.has_value() && hit->value == 0x200000001ull && hit->stamp == 60, "(9) a 64-bit label is not served");
     recorder.Sync();
-    Require(!Recorder::LookupLabel(a, 4, 5).has_value() && !Recorder::LookupLabel(b, 8, 5).has_value() && !recorder.PendingLabelIn(0x70000, 0x400), "(7) entries outlived their batch");
+    Require(!Recorder::LookupLabel(a, 4, 0, any).has_value() && !Recorder::LookupLabel(b, 8, 0, any).has_value() && !recorder.PendingLabelIn(0x70000, 0x400), "(10) entries outlived their batch");
 }
 
 void labelMatchTests(Recorder& recorder) {
@@ -894,8 +873,7 @@ void labelMatchTests(Recorder& recorder) {
     Require(Recorder::PendingLabelsMatchMemory(base, 16), "a range without labels does not match memory");
     recorder.NoteLabel(base, wide, 300, 0);
     recorder.NoteLabel(base + 0x100, narrow, 301, 0);
-    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
-    Require(Recorder::WideLabelIn(base + 0x18, 8) && Recorder::LookupLabel(base + 0x100, 4, 0).has_value(), "the labels were not noted");
+    Require(Recorder::WideLabelIn(base + 0x18, 8) && Recorder::LookupLabel(base + 0x100, 4, 0, [](std::uint64_t) { return true; }).has_value(), "the labels were not noted");
     Require(Recorder::PendingLabelsMatchMemory(base + 0x18, 8) && Recorder::PendingLabelsMatchMemory(base + 0xf8, 0x10), "labels that store the bytes memory holds were taken as changing them");
     memory[7] = 0x22222222u;
     Require(!Recorder::PendingLabelsMatchMemory(base + 0x18, 8) && Recorder::PendingLabelsMatchMemory(base + 0x20, 8), "a wide label over other bytes than memory holds was not found, or one beside them was");
@@ -916,23 +894,19 @@ void largeLabelTests(Recorder& recorder) {
     Require(recorder.PendingLabels() == 0 && !Recorder::PendingLabelSince().has_value() && !Recorder::WideLabelIn(0, ~0ull), "the table is not empty before the large label tests");
     recorder.NoteLabel(small, one, 100, 0);
     recorder.NoteLabel(outside, one, 100, 0);
-    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
-    Require(recorder.PendingLabels() == 2 && Recorder::LookupLabel(small, 4, 50).has_value(), "4-byte labels did not enter the table");
+    Require(recorder.PendingLabels() == 2 && Recorder::LookupLabel(small, 4, 50, [](std::uint64_t) { return true; }).has_value(), "4-byte labels did not enter the table");
     recorder.NoteLabel(slot, clear, 101, 0);
-    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
-    Require(recorder.PendingLabels() == 1 && Recorder::LookupLabel(outside, 4, 50).has_value(), "a label larger than the table bound entered dwords or removed one outside its range");
-    Require(!Recorder::LookupLabel(small, 4, 50).has_value() && !Recorder::LookupLabel(slot, 8, 0).has_value(), "an older label under a larger one still composes the value");
+    Require(recorder.PendingLabels() == 1 && Recorder::LookupLabel(outside, 4, 50, [](std::uint64_t) { return true; }).has_value(), "a label larger than the table bound entered dwords or removed one outside its range");
+    Require(!Recorder::LookupLabel(small, 4, 50, [](std::uint64_t) { return true; }).has_value() && !Recorder::LookupLabel(slot, 8, 0, [](std::uint64_t) { return true; }).has_value(), "an older label under a larger one still composes the value");
     Require(Recorder::WideLabelIn(slot, 4) && Recorder::WideLabelIn(slot + clear.size() - 4, 4) && Recorder::WideLabelIn(slot - 0x100, 0x104) && !Recorder::WideLabelIn(slot - 0x100, 0x100) && !Recorder::WideLabelIn(slot + clear.size(), 4), "a large label's range is wrong");
     Require(recorder.PendingLabelIn(slot + 0x20, 0x20) && recorder.PendingWriteOverlaps(slot, clear.size()), "a large label is not pending");
     Require(Recorder::PendingLabelSince().has_value(), "a large label did not start the label flush deadline");
     recorder.NoteLabel(small, one, 102, 0);
-    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
-    const auto later = Recorder::LookupLabel(small, 4, 101);
+    const auto later = Recorder::LookupLabel(small, 4, 101, [](std::uint64_t) { return true; });
     Require(later.has_value() && later->value == 1 && later->stamp == 102, "a label after a large one is not served");
     recorder.NoteLabel(wide, limit, 103, 0);
-    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
     Require(recorder.PendingLabels() == 2 + Recorder::LabelTableBytes / 4 && !Recorder::WideLabelIn(wide, limit.size()), "a label at the table bound did not enter every dword");
-    const auto bound = Recorder::LookupLabel(wide + Recorder::LabelTableBytes - 8, 8, 0);
+    const auto bound = Recorder::LookupLabel(wide + Recorder::LabelTableBytes - 8, 8, 0, [](std::uint64_t) { return true; });
     Require(bound.has_value() && bound->value == 0x0303030303030303ull && bound->stamp == 103, "a label at the table bound is not served");
     recorder.Sync();
     Require(recorder.PendingLabels() == 0 && !Recorder::WideLabelIn(0, ~0ull) && !recorder.PendingLabelIn(slot, clear.size()) && !recorder.PendingWriteOverlaps(slot, clear.size()), "large label tests left entries, ranges or writes behind");
@@ -1103,59 +1077,6 @@ void targetKeyProofTests(const Device& device, Recorder& recorder) {
     Require(ProvedCurrentDccKeys(address, surfaceBytes, proof) == DccKeys::Clear0000 && proof.generation != 0, "the landed fill was not proved");
     proved = proofs();
     Require(ProvedCurrentDccKeys(address, surfaceBytes, proof) == DccKeys::Clear0000 && proofs() == proved + 1, "the proof after the fill landed did not hold");
-}
-
-// (8) The group close against a collect in progress: a CPU store made after the close must refuse
-// the entry although another thread's resetting walk of the label's page (over a large range) may
-// absorb the store and stamp the block with the generation it took before the close. And an entry
-// whose batch was submitted before the close stays unclosed.
-void closeRaceTests(const Device& device, Recorder& recorder) {
-    using namespace AgcDriver::GuestMemory;
-    using Refusal = Recorder::LabelRefusal;
-    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
-    Refusal refusal{};
-    if (!Recorder::LateTrust()) return;
-    recorder.NoteLabel(0x80000, one, 70, 0);
-    recorder.Submit();
-    Recorder::CloseLabelGroup(TrackerGeneration());
-    Require(!Recorder::LookupLabel(0x80000, 4, 70, &refusal).has_value() && refusal == Refusal::Unclosed, "(8) a submitted batch's entry was closed");
-    device.WaitQueue();
-    recorder.Sync();
-    constexpr std::size_t bytes = 1u << 20;
-    void* block = AllocateWatched(bytes, 65536);
-    if (block == nullptr) return;
-    const auto base = reinterpret_cast<std::uint64_t>(block);
-    // Late in the range, so the walker is usually still ahead of the page when the store lands.
-    const auto label = base + 4096 * 250;
-    auto* word = reinterpret_cast<volatile std::uint32_t*>(label);
-    *word = 0;
-    CollectWritesUncached(base, bytes);
-    // Joined on every exit, so a failed Require reports instead of terminating on the thread.
-    struct Walker {
-        std::atomic<bool> stop{false};
-        std::thread thread;
-        ~Walker() {
-            stop.store(true, std::memory_order_relaxed);
-            if (thread.joinable()) thread.join();
-        }
-    } walker;
-    walker.thread = std::thread([&] {
-        while (!walker.stop.load(std::memory_order_relaxed)) CollectWritesUncached(base, bytes);
-    });
-    for (std::uint32_t i = 0; i < 4000; ++i) {
-        const std::uint64_t stamp = 100 + i;
-        recorder.NoteLabel(label, one, stamp, 0);
-        Recorder::CloseLabelGroup(TrackerGeneration());
-        *word = i + 2;
-        const auto hit = Recorder::LookupLabel(label, 4, stamp, &refusal);
-        Require(hit.has_value() && hit->late && hit->generation != 0, "(8) the closed entry is not served late");
-        Require(!UnchangedSinceCollected(label, 4, hit->generation), "(8) a store after the close is hidden by a racing collect");
-    }
-    walker.stop.store(true, std::memory_order_relaxed);
-    walker.thread.join();
-    recorder.Sync();
-    Require(!Recorder::LookupLabel(label, 4, 5).has_value(), "(8) the entry outlived its batch");
-    ReleaseWatched(block, bytes);
 }
 
 // A resource build over host-imported guest memory notes its in-place reads when its writes are
@@ -6478,7 +6399,7 @@ int main(int argc, char** argv) {
             afterRecordedWorkTests(device, recorder);
             directCompletionLabelTests(recorder);
             labelTests(recorder);
-            lateLabelTests(recorder);
+            labelRegistryTests(recorder);
             largeLabelTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
             return 0;
@@ -6558,10 +6479,9 @@ int main(int argc, char** argv) {
         directCompletionLabelTests(recorder);
         batchStampTests(recorder);
         labelTests(recorder);
-        lateLabelTests(recorder);
+        labelRegistryTests(recorder);
         largeLabelTests(recorder);
         unchangedSinceTests();
-        closeRaceTests(device, recorder);
         keyProofTests(device, recorder);
         targetKeyProofTests(device, recorder);
         refreshProofTests(device, recorder);
