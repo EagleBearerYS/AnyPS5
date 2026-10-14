@@ -319,8 +319,87 @@ ResumedWrites* ResumedWritesOf(DWORD thread, bool claim) {
     return nullptr;
 }
 
+struct FaultRegion {
+    std::atomic<std::uint64_t> region {0};
+    std::atomic<std::uint64_t> count {0};
+};
+
+constexpr std::size_t kFaultRegions = 64;
+FaultRegion g_faultRegions[kFaultRegions];
+std::atomic<std::uint64_t> g_lastResumedReport {0};
+std::atomic<std::uint64_t> g_resumedAtLastReport {0};
+
+void CountFaultRegion(std::uint64_t address) {
+    const auto region = (address >> 26u) + 1u;
+    for (std::size_t probe = 0; probe < kFaultRegions; ++probe) {
+        auto& slot = g_faultRegions[(region + probe) % kFaultRegions];
+        auto current = slot.region.load(std::memory_order_acquire);
+        if (current != region && current != 0) continue;
+        if (current == 0 && !slot.region.compare_exchange_strong(current, region) && current != region) continue;
+        slot.count.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+}
+
+void ReportThreadCounts(const char* prefix, std::size_t limit) {
+    std::pair<std::uint64_t, DWORD> busiest[8] {};
+    for (const auto& candidate : g_resumedWrites) {
+        const auto thread = candidate.thread.load(std::memory_order_acquire);
+        if (thread == 0) continue;
+        std::pair<std::uint64_t, DWORD> item {candidate.count, thread};
+        for (auto& slot : busiest) {
+            if (item.first > slot.first) std::swap(item, slot);
+        }
+    }
+    for (std::size_t index = 0; index < limit && index < 8; ++index) {
+        const auto [count, thread] = busiest[index];
+        if (count == 0) break;
+        char name[128] = "";
+        if (HANDLE handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, thread)) {
+            PWSTR description = nullptr;
+            if (SUCCEEDED(GetThreadDescription(handle, &description)) && description) {
+                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
+                LocalFree(description);
+            }
+            CloseHandle(handle);
+        }
+        Report("%sthread %lu '%s': %llu resumed write faults\n", prefix, thread, name, static_cast<unsigned long long>(count));
+    }
+}
+
+void ReportResumedPeriodically() {
+    static const bool periodic = std::getenv("APS5_RE8_RESUMED_FAULTS") != nullptr;
+    if (!periodic) return;
+    const auto now = GetTickCount64();
+    auto last = g_lastResumedReport.load(std::memory_order_relaxed);
+    if (last == 0) {
+        g_lastResumedReport.compare_exchange_strong(last, now);
+        return;
+    }
+    if (now - last < 10000u || !g_lastResumedReport.compare_exchange_strong(last, now)) return;
+    const auto total = g_resumedWriteCount.load(std::memory_order_relaxed);
+    const auto before = g_resumedAtLastReport.exchange(total, std::memory_order_relaxed);
+    Report("[resumed-faults] %llu in the last %llu ms, %llu in all\n", static_cast<unsigned long long>(total - before), static_cast<unsigned long long>(now - last), static_cast<unsigned long long>(total));
+    ReportThreadCounts("[resumed-faults]   ", 6);
+    std::pair<std::uint64_t, std::uint64_t> regions[6] {};
+    for (const auto& slot : g_faultRegions) {
+        const auto region = slot.region.load(std::memory_order_acquire);
+        if (region == 0) continue;
+        std::pair<std::uint64_t, std::uint64_t> item {slot.count.load(std::memory_order_relaxed), region};
+        for (auto& top : regions) {
+            if (item.first > top.first) std::swap(item, top);
+        }
+    }
+    for (const auto& [count, region] : regions) {
+        if (count == 0) break;
+        Report("[resumed-faults]   region 0x%llx+0x4000000: %llu\n", static_cast<unsigned long long>((region - 1u) << 26u), static_cast<unsigned long long>(count));
+    }
+}
+
 void NoteResumedWrite(const EXCEPTION_POINTERS* info) {
     g_resumedWriteCount.fetch_add(1, std::memory_order_relaxed);
+    CountFaultRegion(static_cast<std::uint64_t>(info->ExceptionRecord->ExceptionInformation[1]));
+    ReportResumedPeriodically();
     auto* entry = ResumedWritesOf(GetCurrentThreadId(), true);
     if (entry == nullptr) return;
     entry->newest[entry->count % 4] = {info->ContextRecord->Rip, info->ContextRecord->Rsp, static_cast<std::uint64_t>(info->ExceptionRecord->ExceptionInformation[1]), GetTickCount64()};
