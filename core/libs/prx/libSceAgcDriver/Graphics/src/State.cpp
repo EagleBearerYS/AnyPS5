@@ -129,14 +129,6 @@ std::uint32_t shaderControlMask(std::uint32_t zFormat) {
     return mask;
 }
 
-// Debug aid: APS5_IGNORE_DEPTH_TEST=1 renders depth- and stencil-tested draws without a depth
-// target as if their tests always passed (wrong occlusion, but the draws run), so stages that
-// depth-test everything can exercise the draw paths before depth targets exist.
-bool IgnoreDepthTest() {
-    static const bool ignore = std::getenv("APS5_IGNORE_DEPTH_TEST") != nullptr;
-    return ignore;
-}
-
 bool depthSurfaceBound(const Registers& cx) {
     const auto z = find(cx, 0x010);
     const auto stencil = find(cx, 0x011);
@@ -726,12 +718,6 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 reported = true;
                 std::fprintf(stderr, "[gpu] always-pass depth/stencil state is rendered without a depth target (DB_DEPTH_CONTROL=0x%08x)\n", depthControl);
             }
-        } else if (IgnoreDepthTest()) {
-            static bool reported = false;
-            if (!reported) {
-                reported = true;
-                std::fprintf(stderr, "[gpu] depth/stencil tests are ignored (APS5_IGNORE_DEPTH_TEST; DB_DEPTH_CONTROL=0x%08x)\n", depthControl);
-            }
         } else {
             if ((effectiveDepthControl(depthControl) & DepthControlMask) != 0) zero(cx, 0x200, DepthControlMask, "depth, stencil or conditional color writes");
         }
@@ -1275,7 +1261,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
         }
         const auto tests = planeTests(cx, word);
         const bool surface = (tests != 0 || depthClear || stencilClear) && depthSurfaceBound(cx);
-        if (!surface && !((word & 0xbu) != 0 && (tests == 0 || depthPlanesAbsent(cx))) && !depthPassThrough(word) && !IgnoreDepthTest() && (effectiveDepthControl(word) & DepthControlMask) != 0) return zeroMessage(0x200, word, "depth, stencil or conditional color writes");
+        if (!surface && !((word & 0xbu) != 0 && (tests == 0 || depthPlanesAbsent(cx))) && !depthPassThrough(word) && (effectiveDepthControl(word) & DepthControlMask) != 0) return zeroMessage(0x200, word, "depth, stencil or conditional color writes");
         if (auto reason = require((word & 8u) == 0 || surface || depthPlanesAbsent(cx), "depth bounds without a depth surface"); !reason.empty()) return reason;
         if (auto reason = require((word & 0xc0000000u) == 0, "depth-conditional color writes are unsupported"); !reason.empty()) return reason;
     }

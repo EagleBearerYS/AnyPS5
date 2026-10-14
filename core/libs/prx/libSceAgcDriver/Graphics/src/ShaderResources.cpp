@@ -4223,17 +4223,8 @@ void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoi
     if (fragment.set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragment.set, 0, nullptr);
 }
 
-namespace {
-// Debug aid: APS5_GPU_NO_WRITEBACK=1 keeps GPU results out of guest memory.
-bool SkipWriteBack() {
-    static const bool skip = std::getenv("APS5_GPU_NO_WRITEBACK") != nullptr;
-    return skip;
-}
-}
-
 void ShaderResources::WriteBack() {
     WriteBackBuffers();
-    if (SkipWriteBack()) return;
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index]) continue;
         storageTextures[index]->MarkDirty();
@@ -4246,7 +4237,6 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     // alike, and an address-based build's whole leased heaps), before the writes: a CPU store into
     // one of them (the copy HLE) must not land before the recorded work read it.
     recorder.NotePendingReads(guestMemory.InPlaceReads(), guestMemory.HoldsLease() ? Recorder::ReadKind::AddressBased : Recorder::ReadKind::DispatchElement);
-    if (SkipWriteBack()) return;
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index]) continue;
         storageTextures[index]->MarkDirty();
@@ -4279,7 +4269,6 @@ void ShaderResources::CheckFaults() const {
 
 void ShaderResources::WriteBackBuffers() {
     if (bda) bda->CheckFault();
-    if (SkipWriteBack()) return;
     guestMemory.WriteBack();
 }
 
