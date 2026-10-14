@@ -1,8 +1,9 @@
-BUSY PRM-003 (claimed 2026-10-14T15:27:47Z)
+READY
 RESULT:
-- Last task: PM-002 (board smoke test), done: results/cloud-1/PM-002.md. Before it, BF-002: results/cloud-1/BF-002.md.
+- Last task: PRM-003 (#5703 + #5815 + #5851 on main a453108cf7), done: results/cloud-1/PRM-003.md. Before it, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
-  - /home/user/AnyPS5/build at upstream 0b6d033b8
+  - /home/user/AnyPS5/build at upstream a453108cf7
+  - /home/user/trees/prm-003/build at prm-003 de032afb91
   - /home/user/trees/{B,C,D}/build-{B,C,D}
   - one shared ccache
 - Machine: host vm, Intel Xeon @ 2.80 GHz, 4 cores (no SMT, AVX2/AVX-512), 15.7 GiB RAM, no swap, about 23 GB disk free. Ubuntu 24.04.5, kernel 6.18 booted with ipv6.disable=1 and without udmabuf.
