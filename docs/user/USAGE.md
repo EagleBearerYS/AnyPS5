@@ -147,6 +147,14 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 
 Games ask for the console's language with `sceSystemServiceParamGetInt` and show their text in it when they have it. It is English (United States) unless `ANYPS5_LANGUAGE` is set to another console language number: 0 Japanese, 1 English (United States), 2 French, 3 Spanish, 4 German, 5 Italian, 6 Dutch, 7 Portuguese (Portugal), 8 Russian, 9 Korean, 10 Chinese (Traditional), 11 Chinese (Simplified), 12 Finnish, 13 Swedish, 14 Danish, 15 Norwegian, 16 Polish, 17 Portuguese (Brazil), 18 English (United Kingdom), 19 Turkish, 20 Spanish (Latin America), 21 Arabic, 22 French (Canada), 23 Czech, 24 Hungarian, 25 Greek, 26 Romanian, 27 Thai, 28 Vietnamese, 29 Indonesian, 30 Ukrainian. For example, `ANYPS5_LANGUAGE=21` selects Arabic. An empty value is the same as an unset one; any other value stops the game at its first language query with an error that names the variable.
 
+### Trophies
+
+A game unlocks a trophy by posting a `_UnlockTrophy` event with an int32 `_trophy_id` property to `libSceNpUniversalDataSystem`. The unlock is stored in `_trophy/<user id>_<service label>.txt` in the directory the game runs in (the one that holds `app0/`), one `<trophy id> <unlock time>` line per trophy; the time is an RTC tick, microseconds since 0001-01-01 UTC. Delete the file before starting the game to lock its trophies again. Each new unlock prints one line, such as `[trophy] PPSA01556 unlocked trophy 12 for user 268435456`; unlocking a trophy again prints nothing. `sceNpTrophy2GetTrophyInfo`, `sceNpTrophy2GetTrophyInfoArray` and `sceNpTrophy2GetGameInfo` report the stored unlocks and their times to the game.
+
+`APS5_TRACE_UDS=1` prints every posted event, such as `[uds] context 1 posted _UnlockTrophy {"_trophy_id":12}`. A trophy event that is not stored prints the reason in a `[trophy] ignored` line: an `_UnlockTrophy` event without an int32 `_trophy_id` of 0 or more, or posted to a context that does not exist, and the first `_UpdateTrophyProgress` event of each trophy, because trophy progress is not stored.
+
+The trophy data in `sce_sys/trophy2/` is not read. Trophy names, grades, groups and icons, the number of trophies and the grade counts are placeholders, and trophies that a game unlocks through the statistics rules in `sce_sys/uds/` instead of `_UnlockTrophy` stay locked. No notification is shown, and callbacks registered with `sceNpTrophy2RegisterUnlockCallback` are not called.
+
 ### GPU selection
 
 The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.
