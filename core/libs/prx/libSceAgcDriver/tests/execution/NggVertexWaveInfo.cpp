@@ -42,7 +42,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     Pixels.fill(Kept);
     const auto target = device.Target();
 
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -63,7 +63,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    const std::vector<std::uint32_t> pixelUserData(8, 0u);
+    const TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},

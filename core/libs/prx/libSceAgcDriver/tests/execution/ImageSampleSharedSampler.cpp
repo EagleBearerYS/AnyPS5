@@ -97,7 +97,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t
 
 void Run(AgcDriver::VulkanDevice& device) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto integers = TextureDescriptor(Integers.data(), Format32SInt, SwizzleX111);
     const auto colors = TextureDescriptor(Colors.data(), Format8888UNorm, IdentitySwizzle);

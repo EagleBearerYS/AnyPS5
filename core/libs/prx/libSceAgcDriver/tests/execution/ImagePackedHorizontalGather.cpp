@@ -126,7 +126,7 @@ std::array<std::uint32_t, 4> Expected(std::uint32_t tid, std::uint32_t dmask) {
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device) {
-    std::vector<std::uint32_t> userData(20, 0u);
+    TestGuest::Vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor();

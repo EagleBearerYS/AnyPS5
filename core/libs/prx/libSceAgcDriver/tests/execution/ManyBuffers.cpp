@@ -112,7 +112,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
         Table[buffer * 4u + 3u] = 0x31016facu;
     }
     const auto table = reinterpret_cast<std::uintptr_t>(Table.data());
-    const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(table), static_cast<std::uint32_t>(table >> 32u)};
+    const TestGuest::Vector<std::uint32_t> userData{static_cast<std::uint32_t>(table), static_cast<std::uint32_t>(table >> 32u)};
     const std::span<const std::uint32_t> tableWords(Table.data(), buffers * 4u);
     const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {table, std::as_bytes(tableWords)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};

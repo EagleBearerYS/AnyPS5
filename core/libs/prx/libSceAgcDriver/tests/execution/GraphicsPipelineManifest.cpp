@@ -94,7 +94,7 @@ const Shader* Registered(Header& header, const std::uint32_t* code, std::size_t 
     return &header.shader;
 }
 
-void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
+void Append(TestGuest::Vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
     commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u));
     commands.insert(commands.end(), payload);
 }
@@ -105,7 +105,7 @@ void Register() {
 }
 
 void Draw(std::uint32_t colorInfo) {
-    std::vector<std::uint32_t> commands;
+    TestGuest::Vector<std::uint32_t> commands;
     Append(commands, 0x79, {0x242, 4});
     for (const auto& [offset, value] : Context(colorInfo)) Append(commands, 0x69, {offset, value});
     for (const auto& registers : {VertexRegisters(), PixelRegisters()}) {

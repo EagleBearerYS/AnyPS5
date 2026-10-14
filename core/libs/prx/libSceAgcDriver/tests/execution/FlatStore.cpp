@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -97,8 +98,8 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-std::vector<std::uint8_t> Expected() {
-    std::vector<std::uint8_t> image(CheckedBytes, Fill);
+TestGuest::Vector<std::uint8_t> Expected() {
+    TestGuest::Vector<std::uint8_t> image(CheckedBytes, Fill);
     const auto put = [&](std::uint32_t offset, std::uint32_t value, std::uint32_t bytes) {
         for (std::uint32_t byte = 0; byte < bytes; ++byte) image.at(offset + byte) = static_cast<std::uint8_t>(value >> (byte * 8u));
     };
@@ -121,7 +122,7 @@ std::vector<std::uint8_t> Expected() {
 
 void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std::uint8_t* base) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     userData[0] = static_cast<std::uint32_t>(address);
     userData[1] = static_cast<std::uint32_t>(address >> 32u);
     const std::span<const std::uint32_t> code(FlatStoreCode);

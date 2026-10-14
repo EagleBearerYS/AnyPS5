@@ -172,7 +172,7 @@ std::array<std::uint32_t, 4> BilinearClampSamplerDescriptor() {
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture, const std::array<std::uint32_t, 4>& sampler = SamplerDescriptor()) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);

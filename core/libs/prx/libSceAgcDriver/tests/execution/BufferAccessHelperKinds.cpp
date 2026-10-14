@@ -254,7 +254,7 @@ void Assemble(Program& program, const Case& c) {
     Require(at <= w.size(), "buffer access helper kinds: the program does not fit");
 }
 
-std::uint32_t ReadDword(const std::vector<std::uint8_t>& memory, std::size_t offset) {
+std::uint32_t ReadDword(const TestGuest::Vector<std::uint8_t>& memory, std::size_t offset) {
     std::uint32_t value = 0;
     std::memcpy(&value, memory.data() + offset, 4u);
     return value;
@@ -263,7 +263,7 @@ std::uint32_t ReadDword(const std::vector<std::uint8_t>& memory, std::size_t off
 void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, Program& program, const Case& c) {
     std::uint8_t* target = c.gpu ? guest.Data() : Bound.data();
     for (std::uint32_t index = 0; index < TargetBytes; ++index) target[index] = static_cast<std::uint8_t>(Hash(index + c.records) >> 5u);
-    std::vector<std::uint8_t> expected(target, target + TargetBytes);
+    TestGuest::Vector<std::uint8_t> expected(target, target + TargetBytes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         Params[lane * 16u] = FirstOffset(c, lane);
         Params[lane * 16u + 1u] = Activity(lane);
@@ -278,7 +278,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, Program& program, c
     const auto* view = target + c.view;
     const auto input = BufferDescriptor(view, c.records, Raw);
     Descriptor = input;
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {c.gpu ? std::array<std::uint32_t, 4>{} : input, BufferDescriptor(Output.data(), decltype(Output)::ByteSize, Raw), BufferDescriptor(Params.data(), decltype(Params)::ByteSize, Raw), BufferDescriptor(Descriptor.data(), decltype(Descriptor)::ByteSize, Raw)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }

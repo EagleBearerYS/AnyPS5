@@ -91,7 +91,7 @@ std::uint8_t FillByte(std::size_t offset) {
     return static_cast<std::uint8_t>(Fill >> ((offset % 4u) * 8u));
 }
 
-ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::SpirvTarget& target, std::span<const ShaderRecompiler::MemoryRegion> memory) {
+ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> code, const TestGuest::Vector<std::uint32_t>& userData, const ShaderRecompiler::SpirvTarget& target, std::span<const ShaderRecompiler::MemoryRegion> memory) {
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
@@ -108,7 +108,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset, std::uint32_
     Output.fill(Fill);
     auto* output = reinterpret_cast<std::uint8_t*>(Output.data());
     const auto* view = Input.data() + viewOffset;
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(Input.data(), InputBytes), BufferDescriptor(view, ViewBytes), BufferDescriptor(Output.data(), ResultBytes), BufferDescriptor(output + ResultBytes + storeOffset, StoredBytes)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
@@ -153,7 +153,7 @@ void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
     for (std::uint32_t index = 0; index < InputBytes; ++index) Input[index] = static_cast<std::uint8_t>(index * 53u + 7u + (index >> 2u));
     Output.fill(Fill);
     const auto* view = Input.data() + viewOffset;
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(Input.data(), InputBytes), BufferDescriptor(view, ViewBytes), BufferDescriptor(Output.data(), ResultBytes)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
@@ -173,7 +173,7 @@ void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
 }
 
 auto RecompileFormatted(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint8_t* view, std::uint32_t viewBytes) {
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(view, viewBytes), BufferDescriptor(Output.data(), ResultBytes)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
@@ -220,7 +220,7 @@ void RunFormattedStore(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset
 }
 
 void RunAtomic(AgcDriver::VulkanDevice& device) {
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     const auto descriptor = BufferDescriptor(reinterpret_cast<std::uint8_t*>(Output.data()) + 2u, 64u);
     userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(AtomicCode.data()), std::as_bytes(std::span(AtomicCode))}}};

@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_TESTS_EXECUTION_DEPTHFASTCLEARHARNESS_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_TESTS_EXECUTION_DEPTHFASTCLEARHARNESS_HPP
 
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -70,7 +71,7 @@ struct Shaders {
 inline Shaders Compile(AgcDriver::VulkanDevice& device) {
     const auto target = device.Target();
     Shaders shaders;
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(Triangles().data(), 16u, static_cast<std::uint32_t>(Triangles().size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -91,7 +92,7 @@ inline Shaders Compile(AgcDriver::VulkanDevice& device) {
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(4, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},

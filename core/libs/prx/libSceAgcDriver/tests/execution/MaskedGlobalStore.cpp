@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -53,7 +54,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     auto* data = reinterpret_cast<std::uint32_t*>(guest.Data());
     for (std::size_t index = 0; index < BlockBytes / 4u; ++index) data[index] = static_cast<std::uint32_t>(index * 0x9e3779b1u);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    const std::vector<std::uint32_t> userData{0, 0, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), value, keep};
+    const TestGuest::Vector<std::uint32_t> userData{0, 0, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), value, keep};
     const std::span<const std::uint32_t> code(MaskedStoreCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{64, 1, 1}, 0, {true, false, false}, false, 1};

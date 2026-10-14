@@ -44,8 +44,8 @@ constexpr std::array<const char*, 12> PredicateNames{"lt", "eq", "le", "gt", "lg
 
 constexpr std::uint32_t Compares = static_cast<std::uint32_t>(Constants.size() * Predicates.size() * 2u);
 
-std::vector<std::uint32_t> Build(bool registerOperand) {
-    std::vector<std::uint32_t> code{0x34020082u, 0x34060085u, 0xe0301000u, 0x80000401u, 0xbf8c3f70u, 0x7e2c0281u};
+TestGuest::Vector<std::uint32_t> Build(bool registerOperand) {
+    TestGuest::Vector<std::uint32_t> code{0x34020082u, 0x34060085u, 0xe0301000u, 0x80000401u, 0xbf8c3f70u, 0x7e2c0281u};
     for (std::uint32_t word = 0; word < Words; ++word) code.push_back(0x7e000280u | ((30u + word) << 17));
     std::uint32_t bit = 0;
     for (const auto& constant : Constants) {
@@ -112,7 +112,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
 void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, bool registerOperand) {
     Output.fill(0xdeadbeefu);
     const auto code = Build(registerOperand);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());

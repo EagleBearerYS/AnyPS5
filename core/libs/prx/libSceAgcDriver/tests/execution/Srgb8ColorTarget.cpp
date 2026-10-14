@@ -202,7 +202,7 @@ const VkPipelineColorBlendAttachmentState Multiply = Blend(true, VK_BLEND_FACTOR
 void Draw(AgcDriver::VulkanDevice& device, std::vector<AgcDriver::Graphics::ColorTarget> colors, std::vector<VkPipelineColorBlendAttachmentState> blends, std::span<const std::uint32_t> pixelCode) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -222,7 +222,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::vector<AgcDriver::Graphics::Colo
     pixel.posY = true;
     for (std::size_t index = 0; index < colors.size(); ++index) pixel.targetOutputMode.at(index) = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    const std::vector<std::uint32_t> pixelUserData(8, 0u);
+    const TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
@@ -256,15 +256,15 @@ void Draw(AgcDriver::VulkanDevice& device, std::vector<AgcDriver::Graphics::Colo
     device.Draw(state, draw, shaders);
 }
 
-std::vector<std::uint8_t> ReadBack(AgcDriver::VulkanDevice& device, std::uint64_t address, std::size_t bytes) {
+TestGuest::Vector<std::uint8_t> ReadBack(AgcDriver::VulkanDevice& device, std::uint64_t address, std::size_t bytes) {
     AgcDriver::Graphics::StorageTexture::FlushPending(address, bytes, nullptr, "test read-back");
     device.WaitIdle();
-    std::vector<std::uint8_t> stored(bytes);
+    TestGuest::Vector<std::uint8_t> stored(bytes);
     AgcDriver::GuestMemory::Read(address, std::as_writable_bytes(std::span(stored)), 1);
     return stored;
 }
 
-void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const std::vector<std::uint8_t>& before, const std::function<int(std::uint8_t)>& drawn, int tolerance, const std::string& what) {
+void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const TestGuest::Vector<std::uint8_t>& before, const std::function<int(std::uint8_t)>& drawn, int tolerance, const std::string& what) {
     const auto stored = ReadBack(device, block.Address(), SurfaceBytes);
     for (std::size_t offset = 0; offset < SurfaceBytes; ++offset) {
         const bool inside = offset < BlockBytes;
@@ -275,9 +275,9 @@ void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const st
     }
 }
 
-std::vector<std::uint8_t> Fill(Block& block) {
+TestGuest::Vector<std::uint8_t> Fill(Block& block) {
     for (std::size_t offset = 0; offset < block.bytes; ++offset) block.data[offset] = static_cast<std::uint8_t>((offset * 7u + offset / 256u) & 0xffu);
-    return std::vector<std::uint8_t>(block.data, block.data + block.bytes);
+    return TestGuest::Vector<std::uint8_t>(block.data, block.data + block.bytes);
 }
 
 void RecordedDrawTests(AgcDriver::VulkanDevice& device, Block& block) {
@@ -309,7 +309,7 @@ void ClearTests(AgcDriver::VulkanDevice& device, Block& block) {
     Require(color.dccAddress == reinterpret_cast<std::uintptr_t>(Keys.data()), "the 8_SRGB target lost its DCC keys");
     const auto written = static_cast<float>(Eotf(200));
     Draw(device, {color}, {BlendOff}, Program({written, 0.25f, 0.5f, 0.75f}, false));
-    const std::vector<std::uint8_t> cleared(SurfaceBytes, ClearCode);
+    const TestGuest::Vector<std::uint8_t> cleared(SurfaceBytes, ClearCode);
     ExpectSurface(device, block, cleared, [](std::uint8_t) { return 200; }, 1, "a draw over a fast-cleared 8_SRGB target");
     std::array<std::uint8_t, KeyBytes> keys{};
     AgcDriver::GuestMemory::Read(reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_writable_bytes(std::span(keys)), 1);

@@ -106,8 +106,8 @@ std::uint64_t TexelOffset(const Format& format, std::uint32_t x) {
     return mip.tiledOffset + static_cast<std::uint64_t>(x) * format.components * 4u;
 }
 
-std::vector<std::uint8_t> Initial() {
-    std::vector<std::uint8_t> bytes(TexelBytes);
+TestGuest::Vector<std::uint8_t> Initial() {
+    TestGuest::Vector<std::uint8_t> bytes(TexelBytes);
     for (std::size_t index = 0; index < bytes.size(); ++index) bytes[index] = static_cast<std::uint8_t>(0x80u + 37u * index + 11u * (index >> 4u));
     return bytes;
 }
@@ -137,7 +137,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<c
     }
     const auto initial = Initial();
     std::copy(initial.begin(), initial.end(), texels);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto texture = TextureDescriptor(texels, format);
     std::copy(buffer.begin(), buffer.end(), userData.begin());

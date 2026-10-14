@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -56,7 +57,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const std::uint32_t* texels, std:
 }
 
 void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::uint32_t level, std::span<const std::uint32_t> code) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, level);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
@@ -90,7 +91,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        std::vector<std::uint32_t> storage((SurfaceBytes + 0x10000u) / 4u);
+        TestGuest::Vector<std::uint32_t> storage((SurfaceBytes + 0x10000u) / 4u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + SurfaceBytes / 4u, Untouched);
         {

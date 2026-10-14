@@ -104,7 +104,7 @@ int main() {
                 0xbefc0300u, 0x7e028700u, 0xd5480001u, 0x02111101u,
                 0x7e020d01u, 0x060202f2u, 0xf800180fu, 0x01010101u
             };
-            auto code = std::vector<std::uint32_t>(read.begin(), read.end());
+            auto code = TestGuest::Vector<std::uint32_t>(read.begin(), read.end());
             code.push_back(0xbf810000u);
             std::cerr << "wave " << waveSize << " packed read\n";
             Draw(*device, code, 0u, waveSize, std::byte{255});

@@ -66,7 +66,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const std::array<s
     }
     Output.fill(0xdeadbeefu);
     const auto code = Code(Selectors(lanes));
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(Input.data(), decltype(Input)::ByteSize), BufferDescriptor(Output.data(), decltype(Output)::ByteSize)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }

@@ -60,12 +60,12 @@ std::uint32_t Entry(std::uint32_t key) {
     return 0x5a000000u + key * 0x00010101u;
 }
 
-std::vector<std::uint32_t> Prepare(std::uint32_t lanes) {
+TestGuest::Vector<std::uint32_t> Prepare(std::uint32_t lanes) {
     for (std::uint32_t lane = 0; lane < Threads; ++lane) LaneKeys[lane] = (lane * 5u + lane / 7u) % Keys;
     Table.fill(0u);
     for (std::uint32_t key = 0; key < Keys; ++key) Table[key * KeyStride / 4u] = Entry(key);
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(12, 0u);
+    TestGuest::Vector<std::uint32_t> userData(12, 0u);
     const auto keys = BufferDescriptor(LaneKeys.data(), 4u, lanes);
     const auto table = BufferDescriptor(Table.data(), 0u, static_cast<std::uint32_t>(Table.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), 16u, lanes);
@@ -94,7 +94,7 @@ void Draw(AgcDriver::VulkanDevice& device) {
     pixel.posX = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    const std::vector<std::uint32_t> pixelUserData(4, 0u);
+    const TestGuest::Vector<std::uint32_t> pixelUserData(4, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},

@@ -39,8 +39,8 @@ struct Format {
     std::uint32_t components;
 };
 
-std::vector<std::uint32_t> Code(std::uint32_t opcode, std::uint32_t dmask) {
-    std::vector<std::uint32_t> code{0x34060084u, 0xe0381000u, 0x80031e03u, 0xbf8c3f70u};
+TestGuest::Vector<std::uint32_t> Code(std::uint32_t opcode, std::uint32_t dmask) {
+    TestGuest::Vector<std::uint32_t> code{0x34060084u, 0xe0381000u, 0x80031e03u, 0xbf8c3f70u};
     for (std::uint32_t index = 0; index < 4u; ++index) {
         code.push_back(0x7e0002ffu | ((10u + index) << 17u));
         code.push_back(Sentinel + index);
@@ -106,7 +106,7 @@ void FillInput() {
 
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t format, std::uint32_t dmask, std::uint32_t swizzle = 0xfacu) {
     const auto code = Code(opcode, dmask);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto descriptor = Descriptor(format, swizzle);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));

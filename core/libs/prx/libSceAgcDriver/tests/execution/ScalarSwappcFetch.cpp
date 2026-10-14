@@ -71,8 +71,8 @@ ShaderRecompiler::ShaderVertexStageInfo VertexInfo(std::uint32_t select, std::in
     return info;
 }
 
-std::vector<std::uint32_t> UserData() {
-    std::vector<std::uint32_t> userData(12, 0u);
+TestGuest::Vector<std::uint32_t> UserData() {
+    TestGuest::Vector<std::uint32_t> userData(12, 0u);
     userData[0] = 0x10000000u;
     userData[1] = 0x00000001u;
     const auto output = OutputDescriptor();
@@ -94,7 +94,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t select, bool onlyRestar
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    const std::vector<std::uint32_t> pixelUserData(8, 0u);
+    const TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},

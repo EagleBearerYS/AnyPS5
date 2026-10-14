@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -144,7 +145,7 @@ std::string Bytes(std::size_t bytes) {
 }
 
 void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* target) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto descriptor = RawBuffer(target, static_cast<std::uint32_t>(BufferBytes));
     std::copy(descriptor.begin(), descriptor.end(), userData.begin());
     const std::span<const std::uint32_t> code(StoreCode);
@@ -174,7 +175,7 @@ void FillVertices(GuestBuffer& vertices) {
 
 void Draw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels, GuestBuffer& vertices) {
     const auto target = device.Target();
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = VertexBuffer(vertices.Data(), 16u, static_cast<std::uint32_t>(BufferBytes / 16u));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -194,7 +195,7 @@ void Draw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels, GuestBuffer& ver
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(4, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},

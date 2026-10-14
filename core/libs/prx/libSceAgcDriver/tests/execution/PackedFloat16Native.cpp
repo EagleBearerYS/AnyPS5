@@ -152,13 +152,13 @@ int main() {
             std::puts("packed f16 native: skipped, the device has no native f16 with RTE rounding and kept denormals");
             return VulkanTestSkipped;
         }
-        std::vector<std::uint32_t> withoutFloat16;
+        TestGuest::Vector<std::uint32_t> withoutFloat16;
         std::ranges::copy_if(target.supportedCapabilities, std::back_inserter(withoutFloat16), [](std::uint32_t capability) { return capability != spv::CapabilityFloat16; });
         auto emulatedTarget = target;
         emulatedTarget.supportedCapabilities = withoutFloat16;
 
         const std::span<const std::uint32_t> code(Code);
-        std::vector<std::uint32_t> userData(8, 0u);
+        TestGuest::Vector<std::uint32_t> userData(8, 0u);
         const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
         const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
         std::copy(input.begin(), input.end(), userData.begin());

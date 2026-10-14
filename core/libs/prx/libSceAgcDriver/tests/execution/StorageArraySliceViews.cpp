@@ -123,7 +123,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const TestGuest::Vector<std::uint32_t>& userData) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -139,7 +139,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
 }
 
 void StoreSlice(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::uint32_t slice) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = SliceDescriptor(texels, slice, slice);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     userData[12] = Values[slice];
@@ -148,7 +148,7 @@ void StoreSlice(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std
 
 void LoadThroughArray(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::uint32_t slice) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto texture = SliceDescriptor(texels, 0, Slices - 1u);
     std::copy(buffer.begin(), buffer.end(), userData.begin());

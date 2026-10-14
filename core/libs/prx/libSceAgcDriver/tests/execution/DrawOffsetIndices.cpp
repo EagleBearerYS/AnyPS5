@@ -225,8 +225,8 @@ public:
         mutation.Add(records, RecordBytes, true, true, true);
     }
 
-    std::vector<std::uint32_t> UserData(std::uint32_t baseVertex, std::uint32_t startInstance) const {
-        std::vector<std::uint32_t> userData(10, 0u);
+    TestGuest::Vector<std::uint32_t> UserData(std::uint32_t baseVertex, std::uint32_t startInstance) const {
+        TestGuest::Vector<std::uint32_t> userData(10, 0u);
         const auto output = OutputDescriptor();
         std::copy(output.begin(), output.end(), userData.begin());
         const auto table = reinterpret_cast<std::uintptr_t>(BufferTable.data());
@@ -237,7 +237,7 @@ public:
         return userData;
     }
 
-    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) const {
+    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const TestGuest::Vector<std::uint32_t>& userData) const {
         ShaderRecompiler::ShaderVertexStageInfo info{};
         info.resourcesNum = 2;
         info.resources[0].fields = {BufferTable[0], BufferTable[1], BufferTable[2], BufferTable[3]};
@@ -331,14 +331,14 @@ private:
     std::uint32_t* records = nullptr;
 };
 
-AgcDriver::DriverDetail::DrawProgram Program(const std::vector<std::uint32_t>& userData) {
+AgcDriver::DriverDetail::DrawProgram Program(const TestGuest::Vector<std::uint32_t>& userData) {
     AgcDriver::DriverDetail::DrawProgram program{};
     program.firstUserSgpr = 8;
-    program.userData = userData;
+    program.userData.assign(userData.begin(), userData.end());
     return program;
 }
 
-AgcDriver::Pm4::DrawParameters FoldedDraw(const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters draw) {
+AgcDriver::Pm4::DrawParameters FoldedDraw(const ShaderRecompiler::RecompileResult& vertex, const TestGuest::Vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters draw) {
     AgcDriver::DriverDetail::Driver::FoldDrawOffsets(vertex, Program(userData), draw);
     return draw;
 }
@@ -347,7 +347,7 @@ std::string PathName(const std::optional<Path>& path) {
     return path ? "the CPU path (" + std::string(AgcDriver::Graphics::IndirectDrawPathName(*path)) + ")" : std::string("the GPU");
 }
 
-std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule) {
+std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const TestGuest::Vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule) {
     const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(), Program(userData), fixture.device, draw, false);
     const auto& indirect = *draw.indirect;
     const bool rules = expectedPath || (indirect.vertexRule == expectedRule && indirect.instanceRule == expectedRule);

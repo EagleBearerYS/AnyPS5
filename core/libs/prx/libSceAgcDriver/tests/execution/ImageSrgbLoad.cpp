@@ -159,7 +159,7 @@ void Fill(std::uint32_t format) {
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const void* texels, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups, bool useCache = false) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto texture = TextureDescriptor(texels, format, swizzle);
     std::copy(output.begin(), output.end(), userData.begin());

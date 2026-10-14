@@ -96,7 +96,7 @@ float SrgbToLinear(std::uint8_t code) {
 }
 
 std::array<float, Threads * 4> Sample(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t filter, std::uint32_t forced, std::uint32_t filters = 0u) {
-    std::vector<std::uint32_t> userData(20, 0u);
+    TestGuest::Vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(format);

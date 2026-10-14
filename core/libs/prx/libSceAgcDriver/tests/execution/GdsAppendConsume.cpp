@@ -62,13 +62,13 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x11016facu};
 }
 
-std::vector<std::uint32_t> Packet(std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
-    std::vector<std::uint32_t> result{0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u)};
+TestGuest::Vector<std::uint32_t> Packet(std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
+    TestGuest::Vector<std::uint32_t> result{0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u)};
     result.insert(result.end(), payload);
     return result;
 }
 
-void Execute(AgcDriver::QueueState& queue, const std::vector<std::uint32_t>& packet) {
+void Execute(AgcDriver::QueueState& queue, const TestGuest::Vector<std::uint32_t>& packet) {
     AgcDriver::Pm4::Validate(packet, 0);
     AgcDriver::Pm4::Execute(packet, queue);
 }
@@ -87,7 +87,7 @@ std::array<std::uint32_t, Counters> ReadCounters(AgcDriver::QueueState& queue) {
 void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
     Output.fill(0xdeadbeefu);
     Code[ActiveLanesLiteral] = workgroup.activeLanes;
-    std::vector<std::uint32_t> userData(4, 0u);
+    TestGuest::Vector<std::uint32_t> userData(4, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(output.begin(), output.end(), userData.begin());
     const std::span<const std::uint32_t> code(Code);
@@ -107,8 +107,8 @@ void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
 
 void CheckWaves(const Workgroup& workgroup, std::uint32_t result, std::uint32_t start, bool append, bool masked) {
     const auto waves = workgroup.threads / workgroup.waveSize;
-    std::vector<std::uint32_t> values(waves);
-    std::vector<std::uint32_t> counts(waves);
+    TestGuest::Vector<std::uint32_t> values(waves);
+    TestGuest::Vector<std::uint32_t> counts(waves);
     const auto what = workgroup.Name() + (masked ? " masked" : "") + (append ? " ds_append" : " ds_consume");
     for (std::uint32_t wave = 0; wave < waves; ++wave) {
         const auto first = wave * workgroup.waveSize;
@@ -124,7 +124,7 @@ void CheckWaves(const Workgroup& workgroup, std::uint32_t result, std::uint32_t 
             Require(actual == values[wave], what + ": lane " + std::to_string(lane) + " returned " + std::to_string(actual) + ", its wave's first active lane " + std::to_string(values[wave]));
         }
     }
-    std::vector<std::uint32_t> order(waves);
+    TestGuest::Vector<std::uint32_t> order(waves);
     for (std::uint32_t wave = 0; wave < waves; ++wave) order[wave] = wave;
     std::sort(order.begin(), order.end(), [&](std::uint32_t left, std::uint32_t right) { return append ? values[left] < values[right] : values[left] > values[right]; });
     auto expected = start;

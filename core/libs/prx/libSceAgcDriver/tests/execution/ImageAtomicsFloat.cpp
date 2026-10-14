@@ -491,7 +491,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t f
 
 ShaderRecompiler::RecompileResult Compile(std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, std::uint32_t format) {
     const std::span<const std::uint32_t> code(Code);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = TextureDescriptor(Texels.data(), format);
     std::copy(buffer.begin(), buffer.end(), userData.begin());

@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -152,7 +153,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
 void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t inputAddr, std::span<const std::uint32_t> pixelCode) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -170,7 +171,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     pixel.inputAddr = inputAddr;
     pixel.targetOutputMode.at(0) = Float32AbgrExport;
     pixel.targetExportMapping.fill(0xe4u);
-    const std::vector<std::uint32_t> pixelUserData(8, 0u);
+    const TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
@@ -207,10 +208,10 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     device.Draw(state, draw, shaders);
 }
 
-std::vector<std::uint8_t> ReadBack(AgcDriver::VulkanDevice& device, std::uint64_t address, std::size_t bytes) {
+TestGuest::Vector<std::uint8_t> ReadBack(AgcDriver::VulkanDevice& device, std::uint64_t address, std::size_t bytes) {
     AgcDriver::Graphics::StorageTexture::FlushPending(address, bytes, nullptr, "test read-back");
     device.WaitIdle();
-    std::vector<std::uint8_t> stored(bytes);
+    TestGuest::Vector<std::uint8_t> stored(bytes);
     AgcDriver::GuestMemory::Read(address, std::as_writable_bytes(std::span(stored)), 1);
     return stored;
 }

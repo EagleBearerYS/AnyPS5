@@ -226,7 +226,7 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {0u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const TestGuest::Vector<std::uint32_t>& userData) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -252,7 +252,7 @@ void FillBuffer(const std::array<std::array<std::uint32_t, 3>, Threads>& inputs)
 void RunStorage(AgcDriver::VulkanDevice& device) {
     FillBuffer(StorageInputs);
     StorageTexels.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = TextureDescriptor(StorageTexels.data(), Format32UInt, StorageWidth, StorageHeight);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
@@ -270,7 +270,7 @@ void RunSample(AgcDriver::VulkanDevice& device) {
             SampleTexels[(mips[0].tiledOffset + static_cast<std::uint64_t>(y) * mips[0].pitchBytes) / 4u + x] = std::bit_cast<std::uint32_t>(static_cast<float>(x + 100u * y));
         }
     }
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = TextureDescriptor(SampleTexels.data(), Format32Float, SampleWidth, SampleHeight);
     const auto sampler = SamplerDescriptor();
@@ -282,7 +282,7 @@ void RunSample(AgcDriver::VulkanDevice& device) {
 
 void CheckRefused(AgcDriver::VulkanDevice& device) {
     constexpr std::array<const char*, 3> names{"image_get_lod lwe", "image_atomic_add tfe", "image_load tfe status past v255"};
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     for (std::uint32_t i = 0; i < RefusedCode.size(); ++i) {
         const std::span<const std::uint32_t> code(RefusedCode[i]);
         const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};

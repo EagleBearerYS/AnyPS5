@@ -3,6 +3,7 @@
 
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #ifndef _WIN32
 #include <sys/mman.h>
@@ -13,7 +14,9 @@
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <new>
 #include <stdexcept>
+#include <vector>
 
 namespace TestGuest {
 
@@ -111,6 +114,32 @@ public:
 private:
     T* items;
 };
+
+
+template<typename T>
+struct Allocator {
+    using value_type = T;
+
+    Allocator() = default;
+    template<typename U>
+    Allocator(const Allocator<U>&) {}
+
+    T* allocate(std::size_t count) {
+        void* block = GuestHeap::GuestHeapAlignForGpu_nid_postfix(256, std::max<std::size_t>(count * sizeof(T), 1));
+        if (block == nullptr) throw std::bad_alloc();
+        return static_cast<T*>(block);
+    }
+
+    void deallocate(T* pointer, std::size_t) {
+        GuestHeap::GuestHeapFree_nid_postfix(pointer);
+    }
+
+    template<typename U>
+    bool operator==(const Allocator<U>&) const { return true; }
+};
+
+template<typename T>
+using Vector = std::vector<T, Allocator<T>>;
 
 }
 

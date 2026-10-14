@@ -393,7 +393,7 @@ bool IsNan(std::uint32_t value) {
 void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, std::span<const std::uint32_t> code = Code, const std::uint32_t (*rows)[Inputs] = Rows) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(rows[tid]), std::end(rows[tid]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());

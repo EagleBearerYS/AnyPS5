@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -161,7 +162,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
 }
 
 void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::span<const std::uint32_t> code, std::uint32_t layer = 0, std::uint32_t mip = 0, float scale = 0.0f) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, shape);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     userData[12] = layer;
@@ -173,7 +174,7 @@ void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& s
 }
 
 ShaderRecompiler::RecompileResult SampleProgram(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t layer = 0, std::uint32_t mip = 0) {
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size_bytes()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size_bytes()));
     const auto texture = TextureDescriptor(texels, shape);

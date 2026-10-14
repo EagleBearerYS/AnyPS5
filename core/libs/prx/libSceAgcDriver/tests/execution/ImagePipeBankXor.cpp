@@ -105,7 +105,7 @@ void FillInput() {
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t tileMode, std::uint32_t pipeBankXor, const char* name) {
     FillTexels(tileMode, pipeBankXor);
     Output.fill(-1.0f);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(tileMode, pipeBankXor);

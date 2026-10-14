@@ -176,8 +176,8 @@ std::uint64_t TexelOffset(const Format& format, std::uint32_t x, std::uint32_t y
     return mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + static_cast<std::uint64_t>(x) * TexelBytesOf(format);
 }
 
-std::vector<std::uint8_t> Initial() {
-    std::vector<std::uint8_t> bytes(TexelBytes);
+TestGuest::Vector<std::uint8_t> Initial() {
+    TestGuest::Vector<std::uint8_t> bytes(TexelBytes);
     for (std::size_t index = 0; index < bytes.size(); ++index) {
         bytes[index] = static_cast<std::uint8_t>(0x80u + 37u * index + 11u * (index >> 4u));
     }
@@ -192,7 +192,7 @@ std::uint32_t StoredComponent(const Format& format, std::uint32_t tid, std::uint
     return Saturate(value, format.bits);
 }
 
-std::vector<std::uint8_t> Expected(const Format& format, std::span<const Write> writes) {
+TestGuest::Vector<std::uint8_t> Expected(const Format& format, std::span<const Write> writes) {
     auto bytes = Initial();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (const auto& write : writes) {
@@ -226,7 +226,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t f
 }
 
 void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t format, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& buffer) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, format, swizzle);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);

@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -135,7 +136,7 @@ std::array<std::uint32_t, 8> SurfaceWords(std::uint64_t address, std::uint64_t k
     };
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const TestGuest::Vector<std::uint32_t>& userData) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -154,7 +155,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
 // stores into it, flushed at once so that no later write-back of it covers memory another image is
 // checked over. The GPU mutex is taken here, not held by the caller.
 std::shared_ptr<StorageTexture> Create(AgcDriver::VulkanDevice& device, std::uint64_t address, std::uint64_t keys) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto words = SurfaceWords(address, keys);
     std::copy(words.begin(), words.end(), userData.begin() + 4);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());

@@ -68,7 +68,7 @@ std::string Hex(std::uint32_t value) {
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid] = Vectors[tid % std::size(Vectors)].input;
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), 4u);
     const auto output = BufferDescriptor(Output.data(), Results * 4u);
     std::copy(input.begin(), input.end(), userData.begin());

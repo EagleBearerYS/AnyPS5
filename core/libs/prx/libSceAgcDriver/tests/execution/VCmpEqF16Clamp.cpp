@@ -43,7 +43,7 @@ Vop3CompareWords Vop3Compare(std::uint32_t opcode, std::uint32_t source0, std::u
     return {0xd4000000u | (opcode << 16u) | VccLow | 0x8000u, encoded0 | (encoded1 << 9u)};
 }
 
-std::vector<std::uint32_t> ClampCode(const Vop3CompareWords& compare) {
+TestGuest::Vector<std::uint32_t> ClampCode(const Vop3CompareWords& compare) {
     return {
         0x34020082u, 0x34060082u,
         0xe0302000u, 0x80000401u,
@@ -77,7 +77,7 @@ void RunClampRows(AgcDriver::VulkanDevice& device, const char* name, const Vop3C
                   Input.begin() + static_cast<std::ptrdiff_t>(index * Inputs));
     }
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin());

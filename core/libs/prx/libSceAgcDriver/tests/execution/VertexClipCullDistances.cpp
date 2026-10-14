@@ -86,7 +86,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const Row& ro
         vertices[i] = {{PositionX[i], PositionY[i], 0.5f, 1.0f}, {row.component0[i], row.component1[i], row.component2[i], 0.0f}};
     }
 
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(vertices.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -109,7 +109,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const Row& ro
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
-        {waveSize, 0, std::vector<std::uint32_t>(4, 0u), std::nullopt, pixel, std::nullopt, pixelMemory},
+        {waveSize, 0, TestGuest::Vector<std::uint32_t>(4, 0u), std::nullopt, pixel, std::nullopt, pixelMemory},
         device.Target(),
         PixelPushLayout(vertexPush, device.Target())
     };

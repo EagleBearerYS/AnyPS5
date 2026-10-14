@@ -293,7 +293,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWo
     const std::array<std::uint32_t, 4> buffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(Buffer.size() * 4u), 0x31016facu};
     const auto texture = TextureDescriptor(type, height, depth);
     const std::array<std::uint32_t, 4> sampler{0x92u, (4u * 256u) << 12u, (1u << 22u) | (1u << 26u), 0u};
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
@@ -332,7 +332,7 @@ int main() {
         }
         const bool computedOffsets = device->Target().nonConstantImageOffsets;
         if (!computedOffsets) std::puts("2D cases skipped, their computed texel offsets need VK_KHR_maintenance8");
-        std::vector<std::uint32_t> waves{Threads};
+        TestGuest::Vector<std::uint32_t> waves{Threads};
         if (device->Target().subgroupSize >= Threads) waves.push_back(Wave64Threads);
         for (const auto threads : waves) {
             if (computedOffsets) Run(*device, Code2D, threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D);

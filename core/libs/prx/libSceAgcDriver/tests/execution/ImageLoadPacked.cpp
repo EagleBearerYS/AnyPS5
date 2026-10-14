@@ -127,7 +127,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t f
 
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t swizzle) {
     Buffer.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = TextureDescriptor(Texels.data(), format, swizzle);
     std::copy(buffer.begin(), buffer.end(), userData.begin());

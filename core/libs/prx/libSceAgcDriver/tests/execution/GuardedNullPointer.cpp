@@ -109,7 +109,7 @@ private:
 };
 
 struct Outcome {
-    std::vector<std::uint32_t> words;
+    TestGuest::Vector<std::uint32_t> words;
     std::string log;
     std::uint64_t variantId = 0;
     std::uint64_t pipelineVariantId = 0;

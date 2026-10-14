@@ -199,7 +199,7 @@ void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, con
 void Run(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     GuestBlock guest;
     std::memset(guest.Data(), 0, BlockBytes);
     std::memcpy(guest.Data(), Input.data(), Input.size() * 4u);

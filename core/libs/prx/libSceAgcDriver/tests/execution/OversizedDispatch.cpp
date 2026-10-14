@@ -80,7 +80,7 @@ private:
 void CheckSplitCoverage(AgcDriver::VulkanDevice& device) {
     const GuestBlock guest(Stores);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    const std::vector<std::uint32_t> userData{
+    const TestGuest::Vector<std::uint32_t> userData{
         static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
         Stores, 0x00014004u, Pattern[0], Pattern[1], Pattern[2], Pattern[3], Stores, Period};
     const std::span<const std::uint32_t> code(Code);
@@ -117,7 +117,7 @@ TestGuest::Array<std::uint32_t, Threads * 4> LdsOutput;
 void CheckLdsSplitThrows(AgcDriver::VulkanDevice& device) {
     const auto target = device.Target();
     const auto ldsBytes = target.maxWorkgroupSharedMemoryBytes + 4096u;
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto descriptor = [&](const void* data, std::uint32_t bytes) {
         const auto address = reinterpret_cast<std::uintptr_t>(data);
         return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
@@ -149,7 +149,7 @@ void CheckLdsSplitThrows(AgcDriver::VulkanDevice& device) {
 void CheckNvidiaSplitThrows(AgcDriver::VulkanDevice& device) {
     const GuestBlock guest(Threads);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    const std::vector<std::uint32_t> userData{
+    const TestGuest::Vector<std::uint32_t> userData{
         static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
         Threads, 0x00014004u, Pattern[0], Pattern[1], Pattern[2], Pattern[3], Threads, Period};
     const std::span<const std::uint32_t> code(Code);

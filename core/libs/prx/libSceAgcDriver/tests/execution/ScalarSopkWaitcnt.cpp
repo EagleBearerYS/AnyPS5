@@ -134,7 +134,7 @@ std::string Hex(std::uint32_t value) {
 
 void Run(AgcDriver::VulkanDevice& device) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(ValueRegister + 1u, 0u);
+    TestGuest::Vector<std::uint32_t> userData(ValueRegister + 1u, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(output.begin(), output.end(), userData.begin() + OutputRegister);
     userData[ValueRegister] = Value;

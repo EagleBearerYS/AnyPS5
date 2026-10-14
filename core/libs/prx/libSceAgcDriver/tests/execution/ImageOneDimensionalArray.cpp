@@ -91,7 +91,7 @@ void Expect(std::uint32_t tid, const char* name, const float* actual, const std:
 
 void Run(AgcDriver::VulkanDevice& device) {
     Output.fill(-1.0f);
-    std::vector<std::uint32_t> userData(20, 0u);
+    TestGuest::Vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor();

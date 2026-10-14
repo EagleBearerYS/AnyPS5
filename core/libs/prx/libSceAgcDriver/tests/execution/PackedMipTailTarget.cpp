@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -141,7 +142,7 @@ void DrawLevel(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     pixelWords[at++] = 0x07060504u;
     pixelWords[at++] = 0xbf810000u;
     const std::span<const std::uint32_t> pixelCode(pixelWords.data(), at);
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto address = reinterpret_cast<std::uintptr_t>(Triangle.data());
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
@@ -195,7 +196,7 @@ void DrawLevel(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     device.WaitIdle();
 }
 
-void Expect(std::vector<std::uint32_t>& expected, const TileMipLayout& mip, std::uint32_t value) {
+void Expect(TestGuest::Vector<std::uint32_t>& expected, const TileMipLayout& mip, std::uint32_t value) {
     const ColorTargetLayout block(BlockSide, BlockSide, ColorTileMode::RenderTarget, 4);
     const ColorTargetLayout own(mip.width, mip.height, ColorTileMode::RenderTarget, 4);
     for (std::uint32_t y = 0; y < mip.height; ++y) {
@@ -207,7 +208,7 @@ void Expect(std::vector<std::uint32_t>& expected, const TileMipLayout& mip, std:
     }
 }
 
-void Check(const std::uint8_t* texels, const std::vector<std::uint32_t>& expected, const std::string& what) {
+void Check(const std::uint8_t* texels, const TestGuest::Vector<std::uint32_t>& expected, const std::string& what) {
     const auto* words = reinterpret_cast<const std::uint32_t*>(texels);
     for (std::size_t index = 0; index < expected.size(); ++index) {
         Require(words[index] == expected[index], what + ": surface byte " + Hex(index * 4u) + " holds " + Hex(words[index]) + ", expected " + Hex(expected[index]));
@@ -223,7 +224,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    std::vector<std::uint32_t> expected(SurfaceBytes / 4u, Initial);
+    TestGuest::Vector<std::uint32_t> expected(SurfaceBytes / 4u, Initial);
     const std::array<std::pair<std::uint32_t, float>, 3> draws{{{2u, 0.25f}, {3u, 0.75f}, {1u, 0.5f}}};
     for (const auto& [level, drawn] : draws) {
         const auto value = std::bit_cast<std::uint32_t>(drawn);

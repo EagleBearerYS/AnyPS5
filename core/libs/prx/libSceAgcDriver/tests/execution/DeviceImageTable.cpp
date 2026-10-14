@@ -55,7 +55,7 @@ TestGuest::Array<std::uint32_t, MaxGroups * 128 * 4> Output;
 TestGuest::Array<std::uint32_t, MaxGroups * 128 * 4> OtherOutput;
 TestGuest::Array<std::uint32_t, 32> Srt;
 TestGuest::Array<std::uint32_t, 5 * Width * Height> RuntimeTexels;
-std::vector<std::uint32_t> RuntimeBlocks(0x8000u);
+TestGuest::Vector<std::uint32_t> RuntimeBlocks(0x8000u);
 constexpr std::uint32_t PointerBytes = MaxGroups * 16u;
 constexpr std::uint32_t ArgumentWord = 1024u;
 
@@ -192,7 +192,7 @@ private:
 };
 
 struct Outcome {
-    std::vector<std::uint32_t> words;
+    TestGuest::Vector<std::uint32_t> words;
     std::string log;
     std::uint64_t variantId = 0;
     std::uint32_t tableElements = 0;
@@ -305,8 +305,8 @@ void SetArgument(std::uint32_t record, const std::array<std::uint32_t, 4>& sampl
     RuntimeBlocks[record * 4u + 1u] = static_cast<std::uint32_t>(address >> 32u);
 }
 
-std::vector<std::uint32_t> Group(const Outcome& outcome, std::uint32_t group) {
-    return std::vector<std::uint32_t>(outcome.words.begin() + group * Lanes * 4u, outcome.words.begin() + (group + 1u) * Lanes * 4u);
+TestGuest::Vector<std::uint32_t> Group(const Outcome& outcome, std::uint32_t group) {
+    return TestGuest::Vector<std::uint32_t>(outcome.words.begin() + group * Lanes * 4u, outcome.words.begin() + (group + 1u) * Lanes * 4u);
 }
 
 bool Faulted(const Outcome& outcome) {

@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -68,14 +69,14 @@ std::uint32_t Low(std::uint64_t value) { return static_cast<std::uint32_t>(value
 
 std::uint32_t High(std::uint64_t value) { return static_cast<std::uint32_t>(value >> 32u); }
 
-std::vector<std::uint32_t> Pm4Packet(std::uint32_t opcode, std::initializer_list<std::uint32_t> body) {
-    std::vector<std::uint32_t> words{0xc0000000u | (static_cast<std::uint32_t>(body.size() - 1) << 16u) | (opcode << 8u)};
+TestGuest::Vector<std::uint32_t> Pm4Packet(std::uint32_t opcode, std::initializer_list<std::uint32_t> body) {
+    TestGuest::Vector<std::uint32_t> words{0xc0000000u | (static_cast<std::uint32_t>(body.size() - 1) << 16u) | (opcode << 8u)};
     words.insert(words.end(), body);
     return words;
 }
 
-void Submit(std::initializer_list<std::vector<std::uint32_t>> packets) {
-    std::vector<std::uint32_t> words;
+void Submit(std::initializer_list<TestGuest::Vector<std::uint32_t>> packets) {
+    TestGuest::Vector<std::uint32_t> words;
     for (const auto& packet : packets) words.insert(words.end(), packet.begin(), packet.end());
     Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&dcb) == 0, "depth fast clear submit: DCB submission failed");

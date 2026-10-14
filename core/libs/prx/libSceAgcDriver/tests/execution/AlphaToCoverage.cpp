@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -191,7 +192,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     blend.colorWriteMask = 0xf;
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto address = reinterpret_cast<std::uintptr_t>(Triangle.data());
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
@@ -255,16 +256,16 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     device.Draw(state, draw, shaders);
 }
 
-std::vector<std::uint16_t> ReadBack(AgcDriver::VulkanDevice& device, const Block& block) {
+TestGuest::Vector<std::uint16_t> ReadBack(AgcDriver::VulkanDevice& device, const Block& block) {
     AgcDriver::Graphics::StorageTexture::FlushPending(block.Address(), block.bytes, nullptr, "test read-back");
     device.WaitIdle();
-    std::vector<std::uint16_t> stored(block.bytes / 2u);
+    TestGuest::Vector<std::uint16_t> stored(block.bytes / 2u);
     AgcDriver::GuestMemory::Read(block.Address(), std::as_writable_bytes(std::span(stored)), 1);
     return stored;
 }
 
-std::vector<std::uint16_t> Fill(Block& block, const ColorTargetLayout& layout) {
-    std::vector<std::uint16_t> halves(block.bytes / 2u);
+TestGuest::Vector<std::uint16_t> Fill(Block& block, const ColorTargetLayout& layout) {
+    TestGuest::Vector<std::uint16_t> halves(block.bytes / 2u);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             const auto& color = Destinations[(x + y) % Destinations.size()];
@@ -276,7 +277,7 @@ std::vector<std::uint16_t> Fill(Block& block, const ColorTargetLayout& layout) {
     return halves;
 }
 
-void Check(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const std::vector<std::uint16_t>& before, const std::function<Color(const Color&)>& expectedColor, const std::string& what) {
+void Check(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const TestGuest::Vector<std::uint16_t>& before, const std::function<Color(const Color&)>& expectedColor, const std::string& what) {
     const auto stored = ReadBack(device, block);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {

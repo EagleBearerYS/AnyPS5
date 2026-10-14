@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -88,8 +89,8 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-std::vector<std::uint32_t> Expected(std::uint32_t lanes) {
-    std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
+TestGuest::Vector<std::uint32_t> Expected(std::uint32_t lanes) {
+    TestGuest::Vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
     for (const auto& store : Stores) {
         for (std::uint32_t lane = 0; lane < lanes; ++lane) {
             if (store.masked && (lane & 3u) == 2u) continue;
@@ -100,10 +101,10 @@ std::vector<std::uint32_t> Expected(std::uint32_t lanes) {
 }
 
 void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::string& name) {
-    std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
+    TestGuest::Vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
     std::memcpy(guest.Data(), memory.data(), BlockBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    std::vector<std::uint32_t> userData(10, 0u);
+    TestGuest::Vector<std::uint32_t> userData(10, 0u);
     userData[8] = static_cast<std::uint32_t>(address);
     userData[9] = static_cast<std::uint32_t>(address >> 32u);
     const std::span<const std::uint32_t> code(AddtidCode);
@@ -129,7 +130,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
 void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& reason) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{32, 1, 1}, 0, {false, false, false}, false, 1};
-    const std::vector<std::uint32_t> userData(10, 0u);
+    const TestGuest::Vector<std::uint32_t> userData(10, 0u);
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, regions},

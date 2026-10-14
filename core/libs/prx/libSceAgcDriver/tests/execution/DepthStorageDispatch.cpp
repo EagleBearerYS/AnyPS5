@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "DepthFastClearHarness.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -146,7 +147,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
 }
 
 ShaderRecompiler::RecompileResult PlaneProgram(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::span<std::uint32_t> output, const std::uint8_t* plane, std::uint32_t format, float factor) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size_bytes()));
     const auto texture = TextureDescriptor(plane, format);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
@@ -235,7 +236,7 @@ void ArrayViewCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, std:
     const VkStencilOpState writeFive{VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, 5u};
     Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .stencilTest = true, .stencil = writeFive}) == Covered, "the depth and stencil producer of the array views did not cover the surface");
     const auto layer = [&](std::span<const std::uint32_t> code, const std::uint8_t* plane, std::uint32_t format, float factor) {
-        std::vector<std::uint32_t> userData(16, 0u);
+        TestGuest::Vector<std::uint32_t> userData(16, 0u);
         const auto buffer = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size_bytes()));
         const auto texture = TextureDescriptor(plane, format, Type2DArray);
         std::copy(buffer.begin(), buffer.end(), userData.begin());
@@ -248,7 +249,7 @@ void ArrayViewCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, std:
     RunPlane(device, layer(AddStencilLayerCode, stencil, Format8Uint, 0.0f), AddStencilLayerCode, output, 5u, "stencil dispatch through a one-layer 2D array view");
     RequireRow(Draw(device, shaders, surface, {.depthTest = false, .stencilTest = true, .stencil = StencilEqual(9u)}), "stencil test against the one-layer 2D array view's stencil");
 
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(depth, Format32Float, Type2DArray, TileLinear, 1u);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     userData[14] = std::bit_cast<std::uint32_t>(1.0f / 64.0f);
@@ -286,7 +287,7 @@ void MultisampledCase(AgcDriver::VulkanDevice& device, const Shaders& compiled, 
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(DepthFastClearHarness::Triangles().size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(depth, Format32Float);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     const auto program = Compile(device, StoreCode, userData);
@@ -301,7 +302,7 @@ void SampledCopyCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, st
     Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, "the sampled depth producer did not cover the surface");
     Require(Draw(device, shaders, later, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, "the later depth producer did not cover its surface");
 
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size_bytes()));
     const auto layers = TextureDescriptor(depth, Format32Float, Type2DArray, TileLinear, 1u);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
@@ -315,7 +316,7 @@ void SampledCopyCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, st
 }
 
 void TwoViewsCase(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
-    std::vector<std::uint32_t> userData(20, 0u);
+    TestGuest::Vector<std::uint32_t> userData(20, 0u);
     const auto first = TextureDescriptor(block, Format32Float, Type2D, TileLinear);
     const auto second = TextureDescriptor(block, Format32Float, Type2D, TileStandard256B);
     std::copy(first.begin(), first.end(), userData.begin() + 4);

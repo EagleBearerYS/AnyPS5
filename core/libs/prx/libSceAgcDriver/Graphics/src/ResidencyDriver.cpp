@@ -14,12 +14,12 @@ std::atomic<ResidencyDriver*> activeDriver{nullptr};
 
 ResidencyDriver::ResidencyDriver(const Context& context, Recorder& recorder, IResidencyGuestMemory& guest, const ResidencyPolicy& policy)
     : recorder(recorder), guest(guest), mirrors(context, policy.chunkSlots), manager(*this, policy) {
-    ResidencyDriver* expected = nullptr;
-    Require(activeDriver.compare_exchange_strong(expected, this), "residency: a second residency driver while one is active");
+    activeDriver.store(this);
 }
 
 ResidencyDriver::~ResidencyDriver() {
-    activeDriver.store(nullptr);
+    ResidencyDriver* expected = this;
+    activeDriver.compare_exchange_strong(expected, nullptr);
 }
 
 ResidencyDriver* ResidencyDriver::Active() {

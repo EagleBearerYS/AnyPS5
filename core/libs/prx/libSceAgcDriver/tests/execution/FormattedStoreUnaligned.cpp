@@ -44,8 +44,8 @@ constexpr std::array<Store, 8> Stores{{
 TestGuest::Array<std::uint32_t, Threads * Inputs> Input;
 TestGuest::Array<std::uint8_t, Threads * LaneBytes> Output;
 
-std::vector<std::uint32_t> Program() {
-    std::vector<std::uint32_t> code{0x34020084, 0x34060086};
+TestGuest::Vector<std::uint32_t> Program() {
+    TestGuest::Vector<std::uint32_t> code{0x34020084, 0x34060086};
     for (std::uint32_t component = 0; component < Inputs; ++component) code.insert(code.end(), {0xe0301000u | (component * 4u), 0x80000401u | (component << 8u)});
     code.push_back(0xbf8c3f70);
     code.insert(code.end(), {0x7e3c02ff, Fill});
@@ -88,7 +88,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         for (std::uint32_t component = 0; component < Inputs; ++component) Input[tid * Inputs + component] = Value(tid, component);
     }
     Output.fill(0xdeu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin());

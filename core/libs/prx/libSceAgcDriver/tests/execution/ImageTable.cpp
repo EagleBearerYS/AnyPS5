@@ -68,7 +68,7 @@ TestGuest::Array<std::uint32_t, MaxGroups * 128 * 4> Output;
 TestGuest::Array<std::uint32_t, 32> Srt;
 constexpr std::uint32_t PaletteOffset = 0x40;
 constexpr std::uint32_t PaletteBytes = PaletteOffset + 256u * 32u;
-std::vector<std::uint32_t> Root(0x100000u);
+TestGuest::Vector<std::uint32_t> Root(0x100000u);
 
 alignas(256) constexpr std::array<std::uint32_t, 28> TableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0x8f108202u, 0xf4200444u,
@@ -372,7 +372,7 @@ private:
 };
 
 struct Outcome {
-    std::vector<std::uint32_t> words;
+    TestGuest::Vector<std::uint32_t> words;
     std::string log;
     std::uint64_t variantId = 0;
     std::uint64_t artifactId = 0;
@@ -523,8 +523,8 @@ Outcome RunDirect(AgcDriver::VulkanDevice& device, const std::array<std::uint32_
     return RunDirectCode(device, DirectCode, sampler, image);
 }
 
-std::vector<std::uint32_t> Group(const Outcome& outcome, std::uint32_t group, std::uint32_t threads = Lanes) {
-    return std::vector<std::uint32_t>(outcome.words.begin() + group * threads * 4u, outcome.words.begin() + (group + 1u) * threads * 4u);
+TestGuest::Vector<std::uint32_t> Group(const Outcome& outcome, std::uint32_t group, std::uint32_t threads = Lanes) {
+    return TestGuest::Vector<std::uint32_t>(outcome.words.begin() + group * threads * 4u, outcome.words.begin() + (group + 1u) * threads * 4u);
 }
 
 bool Faulted(const Outcome& outcome) {
@@ -1378,7 +1378,7 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     VertexResults.fill(0xdeadbeefu);
     PixelResults.fill(0xdeadbeefu);
     const auto table = Buffer(GraphicsTable.data(), static_cast<std::uint32_t>(decltype(GraphicsTable)::ByteSize));
-    std::vector<std::uint32_t> vertexUserData(20, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(20, 0u);
     const auto vertices = VertexBuffer(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     const auto vertexOutput = VertexBuffer(VertexResults.data(), 16u, 4u);
     std::copy(vertices.begin(), vertices.end(), vertexUserData.begin());
@@ -1402,7 +1402,7 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(12, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(12, 0u);
     const auto pixelOutput = Buffer(PixelResults.data(), static_cast<std::uint32_t>(decltype(PixelResults)::ByteSize));
     std::copy(table.begin(), table.end(), pixelUserData.begin());
     pixelUserData[4] = pixelKey;

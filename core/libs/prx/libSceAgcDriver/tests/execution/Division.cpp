@@ -654,7 +654,7 @@ class Shader {
 public:
     Shader(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code,
         const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}) : device(device), code(code) {
-        std::vector<std::uint32_t> userData(8, 0u);
+        TestGuest::Vector<std::uint32_t> userData(8, 0u);
         const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
         const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
         std::copy(input.begin(), input.end(), userData.begin());

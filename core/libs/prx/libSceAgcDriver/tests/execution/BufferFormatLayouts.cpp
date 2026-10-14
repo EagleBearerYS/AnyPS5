@@ -229,7 +229,7 @@ void AssembleTyped(Program& program, const Layout& layout) {
     emit(0xbf810000u);
 }
 
-ShaderRecompiler::RecompileResult Dispatch(AgcDriver::VulkanDevice& device, Program& program, const std::vector<std::uint32_t>& userData, std::uint32_t groups) {
+ShaderRecompiler::RecompileResult Dispatch(AgcDriver::VulkanDevice& device, Program& program, const TestGuest::Vector<std::uint32_t>& userData, std::uint32_t groups) {
     const std::span<const std::uint32_t> code(program.words);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
@@ -246,8 +246,8 @@ ShaderRecompiler::RecompileResult Dispatch(AgcDriver::VulkanDevice& device, Prog
     return result;
 }
 
-std::vector<std::uint32_t> UserData(const std::array<std::uint32_t, 4>& resource, const std::array<std::uint32_t, 4>& output) {
-    std::vector<std::uint32_t> userData;
+TestGuest::Vector<std::uint32_t> UserData(const std::array<std::uint32_t, 4>& resource, const std::array<std::uint32_t, 4>& output) {
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {resource, output, BufferDescriptor(Params.data(), decltype(Params)::ByteSize, Raw), BufferDescriptor(Descriptors.data(), decltype(Descriptors)::ByteSize, Raw)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }

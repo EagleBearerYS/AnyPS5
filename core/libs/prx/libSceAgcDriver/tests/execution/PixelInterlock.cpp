@@ -110,7 +110,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::span<con
     const auto target = device.Target();
     const auto& triangles = Triangles();
 
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(triangles.data(), 16u, static_cast<std::uint32_t>(triangles.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -167,8 +167,8 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::span<con
     device.WaitIdle();
 }
 
-std::vector<std::uint32_t> CounterUserData() {
-    std::vector<std::uint32_t> userData(4, 0u);
+TestGuest::Vector<std::uint32_t> CounterUserData() {
+    TestGuest::Vector<std::uint32_t> userData(4, 0u);
     const auto counters = BufferDescriptor(Counters.data(), 0u, static_cast<std::uint32_t>(decltype(Counters)::ByteSize));
     std::copy(counters.begin(), counters.end(), userData.begin());
     return userData;

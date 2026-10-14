@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -176,7 +177,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool wait = true) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const TestGuest::Vector<std::uint32_t>& userData, bool wait = true) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -213,9 +214,9 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::memset(copied, 0xaa, KeyBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
-    std::vector<std::uint32_t> writeData(16, 0u);
+    TestGuest::Vector<std::uint32_t> writeData(16, 0u);
     std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
-    std::vector<std::uint32_t> copyData(16, 0u);
+    TestGuest::Vector<std::uint32_t> copyData(16, 0u);
     const auto source = BufferDescriptor(keys, KeyBytes);
     const auto destination = BufferDescriptor(copied, KeyBytes);
     std::copy(source.begin(), source.end(), copyData.begin());
@@ -254,7 +255,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
         Require(StorageTexture::NoteKeysFill(AddressOf(keys), KeyBytes, key) == 1, "the key fill did not cover the surface");
         if (!device.FillBuffer(AddressOf(keys), KeyBytes, pattern)) {
             device.WaitIdle();
-            const std::vector<std::byte> filled(KeyBytes, std::byte{key});
+            const TestGuest::Vector<std::byte> filled(KeyBytes, std::byte{key});
             AgcDriver::GuestMemory::Write(AddressOf(keys), filled);
         }
         AgcDriver::Graphics::NoteKeysFillOnGpu(AddressOf(keys), KeyBytes, code);
@@ -269,7 +270,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     fillKeys(0x00, DccKeys::Clear0000);
     RequireKeys(keys, 0x00, "the keys of a fill recorded right after a first write, after its write-back");
     Dispatch(device, WriteCode, writeData);
-    std::vector<std::uint32_t> clearData(16, 0u);
+    TestGuest::Vector<std::uint32_t> clearData(16, 0u);
     std::copy(source.begin(), source.end(), clearData.begin());
     Dispatch(device, ClearKeysCode, clearData, false);
     Dispatch(device, WriteRowCode, writeData);
@@ -293,7 +294,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
         Require(read == expected && waited == wait, text);
         device.WaitIdle();
     };
-    std::vector<std::uint32_t> clearTailData(16, 0u);
+    TestGuest::Vector<std::uint32_t> clearTailData(16, 0u);
     const auto tail = BufferDescriptor(keys + KeyBytes / 2, KeyBytes / 2);
     std::copy(tail.begin(), tail.end(), clearTailData.begin());
     fillKeys(0x00, DccKeys::Clear0000);
@@ -375,7 +376,7 @@ void RunReusedKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::memset(keys, 0x00, KeyBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
-    std::vector<std::uint32_t> writeData(16, 0u);
+    TestGuest::Vector<std::uint32_t> writeData(16, 0u);
     std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     Dispatch(device, WriteCode, writeData);
@@ -393,13 +394,13 @@ void RunSingleKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     auto* texels = block;
     auto* keys = block + KeysOffset;
     const auto surface = AddressOf(texels);
-    std::vector<std::uint32_t> original(SurfaceBytes / 4);
+    TestGuest::Vector<std::uint32_t> original(SurfaceBytes / 4);
     for (std::size_t index = 0; index < original.size(); ++index) original[index] = 0x01000000u + static_cast<std::uint32_t>(index);
     std::memcpy(texels, original.data(), SurfaceBytes);
     std::memset(keys, 0x10, KeyBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
-    std::vector<std::uint32_t> writeData(16, 0u);
+    TestGuest::Vector<std::uint32_t> writeData(16, 0u);
     std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     Dispatch(device, WriteCode, writeData);
@@ -436,7 +437,7 @@ void RunSingleKeysSampled(AgcDriver::VulkanDevice& device, std::uint8_t* block, 
     std::memset(keys, 0x10, KeyBytes);
     const auto texture = TextureDescriptor(texels, keys);
     const auto results = BufferDescriptor(output, Threads * 16u);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     std::copy(results.begin(), results.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(PointSampler.begin(), PointSampler.end(), userData.begin() + 12);
@@ -478,10 +479,10 @@ void RunSingleKeysOverPendingImage(AgcDriver::VulkanDevice& device, std::uint8_t
     std::memset(keys, 0xff, KeyBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
-    std::vector<std::uint32_t> writeData(16, 0u);
+    TestGuest::Vector<std::uint32_t> writeData(16, 0u);
     std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
     const auto results = BufferDescriptor(output, Threads * 16u);
-    std::vector<std::uint32_t> sampleData(24, 0u);
+    TestGuest::Vector<std::uint32_t> sampleData(24, 0u);
     std::copy(results.begin(), results.end(), sampleData.begin());
     std::copy(texture.begin(), texture.end(), sampleData.begin() + 4);
     std::copy(PointSampler.begin(), PointSampler.end(), sampleData.begin() + 12);
@@ -514,10 +515,10 @@ void RunSampledKeysBehindKernel(AgcDriver::VulkanDevice& device, std::uint8_t* b
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
     const auto resource = AgcDriver::Graphics::DecodeTextureResource(texture);
-    std::vector<std::uint32_t> clearData(16, 0u);
+    TestGuest::Vector<std::uint32_t> clearData(16, 0u);
     const auto head = BufferDescriptor(keys, KeyBytes / 2);
     std::copy(head.begin(), head.end(), clearData.begin());
-    std::vector<std::uint32_t> clearTailData(16, 0u);
+    TestGuest::Vector<std::uint32_t> clearTailData(16, 0u);
     const auto tail = BufferDescriptor(keys + KeyBytes / 2, KeyBytes / 2);
     std::copy(tail.begin(), tail.end(), clearTailData.begin());
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -540,10 +541,10 @@ void RunUniformKeysBehindKernel(AgcDriver::VulkanDevice& device, std::uint8_t* b
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
     const auto resource = AgcDriver::Graphics::DecodeTextureResource(texture);
-    std::vector<std::uint32_t> clearData(16, 0u);
+    TestGuest::Vector<std::uint32_t> clearData(16, 0u);
     const auto head = BufferDescriptor(keys, KeyBytes / 2);
     std::copy(head.begin(), head.end(), clearData.begin());
-    std::vector<std::uint32_t> clearTailData(16, 0u);
+    TestGuest::Vector<std::uint32_t> clearTailData(16, 0u);
     const auto tail = BufferDescriptor(keys + KeyBytes / 2, KeyBytes / 2);
     std::copy(tail.begin(), tail.end(), clearTailData.begin());
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -565,7 +566,7 @@ void RunUntrackedReuse(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     descriptor[2] = ((Side - 1u) >> 2u) | ((2 * Side - 1u) << 14u);
     descriptor[6] = 0;
     descriptor[7] = 0;
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     Dispatch(device, WriteCode, userData);
@@ -620,7 +621,7 @@ void RunImportWindow(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::memset(keys, 0x00, KeyBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
-    std::vector<std::uint32_t> writeData(16, 0u);
+    TestGuest::Vector<std::uint32_t> writeData(16, 0u);
     std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     Dispatch(device, WriteCode, writeData);

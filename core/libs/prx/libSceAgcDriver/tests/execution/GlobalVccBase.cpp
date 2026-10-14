@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -83,13 +84,13 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-std::vector<std::uint32_t> Initial() {
-    std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
+TestGuest::Vector<std::uint32_t> Initial() {
+    TestGuest::Vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
     for (std::uint32_t dword = 0; dword < InputDwords; ++dword) memory[dword] = 0x51000000u + dword * 0x00010203u;
     return memory;
 }
 
-std::vector<std::uint32_t> ExpectedBase() {
+TestGuest::Vector<std::uint32_t> ExpectedBase() {
     const auto initial = Initial();
     auto memory = initial;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -102,7 +103,7 @@ std::vector<std::uint32_t> ExpectedBase() {
     return memory;
 }
 
-std::vector<std::uint32_t> ExpectedAddtid(std::uint32_t waveSize) {
+TestGuest::Vector<std::uint32_t> ExpectedAddtid(std::uint32_t waveSize) {
     const auto initial = Initial();
     auto memory = initial;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -126,11 +127,11 @@ ShaderRecompiler::RecompileResult Recompile(std::span<const std::uint32_t> code,
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::vector<std::uint32_t>& expected, const std::string& name) {
+void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const TestGuest::Vector<std::uint32_t>& expected, const std::string& name) {
     auto memory = Initial();
     std::memcpy(guest.Data(), memory.data(), BlockBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    std::vector<std::uint32_t> userData(2, 0u);
+    TestGuest::Vector<std::uint32_t> userData(2, 0u);
     userData[0] = static_cast<std::uint32_t>(address);
     userData[1] = static_cast<std::uint32_t>(address >> 32u);
     const auto result = Recompile(code, waveSize, userData, target);
@@ -143,7 +144,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std
 }
 
 void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& reason) {
-    const std::vector<std::uint32_t> userData(2, 0u);
+    const TestGuest::Vector<std::uint32_t> userData(2, 0u);
     std::string failure;
     try {
         static_cast<void>(Recompile(code, 32, userData, device.Target()));

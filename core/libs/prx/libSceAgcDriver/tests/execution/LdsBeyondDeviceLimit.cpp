@@ -72,7 +72,7 @@ std::string Hex(std::uint32_t value) {
 std::uint64_t WorkgroupBytes(std::span<const std::uint32_t> words) {
     std::unordered_map<std::uint32_t, std::span<const std::uint32_t>> types;
     std::unordered_map<std::uint32_t, std::uint32_t> constants;
-    std::vector<std::uint32_t> pointers;
+    TestGuest::Vector<std::uint32_t> pointers;
     for (std::size_t at = 5; at < words.size();) {
         const auto count = words[at] >> 16u;
         Require(count != 0u && at + count <= words.size(), "lds beyond the device limit: malformed SPIR-V at word " + std::to_string(at));
@@ -117,7 +117,7 @@ std::uint64_t WorkgroupBytes(std::span<const std::uint32_t> words) {
 }
 
 ShaderRecompiler::RecompileResult Compile(std::uint32_t waveSize, std::uint32_t ldsBytes, const ShaderRecompiler::SpirvTarget& target) {
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
@@ -178,8 +178,8 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRe
     }
     for (std::uint32_t group = 0; group < MaxGroups; ++group) {
         const std::string where = "lds beyond the device limit " + run + ", group " + std::to_string(group);
-        std::vector<std::uint32_t> counter32;
-        std::vector<std::uint32_t> counter64;
+        TestGuest::Vector<std::uint32_t> counter32;
+        TestGuest::Vector<std::uint32_t> counter64;
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
             const auto* lane = &Output[(group * Threads + tid) * Results];
             if (!dispatched[group]) {

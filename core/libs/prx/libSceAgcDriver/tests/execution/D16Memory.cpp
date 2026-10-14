@@ -48,7 +48,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
 void Run(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t i = 0; i < Input.size(); ++i) Input[i] = static_cast<std::uint8_t>(i * 37u + 0x81u);
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());

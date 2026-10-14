@@ -126,7 +126,7 @@ ShaderRecompiler::ShaderPixelStageInfo PixelStage(std::uint32_t waveSize, std::u
 }
 
 ShaderRecompiler::RecompileResult RecompilePixel(std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t input0, const ShaderRecompiler::SpirvTarget& target, std::uint32_t pushOffset) {
-    std::vector<std::uint32_t> pixelUserData(8, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const auto results = BufferDescriptor(Results.data(), ResultDwords * 4u, Width * Height);
     std::copy(results.begin(), results.end(), pixelUserData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
@@ -147,7 +147,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     Pixels.fill(std::byte{0});
     Results.fill(Sentinel);
 
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(triangles.data(), sizeof(Vertex), static_cast<std::uint32_t>(triangles.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};

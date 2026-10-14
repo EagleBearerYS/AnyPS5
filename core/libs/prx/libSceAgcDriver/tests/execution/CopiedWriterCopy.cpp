@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -79,7 +80,7 @@ private:
 };
 
 void RecordDispatch(AgcDriver::VulkanDevice& device, const GuestBlock& input, const GuestBlock& output) {
-    std::vector<std::uint32_t> userData(10, 0u);
+    TestGuest::Vector<std::uint32_t> userData(10, 0u);
     const auto address = output.Address();
     const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), OutputBytes, 0x31016facu};
     std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4);

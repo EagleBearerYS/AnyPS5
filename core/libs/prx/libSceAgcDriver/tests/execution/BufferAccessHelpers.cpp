@@ -221,7 +221,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, Program& program, c
     const auto* view = data + c.view;
     const auto input = BufferDescriptor(view, c.records, c.word3);
     Descriptor = input;
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {c.gpu ? std::array<std::uint32_t, 4>{} : input, BufferDescriptor(Output.data(), decltype(Output)::ByteSize, Raw), BufferDescriptor(Params.data(), decltype(Params)::ByteSize, Raw), BufferDescriptor(Descriptor.data(), decltype(Descriptor)::ByteSize, Raw)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }

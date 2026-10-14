@@ -128,7 +128,7 @@ std::string Hex(std::uint32_t value) {
 
 void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint8_t* base) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
-    std::vector<std::uint32_t> userData(10, 0u);
+    TestGuest::Vector<std::uint32_t> userData(10, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     userData[8] = static_cast<std::uint32_t>(address);

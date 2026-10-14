@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -53,7 +54,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint64_t address) {
 
 std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint64_t base, std::uint32_t surface) {
     const auto address = base + surface * Stride;
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(address);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(StoreCode);
@@ -86,7 +87,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto budget = TestBudget;
-        std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
+        TestGuest::Vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
         for (std::uint32_t surface = 0; surface < MaxSurfaces; ++surface) texels[surface * Stride / 4u] = Marker(surface);
         const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));

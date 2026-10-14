@@ -56,7 +56,7 @@ std::array<std::uint32_t, 4> OutputDescriptor() {
 void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     Pixels.fill(std::byte{0x40});
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(12, 0u);
+    TestGuest::Vector<std::uint32_t> userData(12, 0u);
     userData[0] = 0x10000000u;
     userData[1] = 0x00000001u;
     const auto output = OutputDescriptor();
@@ -90,7 +90,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    const std::vector<std::uint32_t> pixelUserData(8, 0u);
+    const TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},

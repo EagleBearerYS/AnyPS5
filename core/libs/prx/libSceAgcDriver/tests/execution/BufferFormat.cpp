@@ -141,7 +141,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     Scratch.fill(0xaaaaaaaau);
-    std::vector<std::uint32_t> userData(8u + 4u * FormattedWord3.size(), 0u);
+    TestGuest::Vector<std::uint32_t> userData(8u + 4u * FormattedWord3.size(), 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u), 0x31016facu);
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     for (std::size_t index = 0; index < FormattedWord3.size(); ++index) {

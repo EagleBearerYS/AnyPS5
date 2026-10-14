@@ -129,7 +129,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint64_t mask) {
     for (std::uint32_t lane = 0; lane < Threads; ++lane) Input[lane] = ((mask >> lane) & 1u) != 0u ? 1u : 0u;
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
@@ -162,7 +162,7 @@ void Check(const char* variant, const Case& testCase) {
 }
 
 void CheckWave32Throws(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{32, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{

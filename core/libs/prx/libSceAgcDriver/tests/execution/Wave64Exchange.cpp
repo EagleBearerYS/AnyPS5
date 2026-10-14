@@ -49,7 +49,7 @@ public:
     std::size_t Here() const { return code.size(); }
     void BranchTo(std::uint32_t op, std::size_t target) { Sopp(op, static_cast<std::uint32_t>(static_cast<std::int32_t>(target) - static_cast<std::int32_t>(code.size()) - 1)); }
 
-    std::vector<std::uint32_t> code;
+    TestGuest::Vector<std::uint32_t> code;
 };
 
 constexpr std::uint32_t SMovB32 = 0x03, SMovB64 = 0x04, SBcnt1B64 = 0x10, SAndSaveexecB64 = 0x24;
@@ -82,7 +82,7 @@ void SkipRegion(Assembler& a, std::uint32_t compare, std::uint32_t bound, std::u
     a.Sop1(SMovB64, Exec, 18);
 }
 
-std::vector<std::uint32_t> Program() {
+TestGuest::Vector<std::uint32_t> Program() {
     Assembler a;
     a.Vop2(VShl, 1, Int(7), 0);
     a.Vop2(VAnd, 0, Int(63), 0);
@@ -164,7 +164,7 @@ constexpr std::array<const char*, Results> Names{"bcnt1 of a ballot", "ballot lo
 
 std::uint32_t Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t threads) {
     Output.fill(Untouched);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto address = reinterpret_cast<std::uintptr_t>(Output.data());
     userData[4] = static_cast<std::uint32_t>(address);
     userData[5] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu);

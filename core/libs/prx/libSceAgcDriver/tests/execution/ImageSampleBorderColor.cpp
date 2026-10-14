@@ -59,7 +59,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t borderType, std::uint32_t filters) {
     Output.fill(0xdeadbeefu);
     Texels.fill(0u);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto outputAddress = reinterpret_cast<std::uintptr_t>(Output.data());
     const std::array<std::uint32_t, 4> output{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), static_cast<std::uint32_t>(Output.size() * 4u), 0x31016facu};
     const auto texture = TextureDescriptor(format);

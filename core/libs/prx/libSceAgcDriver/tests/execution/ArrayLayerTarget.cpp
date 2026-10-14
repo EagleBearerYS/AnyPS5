@@ -132,7 +132,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const TestGuest::Vector<std::uint32_t>& userData) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -151,7 +151,7 @@ void LoadLayer(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     Output.fill(0xdeadbeefu);
     auto& code = LoadCodes[layer];
     code = {0x7e020280, 0x7e040280u | layer, 0xf0001128, 0x00010300, 0x34080082, 0xbf8c3f70, 0xe0701000, 0x80000304, 0xbf810000};
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto texture = ArrayDescriptor(surface, swizzleMode);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
@@ -194,7 +194,7 @@ void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     PixelCode[at++] = 0x07060504u;
     PixelCode[at++] = 0xbf810000u;
     const std::span<const std::uint32_t> pixelCode(PixelCode.data(), at);
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto address = reinterpret_cast<std::uintptr_t>(Triangle.data());
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());

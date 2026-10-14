@@ -37,8 +37,8 @@ std::array<std::uint32_t, 8> UserData(const void* first, const void* second) {
         static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Output)::ByteSize), 0x31016facu};
 }
 
-std::vector<std::uint32_t> Commands(const std::array<std::uint32_t, 8>& data, bool wave32) {
-    std::vector<std::uint32_t> words;
+TestGuest::Vector<std::uint32_t> Commands(const std::array<std::uint32_t, 8>& data, bool wave32) {
+    TestGuest::Vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
         words.push_back(first);

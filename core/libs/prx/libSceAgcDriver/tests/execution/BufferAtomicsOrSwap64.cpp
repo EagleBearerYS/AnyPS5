@@ -247,7 +247,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     Input.fill(0u);
     for (std::uint32_t tid = 0; tid < waveSize; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), waveSize * Inputs * 4u);
     const auto output = BufferDescriptor(Output.data(), waveSize * Results * 4u);
     std::copy(input.begin(), input.end(), userData.begin());

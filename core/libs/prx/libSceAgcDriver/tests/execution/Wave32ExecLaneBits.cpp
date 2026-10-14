@@ -66,7 +66,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Output.fill(0xdeadbeefu);
-        std::vector<std::uint32_t> userData(4, 0u);
+        TestGuest::Vector<std::uint32_t> userData(4, 0u);
         const auto buffer = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
         std::copy(buffer.begin(), buffer.end(), userData.begin());
         const std::span<const std::uint32_t> code(Code);

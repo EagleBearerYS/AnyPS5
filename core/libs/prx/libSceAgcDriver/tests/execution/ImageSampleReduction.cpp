@@ -162,7 +162,7 @@ float Expected(std::uint32_t tid, const Sampler& sampler) {
     const float u = Input[tid * 3u + 0u];
     const float v = Input[tid * 3u + 1u];
     const float lod = Input[tid * 3u + 2u];
-    std::vector<float> footprint;
+    TestGuest::Vector<float> footprint;
     const auto gather = [&](std::uint32_t level) {
         const float size = static_cast<float>(Size >> level);
         if (sampler.filter == FilterPoint) {
@@ -186,7 +186,7 @@ std::array<float, 4> ExpectedGather(std::uint32_t tid) {
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code) {
-    std::vector<std::uint32_t> userData(28, 0u);
+    TestGuest::Vector<std::uint32_t> userData(28, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(format);

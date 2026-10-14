@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -36,7 +37,7 @@ alignas(256) std::array<std::array<std::uint32_t, 64>, 4> Programs{};
 
 std::span<const std::uint32_t> Code(bool coherent, bool barrier) {
     auto& program = Programs[(coherent ? 2u : 0u) + (barrier ? 1u : 0u)];
-    std::vector<std::uint32_t> code{0x34040084, 0x4a0404ff, LoadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff, OutputBase, 0xdc388ff8 | (coherent ? 0x10000u : 0u), 0x04000002, 0xbf8c3f70};
+    TestGuest::Vector<std::uint32_t> code{0x34040084, 0x4a0404ff, LoadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff, OutputBase, 0xdc388ff8 | (coherent ? 0x10000u : 0u), 0x04000002, 0xbf8c3f70};
     if (barrier) code.push_back(0xbf8a0000);
     code.insert(code.end(), {0xdc708000, 0x00000503, 0xdc708004, 0x00000703, 0xbf810000});
     std::copy(code.begin(), code.end(), program.begin());
@@ -79,13 +80,13 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-std::vector<std::uint32_t> Initial() {
-    std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
+TestGuest::Vector<std::uint32_t> Initial() {
+    TestGuest::Vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
     for (std::uint32_t dword = 0; dword < InputDwords; ++dword) memory[dword] = 0x52000000u + dword * 0x00010203u;
     return memory;
 }
 
-std::uint32_t Bytes(const std::vector<std::uint32_t>& memory, std::uint32_t address) {
+std::uint32_t Bytes(const TestGuest::Vector<std::uint32_t>& memory, std::uint32_t address) {
     std::uint32_t value = 0;
     for (std::uint32_t byte = 0; byte < 4u; ++byte) {
         const std::uint32_t at = address + byte;
@@ -94,7 +95,7 @@ std::uint32_t Bytes(const std::vector<std::uint32_t>& memory, std::uint32_t addr
     return value;
 }
 
-std::vector<std::uint32_t> Expected() {
+TestGuest::Vector<std::uint32_t> Expected() {
     const auto initial = Initial();
     auto memory = initial;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -123,7 +124,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, bool coherent, bool
     auto memory = Initial();
     std::memcpy(guest.Data(), memory.data(), BlockBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const TestGuest::Vector<std::uint32_t> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
     const auto result = Recompile(code, waveSize, userData, target);
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();

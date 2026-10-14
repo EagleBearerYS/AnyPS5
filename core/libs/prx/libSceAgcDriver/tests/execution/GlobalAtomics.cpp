@@ -310,7 +310,7 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-void Put(std::vector<std::uint8_t>& image, std::uint32_t offset, std::uint64_t value, std::uint32_t bytes) {
+void Put(TestGuest::Vector<std::uint8_t>& image, std::uint32_t offset, std::uint64_t value, std::uint32_t bytes) {
     for (std::uint32_t byte = 0; byte < bytes; ++byte) image.at(offset + byte) = static_cast<std::uint8_t>(value >> (byte * 8u));
 }
 
@@ -333,8 +333,8 @@ std::uint32_t OpBytes(std::uint32_t op) {
     return op < NarrowOps ? 4u : 8u;
 }
 
-std::vector<std::uint8_t> Initial() {
-    std::vector<std::uint8_t> image(BlockBytes, Fill);
+TestGuest::Vector<std::uint8_t> Initial() {
+    TestGuest::Vector<std::uint8_t> image(BlockBytes, Fill);
     for (std::uint32_t op = 0; op < OpCount; ++op) {
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
             Put(image, op * OpStride + tid * 8u, RowOf(op, tid).memory, OpBytes(op));
@@ -343,7 +343,7 @@ std::vector<std::uint8_t> Initial() {
     return image;
 }
 
-std::vector<std::uint8_t> Expected() {
+TestGuest::Vector<std::uint8_t> Expected() {
     auto image = Initial();
     for (std::uint32_t op = 0; op < OpCount; ++op) {
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -375,7 +375,7 @@ void FillInput() {
 
 void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std::uint8_t* base) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
-    std::vector<std::uint32_t> userData(10, 0u);
+    TestGuest::Vector<std::uint32_t> userData(10, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());

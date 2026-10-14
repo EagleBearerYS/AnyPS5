@@ -26,8 +26,8 @@ TestGuest::Array<std::uint32_t, Capacity * 4u> Output;
 
 std::uint32_t Bits(float value) { return std::bit_cast<std::uint32_t>(value); }
 
-std::vector<std::uint32_t> Inputs() {
-    std::vector<std::uint32_t> inputs{
+TestGuest::Vector<std::uint32_t> Inputs() {
+    TestGuest::Vector<std::uint32_t> inputs{
         0x00000000u, 0x80000000u, 0x00000001u, 0x807fffffu, 0x00800000u, 0x3f000000u, 0xbf000000u, 0x3f7fffffu,
         0xbf7fffffu, 0x3f800000u, 0xbf800000u, 0x3f800001u, 0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u,
         0x7f800001u, 0x437f0000u, 0x437f8000u, 0x43800000u, 0x7f7fffffu, 0x37800000u, 0x377fffffu, 0x38000000u,
@@ -89,12 +89,12 @@ int main() {
         const auto inputs = Inputs();
         std::copy(inputs.begin(), inputs.end(), Input.begin());
         Output.fill(0xdeadbeefu);
-        const std::vector<std::uint32_t> code{
+        const TestGuest::Vector<std::uint32_t> code{
             0x34020082u, 0x8f098708u, 0x4a020209u, 0xe0301000u, 0x80000401u, 0x34060282u, 0xbf8c3f70u,
             0xd7690005u, 0x00020904u, 0xd7680006u, 0x00020904u, 0xd55e0007u, 0x02010104u,
             0xe0781000u, 0x80010503u, 0xbf810000u,
         };
-        std::vector<std::uint32_t> userData(8, 0u);
+        TestGuest::Vector<std::uint32_t> userData(8, 0u);
         const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
         const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
         std::copy(input.begin(), input.end(), userData.begin());

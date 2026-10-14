@@ -242,7 +242,7 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, bool addressI
     const auto address = guest.Address();
     FillInput(addressInPointer ? address >> 3u : 0u);
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto narrow = BvhDescriptor(address, LastNode);

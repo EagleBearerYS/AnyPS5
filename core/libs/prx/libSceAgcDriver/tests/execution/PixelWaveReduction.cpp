@@ -39,7 +39,7 @@ std::uint32_t Key(std::uint32_t pixel) {
     return (pixel * 0x9e3779b1u) >> 22u;
 }
 
-std::vector<std::uint32_t> PixelCode(const Reduction& reduction) {
+TestGuest::Vector<std::uint32_t> PixelCode(const Reduction& reduction) {
     const std::uint32_t dpp = reduction.vector | 0x001a1afau;
     return {
         0x7e040f00, 0x7e060f01, 0xd5430006, 0x0409ff03, 0x000000c0, 0x7e120506, 0xd569000b, 0x0001ff06,
@@ -78,7 +78,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     Pixels.fill(std::byte{0});
     Results.fill(Sentinel);
 
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(triangles.data(), 16u, static_cast<std::uint32_t>(triangles.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -98,7 +98,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(8, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const auto results = BufferDescriptor(Results.data(), 4u, static_cast<std::uint32_t>(Results.size()));
     std::copy(results.begin(), results.end(), pixelUserData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
@@ -137,7 +137,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
 
 std::uint32_t Check(const Reduction& reduction, std::uint32_t subgroupSize) {
     const auto what = std::string("pixel wave reduction ") + reduction.name;
-    std::map<std::uint32_t, std::vector<std::uint32_t>> waves;
+    std::map<std::uint32_t, TestGuest::Vector<std::uint32_t>> waves;
     for (std::uint32_t pixel = 0; pixel < Results.size(); ++pixel) {
         if (std::to_integer<std::uint8_t>(Pixels[pixel * 4u]) != 255u) {
             Require(Results[pixel] == Sentinel, what + ": uncovered pixel " + std::to_string(pixel) + " stored " + std::to_string(Results[pixel]));

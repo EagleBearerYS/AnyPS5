@@ -127,7 +127,7 @@ std::int32_t LevelHeight(std::uint32_t level) {
 std::vector<Coordinate> Coordinates(std::uint32_t level) {
     const auto width = LevelWidth(level);
     const auto height = LevelHeight(level);
-    std::vector<float> us;
+    TestGuest::Vector<float> us;
     for (std::int32_t k = 0; k < width; ++k) {
         for (const float fraction : {0.5f, 0.0f, 0.25f, 0.75f}) us.push_back(static_cast<float>(k) + fraction);
     }
@@ -218,7 +218,7 @@ Samples Run(AgcDriver::VulkanDevice& device, const Program& program, const std::
             Buffer[lane * Words + 1u] = std::bit_cast<std::uint32_t>(coordinate.v);
             Buffer[lane * Words + 2u] = 0xffffc0c0u | (static_cast<std::uint32_t>(coordinate.du) & 0x3fu) | ((static_cast<std::uint32_t>(coordinate.dv) & 0x3fu) << 8u);
         }
-        std::vector<std::uint32_t> userData(16, 0u);
+        TestGuest::Vector<std::uint32_t> userData(16, 0u);
         const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
         std::copy(buffer.begin(), buffer.end(), userData.begin());
         std::copy(texture.begin(), texture.end(), userData.begin() + 4);

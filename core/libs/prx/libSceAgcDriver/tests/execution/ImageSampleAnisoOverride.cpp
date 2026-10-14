@@ -113,7 +113,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t
 
 std::optional<std::string> Run(AgcDriver::VulkanDevice& device, Levelled first, Levelled second, std::uint32_t samplerFlags) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto integers = TextureDescriptor(first.maxMip == 0 ? SingleIntegers.data() : MipIntegers.data(), Format32SInt, SwizzleX111, first);
     const auto colors = TextureDescriptor(second.maxMip == 0 ? SingleColors.data() : MipColors.data(), Format8888UNorm, IdentitySwizzle, second);

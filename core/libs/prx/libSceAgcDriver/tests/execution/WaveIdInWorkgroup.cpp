@@ -47,7 +47,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
     Output.fill(Untouched);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
-    const std::vector<std::uint32_t> userData(output.begin(), output.end());
+    const TestGuest::Vector<std::uint32_t> userData(output.begin(), output.end());
     const std::span<const std::uint32_t> code(WaveIdCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{workgroup.threads, 0, {false, false, false}, false, 3};
@@ -73,7 +73,7 @@ void Check(const Workgroup& workgroup) {
 
 void CheckRejectedOutsideCompute(const AgcDriver::VulkanDevice& device) {
     alignas(256) static constexpr std::array<std::uint32_t, 3> vertexCode{0xf4a80100, 0x00000000, 0xbf810000};
-    const std::vector<std::uint32_t> userData(8, 0u);
+    const TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const std::span<const std::uint32_t> code(vertexCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     ShaderRecompiler::RecompileRequest request{

@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -60,7 +61,7 @@ std::uint64_t GuestBytes(const std::uint32_t* texels, std::uint32_t maxMip) {
 }
 
 void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::uint32_t maxMip) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, maxMip);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
     const std::span<const std::uint32_t> code(StoreCode);
@@ -89,7 +90,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        std::vector<std::uint32_t> storage((BlockBytes + 0x10000u) / 4u);
+        TestGuest::Vector<std::uint32_t> storage((BlockBytes + 0x10000u) / 4u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + BlockBytes / 4u, Untouched);
         {

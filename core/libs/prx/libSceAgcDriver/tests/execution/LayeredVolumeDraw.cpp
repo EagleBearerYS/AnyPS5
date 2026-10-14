@@ -156,7 +156,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Vertices.size()), 0, 1, 0, false};
     ShaderRecompiler::ShaderVertexStageInfo vertexInfo{};
     vertexInfo.paClVsOutCntl = LayerExport;
-    std::vector<std::uint32_t> userData(mesh ? 12u : 4u, 0u);
+    TestGuest::Vector<std::uint32_t> userData(mesh ? 12u : 4u, 0u);
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), userData.begin() + (mesh ? 8 : 0));
     const std::span<const std::uint32_t> code = mesh ? std::span<const std::uint32_t>(GeometryCode) : std::span<const std::uint32_t>(VertexCode);
     const auto stage = mesh ? ShaderStage::Mesh : ShaderStage::Vertex;
@@ -180,7 +180,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
         pixel.ancillary = true;
         pixel.layerExported = true;
     }
-    const std::vector<std::uint32_t> pixelUserData(8, 0u);
+    const TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},

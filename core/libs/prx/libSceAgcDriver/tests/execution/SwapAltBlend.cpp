@@ -174,7 +174,7 @@ VkPipelineColorBlendAttachmentState Blend(VkBlendFactor source, VkBlendFactor de
 void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, const VkPipelineColorBlendAttachmentState& blend, std::span<const std::uint32_t> pixelCode, std::span<const std::uint32_t> vertexCode = VertexCode) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
-    std::vector<std::uint32_t> vertexUserData(8, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(8, 0u);
     const auto address = reinterpret_cast<std::uintptr_t>(Triangle.data());
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
@@ -227,8 +227,8 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     device.Draw(state, draw, shaders);
 }
 
-std::vector<std::uint8_t> Fill(Block& block, const ColorTargetLayout& layout) {
-    std::vector<std::uint8_t> bytes(block.bytes);
+TestGuest::Vector<std::uint8_t> Fill(Block& block, const ColorTargetLayout& layout) {
+    TestGuest::Vector<std::uint8_t> bytes(block.bytes);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             const auto& color = Destinations[(x + y) % Destinations.size()];
@@ -241,10 +241,10 @@ std::vector<std::uint8_t> Fill(Block& block, const ColorTargetLayout& layout) {
     return bytes;
 }
 
-void Check(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const std::vector<std::uint8_t>& before, const std::function<std::array<float, 2>(float first, float second)>& blended, const std::string& what) {
+void Check(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const TestGuest::Vector<std::uint8_t>& before, const std::function<std::array<float, 2>(float first, float second)>& blended, const std::string& what) {
     AgcDriver::Graphics::StorageTexture::FlushPending(block.Address(), block.bytes, nullptr, "test read-back");
     device.WaitIdle();
-    std::vector<std::uint8_t> stored(block.bytes);
+    TestGuest::Vector<std::uint8_t> stored(block.bytes);
     AgcDriver::GuestMemory::Read(block.Address(), std::as_writable_bytes(std::span(stored)), 1);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {

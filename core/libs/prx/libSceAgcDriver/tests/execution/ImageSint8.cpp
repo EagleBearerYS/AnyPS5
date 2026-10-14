@@ -105,7 +105,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t format, const std::array<std::uint32_t, 4>& sampler, std::uint32_t groups) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto texture = TextureDescriptor(Texture.data(), format, Width, Height, SwizzleX111);
     std::copy(output.begin(), output.end(), userData.begin());
@@ -198,7 +198,7 @@ void CheckTable(AgcDriver::VulkanDevice& device) {
     std::copy(materials.begin(), materials.end(), Tables.srt.begin() + 8);
     std::copy(output.begin(), output.end(), Tables.srt.begin() + 12);
     const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Tables.srt.data()));
-    const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const TestGuest::Vector<std::uint32_t> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     const std::span<const std::uint32_t> code(TableCode);
     const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{
         {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},

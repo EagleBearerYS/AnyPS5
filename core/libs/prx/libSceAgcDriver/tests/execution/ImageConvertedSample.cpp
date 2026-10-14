@@ -198,7 +198,7 @@ std::array<std::uint32_t, 4> SamplerDescriptor(std::uint32_t clamp, std::uint32_
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture, const std::array<std::uint32_t, 4>& sampler, std::uint32_t samples) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     std::copy(output.begin(), output.end(), userData.begin());
@@ -601,7 +601,7 @@ void CheckLevelZeroVariants(AgcDriver::VulkanDevice& device, const Surface& surf
 void DrawLod(AgcDriver::VulkanDevice& device, const Surface& surface, float scale) {
     const auto& target = device.Target();
     LodPixels.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexAddress = reinterpret_cast<std::uintptr_t>(Triangle.data());
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(vertexAddress), static_cast<std::uint32_t>((vertexAddress >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
@@ -622,7 +622,7 @@ void DrawLod(AgcDriver::VulkanDevice& device, const Surface& surface, float scal
     pixel.posY = true;
     pixel.targetOutputMode[0] = Float32AbgrExport;
     pixel.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(17, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(17, 0u);
     const auto texture = surface.Descriptor(SwizzleXYZ1);
     const auto sampler = SamplerDescriptor(ClampEdge, Bilinear);
     std::copy(texture.begin(), texture.end(), pixelUserData.begin() + 4);

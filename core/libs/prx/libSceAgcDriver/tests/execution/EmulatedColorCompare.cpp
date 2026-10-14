@@ -219,7 +219,7 @@ float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, bool useCache = false, bool nativeSampleOffsets = true, bool cube = false) {
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto input = cube ? BufferDescriptor(CubeInput.data(), static_cast<std::uint32_t>(decltype(CubeInput)::ByteSize)) : BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(format, cube);

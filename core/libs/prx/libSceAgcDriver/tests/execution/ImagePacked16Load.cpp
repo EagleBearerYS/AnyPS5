@@ -88,7 +88,7 @@ void Fill(const Packed& format) {
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto outputAddress = reinterpret_cast<std::uintptr_t>(Output.data());
     const std::array<std::uint32_t, 4> output{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), static_cast<std::uint32_t>(Output.size() * 4u), 0x31016facu};
     const auto texture = TextureDescriptor(format, swizzle);

@@ -91,7 +91,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     const auto& target = device.Target();
     Pixels.fill(std::byte{0});
 
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -112,7 +112,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(18, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(18, 0u);
     const auto texture = LineDescriptor();
     const auto sampler = SamplerDescriptor();
     std::copy(texture.begin(), texture.end(), pixelUserData.begin() + 4);

@@ -36,11 +36,11 @@ std::array<std::uint32_t, 4> Descriptor(const void* data, std::uint32_t bytes) {
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::vector<std::uint32_t> Commands() {
+TestGuest::Vector<std::uint32_t> Commands() {
     const auto source = Descriptor(Input.data(), decltype(Input)::ByteSize);
     const auto target = Descriptor(Output.data(), decltype(Output)::ByteSize);
     const std::array<std::uint32_t, 8> data{source[0], source[1], source[2], source[3], target[0], target[1], target[2], target[3]};
-    std::vector<std::uint32_t> words;
+    TestGuest::Vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
         words.push_back(first);

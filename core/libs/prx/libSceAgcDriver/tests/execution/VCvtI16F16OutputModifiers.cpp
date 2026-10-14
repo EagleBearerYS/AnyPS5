@@ -87,7 +87,7 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::ShaderFloatMod
     Input.fill(0u);
     for (std::uint32_t tid = 0; tid < RowCount; ++tid) Input[tid * Inputs] = Rows[tid];
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());

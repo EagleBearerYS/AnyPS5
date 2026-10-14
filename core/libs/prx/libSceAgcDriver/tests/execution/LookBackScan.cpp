@@ -45,7 +45,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t groups) {
     alignas(256) static std::array<std::uint32_t, ScanCode.size()> code{};
     code = ScanCode;
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(Counter.data(), decltype(Counter)::ByteSize), BufferDescriptor(Aggregates.data(), decltype(Aggregates)::ByteSize), BufferDescriptor(Pairs.data(), decltype(Pairs)::ByteSize), BufferDescriptor(Prefixes.data(), decltype(Prefixes)::ByteSize)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }

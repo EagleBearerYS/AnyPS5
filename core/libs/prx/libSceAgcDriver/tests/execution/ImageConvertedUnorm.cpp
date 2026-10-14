@@ -181,7 +181,7 @@ std::uint32_t StoreField(std::uint32_t bits, std::uint32_t maximum) {
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture, const std::array<std::uint32_t, 4>& extra, std::uint32_t groups, const std::array<std::uint32_t, 8>& target = {}) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(24, 0u);
+    TestGuest::Vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);

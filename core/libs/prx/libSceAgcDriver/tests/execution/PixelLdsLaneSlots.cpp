@@ -25,8 +25,8 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
-std::vector<std::uint32_t> PixelCode() {
-    std::vector<std::uint32_t> code{0x7e040f00, 0x7e060f01, 0xd5430006, 0x0409ff03, Width};
+TestGuest::Vector<std::uint32_t> PixelCode() {
+    TestGuest::Vector<std::uint32_t> code{0x7e040f00, 0x7e060f01, 0xd5430006, 0x0409ff03, Width};
     const auto vop2 = [&](std::uint32_t opcode, std::uint32_t destination, std::uint32_t source, std::uint32_t vector) {
         code.push_back(opcode | (destination << 17u) | (vector << 9u) | source);
     };
@@ -67,7 +67,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     Results.fill(Sentinel);
     const auto target = device.Target();
 
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(triangles.data(), 16u, static_cast<std::uint32_t>(triangles.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -88,7 +88,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(8, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(8, 0u);
     const auto results = BufferDescriptor(Results.data(), 16u, Width * Height);
     std::copy(results.begin(), results.end(), pixelUserData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(std::span(pixelCode))}}};

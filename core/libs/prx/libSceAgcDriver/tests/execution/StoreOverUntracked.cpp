@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
@@ -72,7 +73,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const std::uint32_t* texels) {
 }
 
 void Dispatch(std::span<const std::uint32_t> code, std::uint32_t threads, std::uint32_t resource, std::span<const std::uint32_t> userData, std::uint32_t groups) {
-    std::vector<std::uint32_t> words;
+    TestGuest::Vector<std::uint32_t> words;
     const auto registers = [&](const std::uint32_t first, const std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
         words.push_back(first);
@@ -161,7 +162,7 @@ public:
 
 private:
     bool watched;
-    std::vector<std::uint32_t> storage;
+    TestGuest::Vector<std::uint32_t> storage;
     std::uint32_t* texels = nullptr;
 };
 
@@ -279,7 +280,7 @@ Outcome Run(const Case& test) {
     AgcDriver::GuestMemory::Read(address + test.access, read);
     const auto lostAtAccess = LostBytes(bytes);
     StorageTexture::FlushAllPending("store over untracked fixture");
-    std::vector<std::byte> whole(SurfaceBytes);
+    TestGuest::Vector<std::byte> whole(SurfaceBytes);
     AgcDriver::GuestMemory::Read(address, whole);
     const auto lostAtEnd = LostBytes(bytes);
     if (test.kind == Kind::Filled || test.kind == Kind::Copied) Require(static_cast<const volatile std::uint32_t*>(surface.Texels())[2 * Block / 4u] == Filled, "store over untracked: the result did not reach a block the CPU left alone");

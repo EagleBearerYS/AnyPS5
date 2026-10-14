@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -31,7 +32,7 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
-using Words = std::vector<std::uint32_t>;
+using Words = TestGuest::Vector<std::uint32_t>;
 
 constexpr std::uint32_t SharedHigh = 0x80000000u;
 constexpr std::uint32_t PrivateHigh = 0x70000000u;
@@ -342,7 +343,7 @@ std::string Describe(const Row& row) {
     return access + " " + TargetNames[static_cast<std::size_t>(row.target)] + " offset " + std::to_string(row.offset) + " wave" + std::to_string(row.waveSize);
 }
 
-void Check(const Row& row, const std::vector<std::uint32_t>& output) {
+void Check(const Row& row, const TestGuest::Vector<std::uint32_t>& output) {
     const std::string name = Describe(row);
     for (std::uint32_t lane = 0; lane < row.waveSize; ++lane) {
         const auto a = OperandA(lane);
@@ -370,7 +371,7 @@ void Check(const Row& row, const std::vector<std::uint32_t>& output) {
     }
 }
 
-void Check64(const Row& row, const std::vector<std::uint32_t>& output) {
+void Check64(const Row& row, const TestGuest::Vector<std::uint32_t>& output) {
     const std::string name = Describe(row);
     for (std::uint32_t lane = 0; lane < row.waveSize; ++lane) {
         const auto old = Pack(output[lane * 8u + 1u], output[lane * 8u]);
@@ -382,7 +383,7 @@ void Check64(const Row& row, const std::vector<std::uint32_t>& output) {
     }
 }
 
-ShaderRecompiler::RecompileRequest MakeRequest(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<ShaderRecompiler::MemoryRegion, 1>& memory, std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::uint32_t waveSize) {
+ShaderRecompiler::RecompileRequest MakeRequest(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<ShaderRecompiler::MemoryRegion, 1>& memory, TestGuest::Vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::uint32_t waveSize) {
     return ShaderRecompiler::RecompileRequest{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
@@ -396,7 +397,7 @@ void Run(AgcDriver::VulkanDevice& device, const Row& row, const GuestBlock& gues
     const auto guestSlot = row.atomic ? GuestAtomicSlot : GuestStoreSlot;
     const auto guestBase = static_cast<std::uint64_t>(guest.Address()) + guestSlot;
     const bool wideAtomic = row.atomic && row.width == 64u;
-    std::vector<std::uint32_t> table(lanes * 8u, 0u);
+    TestGuest::Vector<std::uint32_t> table(lanes * 8u, 0u);
     for (std::uint32_t lane = 0; lane < lanes; ++lane) {
         const auto address = LaneAddress(row, lane, guestBase);
         table[lane * 8u] = static_cast<std::uint32_t>(address);
@@ -417,8 +418,8 @@ void Run(AgcDriver::VulkanDevice& device, const Row& row, const GuestBlock& gues
             table[lane * 8u + 4u] = row.atomic ? InitValue(lane) : 0u;
         }
     }
-    std::vector<std::uint32_t> output(lanes * 8u, 0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> output(lanes * 8u, 0xdeadbeefu);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto outputDescriptor = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size() * 4u));
     const auto tableDescriptor = BufferDescriptor(table.data(), static_cast<std::uint32_t>(table.size() * 4u));
     std::copy(outputDescriptor.begin(), outputDescriptor.end(), userData.begin());

@@ -39,7 +39,7 @@ alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0x7e000200u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
 TestGuest::Array<std::byte, 1024> ColorMemory;
 
-void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
+void Append(TestGuest::Vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
     commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u));
     commands.insert(commands.end(), payload);
 }
@@ -97,7 +97,7 @@ void Dispatch() {
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
     const std::array<std::uint32_t, 8> data{static_cast<std::uint32_t>(low), static_cast<std::uint32_t>(low >> 32u), static_cast<std::uint32_t>(high), static_cast<std::uint32_t>(high >> 32u),
         static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Output)::ByteSize), 0x31016facu};
-    std::vector<std::uint32_t> words;
+    TestGuest::Vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
         words.push_back(first);
@@ -148,7 +148,7 @@ void Draw() {
         {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 1u << 1u}, {0x8c, 0},
         {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 1u << 1u}, {0x00c, std::bit_cast<std::uint32_t>(1.0f)},
     };
-    std::vector<std::uint32_t> commands;
+    TestGuest::Vector<std::uint32_t> commands;
     Append(commands, 0x79, {0x242, 4});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});

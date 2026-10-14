@@ -58,9 +58,9 @@ constexpr std::uint32_t StoreByte = 0x18u;
 constexpr std::uint32_t StoreShort = 0x1au;
 constexpr std::uint32_t StoreDword = 0x1cu;
 
-std::vector<std::uint32_t> Program(std::uint32_t waveSize, bool vccScalar) {
+TestGuest::Vector<std::uint32_t> Program(std::uint32_t waveSize, bool vccScalar) {
     const bool wave64 = waveSize == 64u;
-    std::vector<std::uint32_t> code{
+    TestGuest::Vector<std::uint32_t> code{
         Vop2(AndB32, 0, 0xbfu, 0),
         Vop1Move(1, 0x80u + SharedSame), Vop1Move(2, Literal), 0x5au,
         StoreWord0(StoreByte), StoreWord1(2, 1),
@@ -89,7 +89,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
 
 std::uint32_t Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t threads) {
     Output.fill(Fill);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto output = BufferDescriptor(Output.data(), OutputBytes);
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};

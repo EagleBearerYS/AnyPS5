@@ -659,7 +659,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t cou
         Input[lane * Inputs + 2] = vector.c;
     }
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin());
@@ -686,7 +686,7 @@ void RunDirected(AgcDriver::VulkanDevice& device, std::uint32_t rounding, std::u
         std::copy(DirectedVectors[lane].inputs.begin(), DirectedVectors[lane].inputs.end(), Input.begin() + lane * Inputs);
     }
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin());
@@ -765,7 +765,7 @@ void RunLdexpDenormal(AgcDriver::VulkanDevice& device, std::uint32_t denorm16) {
         Input[lane * Inputs + 1] = LdexpDenormalVectors[lane].exponent;
     }
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin());

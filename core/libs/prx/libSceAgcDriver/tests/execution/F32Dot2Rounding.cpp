@@ -243,11 +243,11 @@ int main() {
             Input[index * 4u + 2u] = cases[index].c;
         }
         Output.fill(0xdeadbeefu);
-        const std::vector<std::uint32_t> code{
+        const TestGuest::Vector<std::uint32_t> code{
             0x34020084u, 0x8f098908u, 0x4a020209u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
             0xcc134008u, 0x1c1a0b04u, 0x2c060282u, 0xe0701000u, 0x80010803u, 0xbf810000u,
         };
-        std::vector<std::uint32_t> userData(8, 0u);
+        TestGuest::Vector<std::uint32_t> userData(8, 0u);
         const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
         const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
         std::copy(input.begin(), input.end(), userData.begin());

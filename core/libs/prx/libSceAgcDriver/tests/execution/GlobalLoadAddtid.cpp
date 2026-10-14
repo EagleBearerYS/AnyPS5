@@ -73,8 +73,8 @@ ShaderRecompiler::RecompileResult Recompile(const AgcDriver::VulkanDevice& devic
     return ShaderRecompiler::Recompile(request);
 }
 
-std::vector<std::uint32_t> UserData() {
-    std::vector<std::uint32_t> userData(8, 0u);
+TestGuest::Vector<std::uint32_t> UserData() {
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto table = BufferDescriptor(Table.data(), static_cast<std::uint32_t>(Table.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(table.begin(), table.end(), userData.begin());

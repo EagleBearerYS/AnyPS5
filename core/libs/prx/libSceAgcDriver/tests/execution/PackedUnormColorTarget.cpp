@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -177,7 +178,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
 void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto address = reinterpret_cast<std::uintptr_t>(Triangle.data());
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
@@ -244,15 +245,15 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     device.Draw(state, draw, shaders);
 }
 
-std::vector<std::uint32_t> ReadBack(AgcDriver::VulkanDevice& device, const Block& block) {
+TestGuest::Vector<std::uint32_t> ReadBack(AgcDriver::VulkanDevice& device, const Block& block) {
     AgcDriver::Graphics::StorageTexture::FlushPending(block.Address(), block.bytes, nullptr, "test read-back");
     device.WaitIdle();
-    std::vector<std::uint32_t> stored(block.bytes / 4u);
+    TestGuest::Vector<std::uint32_t> stored(block.bytes / 4u);
     AgcDriver::GuestMemory::Read(block.Address(), std::as_writable_bytes(std::span(stored)), 1);
     return stored;
 }
 
-void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const std::vector<std::uint32_t>& before, std::uint32_t word, const std::string& what) {
+void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const TestGuest::Vector<std::uint32_t>& before, std::uint32_t word, const std::string& what) {
     const auto stored = ReadBack(device, block);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
@@ -267,8 +268,8 @@ void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const Co
     }
 }
 
-std::vector<std::uint32_t> Fill(Block& block) {
-    std::vector<std::uint32_t> words(block.bytes / 4u);
+TestGuest::Vector<std::uint32_t> Fill(Block& block) {
+    TestGuest::Vector<std::uint32_t> words(block.bytes / 4u);
     for (std::size_t index = 0; index < words.size(); ++index) words[index] = static_cast<std::uint32_t>(index * 0x9e3779b9u);
     std::memcpy(block.data, words.data(), block.bytes);
     return words;

@@ -68,8 +68,8 @@ void SetRecord(std::uint32_t record, const void* target, const void* argument) {
     Table[record * 4u + 3u] = static_cast<std::uint32_t>(data >> 32u);
 }
 
-std::vector<std::uint32_t> Commands() {
-    std::vector<std::uint32_t> words;
+TestGuest::Vector<std::uint32_t> Commands() {
+    TestGuest::Vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
         words.push_back(first);

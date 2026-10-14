@@ -173,7 +173,7 @@ void SetOutput(const void* output) {
 }
 
 void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32_t texture) {
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto image = Image(block.Texels(texture));
     std::copy(image.begin(), image.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(StoreCode);
@@ -191,18 +191,18 @@ void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32
     device.WaitIdle();
 }
 
-std::vector<std::uint32_t> Dispatch(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, std::uint32_t record) {
+TestGuest::Vector<std::uint32_t> Dispatch(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, std::uint32_t record) {
     Keys[0] = record;
     std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
     device.Dispatch(result, 1, 1, 1, AddressOf(TableCode.data()));
     device.WaitIdle();
-    std::vector<std::uint32_t> red(Lanes);
+    TestGuest::Vector<std::uint32_t> red(Lanes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) red[lane] = Output[lane * 4u];
     return red;
 }
 
-std::vector<std::uint32_t> Row(const float* texels) {
-    std::vector<std::uint32_t> row(Lanes);
+TestGuest::Vector<std::uint32_t> Row(const float* texels) {
+    TestGuest::Vector<std::uint32_t> row(Lanes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) row[lane] = std::bit_cast<std::uint32_t>(texels[lane % Width]);
     return row;
 }
@@ -236,7 +236,7 @@ void RunImageStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Require(Dispatch(device, result, 27) == Row(block.Texels(27)), "image table reuse: the table resolved again before an image store sampled the wrong entry");
     Require(Dispatch(device, result, 23) == Row(block.Texels(23)), "image table reuse: the table reused before an image store sampled the wrong entry");
     Store(device, block, 23);
-    std::vector<float> stored(Width);
+    TestGuest::Vector<float> stored(Width);
     for (std::uint32_t x = 0; x < Width; ++x) stored[x] = -4.0f - static_cast<float>(x);
     Require(Dispatch(device, result, 23) == Row(stored.data()), "image table reuse: an entry an image store left results pending over kept its old texels");
     Expect(before, 3 - CpuWriteResolutions, CpuWriteResolutions + 1, "CPU writes to a new table's 64 KiB block, then an image store leaving results pending over an entry");
@@ -260,7 +260,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     const auto result = Compile(device, block);
     const bool watched = AgcDriver::GuestMemory::WriteWatched();
 
-    std::vector<std::uint32_t> unbumped[2];
+    TestGuest::Vector<std::uint32_t> unbumped[2];
     auto before = AgcDriver::Graphics::ImageTableReuses();
     std::thread thread([&] {
         unbumped[0] = Dispatch(device, result, 3);
@@ -289,7 +289,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     Expect(before, 1, 1, "a kept table whose textures the texture cache dropped");
 
     before = AgcDriver::Graphics::ImageTableReuses();
-    std::vector<float> stored(Width * Height);
+    TestGuest::Vector<float> stored(Width * Height);
     for (std::uint32_t texel = 0; texel < Width * Height; ++texel) stored[texel] = -1.0f - static_cast<float>(texel);
     AgcDriver::GuestMemory::Write(AddressOf(block.Texels(11)), std::as_bytes(std::span(stored)));
     Require(Dispatch(device, result, 11) == Row(stored.data()), "image table reuse: an entry the driver stored over in the epoch kept its old texels");
@@ -320,7 +320,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     before = AgcDriver::Graphics::ImageTableReuses();
     static_cast<void>(Dispatch(device, writer, 7));
     const auto sampled = Dispatch(device, result, 13);
-    const std::vector<float> written(block.Texels(13), block.Texels(13) + Width * Height);
+    const TestGuest::Vector<float> written(block.Texels(13), block.Texels(13) + Width * Height);
     Require(std::bit_cast<std::uint32_t>(written[0]) == Row(block.Texels(7))[0], "image table reuse: the dispatch writing into an entry's texels stored the wrong values");
     Require(sampled == Row(written.data()), "image table reuse: an entry a dispatch wrote in the epoch kept its old texels");
     Expect(before, 1, 1, "a dispatch writing an entry's texels");

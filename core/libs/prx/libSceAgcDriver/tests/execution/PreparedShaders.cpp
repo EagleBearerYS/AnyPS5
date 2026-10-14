@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
@@ -198,7 +199,7 @@ void Run(AgcDriver::VulkanDevice& device) {
 void FailureCapture(AgcDriver::VulkanDevice& device) {
     using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 1> code{0xffffffffu};
-    const std::vector<std::byte> header(2048, std::byte{0x5a});
+    const TestGuest::Vector<std::byte> header(2048, std::byte{0x5a});
     RecompileRequest request{{ShaderStage::Compute, 0x12345cafeull, code, 0x20000, header},
         {32, 0, {}, ShaderComputeStageInfo{{1, 1, 1}, 0, {}, false, 1, {}}, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
     const auto failure = [&](auto action) {
@@ -257,7 +258,7 @@ void PrepareMultisampledStorage(AgcDriver::VulkanDevice& device) {
     request.context.waveSize = 32;
     request.context.compute = ShaderComputeStageInfo{{8, 8, 1}, 0, {true, true, false}, false, 2, {}};
     request.target = device.ComputeTarget(32);
-    std::vector<std::uint32_t> multisampleCapabilities(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
+    TestGuest::Vector<std::uint32_t> multisampleCapabilities(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
     if (std::ranges::find(multisampleCapabilities, spv::CapabilityStorageImageMultisample) == multisampleCapabilities.end()) multisampleCapabilities.push_back(spv::CapabilityStorageImageMultisample);
     request.target.supportedCapabilities = multisampleCapabilities;
     request.layout.pushConstantSizeBytes = 128;
@@ -271,7 +272,7 @@ void PrepareMultisampledStorage(AgcDriver::VulkanDevice& device) {
         }
         const auto handle = PrepareShader(request);
         const auto& artifact = GetPreparedArtifact(*handle);
-        std::vector<std::uint32_t> samples;
+        TestGuest::Vector<std::uint32_t> samples;
         for (std::size_t offset = 5; offset < artifact.spirv.size(); offset += artifact.spirv[offset] >> 16u) {
             const auto instruction = artifact.spirv[offset];
             if ((instruction & 0xffffu) == spv::OpImageWrite) {
@@ -295,7 +296,7 @@ void PrepareMultisampledStorage(AgcDriver::VulkanDevice& device) {
             Require(found, "MSAA sample constant is missing");
         }
     }
-    std::vector<std::uint32_t> capabilities(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
+    TestGuest::Vector<std::uint32_t> capabilities(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end());
     std::erase(capabilities, spv::CapabilityStorageImageMultisample);
     request.target.supportedCapabilities = capabilities;
     ExpectFailure([&] { static_cast<void>(PrepareShader(request)); }, "storage image multisampling is unavailable on the target device");
@@ -407,7 +408,7 @@ void SharedCodeHeaders() {
     AgcDriverResolveShaderAbi_nid_postfix(&copy, {}, primitive);
     copy.target ^= 1u;
     ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&copy, {}, primitive); }, "replaced shader header");
-    std::vector<std::uint32_t> commands;
+    TestGuest::Vector<std::uint32_t> commands;
     for (const auto reg : vertex.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
     for (const auto reg : vertex.context) commands.insert(commands.end(), {0xc0016900u, reg.offset, reg.value});
     commands.insert(commands.end(), {0xc0017600u, 0x8, 0, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
@@ -446,7 +447,7 @@ void RegistrationWithoutSpecials() {
     header.shader.num_sh_registers = header.registers.size();
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 0}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
-    std::vector<std::uint32_t> commands;
+    TestGuest::Vector<std::uint32_t> commands;
     for (const auto reg : header.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
     for (const std::uint32_t initiator : {0x8041u, 0x41u}) commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, initiator});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
@@ -515,7 +516,7 @@ void Registration(bool indirect) {
     header.registers[threadRegisterIndex].value = 1;
     code[0] = 0xffffffffu;
     ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "");
-    std::vector<std::uint32_t> commands;
+    TestGuest::Vector<std::uint32_t> commands;
     for (const auto reg : header.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
     const std::array<std::uint32_t, 3> arguments{1, 1, 1};
     const auto argumentAddress = reinterpret_cast<std::uintptr_t>(arguments.data());
@@ -616,7 +617,7 @@ void DeferredRegistration() {
     header.specials.dispatch_modifier = 0x8000;
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 12}, {0x207, 1}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
-    std::vector<std::uint32_t> commands;
+    TestGuest::Vector<std::uint32_t> commands;
     for (const auto reg : header.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
     commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
@@ -644,7 +645,7 @@ void DeferredUndecodableRegistration() {
     header.specials.dispatch_modifier = 0x8000;
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 12}, {0x207, 1}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
-    std::vector<std::uint32_t> commands;
+    TestGuest::Vector<std::uint32_t> commands;
     for (const auto reg : header.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
     commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};

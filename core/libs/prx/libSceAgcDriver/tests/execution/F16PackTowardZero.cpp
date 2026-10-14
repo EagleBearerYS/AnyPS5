@@ -32,8 +32,8 @@ std::uint32_t HalfToFloatBits(std::uint32_t half) {
     return ((113u - shift) << 23u) | (((mantissa << shift) & 0x3ffu) << 13u);
 }
 
-std::vector<std::uint32_t> Inputs() {
-    std::vector<std::uint32_t> inputs{
+TestGuest::Vector<std::uint32_t> Inputs() {
+    TestGuest::Vector<std::uint32_t> inputs{
         0x00000000u, 0x00000001u, 0x007fffffu, 0x00800000u, 0x33000000u, 0x33000001u, 0x337fffffu, 0x33800000u,
         0x387fffffu, 0x38800000u, 0x477fe000u, 0x477fefffu, 0x477ff000u, 0x477fffffu, 0x47800000u, 0x7f7fffffu,
         0x7f800000u, 0x7fc00000u, 0x7f800001u, 0x7fffe000u, 0x7fbfffffu, 0x7f802000u,
@@ -81,11 +81,11 @@ int main() {
         const auto inputs = Inputs();
         std::copy(inputs.begin(), inputs.end(), Input.begin());
         Output.fill(0xdeadbeefu);
-        const std::vector<std::uint32_t> code{
+        const TestGuest::Vector<std::uint32_t> code{
             0x34020082u, 0x8f098708u, 0x4a020209u, 0xe0301000u, 0x80000401u, 0xbf8c3f70u,
             0xd52f0005u, 0x40020904u, 0xe0701000u, 0x80010501u, 0xbf810000u,
         };
-        std::vector<std::uint32_t> userData(8, 0u);
+        TestGuest::Vector<std::uint32_t> userData(8, 0u);
         const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
         const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
         std::copy(input.begin(), input.end(), userData.begin());

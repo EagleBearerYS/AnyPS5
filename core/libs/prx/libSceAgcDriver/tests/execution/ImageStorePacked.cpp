@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -117,8 +118,8 @@ std::uint64_t TexelOffset(const AgcDriver::Graphics::TileMipLayout& mip, const F
     return mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + static_cast<std::uint64_t>(x) * format.bytes;
 }
 
-std::vector<std::uint8_t> Initial() {
-    std::vector<std::uint8_t> bytes(TexelBytes);
+TestGuest::Vector<std::uint8_t> Initial() {
+    TestGuest::Vector<std::uint8_t> bytes(TexelBytes);
     for (std::size_t index = 0; index < bytes.size(); ++index) {
         bytes[index] = static_cast<std::uint8_t>(0x80u + 37u * index + 11u * (index >> 4u));
     }
@@ -129,7 +130,7 @@ std::uint32_t Data(std::uint32_t tid, std::uint32_t index) {
     return (tid + 1u) * 0x9e3779b1u + index * 0x7f4a7c15u;
 }
 
-void Store(std::vector<std::uint8_t>& bytes, const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x, std::uint32_t y, std::uint32_t dmask, std::uint32_t tid) {
+void Store(TestGuest::Vector<std::uint8_t>& bytes, const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x, std::uint32_t y, std::uint32_t dmask, std::uint32_t tid) {
     std::array<std::uint32_t, 4> words{};
     std::uint32_t next = 0;
     for (std::uint32_t word = 0; word < 4u; ++word) {
@@ -140,7 +141,7 @@ void Store(std::vector<std::uint8_t>& bytes, const AgcDriver::Graphics::TileMipL
     std::memcpy(bytes.data() + TexelOffset(mip, format, x, y), words.data(), format.bytes);
 }
 
-std::vector<std::uint8_t> Expected(const Format& format, Pattern pattern) {
+TestGuest::Vector<std::uint8_t> Expected(const Format& format, Pattern pattern) {
     const auto mips = Mips(format, pattern);
     auto bytes = Initial();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -180,7 +181,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const 
     Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= TexelBytes, std::string("image store packed: the mip chain of ") + format.name + " does not fit the texel storage");
     const auto initial = Initial();
     std::copy(initial.begin(), initial.end(), texels);
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, format.format, swizzle, Levels(pattern));
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};

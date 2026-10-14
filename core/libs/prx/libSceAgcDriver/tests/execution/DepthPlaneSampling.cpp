@@ -162,7 +162,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
     const auto& vertices = vertexData.back();
     const auto target = device.Target();
-    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(vertices.data(), 16u, static_cast<std::uint32_t>(vertices.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
@@ -182,7 +182,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     pixelInfo.posY = true;
     pixelInfo.targetOutputMode[0] = 9;
     pixelInfo.targetExportMapping.fill(0xe4u);
-    std::vector<std::uint32_t> pixelUserData(4, 0u);
+    TestGuest::Vector<std::uint32_t> pixelUserData(4, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragmentRequest{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
@@ -224,7 +224,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
 // `shaderImage2D` the shader declares a 2D image whatever the T#'s type is.
 void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false) {
     const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
-    std::vector<std::uint32_t> userData(16, 0u);
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
     const auto texture = TextureDescriptor(texels, shape);
     std::copy(out.begin(), out.end(), userData.begin());

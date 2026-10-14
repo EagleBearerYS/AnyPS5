@@ -52,11 +52,11 @@ std::array<std::uint32_t, 4> Descriptor(const void* pointer, std::uint32_t bytes
     return {Low(pointer), High(pointer) & 0xffffu, bytes, 0x31016facu};
 }
 
-void SetShaderRegister(std::vector<std::uint32_t>& words, std::uint32_t offset, std::uint32_t value) {
+void SetShaderRegister(TestGuest::Vector<std::uint32_t>& words, std::uint32_t offset, std::uint32_t value) {
     words.insert(words.end(), {0xc0017600u, offset, value});
 }
 
-void Dispatch(std::vector<std::uint32_t>& words, const void* code, std::initializer_list<std::uint32_t> userData) {
+void Dispatch(TestGuest::Vector<std::uint32_t>& words, const void* code, std::initializer_list<std::uint32_t> userData) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code));
     SetShaderRegister(words, 0x20c, static_cast<std::uint32_t>(address >> 8u));
     SetShaderRegister(words, 0x20d, static_cast<std::uint32_t>(address >> 40u) & 0xffu);
@@ -68,15 +68,15 @@ void Dispatch(std::vector<std::uint32_t>& words, const void* code, std::initiali
     words.insert(words.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
 }
 
-void WriteData(std::vector<std::uint32_t>& words, volatile std::uint32_t* target, std::uint32_t value) {
+void WriteData(TestGuest::Vector<std::uint32_t>& words, volatile std::uint32_t* target, std::uint32_t value) {
     words.insert(words.end(), {0xc0033700u, 0x00100200u, Low(target), High(target), value});
 }
 
-void WaitEqual(std::vector<std::uint32_t>& words, volatile std::uint32_t* target, std::uint32_t value) {
+void WaitEqual(TestGuest::Vector<std::uint32_t>& words, volatile std::uint32_t* target, std::uint32_t value) {
     words.insert(words.end(), {0xc0053c00u, 0x13u, Low(target), High(target), value, 0xffffffffu, 0x19u});
 }
 
-void Submit(std::uint32_t queue, std::vector<std::uint32_t>& words) {
+void Submit(std::uint32_t queue, TestGuest::Vector<std::uint32_t>& words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     Require(sceAgcDriverSubmitAcb(queue, &packet) == 0, "compute submit failed");
 }
@@ -89,10 +89,10 @@ Outcome Run(Slot& slot, std::uint32_t spinDispatches) {
     slot.table = {Low(slot.stale.data()), High(slot.stale.data())};
     slot.outputDescriptor = Descriptor(slot.output.data(), sizeof(slot.output));
     slot.spinDescriptor = Descriptor(slot.spinOutput.data(), sizeof(slot.spinOutput));
-    std::vector<std::uint32_t> producer;
+    TestGuest::Vector<std::uint32_t> producer;
     for (std::uint32_t index = 0; index < spinDispatches; ++index) Dispatch(producer, SpinCode.data(), {Low(slot.spinDescriptor.data()), High(slot.spinDescriptor.data()), SpinIterationsPerDispatch});
     WriteData(producer, &slot.label, 1);
-    std::vector<std::uint32_t> consumer;
+    TestGuest::Vector<std::uint32_t> consumer;
     WaitEqual(consumer, &slot.label, 1);
     Dispatch(consumer, ReaderCode.data(), {Low(slot.table.data()), High(slot.table.data()), Low(slot.outputDescriptor.data()), High(slot.outputDescriptor.data())});
     WriteData(consumer, &slot.done, 1);

@@ -156,7 +156,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> code, std::span<const std::uint32_t> output, const ShaderRecompiler::SpirvTarget& target, const std::optional<ShaderFloatMode>& floatMode,
-                                           std::vector<std::uint32_t>& userData, std::array<ShaderRecompiler::MemoryRegion, 1>& memory) {
+                                           TestGuest::Vector<std::uint32_t>& userData, std::array<ShaderRecompiler::MemoryRegion, 1>& memory) {
     userData.assign(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto results = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size() * 4u));
@@ -222,7 +222,7 @@ void VerifySpirv() {
     target.maxWorkgroupSize = {1024, 1024, 64};
     target.maxWorkgroupInvocations = 1024;
     target.maxWorkgroupSharedMemoryBytes = 49152;
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     std::array<ShaderRecompiler::MemoryRegion, 1> memory{};
     for (const auto& mode : Modes) {
         const auto result = ShaderRecompiler::Recompile(Request(MergedCode, Merged, target, mode.floatMode, userData, memory));
@@ -288,8 +288,8 @@ int main(int argc, char** argv) {
         }
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        std::vector<std::uint32_t> mergedUserData;
-        std::vector<std::uint32_t> reloadedUserData;
+        TestGuest::Vector<std::uint32_t> mergedUserData;
+        TestGuest::Vector<std::uint32_t> reloadedUserData;
         std::array<ShaderRecompiler::MemoryRegion, 1> mergedMemory{};
         std::array<ShaderRecompiler::MemoryRegion, 1> reloadedMemory{};
         for (const auto& mode : Modes) {

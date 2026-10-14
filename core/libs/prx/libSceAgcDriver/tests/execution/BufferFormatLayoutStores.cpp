@@ -114,7 +114,7 @@ void Run(AgcDriver::VulkanDevice& device, Program& program, std::uint32_t first,
         }
     }
     Assemble(program, first, second);
-    std::vector<std::uint32_t> userData;
+    TestGuest::Vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(First.data(), Records, Word3(first)), BufferDescriptor(Second.data(), Records, Word3(second)), BufferDescriptor(Params.data(), decltype(Params)::ByteSize, Raw), BufferDescriptor(Typed.data(), Records, Raw)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }

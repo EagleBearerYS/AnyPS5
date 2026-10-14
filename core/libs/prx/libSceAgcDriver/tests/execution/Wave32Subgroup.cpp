@@ -34,7 +34,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 
 void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
     Output.fill(0xdeadbeefu);
-    std::vector<std::uint32_t> userData(8, 0u);
+    TestGuest::Vector<std::uint32_t> userData(8, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(WaveCode);
