@@ -6498,7 +6498,7 @@ int main(int argc, char** argv) {
             std::cout << "sparse buffer hole tests " << (passed ? "passed" : "failed") << '\n';
             return passed ? 0 : 1;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--address-copy-cap") {
+        if (argc == 2 && (std::string_view(argv[1]) == "--address-copy-cap" || std::string_view(argv[1]) == "--heap-mirror-unwatch")) {
 #ifdef _WIN32
             _putenv_s("APS5_ADDRESS_COPY_MAX_MIB", "1");
 #else
@@ -6519,7 +6519,7 @@ int main(int argc, char** argv) {
                     },
                     {},
                     {}
-                });
+                }, std::string_view(argv[1]) == "--heap-mirror-unwatch");
             }
             Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             return 0;
