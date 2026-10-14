@@ -1,5 +1,6 @@
 // agc_shader_replay <shader_*.req>...: replays compute recompile requests the driver saved with
 // APS5_DUMP_SHADERS=1, running the same resource analysis and recompile steps without the game.
+#include "ControlFlow/CalleeLinker.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "ControlFlow/Structurizer.hpp"
@@ -15,6 +16,8 @@
 #include <cstdio>
 #include <exception>
 #include <fstream>
+#include <map>
+#include <span>
 #include <sstream>
 #include <string>
 
@@ -46,9 +49,54 @@ bool g_graph = false;
 bool g_maintenance8 = false;
 bool g_code = false;
 
+bool ReadRequestWords(void* context, std::uint64_t address, std::span<std::uint32_t> words) {
+    const auto& runtime = *static_cast<const ShaderRecompiler::SrtRuntime*>(context);
+    for (std::size_t word = 0; word < words.size(); ++word) {
+        if (!runtime.readMemory(runtime.userContext, address + word * sizeof(std::uint32_t), &words[word])) return false;
+    }
+    return true;
+}
+
+void ShowCallTable(void* context, const ShaderRecompiler::TableCall& call, std::uint64_t base, std::span<const std::uint32_t> table) {
+    const auto& runtime = *static_cast<const ShaderRecompiler::SrtRuntime*>(context);
+    std::map<std::uint64_t, std::size_t> targets;
+    for (std::uint64_t offset = call.entryOffset; offset + 8u <= table.size() * sizeof(std::uint32_t); offset += call.entryStride) {
+        const auto target = static_cast<std::uint64_t>(table[offset / 4u]) | static_cast<std::uint64_t>(table[offset / 4u + 1u]) << 32u;
+        if (target != 0u) ++targets[target];
+        if (call.entryStride == 0u) break;
+    }
+    std::printf("  table call at pc 0x%x: table 0x%llx + 0x%zx, stride %u, %zu targets\n", call.programCounter, static_cast<unsigned long long>(base), table.size() * sizeof(std::uint32_t), call.entryStride, targets.size());
+    for (const auto& [target, records] : targets) {
+        std::uint32_t word = 0;
+        const bool present = runtime.readMemory(runtime.userContext, target, &word);
+        std::printf("    target 0x%llx: %zu records, code %s\n", static_cast<unsigned long long>(target), records, present ? "in the request" : "not in the request");
+    }
+}
+
+void LinkRequestCallees(ShaderRecompiler::DeserializedRequest& request) {
+    static ShaderRecompiler::LinkedCode linked;
+    if (!request.request.shader.linkedLiterals.empty()) return;
+    ShaderRecompiler::RequestMemoryView view(request.request.context.memory);
+    auto runtime = view.MakeRuntime(request.request.context.userData, request.request.shader.codeAddress);
+    const ShaderRecompiler::CalleeMemory memory{&runtime, &ReadRequestWords, &ReadRequestWords, &ShowCallTable};
+    try {
+        auto result = ShaderRecompiler::LinkCallees(request.request, memory);
+        if (result.code.empty()) return;
+        linked = std::move(result);
+    } catch (const std::exception& error) {
+        std::printf("  callees not linked, replaying the request as recorded: %s\n", FirstLine(error.what()).c_str());
+        return;
+    }
+    request.request.shader.code = linked.code;
+    request.request.shader.linkedLiterals = linked.linkedLiterals;
+    request.request.context.linkedWords = linked.linkedWords;
+    std::printf("  linked callees: %zu code words, %zu linked literals, %zu linked words\n", linked.code.size(), linked.linkedLiterals.size(), linked.linkedWords.size());
+}
+
 bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
+    LinkRequestCallees(request);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
         std::printf("  compute: threads %ux%ux%u, lds %u dwords, group ids %d%d%d, tg size %d, thread id components %u\n", compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], compute.ldsSizeDwords, compute.groupIdEnable[0], compute.groupIdEnable[1], compute.groupIdEnable[2], compute.tgSizeEnable, compute.threadIdComponentCount);

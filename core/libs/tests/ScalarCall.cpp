@@ -3,6 +3,7 @@
 #include "RdnaDecoder/RdnaScalarOpDecoder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
+#include "ControlFlow/CalleeLinker.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include <array>
 #include <cstdio>
@@ -298,6 +299,80 @@ static void CheckTableCalls() {
     });
 }
 
+struct CalleeRegions {
+    std::vector<std::pair<std::uint64_t, std::vector<std::uint32_t>>> regions;
+    std::vector<std::pair<std::uint64_t, std::size_t>> tables;
+};
+
+static bool ReadCalleeRegions(void* context, std::uint64_t address, std::span<std::uint32_t> words) {
+    const auto& memory = *static_cast<const CalleeRegions*>(context);
+    for (const auto& [base, region] : memory.regions) {
+        if (address >= base && (address - base) / 4u + words.size() <= region.size()) {
+            std::copy_n(region.begin() + static_cast<std::ptrdiff_t>((address - base) / 4u), words.size(), words.begin());
+            return true;
+        }
+    }
+    return false;
+}
+
+static void ObserveCalleeTable(void* context, const TableCall&, std::uint64_t base, std::span<const std::uint32_t> table) {
+    static_cast<CalleeRegions*>(context)->tables.emplace_back(base, table.size());
+}
+
+static void CheckCalleeLinker() {
+    constexpr std::uint64_t srt = 0x1100010000ull;
+    constexpr std::uint64_t table = 0x1100020000ull;
+    constexpr std::uint64_t code = 0x1100030000ull;
+    const std::vector<std::uint32_t> first{0xbf068000u, 0x4a020285u, 0xbe80200eu};
+    const std::vector<std::uint32_t> second{0x4a0202c0u, 0xbe80200eu};
+    std::vector<std::uint32_t> page(1024u, 0u);
+    std::copy(first.begin(), first.end(), page.begin());
+    std::copy(second.begin(), second.end(), page.begin() + 0x200);
+    std::vector<std::uint32_t> descriptors(0x270u / 4u + 4u, 0u);
+    const std::array<std::uint32_t, 4> tableDescriptor{static_cast<std::uint32_t>(table), static_cast<std::uint32_t>(table >> 32u) | (16u << 16u), 4u, 0u};
+    std::copy(tableDescriptor.begin(), tableDescriptor.end(), descriptors.begin() + 0x270 / 4);
+    const auto low = [](std::uint64_t address) { return static_cast<std::uint32_t>(address); };
+    const auto high = [](std::uint64_t address) { return static_cast<std::uint32_t>(address >> 32u); };
+    const std::vector<std::uint32_t> records{low(code), high(code), 0x00c0ffeeu, 0x12u, low(code), high(code), 0x0badf00du, 0x13u, low(code + 0x800u), high(code + 0x800u), 0x00c0ffeeu, 0x12u, 0u, 0u, 0u, 0u};
+    CalleeRegions memory{{{srt, descriptors}, {table, records}, {code, page}}, {}};
+    std::array<std::uint32_t, 16> userData{};
+    userData[12] = low(srt);
+    userData[13] = high(srt);
+    const auto caller = TableCaller();
+    RecompileRequest request{};
+    request.shader.stage = ShaderStage::Compute;
+    request.shader.codeAddress = 0x1100040000ull;
+    request.shader.code = caller;
+    request.context.waveSize = 32u;
+    request.context.userData = userData;
+    const CalleeMemory callees{&memory, &ReadCalleeRegions, &ReadCalleeRegions, &ObserveCalleeTable};
+    const auto linked = LinkCallees(request, callees);
+    const auto program = RdnaInstructionDecoder{}.Decode(caller);
+    const SwappcInfo swappc{false, 0u, 16u, 32u};
+    const std::vector<std::vector<TableCallee>> expectedCallees{{{code, {low(code), high(code), 0x00c0ffeeu, 0x12u}, first}, {code, {low(code), high(code), 0x0badf00du, 0x13u}, first}, {code + 0x800u, {low(code + 0x800u), high(code + 0x800u), 0x00c0ffeeu, 0x12u}, second}}};
+    const auto expected = LinkCalls(program, {}, {}, FindTableCalls(program, swappc), expectedCallees);
+    Require(linked.code == expected.code && linked.linkedLiterals == expected.linkedLiterals && linked.linkedWords == expected.linkedWords);
+    Require(memory.tables == std::vector<std::pair<std::uint64_t, std::size_t>>{{table, records.size()}});
+    CalleeRegions withoutCode{{{srt, descriptors}, {table, records}}, {}};
+    ExpectThrow("calls a target loaded from a table at program counter 0x24, but its callee at 0x1100030000 is not readable at 0x1100030000", [&] {
+        static_cast<void>(LinkCallees(request, CalleeMemory{&withoutCode, &ReadCalleeRegions, &ReadCalleeRegions, nullptr}));
+    });
+    CalleeRegions withoutTable{{{srt, descriptors}, {code, page}}, {}};
+    ExpectThrow("its call table at 0x1100020000 + 0x40 is not readable", [&] {
+        static_cast<void>(LinkCallees(request, CalleeMemory{&withoutTable, &ReadCalleeRegions, &ReadCalleeRegions, nullptr}));
+    });
+
+    const auto userDataCaller = UserDataCaller();
+    const std::array<std::uint32_t, 8> pointers{low(code), high(code), low(code + 0x800u), high(code + 0x800u), 0u, 0u, 0u, 0u};
+    request.shader.code = userDataCaller;
+    request.context.userData = pointers;
+    const auto userDataProgram = RdnaInstructionDecoder{}.Decode(userDataCaller);
+    const std::vector<std::vector<std::uint32_t>> userDataCallees{first, second};
+    Require(LinkCallees(request, callees).code == LinkUserDataCalls(userDataProgram, FindUserDataCalls(userDataProgram, SwappcInfo{false, 0u, 8u, 32u}), userDataCallees));
+    request.shader.stage = ShaderStage::Fragment;
+    Require(LinkCallees(request, callees).code.empty());
+}
+
 static void CheckRejections() {
     ExpectThrow("invalid instruction boundary", [] {
         Build({Call(0u, 8u, 16u), Sopp(4u, 1u)});
@@ -398,6 +473,7 @@ int main(int argc, char** argv) {
             CheckRejections();
             CheckUserDataCalls();
             CheckTableCalls();
+            CheckCalleeLinker();
             CheckGuards("");
         } else {
             Require(argc == 2);

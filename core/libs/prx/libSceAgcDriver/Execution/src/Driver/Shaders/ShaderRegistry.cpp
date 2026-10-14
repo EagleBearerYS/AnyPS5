@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/LogMacros.hpp"
+#include "ControlFlow/CalleeLinker.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -460,111 +461,34 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 
 namespace {
 
-std::string hexText(std::uint64_t value) {
-    char text[24];
-    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(value));
-    return text;
+struct CalleeReads {
+    const ShaderRecompiler::RecompileRequest& request;
+    ShaderMemory* memory = nullptr;
+};
+
+bool ReadCalleeCode(void*, std::uint64_t address, std::span<std::uint32_t> words) {
+    const auto bytes = words.size() * sizeof(std::uint32_t);
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), bytes)) return false;
+    GuestMemory::Read(address, std::as_writable_bytes(words));
+    return true;
 }
 
-std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister) {
-    constexpr std::uint64_t page = 4096u;
-    constexpr std::size_t limitWords = 16384u;
-    if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");
-    std::vector<std::uint32_t> words;
-    while (words.size() < limitWords) {
-        const auto next = address + words.size() * 4u;
-        const auto bytes = static_cast<std::size_t>(page - next % page);
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(next)), bytes)) throw std::runtime_error("its callee at " + hexText(address) + " is not readable at " + hexText(next));
-        const auto old = words.size();
-        words.resize(old + bytes / 4u);
-        GuestMemory::Read(next, std::as_writable_bytes(std::span(words).subspan(old)));
-        if (const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister)) {
-            words.resize(*length);
-            return words;
-        }
-    }
-    throw std::runtime_error("its callee at " + hexText(address) + " does not return within " + std::to_string(limitWords * 4u) + " bytes");
-}
-
-std::vector<std::uint32_t> ReadScalarWords(std::uint64_t address, std::uint64_t count, const char* what, ShaderMemory* memory) {
-    const auto aligned = address & ~std::uint64_t{3u};
-    const auto bytes = count * sizeof(std::uint32_t);
-    const auto unreadable = [&] { return std::runtime_error(std::string("its ") + what + " at " + hexText(address) + " + " + hexText(bytes) + " is not readable"); };
-    if (aligned > UINTPTR_MAX - bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(aligned)), static_cast<std::size_t>(bytes))) throw unreadable();
-    std::vector<std::uint32_t> words(static_cast<std::size_t>(count));
-    if (memory == nullptr) {
-        GuestMemory::Read(aligned, std::as_writable_bytes(std::span(words)));
-    } else if (!memory->ReadWords(aligned, words)) {
-        throw unreadable();
-    }
-    return words;
-}
-
-std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCall& call, ShaderMemory* memory) {
-    constexpr std::uint64_t limitBytes = 64u << 20u;
-    constexpr std::size_t limitCallees = 64u;
-    const auto slot = call.userDataRegister - request.context.userDataBaseRegister;
-    const auto pointer = static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
-    const auto words = ReadScalarWords(pointer + call.descriptorOffset, 4u, "call table descriptor", memory);
-    ShaderRecompiler::ShaderBufferResource descriptor{};
-    std::memcpy(descriptor.fields.data(), words.data(), sizeof(descriptor.fields));
-    const auto bytes = descriptor.GetSize();
-    if (bytes > limitBytes) throw std::runtime_error("its call table of " + std::to_string(bytes) + " bytes is larger than the " + std::to_string(limitBytes) + " bytes that are searched for callees");
-    const auto table = bytes < sizeof(std::uint32_t) ? std::vector<std::uint32_t>{} : ReadScalarWords(descriptor.Base48(), bytes / sizeof(std::uint32_t), "call table", memory);
-    const auto targetDword = (call.entryOffset - call.recordOffset) / 4u;
-    std::vector<bool> held(call.recordDwords, false);
-    held[targetDword] = held[targetDword + 1u] = true;
-    for (const auto& reg : call.recordRegisters) held[reg.dword] = true;
-    std::map<std::vector<std::uint32_t>, std::uint64_t> records;
-    for (std::uint64_t offset = call.recordOffset; offset + (targetDword + 2u) * 4u <= bytes; offset += call.entryStride) {
-        std::vector<std::uint32_t> record(call.recordDwords, 0u);
-        for (std::uint32_t dword = 0; dword < call.recordDwords; ++dword) {
-            if (held[dword] && offset / 4u + dword < table.size()) record[dword] = table[offset / 4u + dword];
-        }
-        const auto target = static_cast<std::uint64_t>(record[targetDword + 1u]) << 32u | record[targetDword];
-        if (target != 0u) records.emplace(std::move(record), target);
-        if (call.entryStride == 0u) break;
-    }
-    if (records.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(records.size()) + " distinct records; at most " + std::to_string(limitCallees) + " are linked");
-    std::map<std::uint64_t, std::vector<std::uint32_t>> codes;
-    std::vector<ShaderRecompiler::TableCallee> callees;
-    for (const auto& [record, target] : records) {
-        auto code = codes.find(target);
-        if (code == codes.end()) code = codes.emplace(target, ReadUserDataCallee(target, call.linkRegister)).first;
-        callees.push_back({target, record, code->second});
-    }
-    return callees;
+bool ReadCalleeData(void* context, std::uint64_t address, std::span<std::uint32_t> words) {
+    auto* memory = static_cast<CalleeReads*>(context)->memory;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), words.size() * sizeof(std::uint32_t))) return false;
+    if (memory != nullptr) return memory->ReadWords(address, words);
+    GuestMemory::Read(address, std::as_writable_bytes(words));
+    return true;
 }
 
 ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory) {
-    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return {};
-    const auto code = request.shader.code;
-    if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return {};
-    const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
-    const ShaderRecompiler::SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
-    const auto calls = ShaderRecompiler::FindUserDataCalls(program, swappc);
-    const auto tableCalls = ShaderRecompiler::FindTableCalls(program, swappc);
-    if (calls.empty() && tableCalls.empty()) return {};
-    std::vector<std::vector<std::uint32_t>> callees;
-    for (const auto& call : calls) {
-        const auto slot = call.userDataRegister - swappc.userDataBaseRegister;
-        const auto address = static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
-        try {
-            callees.push_back(ReadUserDataCallee(address, call.linkRegister));
-        } catch (const std::exception& error) {
-            throw std::runtime_error("AGC driver: compute shader " + hexText(request.shader.codeAddress) + " calls user data s[" + std::to_string(call.userDataRegister) + ":" +
-                std::to_string(call.userDataRegister + 1u) + "] at program counter " + hexText(call.programCounter) + ", but " + error.what());
-        }
+    CalleeReads reads{request, memory};
+    const ShaderRecompiler::CalleeMemory callees{&reads, &ReadCalleeCode, &ReadCalleeData, nullptr};
+    try {
+        return ShaderRecompiler::LinkCallees(request, callees);
+    } catch (const std::runtime_error& error) {
+        throw std::runtime_error(std::string("AGC driver: ") + error.what());
     }
-    std::vector<std::vector<ShaderRecompiler::TableCallee>> tableCallees;
-    for (const auto& call : tableCalls) {
-        try {
-            tableCallees.push_back(ReadTableCallees(request, call, memory));
-        } catch (const std::exception& error) {
-            throw std::runtime_error("AGC driver: compute shader " + hexText(request.shader.codeAddress) + " calls a target loaded from a table at program counter " + hexText(call.programCounter) + ", but " + error.what());
-        }
-    }
-    return ShaderRecompiler::LinkCalls(program, calls, callees, tableCalls, tableCallees);
 }
 
 }
