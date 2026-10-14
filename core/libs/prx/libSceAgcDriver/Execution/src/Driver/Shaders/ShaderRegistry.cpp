@@ -33,6 +33,7 @@
 #include <stdexcept>
 #include <thread>
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include "ControlFlow/RequestSerializer.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver::DriverDetail {
@@ -496,7 +497,7 @@ ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::Recompi
 
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory) {
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory, bool* preparedAtUse) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
@@ -528,7 +529,15 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
     if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
     snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
+    if (preparedAtUse != nullptr) *preparedAtUse = true;
     return std::move(*invocation);
+}
+
+void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+    auto* replay = device != nullptr ? device->Replay() : nullptr;
+    if (replay == nullptr || snapshot.header.empty()) return;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> own{{{snapshot.codeAddress, snapshot.codeAddress + snapshot.code.size() * sizeof(std::uint32_t)}, {snapshot.headerAddress, snapshot.headerAddress + snapshot.header.size()}}};
+    replay->RecordPreparedProgram(snapshot.code, codeOffset, own, request);
 }
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot) {
     if (snapshot.registeredState == nullptr) return std::nullopt;
@@ -890,6 +899,30 @@ void OfferPreparedArtifacts(const std::shared_ptr<VulkanDevice>& device, std::sp
     }
 }
 
+void ReplayPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, const PreparedProgramRecord& record) {
+    try {
+        const auto deserialized = ShaderRecompiler::RequestSerializer{}.Deserialize(record.request);
+        const auto& request = deserialized.request;
+        if (record.codeOffset >= snapshot.code.size() || ShaderRecompiler::ArtifactIdentity(request) != record.identity) {
+            PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Stale);
+            return;
+        }
+        const auto handle = PrepareShaderWithDiagnostics(request);
+        const PreparedShaders::Entry entry{static_cast<std::size_t>(record.codeOffset), handle};
+        {
+            std::lock_guard lock(snapshot.prepared->mutex);
+            auto& entries = snapshot.prepared->entries;
+            if (std::ranges::none_of(entries, [&](const auto& existing) { return existing.codeOffset == entry.codeOffset && existing.handle->artifact == handle->artifact; })) entries.push_back(entry);
+        }
+        if (request.shader.stage == ShaderRecompiler::ShaderStage::Compute) static_cast<void>(device->PrepareRecordedComputePipelines(request, *handle));
+        OfferPreparedArtifacts(device, std::span(&entry, 1));
+        PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Replayed);
+    } catch (const std::exception& error) {
+        PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Failed);
+        APS5_LOG_ERR("Shader 0x%llx: a program an earlier run prepared at use could not be prepared at registration: %s", static_cast<unsigned long long>(snapshot.codeAddress), error.what());
+    }
+}
+
 void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan) {
     const auto* preparedKey = snapshot->prepared.get();
     SubmitRegistrationPreparation([snapshot = std::move(snapshot), plan = std::move(plan)] {
@@ -942,6 +975,12 @@ void PrioritizeRegistrationPreparation(PreparedShaders& prepared) {
 
 void SubmitLibraryPrebuild(std::function<void()> task) {
     RegistrationPreparePool::Prebuild().Submit(std::move(task));
+}
+
+void ReplayPreparedPrograms(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderSnapshot>& snapshot) {
+    auto* replay = device != nullptr ? device->Replay() : nullptr;
+    if (replay == nullptr || snapshot->header.empty()) return;
+    for (auto& record : replay->PreparedPrograms(snapshot->code)) SubmitLibraryPrebuild([device, snapshot, record = std::move(record)] { ReplayPreparedProgram(device, *snapshot, record); });
 }
 
 void CloseRegistrationPreparation() {
@@ -1370,6 +1409,7 @@ void Driver::RegisterShader(const Shader* shader) {
     transaction.Commit();
     if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));
     OfferPreparedArtifacts(localDevice, offered);
+    ReplayPreparedPrograms(localDevice, published);
 }
 
 }

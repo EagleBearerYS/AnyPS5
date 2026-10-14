@@ -28,12 +28,23 @@ public:
         std::uint64_t notRecordable = 0;
         std::uint64_t failed = 0;
         std::uint64_t inFrames = 0;
+        std::uint64_t programsLoaded = 0;
+        std::uint64_t programsAtUse = 0;
+        std::uint64_t programsRecorded = 0;
+        std::uint64_t programsReplayed = 0;
+        std::uint64_t programsStale = 0;
+        std::uint64_t programsFailed = 0;
     };
+    enum class ProgramReplay { Replayed, Stale, Failed };
 
     PipelineReplay(PipelineManifest& manifest, std::function<Graphics::Context()> context, std::function<Target()> target);
 
     void Created(const Graphics::Context& context, const Graphics::State& state, const Graphics::VertexInputLayout& vertexInput, const Graphics::PipelineSetLayouts& resources, std::span<const Graphics::CompiledShader> shaders, VkImageLayout attachmentLayout) override;
     std::vector<std::function<void()>> Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle);
+    void RecordPreparedProgram(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, std::span<const std::pair<std::uint64_t, std::uint64_t>> ownRegions, const ShaderRecompiler::RecompileRequest& request);
+    std::vector<PreparedProgramRecord> PreparedPrograms(std::span<const std::uint32_t> registeredCode) const;
+    static void CountProgramReplay(ProgramReplay outcome);
+    static std::array<std::uint64_t, 2> ProgramKey(std::span<const std::uint32_t> registeredCode);
     static Counters Totals();
 
 private:

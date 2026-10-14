@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineReplay.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "CompiledVariant.hpp"
+#include "ControlFlow/RequestSerializer.hpp"
+#include "ShaderCacheDirectory.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -18,6 +20,12 @@ struct ReplayTotals {
     std::atomic<std::uint64_t> notRecordable{0};
     std::atomic<std::uint64_t> failed{0};
     std::atomic<std::uint64_t> inFrames{0};
+    std::atomic<std::uint64_t> programsLoaded{0};
+    std::atomic<std::uint64_t> programsAtUse{0};
+    std::atomic<std::uint64_t> programsRecorded{0};
+    std::atomic<std::uint64_t> programsReplayed{0};
+    std::atomic<std::uint64_t> programsStale{0};
+    std::atomic<std::uint64_t> programsFailed{0};
 };
 
 ReplayTotals& ReplayCounters() {
@@ -51,6 +59,7 @@ PipelineReplay::PipelineReplay(PipelineManifest& manifest, std::function<Graphic
         entry.record = std::move(record);
     }
     ReplayCounters().loaded.store(pending.size(), std::memory_order_relaxed);
+    ReplayCounters().programsLoaded.store(manifest.LoadedRecords().prepared.size(), std::memory_order_relaxed);
 }
 
 void PipelineReplay::Created(const Graphics::Context& context, const Graphics::State& state, const Graphics::VertexInputLayout& vertexInput, const Graphics::PipelineSetLayouts& resources, std::span<const Graphics::CompiledShader> shaders, VkImageLayout attachmentLayout) {
@@ -135,9 +144,36 @@ void PipelineReplay::create(const GraphicsPipelineRecord& record, const std::vec
     }
 }
 
+std::array<std::uint64_t, 2> PipelineReplay::ProgramKey(std::span<const std::uint32_t> registeredCode) {
+    const auto bytes = std::as_bytes(registeredCode);
+    return {ShaderRecompiler::HashBytes(bytes, 0x5eed0003ull), ShaderRecompiler::HashBytes(bytes, 0x5eed0004ull)};
+}
+
+void PipelineReplay::RecordPreparedProgram(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, std::span<const std::pair<std::uint64_t, std::uint64_t>> ownRegions, const ShaderRecompiler::RecompileRequest& request) {
+    ReplayCounters().programsAtUse.fetch_add(1, std::memory_order_relaxed);
+    auto own = request;
+    std::vector<ShaderRecompiler::MemoryRegion> memory;
+    for (const auto& region : request.context.memory) {
+        const auto end = region.guestAddress + region.bytes.size();
+        if (std::ranges::any_of(ownRegions, [&](const auto& range) { return region.guestAddress < range.second && range.first < end; })) memory.push_back(region);
+    }
+    own.context.memory = memory;
+    PreparedProgramRecord record{ProgramKey(registeredCode), codeOffset, ShaderRecompiler::ArtifactIdentity(request), ShaderRecompiler::RequestSerializer{}.Serialize(own)};
+    if (manifest.Record(std::move(record))) ReplayCounters().programsRecorded.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::vector<PreparedProgramRecord> PipelineReplay::PreparedPrograms(std::span<const std::uint32_t> registeredCode) const {
+    return manifest.PreparedPrograms(ProgramKey(registeredCode));
+}
+
+void PipelineReplay::CountProgramReplay(ProgramReplay outcome) {
+    auto& counters = ReplayCounters();
+    (outcome == ProgramReplay::Replayed ? counters.programsReplayed : outcome == ProgramReplay::Stale ? counters.programsStale : counters.programsFailed).fetch_add(1, std::memory_order_relaxed);
+}
+
 PipelineReplay::Counters PipelineReplay::Totals() {
     auto& totals = ReplayCounters();
-    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed)};
+    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed), totals.programsLoaded.load(std::memory_order_relaxed), totals.programsAtUse.load(std::memory_order_relaxed), totals.programsRecorded.load(std::memory_order_relaxed), totals.programsReplayed.load(std::memory_order_relaxed), totals.programsStale.load(std::memory_order_relaxed), totals.programsFailed.load(std::memory_order_relaxed)};
 }
 
 }

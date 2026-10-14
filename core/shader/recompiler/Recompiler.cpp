@@ -503,6 +503,10 @@ std::uint64_t nextVariantId() {
     return variants.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
+std::array<std::uint64_t, 2> identityOf(std::span<const std::byte> diskKey) {
+    return {HashBytes(diskKey, 0x5eed0001ull), HashBytes(diskKey, 0x5eed0002ull)};
+}
+
 std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> vertexClassesOf(std::span<const PipelineSpecializationConstant> constants) {
     constexpr auto first = PipelineSpecialization::VertexBase;
     constexpr auto words = PipelineSpecialization::VertexWords;
@@ -1032,7 +1036,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
     const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive();
     std::vector<std::byte> diskKey;
     ShaderDiskCache::BuildKey(request, HostSubgroupSize(request), diskKey);
-    const std::array<std::uint64_t, 2> identity{HashBytes(diskKey, 0x5eed0001ull), HashBytes(diskKey, 0x5eed0002ull)};
+    const auto identity = identityOf(diskKey);
     std::shared_ptr<const CompiledVariant> variant;
     if (disk) {
         CompiledVariant loaded;
@@ -1474,6 +1478,13 @@ std::shared_ptr<RecompileResult> SpecializedStageResult(const SourceHandle& hand
         result->moduleConstants = module->constants;
     }
     return result;
+}
+
+std::array<std::uint64_t, 2> ArtifactIdentity(const RecompileRequest& request) {
+    struct IdentityKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::byte>, IdentityKeyStorage>();
+    ShaderDiskCache::BuildKey(request, HostSubgroupSize(request), key);
+    return identityOf(key);
 }
 
 std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest& request, const ResourceCapture& capture, const SourceHandle& handle) {

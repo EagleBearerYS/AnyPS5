@@ -120,7 +120,9 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 std::vector<ShaderRecompiler::RecompileRequest> RegistrationRequests(const ShaderRecompiler::RecompileRequest& request);
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory = nullptr);
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory = nullptr, bool* preparedAtUse = nullptr);
+void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
+void ReplayPreparedPrograms(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderSnapshot>& snapshot);
 
 }
 

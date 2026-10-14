@@ -252,6 +252,7 @@ function(add_shader_recompiler target runtimeTarget)
             RegistrationResult
             SpecializedComputeResult
             SpecializedStageResult
+            ArtifactIdentity
             ShaderDiskCache::SourceVersion
             ResolveSource
             ResourceMaterializer::BindsDecodedCopy

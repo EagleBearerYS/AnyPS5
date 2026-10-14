@@ -36,8 +36,17 @@ std::vector<AgcDriver::GraphicsPipelineRecord> GraphicsRecords() {
     return {first, second};
 }
 
+std::vector<AgcDriver::PreparedProgramRecord> PreparedRecords() {
+    AgcDriver::PreparedProgramRecord first{{7u, 8u}, 64u, {0x1111222233334444ull, 0x5555666677778888ull}, "stage 0 code AQID"};
+    auto second = first;
+    second.codeOffset = 128u;
+    second.identity = {3u, 4u};
+    AgcDriver::PreparedProgramRecord other{{9u, 9u}, 0u, {5u, 6u}, ""};
+    return {first, second, other};
+}
+
 AgcDriver::ManifestRecords Records() {
-    return {ComputeRecords(), GraphicsRecords()};
+    return {ComputeRecords(), GraphicsRecords(), PreparedRecords()};
 }
 
 void Codec() {
@@ -58,7 +67,7 @@ void Codec() {
     Require(!AgcDriver::PipelineManifest::Decode(corrupt, 77u).has_value(), "a manifest whose constant count exceeds its bytes was accepted");
     auto older = bytes;
     older[8] = std::byte{1};
-    Require(!AgcDriver::PipelineManifest::Decode(older, 77u).has_value(), "a manifest of the format without graphics records was accepted");
+    Require(!AgcDriver::PipelineManifest::Decode(older, 77u).has_value(), "a manifest of an earlier format was accepted");
 }
 
 void File() {
@@ -67,18 +76,21 @@ void File() {
     const auto path = directory / "pipelines.manifest";
     const auto compute = ComputeRecords();
     const auto graphics = GraphicsRecords();
+    const auto prepared = PreparedRecords();
     {
         AgcDriver::PipelineManifest manifest(path, 77u);
         Require(manifest.Loaded() == 0u && manifest.Size() == 0u, "a manifest without a file has records");
         for (const auto& record : compute) Require(manifest.Record(record), "a new compute record was refused");
         for (const auto& record : graphics) Require(manifest.Record(record), "a new graphics record was refused");
-        Require(!manifest.Record(compute[1]) && !manifest.Record(graphics[1]), "a record seen before was recorded again");
+        for (const auto& record : prepared) Require(manifest.Record(record), "a new record of a program prepared at use was refused");
+        Require(!manifest.Record(compute[1]) && !manifest.Record(graphics[1]) && !manifest.Record(prepared[1]), "a record seen before was recorded again");
         Require(manifest.Records(compute[0].program).size() == 2u && manifest.Records(compute[2].program).size() == 1u && manifest.Records({9u, 9u}).empty(), "the records of a program are not the records recorded for it");
         Require(manifest.GraphicsRecords() == graphics, "the graphics records are not the ones recorded");
     }
     {
         AgcDriver::PipelineManifest manifest(path, 77u);
-        Require(manifest.Loaded() == 5u && manifest.Records(compute[0].program) == std::vector<AgcDriver::ComputePipelineRecord>{compute[0], compute[1]}, "a manifest did not load the compute records the previous one saved");
+        Require(manifest.Loaded() == 8u && manifest.Records(compute[0].program) == std::vector<AgcDriver::ComputePipelineRecord>{compute[0], compute[1]}, "a manifest did not load the compute records the previous one saved");
+        Require(manifest.PreparedPrograms({7u, 8u}) == std::vector<AgcDriver::PreparedProgramRecord>{prepared[0], prepared[1]} && manifest.PreparedPrograms({1u, 1u}).empty(), "a manifest did not load the programs prepared at use the previous one saved");
         Require(manifest.GraphicsRecords() == graphics && manifest.LoadedRecords().graphics == graphics, "a manifest did not load the graphics records the previous one saved");
     }
     {

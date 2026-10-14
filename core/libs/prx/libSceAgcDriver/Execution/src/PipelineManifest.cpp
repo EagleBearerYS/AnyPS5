@@ -10,7 +10,7 @@ namespace AgcDriver {
 namespace {
 
 constexpr std::uint64_t Magic = 0x314d504335535041ull;
-constexpr std::uint32_t FormatVersion = 2;
+constexpr std::uint32_t FormatVersion = 3;
 
 class Writer {
 public:
@@ -83,7 +83,8 @@ PipelineManifest::PipelineManifest(std::filesystem::path path, std::uint64_t sou
             loaded = std::move(*decoded);
             for (const auto& record : loaded.compute) compute[record.program].push_back(record);
             graphics = loaded.graphics;
-            count = loaded.compute.size() + loaded.graphics.size();
+            prepared = loaded.prepared;
+            count = loaded.compute.size() + loaded.graphics.size() + loaded.prepared.size();
         } else {
             std::fprintf(stderr, "[pipeline-manifest] ignoring %s: it is not a manifest of this build\n", this->path.string().c_str());
         }
@@ -122,6 +123,24 @@ bool PipelineManifest::Record(GraphicsPipelineRecord record) {
     return true;
 }
 
+bool PipelineManifest::Record(PreparedProgramRecord record) {
+    std::lock_guard lock(mutex);
+    if (std::ranges::any_of(prepared, [&](const PreparedProgramRecord& existing) { return existing.identity == record.identity && existing.program == record.program && existing.codeOffset == record.codeOffset; })) return false;
+    prepared.push_back(std::move(record));
+    ++count;
+    dirty = true;
+    return true;
+}
+
+std::vector<PreparedProgramRecord> PipelineManifest::PreparedPrograms(const std::array<std::uint64_t, 2>& program) const {
+    std::lock_guard lock(mutex);
+    std::vector<PreparedProgramRecord> result;
+    for (const auto& record : prepared) {
+        if (record.program == program) result.push_back(record);
+    }
+    return result;
+}
+
 std::vector<ComputePipelineRecord> PipelineManifest::Records(const std::array<std::uint64_t, 2>& program) const {
     std::lock_guard lock(mutex);
     const auto found = compute.find(program);
@@ -146,6 +165,7 @@ void PipelineManifest::Save() {
         if (!dirty) return;
         for (const auto& [program, list] : compute) all.compute.insert(all.compute.end(), list.begin(), list.end());
         all.graphics = graphics;
+        all.prepared = prepared;
         dirty = false;
     }
     const auto bytes = Encode(sourceVersion, all);
@@ -201,6 +221,15 @@ std::vector<std::byte> PipelineManifest::Encode(std::uint64_t sourceVersion, con
         });
         writer.List(record.description, [&](std::byte value) { writer.Value(value); });
     });
+    writer.List(records.prepared, [&](const PreparedProgramRecord& record) {
+        writer.Value(record.program[0]);
+        writer.Value(record.program[1]);
+        writer.Value(record.codeOffset);
+        writer.Value(record.identity[0]);
+        writer.Value(record.identity[1]);
+        writer.Value(static_cast<std::uint32_t>(record.request.size()));
+        for (const char character : record.request) writer.Value(character);
+    });
     return out;
 }
 
@@ -224,7 +253,16 @@ std::optional<ManifestRecords> PipelineManifest::Decode(std::span<const std::byt
                    });
         }) && reader.List(record.description, 1u, [&](std::byte& value) { return reader.Value(value); });
     });
-    if (!graphics || reader.Remaining() != 0) return std::nullopt;
+    const bool prepared = graphics && reader.List(records.prepared, 44u, [&](PreparedProgramRecord& record) {
+        std::uint32_t size = 0;
+        if (!reader.Value(record.program[0]) || !reader.Value(record.program[1]) || !reader.Value(record.codeOffset) || !reader.Value(record.identity[0]) || !reader.Value(record.identity[1]) || !reader.Value(size) || size > reader.Remaining()) return false;
+        record.request.resize(size);
+        for (auto& character : record.request) {
+            if (!reader.Value(character)) return false;
+        }
+        return true;
+    });
+    if (!prepared || reader.Remaining() != 0) return std::nullopt;
     return records;
 }
 

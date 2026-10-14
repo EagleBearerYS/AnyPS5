@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -54,9 +55,19 @@ struct GraphicsPipelineRecord {
     bool operator==(const GraphicsPipelineRecord&) const = default;
 };
 
+struct PreparedProgramRecord {
+    std::array<std::uint64_t, 2> program{};
+    std::uint64_t codeOffset = 0;
+    std::array<std::uint64_t, 2> identity{};
+    std::string request;
+
+    bool operator==(const PreparedProgramRecord&) const = default;
+};
+
 struct ManifestRecords {
     std::vector<ComputePipelineRecord> compute;
     std::vector<GraphicsPipelineRecord> graphics;
+    std::vector<PreparedProgramRecord> prepared;
 
     bool operator==(const ManifestRecords&) const = default;
 };
@@ -72,10 +83,12 @@ public:
 
     bool Record(ComputePipelineRecord record);
     bool Record(GraphicsPipelineRecord record);
+    bool Record(PreparedProgramRecord record);
     std::vector<ComputePipelineRecord> Records(const std::array<std::uint64_t, 2>& program) const;
     std::vector<GraphicsPipelineRecord> GraphicsRecords() const;
+    std::vector<PreparedProgramRecord> PreparedPrograms(const std::array<std::uint64_t, 2>& program) const;
     std::size_t Size() const;
-    std::size_t Loaded() const { return loaded.compute.size() + loaded.graphics.size(); }
+    std::size_t Loaded() const { return loaded.compute.size() + loaded.graphics.size() + loaded.prepared.size(); }
     const ManifestRecords& LoadedRecords() const { return loaded; }
     void Save();
 
@@ -91,6 +104,7 @@ private:
     mutable std::mutex mutex;
     std::map<std::array<std::uint64_t, 2>, std::vector<ComputePipelineRecord>> compute;
     std::vector<GraphicsPipelineRecord> graphics;
+    std::vector<PreparedProgramRecord> prepared;
     std::size_t count = 0;
     bool dirty = false;
     bool stopping = false;
