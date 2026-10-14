@@ -602,10 +602,12 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
             return StoreWrite{destination, {}, copyDataSource(packet, bytes)};
         }
         case 0x50: {
-            if (packet.size() < 7 || dmaDestination(packet) == DmaSelectGds) return std::nullopt;
+            if (packet.size() < 7) return std::nullopt;
             if (dmaDestination(packet) == DmaSelectNowhere) return StoreWrite{address(packet[2], packet[3]), {}, {}};
             const std::size_t bytes = packet[6] & 0x3ffffffu;
-            const auto destination = address(packet[4], packet[5]);
+            const bool gds = dmaDestination(packet) == DmaSelectGds;
+            if (gds && (packet[5] != 0 || !gdsRange(packet[4], bytes))) return std::nullopt;
+            const auto destination = gds ? GdsAddress() + packet[4] : address(packet[4], packet[5]);
             if (!fits(destination, bytes)) return std::nullopt;
             return StoreWrite{destination, {}, dmaSourceBytes(packet)};
         }
