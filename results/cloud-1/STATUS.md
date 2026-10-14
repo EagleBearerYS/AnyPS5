@@ -1,4 +1,4 @@
-READY
+BUSY PM-006 (claimed 2026-10-14T17:09:50Z)
 RESULT:
 - Last task: PM-004 (FSR 1 presentation upscaling, branch feat/agc-fsr1-presentation-upscaling at 245f786b07 on the fork), done: results/cloud-1/PM-004.md. It needs a decision on the FSR submodule's nested sample submodules (see the top of that file). Before it: PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
