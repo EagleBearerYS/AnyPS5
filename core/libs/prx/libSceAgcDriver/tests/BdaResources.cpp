@@ -1623,3 +1623,43 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");
 }
+
+void RunImageMirrorEpochTests(const Context& context, const BdaTestAccess& access) {
+    alignas(65536) static std::byte epochImage[2 * 65536];
+    const auto address = reinterpret_cast<std::uint64_t>(epochImage);
+    const auto probe = address + 100;
+    std::memset(epochImage, 0x31, sizeof(epochImage));
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RegisterMainImage();
+        mutation.Protect(epochImage, sizeof(epochImage), true, true, true, [] {});
+    }
+    const auto build = [&] {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= probe && probe < range.end; });
+        Require(found != ranges.end(), "the GPU-mapped image range is missing from the BDA table");
+        const auto byte = access.addressBytes(found->deviceAddress + (probe - found->begin))[0];
+        leased.WriteBack();
+        return byte;
+    };
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(build() == std::byte{0x31} && build() == std::byte{0x31}, "the writable image mirror missed the guest bytes");
+    const auto compared = MirrorCounters().blocksCompared;
+    Require(build() == std::byte{0x31}, "the writable image mirror lost the guest bytes");
+    Require(MirrorCounters().blocksCompared == compared, "a build compared an unchanged writable image mirror again within one collect epoch");
+    const std::array<std::byte, 1> stored{std::byte{0x42}};
+    AgcDriver::GuestMemory::Write(probe, stored);
+    Require(build() == std::byte{0x42}, "a driver store into a writable image range was hidden by the collect epoch");
+    Require(MirrorCounters().blocksCompared > compared, "a driver store into a writable image range did not compare its mirror");
+    epochImage[100] = std::byte{0x55};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(build() == std::byte{0x55}, "a guest store into a writable image range was not seen in the next collect epoch");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(epochImage, sizeof(epochImage), true, true, false, [] {});
+    }
+    ClearImageMirrors(context.device);
+}
