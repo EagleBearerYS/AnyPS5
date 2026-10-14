@@ -1544,9 +1544,18 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         reject([&] { resources.CheckFaults(); }, "rect-list requires");
     }
     {
+        shader.bdaWrites = true;
+        ShaderResources resources(context, compiled, snapshots);
+        const auto writable = resources.Writable();
+        Require(writable.writableImports && writable.ranges.empty(), "a build of a program that stores through the page table may not write the writable imports");
+        resources.WriteBack();
+        shader.bdaWrites = false;
+    }
+    {
         ShaderResources resources(context, compiled, snapshots);
         Require(ShaderResources::NeverReusable(std::span<const CompiledShader>(&compiled, 1)) && !resources.Reusable(), "an address-based build is reusable");
         Require(resources.UsesAddressTable(), "an address-based build does not use the BDA table");
+        Require(!resources.Writable().writableImports && resources.Writable().ranges.empty(), "a build of a program that stores nothing may write");
         ShaderRecompiler::RecompileResult plain;
         plain.bindings = {binding(Role::GuestBuffers, 6)};
         const CompiledShader plainStage{ShaderRecompiler::ShaderStage::Compute, &plain, 0};
