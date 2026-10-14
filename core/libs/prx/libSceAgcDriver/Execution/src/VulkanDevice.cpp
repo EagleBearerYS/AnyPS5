@@ -3079,7 +3079,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (overlay) {
         if (!state->overlay) state->overlay = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
-        state->overlay->NotePresent(std::chrono::steady_clock::now());
+        state->overlay->NotePresent(std::chrono::steady_clock::now(), clearOnly ? VkExtent2D{} : VkExtent2D{width, height});
         state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     } else if (!drawn) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -4540,6 +4540,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), context.pipelineCache, objects->module, objects->layout, pipelineFlags, 0, specialization.Info(), subgroupSize, &objects->pipeline, context.pipelineCacheSynchronization);
         objects->destroyModule(objects->device, objects->module, nullptr);
         objects->module = VK_NULL_HANDLE;
+        PerformanceCounters::CountPipeline();
         Graphics::LogPipelineStatistics_nid_no_patch(context, objects->pipeline);
         timing.Mark("pipeline_create");
         if (pipelineKey != 0) {

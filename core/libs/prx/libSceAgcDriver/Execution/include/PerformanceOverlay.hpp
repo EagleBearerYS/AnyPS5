@@ -5,12 +5,14 @@
 #include <vulkan/vulkan.h>
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -35,10 +37,38 @@ class PerformanceCounters {
 public:
     static void AddGpuNanoseconds(std::uint64_t nanoseconds);
     static void AddDriverNanoseconds(std::uint64_t nanoseconds);
+    static void CountPipeline();
     static std::uint64_t GpuNanoseconds();
     static std::uint64_t DriverNanoseconds();
+    static std::uint64_t Pipelines();
     static bool GpuEnabled();
     static bool DriverEnabled();
+};
+
+class PacketCounters {
+public:
+    struct Totals {
+        std::uint64_t draws = 0;
+        std::uint64_t dispatches = 0;
+    };
+
+    static PacketCounters& ThisThread();
+    static Totals Sum();
+
+    void CountDraw() { draws.store(draws.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed); }
+    void CountDispatch() { dispatches.store(dispatches.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed); }
+
+private:
+    alignas(64) std::atomic<std::uint64_t> draws{0};
+    std::atomic<std::uint64_t> dispatches{0};
+};
+
+struct OverlayCounters {
+    std::uint64_t gpuNanoseconds = 0;
+    std::uint64_t driverNanoseconds = 0;
+    std::uint64_t draws = 0;
+    std::uint64_t dispatches = 0;
+    std::uint64_t pipelines = 0;
 };
 
 class OverlayStatistics {
@@ -54,6 +84,7 @@ public:
     };
 
     void AddPresent(Clock::time_point at, std::uint64_t gpuNanoseconds, std::uint64_t driverNanoseconds);
+    void AddPresent(Clock::time_point at, const OverlayCounters& counters);
     void Reset();
     double Fps() const;
     double LastFrameMs() const;
@@ -61,15 +92,18 @@ public:
     Range FrameTimeRange() const;
     double GpuMsPerFrame() const;
     double DriverMsPerFrame() const;
+    double DrawsPerFrame() const;
+    double DispatchesPerFrame() const;
+    std::uint64_t PipelinesInWindow() const;
+    OverlayCounters Latest() const;
 
 private:
     struct Sample {
         Clock::time_point at;
-        std::uint64_t gpu = 0;
-        std::uint64_t driver = 0;
+        OverlayCounters counters;
     };
 
-    double perFrameMs(std::uint64_t Sample::*counter) const;
+    double perFrame(std::uint64_t OverlayCounters::*counter) const;
 
     std::deque<Sample> window;
     std::array<double, FrameHistory> frameTimes{};
@@ -94,6 +128,18 @@ struct OverlayContent {
     std::vector<std::string> below;
 };
 
+struct OverlayMemory {
+    std::uint64_t used = 0;
+    std::uint64_t budget = 0;
+};
+
+struct OverlayDetails {
+    std::optional<OverlayMemory> vram;
+    std::optional<std::uint64_t> ram;
+    VkExtent2D display{};
+    VkExtent2D window{};
+};
+
 struct OverlayLayout {
     OverlayRect bounds;
     std::vector<OverlayRect> rects;
@@ -115,7 +161,13 @@ struct OverlayMetrics {
 
 const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char character);
 std::string FormatOverlayValue(double value);
+std::string FormatOverlayCount(double value);
+std::string FormatOverlayGigabytes(std::uint64_t bytes);
 OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, bool driver);
+OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, bool driver, const OverlayDetails& details);
+bool OverlaySampleDue(std::optional<OverlayStatistics::Clock::time_point> sampledAt, OverlayStatistics::Clock::time_point now);
+std::optional<OverlayMemory> ReadVramBudget(const Graphics::Context& context);
+std::optional<std::uint64_t> ReadProcessPrivateBytes();
 std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content);
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner);
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace);
@@ -131,9 +183,9 @@ public:
     static void Toggle();
     static OverlayCorner Corner();
 
-    void NotePresent(OverlayStatistics::Clock::time_point at);
-    void NotePresent(OverlayStatistics::Clock::time_point at, std::uint64_t gpuNanoseconds, std::uint64_t driverNanoseconds);
+    void NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display);
     const OverlayStatistics& Statistics() const { return statistics; }
+    const OverlayDetails& Details() const { return details; }
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner);
     void Release(std::size_t slot) noexcept;
@@ -149,6 +201,7 @@ private:
     VkPipeline pipeline(VkFormat format, VkRenderPass compatible);
     void releaseTransient(Slot& slot) noexcept;
     void release() noexcept;
+    void restartIfToggled();
 
     Graphics::Context context;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
@@ -158,6 +211,8 @@ private:
     std::map<VkFormat, VkPipeline> pipelines;
     std::vector<Slot> slots;
     OverlayStatistics statistics;
+    OverlayDetails details;
+    std::optional<OverlayStatistics::Clock::time_point> sampledAt;
     std::uint64_t toggles = 0;
 };
 

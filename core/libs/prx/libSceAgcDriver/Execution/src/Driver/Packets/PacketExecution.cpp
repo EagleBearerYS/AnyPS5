@@ -109,6 +109,7 @@ void Driver::execute(const Submission& submission) {
     thread_local PacketProfile* packetProfileSlot = nullptr;
     auto& packetProfile = ShaderRecompiler::ThreadOwned(packetProfileSlot);
     ++packetProfile.submissions;
+    auto& packetCounters = PacketCounters::ThisThread();
 
     bumpEpoch(&EpochBumps::submissions);
     clearResolvedAhead();
@@ -247,6 +248,7 @@ void Driver::execute(const Submission& submission) {
             flipHold.Release();
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15 || opcode == 0x16) {
+            packetCounters.CountDispatch();
             landPendingWaits(submission.queue);
             currentPacketOffset() = cursor;
             if (gateOpened()) {
@@ -275,6 +277,7 @@ void Driver::execute(const Submission& submission) {
                 }
             }
         } else if (drawPacket) {
+            packetCounters.CountDraw();
             landPendingWaits(submission.queue);
             bool drawn = false;
             timed(&WorkerProfile::drawMs, [&] {

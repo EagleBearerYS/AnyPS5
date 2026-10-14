@@ -5,14 +5,24 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/PerformanceOverlayFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/PerformanceOverlayVert_spv.h"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 namespace AgcDriver {
 namespace {
@@ -27,6 +37,30 @@ struct OverlayParameters {
 std::atomic<std::uint64_t> toggleCount{0};
 std::atomic<std::uint64_t> gpuTotal{0};
 std::atomic<std::uint64_t> driverTotal{0};
+std::atomic<std::uint64_t> pipelineTotal{0};
+
+struct PacketCounterRegistry {
+    std::mutex mutex;
+    std::deque<PacketCounters> counters;
+    std::vector<PacketCounters*> unused;
+};
+
+PacketCounterRegistry& packetCounterRegistry() {
+    static auto* registry = new PacketCounterRegistry;
+    return *registry;
+}
+
+struct PacketCounterLease {
+    PacketCounters* counters = nullptr;
+    ~PacketCounterLease() {
+        if (counters == nullptr) return;
+        auto& registry = packetCounterRegistry();
+        std::lock_guard lock(registry.mutex);
+        registry.unused.push_back(counters);
+    }
+};
+
+constexpr double GigabyteBytes = 1024.0 * 1024.0 * 1024.0;
 
 const OverlaySettings& settings() {
     static const OverlaySettings parsed = ParseOverlaySettings(std::getenv("ANYPS5_OVERLAY"), std::getenv("ANYPS5_OVERLAY_POS"));
@@ -90,12 +124,46 @@ void PerformanceCounters::AddDriverNanoseconds(std::uint64_t nanoseconds) {
     driverTotal.fetch_add(nanoseconds, std::memory_order_relaxed);
 }
 
+void PerformanceCounters::CountPipeline() {
+    pipelineTotal.fetch_add(1, std::memory_order_relaxed);
+}
+
 std::uint64_t PerformanceCounters::GpuNanoseconds() {
     return gpuTotal.load(std::memory_order_relaxed);
 }
 
 std::uint64_t PerformanceCounters::DriverNanoseconds() {
     return driverTotal.load(std::memory_order_relaxed);
+}
+
+std::uint64_t PerformanceCounters::Pipelines() {
+    return pipelineTotal.load(std::memory_order_relaxed);
+}
+
+PacketCounters& PacketCounters::ThisThread() {
+    thread_local PacketCounterLease lease;
+    if (lease.counters == nullptr) {
+        auto& registry = packetCounterRegistry();
+        std::lock_guard lock(registry.mutex);
+        if (registry.unused.empty()) {
+            lease.counters = &registry.counters.emplace_back();
+        } else {
+            lease.counters = registry.unused.back();
+            registry.unused.pop_back();
+        }
+    }
+    return *lease.counters;
+}
+
+PacketCounters::Totals PacketCounters::Sum() {
+    auto& registry = packetCounterRegistry();
+    std::lock_guard lock(registry.mutex);
+    Totals totals;
+    for (const auto& counters : registry.counters) {
+        totals.draws += counters.draws.load(std::memory_order_relaxed);
+        totals.dispatches += counters.dispatches.load(std::memory_order_relaxed);
+    }
+    return totals;
 }
 
 bool PerformanceCounters::GpuEnabled() {
@@ -108,13 +176,17 @@ bool PerformanceCounters::DriverEnabled() {
 }
 
 void OverlayStatistics::AddPresent(Clock::time_point at, std::uint64_t gpuNanoseconds, std::uint64_t driverNanoseconds) {
+    AddPresent(at, OverlayCounters{gpuNanoseconds, driverNanoseconds});
+}
+
+void OverlayStatistics::AddPresent(Clock::time_point at, const OverlayCounters& counters) {
     if (!window.empty()) {
         Graphics::Require(at >= window.back().at, "presents reached the performance overlay out of order");
         frameTimes[frameNext] = std::chrono::duration<double, std::milli>(at - window.back().at).count();
         frameNext = (frameNext + 1) % FrameHistory;
         frameCount = std::min(frameCount + 1, FrameHistory);
     }
-    window.push_back({at, gpuNanoseconds, driverNanoseconds});
+    window.push_back({at, counters});
     while (at - window.front().at > Window) window.pop_front();
 }
 
@@ -156,19 +228,38 @@ OverlayStatistics::Range OverlayStatistics::FrameTimeRange() const {
     return range;
 }
 
-double OverlayStatistics::perFrameMs(std::uint64_t Sample::*counter) const {
+double OverlayStatistics::perFrame(std::uint64_t OverlayCounters::*counter) const {
     if (window.size() < 2) return 0;
-    const auto first = window.front().*counter;
-    const auto last = window.back().*counter;
-    return last >= first ? static_cast<double>(last - first) / 1e6 / static_cast<double>(window.size() - 1) : 0;
+    const auto first = window.front().counters.*counter;
+    const auto last = window.back().counters.*counter;
+    return last >= first ? static_cast<double>(last - first) / static_cast<double>(window.size() - 1) : 0;
 }
 
 double OverlayStatistics::GpuMsPerFrame() const {
-    return perFrameMs(&Sample::gpu);
+    return perFrame(&OverlayCounters::gpuNanoseconds) / 1e6;
 }
 
 double OverlayStatistics::DriverMsPerFrame() const {
-    return perFrameMs(&Sample::driver);
+    return perFrame(&OverlayCounters::driverNanoseconds) / 1e6;
+}
+
+double OverlayStatistics::DrawsPerFrame() const {
+    return perFrame(&OverlayCounters::draws);
+}
+
+double OverlayStatistics::DispatchesPerFrame() const {
+    return perFrame(&OverlayCounters::dispatches);
+}
+
+std::uint64_t OverlayStatistics::PipelinesInWindow() const {
+    if (window.empty()) return 0;
+    const auto first = window.front().counters.pipelines;
+    const auto last = window.back().counters.pipelines;
+    return last >= first ? last - first : 0;
+}
+
+OverlayCounters OverlayStatistics::Latest() const {
+    return window.empty() ? OverlayCounters{} : window.back().counters;
 }
 
 const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char character) {
@@ -190,18 +281,26 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
     static constexpr Glyph colon{0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00};
     static constexpr Glyph slash{0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00};
     static constexpr Glyph a{0x0e, 0x11, 0x11, 0x11, 0x1f, 0x11, 0x11};
+    static constexpr Glyph b{0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e};
+    static constexpr Glyph c{0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e};
     static constexpr Glyph d{0x1c, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1c};
     static constexpr Glyph e{0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f};
     static constexpr Glyph f{0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10};
     static constexpr Glyph g{0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f};
+    static constexpr Glyph h{0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11};
     static constexpr Glyph i{0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e};
+    static constexpr Glyph k{0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
+    static constexpr Glyph l{0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f};
     static constexpr Glyph m{0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11};
     static constexpr Glyph n{0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11};
+    static constexpr Glyph o{0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
     static constexpr Glyph p{0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10};
     static constexpr Glyph r{0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11};
     static constexpr Glyph s{0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e};
+    static constexpr Glyph t{0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
     static constexpr Glyph u{0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
     static constexpr Glyph v{0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04};
+    static constexpr Glyph w{0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a};
     static constexpr Glyph x{0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11};
     if (character >= '0' && character <= '9') return digits[static_cast<std::size_t>(character - '0')];
     switch (character) {
@@ -210,18 +309,26 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
         case ':': return colon;
         case '/': return slash;
         case 'A': return a;
+        case 'B': return b;
+        case 'C': return c;
         case 'D': return d;
         case 'E': return e;
         case 'F': return f;
         case 'G': return g;
+        case 'H': return h;
         case 'I': return i;
+        case 'K': return k;
+        case 'L': return l;
         case 'M': return m;
         case 'N': return n;
+        case 'O': return o;
         case 'P': return p;
         case 'R': return r;
         case 'S': return s;
+        case 'T': return t;
         case 'U': return u;
         case 'V': return v;
+        case 'W': return w;
         case 'X': return x;
         default: throw std::runtime_error(std::string("the performance overlay font has no glyph for '") + character + "'");
     }
@@ -234,7 +341,24 @@ std::string FormatOverlayValue(double value) {
     return text;
 }
 
+std::string FormatOverlayCount(double value) {
+    const long long rounded = std::isfinite(value) && value > 0 ? std::llround(std::min(value, 1e12)) : 0;
+    char text[24];
+    if (rounded < 10000) std::snprintf(text, sizeof(text), "%lld", rounded);
+    else if (rounded < 1000000) std::snprintf(text, sizeof(text), "%lldK", rounded / 1000);
+    else std::snprintf(text, sizeof(text), "%lldM", std::min<long long>(rounded / 1000000, 999));
+    return text;
+}
+
+std::string FormatOverlayGigabytes(std::uint64_t bytes) {
+    return FormatOverlayValue(static_cast<double>(bytes) / GigabyteBytes);
+}
+
 OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, bool driver) {
+    return ComposeOverlay(statistics, gpu, driver, OverlayDetails{});
+}
+
+OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, bool driver, const OverlayDetails& details) {
     OverlayContent content;
     content.above.push_back("FPS: " + FormatOverlayValue(statistics.Fps()));
     content.above.push_back("FRAME: " + FormatOverlayValue(statistics.LastFrameMs()) + " MS");
@@ -243,7 +367,59 @@ OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, boo
     content.below.push_back("MIN/AVG/MAX: " + FormatOverlayValue(range.minimum) + "/" + FormatOverlayValue(range.average) + "/" + FormatOverlayValue(range.maximum));
     if (gpu) content.below.push_back("GPU: " + FormatOverlayValue(statistics.GpuMsPerFrame()) + " MS");
     if (driver) content.below.push_back("DRIVER: " + FormatOverlayValue(statistics.DriverMsPerFrame()) + " MS");
+    const auto latest = statistics.Latest();
+    if (latest.draws != 0 || latest.dispatches != 0) content.below.push_back("DRAWS: " + FormatOverlayCount(statistics.DrawsPerFrame()) + "  DISPATCH: " + FormatOverlayCount(statistics.DispatchesPerFrame()));
+    if (latest.pipelines != 0) content.below.push_back("SHADERS: " + FormatOverlayCount(static_cast<double>(statistics.PipelinesInWindow())) + "  TOTAL: " + FormatOverlayCount(static_cast<double>(latest.pipelines)));
+    if (details.vram) content.below.push_back("VRAM: " + FormatOverlayGigabytes(details.vram->used) + "/" + FormatOverlayGigabytes(details.vram->budget) + " GB");
+    if (details.ram) content.below.push_back("RAM: " + FormatOverlayGigabytes(*details.ram) + " GB");
+    if (details.display.width != 0 && details.display.height != 0 && details.window.width != 0 && details.window.height != 0) {
+        const auto size = [](VkExtent2D extent) { return std::to_string(extent.width) + "X" + std::to_string(extent.height); };
+        for (const std::string_view separator : {" / ", "/"}) {
+            auto line = "RES: " + size(details.display) + std::string(separator) + size(details.window);
+            if (line.size() > static_cast<std::size_t>(OverlayMetrics::Columns)) continue;
+            content.below.push_back(std::move(line));
+            break;
+        }
+    }
     return content;
+}
+
+bool OverlaySampleDue(std::optional<OverlayStatistics::Clock::time_point> sampledAt, OverlayStatistics::Clock::time_point now) {
+    return !sampledAt || now - *sampledAt >= std::chrono::seconds(1);
+}
+
+std::optional<OverlayMemory> ReadVramBudget(const Graphics::Context& context) {
+    if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return std::nullopt;
+    const auto heap = Graphics::LargestDeviceLocalHeap(context.memory);
+    if (!heap) return std::nullopt;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
+    context.memoryProperties2(context.physical, &properties);
+    if (reported.heapBudget[*heap] == 0) return std::nullopt;
+    return OverlayMemory{reported.heapUsage[*heap], reported.heapBudget[*heap]};
+}
+
+std::optional<std::uint64_t> ReadProcessPrivateBytes() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(counters.PrivateUsage);
+#else
+    std::FILE* status = std::fopen("/proc/self/status", "r");
+    if (status == nullptr) return std::nullopt;
+    std::optional<std::uint64_t> anonymousKb;
+    std::uint64_t swapKb = 0;
+    char line[256];
+    while (std::fgets(line, sizeof(line), status) != nullptr) {
+        unsigned long long value = 0;
+        if (std::sscanf(line, "RssAnon: %llu kB", &value) == 1) anonymousKb = value;
+        else if (std::sscanf(line, "VmSwap: %llu kB", &value) == 1) swapKb = value;
+    }
+    std::fclose(status);
+    if (!anonymousKb) return std::nullopt;
+    return (*anonymousKb + swapKb) * 1024u;
+#endif
 }
 
 std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content) {
@@ -404,17 +580,25 @@ OverlayCorner PerformanceOverlay::Corner() {
     return settings().corner;
 }
 
-void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at) {
-    NotePresent(at, PerformanceCounters::GpuEnabled() ? PerformanceCounters::GpuNanoseconds() : 0, PerformanceCounters::DriverEnabled() ? PerformanceCounters::DriverNanoseconds() : 0);
+void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display) {
+    restartIfToggled();
+    if (OverlaySampleDue(sampledAt, at)) {
+        details.vram = ReadVramBudget(context);
+        details.ram = ReadProcessPrivateBytes();
+        sampledAt = at;
+    }
+    details.display = display;
+    const auto packets = PacketCounters::Sum();
+    statistics.AddPresent(at, OverlayCounters{PerformanceCounters::GpuEnabled() ? PerformanceCounters::GpuNanoseconds() : 0, PerformanceCounters::DriverEnabled() ? PerformanceCounters::DriverNanoseconds() : 0, packets.draws, packets.dispatches, PerformanceCounters::Pipelines()});
 }
 
-void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at, std::uint64_t gpuNanoseconds, std::uint64_t driverNanoseconds) {
+void PerformanceOverlay::restartIfToggled() {
     const auto current = toggleCount.load(std::memory_order_relaxed);
-    if (current != toggles) {
-        statistics.Reset();
-        toggles = current;
-    }
-    statistics.AddPresent(at, gpuNanoseconds, driverNanoseconds);
+    if (current == toggles) return;
+    statistics.Reset();
+    details = {};
+    sampledAt.reset();
+    toggles = current;
 }
 
 VkRenderPass PerformanceOverlay::renderPass(VkFormat format, VkImageLayout initialLayout, VkImageLayout finalLayout) {
@@ -516,7 +700,9 @@ VkPipeline PerformanceOverlay::pipeline(VkFormat format, VkRenderPass compatible
 }
 
 OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
-    return Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, ComposeOverlay(statistics, PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled()), Corner());
+    auto shown = details;
+    shown.window = extent;
+    return Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, ComposeOverlay(statistics, PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled(), shown), Corner());
 }
 
 OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner) {
