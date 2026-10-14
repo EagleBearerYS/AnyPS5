@@ -1,5 +1,10 @@
 BUSY GAC-007 (claimed 2026-10-14T23:16:59Z)
 RESULT:
+- GAC-007 Part A is done, in results/cloud-1/GAC-007.md. Parts B and C are in progress.
+  - Merge a5c72131df = upstream 6239ceffc8 + fork 7ae42fd181. It builds with CI's flags.
+  - `^agc`: 571 tests, 0 failed, 41 skipped (all expected).
+  - The three expand tests passed 10 of 10 each.
+  - Full suite: 6 of 1220 failed. Plain 6239ceffc8 fails the same 6 of 1218 (agc_driver_preparation_scope_settle, the four guest_datagram tests, guest_tcp), so none comes from the merge.
 - Last task: GAC-006 (depth expand reads of a non-imported write base: not reproduced at e1a94e7735 in 11 variants; green coverage test on fix/agc-db-depth-expand-noimport at 984604118; separate abort found for window imports inside heap-mirrored ranges), done: results/cloud-1/GAC-006.md. Before it: GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
   - /home/user/AnyPS5/build at upstream a453108cf7
