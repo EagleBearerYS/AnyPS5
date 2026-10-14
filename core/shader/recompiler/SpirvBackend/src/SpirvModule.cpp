@@ -215,6 +215,21 @@ void SpirvModule::AddFunction(std::span<const std::uint32_t> words) {
     AppendInstructionWords(functionInstructions, words);
 }
 
+std::size_t SpirvModule::FunctionWordCount() const {
+    return functionInstructions.size();
+}
+
+std::vector<std::uint32_t> SpirvModule::TakeFunctionWords(std::size_t offset) {
+    if (offset > functionInstructions.size()) throw std::runtime_error("SpirvModule::TakeFunctionWords offset is past the function instructions");
+    std::vector<std::uint32_t> words(functionInstructions.begin() + static_cast<std::ptrdiff_t>(offset), functionInstructions.end());
+    functionInstructions.resize(offset);
+    return words;
+}
+
+void SpirvModule::AppendFunctionWords(std::span<const std::uint32_t> words) {
+    functionInstructions.insert(functionInstructions.end(), words.begin(), words.end());
+}
+
 void SpirvModule::appendString(std::vector<std::uint32_t>& words, const std::string& text) {
     const auto length = text.size();
     const auto wordCount = (length + 1u + 3u) / 4u;

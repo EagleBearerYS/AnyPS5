@@ -55,6 +55,9 @@ public:
     void AddMemoryModel(std::uint32_t addressingModel, std::uint32_t memoryModel);
     void AddName(std::uint32_t target, const std::string& name);
     void AddFunction(std::span<const std::uint32_t> words);
+    [[nodiscard]] std::size_t FunctionWordCount() const;
+    [[nodiscard]] std::vector<std::uint32_t> TakeFunctionWords(std::size_t offset);
+    void AppendFunctionWords(std::span<const std::uint32_t> words);
     void BeginHelperFunction();
     void EndHelperFunction();
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);

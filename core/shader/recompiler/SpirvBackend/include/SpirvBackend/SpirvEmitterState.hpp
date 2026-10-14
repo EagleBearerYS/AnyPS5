@@ -87,6 +87,14 @@ struct SpirvTableAccess {
     bool active = false;
 };
 
+struct SpirvTableImageFunction {
+    IrOpcode opcode;
+    MemoryInfo memory;
+    std::vector<std::uint32_t> operands;
+    std::uint32_t function = 0;
+    std::vector<std::uint32_t> arguments;
+};
+
 struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
@@ -165,6 +173,7 @@ struct SpirvEmitterState {
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t heapSamplerVariable = 0;
     std::vector<SpirvTableImageVariable> tableImageVariables;
+    std::vector<SpirvTableImageFunction> tableImageFunctions;
     std::uint32_t tableMapVariable = 0;
     std::uint32_t mainFunc = 0;
     std::uint32_t meshGuestFunc = 0;

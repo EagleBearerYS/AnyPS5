@@ -1216,6 +1216,62 @@ void verifyImageTables() {
     FillTableSrt(guest, heap.data(), 32u, 4u);
 }
 
+const std::vector<std::uint32_t> TableTwoSampleCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x7e020d00u, 0x100402f0u, 0x060602f2u, 0xf09c0f08u, 0x00450401u, 0xf09c0f08u, 0x00450802u, 0xe0700000u, 0x80070400u, 0xe0700004u, 0x80070800u, 0xbf810000u};
+
+struct TableSpirvFunction {
+    bool dontInline = false;
+    std::uint32_t switches = 0;
+    std::map<std::uint32_t, std::uint32_t> calls;
+};
+
+std::map<std::uint32_t, TableSpirvFunction> ScanTableFunctions(const std::vector<std::uint32_t>& words, std::uint32_t& entry) {
+    std::map<std::uint32_t, TableSpirvFunction> functions;
+    std::uint32_t current = 0;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0 && count <= words.size() - cursor, "image table functions: truncated SPIR-V instruction");
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpEntryPoint) entry = words[cursor + 2];
+        if (op == spv::OpFunction) {
+            current = words[cursor + 2];
+            functions[current].dontInline = (words[cursor + 3] & spv::FunctionControlDontInlineMask) != 0u;
+        }
+        if (op == spv::OpSwitch && count > 3u) ++functions[current].switches;
+        if (op == spv::OpFunctionCall) ++functions[current].calls[words[cursor + 3]];
+        cursor += count;
+    }
+    return functions;
+}
+
+void verifyImageTableFunctions() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    guest.heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    guest.heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 1u, 0u, 0u}}};
+    FillTableSrt(guest, guest.heap.data(), 32u, 2u);
+    const auto request = TableRequest(TableTwoSampleCode, TableUserData(guest));
+    const auto compiled = CompileTable(request);
+    const auto& spirv = compiled.result->spirv;
+    std::uint32_t entry = 0;
+    const auto functions = ScanTableFunctions(spirv, entry);
+    require(functions.contains(entry), "image table functions: the module has no entry point function");
+    std::vector<std::uint32_t> switched;
+    for (const auto& [id, function] : functions) {
+        if (function.switches != 0u) switched.push_back(id);
+    }
+    const auto& main = functions.at(entry);
+    require(main.switches == 0u && switched.size() == 1u, ("image table functions: two samples of one table image with the same operand shapes left " + std::to_string(main.switches) + " mode switches in the entry point and " + std::to_string(switched.size()) + " functions with mode switches instead of one called function").c_str());
+    const auto& helper = functions.at(switched[0]);
+    const auto calls = main.calls.find(switched[0]);
+    require(helper.dontInline && helper.switches == 1u && calls != main.calls.end() && calls->second >= 2u, "image table functions: the mode switch function is inlinable, holds more than one switch or is not called once per sample");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
+}
+
 void verifyImageTableSrtKey() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -4132,6 +4188,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--bindless") {
             verifyImageTableKeys();
             verifyImageTables();
+            verifyImageTableFunctions();
             verifyImageTableBulkReads();
             verifyImageTableSrtKey();
             verifyImageTableRegistration();
@@ -4157,6 +4214,7 @@ int main(int argc, char** argv) {
         verifyGuardedDescriptorSources();
         verifyImageTableKeys();
         verifyImageTables();
+        verifyImageTableFunctions();
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
