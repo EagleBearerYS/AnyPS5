@@ -61,6 +61,12 @@ public:
             while (family < count && (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) ++family;
             Require(family < count, "no Vulkan graphics queue");
             timestampBits = families[family].timestampValidBits;
+            const auto enumerateExtensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
+            Check(enumerateExtensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
+            std::vector<VkExtensionProperties> extensions(count);
+            Check(enumerateExtensions(context.physical, nullptr, &count, extensions.data()), "vkEnumerateDeviceExtensionProperties");
+            memoryBudget = std::any_of(extensions.begin(), extensions.end(), [](const VkExtensionProperties& extension) { return std::string(extension.extensionName) == VK_EXT_MEMORY_BUDGET_EXTENSION_NAME; });
+            const char* const budgetExtension = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
             const float priority = 1;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
@@ -69,7 +75,10 @@ public:
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
+            device.enabledExtensionCount = memoryBudget ? 1 : 0;
+            device.ppEnabledExtensionNames = memoryBudget ? &budgetExtension : nullptr;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
+            if (memoryBudget) context.memoryProperties2 = function<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2");
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
             function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(context.physical, &context.memory);
             VkPhysicalDeviceProperties properties{};
@@ -93,6 +102,7 @@ public:
     const Context& GetContext() const { return context; }
     const std::string& Name() const { return name; }
     std::uint32_t TimestampBits() const { return timestampBits; }
+    bool MemoryBudget() const { return memoryBudget; }
 
 private:
     template<typename TFunction>
@@ -116,6 +126,7 @@ private:
     Context context{};
     std::string name;
     std::uint32_t timestampBits = 0;
+    bool memoryBudget = false;
 };
 
 class Image {
@@ -247,6 +258,72 @@ int channel(std::uint32_t word, unsigned shift) {
     return static_cast<int>((word >> shift) & 0xffu);
 }
 
+void requireTextDrawn(const std::vector<std::uint32_t>& drawn, VkExtent2D extent, const OverlayRect& bounds, std::int32_t scale, std::uint32_t frameWord, const std::string& line, std::int32_t row, std::size_t first = 0, std::size_t count = std::string::npos) {
+    const auto end = count == std::string::npos ? line.size() : std::min(line.size(), first + count);
+    for (std::size_t index = first; index < end; ++index) {
+        const auto& glyph = AgcDriver::OverlayGlyph(line[index]);
+        const auto column = static_cast<std::int32_t>(index);
+        for (std::int32_t gy = 0; gy < OverlayMetrics::GlyphHeight; ++gy) {
+            for (std::int32_t gx = 0; gx < OverlayMetrics::Advance; ++gx) {
+                const bool set = gx < OverlayMetrics::GlyphWidth && (glyph[static_cast<std::size_t>(gy)] & (0x10u >> gx)) != 0;
+                for (std::int32_t py = 0; py < scale; ++py) {
+                    for (std::int32_t px = 0; px < scale; ++px) {
+                        const auto x = bounds.x + (OverlayMetrics::Padding + column * OverlayMetrics::Advance + gx) * scale + px;
+                        const auto y = bounds.y + (row + gy) * scale + py;
+                        const auto word = drawn[static_cast<std::size_t>(y) * extent.width + static_cast<std::size_t>(x)];
+                        const auto where = std::string("'") + line[index] + "' of '" + line + "' glyph pixel " + std::to_string(gx) + "," + std::to_string(gy);
+                        Require(channel(word, 24) == channel(frameWord, 24), where + " changed the alpha");
+                        if (set) {
+                            Require((word & 0x00ffffffu) == 0x00ffffffu, where + " is not white text: 0x" + std::to_string(word));
+                            continue;
+                        }
+                        for (const unsigned shift : {0u, 8u, 16u}) {
+                            const int expected = static_cast<int>(std::lround(channel(frameWord, shift) * 0.4));
+                            Require(std::abs(channel(word, shift) - expected) <= 1, where + " is not the panel over the frame: " + std::to_string(channel(word, shift)) + " for " + std::to_string(expected));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+AgcDriver::OverlayDetails measuredDetails(const Context& context, VkExtent2D display, VkExtent2D window) {
+    AgcDriver::OverlayDetails details;
+    details.vram = AgcDriver::ReadVramBudget(context);
+    details.ram = AgcDriver::ReadProcessPrivateBytes();
+    details.display = display;
+    details.window = window;
+    return details;
+}
+
+AgcDriver::OverlayDetails fixedDetails(VkExtent2D display, VkExtent2D window) {
+    constexpr double GiB = 1024.0 * 1024.0 * 1024.0;
+    AgcDriver::OverlayDetails details;
+    details.vram = AgcDriver::OverlayMemory{static_cast<std::uint64_t>(6.1 * GiB), static_cast<std::uint64_t>(7.8 * GiB)};
+    details.ram = static_cast<std::uint64_t>(3.2 * GiB);
+    details.display = display;
+    details.window = window;
+    return details;
+}
+
+OverlayContent fullPanel(const AgcDriver::OverlayDetails& details) {
+    AgcDriver::OverlayStatistics statistics;
+    const auto start = AgcDriver::OverlayStatistics::Clock::time_point{} + std::chrono::hours(1);
+    for (std::uint64_t i = 0; i <= 60; ++i) {
+        AgcDriver::OverlayCounters counters;
+        counters.gpuNanoseconds = i * 4'200'000u;
+        counters.driverNanoseconds = i * 1'300'000u;
+        counters.draws = i * 1240;
+        counters.dispatches = i * 85;
+        counters.pipelines = i < 50 ? 1500 : 1503;
+        statistics.AddPresent(start + std::chrono::nanoseconds(16'666'667) * i, counters);
+    }
+    auto content = AgcDriver::ComposeOverlay(statistics, true, true, details);
+    Require(content.above.front() == "FPS: 60.0" && content.below.size() == 5u + (details.vram ? 1u : 0u) + (details.ram ? 1u : 0u) + (details.display.width != 0 ? 1u : 0u), "the full panel composes as '" + content.above.front() + "' with " + std::to_string(content.below.size()) + " lines below its graph");
+    return content;
+}
+
 void sdrOverlayTest(const Context& context, PerformanceOverlay& overlay) {
     const VkExtent2D extent{1280, 720};
     VkClearColorValue clear{};
@@ -261,36 +338,10 @@ void sdrOverlayTest(const Context& context, PerformanceOverlay& overlay) {
     Require(bounds.x == AgcDriver::LayOutOverlay(content, extent, OverlayCorner::TopLeft).bounds.x && bounds.width > 0 && bounds.height > 0, "the overlay drew another panel than its layout");
     onlyInside(reference, drawn, extent, bounds, "SDR 1280x720");
     const auto scale = AgcDriver::OverlayScale(extent, content);
-    const auto clearWord = reference.front();
     const std::string digits = "60.0";
     const auto firstColumn = content.above.front().find(digits);
     Require(firstColumn != std::string::npos, "the FPS line has no '60.0'");
-    for (std::size_t i = 0; i < digits.size(); ++i) {
-        const auto& glyph = AgcDriver::OverlayGlyph(digits[i]);
-        const auto column = static_cast<std::int32_t>(firstColumn + i);
-        for (std::int32_t gy = 0; gy < OverlayMetrics::GlyphHeight; ++gy) {
-            for (std::int32_t gx = 0; gx < OverlayMetrics::Advance; ++gx) {
-                const bool set = gx < OverlayMetrics::GlyphWidth && (glyph[static_cast<std::size_t>(gy)] & (0x10u >> gx)) != 0;
-                for (std::int32_t py = 0; py < scale; ++py) {
-                    for (std::int32_t px = 0; px < scale; ++px) {
-                        const auto x = bounds.x + (OverlayMetrics::Padding + column * OverlayMetrics::Advance + gx) * scale + px;
-                        const auto y = bounds.y + (OverlayMetrics::Padding + gy) * scale + py;
-                        const auto word = drawn[static_cast<std::size_t>(y) * extent.width + static_cast<std::size_t>(x)];
-                        const auto where = std::string("'") + digits[i] + "' glyph pixel " + std::to_string(gx) + "," + std::to_string(gy);
-                        Require(channel(word, 24) == channel(clearWord, 24), where + " changed the alpha");
-                        if (set) {
-                            Require((word & 0x00ffffffu) == 0x00ffffffu, where + " is not white text: 0x" + std::to_string(word));
-                            continue;
-                        }
-                        for (const unsigned shift : {0u, 8u, 16u}) {
-                            const int expected = static_cast<int>(std::lround(channel(clearWord, shift) * 0.4));
-                            Require(std::abs(channel(word, shift) - expected) <= 1, where + " is not the panel over the frame: " + std::to_string(channel(word, shift)) + " for " + std::to_string(expected));
-                        }
-                    }
-                }
-            }
-        }
-    }
+    requireTextDrawn(drawn, extent, bounds, scale, reference.front(), content.above.front(), OverlayMetrics::Padding, firstColumn, digits.size());
     std::printf("SDR overlay: panel %dx%d at %d,%d (scale %d), FPS digits drawn bit for bit\n", bounds.width, bounds.height, bounds.x, bounds.y, scale);
 }
 
@@ -352,6 +403,69 @@ void cornerTest(const Context& context, PerformanceOverlay& overlay) {
     std::printf("overlay corners: tl, tr, bl and br drawn where the layout puts them\n");
 }
 
+void fullPanelTest(const Device& device, PerformanceOverlay& overlay) {
+    const auto& context = device.GetContext();
+    const VkExtent2D extent{1920, 1080};
+    auto details = measuredDetails(context, extent, extent);
+    Require(details.ram.has_value(), "the process's private memory cannot be read");
+    Require(details.vram.has_value() == device.MemoryBudget(), device.MemoryBudget() ? "VK_EXT_memory_budget gives no device-local budget" : "VRAM is read without VK_EXT_memory_budget");
+    auto withoutBudget = context;
+    withoutBudget.memoryProperties2 = nullptr;
+    Require(!AgcDriver::ReadVramBudget(withoutBudget).has_value(), "VRAM is read without vkGetPhysicalDeviceMemoryProperties2");
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.75f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.25f;
+    clear.float32[3] = 1.0f;
+    const auto content = fullPanel(details);
+    OverlayRect bounds{};
+    const auto reference = clearAndOverlay(context, nullptr, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, content, OverlayCorner::TopLeft, nullptr);
+    const auto drawn = clearAndOverlay(context, &overlay, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, content, OverlayCorner::TopLeft, &bounds);
+    const auto layout = AgcDriver::LayOutOverlay(content, extent, OverlayCorner::TopLeft);
+    Require(bounds.x == layout.bounds.x && bounds.y == layout.bounds.y && bounds.width == layout.bounds.width && bounds.height == layout.bounds.height, "the full panel is not drawn where its layout puts it");
+    onlyInside(reference, drawn, extent, bounds, "full panel 1920x1080");
+    std::int32_t row = OverlayMetrics::Padding;
+    for (const auto& line : content.above) {
+        requireTextDrawn(drawn, extent, bounds, layout.scale, reference.front(), line, row);
+        row += OverlayMetrics::LinePitch;
+    }
+    row += OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap;
+    for (const auto& line : content.below) {
+        requireTextDrawn(drawn, extent, bounds, layout.scale, reference.front(), line, row);
+        row += OverlayMetrics::LinePitch;
+    }
+    std::printf("full panel at 1920x1080: %dx%d at %d,%d (scale %d, %.1f%% of the height), every line drawn bit for bit, nothing changed outside it:\n", bounds.width, bounds.height, bounds.x, bounds.y, layout.scale, 100.0 * bounds.height / extent.height);
+    for (const auto& line : content.above) std::printf("  %s\n", line.c_str());
+    std::printf("  (graph of %zu frame times)\n", content.frameTimes.size());
+    for (const auto& line : content.below) std::printf("  %s\n", line.c_str());
+}
+
+void notePresentTest(const Device& device) {
+    const auto& context = device.GetContext();
+    const VkExtent2D extent{1280, 720};
+    PerformanceOverlay overlay(context, 1);
+    overlay.NotePresent(AgcDriver::OverlayStatistics::Clock::now(), VkExtent2D{640, 360});
+    const auto& details = overlay.Details();
+    Require(details.ram.has_value() && details.vram.has_value() == device.MemoryBudget() && details.display.width == 640 && details.display.height == 360, "a shown frame did not sample the memory or keep the display buffer size");
+    Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    OverlayRect bounds{};
+    {
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+        bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        batch.SubmitAndWait();
+    }
+    overlay.Release(0);
+    auto shown = details;
+    shown.window = extent;
+    const auto expected = AgcDriver::ComposeOverlay(overlay.Statistics(), AgcDriver::PerformanceCounters::GpuEnabled(), AgcDriver::PerformanceCounters::DriverEnabled(), shown);
+    Require(expected.below.back() == "RES: 640X360 / 1280X720", "the RES line reads '" + expected.below.back() + "'");
+    const auto layout = AgcDriver::LayOutOverlay(expected, extent, PerformanceOverlay::Corner());
+    Require(bounds.height == layout.bounds.height && bounds.width == layout.bounds.width, "a shown frame's panel does not hold the sampled VRAM, RAM and RES lines");
+    std::printf("shown frame: memory sampled, %zu lines below the graph, the last '%s'\n", expected.below.size(), expected.below.back().c_str());
+}
+
 class Presenter {
 public:
     explicit Presenter(const Context& context) : context(context), pass(context, 1), overlay(context, 1), source(context, VK_FORMAT_B8G8R8A8_UNORM, {256, 144}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT) {
@@ -381,7 +495,7 @@ public:
             CommandBatch batch(context);
             const auto commands = batch.Handle();
             pass.RecordPresent(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, visible ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            if (visible) *bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sixtyFps(), OverlayCorner::TopLeft);
+            if (visible) *bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fullPanel(fixedDetails({256, 144}, Extent)), OverlayCorner::TopLeft);
             readImage(context, commands, destination, readback);
             batch.SubmitAndWait();
         }
@@ -406,7 +520,7 @@ public:
             transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             AgcDriver::PresentationScaler::RecordBlitFrom(context, commands, source.Handle(), VK_IMAGE_LAYOUT_GENERAL, 256, 144, VK_FILTER_LINEAR, destination.Handle(), Extent.width, Extent.height);
             if (visible) {
-                *bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sixtyFps(), OverlayCorner::TopLeft);
+                *bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fullPanel(fixedDetails({256, 144}, Extent)), OverlayCorner::TopLeft);
             } else {
                 transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             }
@@ -456,11 +570,13 @@ void costReport(const Device& device, PerformanceOverlay& overlay) {
     info.queryCount = 2;
     VkQueryPool queries = VK_NULL_HANDLE;
     Check(context.Function<PFN_vkCreateQueryPool>("vkCreateQueryPool")(context.device, &info, nullptr, &queries), "vkCreateQueryPool overlay cost");
+    const auto sampled = std::chrono::steady_clock::now();
+    for (int run = 0; run < 100; ++run) static_cast<void>(AgcDriver::ReadVramBudget(context));
+    const auto vramUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - sampled).count() / 100;
+    std::printf("VRAM budget read in %.1f us (%s), once a second while the overlay is shown\n", vramUs, device.MemoryBudget() ? "VK_EXT_memory_budget" : "no VK_EXT_memory_budget");
     for (const VkExtent2D extent : {VkExtent2D{1920, 1080}, VkExtent2D{3840, 2160}}) {
         Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        auto content = sixtyFps();
-        content.below.push_back("GPU: 4.2 MS");
-        content.below.push_back("DRIVER: 1.3 MS");
+        const auto content = fullPanel(fixedDetails(extent, extent));
         std::vector<double> gpuMs;
         std::vector<double> cpuMs;
         for (int run = 0; run < 12; ++run) {
@@ -481,7 +597,7 @@ void costReport(const Device& device, PerformanceOverlay& overlay) {
         }
         std::sort(gpuMs.begin(), gpuMs.end());
         std::sort(cpuMs.begin(), cpuMs.end());
-        std::printf("overlay cost on %s at %ux%u: GPU median %.3f ms (min %.3f, max %.3f), recording median %.3f ms\n", device.Name().c_str(), extent.width, extent.height, gpuMs[gpuMs.size() / 2], gpuMs.front(), gpuMs.back(), cpuMs[cpuMs.size() / 2]);
+        std::printf("full panel cost on %s at %ux%u: GPU median %.3f ms (min %.3f, max %.3f), recording median %.3f ms\n", device.Name().c_str(), extent.width, extent.height, gpuMs[gpuMs.size() / 2], gpuMs.front(), gpuMs.back(), cpuMs[cpuMs.size() / 2]);
     }
     context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, queries, nullptr);
 }
@@ -506,8 +622,10 @@ int main() {
             sdrOverlayTest(context, overlay);
             hdrOverlayTest(context, overlay);
             cornerTest(context, overlay);
+            fullPanelTest(*device, overlay);
             costReport(*device, overlay);
         }
+        notePresentTest(*device);
         disabledIsUnchangedTest(context);
         std::cout << "performance overlay tests passed\n";
         return 0;

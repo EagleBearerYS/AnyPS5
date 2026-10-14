@@ -3,9 +3,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -131,6 +136,25 @@ std::vector<std::uint8_t> coverage(const AgcDriver::OverlayLayout& layout, std::
     return covered;
 }
 
+void requireLineDrawn(const AgcDriver::OverlayLayout& layout, const std::vector<std::uint8_t>& text, const std::string& line, std::int32_t top) {
+    const auto s = layout.scale;
+    for (std::size_t column = 0; column < line.size(); ++column) {
+        const auto& glyph = AgcDriver::OverlayGlyph(line[column]);
+        for (std::int32_t gy = 0; gy < OverlayMetrics::GlyphHeight; ++gy) {
+            for (std::int32_t gx = 0; gx < OverlayMetrics::Advance; ++gx) {
+                const bool set = gx < OverlayMetrics::GlyphWidth && (glyph[static_cast<std::size_t>(gy)] & (0x10u >> gx)) != 0;
+                for (std::int32_t py = 0; py < s; ++py) {
+                    for (std::int32_t px = 0; px < s; ++px) {
+                        const auto x = (OverlayMetrics::Padding + static_cast<std::int32_t>(column) * OverlayMetrics::Advance + gx) * s + px;
+                        const auto y = (top + gy) * s + py;
+                        require(text[static_cast<std::size_t>(y) * static_cast<std::size_t>(layout.bounds.width) + static_cast<std::size_t>(x)] == (set ? 1 : 0), "'" + std::string(1, line[column]) + "' of '" + line + "' is drawn wrong at glyph pixel " + std::to_string(gx) + "," + std::to_string(gy));
+                    }
+                }
+            }
+        }
+    }
+}
+
 void layoutTests() {
     OverlayContent content{{"FPS: 60.0", "FRAME: 16.7 MS"}, {}, {"MIN/AVG/MAX: 16.7/16.7/16.7"}};
     for (int i = 0; i < 40; ++i) content.frameTimes.push_back(i == 39 ? 50.0 : 10.0);
@@ -149,26 +173,9 @@ void layoutTests() {
 
     const auto text = coverage(layout, static_cast<std::uint32_t>(AgcDriver::OverlayColor::Text));
     const auto lineTop = [&](std::size_t line) { return OverlayMetrics::Padding + static_cast<std::int32_t>(line) * OverlayMetrics::LinePitch; };
-    const auto checkLine = [&](const std::string& line, std::int32_t top) {
-        for (std::size_t column = 0; column < line.size(); ++column) {
-            const auto& glyph = AgcDriver::OverlayGlyph(line[column]);
-            for (std::int32_t gy = 0; gy < OverlayMetrics::GlyphHeight; ++gy) {
-                for (std::int32_t gx = 0; gx < OverlayMetrics::Advance; ++gx) {
-                    const bool set = gx < OverlayMetrics::GlyphWidth && (glyph[static_cast<std::size_t>(gy)] & (0x10u >> gx)) != 0;
-                    for (std::int32_t py = 0; py < s; ++py) {
-                        for (std::int32_t px = 0; px < s; ++px) {
-                            const auto x = (OverlayMetrics::Padding + static_cast<std::int32_t>(column) * OverlayMetrics::Advance + gx) * s + px;
-                            const auto y = (top + gy) * s + py;
-                            require(text[static_cast<std::size_t>(y) * static_cast<std::size_t>(layout.bounds.width) + static_cast<std::size_t>(x)] == (set ? 1 : 0), "'" + std::string(1, line[column]) + "' of '" + line + "' is drawn wrong at glyph pixel " + std::to_string(gx) + "," + std::to_string(gy));
-                        }
-                    }
-                }
-            }
-        }
-    };
-    checkLine(content.above[0], lineTop(0));
-    checkLine(content.above[1], lineTop(1));
-    checkLine(content.below[0], lineTop(2) + OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap);
+    requireLineDrawn(layout, text, content.above[0], lineTop(0));
+    requireLineDrawn(layout, text, content.above[1], lineTop(1));
+    requireLineDrawn(layout, text, content.below[0], lineTop(2) + OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap);
 
     std::vector<OverlayRect> bars;
     for (const auto& rect : layout.rects) {
@@ -207,6 +214,182 @@ void layoutTests() {
     require(refused, "a character without a glyph was drawn");
 }
 
+constexpr std::uint64_t GiB = 1ull << 30u;
+
+OverlayStatistics countedStatistics() {
+    OverlayStatistics statistics;
+    for (std::uint64_t i = 0; i <= 60; ++i) {
+        AgcDriver::OverlayCounters counters;
+        counters.gpuNanoseconds = i * 4'000'000u;
+        counters.driverNanoseconds = i * 1'500'000u;
+        counters.draws = 5000 + i * 1240;
+        counters.dispatches = 70 + i * 85;
+        counters.pipelines = i < 50 ? 1500 : 1503;
+        statistics.AddPresent(Start + i * 16ms, counters);
+    }
+    return statistics;
+}
+
+AgcDriver::OverlayDetails fullDetails() {
+    AgcDriver::OverlayDetails details;
+    details.vram = AgcDriver::OverlayMemory{static_cast<std::uint64_t>(6.1 * GiB), static_cast<std::uint64_t>(7.8 * GiB)};
+    details.ram = static_cast<std::uint64_t>(3.2 * GiB);
+    details.display = {1920, 1080};
+    details.window = {2560, 1440};
+    return details;
+}
+
+void packetStatisticsTests() {
+    const auto statistics = countedStatistics();
+    require(near(statistics.DrawsPerFrame(), 1240) && near(statistics.DispatchesPerFrame(), 85), "1240 draws and 85 dispatches per frame read as " + std::to_string(statistics.DrawsPerFrame()) + " and " + std::to_string(statistics.DispatchesPerFrame()));
+    require(statistics.PipelinesInWindow() == 3 && statistics.Latest().pipelines == 1503, "3 pipelines created within the last second of 1503 read as " + std::to_string(statistics.PipelinesInWindow()) + " of " + std::to_string(statistics.Latest().pipelines));
+    require(near(statistics.GpuMsPerFrame(), 4.0) && near(statistics.DriverMsPerFrame(), 1.5), "the time counters changed with the packet counters");
+    auto stalled = statistics;
+    auto counters = stalled.Latest();
+    counters.pipelines += 7;
+    stalled.AddPresent(Start + 3000ms, counters);
+    require(stalled.DrawsPerFrame() == 0 && stalled.PipelinesInWindow() == 0 && stalled.Latest().pipelines == 1510, "a present alone in its second reads as packets or pipelines of that second");
+    auto restarted = statistics;
+    counters = restarted.Latest();
+    counters.draws = 3;
+    restarted.AddPresent(Start + 61 * 16ms, counters);
+    require(restarted.DrawsPerFrame() == 0, "a draw counter that went back is read as draws");
+    OverlayStatistics empty;
+    require(empty.PipelinesInWindow() == 0 && empty.Latest().draws == 0, "an overlay without presents shows packet counts");
+}
+
+void packetCounterTests() {
+    const auto before = AgcDriver::PacketCounters::Sum();
+    auto& counters = AgcDriver::PacketCounters::ThisThread();
+    require(&counters == &AgcDriver::PacketCounters::ThisThread(), "one thread got two packet counters");
+    for (int i = 0; i < 1240; ++i) counters.CountDraw();
+    for (int i = 0; i < 85; ++i) counters.CountDispatch();
+    bool separate = false;
+    std::thread worker([&] {
+        auto& own = AgcDriver::PacketCounters::ThisThread();
+        separate = &own != &counters;
+        for (int i = 0; i < 1000; ++i) own.CountDraw();
+        own.CountDispatch();
+    });
+    worker.join();
+    require(separate, "two workers share packet counters");
+    const auto after = AgcDriver::PacketCounters::Sum();
+    require(after.draws - before.draws == 2240 && after.dispatches - before.dispatches == 86, "two workers' 2240 draws and 86 dispatches sum to " + std::to_string(after.draws - before.draws) + " and " + std::to_string(after.dispatches - before.dispatches));
+    std::thread next([] { AgcDriver::PacketCounters::ThisThread().CountDraw(); });
+    next.join();
+    require(AgcDriver::PacketCounters::Sum().draws == after.draws + 1, "the counts of a worker that ended were lost, or a new worker restarted them");
+}
+
+void countFormatTests() {
+    const std::pair<double, const char*> counts[] = {{0, "0"}, {0.4, "0"}, {0.5, "1"}, {85, "85"}, {1239.6, "1240"}, {9999, "9999"}, {9999.5, "10K"}, {12345, "12K"}, {999999, "999K"}, {1e6, "1M"}, {2.5e9, "999M"}, {-3, "0"}, {std::nan(""), "0"}, {INFINITY, "0"}};
+    for (const auto& [value, expected] : counts) require(AgcDriver::FormatOverlayCount(value) == expected, std::to_string(value) + " is counted as '" + AgcDriver::FormatOverlayCount(value) + "', not '" + expected + "'");
+    const std::pair<std::uint64_t, const char*> sizes[] = {{0, "0.0"}, {static_cast<std::uint64_t>(6.1 * GiB), "6.1"}, {static_cast<std::uint64_t>(7.8 * GiB), "7.8"}, {GiB / 2, "0.5"}, {1536 * GiB, "1536"}, {20000 * GiB, "9999"}};
+    for (const auto& [bytes, expected] : sizes) require(AgcDriver::FormatOverlayGigabytes(bytes) == expected, std::to_string(bytes) + " bytes are shown as '" + AgcDriver::FormatOverlayGigabytes(bytes) + "' GB, not '" + expected + "'");
+}
+
+void detailComposeTests() {
+    const auto statistics = countedStatistics();
+    const auto full = AgcDriver::ComposeOverlay(statistics, true, true, fullDetails());
+    const std::vector<std::string> expected{"MIN/AVG/MAX: 16.0/16.0/16.0", "GPU: 4.0 MS", "DRIVER: 1.5 MS", "DRAWS: 1240  DISPATCH: 85", "SHADERS: 3  TOTAL: 1503", "VRAM: 6.1/7.8 GB", "RAM: 3.2 GB", "RES: 1920X1080 / 2560X1440"};
+    require(full.below == expected, "the full panel's lines below the graph read '" + (full.below.empty() ? std::string() : full.below.back()) + "' last, of " + std::to_string(full.below.size()));
+    for (const auto& line : full.below) require(line.size() <= static_cast<std::size_t>(OverlayMetrics::Columns), "'" + line + "' is wider than the panel");
+
+    OverlayStatistics uncounted;
+    for (int i = 0; i <= 60; ++i) uncounted.AddPresent(Start + i * 16ms, 0, 0);
+    const auto plain = AgcDriver::ComposeOverlay(uncounted, false, false);
+    const auto none = AgcDriver::ComposeOverlay(uncounted, false, false, AgcDriver::OverlayDetails{});
+    require(none.above == plain.above && none.below == plain.below && none.below.size() == 1, "a panel without packets, pipelines, memory or a display buffer shows more than the first lines");
+
+    auto details = fullDetails();
+    details.vram.reset();
+    details.ram.reset();
+    details.display = {};
+    const auto partial = AgcDriver::ComposeOverlay(statistics, false, false, details);
+    require(partial.below.size() == 3 && partial.below.back().rfind("SHADERS", 0) == 0, "a line is shown without its data: the last line is '" + partial.below.back() + "'");
+
+    details = fullDetails();
+    details.display = {3840, 2160};
+    details.window = {16384, 16384};
+    require(AgcDriver::ComposeOverlay(uncounted, false, false, details).below.back() == "RES: 3840X2160/16384X16384", "a long RES line is not written without spaces");
+    details.display = {12345, 12345};
+    details.window = {12345, 12345};
+    require(AgcDriver::ComposeOverlay(uncounted, false, false, details).below.back() == "RAM: 3.2 GB", "a RES line wider than the panel is shown");
+    details = fullDetails();
+    details.window = {};
+    require(AgcDriver::ComposeOverlay(uncounted, false, false, details).below.back() == "RAM: 3.2 GB", "RES is shown without a window size");
+    auto large = countedStatistics();
+    auto counters = large.Latest();
+    counters.draws += 12345 * 2;
+    counters.pipelines = 123456;
+    large.AddPresent(Start + 62 * 16ms, counters);
+    const auto busy = AgcDriver::ComposeOverlay(large, false, false);
+    require(busy.below.size() == 3 && busy.below[2] == "SHADERS: 121K  TOTAL: 123K", "large counts are not shortened: '" + busy.below.back() + "'");
+}
+
+void fullPanelLayoutTests() {
+    auto content = AgcDriver::ComposeOverlay(countedStatistics(), true, true, fullDetails());
+    content.below[3] = "DRAWS: 9999  DISPATCH: 12K";
+    content.below[4] = "SHADERS: 999M  TOTAL: 9999";
+    const VkExtent2D hd{1920, 1080};
+    const auto layout = AgcDriver::LayOutOverlay(content, hd, OverlayCorner::TopLeft);
+    require(layout.scale == 2 && layout.bounds.height * 3 <= static_cast<std::int32_t>(hd.height), "the full panel at 1080p is " + std::to_string(layout.bounds.height) + " pixels tall at scale " + std::to_string(layout.scale) + ", more than a third of the window");
+    const auto text = coverage(layout, static_cast<std::uint32_t>(AgcDriver::OverlayColor::Text));
+    std::int32_t top = OverlayMetrics::Padding;
+    for (const auto& line : content.above) {
+        requireLineDrawn(layout, text, line, top);
+        top += OverlayMetrics::LinePitch;
+    }
+    top += OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap;
+    for (const auto& line : content.below) {
+        requireLineDrawn(layout, text, line, top);
+        top += OverlayMetrics::LinePitch;
+    }
+    require(layout.bounds.height == (top - OverlayMetrics::LinePitch + OverlayMetrics::GlyphHeight + OverlayMetrics::Padding) * layout.scale, "the panel does not end one padding below its last line");
+    const std::pair<VkExtent2D, std::int32_t> scales[] = {{{1280, 720}, 2}, {{2560, 1440}, 3}, {{3840, 2160}, 5}, {{320, 180}, 1}};
+    for (const auto& [extent, scale] : scales) {
+        const auto placed = AgcDriver::LayOutOverlay(content, extent, OverlayCorner::BottomRight);
+        require(placed.scale == scale && placed.bounds.x >= 0 && placed.bounds.y >= 0 && placed.bounds.y + placed.bounds.height <= static_cast<std::int32_t>(extent.height), "the full panel does not fit " + std::to_string(extent.width) + "x" + std::to_string(extent.height) + " at scale " + std::to_string(scale));
+    }
+    const std::string added = "BCHKLOTW";
+    for (const char letter : added) {
+        const auto& glyph = AgcDriver::OverlayGlyph(letter);
+        require(std::any_of(glyph.begin(), glyph.end(), [](std::uint8_t row) { return row != 0; }) && std::all_of(glyph.begin(), glyph.end(), [](std::uint8_t row) { return row <= 0x1f; }), std::string("the glyph of '") + letter + "' is empty or wider than 5 pixels");
+        for (const char other : std::string("0123456789ADEFGIMNPRSUVX") + added) {
+            if (other != letter) require(glyph != AgcDriver::OverlayGlyph(other), std::string("'") + letter + "' and '" + other + "' have the same glyph");
+        }
+    }
+}
+
+void sampleTests() {
+    require(AgcDriver::OverlaySampleDue(std::nullopt, Start), "the first frame is not sampled");
+    require(!AgcDriver::OverlaySampleDue(Start, Start + 999ms) && AgcDriver::OverlaySampleDue(Start, Start + 1000ms), "memory is sampled more than once a second, or not after a second");
+    static std::uint8_t* volatile touched = nullptr;
+    const auto before = AgcDriver::ReadProcessPrivateBytes();
+    require(before.has_value() && *before != 0, "the process's private memory cannot be read");
+    constexpr std::size_t Bytes = std::size_t{64} << 20u;
+    const auto block = std::make_unique<std::uint8_t[]>(Bytes);
+    touched = block.get();
+    std::memset(touched, 0x5a, Bytes);
+    const auto after = AgcDriver::ReadProcessPrivateBytes();
+    require(after.has_value() && *after >= *before + Bytes * 3 / 4, "touching 64 MiB raised the private memory from " + std::to_string(*before) + " to " + std::to_string(after.value_or(0)) + " bytes");
+    require(touched[Bytes - 1] == 0x5a, "the touched block was not written");
+}
+
+void costReport() {
+    auto& counters = AgcDriver::PacketCounters::ThisThread();
+    constexpr int Increments = 20'000'000;
+    const auto counted = Clock::now();
+    for (int i = 0; i < Increments; ++i) counters.CountDraw();
+    const auto countNs = std::chrono::duration<double, std::nano>(Clock::now() - counted).count() / Increments;
+    const auto summed = Clock::now();
+    for (int i = 0; i < 1000; ++i) static_cast<void>(AgcDriver::PacketCounters::Sum());
+    const auto sumUs = std::chrono::duration<double, std::micro>(Clock::now() - summed).count() / 1000;
+    const auto sampled = Clock::now();
+    for (int i = 0; i < 100; ++i) static_cast<void>(AgcDriver::ReadProcessPrivateBytes());
+    const auto ramUs = std::chrono::duration<double, std::micro>(Clock::now() - sampled).count() / 100;
+    std::printf("hidden cost: %.2f ns per counted draw or dispatch packet; shown: %.2f us to sum the packet counters per frame, %.1f us to read the private memory once a second\n", countNs, sumUs, ramUs);
+}
+
 void paletteTests() {
     const auto sdr = AgcDriver::OverlayPalette(VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR);
     require(sdr[1] == std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f} && sdr[0][3] > 0.0f && sdr[0][3] < 1.0f, "the SDR palette is not opaque white text over a translucent panel");
@@ -229,7 +412,14 @@ int main() {
         composeTests();
         layoutTests();
         paletteTests();
-        std::cout << "performance overlay statistics, layout and palette tests passed\n";
+        packetStatisticsTests();
+        packetCounterTests();
+        countFormatTests();
+        detailComposeTests();
+        fullPanelLayoutTests();
+        sampleTests();
+        costReport();
+        std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory and resolution tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
