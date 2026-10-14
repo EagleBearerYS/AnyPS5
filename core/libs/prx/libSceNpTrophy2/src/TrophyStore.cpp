@@ -1,4 +1,5 @@
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
+#include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
@@ -154,6 +155,9 @@ extern "C" bool NpTrophy2RecordUnlock_nid_no_patch(std::int32_t userId, std::uin
         current = registry.entries;
     }
     for (const auto& entry : current) entry.callback(entry.context, unlock);
+    const auto* package = NpTrophy2::Package(serviceLabel);
+    if (package == nullptr) return true;
+    if (const auto platinum = NpTrophy2::PlatinumToUnlock(*package, trophyId, NpTrophy2::UnlockedBy(userId, serviceLabel))) NpTrophy2RecordUnlock_nid_no_patch(userId, serviceLabel, *platinum);
     return true;
 }
 
