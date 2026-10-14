@@ -94,11 +94,12 @@ libs/
     *.prx
 app0/
     <app resources>
+    eboot.bin
     sce_module/
         <converted modules>
 ```
 
-Use `sce_modules/` or `prx/` instead of `sce_module/` if that is the input directory name. Relinker preserves each module's directory under `app0/` and prints its exact path. Place app resources in `app0/` separately. Copy the built system libraries from `build/core/libs/libs/*.prx` into `libs/`; use libraries built for the target OS. A custom `--rpath` changes the system library location.
+Use `sce_modules/` or `prx/` instead of `sce_module/` if that is the input directory name. Relinker preserves each module's directory under `app0/` and prints its exact path. Place app resources in `app0/` separately, including the title's original `eboot.bin`: titles test `/app0/eboot.bin` to find their own directory, as it is always present on the console (ProsperoTV, ProsperoRadio, ProsperoLight and ProsperoLichess fall back to an empty `/data/homebrew/<title id>` and fail to load their fonts without it). Only the converted executable runs. Copy the built system libraries from `build/core/libs/libs/*.prx` into `libs/`; use libraries built for the target OS. A custom `--rpath` changes the system library location.
 
 Use the generated files printed as `Guest module:` for bundled title modules. `libs/` is for AnyPS5 system libraries, not the original PS5 `.prx` files. Placing an original PS5 module in `libs/` on Windows makes Windows try to load it as a DLL and can fail with error 193 (not a valid Win32 application).
 
@@ -146,6 +147,14 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 
 Games ask for the console's language with `sceSystemServiceParamGetInt` and show their text in it when they have it. It is English (United States) unless `ANYPS5_LANGUAGE` is set to another console language number: 0 Japanese, 1 English (United States), 2 French, 3 Spanish, 4 German, 5 Italian, 6 Dutch, 7 Portuguese (Portugal), 8 Russian, 9 Korean, 10 Chinese (Traditional), 11 Chinese (Simplified), 12 Finnish, 13 Swedish, 14 Danish, 15 Norwegian, 16 Polish, 17 Portuguese (Brazil), 18 English (United Kingdom), 19 Turkish, 20 Spanish (Latin America), 21 Arabic, 22 French (Canada), 23 Czech, 24 Hungarian, 25 Greek, 26 Romanian, 27 Thai, 28 Vietnamese, 29 Indonesian, 30 Ukrainian. For example, `ANYPS5_LANGUAGE=21` selects Arabic. An empty value is the same as an unset one; any other value stops the game at its first language query with an error that names the variable.
 
+### Trophies
+
+A game unlocks a trophy by posting a `_UnlockTrophy` event with an int32 `_trophy_id` property to `libSceNpUniversalDataSystem`. The unlock is stored in `_trophy/<user id>_<service label>.txt` in the directory the game runs in (the one that holds `app0/`), one `<trophy id> <unlock time>` line per trophy; the time is an RTC tick, microseconds since 0001-01-01 UTC. Delete the file before starting the game to lock its trophies again. Each new unlock prints one line, such as `[trophy] PPSA01556 unlocked trophy 12 for user 268435456`; unlocking a trophy again prints nothing. `sceNpTrophy2GetTrophyInfo`, `sceNpTrophy2GetTrophyInfoArray` and `sceNpTrophy2GetGameInfo` report the stored unlocks and their times to the game.
+
+`APS5_TRACE_UDS=1` prints every posted event, such as `[uds] context 1 posted _UnlockTrophy {"_trophy_id":12}`. A trophy event that is not stored prints the reason in a `[trophy] ignored` line: an `_UnlockTrophy` event without an int32 `_trophy_id` of 0 or more, or posted to a context that does not exist, and the first `_UpdateTrophyProgress` event of each trophy, because trophy progress is not stored.
+
+The trophy data in `sce_sys/trophy2/` is not read. Trophy names, grades, groups and icons, the number of trophies and the grade counts are placeholders, and trophies that a game unlocks through the statistics rules in `sce_sys/uds/` instead of `_UnlockTrophy` stay locked. No notification is shown, and callbacks registered with `sceNpTrophy2RegisterUnlockCallback` are not called.
+
 ### GPU selection
 
 The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.
@@ -160,6 +169,8 @@ $env:VK_LOADER_DRIVERS_DISABLE = '*dzn*'
 ```
 
 Do not disable Dozen if it is the only Vulkan driver available; the application would have no device to use. `VK_LOADER_DRIVERS_DISABLE` matches Vulkan driver manifest filenames and requires a Vulkan loader built with headers 1.3.234 or later ([loader documentation](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#filter-environment-variables)).
+
+On Windows, NVIDIA driver 610.47 can crash in its shader compiler while pipelines are created: the log ends in `FATAL: unhandled exception 0xc0000005` with `nvgpucomp64.dll` in `rip`, on a driver thread. PPSA25344 on an RTX 3060 stopped this way in 3 of 3 New Game loads, also with `APS5_NO_PIPELINE_LTO=1`; with driver 617.42 the same build and scene ran for 40 minutes. Update the driver when the crash is in `nvgpucomp64.dll`.
 
 ### HDR output
 
@@ -233,7 +244,9 @@ python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.
 
 Each `--modules` file is also audited itself: its undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries it needs must have a file in `--libs` or `--modules`. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table.
 
-The report also lists needed libraries that have no file in `--libs` or `--modules`, and imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
+
+The report also lists needed libraries that have no file in `--libs` or `--modules`, including dependencies with zero imports. These do not increase the import or reference counts. Windows can skip a missing dependency when no import needs it; Linux still needs the file. The audit also lists imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
 
 | Option | Effect |
 |--------|--------|

@@ -200,6 +200,7 @@ struct GuestContext {
     std::optional<ShaderVertexStageInfo> vertex;
     std::span<const MemoryRegion> memory;
     std::optional<ShaderFloatMode> floatMode;
+    std::span<const std::uint32_t> linkedCallFallbacks;
 };
 
 struct MeshTargetLimits {
@@ -293,6 +294,8 @@ struct TessellationConfiguration {
     std::uint32_t patchesPerGroup = 256;
     std::uint32_t primitiveGroupSize = 0;
     bool breakAtInstance = false;
+    std::uint32_t instancePatches = 0;
+    bool drawParameters = false;
 };
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
@@ -333,6 +336,11 @@ struct RecompileRequest {
     bool useCache = true;
 };
 
+inline std::uint32_t TessellationInstancePatches(const RecompileRequest& request) {
+    if (!request.graphics || !request.graphics->tessellation || request.graphics->draw.instanceCount <= 1u || request.graphics->tessellation->breakAtInstance) return 0u;
+    return request.graphics->draw.indexCount / request.graphics->tessellation->inputControlPoints;
+}
+
 enum class DescriptorKind {
     UniformBuffer,
     StorageBuffer,
@@ -349,7 +357,8 @@ enum class DescriptorImageShape {
     Image2DArray,
     ImageCube,
     Image3D,
-    Image1DArray
+    Image1DArray,
+    Image2DMultisample
 };
 
 enum class DescriptorRole {

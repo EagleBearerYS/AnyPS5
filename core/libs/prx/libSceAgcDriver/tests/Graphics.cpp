@@ -1484,6 +1484,13 @@ void DepthStencilTests() {
     AgcDriver::Graphics::RegisterReadLog() = nullptr;
     for (const auto read : log) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks an HTILE register the decoder reads: " + std::to_string(read.offset));
     Require(state.depth->htileAddress == (0x30000ull | (1ull << 40u)), "the HTILE address was not decoded from DB_HTILE_DATA_BASE and its high byte");
+    {
+        const auto view = queue.context[0x002];
+        queue.context[0x002] = 2u | (2u << 13u);
+        const auto slice = AgcDriver::Graphics::DecodeState(queue);
+        Require(slice.depth->htileAddress == (0x30000ull | (1ull << 40u)) + 2u * AgcDriver::Graphics::HtileMetadataBytes(slice.depth->extent), "slice 2 of a depth array must use the third slice of its HTILE");
+        queue.context[0x002] = view;
+    }
     queue.context[0x010] &= ~0x20000000u;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depth->htileAddress == 0, "a surface without TILE_SURFACE_ENABLE decoded an HTILE address");
@@ -2259,6 +2266,7 @@ VKAPI_ATTR VkResult VKAPI_CALL sampleLocationDepthProperties(VkPhysicalDevice, V
 
 void multisampleTests() {
     using AgcDriver::Graphics::ColorMetadataPass;
+    using AgcDriver::Graphics::DecodeColorBuffer;
     using AgcDriver::Graphics::DecodeColorMetadataPass;
     using AgcDriver::Graphics::DecodeState;
     const auto multisampled = [] {
@@ -2475,6 +2483,10 @@ void multisampleTests() {
     queue.context[0x31f] = 0;
     expectFailure([&] { DecodeState(queue); }, "without a CMASK address");
     queue = multisampled();
+    queue.context[0x31c] |= 0x10000000u;
+    expectFailure([&] { DecodeState(queue); }, "DCC over a multisampled color target is unsupported");
+    expectFailure([&] { DecodeColorBuffer(queue.context, 0); }, "DCC over a multisampled color target is unsupported");
+    queue = multisampled();
     queue.context[0x31c] |= 0x2000;
     setCmaskAddress(queue);
     std::vector<AgcDriver::Graphics::RegisterRead> reads;
@@ -2505,6 +2517,9 @@ void multisampleTests() {
     queue = rasterizedResolve;
     queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
+    queue = rasterizedResolve;
+    queue.context[0x31c] |= 0x10000000u;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "DCC over a multisampled color target is unsupported");
     queue = multisampled();
     queue.context[0x0] = 0;
     queue.context[0x202] = 0xcc0030;
@@ -2520,6 +2535,32 @@ void multisampleTests() {
     queue.context[0x0] = 0;
     queue.context[0x202] = 0xcc0020;
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled color target");
+    queue.context[0x31c] |= 0x10000000u;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "DCC over a multisampled color target is unsupported");
+    queue = multisampled();
+    queue.context[0x2f8] = 0;
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0x00cc0050;
+    queue.context[0x31c] = 0x1002e028;
+    queue.context[0x31d] = 0x00012000;
+    queue.context[0x325] = 0x2000;
+    queue.context[0x323] = 0x3f800000;
+    queue.context[0x324] = 0x3f800000;
+    setCmaskAddress(queue);
+    auto fmaskPass = DecodeColorMetadataPass(queue);
+    Require(fmaskPass.has_value() && fmaskPass->mode == ColorMetadataPass::Mode::FmaskDecompress && fmaskPass->targets.size() == 1 && fmaskPass->targets[0].samples == 4 && fmaskPass->targets[0].cmaskAddress == cmaskAddress && fmaskPass->targets[0].dccAddress != 0, "an FMASK decompress of a 4x multisampled target with CMASK and DCC did not decode");
+    Require(fmaskPass->targets[0].clearWords[0] == 0x3f800000 && fmaskPass->targets[0].clearWords[1] == 0x3f800000, "fast clear words changed");
+    queue = makeState();
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0x00cc0050;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "over a single-sample target");
+    queue = multisampled();
+    queue.context[0x2f8] = 0;
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0x00cc0050;
+    queue.context[0x31c] = 0x00008028;
+    queue.context[0x31d] = 0x00012000;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "FMASK decompress of a target without a CMASK address");
 
     using AgcDriver::Graphics::DccKeys;
     using AgcDriver::Graphics::MultisampledCmask;
@@ -2539,6 +2580,7 @@ void multisampleTests() {
     MultisampledCmask seeded(0x30000, 0x1000);
     seeded.SeedKeys(DccKeys::Clear0000);
     Require(seeded.TakeClear(), "a fast-cleared seed did not clear its first use");
+    Require(!seeded.TakeClear(), "a subsequent use applied the clear again");
     MultisampledCmask mixedSeed(0x30000, 0x1000);
     mixedSeed.SeedKeys(DccKeys::Mixed);
     expectFailure([&] { mixedSeed.TakeClear(); }, "not modeled");
@@ -4671,6 +4713,40 @@ void copiedWriterIndirectOverlapTests() {
     ::operator delete(copiedBlock, std::align_val_t{half});
 }
 
+void registeredReadableCoverTests() {
+    using namespace AgcDriver::Graphics;
+
+    constexpr std::size_t block = 65536;
+    auto* memory = static_cast<std::byte*>(::operator new(4 * block, std::align_val_t{block}));
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto add = [&](std::size_t index, bool readable) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto remove = [&](std::size_t index) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, memory + index * block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+
+    add(0, true);
+    add(1, true);
+    Require(RegisteredReadableCovers(base, block), "a registered allocation must be covered");
+    Require(RegisteredReadableCovers(base + block / 2, block), "a range across two adjacent registered allocations must be covered");
+    Require(RegisteredReadableCovers(base, 2 * block), "two adjacent registered allocations must be covered together");
+    Require(!RegisteredReadableCovers(base + block, 2 * block), "a range past the last registered allocation must not be covered");
+    add(3, true);
+    Require(!RegisteredReadableCovers(base, 4 * block), "a range over a gap between registered allocations must not be covered");
+    add(2, false);
+    Require(!RegisteredReadableCovers(base + block, 2 * block), "a range over an unreadable registered allocation must not be covered");
+    Require(RegisteredReadableCovers(base + 3 * block, block), "the readable allocation after an unreadable one must be covered");
+    Require(!RegisteredReadableCovers(base, 0), "an empty range must not be covered");
+    for (std::size_t index = 0; index < 4; ++index) remove(index);
+    Require(!RegisteredReadableCovers(base, block), "a removed allocation must not be covered");
+    ::operator delete(memory, std::align_val_t{block});
+}
+
 void rectListTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -6528,6 +6604,7 @@ int main(int argc, char** argv) {
         floatControlsModeTests();
         barycentricEmulationTests();
         copiedWriterIndirectOverlapTests();
+        registeredReadableCoverTests();
         mock = MockVulkan{};
         auto bdaContext = mockContext();
         bdaContext.bufferDeviceAddress = true;
