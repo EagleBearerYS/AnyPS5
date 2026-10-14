@@ -226,6 +226,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestBufferMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Residency.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyMirrors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
@@ -1350,6 +1351,23 @@ foreach(stage IN ITEMS vert frag)
     target_sources(agc_driver_provoking_vertex_tests PRIVATE ${agcProvokingShaderHeader})
 endforeach()
 target_include_directories(agc_driver_provoking_vertex_tests PRIVATE ${agcTestShaderGeneratedRoot})
+
+set(agcResidencyReadSpv ${agcTestShaderGeneratedRoot}/ResidencyRead_comp.spv)
+set(agcResidencyReadHeader ${agcTestShaderGeneratedRoot}/ResidencyRead_comp_spv.h)
+add_custom_command(
+    OUTPUT "${agcResidencyReadHeader}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+    COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcResidencyReadSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ResidencyRead.comp"
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${agcResidencyReadSpv} -DOUTPUT=${agcResidencyReadHeader}
+    -DSYMBOL=RESIDENCY_READ_COMP_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ResidencyRead.comp" glslang-standalone
+    VERBATIM
+)
+target_sources(agc_driver_residency_mirrors_tests PRIVATE ${agcResidencyReadHeader})
+target_include_directories(agc_driver_residency_mirrors_tests PRIVATE ${agcTestShaderGeneratedRoot})
+if(WIN32)
+    target_link_libraries(agc_driver_residency_mirrors_tests PRIVATE psapi)
+endif()
 
 target_include_directories(agc_driver_prepared_exports_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
