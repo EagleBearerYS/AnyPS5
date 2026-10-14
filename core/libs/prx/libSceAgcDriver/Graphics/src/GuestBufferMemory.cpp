@@ -70,6 +70,7 @@ struct ImageMirror {
     std::shared_ptr<Buffer> buffer;
     // Writable ranges only: the guest bytes the mirror holds, compared on refresh and at write-back.
     std::vector<std::byte> shadow;
+    std::array<std::uint64_t, 4> compared{};
     // Identity for the life of this mirror (see ImageMirrorSerial); the top bit keeps mirror serials
     // apart from host import serials.
     std::uint64_t serial = 0;
@@ -1494,6 +1495,15 @@ bool prepareRefresh(ImageMirror& mirror, std::uint64_t address, std::uint64_t by
     return true;
 }
 
+std::array<std::uint64_t, 4> compareStamp(std::uint64_t address, std::uint64_t bytes) {
+    const auto epoch = GuestMemory::CollectEpoch();
+    const auto forget = GuestMemory::ForgetSerial();
+    if (epoch == 0 || (forget & 1u) != 0) return {};
+    const auto* recorder = Recorder::Active();
+    const auto length = static_cast<std::size_t>(bytes);
+    return {epoch, GuestMemory::NewestStamp(address, length), forget, recorder != nullptr ? recorder->NewestWriteNote(address, length) : 0};
+}
+
 void appendBlocks(std::vector<RefreshBlock>& blocks, ImageMirror& mirror, std::uint64_t address, std::uint64_t bytes) {
     constexpr std::uint64_t block = 65536;
     const auto end = address + bytes;
@@ -2520,6 +2530,7 @@ void GuestBufferMemory::AcquireRegistered() {
     // APS5_NO_SORTED_SNAPSHOT_LOOKUP=1: AddSnapshot scans the regions as before instead of searching.
     static const bool sortedLookup = std::getenv("APS5_NO_SORTED_SNAPSHOT_LOOKUP") == nullptr;
     std::vector<RefreshBlock> blocks;
+    std::vector<std::pair<ImageMirror*, std::array<std::uint64_t, 4>>> stamped;
     std::vector<ImageMirror*> heaps;
     bool mirrored = false;
     bool served = false;
@@ -2570,7 +2581,11 @@ void GuestBufferMemory::AcquireRegistered() {
             mirrored = space->mirrored;
             for (const auto index : space->writableMirrors) {
                 const auto& region = space->base[index];
-                if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
+                if (!prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) continue;
+                const auto stamp = compareStamp(region.begin, region.end - region.begin);
+                if (stamp[0] != 0 && region.mirror->compared == stamp) continue;
+                appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
+                stamped.emplace_back(region.mirror.get(), stamp);
             }
             lap(timing.mirrorsUs, at);
         }
@@ -2726,6 +2741,7 @@ void GuestBufferMemory::AcquireRegistered() {
     lap(timing.mirrorsUs, at);
     const auto copiedBefore = Mirrors().blocksCopied;
     compareBlocks(blocks);
+    for (const auto& [mirror, stamp] : stamped) mirror->compared = stamp;
     for (const auto& [run, collected] : checked) space->verified[run].store(collected, std::memory_order_relaxed);
     lap(timing.compareUs, at);
     if (profile) {
