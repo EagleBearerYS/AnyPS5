@@ -12,6 +12,8 @@
 
 namespace AgcDriver::Graphics {
 
+class BdaPageTable;
+
 void ShutdownGuestBufferWorkers();
 
 struct GuestMemorySnapshot {
@@ -223,15 +225,9 @@ public:
     std::pair<VkDeviceAddress, std::uint64_t> Address(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
     static std::uint64_t ViewBytes(std::uint64_t bytes, std::uint32_t adjustment);
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;
-    // The BDA table of the cached address space when it serves this upload alone (an address-based
-    // build with no region outside it): its ranges, immutable while the space lives, and the
-    // space's serial, by which BdaResources reuses the table buffer built for it without a
-    // compare. Nothing when a region of this build is not in the space (AddressRanges then merges).
-    struct CachedTable {
-        std::uint64_t serial;
-        const std::vector<ShaderRecompiler::BdaAbi::Range>* ranges;
-    };
-    std::optional<CachedTable> CachedAddressTable() const;
+    std::vector<ShaderRecompiler::BdaAbi::Grant> WriteGrants() const;
+    std::vector<ShaderRecompiler::BdaAbi::Range> OwnRanges() const;
+    std::shared_ptr<const BdaPageTable> PageTable(const Context& context) const;
     // The registered memory an address-based build maps, shared by consecutive builds (see
     // GuestBufferMemory.cpp): its lease and the sorted, immutable regions of the ranges served in
     // place by imports and mirrors. Opaque outside GuestBufferMemory.cpp.
@@ -347,6 +343,7 @@ private:
     void addCopiedRange(const CopiedRange& range);
     // The BDA table entry of an uploaded region.
     static ShaderRecompiler::BdaAbi::Range addressRange(const Region& region);
+    bool mappedInPlace(const Region& region) const;
     static std::uint64_t servedEnd(const Region& region);
     void validate(std::uint64_t address, std::size_t bytes) const;
     // The region of a descriptor-bound range (AddWritable/AddReadable), committed pages only. A
@@ -380,8 +377,6 @@ private:
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
-    mutable std::uint64_t writeTableSerial = 0;
-    mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> writeTableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while
     // no import was destroyed since.
     std::uint64_t importsEpoch = 0;

@@ -557,6 +557,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     result.registrationModule = registration;
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
+    result.bdaWrites = program.Info().usesDma && program.Info().bdaWrites;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.bufferAddressDword = bindings.layout.BufferAddressDword();
     result.samplerSlotDword = bindings.layout.SamplerSlotDword();
@@ -863,6 +864,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .runtimeImageResources = artifact.runtimeImageResources,
         .registrationModule = artifact.registrationModule,
         .bdaAbiVersion = artifact.bdaAbiVersion,
+        .bdaWrites = artifact.bdaWrites,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
         .vertexOffsetSgpr = artifact.vertexOffsetSgpr,

@@ -196,6 +196,11 @@ public:
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool UsesAddressTable() const { return usesBda; }
+    struct WritableSet {
+        std::vector<ShaderRecompiler::BdaAbi::Grant> ranges;
+        bool writableImports = false;
+    };
+    WritableSet Writable() const { return {guestMemory.WriteGrants(), pageTableStores}; }
     bool UsesDeviceImages() const { return deviceImages; }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
@@ -504,6 +509,7 @@ private:
     GuestBufferMemory guestMemory;
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
+    bool pageTableStores = false;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
     bool deviceImages = false;

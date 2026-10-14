@@ -1,4 +1,7 @@
 #include "BdaTests.hpp"
+#include "BdaPageReference.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
@@ -714,18 +717,9 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
         const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address; });
         Require(found != ranges.end() && found->deviceAddress != 0u, "the heap range is missing from the BDA table");
         const auto device = found->deviceAddress;
-        auto cursor = address;
-        std::uint64_t writableBytes = 0;
-        for (auto part = found; cursor < address + bytes && part != ranges.end(); ++part) {
-            Require(part->begin == cursor && part->end > cursor && part->end <= address + bytes, "heap BDA ranges have gaps or overlap");
-            Require(part->deviceAddress == device + cursor - address, "heap BDA ranges are not contiguous on the device");
-            const bool writable = written != 0u && part->begin >= written && part->end <= written + 32u;
-            const auto permissions = ShaderRecompiler::BdaAbi::Read | (writable ? ShaderRecompiler::BdaAbi::Write : 0u);
-            Require(part->permissions == permissions, "heap BDA range has incorrect permissions");
-            if (writable) writableBytes += part->end - part->begin;
-            cursor = part->end;
-        }
-        Require(cursor == address + bytes && writableBytes == (written != 0u ? 32u : 0u), "heap BDA coverage or writable extent is incorrect");
+        Require(found->end == address + bytes && found->permissions == ShaderRecompiler::BdaAbi::Read, "the heap BDA range does not cover the heap read-only");
+        const auto grants = leased.WriteGrants();
+        Require(written == 0u ? grants.empty() : grants.size() == 1u && grants[0].begin == written && grants[0].end == written + 32u, "the heap write grant is incorrect");
         if (gpu) gpu(leased);
         leased.WriteBack();
         return device;
@@ -1306,6 +1300,172 @@ void sparseHeapMirrorTests(const Context& context, const BdaTestAccess& access) 
 #endif
 }
 
+static void pageTableRootTests(const Context& shared, const BdaTestAccess& access) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    namespace Ref = BdaPageReference;
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: the page table of a split heap not tested\n";
+        return;
+    }
+    auto context = shared;
+    context.bufferPool.reset();
+    constexpr std::size_t bytes = 2 * 65536;
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536);
+#ifdef _WIN32
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+#endif
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto sweep = [&] {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    registry(true);
+    {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.AddWritable(address + 16, 32);
+        leased.Upload(true);
+        BdaResources bda(context, leased);
+        const auto root = access.bytes(bda.Table().buffer);
+        Abi::Header header{};
+        std::memcpy(&header, root.data(), sizeof(header));
+        Require(header.version == Abi::TableVersion && header.grants == 1u && header.pageTable != 0u, "an address-based build over a registered heap bound no page table or no write grant");
+        std::vector<Abi::Range> list(header.count);
+        std::memcpy(list.data(), root.data() + sizeof(header), list.size() * sizeof(Abi::Range));
+        std::vector<Abi::Grant> grants(header.grants);
+        std::memcpy(grants.data(), root.data() + sizeof(header) + list.size() * sizeof(Abi::Range), grants.size() * sizeof(Abi::Grant));
+        Require(grants.size() == 1u && grants[0].begin == address + 16u && grants[0].end == address + 48u, "the write interval is not the build's write grant");
+        const auto first = access.addressBytes(header.pageTable);
+        Ref::Leaves leaves;
+        for (std::uint32_t window = 0; window < Abi::WindowCount; ++window) {
+            std::uint64_t leaf = 0;
+            std::memcpy(&leaf, first.data() + window * sizeof(leaf), sizeof(leaf));
+            if (leaf == 0u) continue;
+            const auto entries = access.addressBytes(leaf);
+            std::vector<Abi::PageEntry> decoded(entries.size() / sizeof(Abi::PageEntry));
+            std::memcpy(decoded.data(), entries.data(), decoded.size() * sizeof(Abi::PageEntry));
+            leaves.emplace(window, std::move(decoded));
+        }
+        const auto mapped = leased.AddressRanges();
+        const auto own = leased.OwnRanges();
+        Require(std::equal(list.begin(), list.end(), own.begin(), own.end(), [](const Abi::Range& left, const Abi::Range& right) { return std::memcmp(&left, &right, sizeof(left)) == 0; }), "the table root does not hold the build's own ranges");
+        Require(std::none_of(list.begin(), list.end(), [&](const auto& range) { return range.begin < address + bytes && address < range.end; }), "the heap the page table maps is also an own range of the build");
+        const auto heap = std::find_if(mapped.begin(), mapped.end(), [&](const auto& range) { return range.begin <= address && address < range.end; });
+        Require(heap != mapped.end() && heap->end >= address + bytes && heap->permissions == Abi::Read, "the write interval split the heap's read-only range");
+        const auto device = heap->deviceAddress + (address - heap->begin);
+        Require(Ref::Translate(leaves, list, address + 8u, 64u, Abi::Read, grants) == Ref::Translation{device + 8u, 0u}, "a 64-byte read across the write grant of one read-only range faulted");
+        for (const std::uint64_t offset : {0u, 15u, 16u, 44u, 45u, 48u, 65532u, 65536u, static_cast<unsigned>(bytes) - 4u}) {
+            const bool granted = offset >= 16u && offset + 4u <= 48u;
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Read, grants) == Ref::Translation{device + offset, 0u}, "the page table alone did not translate the registered heap at +" + std::to_string(offset));
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write) == Ref::Fault(Abi::FaultReason::Permission), "the page table alone let a store reach the read-only mirror at +" + std::to_string(offset));
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write, grants) == (granted ? Ref::Translation{device + offset, 0u} : Ref::Fault(Abi::FaultReason::Permission)), "the write grant did not decide a store to the mirror at +" + std::to_string(offset));
+        }
+        const Ref::Leaves none;
+        for (const auto probe : Ref::Probes(mapped)) {
+            for (const auto size : Ref::ProbeBytes) {
+                for (const auto permission : {Abi::Read, Abi::Write, Abi::Read | Abi::Write}) {
+                    const auto actual = Ref::Translate(leaves, list, probe, size, permission, grants);
+                    const auto expected = Ref::Translate(none, mapped, probe, size, permission, grants);
+                    Require(actual == expected, "the page table of a granted heap translated 0x" + std::to_string(probe) + " (" + std::to_string(size) + " bytes, permission " + std::to_string(permission) + ") unlike its ranges");
+                }
+            }
+        }
+        leased.WriteBack();
+    }
+    registry(false);
+    sweep();
+}
+
+void dissolvedSpaceTableTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    constexpr std::size_t piece = 65536;
+    void* block = ::operator new(4 * piece, std::align_val_t{piece});
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    std::memset(block, 0x5a, 4 * piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto change = [&](std::uint8_t* range, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    change(guest, true);
+    change(guest + 2 * piece, true);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto pages = leased.PageTable(importing);
+        if (AddressSpaceCounters().enabled) Require(pages != nullptr && leased.OwnRanges().empty(), "a build served by its address space alone has own ranges or no page table");
+        leased.WriteBack();
+    }
+    const auto before = AddressSpaceCounters();
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.AddReadable(first + piece - 16, 32);
+        leased.Upload(true);
+        const auto after = AddressSpaceCounters();
+        if (before.enabled) Require(after.dissolvedOverlap == before.dissolvedOverlap + 1, "a V# past the end of a registered range did not dissolve the address space");
+        const auto pages = leased.PageTable(importing);
+        const auto own = leased.OwnRanges();
+        const auto mapped = leased.AddressRanges();
+        Require(pages != nullptr, "a build without an address space has no page table for its imports");
+        const auto import = pages->Find(first + 2 * piece + 8);
+        Require(import.has_value() && import->begin <= first + 2 * piece && import->end >= first + 3 * piece && (import->permissions & Abi::Write) != 0, "the page table of a build without an address space does not map its writable import");
+        Require(std::none_of(own.begin(), own.end(), [&](const auto& range) { return range.begin < first + 3 * piece && first + 2 * piece < range.end; }), "an import the page table maps is also an own range");
+        for (const auto& range : mapped) {
+            const auto paged = pages->Find(range.begin);
+            const bool listed = std::any_of(own.begin(), own.end(), [&](const auto& candidate) { return std::memcmp(&candidate, &range, sizeof(range)) == 0; });
+            Require(listed != (paged.has_value() && std::memcmp(&*paged, &range, sizeof(range)) == 0), "a range of the build is not in exactly one of its page table and its own ranges");
+        }
+        BdaResources bda(importing, leased);
+        leased.WriteBack();
+    }
+    change(guest, false);
+    change(guest + 2 * piece, false);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+static void rangeListTests(const Context& shared) {
+    auto context = shared;
+    context.bufferPool.reset();
+    alignas(64) static std::array<std::uint8_t, 4096> stack{};
+    const auto base = reinterpret_cast<std::uintptr_t>(stack.data());
+    std::uint64_t seed = 0x9e3779b97f4a7c15ull;
+    const auto next = [&] {
+        seed ^= seed << 13u;
+        seed ^= seed >> 7u;
+        seed ^= seed << 17u;
+        return seed;
+    };
+    for (std::uint32_t round = 0; round < 16u; ++round) {
+        GuestBufferMemory memory(context);
+        for (std::uint32_t descriptor = 0; descriptor < 6u; ++descriptor) {
+            const auto offset = (next() % 3000u) & ~std::uint64_t{3};
+            const auto size = 4u + (next() % 1000u);
+            if (next() % 2u == 0u) memory.AddWritable(base + offset, size);
+            else memory.AddReadable(base + offset, size);
+        }
+        memory.Upload(true);
+        const auto ranges = memory.AddressRanges();
+        ValidateBdaRangeList(ranges);
+        BdaResources bda(context, memory);
+        memory.WriteBack();
+    }
+}
+
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     alignas(64) std::array<std::uint32_t, 16> guest{};
     guest[0] = 123;
@@ -1323,7 +1483,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     Require(alias.first + adjustment == first.first + 16 && alias.second == 16 + adjustment, "aliased guest buffers have different owners");
     const auto ranges = memory.AddressRanges();
     Require(ranges.size() == 1 && ranges[0].begin == address && ranges[0].end == address + sizeof(guest), "incorrect BDA range bounds");
-    Require(ranges[0].deviceAddress != 0 && ranges[0].permissions == (ShaderRecompiler::BdaAbi::Read | ShaderRecompiler::BdaAbi::Write), "incorrect BDA address or permissions");
+    Require(ranges[0].deviceAddress != 0 && ranges[0].permissions == ShaderRecompiler::BdaAbi::Read, "incorrect BDA address or permissions");
+    const auto grants = memory.WriteGrants();
+    Require(grants.size() == 1 && grants[0].begin == address && grants[0].end == address + sizeof(guest), "the written descriptors are not one write grant");
     std::uint32_t changed = 321;
     std::memcpy(access.addressBytes(alias.first + adjustment).data(), &changed, sizeof(changed));
     memory.WriteBack();
@@ -1382,9 +1544,18 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         reject([&] { resources.CheckFaults(); }, "rect-list requires");
     }
     {
+        shader.bdaWrites = true;
+        ShaderResources resources(context, compiled, snapshots);
+        const auto writable = resources.Writable();
+        Require(writable.writableImports && writable.ranges.empty(), "a build of a program that stores through the page table may not write the writable imports");
+        resources.WriteBack();
+        shader.bdaWrites = false;
+    }
+    {
         ShaderResources resources(context, compiled, snapshots);
         Require(ShaderResources::NeverReusable(std::span<const CompiledShader>(&compiled, 1)) && !resources.Reusable(), "an address-based build is reusable");
         Require(resources.UsesAddressTable(), "an address-based build does not use the BDA table");
+        Require(!resources.Writable().writableImports && resources.Writable().ranges.empty(), "a build of a program that stores nothing may write");
         ShaderRecompiler::RecompileResult plain;
         plain.bindings = {binding(Role::GuestBuffers, 6)};
         const CompiledShader plainStage{ShaderRecompiler::ShaderStage::Compute, &plain, 0};
@@ -1393,7 +1564,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         ShaderRecompiler::BdaAbi::Header header{};
         ShaderRecompiler::BdaAbi::Range range{};
         std::memcpy(&header, table.data(), sizeof(header));
-        Require(header.version == ShaderRecompiler::BdaAbi::Version && header.count == 1 && header.entryBytes == sizeof(range), "BDA header layout mismatch");
+        Require(header.version == ShaderRecompiler::BdaAbi::TableVersion && header.count == 1 && header.grants == 0 && header.reserved == 0 && header.pageTable == 0 && header.unused == 0, "BDA header layout mismatch: version " + std::to_string(header.version) + ", " + std::to_string(header.count) + " ranges, " + std::to_string(header.grants) + " write grants, page table " + std::to_string(header.pageTable));
         std::memcpy(&range, table.data() + sizeof(header), sizeof(range));
         Require(range.begin == snapshots[0].address && range.end == range.begin + source.size(), "64-bit guest address was truncated");
         const auto fault = access.bytes(access.descriptor(5).buffer);
@@ -1519,6 +1690,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importAtMapOverBudgetTests(context);
     importEvictionTests(context);
     heapMirrorTests(context, access);
+    pageTableRootTests(context, access);
+    dissolvedSpaceTableTests(context);
+    rangeListTests(context);
     importedHeapMirrorTests(context, access);
     importWatchTests();
     importedFreshTests(context);

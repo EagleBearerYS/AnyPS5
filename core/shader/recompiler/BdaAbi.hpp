@@ -9,15 +9,70 @@
 namespace ShaderRecompiler::BdaAbi {
 
 inline constexpr std::uint32_t Version = 1;
+inline constexpr std::uint32_t TableVersion = 3;
 inline constexpr std::uint32_t Read = 1;
 inline constexpr std::uint32_t Write = 2;
 
 struct Header {
     std::uint32_t version;
     std::uint32_t count;
-    std::uint32_t entryBytes;
+    std::uint32_t grants;
     std::uint32_t reserved;
+    std::uint64_t pageTable;
+    std::uint64_t unused;
 };
+
+inline constexpr std::uint32_t HeaderWords = 8;
+inline constexpr std::uint32_t CountWord = 1;
+inline constexpr std::uint32_t GrantsWord = 2;
+inline constexpr std::uint32_t PageTableWord = 4;
+inline constexpr std::uint32_t RangeWords = 8;
+inline constexpr std::uint32_t GrantWords = 4;
+inline constexpr std::uint32_t PageShift = 16;
+inline constexpr std::uint32_t WindowShift = 32;
+inline constexpr std::uint32_t AddressBits = 47;
+inline constexpr std::uint64_t PageTableEnd = std::uint64_t{1} << AddressBits;
+inline constexpr std::uint32_t WindowCount = 1u << (AddressBits - WindowShift);
+inline constexpr std::uint32_t WindowPages = 1u << (WindowShift - PageShift);
+inline constexpr std::uint32_t SplitShift = 4;
+inline constexpr std::uint32_t SplitChildren = 1u << SplitShift;
+inline constexpr std::uint64_t LimitMax = (std::uint64_t{1} << 33) - 1u;
+inline constexpr std::uint32_t FirstMask = 0x1ffffu;
+inline constexpr std::uint32_t LimitHighShift = 17;
+inline constexpr std::uint32_t PermissionShift = 18;
+inline constexpr std::uint32_t KindShift = 30;
+
+enum class PageKind : std::uint32_t { None, Segment, Split };
+
+struct PageEntry {
+    std::uint64_t target;
+    std::uint32_t bounds;
+    std::uint32_t limit;
+};
+
+constexpr PageKind KindOf(const PageEntry& entry) {
+    return static_cast<PageKind>(entry.bounds >> KindShift);
+}
+
+constexpr std::uint32_t FirstOf(const PageEntry& entry) {
+    return entry.bounds & FirstMask;
+}
+
+constexpr std::uint64_t LimitOf(const PageEntry& entry) {
+    return entry.limit | (static_cast<std::uint64_t>((entry.bounds >> LimitHighShift) & 1u) << 32u);
+}
+
+constexpr std::uint32_t PermissionsOf(const PageEntry& entry) {
+    return (entry.bounds >> PermissionShift) & (Read | Write);
+}
+
+constexpr PageEntry SegmentEntry(std::uint64_t target, std::uint32_t first, std::uint64_t limit, std::uint32_t permissions) {
+    return {target, first | static_cast<std::uint32_t>(limit >> 32u) << LimitHighShift | permissions << PermissionShift | static_cast<std::uint32_t>(PageKind::Segment) << KindShift, static_cast<std::uint32_t>(limit)};
+}
+
+constexpr PageEntry SplitEntry(std::uint64_t children) {
+    return {children, static_cast<std::uint32_t>(PageKind::Split) << KindShift, 0u};
+}
 
 struct Range {
     std::uint64_t begin;
@@ -25,6 +80,11 @@ struct Range {
     std::uint64_t deviceAddress;
     std::uint32_t permissions;
     std::uint32_t reserved;
+};
+
+struct Grant {
+    std::uint64_t begin;
+    std::uint64_t end;
 };
 
 enum class FaultState : std::uint32_t { Empty, Writing, Ready };
@@ -40,9 +100,14 @@ struct Fault {
     std::uint32_t reserved;
 };
 
-static_assert(std::is_standard_layout_v<Header> && std::is_trivially_copyable_v<Header> && sizeof(Header) == 16);
-static_assert(std::is_standard_layout_v<Range> && std::is_trivially_copyable_v<Range> && sizeof(Range) == 32);
+static_assert(std::is_standard_layout_v<Header> && std::is_trivially_copyable_v<Header> && sizeof(Header) == HeaderWords * sizeof(std::uint32_t));
+static_assert(offsetof(Header, pageTable) == PageTableWord * sizeof(std::uint32_t));
+static_assert(std::is_standard_layout_v<PageEntry> && std::is_trivially_copyable_v<PageEntry> && sizeof(PageEntry) == 16);
+static_assert(PageShift % SplitShift == 0 && FirstMask >= (1u << PageShift) && LimitMax > (std::uint64_t{1} << PageShift) + 0xffffffffull);
+static_assert(offsetof(Header, count) == CountWord * sizeof(std::uint32_t) && offsetof(Header, grants) == GrantsWord * sizeof(std::uint32_t));
+static_assert(std::is_standard_layout_v<Range> && std::is_trivially_copyable_v<Range> && sizeof(Range) == RangeWords * sizeof(std::uint32_t));
 static_assert(offsetof(Range, deviceAddress) == 16 && offsetof(Range, permissions) == 24);
+static_assert(std::is_standard_layout_v<Grant> && std::is_trivially_copyable_v<Grant> && sizeof(Grant) == GrantWords * sizeof(std::uint32_t));
 static_assert(std::is_standard_layout_v<Fault> && std::is_trivially_copyable_v<Fault> && sizeof(Fault) == 32);
 static_assert(offsetof(Fault, address) == 8 && offsetof(Fault, instruction) == 24);
 
