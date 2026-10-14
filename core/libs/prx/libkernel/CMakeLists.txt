@@ -448,6 +448,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_pthread_stack COMMAND guest_pthread_stack_tests)
     set_tests_properties(guest_pthread_stack PROPERTIES TIMEOUT 20)
     if(WIN32)
+        target_compile_definitions(guest_pthread_stack_tests PRIVATE _WIN32_WINNT=0x0602)
         set_tests_properties(guest_pthread_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()

@@ -2,6 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
@@ -24,6 +27,34 @@ thread_local unsigned char threadLocalBlock[512 * 1024];
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+extern "C" void APS5_VABI TouchBelow(std::uintptr_t bytes);
+asm(R"(
+    .globl TouchBelow
+TouchBelow:
+    sub %rdi, %rsp
+    movq $0x5a, (%rsp)
+    add %rdi, %rsp
+    ret
+)");
+
+#ifdef _WIN32
+static constexpr std::size_t PAGE = 4096;
+
+static std::size_t CommittedNativeStack() {
+    ULONG_PTR low = 0;
+    ULONG_PTR high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    std::size_t committed = 0;
+    for (auto cursor = static_cast<std::uintptr_t>(low); cursor < high;) {
+        MEMORY_BASIC_INFORMATION memory{};
+        Require(VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) == sizeof(memory) && memory.RegionSize != 0);
+        if (memory.State == MEM_COMMIT) committed += memory.RegionSize;
+        cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+    }
+    return committed;
+}
+#endif
+
 static std::uintptr_t Descend(std::uintptr_t floor);
 static std::uintptr_t (*volatile descend)(std::uintptr_t) = Descend;
 
@@ -39,6 +70,9 @@ static std::uintptr_t Descend(std::uintptr_t floor) {
 
 static void* APS5_VABI Worker(void* arg) {
     const auto requested = *static_cast<const std::size_t*>(arg);
+#ifdef _WIN32
+    Require(CommittedNativeStack() <= (requested + PAGE - 1) / PAGE * PAGE + 2 * PAGE);
+#endif
     threadLocalBlock[0] = 1;
     threadLocalBlock[sizeof(threadLocalBlock) - 1] = 2;
 
@@ -55,6 +89,7 @@ static void* APS5_VABI Worker(void* arg) {
     const auto local = reinterpret_cast<std::uintptr_t>(&size);
     Require(local > begin && local < begin + size);
     Require(local - begin + FRAME_SIZE >= requested);
+    TouchBelow(local - begin - FRAME_SIZE);
     const auto deepest = Descend(begin);
     Require(deepest >= begin && deepest < begin + FRAME_MARGIN);
     const auto hostDeepest = descend(begin - HOST_CALL_STACK);

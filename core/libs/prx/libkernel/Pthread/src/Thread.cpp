@@ -593,6 +593,30 @@ struct NativeThreadArgs {
 };
 
 #ifdef _WIN32
+static void CommitGuestStack(std::uintptr_t low, std::uintptr_t guestStart, std::uintptr_t high) {
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::uintptr_t page = system.dwPageSize;
+    const auto guestLow = guestStart & ~(page - 1);
+    if (guestLow < low + page)
+        throw std::runtime_error("Guest thread stack leaves no room for its guard page");
+    for (auto cursor = low; cursor < guestLow;) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory) || memory.RegionSize == 0)
+            throw std::runtime_error("Cannot query the guest thread stack reservation");
+        const auto end = std::min(reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize, guestLow);
+        if (memory.State == MEM_COMMIT && !VirtualFree(reinterpret_cast<void*>(cursor), end - cursor, MEM_DECOMMIT))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Decommitting the host margin of a guest thread stack");
+        cursor = end;
+    }
+    DWORD previous = 0;
+    if (VirtualAlloc(reinterpret_cast<void*>(guestLow), high - guestLow, MEM_COMMIT, PAGE_READWRITE) == nullptr || !VirtualProtect(reinterpret_cast<void*>(guestLow), high - guestLow, PAGE_READWRITE, &previous))
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Committing the guest thread stack");
+    if (VirtualAlloc(reinterpret_cast<void*>(guestLow - page), page, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD) == nullptr)
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Placing the guard page below the guest thread stack");
+    reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackLimit = reinterpret_cast<void*>(guestLow);
+}
+
 static unsigned __stdcall StartNativeThread(void* opaque) {
     std::unique_ptr<NativeThreadArgs> args(static_cast<NativeThreadArgs*>(opaque));
     auto* self = args->guest->self;
@@ -602,13 +626,8 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
         GetCurrentThreadStackLimits(&low, &high);
         if (high <= low || high - low < self->stackSize)
             throw std::runtime_error("Cannot query guest thread stack");
+        CommitGuestStack(low, high - self->stackSize, high);
         self->stackAddress = reinterpret_cast<void*>(high - self->stackSize);
-        for (auto cursor = high - self->stackSize; cursor < high;) {
-            MEMORY_BASIC_INFORMATION memory{};
-            if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT || memory.Protect != PAGE_READWRITE || memory.RegionSize == 0)
-                throw std::runtime_error("Guest thread stack is not fully committed");
-            cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
-        }
         self->threadId = std::this_thread::get_id();
         CurrentGuestState().current = self;
         if (!self->name.empty()) {
@@ -702,7 +721,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     const std::size_t nativeStack = (p->stackSize + HOST_STACK_MARGIN + system.dwPageSize - 1) / system.dwPageSize * system.dwPageSize;
     auto native = std::make_unique<NativeThreadArgs>(NativeThreadArgs{std::move(args), start.get_future(), {}});
     auto initialized = native->initialized.get_future();
-    const auto handle = _beginthreadex(nullptr, static_cast<unsigned>(nativeStack), StartNativeThread, native.get(), 0, nullptr);
+    const auto handle = _beginthreadex(nullptr, static_cast<unsigned>(nativeStack), StartNativeThread, native.get(), STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
     if (handle == 0)
         throw std::system_error(errno, std::generic_category(), "Creating guest thread");
     p->nativeHandle = reinterpret_cast<void*>(handle);
