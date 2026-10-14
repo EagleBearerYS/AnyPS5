@@ -192,5 +192,79 @@ int main() {
         return loop(true) && !loop(false);
     });
 
+    passed &= run("an output modifier's result needs no flush, a look-alike with another step does", [] {
+        const auto modified = [](Builder& b, std::uint32_t omod, std::uint32_t step) -> IrValue& {
+            auto& bits = b.unknown();
+            auto& magnitude = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)});
+            auto& sign = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x80000000u)});
+            const auto below = [&](std::uint32_t bound) -> IrValue& { return b.emit(IrOpcode::ULessThan32, IrType::Bool, {&magnitude, &b.constant(bound)}); };
+            IrValue* scaled = nullptr;
+            if (omod == 3u) {
+                scaled = &b.emit(IrOpcode::SelectU32, IrType::U32, {&below(0x01000000u), &sign, &b.emit(IrOpcode::ISub32, IrType::U32, {&bits, &b.constant(step)})});
+            } else {
+                auto& infinity = b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&sign, &b.constant(0x7f800000u)});
+                scaled = &b.emit(IrOpcode::SelectU32, IrType::U32, {&below(0x7f800000u - step), &b.emit(IrOpcode::IAdd32, IrType::U32, {&bits, &b.constant(step)}), &infinity});
+            }
+            auto& small = b.emit(IrOpcode::SelectU32, IrType::U32, {&below(0x00800000u), &b.constant(0u), scaled});
+            auto& special = b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&magnitude, &b.constant(0x7f7fffffu)});
+            return b.flush(b.emit(IrOpcode::SelectU32, IrType::U32, {&special, &bits, &small}));
+        };
+        Builder b;
+        auto& twice = modified(b, 1u, 0x00800000u);
+        auto& fourTimes = modified(b, 2u, 0x01000000u);
+        auto& half = modified(b, 3u, 0x00800000u);
+        auto& lookAlike = modified(b, 1u, 0x00400000u);
+        for (IrValue* flushed : {&twice, &fourTimes, &half, &lookAlike}) b.keep(*flushed);
+        return b.eliminate() == 3u && !twice.HasUses() && !fourTimes.HasUses() && !half.HasUses() && lookAlike.HasUses();
+    });
+
+    passed &= run("rounded results need no flush, a fraction or a maximum only of flushed operands", [] {
+        Builder b;
+        const auto asFloat = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&bits}); };
+        const auto ofFloat = [&](IrOpcode opcode, std::initializer_list<IrValue*> arguments) -> IrValue& {
+            return b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(opcode, IrType::F32, arguments)}));
+        };
+        auto& floor = ofFloat(IrOpcode::FPFloor32, {&asFloat(b.unknown())});
+        auto& ceil = ofFloat(IrOpcode::FPCeil32, {&asFloat(b.unknown())});
+        auto& trunc = ofFloat(IrOpcode::FPTrunc32, {&asFloat(b.unknown())});
+        auto& even = ofFloat(IrOpcode::FPRoundEven32, {&asFloat(b.unknown())});
+        auto& fraction = ofFloat(IrOpcode::FPFract32, {&asFloat(b.flush(b.unknown()))});
+        auto& rawFraction = ofFloat(IrOpcode::FPFract32, {&asFloat(b.unknown())});
+        auto& maximum = ofFloat(IrOpcode::FPMax32, {&asFloat(b.flush(b.unknown())), &asFloat(b.flush(b.unknown()))});
+        auto& median = ofFloat(IrOpcode::FPMedTri32, {&asFloat(b.flush(b.unknown())), &asFloat(b.flush(b.unknown())), &asFloat(b.flush(b.unknown()))});
+        auto& rawMinimum = ofFloat(IrOpcode::FPMin32, {&asFloat(b.flush(b.unknown())), &asFloat(b.unknown())});
+        for (IrValue* flushed : {&floor, &ceil, &trunc, &even, &fraction, &rawFraction, &maximum, &median, &rawMinimum}) b.keep(*flushed);
+        return b.eliminate() == 7u && !floor.HasUses() && !ceil.HasUses() && !trunc.HasUses() && !even.HasUses() && !fraction.HasUses() && !maximum.HasUses() && !median.HasUses() && rawFraction.HasUses() && rawMinimum.HasUses();
+    });
+
+    passed &= run("a select that passes a NaN through needs no flush when its other arm needs none", [] {
+        Builder b;
+        const auto isNan = [&](IrValue& bits) -> IrValue& {
+            return b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)}), &b.constant(0x7f800000u)});
+        };
+        const auto signaling = [&](IrValue& bits) -> IrValue& {
+            auto& exponent = b.emit(IrOpcode::IEqual32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fc00000u)}), &b.constant(0x7f800000u)});
+            auto& payload = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x003fffffu)}), &b.constant(0u)});
+            return b.emit(IrOpcode::LogicalAnd, IrType::Bool, {&exponent, &payload});
+        };
+        const auto quiet = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&bits, &b.constant(0x00400000u)}); };
+        const auto select = [&](IrValue& condition, IrValue& passed, IrValue& other) -> IrValue& { return b.flush(b.emit(IrOpcode::SelectU32, IrType::U32, {&condition, &passed, &other})); };
+        auto& source = b.unknown();
+        auto& passes = select(isNan(source), source, b.flush(b.unknown()));
+        auto& quiets = select(isNan(source), quiet(source), b.flush(b.unknown()));
+        auto& signals = select(signaling(source), quiet(source), b.flush(b.unknown()));
+        auto& otherValue = select(isNan(source), b.unknown(), b.flush(b.unknown()));
+        auto& unknownArm = select(isNan(source), source, b.unknown());
+        for (IrValue* flushed : {&passes, &quiets, &signals, &otherValue, &unknownArm}) b.keep(*flushed);
+        return b.eliminate() == 3u && !passes.HasUses() && !quiets.HasUses() && !signals.HasUses() && otherValue.HasUses() && unknownArm.HasUses();
+    });
+
+    passed &= run("the sign bit of a value needs no flush", [] {
+        Builder b;
+        auto& sign = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.unknown(), &b.constant(0x80000000u)}));
+        b.keep(sign);
+        return b.eliminate() == 1u && !sign.HasUses();
+    });
+
     return passed ? 0 : 1;
 }

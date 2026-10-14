@@ -7,6 +7,68 @@ namespace ShaderRecompiler {
 
 namespace {
 
+bool isImmediate(const IrValue& value, std::uint32_t bits) {
+    return value.HasImmediate() && value.ImmediateU32() == bits;
+}
+
+const IrValue* bitsOf(const IrValue& value) {
+    const IrValue* current = value.Resolve();
+    while (current->Opcode() == IrOpcode::BitCastU32F32 || current->Opcode() == IrOpcode::BitCastF32U32) current = current->Argument(0)->Resolve();
+    return current;
+}
+
+bool comparesMagnitude(const IrValue& condition, IrOpcode opcode, std::uint32_t bound, const IrValue* source) {
+    const IrValue& compare = *condition.Resolve();
+    if (compare.Opcode() != opcode || compare.ArgumentCount() != 2u || !isImmediate(*compare.Argument(1)->Resolve(), bound)) return false;
+    return MaskedOperand(*compare.Argument(0)->Resolve(), IrOpcode::BitwiseAnd32, 0x7fffffffu) == source;
+}
+
+bool offsetOf(const IrValue& value, const IrValue* source, std::uint32_t step) {
+    const IrValue& offset = *value.Resolve();
+    if (offset.Opcode() == IrOpcode::IAdd32) return MaskedOperand(offset, IrOpcode::IAdd32, step) == source;
+    return offset.Opcode() == IrOpcode::ISub32 && offset.Argument(0)->Resolve() == source && isImmediate(*offset.Argument(1)->Resolve(), 0u - step);
+}
+
+bool outputModifierResult(const IrValue& value) {
+    if (value.Opcode() != IrOpcode::SelectU32 || value.ArgumentCount() != 3u) return false;
+    const IrValue* bits = value.Argument(1)->Resolve();
+    if (!comparesMagnitude(*value.Argument(0), IrOpcode::UGreaterThan32, 0x7f7fffffu, bits)) return false;
+    const IrValue& small = *value.Argument(2)->Resolve();
+    if (small.Opcode() != IrOpcode::SelectU32 || !isImmediate(*small.Argument(1)->Resolve(), 0u) || !comparesMagnitude(*small.Argument(0), IrOpcode::ULessThan32, 0x00800000u, bits)) return false;
+    const IrValue& scaled = *small.Argument(2)->Resolve();
+    if (scaled.Opcode() != IrOpcode::SelectU32) return false;
+    if (comparesMagnitude(*scaled.Argument(0), IrOpcode::ULessThan32, 0x01000000u, bits)) {
+        return MaskedOperand(*scaled.Argument(1)->Resolve(), IrOpcode::BitwiseAnd32, 0x80000000u) == bits && offsetOf(*scaled.Argument(2), bits, 0u - 0x00800000u);
+    }
+    for (const std::uint32_t step : {0x00800000u, 0x01000000u}) {
+        if (!comparesMagnitude(*scaled.Argument(0), IrOpcode::ULessThan32, 0x7f800000u - step, bits) || !offsetOf(*scaled.Argument(1), bits, step)) continue;
+        const IrValue* sign = MaskedOperand(*scaled.Argument(2)->Resolve(), IrOpcode::BitwiseOr32, 0x7f800000u);
+        return sign != nullptr && MaskedOperand(*sign, IrOpcode::BitwiseAnd32, 0x80000000u) == bits;
+    }
+    return false;
+}
+
+const IrValue* exponentAllOnesSource(const IrValue& condition) {
+    const IrValue& test = *condition.Resolve();
+    if (const IrValue* source = NanTestedF32Source(test)) return source;
+    if (const IrValue* exponent = MaskedOperand(test, IrOpcode::IEqual32, 0x7f800000u)) return MaskedOperand(*exponent, IrOpcode::BitwiseAnd32, 0x7fc00000u);
+    if (test.Opcode() != IrOpcode::LogicalAnd) return nullptr;
+    for (std::size_t index = 0; index < 2u; ++index) {
+        if (const IrValue* source = exponentAllOnesSource(*test.Argument(index))) return source;
+    }
+    return nullptr;
+}
+
+const IrValue* nanPassingOtherArm(const IrValue& value) {
+    if ((value.Opcode() != IrOpcode::SelectU32 && value.Opcode() != IrOpcode::SelectF32) || value.ArgumentCount() != 3u) return nullptr;
+    const IrValue* source = exponentAllOnesSource(*value.Argument(0));
+    if (source == nullptr) return nullptr;
+    const IrValue* sourceBits = bitsOf(*source);
+    const IrValue* passed = bitsOf(*value.Argument(1));
+    if (passed != sourceBits && QuietedF32Source(*passed) != sourceBits) return nullptr;
+    return value.Argument(2);
+}
+
 class DenormalFreeValues {
 public:
     bool Contains(const IrValue* value) {
@@ -24,13 +86,29 @@ private:
             const std::uint32_t bits = value.ImmediateU32();
             return (bits & 0x7f800000u) != 0u || (bits & 0x7fffffffu) == 0u;
         }
-        if (FlushedF32Source(value) != nullptr) return true;
+        if (FlushedF32Source(value) != nullptr || MaskedOperand(value, IrOpcode::BitwiseAnd32, 0x80000000u) != nullptr || outputModifierResult(value)) return true;
+        if (const IrValue* other = nanPassingOtherArm(value)) return Contains(other);
         switch (value.Opcode()) {
             case IrOpcode::ConvertIToF32:
             case IrOpcode::ConvertUToF32:
             case IrOpcode::ConvertF32S32:
             case IrOpcode::ConvertF32U32:
             case IrOpcode::ConvertF32F16:
+            case IrOpcode::FPFloor32:
+            case IrOpcode::FPCeil32:
+            case IrOpcode::FPTrunc32:
+            case IrOpcode::FPRoundEven32:
+                return true;
+            case IrOpcode::FPFract32:
+                return Contains(value.Argument(0));
+            case IrOpcode::FPMin32:
+            case IrOpcode::FPMax32:
+            case IrOpcode::FPMinTri32:
+            case IrOpcode::FPMaxTri32:
+            case IrOpcode::FPMedTri32:
+                for (std::size_t index = 0; index < value.ArgumentCount(); ++index) {
+                    if (!Contains(value.Argument(index))) return false;
+                }
                 return true;
             case IrOpcode::BitCastU32F32:
             case IrOpcode::BitCastF32U32:
