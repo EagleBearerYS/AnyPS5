@@ -867,6 +867,7 @@ struct PipelineStore {
         std::uint64_t hash;
         std::vector<std::byte> key;
         std::shared_ptr<Pipeline> pipeline;
+        std::shared_ptr<RecordUse> use;
     };
     struct Building {
         std::vector<std::byte> key;
@@ -923,7 +924,9 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     return CachedPipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout);
 }
 
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+namespace {
+
+std::shared_ptr<Pipeline> cachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::shared_ptr<RecordUse> replayed) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
@@ -943,6 +946,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
                 if (alive(*it, context)) {
                     ++store.hits;
                     store.entries.splice(store.entries.end(), store.entries, it);
+                    if (replayed == nullptr && it->use != nullptr) it->use->Mark();
                     return it->pipeline;
                 }
                 abandon(store, it);
@@ -968,11 +972,20 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         }
     }
     if (!shared) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    if (other.valid()) return other.get();
+    if (other.valid()) {
+        auto pipeline = other.get();
+        if (replayed == nullptr) {
+            std::lock_guard lock(store.mutex);
+            if (const auto found = store.index.find(hash); found != store.index.end() && found->second->pipeline == pipeline && found->second->use != nullptr) found->second->use->Mark();
+        }
+        return pipeline;
+    }
     const auto ownKey = key;
     std::shared_ptr<Pipeline> pipeline;
+    auto use = replayed;
     try {
         pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        if (use == nullptr && !CreationAhead::Active() && context.pipelineRecorder != nullptr) use = context.pipelineRecorder->Created(context, state, vertexInput, resources, shaders, attachmentLayout);
     } catch (...) {
         {
             std::lock_guard lock(store.mutex);
@@ -984,7 +997,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     {
         std::lock_guard lock(store.mutex);
         store.building.erase(hash);
-        store.entries.push_back({context.device, context.bufferPool, hash, ownKey, pipeline});
+        store.entries.push_back({context.device, context.bufferPool, hash, ownKey, pipeline, use});
         store.index[hash] = std::prev(store.entries.end());
         constexpr std::size_t bound = 1024;
         while (store.entries.size() > bound) {
@@ -996,8 +1009,18 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         }
     }
     building.set_value(pipeline);
-    if (!CreationAhead::Active() && context.pipelineRecorder != nullptr) context.pipelineRecorder->Created(context, state, vertexInput, resources, shaders, attachmentLayout);
     return pipeline;
+}
+
+}
+
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    return cachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr);
+}
+
+std::shared_ptr<Pipeline> PrepareCachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::shared_ptr<RecordUse> use) {
+    Require(use != nullptr, "a pipeline prepared ahead needs its manifest record");
+    return cachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, std::move(use));
 }
 
 void ClearCachedPipelines(VkDevice device) {

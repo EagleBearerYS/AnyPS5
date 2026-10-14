@@ -5,9 +5,14 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
+
+namespace AgcDriver {
+class RecordUse;
+}
 
 namespace AgcDriver::Graphics {
 
@@ -24,8 +29,10 @@ bool SamePipelineKey(const Context& context, const PipelineSetLayouts& resources
 class IGraphicsPipelineRecorder {
 public:
     virtual ~IGraphicsPipelineRecorder() = default;
-    virtual void Created(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) = 0;
+    virtual std::shared_ptr<RecordUse> Created(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) = 0;
 };
+
+std::shared_ptr<Pipeline> PrepareCachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::shared_ptr<RecordUse> use);
 
 }
 

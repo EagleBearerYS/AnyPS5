@@ -45,6 +45,11 @@ void* RunCreations(void* argument) {
 
 }
 
+std::atomic<std::uint64_t>& RecordUse::Marks() {
+    static std::atomic<std::uint64_t> marks{0};
+    return marks;
+}
+
 bool& CreationAhead::Flag() {
     thread_local bool ahead = false;
     return ahead;

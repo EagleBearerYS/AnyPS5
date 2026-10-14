@@ -34,12 +34,13 @@ public:
         std::uint64_t programsReplayed = 0;
         std::uint64_t programsStale = 0;
         std::uint64_t programsFailed = 0;
+        std::uint64_t used = 0;
     };
     enum class ProgramReplay { Replayed, Stale, Failed };
 
     PipelineReplay(PipelineManifest& manifest, std::function<Graphics::Context()> context, std::function<Target()> target);
 
-    void Created(const Graphics::Context& context, const Graphics::State& state, const Graphics::VertexInputLayout& vertexInput, const Graphics::PipelineSetLayouts& resources, std::span<const Graphics::CompiledShader> shaders, VkImageLayout attachmentLayout) override;
+    std::shared_ptr<RecordUse> Created(const Graphics::Context& context, const Graphics::State& state, const Graphics::VertexInputLayout& vertexInput, const Graphics::PipelineSetLayouts& resources, std::span<const Graphics::CompiledShader> shaders, VkImageLayout attachmentLayout) override;
     std::vector<std::function<void()>> Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle);
     void RecordPreparedProgram(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, std::span<const std::pair<std::uint64_t, std::uint64_t>> ownRegions, const ShaderRecompiler::RecompileRequest& request);
     std::vector<PreparedProgramRecord> PreparedPrograms(std::span<const std::uint32_t> registeredCode) const;
@@ -50,11 +51,12 @@ public:
 private:
     struct Pending {
         GraphicsPipelineRecord record;
+        std::shared_ptr<RecordUse> use;
         std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>> handles;
         std::size_t missing = 0;
     };
 
-    void create(const GraphicsPipelineRecord& record, const std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>>& handles);
+    void create(const GraphicsPipelineRecord& record, const std::shared_ptr<RecordUse>& use, const std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>>& handles);
 
     PipelineManifest& manifest;
     std::function<Graphics::Context()> context;

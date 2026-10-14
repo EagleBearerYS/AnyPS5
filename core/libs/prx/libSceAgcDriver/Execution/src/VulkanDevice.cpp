@@ -218,6 +218,7 @@ struct ComputePipelineObjects {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     std::vector<std::uint32_t> setLayoutKey;
+    std::shared_ptr<RecordUse> use;
     ~ComputePipelineObjects() {
         if (pipeline != VK_NULL_HANDLE) destroyPipeline(device, pipeline, nullptr);
         if (layout != VK_NULL_HANDLE) destroyLayout(device, layout, nullptr);
@@ -1706,7 +1707,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         std::snprintf(name, sizeof(name), "pipelines-%04x-%04x.manifest", state->properties.vendorID, state->properties.deviceID);
         state->pipelineManifest = std::make_unique<PipelineManifest>(directory / name, ShaderRecompiler::ShaderDiskCache::SourceVersion());
         state->pipelineReplay = std::make_unique<PipelineReplay>(*state->pipelineManifest, [this] { return graphicsContext(); }, [this] { return Target(); });
-        std::fprintf(stderr, "[pipeline-manifest] %zu compute and %zu graphics pipelines recorded by earlier runs in %s\n", state->pipelineManifest->LoadedRecords().compute.size(), state->pipelineManifest->LoadedRecords().graphics.size(), (directory / name).string().c_str());
+        std::fprintf(stderr, "[pipeline-manifest] %zu compute and %zu graphics pipelines and %zu programs prepared at use recorded by earlier runs, %zu records expired, in %s\n", state->pipelineManifest->LoadedRecords().compute.size(), state->pipelineManifest->LoadedRecords().graphics.size(), state->pipelineManifest->LoadedRecords().prepared.size(), state->pipelineManifest->Expired(), (directory / name).string().c_str());
     }
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
@@ -4186,7 +4187,12 @@ bool VulkanDevice::RecordComputePipeline(const ShaderRecompiler::RecompileResult
         if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
         record.bindings.emplace_back(binding.binding, binding.count);
     }
-    return state->pipelineManifest->Record(std::move(record));
+    const auto added = state->pipelineManifest->Record(std::move(record));
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const std::uint64_t pipelineKey = (shader.PipelineVariantId() << 1u) | (Graphics::PushConstantStages(shaders) != 0 ? 1u : 0u);
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end() && found->second->use == nullptr) found->second->use = added.use;
+    return added.added;
 }
 
 PipelineReplay* VulkanDevice::Replay() const {
@@ -4196,15 +4202,15 @@ PipelineReplay* VulkanDevice::Replay() const {
 std::size_t VulkanDevice::PrepareRecordedComputePipelines(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle) {
     if (state->pipelineManifest == nullptr || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return 0;
     const auto records = state->pipelineManifest->Records(ShaderRecompiler::GetPreparedArtifact(handle).identity);
-    for (const auto& record : records) {
+    for (const auto& [record, use] : records) {
         auto result = ShaderRecompiler::SpecializedComputeResult(request, handle, record.constants);
         for (const auto& [binding, count] : record.bindings) result->bindings.push_back({ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::ShaderData, ShaderRecompiler::RuntimeAbi::DescriptorSet, binding, count, {}});
-        static_cast<void>(computePipeline(*result, request.shader.codeAddress));
+        static_cast<void>(computePipeline(*result, request.shader.codeAddress, nullptr, use));
     }
     return records.size();
 }
 
-std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created) {
+std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created, std::shared_ptr<RecordUse> use) {
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) throw std::runtime_error("Vulkan dispatch: invalid SPIR-V");
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
@@ -4215,11 +4221,20 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
         {
             std::lock_guard pipelines(state->computePipelinesMutex);
-            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
+            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) {
+                if (use != nullptr && found->second->use == nullptr) found->second->use = use;
+                else if (use == nullptr && found->second->use != nullptr) found->second->use->Mark();
+                return found->second;
+            }
             if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
             else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
         }
-        if (other.valid()) return other.get();
+        if (other.valid()) {
+            auto objects = other.get();
+            std::lock_guard pipelines(state->computePipelinesMutex);
+            if (objects != nullptr && use == nullptr && objects->use != nullptr) objects->use->Mark();
+            return objects;
+        }
     }
     const auto finish = [&](std::shared_ptr<ComputePipelineObjects> built, std::exception_ptr error) {
         if (pipelineKey == 0) return built;
@@ -4244,6 +4259,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         objects->destroyLayout = state->DeviceFunction<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout");
         objects->destroyPipeline = state->DeviceFunction<PFN_vkDestroyPipeline>("vkDestroyPipeline");
         objects->setLayoutKey = described.mainKey;
+        objects->use = use;
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         moduleInfo.codeSize = shader.spirv.size() * sizeof(std::uint32_t);
         moduleInfo.pCode = shader.spirv.data();

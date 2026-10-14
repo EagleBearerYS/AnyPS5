@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineManifest.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include <chrono>
 #include <cstdio>
@@ -40,13 +41,20 @@ std::vector<AgcDriver::PreparedProgramRecord> PreparedRecords() {
     AgcDriver::PreparedProgramRecord first{{7u, 8u}, 64u, {0x1111222233334444ull, 0x5555666677778888ull}, "stage 0 code AQID"};
     auto second = first;
     second.codeOffset = 128u;
-    second.identity = {3u, 4u};
+    second.identity = {0xaaaau, 0xbbbbu};
     AgcDriver::PreparedProgramRecord other{{9u, 9u}, 0u, {5u, 6u}, ""};
     return {first, second, other};
 }
 
+template <typename TRecord>
+std::vector<AgcDriver::Recorded<TRecord>> WithUsage(const std::vector<TRecord>& records, std::uint32_t misses) {
+    std::vector<AgcDriver::Recorded<TRecord>> result;
+    for (std::size_t index = 0; index < records.size(); ++index) result.push_back({records[index], {misses, index + 1u}});
+    return result;
+}
+
 AgcDriver::ManifestRecords Records() {
-    return {ComputeRecords(), GraphicsRecords(), PreparedRecords()};
+    return {WithUsage(ComputeRecords(), 1u), WithUsage(GraphicsRecords(), 2u), PreparedRecords()};
 }
 
 void Codec() {
@@ -60,19 +68,24 @@ void Codec() {
     longer.push_back(std::byte{0});
     Require(!AgcDriver::PipelineManifest::Decode(longer, 77u).has_value(), "a manifest with trailing bytes was accepted");
     auto corrupt = bytes;
-    corrupt[40] = std::byte{0xff};
-    corrupt[41] = std::byte{0xff};
-    corrupt[42] = std::byte{0xff};
-    corrupt[43] = std::byte{0x7f};
+    corrupt[52] = std::byte{0xff};
+    corrupt[53] = std::byte{0xff};
+    corrupt[54] = std::byte{0xff};
+    corrupt[55] = std::byte{0x7f};
     Require(!AgcDriver::PipelineManifest::Decode(corrupt, 77u).has_value(), "a manifest whose constant count exceeds its bytes was accepted");
     auto older = bytes;
-    older[8] = std::byte{1};
+    older[8] = std::byte{3};
     Require(!AgcDriver::PipelineManifest::Decode(older, 77u).has_value(), "a manifest of an earlier format was accepted");
 }
 
-void File() {
+std::filesystem::path Directory() {
     const auto directory = std::filesystem::temp_directory_path() / ("aps5-manifest-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(directory);
+    return directory;
+}
+
+void File() {
+    const auto directory = Directory();
     const auto path = directory / "pipelines.manifest";
     const auto compute = ComputeRecords();
     const auto graphics = GraphicsRecords();
@@ -80,18 +93,19 @@ void File() {
     {
         AgcDriver::PipelineManifest manifest(path, 77u);
         Require(manifest.Loaded() == 0u && manifest.Size() == 0u, "a manifest without a file has records");
-        for (const auto& record : compute) Require(manifest.Record(record), "a new compute record was refused");
-        for (const auto& record : graphics) Require(manifest.Record(record), "a new graphics record was refused");
+        for (const auto& record : compute) Require(manifest.Record(record).added, "a new compute record was refused");
+        for (const auto& record : graphics) Require(manifest.Record(record).added, "a new graphics record was refused");
         for (const auto& record : prepared) Require(manifest.Record(record), "a new record of a program prepared at use was refused");
-        Require(!manifest.Record(compute[1]) && !manifest.Record(graphics[1]) && !manifest.Record(prepared[1]), "a record seen before was recorded again");
+        Require(!manifest.Record(compute[1]).added && !manifest.Record(graphics[1]).added && !manifest.Record(prepared[1]), "a record seen before was recorded again");
         Require(manifest.Records(compute[0].program).size() == 2u && manifest.Records(compute[2].program).size() == 1u && manifest.Records({9u, 9u}).empty(), "the records of a program are not the records recorded for it");
-        Require(manifest.GraphicsRecords() == graphics, "the graphics records are not the ones recorded");
     }
     {
         AgcDriver::PipelineManifest manifest(path, 77u);
-        Require(manifest.Loaded() == 8u && manifest.Records(compute[0].program) == std::vector<AgcDriver::ComputePipelineRecord>{compute[0], compute[1]}, "a manifest did not load the compute records the previous one saved");
-        Require(manifest.PreparedPrograms({7u, 8u}) == std::vector<AgcDriver::PreparedProgramRecord>{prepared[0], prepared[1]} && manifest.PreparedPrograms({1u, 1u}).empty(), "a manifest did not load the programs prepared at use the previous one saved");
-        Require(manifest.GraphicsRecords() == graphics && manifest.LoadedRecords().graphics == graphics, "a manifest did not load the graphics records the previous one saved");
+        const auto& loaded = manifest.LoadedRecords();
+        Require(loaded.compute.size() == 3u && loaded.graphics.size() == 2u && manifest.Records(compute[0].program).front().first == compute[0], "a manifest did not load the pipeline records the previous one saved");
+        Require(loaded.prepared == std::vector<AgcDriver::PreparedProgramRecord>{prepared[0], prepared[1]}, "a manifest kept a program prepared at use that no pipeline record names, or lost one");
+        Require(manifest.PreparedPrograms({7u, 8u}).size() == 2u && manifest.PreparedPrograms({9u, 9u}).empty(), "the programs prepared at use of a registered program are not the ones saved");
+        for (const auto& entry : loaded.compute) Require(entry.usage.misses == 0u && entry.usage.progress != 0u, "a record made in a run was saved without that run's use");
     }
     {
         AgcDriver::PipelineManifest manifest(path, 78u);
@@ -101,12 +115,65 @@ void File() {
     std::filesystem::remove_all(directory, error);
 }
 
+void Expiry() {
+    const auto directory = Directory();
+    const auto path = directory / "pipelines.manifest";
+    const auto compute = ComputeRecords();
+    const auto graphics = GraphicsRecords();
+    const auto prepared = PreparedRecords();
+    {
+        AgcDriver::PipelineManifest manifest(path, 77u);
+        static_cast<void>(manifest.Record(compute[0]));
+        static_cast<void>(manifest.Record(graphics[0]));
+        static_cast<void>(manifest.Record(compute[1]));
+        static_cast<void>(manifest.Record(compute[2]));
+        static_cast<void>(manifest.Record(prepared[1]));
+    }
+    const auto usage = [&](const AgcDriver::ManifestRecords& records, const AgcDriver::ComputePipelineRecord& record) {
+        for (const auto& entry : records.compute) {
+            if (entry.record == record) return entry.usage;
+        }
+        return AgcDriver::RecordUsage{~0u, 0u};
+    };
+    const auto run = [&](std::initializer_list<const AgcDriver::ComputePipelineRecord*> used, bool graphicsUsed) {
+        AgcDriver::PipelineManifest manifest(path, 77u);
+        for (const auto* record : used) static_cast<void>(manifest.Record(*record));
+        if (graphicsUsed) static_cast<void>(manifest.Record(graphics[0]));
+        return manifest.LoadedRecords();
+    };
+    auto loaded = run({}, false);
+    Require(usage(loaded, compute[0]) == AgcDriver::RecordUsage{0u, 1u} && usage(loaded, compute[2]) == AgcDriver::RecordUsage{0u, 4u}, "the first run's records did not keep the order of their first use");
+    loaded = run({&compute[0]}, false);
+    Require(usage(loaded, compute[0]) == AgcDriver::RecordUsage{0u, 1u} && usage(loaded, compute[1]) == AgcDriver::RecordUsage{0u, 3u}, "a run that used nothing changed its records");
+    loaded = run({&compute[0], &compute[2], &compute[1]}, true);
+    Require(usage(loaded, compute[0]) == AgcDriver::RecordUsage{0u, 1u} && usage(loaded, compute[1]) == AgcDriver::RecordUsage{0u, 3u} && usage(loaded, compute[2]) == AgcDriver::RecordUsage{0u, 4u}, "a run that ended before the later records' first use counted it against them");
+    for (std::uint32_t miss = 1; miss <= AgcDriver::PipelineManifest::ExpiryRuns; ++miss) {
+        loaded = run({&compute[0], &compute[2]}, true);
+        Require(usage(loaded, compute[1]) == AgcDriver::RecordUsage{miss - 1u, 3u}, "a record unused by a run that went past its first use did not count a miss");
+        Require(usage(loaded, compute[0]).misses == 0u && usage(loaded, compute[2]).misses == 0u, "a record used in every run counted a miss");
+    }
+    AgcDriver::PipelineManifest manifest(path, 77u);
+    Require(manifest.Expired() == 1u && manifest.Records(compute[1].program).size() == 1u && manifest.Records(compute[1].program).front().first == compute[0], "a record unused in " + std::to_string(AgcDriver::PipelineManifest::ExpiryRuns) + " runs that went past its first use was kept");
+    Require(manifest.GraphicsRecords().size() == 1u && manifest.LoadedRecords().prepared.size() == 1u, "a used graphics record or the program it names was dropped");
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+}
+
+void Unnamed() {
+    AgcDriver::ManifestRecords records{WithUsage(ComputeRecords(), AgcDriver::PipelineManifest::ExpiryRuns), WithUsage(GraphicsRecords(), 0u), PreparedRecords()};
+    std::size_t dropped = 0;
+    const auto kept = AgcDriver::PipelineManifest::Unexpired(records, &dropped);
+    Require(kept.compute.empty() && kept.graphics.size() == 2u && kept.prepared == std::vector<AgcDriver::PreparedProgramRecord>{PreparedRecords()[1]} && dropped == 5u, "expiry did not drop the expired pipelines and the programs only they named");
+}
+
 }
 
 int main() {
     try {
         Codec();
         File();
+        Expiry();
+        Unnamed();
         std::puts("pipeline manifest tests passed");
         return 0;
     } catch (const std::exception& error) {

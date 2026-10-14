@@ -3,11 +3,13 @@
 
 #include "PipelineSpecialization.hpp"
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -17,6 +19,8 @@
 #include <vector>
 
 namespace AgcDriver {
+
+class RecordUse;
 
 struct ComputePipelineRecord {
     std::array<std::uint64_t, 2> program{};
@@ -64,9 +68,24 @@ struct PreparedProgramRecord {
     bool operator==(const PreparedProgramRecord&) const = default;
 };
 
+struct RecordUsage {
+    std::uint32_t misses = 0;
+    std::uint64_t progress = 0;
+
+    bool operator==(const RecordUsage&) const = default;
+};
+
+template <typename TRecord>
+struct Recorded {
+    TRecord record;
+    RecordUsage usage;
+
+    bool operator==(const Recorded&) const = default;
+};
+
 struct ManifestRecords {
-    std::vector<ComputePipelineRecord> compute;
-    std::vector<GraphicsPipelineRecord> graphics;
+    std::vector<Recorded<ComputePipelineRecord>> compute;
+    std::vector<Recorded<GraphicsPipelineRecord>> graphics;
     std::vector<PreparedProgramRecord> prepared;
 
     bool operator==(const ManifestRecords&) const = default;
@@ -75,37 +94,57 @@ struct ManifestRecords {
 class PipelineManifest {
 public:
     static constexpr int SaveIntervalSeconds = 10;
+    static constexpr std::uint32_t ExpiryRuns = 3;
+
+    struct Added {
+        bool added = false;
+        std::shared_ptr<RecordUse> use;
+    };
 
     PipelineManifest(std::filesystem::path path, std::uint64_t sourceVersion);
     ~PipelineManifest();
     PipelineManifest(const PipelineManifest&) = delete;
     PipelineManifest& operator=(const PipelineManifest&) = delete;
 
-    bool Record(ComputePipelineRecord record);
-    bool Record(GraphicsPipelineRecord record);
+    Added Record(ComputePipelineRecord record);
+    Added Record(GraphicsPipelineRecord record);
     bool Record(PreparedProgramRecord record);
-    std::vector<ComputePipelineRecord> Records(const std::array<std::uint64_t, 2>& program) const;
-    std::vector<GraphicsPipelineRecord> GraphicsRecords() const;
+    std::vector<std::pair<ComputePipelineRecord, std::shared_ptr<RecordUse>>> Records(const std::array<std::uint64_t, 2>& program) const;
+    std::vector<std::pair<GraphicsPipelineRecord, std::shared_ptr<RecordUse>>> GraphicsRecords() const;
     std::vector<PreparedProgramRecord> PreparedPrograms(const std::array<std::uint64_t, 2>& program) const;
     std::size_t Size() const;
     std::size_t Loaded() const { return loaded.compute.size() + loaded.graphics.size() + loaded.prepared.size(); }
+    std::size_t Expired() const { return expired; }
     const ManifestRecords& LoadedRecords() const { return loaded; }
+    ManifestRecords Current() const;
     void Save();
 
     static std::vector<std::byte> Encode(std::uint64_t sourceVersion, const ManifestRecords& records);
     static std::optional<ManifestRecords> Decode(std::span<const std::byte> bytes, std::uint64_t sourceVersion);
+    static ManifestRecords Unexpired(ManifestRecords records, std::size_t* dropped = nullptr);
 
 private:
+    template <typename TRecord>
+    struct Stored {
+        TRecord record;
+        RecordUsage usage;
+        std::shared_ptr<RecordUse> use;
+    };
+
     void run();
+    RecordUsage usageNow(const RecordUsage& loaded, const RecordUse& use, std::uint64_t extent) const;
 
     std::filesystem::path path;
     std::uint64_t sourceVersion;
     ManifestRecords loaded;
+    std::size_t expired = 0;
+    std::shared_ptr<std::atomic<std::uint64_t>> uses;
     mutable std::mutex mutex;
-    std::map<std::array<std::uint64_t, 2>, std::vector<ComputePipelineRecord>> compute;
-    std::vector<GraphicsPipelineRecord> graphics;
+    std::map<std::array<std::uint64_t, 2>, std::vector<Stored<ComputePipelineRecord>>> compute;
+    std::vector<Stored<GraphicsPipelineRecord>> graphics;
     std::vector<PreparedProgramRecord> prepared;
     std::size_t count = 0;
+    std::uint64_t savedUses = 0;
     bool dirty = false;
     bool stopping = false;
     std::condition_variable wake;

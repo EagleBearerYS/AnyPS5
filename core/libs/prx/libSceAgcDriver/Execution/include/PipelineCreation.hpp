@@ -1,15 +1,38 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PIPELINECREATION_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PIPELINECREATION_HPP
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
+#include <utility>
 
 namespace AgcDriver {
+
+class RecordUse {
+public:
+    explicit RecordUse(std::shared_ptr<std::atomic<std::uint64_t>> uses) : uses(std::move(uses)) {}
+    RecordUse(const RecordUse&) = delete;
+    RecordUse& operator=(const RecordUse&) = delete;
+
+    void Mark() noexcept {
+        if (order.load(std::memory_order_relaxed) != 0) return;
+        std::uint64_t unused = 0;
+        if (order.compare_exchange_strong(unused, uses->fetch_add(1, std::memory_order_relaxed) + 1, std::memory_order_relaxed)) Marks().fetch_add(1, std::memory_order_relaxed);
+    }
+
+    std::uint64_t Order() const noexcept { return order.load(std::memory_order_relaxed); }
+    static std::atomic<std::uint64_t>& Marks();
+
+private:
+    std::shared_ptr<std::atomic<std::uint64_t>> uses;
+    std::atomic<std::uint64_t> order{0};
+};
 
 class CreationAhead {
 public:
