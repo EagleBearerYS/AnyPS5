@@ -171,11 +171,11 @@ F10 shows or hides a performance overlay over the presented image; `ANYPS5_OVERL
 
 | Line | Meaning |
 |------|---------|
-| `FPS` | Frames presented per second, over the last second. |
+| `FPS` | Frames presented per second, over the last second. Every present counts, including frames a title presents cleared, for example while it loads. |
 | `FRAME` | Time between the last two presented frames, in ms. |
 | graph | The last 120 frame times, the newest on the right. The full height is the longest of them or twice their average, whichever is larger. |
 | `MIN/AVG/MAX` | The shortest, average and longest of the 120 frame times, in ms. |
-| `GPU` | GPU time per frame over the last second, in ms: the span of each recorded batch from its first to its last command, from the timestamp queries of `APS5_PROFILE_GPU=1`. Shown only with that variable. Batches are counted when they complete, so the line trails a sudden change by up to a second. |
+| `GPU` | GPU time per frame over the last second, in ms: the span of each recorded batch from its first to its last command, from the timestamp queries of `APS5_PROFILE_GPU=1`. Shown only with that variable. Batches are counted when they complete, so the line trails a sudden change by up to a second. Batches that overlap on different queues each count in full, so the line can exceed `FRAME`. |
 | `DRIVER` | CPU time per frame over the last second, in ms, that the packet workers spent in dispatch and draw packets (the `dispatch` and `draw` time of the `[gpu] worker` line of `APS5_PROFILE_DRAW=1`). Shown only with that variable. |
 
 Times are shown with one decimal below 100 and as whole numbers above, up to 9999. While the overlay is hidden the presentation records nothing for it and the presented image is unchanged; while it is shown, one small render pass draws it over each presented frame.
