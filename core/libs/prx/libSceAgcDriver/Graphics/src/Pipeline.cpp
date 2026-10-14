@@ -1,7 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineDescription.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -13,6 +16,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <future>
 #include <list>
 #include <mutex>
 #include <string_view>
@@ -863,12 +868,17 @@ struct PipelineStore {
         std::uint64_t hash;
         std::vector<std::byte> key;
         std::shared_ptr<Pipeline> pipeline;
+        std::shared_ptr<RecordUse> use;
+    };
+    struct Building {
+        std::vector<std::byte> key;
+        std::shared_future<std::shared_ptr<Pipeline>> pipeline;
     };
     std::mutex mutex;
-    std::vector<std::byte> scratchKey;
     // Least recently used first.
     std::list<Entry> entries;
     std::unordered_map<std::uint64_t, std::list<Entry>::iterator> index;
+    std::unordered_map<std::uint64_t, Building> building;
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
     std::uint64_t uncached = 0;
@@ -915,55 +925,104 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     return CachedPipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout);
 }
 
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+namespace {
+
+std::shared_ptr<Pipeline> cachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::shared_ptr<RecordUse> replayed) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
-    std::lock_guard lock(store.mutex);
-    reportPipelines(store);
-    auto& key = store.scratchKey;
+    struct PipelineKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
     pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
-    if (key.empty()) {
-        ++store.uncached;
-        return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    }
-    const auto hash = hashKey(key);
-    if (const auto found = store.index.find(hash); found != store.index.end()) {
-        const auto it = found->second;
-        if (it->key == key) {
-            // The key names the device handle, which the loader may reuse for a device created after
-            // this one was destroyed without ClearCachedPipelines: such an entry is a miss.
-            if (alive(*it, context)) {
-                ++store.hits;
-                store.entries.splice(store.entries.end(), store.entries, it);
-                return it->pipeline;
+    const auto hash = key.empty() ? 0u : hashKey(key);
+    std::shared_future<std::shared_ptr<Pipeline>> other;
+    std::promise<std::shared_ptr<Pipeline>> building;
+    bool shared = !key.empty();
+    {
+        std::lock_guard lock(store.mutex);
+        reportPipelines(store);
+        if (!shared) ++store.uncached;
+        if (const auto found = shared ? store.index.find(hash) : store.index.end(); found != store.index.end()) {
+            const auto it = found->second;
+            if (it->key == key) {
+                if (alive(*it, context)) {
+                    ++store.hits;
+                    store.entries.splice(store.entries.end(), store.entries, it);
+                    if (replayed == nullptr && it->use != nullptr) it->use->Mark();
+                    return it->pipeline;
+                }
+                abandon(store, it);
+            } else {
+                ++store.uncached;
+                shared = false;
             }
-            abandon(store, it);
-        } else {
-            // A different configuration with the same hash keeps the resident entry; this one stays private.
-            ++store.uncached;
-            return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        }
+        if (shared) {
+            if (const auto pending = store.building.find(hash); pending != store.building.end()) {
+                if (pending->second.key == key) other = pending->second.pipeline;
+                else {
+                    ++store.uncached;
+                    shared = false;
+                }
+            } else {
+                ++store.misses;
+                for (auto it = store.entries.begin(); it != store.entries.end();) {
+                    it = alive(*it, context) ? std::next(it) : abandon(store, it);
+                }
+                store.building.emplace(hash, PipelineStore::Building{key, building.get_future().share()});
+            }
         }
     }
-    ++store.misses;
-    // Entries of another device belong to one the driver replaced (it does so under the GpuMutex
-    // before any draw reaches the new device), whose objects went with it: forget them.
-    for (auto it = store.entries.begin(); it != store.entries.end();) {
-        it = alive(*it, context) ? std::next(it) : abandon(store, it);
+    if (!shared) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+    if (other.valid()) {
+        auto pipeline = other.get();
+        if (replayed == nullptr) {
+            std::lock_guard lock(store.mutex);
+            if (const auto found = store.index.find(hash); found != store.index.end() && found->second->pipeline == pipeline && found->second->use != nullptr) found->second->use->Mark();
+        }
+        return pipeline;
     }
-    auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    store.entries.push_back({context.device, context.bufferPool, hash, key, pipeline});
-    store.index[hash] = std::prev(store.entries.end());
-    constexpr std::size_t bound = 1024;
-    while (store.entries.size() > bound) {
-        // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
-        const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
-        if (victim == store.entries.end()) break;
-        store.index.erase(victim->hash);
-        store.entries.erase(victim);
-        ++store.evicted;
+    const auto ownKey = key;
+    std::shared_ptr<Pipeline> pipeline;
+    auto use = replayed;
+    try {
+        pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        if (use == nullptr && !CreationAhead::Active() && context.pipelineRecorder != nullptr) use = context.pipelineRecorder->Created(context, state, vertexInput, resources, shaders, attachmentLayout);
+    } catch (...) {
+        {
+            std::lock_guard lock(store.mutex);
+            store.building.erase(hash);
+        }
+        building.set_exception(std::current_exception());
+        throw;
     }
+    {
+        std::lock_guard lock(store.mutex);
+        store.building.erase(hash);
+        store.entries.push_back({context.device, context.bufferPool, hash, ownKey, pipeline, use});
+        store.index[hash] = std::prev(store.entries.end());
+        constexpr std::size_t bound = 1024;
+        while (store.entries.size() > bound) {
+            const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
+            if (victim == store.entries.end()) break;
+            store.index.erase(victim->hash);
+            store.entries.erase(victim);
+            ++store.evicted;
+        }
+    }
+    building.set_value(pipeline);
     return pipeline;
+}
+
+}
+
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    return cachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr);
+}
+
+std::shared_ptr<Pipeline> PrepareCachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::shared_ptr<RecordUse> use) {
+    Require(use != nullptr, "a pipeline prepared ahead needs its manifest record");
+    return cachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, std::move(use));
 }
 
 void ClearCachedPipelines(VkDevice device) {
@@ -978,6 +1037,202 @@ void ClearCachedPipelines(VkDevice device) {
         it = store.entries.erase(it);
     }
     ClearPipelineLibraries(device);
+}
+
+namespace {
+
+constexpr std::uint32_t DescriptionVersion = 1;
+
+class DescriptionWriter {
+public:
+    explicit DescriptionWriter(std::vector<std::byte>& out) : out(out) {}
+
+    template<typename TValue>
+    void Value(const TValue& value) {
+        static_assert(std::is_trivially_copyable_v<TValue>);
+        const auto bytes = std::as_bytes(std::span(&value, 1));
+        out.insert(out.end(), bytes.begin(), bytes.end());
+    }
+
+    void Flag(bool value) { Value(static_cast<std::uint8_t>(value ? 1u : 0u)); }
+
+    template<typename TValue>
+    void Optional(const std::optional<TValue>& value) {
+        Flag(value.has_value());
+        if (value) Value(*value);
+    }
+
+    template<typename TValue, typename TWrite>
+    void List(const std::vector<TValue>& values, TWrite&& write) {
+        Value(static_cast<std::uint32_t>(values.size()));
+        for (const auto& value : values) write(value);
+    }
+
+private:
+    std::vector<std::byte>& out;
+};
+
+class DescriptionReader {
+public:
+    explicit DescriptionReader(std::span<const std::byte> bytes) : bytes(bytes) {}
+
+    template<typename TValue>
+    bool Value(TValue& value) {
+        static_assert(std::is_trivially_copyable_v<TValue>);
+        if (bytes.size() - offset < sizeof(TValue)) return false;
+        std::memcpy(&value, bytes.data() + offset, sizeof(TValue));
+        offset += sizeof(TValue);
+        return true;
+    }
+
+    bool Flag(bool& value) {
+        std::uint8_t raw = 0;
+        if (!Value(raw) || raw > 1u) return false;
+        value = raw != 0u;
+        return true;
+    }
+
+    template<typename TValue>
+    bool Optional(std::optional<TValue>& value) {
+        bool present = false;
+        if (!Flag(present)) return false;
+        if (!present) {
+            value.reset();
+            return true;
+        }
+        TValue read{};
+        if (!Value(read)) return false;
+        value = read;
+        return true;
+    }
+
+    template<typename TValue, typename TRead>
+    bool List(std::vector<TValue>& values, std::size_t minimumBytes, TRead&& read) {
+        std::uint32_t count = 0;
+        if (!Value(count) || count > (bytes.size() - offset) / minimumBytes) return false;
+        values.resize(count);
+        for (auto& value : values) {
+            if (!read(value)) return false;
+        }
+        return true;
+    }
+
+    bool Done() const { return offset == bytes.size(); }
+
+private:
+    std::span<const std::byte> bytes;
+    std::size_t offset = 0;
+};
+
+}
+
+std::vector<std::byte> EncodePipelineDescription(const State& state, const VertexInputLayout& vertexInput, VkImageLayout attachmentLayout) {
+    std::vector<std::byte> out;
+    DescriptionWriter writer(out);
+    writer.Value(DescriptionVersion);
+    writer.Value(state.stages.path);
+    writer.Value(state.stages.registerValue);
+    writer.Value(state.stages.vertexWaveSize);
+    writer.Value(state.stages.fragmentWaveSize);
+    writer.Optional(state.stages.mesh);
+    writer.Optional(state.stages.tessellation);
+    writer.Value(state.stages.minTessellationLevel);
+    writer.Value(state.stages.maxTessellationLevel);
+    writer.Flag(state.depth.has_value());
+    if (state.depth) {
+        writer.Value(state.depth->format);
+        writer.Value(state.depth->samples);
+    }
+    writer.Flag(state.depthTest);
+    writer.Flag(state.depthWrite);
+    writer.Value(state.depthCompare);
+    writer.Flag(state.depthBoundsTest);
+    writer.Value(state.minDepthBounds);
+    writer.Value(state.maxDepthBounds);
+    writer.Flag(state.depthBias);
+    writer.Value(state.depthBiasConstant);
+    writer.Value(state.depthBiasSlope);
+    writer.Value(state.depthBiasClamp);
+    writer.Flag(state.depthBiasPerFace);
+    writer.Value(state.backDepthBiasConstant);
+    writer.Value(state.backDepthBiasSlope);
+    writer.Flag(state.stencilTest);
+    writer.Value(state.stencilFront);
+    writer.Value(state.stencilBack);
+    writer.List(state.colors, [&](const ColorTarget& color) {
+        writer.Value(color.format);
+        writer.Value(color.componentMapping);
+        writer.Value(color.exportIndex);
+        writer.Value(color.samples);
+        writer.Value(color.packing);
+        writer.Flag(color.uintExport);
+    });
+    writer.List(state.blends, [&](const VkPipelineColorBlendAttachmentState& blend) { writer.Value(blend); });
+    writer.Flag(state.hasColorTarget);
+    writer.Flag(state.rectList);
+    writer.Flag(state.dualSourceBlend);
+    writer.Value(state.renderLayers);
+    writer.Value(state.layerExports);
+    writer.Value(state.topology);
+    writer.Flag(state.primitiveRestart);
+    writer.Flag(state.negativeOneToOne);
+    writer.Flag(state.depthClamp);
+    writer.Flag(state.alphaToCoverage);
+    writer.Value(state.conservativeRasterization);
+    writer.Value(state.cullMode);
+    writer.Value(state.frontFace);
+    writer.Value(state.provokingVertexMode);
+    writer.Value(state.blendConstants);
+    writer.Value(state.samples);
+    writer.Value(state.sampleLocations);
+    writer.Flag(state.customSampleLocations);
+    writer.Value(state.paClVsOutCntl);
+    writer.List(vertexInput.bindings, [&](const VkVertexInputBindingDescription& binding) { writer.Value(binding); });
+    writer.List(vertexInput.attributes, [&](const VkVertexInputAttributeDescription& attribute) { writer.Value(attribute); });
+    writer.Value(attachmentLayout);
+    return out;
+}
+
+std::optional<PipelineDescription> DecodePipelineDescription(std::span<const std::byte> bytes) {
+    DescriptionReader reader(bytes);
+    PipelineDescription result;
+    auto& state = result.state;
+    std::uint32_t version = 0;
+    if (!reader.Value(version) || version != DescriptionVersion) return std::nullopt;
+    bool depth = false;
+    bool ok = reader.Value(state.stages.path) && reader.Value(state.stages.registerValue) && reader.Value(state.stages.vertexWaveSize) && reader.Value(state.stages.fragmentWaveSize)
+        && reader.Optional(state.stages.mesh) && reader.Optional(state.stages.tessellation) && reader.Value(state.stages.minTessellationLevel) && reader.Value(state.stages.maxTessellationLevel)
+        && reader.Flag(depth);
+    if (ok && depth) {
+        DepthTarget target{};
+        ok = reader.Value(target.format) && reader.Value(target.samples);
+        state.depth = target;
+    }
+    ok = ok && reader.Flag(state.depthTest) && reader.Flag(state.depthWrite) && reader.Value(state.depthCompare) && reader.Flag(state.depthBoundsTest) && reader.Value(state.minDepthBounds) && reader.Value(state.maxDepthBounds)
+        && reader.Flag(state.depthBias) && reader.Value(state.depthBiasConstant) && reader.Value(state.depthBiasSlope) && reader.Value(state.depthBiasClamp) && reader.Flag(state.depthBiasPerFace)
+        && reader.Value(state.backDepthBiasConstant) && reader.Value(state.backDepthBiasSlope) && reader.Flag(state.stencilTest) && reader.Value(state.stencilFront) && reader.Value(state.stencilBack)
+        && reader.List(state.colors, 15u, [&](ColorTarget& color) {
+               color = ColorTarget{};
+               return reader.Value(color.format) && reader.Value(color.componentMapping) && reader.Value(color.exportIndex) && reader.Value(color.samples) && reader.Value(color.packing) && reader.Flag(color.uintExport);
+           })
+        && reader.List(state.blends, sizeof(VkPipelineColorBlendAttachmentState), [&](VkPipelineColorBlendAttachmentState& blend) { return reader.Value(blend); })
+        && reader.Flag(state.hasColorTarget) && reader.Flag(state.rectList) && reader.Flag(state.dualSourceBlend) && reader.Value(state.renderLayers) && reader.Value(state.layerExports)
+        && reader.Value(state.topology) && reader.Flag(state.primitiveRestart) && reader.Flag(state.negativeOneToOne) && reader.Flag(state.depthClamp) && reader.Flag(state.alphaToCoverage)
+        && reader.Value(state.conservativeRasterization) && reader.Value(state.cullMode) && reader.Value(state.frontFace) && reader.Value(state.provokingVertexMode) && reader.Value(state.blendConstants)
+        && reader.Value(state.samples) && reader.Value(state.sampleLocations) && reader.Flag(state.customSampleLocations) && reader.Value(state.paClVsOutCntl)
+        && reader.List(result.vertexInput.bindings, sizeof(VkVertexInputBindingDescription), [&](VkVertexInputBindingDescription& binding) { return reader.Value(binding); })
+        && reader.List(result.vertexInput.attributes, sizeof(VkVertexInputAttributeDescription), [&](VkVertexInputAttributeDescription& attribute) { return reader.Value(attribute); })
+        && reader.Value(result.attachmentLayout);
+    if (!ok || !reader.Done()) return std::nullopt;
+    return result;
+}
+
+bool SamePipelineKey(const Context& context, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, const PipelineDescription& left, const PipelineDescription& right) {
+    std::vector<std::byte> leftKey;
+    std::vector<std::byte> rightKey;
+    pipelineKey(leftKey, context, left.state, left.vertexInput, resources, shaders, left.attachmentLayout);
+    pipelineKey(rightKey, context, right.state, right.vertexInput, resources, shaders, right.attachmentLayout);
+    return !leftKey.empty() && leftKey == rightKey;
 }
 
 }

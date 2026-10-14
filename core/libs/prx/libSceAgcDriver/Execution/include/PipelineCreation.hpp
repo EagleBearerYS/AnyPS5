@@ -1,12 +1,38 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PIPELINECREATION_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PIPELINECREATION_HPP
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <functional>
+#include <future>
+#include <memory>
 #include <mutex>
+#include <utility>
 
 namespace AgcDriver {
+
+class RecordUse {
+public:
+    explicit RecordUse(std::shared_ptr<std::atomic<std::uint64_t>> uses) : uses(std::move(uses)) {}
+    RecordUse(const RecordUse&) = delete;
+    RecordUse& operator=(const RecordUse&) = delete;
+
+    void Mark() noexcept {
+        if (order.load(std::memory_order_relaxed) != 0) return;
+        std::uint64_t unused = 0;
+        if (order.compare_exchange_strong(unused, uses->fetch_add(1, std::memory_order_relaxed) + 1, std::memory_order_relaxed)) Marks().fetch_add(1, std::memory_order_relaxed);
+    }
+
+    std::uint64_t Order() const noexcept { return order.load(std::memory_order_relaxed); }
+    static std::atomic<std::uint64_t>& Marks();
+
+private:
+    std::shared_ptr<std::atomic<std::uint64_t>> uses;
+    std::atomic<std::uint64_t> order{0};
+};
 
 class CreationAhead {
 public:
@@ -17,12 +43,39 @@ public:
     static bool Active() { return Flag(); }
 
 private:
-    static bool& Flag() {
-        thread_local bool ahead = false;
-        return ahead;
-    }
+    static bool& Flag();
 
     bool previous;
+};
+
+class CreationThread {
+public:
+    static constexpr std::size_t RetainedBudgetBytes = std::size_t{1} << 30u;
+    static constexpr std::size_t RetainedBytesPerWord = 567;
+
+    static std::size_t Words();
+
+    template<typename TCreate>
+    static auto Run(std::size_t words, TCreate&& create) -> decltype(create()) {
+        if (!CreationAhead::Active() || words < Words() || Current()) return create();
+        using Result = decltype(create());
+        std::promise<Result> done;
+        auto result = done.get_future();
+        Submit([&] {
+            try {
+                done.set_value(create());
+            } catch (...) {
+                done.set_exception(std::current_exception());
+            }
+        });
+        return result.get();
+    }
+
+    static bool Current();
+    static std::uint64_t Routed();
+
+private:
+    static void Submit(std::function<void()> task);
 };
 
 class CreationGate {

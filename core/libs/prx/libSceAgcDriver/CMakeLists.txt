@@ -145,7 +145,9 @@ add_custom_command(
 set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ComputePipelineCapture.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PipelineCreation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PipelineManifest.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PipelineReplay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/DisplayBuffer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/DisplayFormat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/DeviceAccess.cpp
@@ -1409,6 +1411,10 @@ target_include_directories(agc_driver_compute_pipeline_off_lock_tests PRIVATE $<
 
 target_include_directories(agc_driver_compute_pipeline_manifest_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
+target_include_directories(agc_driver_graphics_pipeline_manifest_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
+target_include_directories(agc_driver_prepared_at_use_manifest_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
 target_include_directories(agc_driver_pipeline_pool_cores_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_include_directories(agc_driver_prepared_publication_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
@@ -1810,7 +1816,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_compute_pipeline_capture PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test_executable(agc_pipeline_creation_gate_tests tests/PipelineCreationGate.cpp)
+    add_test_executable(agc_pipeline_creation_gate_tests tests/PipelineCreationGate.cpp Execution/src/PipelineCreation.cpp)
     target_include_directories(agc_pipeline_creation_gate_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_pipeline_creation_gate_tests PRIVATE libc)
     set_target_properties(agc_pipeline_creation_gate_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -1820,7 +1826,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_pipeline_creation_gate PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test_executable(agc_pipeline_manifest_tests tests/PipelineManifest.cpp Execution/src/PipelineManifest.cpp)
+    add_test_executable(agc_pipeline_manifest_tests tests/PipelineManifest.cpp Execution/src/PipelineManifest.cpp Execution/src/PipelineCreation.cpp)
     target_include_directories(agc_pipeline_manifest_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler)
     target_link_libraries(agc_pipeline_manifest_tests PRIVATE libc)
     set_target_properties(agc_pipeline_manifest_tests PROPERTIES CXX_EXTENSIONS OFF)

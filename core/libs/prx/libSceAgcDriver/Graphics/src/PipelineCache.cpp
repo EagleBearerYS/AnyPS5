@@ -112,14 +112,14 @@ VkResult PipelineCache::CreateCompute(const Context& caller, const VkComputePipe
     std::optional<CreationGate> gate;
     if (session == VK_NULL_HANDLE) {
         if (words != 0) gate.emplace(words);
-        return create(caller.device, base, 1, &info, nullptr, pipeline);
+        return CreationThread::Run(words, [&] { return create(caller.device, base, 1, &info, nullptr, pipeline); });
     }
     auto lookup = info;
     lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
     const auto found = create(caller.device, base, 1, &lookup, nullptr, pipeline);
     if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
     if (words != 0) gate.emplace(words);
-    return create(caller.device, session, 1, &info, nullptr, pipeline);
+    return CreationThread::Run(words, [&] { return create(caller.device, session, 1, &info, nullptr, pipeline); });
 }
 
 VkResult PipelineCache::CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const {
@@ -127,14 +127,14 @@ VkResult PipelineCache::CreateGraphics(const Context& caller, const VkGraphicsPi
     std::optional<CreationGate> gate;
     if (session == VK_NULL_HANDLE) {
         if (words != 0) gate.emplace(words);
-        return create(caller.device, base, 1, &info, nullptr, pipeline);
+        return CreationThread::Run(words, [&] { return create(caller.device, base, 1, &info, nullptr, pipeline); });
     }
     auto lookup = info;
     lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
     const auto found = create(caller.device, base, 1, &lookup, nullptr, pipeline);
     if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
     if (words != 0) gate.emplace(words);
-    return create(caller.device, session, 1, &info, nullptr, pipeline);
+    return CreationThread::Run(words, [&] { return create(caller.device, session, 1, &info, nullptr, pipeline); });
 }
 
 void PipelineCache::Save() {
@@ -239,14 +239,16 @@ VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCr
     if (context.pipelineCache != nullptr) return context.pipelineCache->CreateCompute(context, info, pipeline, words);
     std::optional<CreationGate> gate;
     if (words != 0) gate.emplace(words);
-    return context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline);
+    const auto create = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
+    return CreationThread::Run(words, [&] { return create(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline); });
 }
 
 VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
     if (context.pipelineCache != nullptr) return context.pipelineCache->CreateGraphics(context, info, pipeline, words);
     std::optional<CreationGate> gate;
     if (words != 0) gate.emplace(words);
-    return context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline);
+    const auto create = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+    return CreationThread::Run(words, [&] { return create(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline); });
 }
 
 }

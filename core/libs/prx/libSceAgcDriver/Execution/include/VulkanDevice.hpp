@@ -24,6 +24,9 @@ struct SourceHandle;
 
 namespace AgcDriver {
 
+class PipelineReplay;
+class RecordUse;
+
 namespace Graphics {
 class StorageTexture;
 }
@@ -326,6 +329,7 @@ public:
     bool PrepareComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
     bool RecordComputePipeline(const ShaderRecompiler::RecompileResult& shader);
     std::size_t PrepareRecordedComputePipelines(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle);
+    PipelineReplay* Replay() const;
 
 private:
     VulkanDevice(const PresentationWindow* window, bool compileOnly);
@@ -337,7 +341,7 @@ private:
     Graphics::Context buildContext() const;
     // Body of Dispatch and DispatchIndirect: `arguments` 0 dispatches x, y, z groups.
     IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe);
-    std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created = nullptr);
+    std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created = nullptr, std::shared_ptr<RecordUse> use = nullptr);
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
     std::uint64_t presync(std::span<const std::pair<std::uint64_t, std::uint64_t>> surfaces);
     // A DISPATCH_INDIRECT's argument path (see DispatchIndirect): GPU-side from the host import, or

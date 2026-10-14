@@ -24,7 +24,9 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, graphics.stages.mesh, graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}}
     };
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
-    const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request);
+    bool preparedAtUse = false;
+    const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request, nullptr, &preparedAtUse);
+    if (preparedAtUse) RecordPreparedProgram(localDevice, *program.snapshot, program.codeOffset, invocation.Request());
     timing.Mark("prepared_invocation");
     auto& stageCapture = stageCaptures[i];
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
