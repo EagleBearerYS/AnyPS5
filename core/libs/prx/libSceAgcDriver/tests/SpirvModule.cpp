@@ -2,7 +2,9 @@
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include <array>
 #include <cstdio>
+#include <initializer_list>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <spirv/unified1/spirv.hpp>
@@ -383,9 +385,143 @@ void testFoldedValuesShareConstants() {
     check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "constant interning is not stable");
 }
 
+void testOperationsOneOperandDecidesFold() {
+    constexpr std::uint32_t uintType = 2u, intType = 3u, boolType = 4u, floatType = 5u;
+    constexpr std::uint32_t zero = 20u, one = 21u, allOnes = 22u, lowBits = 23u, signedZero = 24u, signedOne = 25u, trueValue = 26u, falseValue = 27u, floatZero = 28u, floatOne = 29u, otherZero = 31u;
+    constexpr std::uint32_t x = 62u, y = 63u, b = 64u, f = 65u, none = 0u;
+    struct Case {
+        spv::Op op;
+        std::uint32_t type;
+        std::vector<std::uint32_t> operands;
+        std::uint32_t operand;
+        std::optional<std::uint32_t> constant;
+    };
+    const std::vector<Case> cases{
+        {spv::OpIAdd, uintType, {x, zero}, x, {}},
+        {spv::OpIAdd, uintType, {zero, x}, x, {}},
+        {spv::OpISub, uintType, {x, zero}, x, {}},
+        {spv::OpBitwiseOr, uintType, {x, zero}, x, {}},
+        {spv::OpBitwiseOr, uintType, {zero, x}, x, {}},
+        {spv::OpBitwiseXor, uintType, {zero, x}, x, {}},
+        {spv::OpIMul, uintType, {x, one}, x, {}},
+        {spv::OpIMul, uintType, {one, x}, x, {}},
+        {spv::OpUDiv, uintType, {x, one}, x, {}},
+        {spv::OpShiftLeftLogical, uintType, {x, zero}, x, {}},
+        {spv::OpShiftRightLogical, uintType, {x, zero}, x, {}},
+        {spv::OpShiftRightArithmetic, intType, {y, zero}, y, {}},
+        {spv::OpSDiv, intType, {y, signedOne}, y, {}},
+        {spv::OpBitwiseAnd, uintType, {x, allOnes}, x, {}},
+        {spv::OpBitwiseAnd, uintType, {allOnes, x}, x, {}},
+        {spv::OpLogicalAnd, boolType, {b, trueValue}, b, {}},
+        {spv::OpLogicalAnd, boolType, {trueValue, b}, b, {}},
+        {spv::OpLogicalOr, boolType, {b, falseValue}, b, {}},
+        {spv::OpLogicalEqual, boolType, {b, trueValue}, b, {}},
+        {spv::OpLogicalNotEqual, boolType, {falseValue, b}, b, {}},
+        {spv::OpSelect, uintType, {b, x, x}, x, {}},
+        {spv::OpSelect, floatType, {b, f, f}, f, {}},
+        {spv::OpSelect, uintType, {b, zero, otherZero}, none, 0u},
+        {spv::OpBitwiseAnd, uintType, {x, zero}, none, 0u},
+        {spv::OpBitwiseAnd, uintType, {zero, x}, none, 0u},
+        {spv::OpIMul, uintType, {zero, x}, none, 0u},
+        {spv::OpBitwiseOr, uintType, {x, allOnes}, none, 0xffffffffu},
+        {spv::OpLogicalAnd, boolType, {b, falseValue}, none, 0u},
+        {spv::OpLogicalOr, boolType, {trueValue, b}, none, 1u},
+        {spv::OpISub, uintType, {zero, x}, none, {}},
+        {spv::OpUDiv, uintType, {one, x}, none, {}},
+        {spv::OpShiftRightLogical, uintType, {one, x}, none, {}},
+        {spv::OpBitwiseAnd, uintType, {x, lowBits}, none, {}},
+        {spv::OpBitwiseOr, uintType, {x, lowBits}, none, {}},
+        {spv::OpIAdd, uintType, {y, signedZero}, none, {}},
+        {spv::OpFAdd, floatType, {f, floatZero}, none, {}},
+        {spv::OpFMul, floatType, {f, floatOne}, none, {}},
+        {spv::OpFMul, floatType, {f, floatZero}, none, {}},
+        {spv::OpSelect, uintType, {b, x, zero}, none, {}},
+    };
+    std::vector<std::uint32_t> words{spv::MagicNumber, 0x00010300u, 0u, 300u, 0u};
+    const auto emit = [&](spv::Op op, std::initializer_list<std::uint32_t> operands) {
+        words.push_back((static_cast<std::uint32_t>(operands.size() + 1u) << 16u) | op);
+        words.insert(words.end(), operands);
+    };
+    emit(spv::OpCapability, {spv::CapabilityShader});
+    emit(spv::OpMemoryModel, {spv::AddressingModelLogical, spv::MemoryModelGLSL450});
+    emit(spv::OpEntryPoint, {spv::ExecutionModelGLCompute, 60u, 0x6e69616du, 0u});
+    emit(spv::OpExecutionMode, {60u, spv::ExecutionModeLocalSize, 1u, 1u, 1u});
+    emit(spv::OpTypeVoid, {1u});
+    emit(spv::OpTypeInt, {uintType, 32u, 0u});
+    emit(spv::OpTypeInt, {intType, 32u, 1u});
+    emit(spv::OpTypeBool, {boolType});
+    emit(spv::OpTypeFloat, {floatType, 32u});
+    const std::map<std::uint32_t, std::uint32_t> pointers{{uintType, 6u}, {intType, 7u}, {boolType, 8u}, {floatType, 9u}};
+    for (const auto& [type, pointer] : pointers) emit(spv::OpTypePointer, {pointer, spv::StorageClassPrivate, type});
+    emit(spv::OpTypeFunction, {10u, 1u});
+    emit(spv::OpConstant, {uintType, zero, 0u});
+    emit(spv::OpConstant, {uintType, one, 1u});
+    emit(spv::OpConstant, {uintType, allOnes, 0xffffffffu});
+    emit(spv::OpConstant, {uintType, lowBits, 0x7fffffffu});
+    emit(spv::OpConstant, {intType, signedZero, 0u});
+    emit(spv::OpConstant, {intType, signedOne, 1u});
+    emit(spv::OpConstantTrue, {boolType, trueValue});
+    emit(spv::OpConstantFalse, {boolType, falseValue});
+    emit(spv::OpConstant, {floatType, floatZero, 0u});
+    emit(spv::OpConstant, {floatType, floatOne, 0x3f800000u});
+    emit(spv::OpConstant, {uintType, otherZero, 0u});
+    emit(spv::OpVariable, {pointers.at(uintType), 40u, spv::StorageClassPrivate});
+    emit(spv::OpVariable, {pointers.at(intType), 41u, spv::StorageClassPrivate});
+    emit(spv::OpVariable, {pointers.at(boolType), 42u, spv::StorageClassPrivate});
+    emit(spv::OpVariable, {pointers.at(floatType), 43u, spv::StorageClassPrivate});
+    for (std::uint32_t index = 0; index < cases.size(); ++index) emit(spv::OpVariable, {pointers.at(cases[index].type), 200u + index, spv::StorageClassPrivate});
+    emit(spv::OpFunction, {1u, 60u, spv::FunctionControlMaskNone, 10u});
+    emit(spv::OpLabel, {61u});
+    emit(spv::OpLoad, {uintType, x, 40u});
+    emit(spv::OpLoad, {intType, y, 41u});
+    emit(spv::OpLoad, {boolType, b, 42u});
+    emit(spv::OpLoad, {floatType, f, 43u});
+    for (std::uint32_t index = 0; index < cases.size(); ++index) {
+        const auto& test = cases[index];
+        words.push_back((static_cast<std::uint32_t>(test.operands.size() + 3u) << 16u) | test.op);
+        words.insert(words.end(), {test.type, 100u + index});
+        words.insert(words.end(), test.operands.begin(), test.operands.end());
+        emit(spv::OpStore, {200u + index, 100u + index});
+    }
+    emit(spv::OpReturn, {});
+    emit(spv::OpFunctionEnd, {});
+    const auto specialized = ShaderRecompiler::SpecializeSpirv(words);
+    std::set<std::uint32_t> producers{spv::OpLoad};
+    for (const auto& test : cases) producers.insert(test.op);
+    struct Constant {
+        std::uint32_t type;
+        std::uint32_t value;
+    };
+    std::map<std::uint32_t, std::uint32_t> definitions;
+    std::map<std::uint32_t, Constant> constants;
+    std::map<std::uint32_t, std::uint32_t> stored;
+    std::size_t copies = 0;
+    for (std::size_t cursor = 5; cursor < specialized.size(); cursor += specialized[cursor] >> 16u) {
+        if ((specialized[cursor] >> 16u) == 0u) break;
+        const auto opcode = specialized[cursor] & 0xffffu;
+        if (producers.contains(opcode)) definitions[specialized[cursor + 2u]] = opcode;
+        if (opcode == spv::OpConstant) constants[specialized[cursor + 2u]] = {specialized[cursor + 1u], specialized[cursor + 3u]};
+        if (opcode == spv::OpConstantTrue || opcode == spv::OpConstantFalse) constants[specialized[cursor + 2u]] = {specialized[cursor + 1u], opcode == spv::OpConstantTrue ? 1u : 0u};
+        if (opcode == spv::OpStore) stored[specialized[cursor + 1u]] = specialized[cursor + 2u];
+        if (opcode == spv::OpCopyObject) ++copies;
+    }
+    for (std::uint32_t index = 0; index < cases.size(); ++index) {
+        const auto& test = cases[index];
+        const auto value = stored.at(200u + index);
+        const auto context = " (case " + std::to_string(index) + ")";
+        const auto constant = constants.find(value);
+        if (test.operand != none) check(value == test.operand, ("an identity operation was not replaced by its operand" + context).c_str());
+        else if (test.constant) check(constant != constants.end() && constant->second.type == test.type && constant->second.value == *test.constant, ("an operation one constant operand decides was not replaced by its value" + context).c_str());
+        else check(value == 100u + index && definitions.contains(value) && definitions.at(value) == static_cast<std::uint32_t>(test.op), ("an operation that one operand does not decide for every input was folded" + context).c_str());
+    }
+    check(copies == 0u, "the folding left copies behind");
+    check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "folding decided operations is not stable");
+}
+
 int main() {
     testFoldingLeavesNoDeadBlocksOrConstants();
     testFoldedValuesShareConstants();
+    testOperationsOneOperandDecidesFold();
     testStructExtractsAreNotShuffled();
     testRepeatedTypesShareOneId();
     testOperandShapesDoNotCollide();

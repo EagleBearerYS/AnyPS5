@@ -489,6 +489,7 @@ private:
         if (instruction.size() < 4u) return std::nullopt;
         const auto type = types.find(instruction[1]);
         if (type == types.end() || type->second.width > 32u) return std::nullopt;
+        if (const auto decided = absorbed(instruction, type->second.width)) return decided;
         const auto left = value(instruction[3]);
         if (!left) return std::nullopt;
         if (op == spv::OpCopyObject) return left;
@@ -530,6 +531,75 @@ private:
         }
     }
 
+    std::optional<std::uint32_t> absorbed(const Instruction& instruction, std::uint32_t width) const {
+        if (instruction.size() != 5u) return std::nullopt;
+        const auto mask = width == 32u ? UINT32_MAX : (1u << width) - 1u;
+        const auto either = [&](std::uint32_t expected) {
+            const auto left = value(instruction[3]);
+            const auto right = value(instruction[4]);
+            return (left && (*left & mask) == expected) || (right && (*right & mask) == expected);
+        };
+        switch (Opcode(instruction)) {
+        case spv::OpIMul:
+        case spv::OpBitwiseAnd:
+        case spv::OpLogicalAnd:
+            return either(0u) ? std::optional(0u) : std::nullopt;
+        case spv::OpBitwiseOr:
+        case spv::OpLogicalOr:
+            return either(mask) ? std::optional(mask) : std::nullopt;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    std::uint32_t identityOperand(const Instruction& instruction) const {
+        if (instruction.size() != 5u) return 0u;
+        const auto equals = [&](std::size_t index, std::uint32_t expected) {
+            const auto known = value(instruction[index]);
+            return known && *known == expected;
+        };
+        const auto ones = [&](std::size_t index) {
+            const auto type = types.find(instruction[1]);
+            const auto known = value(instruction[index]);
+            if (type == types.end() || !known) return false;
+            const auto mask = type->second.width >= 32u ? UINT32_MAX : (1u << type->second.width) - 1u;
+            return (*known & mask) == mask;
+        };
+        std::uint32_t kept = 0u;
+        switch (Opcode(instruction)) {
+        case spv::OpIAdd:
+        case spv::OpBitwiseOr:
+        case spv::OpBitwiseXor:
+        case spv::OpLogicalOr:
+        case spv::OpLogicalNotEqual:
+            kept = equals(4u, 0u) ? instruction[3] : equals(3u, 0u) ? instruction[4] : 0u;
+            break;
+        case spv::OpISub:
+        case spv::OpShiftLeftLogical:
+        case spv::OpShiftRightLogical:
+        case spv::OpShiftRightArithmetic:
+            kept = equals(4u, 0u) ? instruction[3] : 0u;
+            break;
+        case spv::OpIMul:
+        case spv::OpLogicalAnd:
+        case spv::OpLogicalEqual:
+            kept = equals(4u, 1u) ? instruction[3] : equals(3u, 1u) ? instruction[4] : 0u;
+            break;
+        case spv::OpUDiv:
+        case spv::OpSDiv:
+            kept = equals(4u, 1u) ? instruction[3] : 0u;
+            break;
+        case spv::OpBitwiseAnd:
+            kept = ones(4u) ? instruction[3] : ones(3u) ? instruction[4] : 0u;
+            break;
+        default:
+            break;
+        }
+        if (kept == 0u) return 0u;
+        const auto keptType = resultTypes.find(kept);
+        return keptType != resultTypes.end() && keptType->second == instruction[1] ? kept : 0u;
+    }
+
     bool fold() {
         bool changed = false;
         bool function = false;
@@ -541,8 +611,12 @@ private:
             if (op == spv::OpFunctionEnd) function = false;
             if (!function) continue;
             if (op == spv::OpSelect && instruction.size() == 6u) {
+                const auto first = value(instruction[4]);
                 if (const auto condition = value(instruction[3])) {
                     instruction = Make(spv::OpCopyObject, {instruction[1], instruction[2], instruction[*condition != 0u ? 4u : 5u]});
+                    changed = true;
+                } else if (instruction[4] == instruction[5] || (first && first == value(instruction[5]))) {
+                    instruction = Make(spv::OpCopyObject, {instruction[1], instruction[2], instruction[4]});
                     changed = true;
                 }
             }
@@ -574,6 +648,10 @@ private:
                     instruction = identity ? Make(spv::OpCopyObject, {instruction[1], instruction[2], source}) : std::move(replacement);
                     changed = true;
                 }
+            }
+            if (const auto kept = identityOperand(instruction)) {
+                instruction = Make(spv::OpCopyObject, {instruction[1], instruction[2], kept});
+                changed = true;
             }
             const auto result = evaluate(instruction);
             if (!result) continue;
