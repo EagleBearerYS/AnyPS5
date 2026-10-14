@@ -177,8 +177,13 @@ F10 shows or hides a performance overlay over the presented image; `ANYPS5_OVERL
 | `MIN/AVG/MAX` | The shortest, average and longest of the 120 frame times, in ms. |
 | `GPU` | GPU time per frame over the last second, in ms: the span of each recorded batch from its first to its last command, from the timestamp queries of `APS5_PROFILE_GPU=1`. Shown only with that variable. Batches are counted when they complete, so the line trails a sudden change by up to a second. Batches that overlap on different queues each count in full, so the line can exceed `FRAME`. |
 | `DRIVER` | CPU time per frame over the last second, in ms, that the packet workers spent in dispatch and draw packets (the `dispatch` and `draw` time of the `[gpu] worker` line of `APS5_PROFILE_DRAW=1`). Shown only with that variable. |
+| `DRAWS` | Draw packets per frame over the last second, then dispatch packets per frame (`DISPATCH`), as the packet workers execute them; packets that predication skips are not counted. Shown once the title has submitted either. |
+| `SHADERS` | Pipelines created in the last second, then since the start (`TOTAL`): a graphics pipeline for each draw state the pipeline cache had not seen and a compute pipeline for each new dispatch shader. A rise while the game stutters points at pipeline compilation. Shown once a pipeline was created. |
+| `VRAM` | Usage and budget of the GPU's largest device-local memory heap from `VK_EXT_memory_budget`, read once a second. Not shown when the driver lacks the extension. |
+| `RAM` | The process's private memory, read once a second: `PrivateUsage` of `GetProcessMemoryInfo` on Windows, `RssAnon` plus `VmSwap` of `/proc/self/status` on Linux. The title's direct memory is shared memory on both systems and is not included. |
+| `RES` | The display buffer's size, then the window's swapchain size, for example `RES: 1920X1080 / 2560X1440`. Not shown for frames without a display buffer. |
 
-Times are shown with one decimal below 100 and as whole numbers above, up to 9999. While the overlay is hidden the presentation records nothing for it and the presented image is unchanged; while it is shown, one small render pass draws it over each presented frame.
+Times are shown with one decimal below 100 and as whole numbers above, up to 9999. Counts are whole numbers, in thousands (`12K`) from 10000 and in millions (`3M`) from a million. Memory is in GB of 2^30 bytes. While the overlay is hidden the presentation records nothing for it and the presented image is unchanged; while it is shown, one small render pass draws it over each presented frame. Each draw and dispatch packet and each pipeline creation is counted also while the overlay is hidden, with one increment of a counter that belongs to the packet worker or, for pipelines, a shared one; the memory and the counters are read only while the overlay is shown.
 
 ### Storing GPU results at each flip
 
