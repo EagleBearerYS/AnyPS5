@@ -535,11 +535,13 @@ struct CompiledShaderArtifact {
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;
     std::uint64_t variantId = 0;
+    std::array<std::uint64_t, 2> identity{};
 };
 
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
     std::uint64_t specializationId = 0;
+    std::vector<PipelineSpecializationConstant> moduleConstants;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
     std::vector<VertexAttribute> vertexAttributes;

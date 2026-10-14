@@ -96,6 +96,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(sameBindings(left.bindings, right.bindings), prefix + "bindings differ");
     require(left.pushConstants == right.pushConstants, prefix + "push constants differ");
     require(left.specialization == right.specialization, prefix + "specialization constants differ");
+    require(left.moduleConstants == right.moduleConstants, prefix + "module constants differ");
     require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
     require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
@@ -172,6 +173,8 @@ RecompileResult sampleResult() {
     result.vertexInputPatches = {{1, 20, {7, 8, 9}}, {5, 40, {10, 11, 12}}};
     result.registrationModule = true;
     result.specialization = {{512, 4}, {516, 0x3f800000u}, {517, 0}};
+    result.moduleConstants = {{16777219u, 0u}, {8188u, 4u}};
+    result.identity = {0x1234u, 0x5678u};
     result.vertexAttributes = {{1, 4, {{0x1000u, 0x20000u, 0x30u, 0x4u}}, 2}, {5, 2, {{9u, 8u, 7u, 6u}}, 0}};
     result.vertexInputs[0].outputMask = 5u;
     result.vertexAttributes[0].formatComponents = 3u;
@@ -324,7 +327,7 @@ void verifyResultRoundTrip() {
     RecompileResult decoded;
     require(ShaderDiskCache::DecodeResult(bytes, decoded), "an encoded result does not decode");
     requireSameResult(result, decoded, "result round trip");
-    require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
+    require(decoded.variantId == 0 && decoded.identity == std::array<std::uint64_t, 2>{} && !decoded.cacheHit, "the per-process fields were stored");
     for (std::size_t size = 0; size < bytes.size(); size += size < 256 ? 1 : 97) {
         RecompileResult partial;
         require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");

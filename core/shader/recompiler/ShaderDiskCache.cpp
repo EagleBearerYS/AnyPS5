@@ -83,9 +83,9 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 232, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 200, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 440, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(CompiledShaderArtifact) == 248, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(ShaderInvocation) == 224, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(RecompileResult) == 480, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -550,10 +550,15 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.barycentricEmulation.smooth);
     reader.Value(result.barycentricEmulation.linear);
     result.variantId = 0;
+    result.identity = {};
 }
 
 void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     writer.List(invocation.specialization, [](Writer& out, const PipelineSpecializationConstant& constant) {
+        out.Value(constant.id);
+        out.Value(constant.value);
+    });
+    writer.List(invocation.moduleConstants, [](Writer& out, const PipelineSpecializationConstant& constant) {
         out.Value(constant.id);
         out.Value(constant.value);
     });
@@ -591,6 +596,10 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     invocation.specializationId = 0;
     reader.List(invocation.specialization, 8, [](Reader& in, PipelineSpecializationConstant& constant) {
+        in.Value(constant.id);
+        in.Value(constant.value);
+    });
+    reader.List(invocation.moduleConstants, 8, [](Reader& in, PipelineSpecializationConstant& constant) {
         in.Value(constant.id);
         in.Value(constant.value);
     });
@@ -1343,6 +1352,7 @@ public:
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
+        persisted->artifact.identity = variant.artifact.identity;
         return persisted;
     }
 

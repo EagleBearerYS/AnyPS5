@@ -12,6 +12,7 @@
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "ShaderDiskCache.hpp"
+#include "ShaderCacheDirectory.hpp"
 #include <list>
 #include <functional>
 #include <map>
@@ -615,6 +616,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
 struct SpecializedModule {
     std::uint64_t specializationId = 0;
+    std::vector<PipelineSpecializationConstant> constants;
     SharedSpirv spirv;
     std::vector<std::uint32_t> bindings;
     bool pushData = false;
@@ -708,6 +710,7 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
         cursor += count;
     }
     module->spirv = std::move(materialized);
+    module->constants.assign(constants.begin(), constants.end());
     module->specializationId = constants.empty() ? 0u : nextVariantId();
     return module;
 }
@@ -869,7 +872,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .parameterExports = artifact.parameterExports,
         .fragmentParameters = artifact.fragmentParameters,
         .barycentricEmulation = artifact.barycentricEmulation,
-        .variantId = artifact.variantId
+        .variantId = artifact.variantId,
+        .identity = artifact.identity
     };
     const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
@@ -958,6 +962,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         if (entry->failure) std::rethrow_exception(entry->failure);
         const auto& module = entry->module;
         result.specializationId = module->specializationId;
+        result.moduleConstants = module->constants;
         result.spirv = module->spirv;
         bindingPlan = &entry->bindings;
     } else {
@@ -1012,13 +1017,15 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
     cacheHit = false;
     const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive();
     std::vector<std::byte> diskKey;
+    ShaderDiskCache::BuildKey(request, HostSubgroupSize(request), diskKey);
+    const std::array<std::uint64_t, 2> identity{HashBytes(diskKey, 0x5eed0001ull), HashBytes(diskKey, 0x5eed0002ull)};
     std::shared_ptr<const CompiledVariant> variant;
     if (disk) {
-        ShaderDiskCache::BuildKey(request, HostSubgroupSize(request), diskKey);
         CompiledVariant loaded;
         if (ShaderDiskCache::Load(diskKey, loaded)) {
             loaded.layout = request.layout;
             loaded.artifact.variantId = nextVariantId();
+            loaded.artifact.identity = identity;
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
         }
     }
@@ -1027,7 +1034,9 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         source.program.reset();
         std::exception_ptr emissionFailure;
         try {
-            variant = std::make_shared<const CompiledVariant>(compileVariant(request, std::move(program), &emissionFailure));
+            auto compiled = compileVariant(request, std::move(program), &emissionFailure);
+            compiled.artifact.identity = identity;
+            variant = std::make_shared<const CompiledVariant>(std::move(compiled));
         } catch (...) {
             if (emissionFailure != nullptr && FailureMemo()) source.emissionFailures.push_back({request.shader.codeAddress, request.layout, emissionFailure});
             throw;
@@ -1428,6 +1437,24 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
     snapshot.userData.assign(RuntimeAbi::UserDataCapacity, 0u);
     snapshot.flattenedSrt.assign(1u, 0u);
     return std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, snapshot, true));
+}
+
+std::shared_ptr<RecompileResult> SpecializedComputeResult(const RecompileRequest& request, const SourceHandle& handle, std::span<const PipelineSpecializationConstant> constants) {
+    if (handle.artifact == nullptr || !MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
+    if (request.shader.stage != ShaderStage::Compute) throw std::runtime_error("ShaderRecompiler: a recorded module specialization is replayed for compute programs only");
+    const auto& variant = *handle.artifact;
+    auto result = std::make_shared<RecompileResult>();
+    static_cast<CompiledShaderArtifact&>(*result) = variant.artifact;
+    result->workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
+    if (variant.bindings.layout.UsesPushData()) result->pushConstants.resize(request.layout.pushConstantSizeBytes);
+    if (!constants.empty()) {
+        const std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> classes{};
+        const auto module = specializeModule(variant.artifact, classes, constants, request.target);
+        result->spirv = module->spirv;
+        result->specializationId = module->specializationId;
+        result->moduleConstants = module->constants;
+    }
+    return result;
 }
 
 std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest& request, const ResourceCapture& capture, const SourceHandle& handle) {

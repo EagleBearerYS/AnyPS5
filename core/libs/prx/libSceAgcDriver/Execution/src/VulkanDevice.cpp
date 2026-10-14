@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -10,6 +12,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineManifest.hpp"
+#include "Optimization/ResourceProgram.hpp"
+#include "ShaderDiskCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
@@ -354,6 +359,7 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::PlaceholderImages> placeholderImages;
     std::unique_ptr<Graphics::TextureCache> textureCache;
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
+    std::unique_ptr<PipelineManifest> pipelineManifest;
     std::unique_ptr<Graphics::DescriptorCache> descriptorCache;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
     std::unique_ptr<Graphics::DescriptorHeap> descriptorHeap;
@@ -706,6 +712,7 @@ struct VulkanDevice::State {
             colorTransfer.reset();
             scaler.reset();
             pipelineCache.reset();
+            pipelineManifest.reset();
             context.bufferPool.reset();
             bufferPool.reset();
             const auto destroyFence = reinterpret_cast<PFN_vkDestroyFence>(deviceProc(device, "vkDestroyFence"));
@@ -1688,6 +1695,12 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     Graphics::PrepareImportWatch(graphicsContext());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, state->pipelineCreationCacheControl);
+    if (const auto directory = ShaderRecompiler::ShaderCacheDirectory(); !directory.empty()) {
+        char name[96];
+        std::snprintf(name, sizeof(name), "compute-pipelines-%04x-%04x.manifest", state->properties.vendorID, state->properties.deviceID);
+        state->pipelineManifest = std::make_unique<PipelineManifest>(directory / name, ShaderRecompiler::ShaderDiskCache::SourceVersion());
+        std::fprintf(stderr, "[pipeline-manifest] %zu compute pipelines recorded by earlier runs in %s\n", state->pipelineManifest->Loaded(), (directory / name).string().c_str());
+    }
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
@@ -4139,11 +4152,37 @@ VulkanDevice::PipelineCreations VulkanDevice::ComputePipelineCreations() {
     return {creations.count[1].load(), creations.count[0].load() + creations.count[2].load(), creations.count[2].load(), milliseconds(1), milliseconds(0) + milliseconds(2), milliseconds(2)};
 }
 
-void VulkanDevice::PrepareComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
-    static_cast<void>(computePipeline(shader, programAddress));
+bool VulkanDevice::PrepareComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
+    bool created = false;
+    static_cast<void>(computePipeline(shader, programAddress, &created));
+    return created;
 }
 
-std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
+bool VulkanDevice::RecordComputePipeline(const ShaderRecompiler::RecompileResult& shader) {
+    if (state->pipelineManifest == nullptr || shader.identity == std::array<std::uint64_t, 2>{}) return false;
+    ComputePipelineRecord record;
+    record.program = shader.identity;
+    record.constants = shader.moduleConstants;
+    for (const auto& binding : shader.bindings) {
+        if (binding.kind == ShaderRecompiler::DescriptorKind::DeviceAddress || binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) continue;
+        if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
+        record.bindings.emplace_back(binding.binding, binding.count);
+    }
+    return state->pipelineManifest->Record(std::move(record));
+}
+
+std::size_t VulkanDevice::PrepareRecordedComputePipelines(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle) {
+    if (state->pipelineManifest == nullptr || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return 0;
+    const auto records = state->pipelineManifest->Records(ShaderRecompiler::GetPreparedArtifact(handle).identity);
+    for (const auto& record : records) {
+        auto result = ShaderRecompiler::SpecializedComputeResult(request, handle, record.constants);
+        for (const auto& [binding, count] : record.bindings) result->bindings.push_back({ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::ShaderData, ShaderRecompiler::RuntimeAbi::DescriptorSet, binding, count, {}});
+        static_cast<void>(computePipeline(*result, request.shader.codeAddress));
+    }
+    return records.size();
+}
+
+std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created) {
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) throw std::runtime_error("Vulkan dispatch: invalid SPIR-V");
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
@@ -4231,6 +4270,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         finish(nullptr, std::current_exception());
         throw;
     }
+    if (created != nullptr) *created = true;
     return finish(std::move(objects), nullptr);
 }
 

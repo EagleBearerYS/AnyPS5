@@ -896,6 +896,7 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
             failure = std::current_exception();
         }
         auto& prepared = *snapshot->prepared;
+        const auto published = entries;
         {
             std::lock_guard lock(prepared.mutex);
             prepared.entries.insert(prepared.entries.end(), std::make_move_iterator(entries.begin()), std::make_move_iterator(entries.end()));
@@ -904,6 +905,17 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
             prepared.pending = false;
         }
         prepared.settled.notify_all();
+        if (failure != nullptr || plan->prebuildDevice == nullptr || plan->request->shader.stage != ShaderRecompiler::ShaderStage::Compute) return;
+        SubmitLibraryPrebuild([snapshot, plan, published] {
+            try {
+                const auto requests = RegistrationRequests(*plan->request);
+                for (std::size_t index = 0; index < published.size() && index < requests.size(); ++index) static_cast<void>(plan->prebuildDevice->PrepareRecordedComputePipelines(requests[index], *published[index].handle));
+            } catch (const std::exception& error) {
+                APS5_LOG_ERR("Shader 0x%llx: a compute pipeline recorded by an earlier run could not be created at registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
+                std::lock_guard lock(snapshot->prepared->mutex);
+                snapshot->prepared->failure = std::current_exception();
+            }
+        });
     }, preparedKey);
 }
 

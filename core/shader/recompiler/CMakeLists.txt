@@ -249,6 +249,8 @@ function(add_shader_recompiler target runtimeTarget)
             GetPreparedArtifact
             MaterializeShader
             RegistrationResult
+            SpecializedComputeResult
+            ShaderDiskCache::SourceVersion
             ResolveSource
             ResourceMaterializer::BindsDecodedCopy
             ResourceMaterializer::SpecializationNanoseconds

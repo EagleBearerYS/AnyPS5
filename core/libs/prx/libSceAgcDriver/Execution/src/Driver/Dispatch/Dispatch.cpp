@@ -363,7 +363,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     bool writersNoted = false;
     const bool noteWrites = writeEvidenceEnabled() || traceCapSync();
     try {
-        localDevice->PrepareComputePipeline(compiled, address);
+        if (localDevice->PrepareComputePipeline(compiled, address)) localDevice->RecordComputePipeline(compiled);
     } catch (const std::exception& error) {
         if (rethrow(error)) return;
     }
