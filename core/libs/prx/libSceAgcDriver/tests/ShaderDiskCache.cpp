@@ -608,17 +608,29 @@ void verifyPersist() {
     const auto key = sample.Key();
     const auto variant = sampleVariant();
     const auto persisted = ShaderDiskCache::Persist(key, variant);
-#ifdef _WIN32
-    require(persisted == nullptr, "an entry was persisted where the cache does not map entries");
-#else
     require(persisted != nullptr, "a persisted entry was not read back");
-    requireSameVariant(variant, *persisted, "persist round trip");
     const auto path = ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key);
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION region{};
+    require(VirtualQuery(persisted->artifact.spirv.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "persisted SPIR-V is not a mapped cache entry");
+    const auto close = [](void* handle) { CloseHandle(handle); };
+    std::unique_ptr<void, decltype(close)> writer(CreateFileW(path.c_str(), GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr), close);
+    require(writer.get() != INVALID_HANDLE_VALUE, "cannot retain the published cache writer");
+    CompiledVariant loaded;
+    require(ShaderDiskCache::Load(key, loaded), "cannot load a cache entry while its writer retains rename access");
+    const auto& loadedWords = loaded.artifact.spirv;
+    require(VirtualQuery(loadedWords.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "cache loading with a retained writer did not map the entry");
+    writer.reset();
+#endif
+    requireSameVariant(variant, *persisted, "persist round trip");
+    auto detached = persisted->artifact.spirv;
+    detached[0] ^= 1u;
+    require(detached[0] != persisted->artifact.spirv[0], "changing a copied mapped module changed its owner");
     require(WriteFileAtomically(path, std::vector<std::byte>(64, std::byte{0x5a})), "cannot replace the persisted entry");
     std::error_code error;
     std::filesystem::remove(path, error);
+    require(!error, "cannot remove the replaced cache entry");
     requireSameArtifact(variant.artifact, persisted->artifact, "a persisted entry whose file was replaced and removed");
-#endif
 }
 
 struct ComputeRequest {

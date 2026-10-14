@@ -121,13 +121,18 @@ std::size_t PayloadOffset(std::size_t keyBytes) {
     return (sizeof(FileHeader) + keyBytes + alignment - 1) / alignment * alignment;
 }
 
-#ifndef _WIN32
 class MappedFile {
 public:
     MappedFile(const void* data, std::size_t size) : data(data), size(size) {}
     MappedFile(const MappedFile&) = delete;
     MappedFile& operator=(const MappedFile&) = delete;
-    ~MappedFile() { munmap(const_cast<void*>(data), size); }
+    ~MappedFile() {
+#ifdef _WIN32
+        UnmapViewOfFile(data);
+#else
+        munmap(const_cast<void*>(data), size);
+#endif
+    }
 
     [[nodiscard]] std::span<const std::byte> Bytes() const { return {static_cast<const std::byte*>(data), size}; }
 
@@ -137,6 +142,27 @@ private:
 };
 
 std::shared_ptr<const MappedFile> MapFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return nullptr;
+    LARGE_INTEGER length{};
+    if (!GetFileSizeEx(file, &length) || length.QuadPart <= 0 || static_cast<unsigned long long>(length.QuadPart) > std::numeric_limits<std::size_t>::max()) {
+        CloseHandle(file);
+        return nullptr;
+    }
+    const HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    CloseHandle(file);
+    if (mapping == nullptr) return nullptr;
+    const void* data = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(mapping);
+    if (data == nullptr) return nullptr;
+    try {
+        return std::make_shared<const MappedFile>(data, static_cast<std::size_t>(length.QuadPart));
+    } catch (...) {
+        UnmapViewOfFile(data);
+        throw;
+    }
+#else
     const int descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC);
     if (descriptor < 0) return nullptr;
     struct stat status{};
@@ -144,9 +170,14 @@ std::shared_ptr<const MappedFile> MapFile(const std::filesystem::path& path) {
     if (fstat(descriptor, &status) == 0 && status.st_size > 0) data = mmap(nullptr, static_cast<std::size_t>(status.st_size), PROT_READ, MAP_PRIVATE, descriptor, 0);
     close(descriptor);
     if (data == MAP_FAILED) return nullptr;
-    return std::make_shared<const MappedFile>(data, static_cast<std::size_t>(status.st_size));
-}
+    try {
+        return std::make_shared<const MappedFile>(data, static_cast<std::size_t>(status.st_size));
+    } catch (...) {
+        munmap(data, static_cast<std::size_t>(status.st_size));
+        throw;
+    }
 #endif
+}
 static_assert(sizeof(FileHeader) == 48 && std::is_trivially_copyable_v<FileHeader>);
 
 class Writer {
@@ -874,12 +905,10 @@ public:
         bool loaded = false;
         std::span<const std::byte> bytes;
         std::shared_ptr<const void> owner;
-#ifndef _WIN32
         if (auto mapped = MapFile(directory / name)) {
             bytes = mapped->Bytes();
             owner = std::move(mapped);
         }
-#endif
         const bool present = owner != nullptr || ReadWholeFile(directory / name, file);
         if (owner == nullptr) bytes = file;
         if (!present) {
@@ -917,11 +946,6 @@ public:
     }
 
     std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant) {
-#ifdef _WIN32
-        static_cast<void>(key);
-        static_cast<void>(variant);
-        return nullptr;
-#else
         const auto path = directory / EntryName(key);
         const auto file = EncodeEntry(key, variant);
         if (!WriteFileAtomically(path, file)) return nullptr;
@@ -935,7 +959,6 @@ public:
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
         return persisted;
-#endif
     }
 
     void Flush() {
