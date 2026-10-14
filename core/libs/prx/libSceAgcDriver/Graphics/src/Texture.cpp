@@ -3051,7 +3051,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     std::vector<bool> unsaved(trackedLayers, false);
     bool anyUnsaved = false;
     for (std::uint32_t layer = first; layer < first + count; ++layer) {
-        unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
+        unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0 && savedTicket[layer] == 0;
         anyUnsaved = anyUnsaved || unsaved[layer];
     }
     if (anyUnsaved && !GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) captureGuestBytes(&unsaved);
