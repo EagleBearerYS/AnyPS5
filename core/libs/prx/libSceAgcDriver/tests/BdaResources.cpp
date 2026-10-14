@@ -1,4 +1,7 @@
 #include "BdaTests.hpp"
+#include "BdaPageReference.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
@@ -1306,6 +1309,113 @@ void sparseHeapMirrorTests(const Context& context, const BdaTestAccess& access) 
 #endif
 }
 
+static void pageTableRootTests(const Context& shared, const BdaTestAccess& access) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    namespace Ref = BdaPageReference;
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: the page table of a split heap not tested\n";
+        return;
+    }
+    auto context = shared;
+    context.bufferPool.reset();
+    constexpr std::size_t bytes = 2 * 65536;
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536);
+#ifdef _WIN32
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+#endif
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto sweep = [&] {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    registry(true);
+    {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.AddWritable(address + 16, 32);
+        leased.Upload(true);
+        BdaResources bda(context, leased);
+        const auto root = access.bytes(bda.Table().buffer);
+        Abi::Header header{};
+        std::memcpy(&header, root.data(), sizeof(header));
+        Require(header.version == Abi::TableVersion && header.entryBytes == sizeof(Abi::Range) && header.pageTable != 0u, "an address-based build over a registered heap bound no page table");
+        std::vector<Abi::Range> list(header.count);
+        std::memcpy(list.data(), root.data() + sizeof(header), list.size() * sizeof(Abi::Range));
+        const auto first = access.addressBytes(header.pageTable);
+        Ref::Leaves leaves;
+        for (std::uint32_t window = 0; window < Abi::WindowCount; ++window) {
+            std::uint64_t leaf = 0;
+            std::memcpy(&leaf, first.data() + window * sizeof(leaf), sizeof(leaf));
+            if (leaf == 0u) continue;
+            const auto entries = access.addressBytes(leaf);
+            std::vector<Abi::PageEntry> decoded(entries.size() / sizeof(Abi::PageEntry));
+            std::memcpy(decoded.data(), entries.data(), decoded.size() * sizeof(Abi::PageEntry));
+            leaves.emplace(window, std::move(decoded));
+        }
+        const auto piece = std::find_if(list.begin(), list.end(), [&](const auto& range) { return range.begin == address; });
+        Require(piece != list.end() && piece->end == address + 16u && piece->permissions == Abi::Read, "the write interval did not split the heap's read-only range");
+        const auto device = piece->deviceAddress;
+        Require(Ref::LookupList(list, address + 8u, 64u, Abi::Read) == Ref::Fault(Abi::FaultReason::Unmapped), "the split list did not fault a read across its split point");
+        Require(Ref::Translate(leaves, list, address + 8u, 64u, Abi::Read) == Ref::Translation{device + 8u, 0u}, "a 64-byte read across the write-split point of one read-only range faulted");
+        for (const std::uint64_t offset : {0u, 15u, 16u, 47u, 48u, 65532u, 65536u, static_cast<unsigned>(bytes) - 4u}) {
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Read) == Ref::Translation{device + offset, 0u}, "the page table alone did not translate the registered heap at +" + std::to_string(offset));
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write) == Ref::Fault(Abi::FaultReason::Unmapped), "the page table alone granted a write to the read-only mirror at +" + std::to_string(offset));
+        }
+        const Ref::Leaves none;
+        for (const auto probe : Ref::Probes(list)) {
+            for (const auto size : Ref::ProbeBytes) {
+                for (const auto permission : {Abi::Read, Abi::Write, Abi::Read | Abi::Write}) {
+                    const auto actual = Ref::Translate(leaves, list, probe, size, permission);
+                    const bool inside = probe >= address && probe < address + bytes && size <= address + bytes - probe;
+                    const bool crosses = inside && permission == Abi::Read && ((probe < address + 16u && address + 16u < probe + size) || (probe < address + 48u && address + 48u < probe + size));
+                    const auto expected = crosses ? Ref::Translation{device + (probe - address), 0u} : Ref::Translate(none, list, probe, size, permission);
+                    Require(actual == expected, "the page table of a split heap translated 0x" + std::to_string(probe) + " (" + std::to_string(size) + " bytes, permission " + std::to_string(permission) + ") unlike the range list");
+                }
+            }
+        }
+        leased.WriteBack();
+    }
+    registry(false);
+    sweep();
+}
+
+static void rangeListTests(const Context& shared) {
+    auto context = shared;
+    context.bufferPool.reset();
+    alignas(64) static std::array<std::uint8_t, 4096> stack{};
+    const auto base = reinterpret_cast<std::uintptr_t>(stack.data());
+    std::uint64_t seed = 0x9e3779b97f4a7c15ull;
+    const auto next = [&] {
+        seed ^= seed << 13u;
+        seed ^= seed >> 7u;
+        seed ^= seed << 17u;
+        return seed;
+    };
+    for (std::uint32_t round = 0; round < 16u; ++round) {
+        GuestBufferMemory memory(context);
+        for (std::uint32_t descriptor = 0; descriptor < 6u; ++descriptor) {
+            const auto offset = (next() % 3000u) & ~std::uint64_t{3};
+            const auto size = 4u + (next() % 1000u);
+            if (next() % 2u == 0u) memory.AddWritable(base + offset, size);
+            else memory.AddReadable(base + offset, size);
+        }
+        memory.Upload(true);
+        const auto ranges = memory.AddressRanges();
+        ValidateBdaRangeList(ranges);
+        BdaResources bda(context, memory);
+        memory.WriteBack();
+    }
+}
+
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     alignas(64) std::array<std::uint32_t, 16> guest{};
     guest[0] = 123;
@@ -1393,7 +1503,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         ShaderRecompiler::BdaAbi::Header header{};
         ShaderRecompiler::BdaAbi::Range range{};
         std::memcpy(&header, table.data(), sizeof(header));
-        Require(header.version == ShaderRecompiler::BdaAbi::Version && header.count == 1 && header.entryBytes == sizeof(range), "BDA header layout mismatch");
+        Require(header.version == ShaderRecompiler::BdaAbi::TableVersion && header.count == 1 && header.entryBytes == sizeof(range) && header.reserved == 0 && header.pageTable == 0 && header.unused == 0, "BDA header layout mismatch: version " + std::to_string(header.version) + ", " + std::to_string(header.count) + " ranges of " + std::to_string(header.entryBytes) + " bytes, page table " + std::to_string(header.pageTable));
         std::memcpy(&range, table.data() + sizeof(header), sizeof(range));
         Require(range.begin == snapshots[0].address && range.end == range.begin + source.size(), "64-bit guest address was truncated");
         const auto fault = access.bytes(access.descriptor(5).buffer);
@@ -1519,6 +1629,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importAtMapOverBudgetTests(context);
     importEvictionTests(context);
     heapMirrorTests(context, access);
+    pageTableRootTests(context, access);
+    rangeListTests(context);
     importedHeapMirrorTests(context, access);
     importWatchTests();
     importedFreshTests(context);

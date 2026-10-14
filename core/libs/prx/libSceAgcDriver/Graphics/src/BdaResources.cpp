@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
 #include "ImageTableAbi.hpp"
 #include "DeviceImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
@@ -42,6 +43,7 @@ struct TableEntry {
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     std::weak_ptr<Buffer> buffer;
     std::uint64_t spaceSerial = 0;
+    std::uint64_t pageTable = 0;
 };
 
 struct TableCache {
@@ -132,6 +134,8 @@ BdaResources::BdaResources(const Context& context) : deviceImages(context.device
 }
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory) : BdaResources(context) {
+    pages = memory.PageTable(context);
+    const std::uint64_t pageTable = pages != nullptr ? pages->Address() : 0u;
     const auto cached = memory.CachedAddressTable();
     std::vector<ShaderRecompiler::BdaAbi::Range> built;
     if (!cached.has_value()) built = memory.AddressRanges();
@@ -152,7 +156,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
         if (serial != 0) {
             for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-                if (it->spaceSerial != serial) continue;
+                if (it->spaceSerial != serial || it->pageTable != pageTable) continue;
                 if (auto shared = it->buffer.lock(); shared != nullptr) {
                     ++cache.hits;
                     ++cache.classes.spaceTables;
@@ -164,7 +168,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
                 break;
             }
         }
-        hash = hashRanges(ranges);
+        hash = hashRanges(ranges) ^ pageTable;
         classifyFirstEntry(cache, hash, ranges);
         for (auto it = cache.entries.begin(); it != cache.entries.end();) {
             // Compare the hash before taking a strong reference: locking a non-matching entry's
@@ -184,7 +188,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
                 it = cache.entries.erase(it);
                 continue;
             }
-            if (sameRanges(it->ranges, ranges)) {
+            if (it->pageTable == pageTable && sameRanges(it->ranges, ranges)) {
                 ++cache.hits;
                 // An equal table of an earlier space (a rebuild that mapped the same ranges the
                 // same way): the next build of this space binds it by the serial.
@@ -197,8 +201,9 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
     }
     for (const auto& range : ranges) Require((range.permissions & ShaderRecompiler::BdaAbi::Write) == 0 || range.end <= ShaderRecompiler::BdaAbi::WrittenAddressLimit, "a writable BDA range ends past the addresses the written-page record can hold");
+    ValidateBdaRangeList(ranges);
     table = std::make_shared<Buffer>(context, tableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const ShaderRecompiler::BdaAbi::Header header{ShaderRecompiler::BdaAbi::Version, static_cast<std::uint32_t>(ranges.size()), sizeof(ShaderRecompiler::BdaAbi::Range), 0};
+    const ShaderRecompiler::BdaAbi::Header header{ShaderRecompiler::BdaAbi::TableVersion, static_cast<std::uint32_t>(ranges.size()), sizeof(ShaderRecompiler::BdaAbi::Range), 0, pageTable, 0};
     std::memcpy(table->Bytes().data(), &header, sizeof(header));
     if (!ranges.empty()) std::memcpy(table->Bytes().data() + sizeof(header), ranges.data(), ranges.size() * sizeof(ranges.front()));
     if (tableCacheEnabled()) {
@@ -208,7 +213,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             cache.entries.clear();
             cache.device = context.device;
         }
-        cache.entries.push_front({hash, cached.has_value() ? ranges : std::move(built), table, serial});
+        cache.entries.push_front({hash, cached.has_value() ? ranges : std::move(built), table, serial, pageTable});
         while (cache.entries.size() > tableCacheEntries()) cache.entries.pop_back();
     }
 }

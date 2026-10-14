@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -112,6 +113,7 @@ struct GuestBufferMemory::AddressSpace {
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     mutable std::mutex tableMutex;
     mutable std::map<std::vector<std::pair<std::uint64_t, std::uint64_t>>, std::pair<std::uint64_t, std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>>>> writeTables;
+    mutable std::shared_ptr<const BdaPageTable> pageTable;
 };
 
 namespace {
@@ -1946,6 +1948,7 @@ MirrorStats MirrorCounters() {
 }
 
 void ClearImageMirrors(VkDevice device) {
+    if (auto current = Spaces().current.load(); current != nullptr && current->device == device) Spaces().current.compare_exchange_strong(current, std::shared_ptr<const GuestBufferMemory::AddressSpace>{});
     auto& state = Mirrors();
     std::map<std::uint64_t, std::shared_ptr<ImageMirror>> entries;
     {
@@ -3695,6 +3698,14 @@ std::optional<GuestBufferMemory::CachedTable> GuestBufferMemory::CachedAddressTa
         space->writeTables.emplace(writes, std::pair{writeTableSerial, writeTableRanges});
     }
     return CachedTable{writeTableSerial, writeTableRanges.get()};
+}
+
+std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& context) const {
+    if (space == nullptr || space->ranges.empty()) return nullptr;
+    Require(uploaded && !committed, "guest GPU address ranges are not available");
+    std::lock_guard lock(space->tableMutex);
+    if (space->pageTable == nullptr) space->pageTable = BdaPageTable::Build(context, space->ranges);
+    return space->pageTable;
 }
 
 bool GuestBufferMemory::HasCopiedWrites() const {

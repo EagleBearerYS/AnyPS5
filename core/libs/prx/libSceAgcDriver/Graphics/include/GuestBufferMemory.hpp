@@ -12,6 +12,8 @@
 
 namespace AgcDriver::Graphics {
 
+class BdaPageTable;
+
 void ShutdownGuestBufferWorkers();
 
 struct GuestMemorySnapshot {
@@ -232,6 +234,7 @@ public:
         const std::vector<ShaderRecompiler::BdaAbi::Range>* ranges;
     };
     std::optional<CachedTable> CachedAddressTable() const;
+    std::shared_ptr<const BdaPageTable> PageTable(const Context& context) const;
     // The registered memory an address-based build maps, shared by consecutive builds (see
     // GuestBufferMemory.cpp): its lease and the sorted, immutable regions of the ranges served in
     // place by imports and mirrors. Opaque outside GuestBufferMemory.cpp.
