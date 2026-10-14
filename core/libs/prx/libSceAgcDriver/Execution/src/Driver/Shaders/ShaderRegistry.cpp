@@ -1174,7 +1174,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     CheckFailure();
     if (LazyPreparation()) {
         transaction.Commit();
-        return true;
+        return;
     }
     require(!stages.empty(), "graphics ABI has no shader headers");
     QueueState state{};
