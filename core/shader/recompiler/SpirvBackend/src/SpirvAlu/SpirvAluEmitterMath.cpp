@@ -172,7 +172,7 @@ std::uint32_t EmitDppWriteCondition(SpirvValueEmitContext& ctx, const IrValue& i
         state.module.AddFunction(spv::OpLogicalAnd, TypeBool(state), bounded, writable, target.valid);
         writable = bounded;
         if (!flags.fetchInactive && (flags.control & DppMoveFlags::Lanes8) == 0u) {
-            const auto sourceActive = EmitBallotLaneActiveBool(state, ctx.Ballot(inst.Argument(2)), target.lane);
+            const auto sourceActive = EmitBallotLaneActiveBool(state, ctx.HalfBallot(inst.Argument(2)), target.lane);
             writable = Binary(state, spv::OpLogicalAnd, TypeBool(state), writable, sourceActive);
         }
     }
@@ -960,7 +960,7 @@ std::uint32_t EmitDppMoveU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     if (flags.fetchInactive) {
         return EmitNative<spv::OpSelect, IrType::U32>(state, target.valid, shuffled, ConstantU32(state, 0u));
     }
-    const auto ballot = ctx.Ballot(inst.Argument(1));
+    const auto ballot = ctx.HalfBallot(inst.Argument(1));
     const auto sourceActive = EmitBallotLaneActiveBool(state, ballot, target.lane);
     const auto canFetch = state.module.AllocateId();
     state.module.AddFunction(spv::OpLogicalAnd, TypeBool(state), canFetch, target.valid, sourceActive);
@@ -1005,6 +1005,21 @@ std::uint32_t EmitBallot(SpirvValueEmitContext& ctx, const IrValue* predicate) {
 
 std::uint32_t EmitReadFirstLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
+    if (state.waveExchange) {
+        const auto u32 = TypeU32(state);
+        const auto active = state.module.AllocateId();
+        EmitSubgroupBallot(state, active, ctx.Arg(inst, 1));
+        const auto word = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, word, active, 0u);
+        const auto first = state.module.AllocateId();
+        EmitSubgroupBallotFindLsb(state, first, active);
+        const auto value = state.module.AllocateId();
+        EmitSubgroupShuffle(state, u32, value, ctx.Arg(inst, 0), Select(state, u32, Binary(state, spv::OpINotEqual, TypeBool(state), word, ConstantU32(state, 0u)), first, ConstantU32(state, 0u)));
+        const auto halves = EmitWaveExchange(state, word, value);
+        const auto lowActive = Binary(state, spv::OpINotEqual, TypeBool(state), halves[0], ConstantU32(state, 0u));
+        const auto highActive = Binary(state, spv::OpINotEqual, TypeBool(state), halves[2], ConstantU32(state, 0u));
+        return Select(state, u32, lowActive, halves[1], Select(state, u32, highActive, halves[3], halves[1]));
+    }
     const auto ballot = ctx.Ballot(inst.Argument(1));
     const auto low = state.module.AllocateId();
     const auto high = state.module.AllocateId();
@@ -1026,6 +1041,12 @@ std::uint32_t EmitReadLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
         }
     }
     const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), ctx.Arg(inst, 1), ConstantU32(state, state.program.WaveSize() - 1u));
+    if (state.waveExchange) {
+        const auto value = state.module.AllocateId();
+        EmitSubgroupShuffle(state, TypeU32(state), value, ctx.Arg(inst, 0), EmitHostSubgroupLane(state, lane));
+        const auto halves = EmitWaveExchange(state, value, ConstantU32(state, 0u));
+        return Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), lane, ConstantU32(state, 32u)), halves[2], halves[0]);
+    }
     return ctx.Shuffle(inst, 0, lane);
 }
 
@@ -1070,7 +1091,7 @@ std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst)
     if (flags.fetchInactive) {
         return shuffled;
     }
-    const auto sourceActive = EmitBallotLaneActiveBool(state, ctx.Ballot(inst.Argument(3)), target);
+    const auto sourceActive = EmitBallotLaneActiveBool(state, ctx.HalfBallot(inst.Argument(3)), target);
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelect, TypeU32(state), result, sourceActive, shuffled, flags.boundControl ? ConstantU32(state, 0u) : ctx.Arg(inst, 4));
     return result;

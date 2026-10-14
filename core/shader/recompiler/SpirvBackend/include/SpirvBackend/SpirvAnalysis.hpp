@@ -52,6 +52,8 @@ enum class OneLaneRejection {
 
 [[nodiscard]] OneLaneRejection Wave64OneLaneRejection(const IrProgram& program, std::uint32_t workgroupThreads, std::span<const std::uint32_t> capabilities, IrOpcode* blocker = nullptr);
 [[nodiscard]] const char* OneLaneRejectionName(OneLaneRejection rejection);
+inline constexpr std::uint32_t WaveExchangeDwords = 8u;
+[[nodiscard]] bool Wave64ExchangeAllowed(const IrProgram& program, std::uint32_t workgroupThreads, std::span<const std::uint32_t> capabilities);
 
 }
 

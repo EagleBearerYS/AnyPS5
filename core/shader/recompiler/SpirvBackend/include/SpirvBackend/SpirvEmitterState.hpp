@@ -111,6 +111,9 @@ struct SpirvEmitterState {
     std::uint32_t hostSubgroupSize = 0;
     bool splitSubgroup = false;
     bool waveSpansSubgroups = false;
+    bool waveExchange = false;
+    std::uint32_t waveExchangeVariable = 0;
+    std::uint32_t waveExchangeParity = 0;
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool registrationModules = false;
@@ -210,6 +213,7 @@ struct SpirvValueEmitContext {
     std::uint32_t Arg(const IrValue& inst, std::size_t index);
     std::uint32_t HalfArg(const IrValue& inst, std::size_t index, std::uint32_t half);
     std::uint32_t Ballot(const IrValue* predicate);
+    std::uint32_t HalfBallot(const IrValue* predicate);
     std::uint32_t FirstLane(std::uint32_t ballot);
     std::uint32_t Shuffle(const IrValue& inst, std::size_t index, std::uint32_t lane);
     std::uint32_t Result(const IrValue& inst);

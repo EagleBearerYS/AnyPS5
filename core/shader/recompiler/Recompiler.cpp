@@ -99,16 +99,27 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     return request.target.subgroupSize;
 }
 
-bool RunsWave64OneLane(const RecompileRequest& request, const IrProgram& program, const ShaderStageInputInfo& inputInfo) {
-    if (request.shader.stage != ShaderStage::Compute || inputInfo.compute == nullptr || program.WaveSize() != 64u || inputInfo.compute->hostSubgroupSize != 32u) return false;
+enum class Wave64Layout {
+    TwoLanes,
+    OneLane,
+    WaveExchange,
+};
+
+Wave64Layout ChooseWave64Layout(const RecompileRequest& request, const IrProgram& program, const ShaderStageInputInfo& inputInfo) {
+    if (request.shader.stage != ShaderStage::Compute || inputInfo.compute == nullptr || program.WaveSize() != 64u || inputInfo.compute->hostSubgroupSize != 32u) return Wave64Layout::TwoLanes;
     static const bool twoLanes = std::getenv("APS5_TWO_LANE") != nullptr;
-    if (twoLanes) return false;
+    if (twoLanes) return Wave64Layout::TwoLanes;
     const auto& threads = inputInfo.compute->threadsNum;
+    const auto workgroupThreads = std::max(threads[0], 1u) * std::max(threads[1], 1u) * std::max(threads[2], 1u);
     IrOpcode blocker = IrOpcode::Void;
-    const auto rejection = Wave64OneLaneRejection(program, std::max(threads[0], 1u) * std::max(threads[1], 1u) * std::max(threads[2], 1u), request.target.supportedCapabilities, &blocker);
+    const auto rejection = Wave64OneLaneRejection(program, workgroupThreads, request.target.supportedCapabilities, &blocker);
+    const auto ldsBytes = request.context.compute.has_value() ? static_cast<std::uint64_t>(request.context.compute->ldsSizeDwords) * 4u : 0u;
+    const auto sharedBytes = request.target.maxWorkgroupSharedMemoryBytes;
+    const bool exchangeFits = ldsBytes + 4u > sharedBytes || ldsBytes + 4u + WaveExchangeDwords * 4u <= sharedBytes;
+    const auto layout = rejection == OneLaneRejection::None ? Wave64Layout::OneLane : exchangeFits && Wave64ExchangeAllowed(program, workgroupThreads, request.target.supportedCapabilities) ? Wave64Layout::WaveExchange : Wave64Layout::TwoLanes;
     static const bool log = std::getenv("APS5_WAVE64_LAYOUT_LOG") != nullptr;
-    if (log) std::fprintf(stderr, "[wave64] 0x%llx %s%s%s\n", static_cast<unsigned long long>(request.shader.codeAddress), OneLaneRejectionName(rejection), blocker == IrOpcode::Void ? "" : ", at ", blocker == IrOpcode::Void ? "" : std::string(IrOpcodeName(blocker)).c_str());
-    return rejection == OneLaneRejection::None;
+    if (log) std::fprintf(stderr, "[wave64] 0x%llx %s%s%s%s\n", static_cast<unsigned long long>(request.shader.codeAddress), layout == Wave64Layout::WaveExchange ? "one lane per invocation with wave operations through workgroup memory, else " : "", OneLaneRejectionName(rejection), blocker == IrOpcode::Void ? "" : ", at ", blocker == IrOpcode::Void ? "" : std::string(IrOpcodeName(blocker)).c_str());
+    return layout;
 }
 
 RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, std::span<const std::uint32_t> linkedLiterals) {
@@ -483,9 +494,10 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
     ShaderStageInputInfo emitInputInfo = inputInfo;
     ShaderComputeInputInfo oneLaneCompute{};
-    if (RunsWave64OneLane(request, program, inputInfo)) {
+    if (const auto layout = ChooseWave64Layout(request, program, inputInfo); layout != Wave64Layout::TwoLanes) {
         oneLaneCompute = *inputInfo.compute;
         oneLaneCompute.hostSubgroupSize = 64u;
+        oneLaneCompute.waveExchange = layout == Wave64Layout::WaveExchange;
         emitInputInfo.compute = &oneLaneCompute;
     }
 

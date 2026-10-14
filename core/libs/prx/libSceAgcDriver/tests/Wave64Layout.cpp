@@ -90,9 +90,12 @@ void Expect(const char* name, std::uint32_t lanes, std::uint32_t expected) {
 int main() {
     try {
         Expect("per-lane arithmetic", HostLanes({0x4a040481u}, 64u, 0u), 64u);
-        Expect("vcc read as a scalar", HostLanes({0x7d880085u, 0xbe88046au, 0x7e040208u}, 64u, 0u), 32u);
-        Expect("v_readfirstlane of a lane value", HostLanes({0x7e100502u, 0x7e040208u}, 64u, 0u), 32u);
-        Expect("execz region with a scalar result used after it", HostLanes({0x7d880085u, 0xbe8a246au, 0xbf880001u, 0x800c8100u, 0x88fe0a7eu, 0x7e04020cu}, 64u, 0u), 32u);
+        Expect("vcc read as a scalar", HostLanes({0x7d880085u, 0xbe88046au, 0x7e040208u}, 64u, 0u), 64u);
+        Expect("v_readfirstlane of a lane value", HostLanes({0x7e100502u, 0x7e040208u}, 64u, 0u), 64u);
+        Expect("execz region with a scalar result used after it", HostLanes({0x7d880085u, 0xbe8a246au, 0xbf880001u, 0x800c8100u, 0x88fe0a7eu, 0x7e04020cu}, 64u, 0u), 64u);
+        Expect("vcc read as a scalar in a two-wave workgroup", HostLanes({0x7d880085u, 0xbe88046au, 0x7e040208u}, 128u, 0u), 32u);
+        Expect("v_readfirstlane of a lane value in a two-wave workgroup", HostLanes({0x7e100502u, 0x7e040208u}, 128u, 0u), 32u);
+        Expect("execz region with a scalar result used after it in a two-wave workgroup", HostLanes({0x7d880085u, 0xbe8a246au, 0xbf880001u, 0x800c8100u, 0x88fe0a7eu, 0x7e04020cu}, 128u, 0u), 32u);
         Expect("execz region with vector work only", HostLanes({0x7d880085u, 0xbe8a246au, 0xbf880001u, 0x4a040481u, 0x88fe0a7eu}, 64u, 0u), 64u);
         Expect("LDS in a one-wave workgroup", HostLanes({0xd8340000u, 0x00000201u, 0xbf8cc07fu, 0xd8d80000u, 0x02000001u, 0xbf8cc07fu}, 64u, 64u), 64u);
         Expect("LDS writes in a two-wave workgroup", HostLanes({0xd8340000u, 0x00000201u, 0xbf8cc07fu, 0xd8d80000u, 0x02000001u, 0xbf8cc07fu}, 128u, 128u), 32u);

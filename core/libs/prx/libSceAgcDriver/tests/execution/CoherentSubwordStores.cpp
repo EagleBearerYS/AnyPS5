@@ -60,6 +60,7 @@ constexpr std::uint32_t StoreDword = 0x1cu;
 std::vector<std::uint32_t> Program(std::uint32_t waveSize, bool vccScalar) {
     const bool wave64 = waveSize == 64u;
     std::vector<std::uint32_t> code{
+        Vop2(AndB32, 0, 0xbfu, 0),
         Vop1Move(1, 0x80u + SharedSame), Vop1Move(2, Literal), 0x5au,
         StoreWord0(StoreByte), StoreWord1(2, 1),
         Vop1Move(1, 0x80u + SharedDifferent), Vop2(AddU32, 2, 0x81u, 0),
@@ -85,13 +86,13 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::uint32_t Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize) {
+std::uint32_t Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t threads) {
     Output.fill(Fill);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto output = BufferDescriptor(Output.data(), OutputBytes);
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{waveSize, 1, 1}, 0u, {false, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
@@ -104,7 +105,7 @@ std::uint32_t Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t
     device.WaitIdle();
     const auto& words = result.spirv.Words();
     for (std::size_t index = 5; index < words.size() && (words[index] >> 16u) != 0u; index += words[index] >> 16u) {
-        if ((words[index] & 0xffffu) == spv::OpExecutionMode && words[index + 2] == spv::ExecutionModeLocalSize) return words[index + 3];
+        if ((words[index] & 0xffffu) == spv::OpExecutionMode && words[index + 2] == spv::ExecutionModeLocalSize) return words[index + 3] * waveSize / threads;
     }
     throw std::runtime_error("coherent subword stores: the compute program has no LocalSize");
 }
@@ -153,21 +154,22 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const auto wave32 = Program(32u, false);
         const auto oneLane = Program(64u, false);
-        const auto twoLanes = Program(64u, true);
+        const auto vccRead = Program(64u, true);
         struct Case {
             const char* name;
             std::span<const std::uint32_t> code;
             std::uint32_t waveSize;
+            std::uint32_t threads;
             bool vccScalar;
+            std::uint32_t invocations;
         };
-        const std::array<Case, 3> cases{{{"wave32", wave32, 32u, false}, {"wave64", oneLane, 64u, false}, {"wave64 with a scalar vcc read", twoLanes, 64u, true}}};
-        std::vector<std::uint32_t> invocations;
-        for (const auto& item : cases) {
-            invocations.push_back(Run(*device, item.code, item.waveSize));
-            Check(item.name, item.waveSize, item.vccScalar);
-        }
+        const std::array<Case, 4> cases{{{"wave32", wave32, 32u, 32u, false, 32u}, {"wave64", oneLane, 64u, 64u, false, 64u}, {"wave64 with a scalar vcc read", vccRead, 64u, 64u, true, 64u}, {"two wave64 waves with a scalar vcc read", vccRead, 64u, 128u, true, 32u}}};
         const auto subgroup = device->ComputeTarget(64u).subgroupSize;
-        if (subgroup == 32u) Require(invocations[1] == 64u && invocations[2] == 32u, "coherent subword stores: the wave64 programs ran at " + std::to_string(invocations[1]) + " and " + std::to_string(invocations[2]) + " invocations per wave, expected one lane per invocation and two");
+        for (const auto& item : cases) {
+            const auto invocations = Run(*device, item.code, item.waveSize, item.threads);
+            Check(item.name, item.waveSize, item.vccScalar);
+            if (subgroup == 32u) Require(invocations == item.invocations, std::string("coherent subword stores ") + item.name + ": " + std::to_string(invocations) + " invocations per wave, expected " + std::to_string(item.invocations));
+        }
         std::puts("coherent subword stores tests passed");
         return 0;
     } catch (const std::exception& error) {

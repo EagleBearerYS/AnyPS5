@@ -81,6 +81,7 @@ struct ShaderWorkgroupInputInfo {
     std::uint32_t scratchSizeDwords = 0;
     std::uint32_t hostSubgroupSize = 64;
     std::uint32_t waveSize = 64;
+    bool waveExchange = false;
 };
 
 struct ShaderMeshInputInfo: ShaderWorkgroupInputInfo {

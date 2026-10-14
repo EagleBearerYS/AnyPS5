@@ -133,8 +133,15 @@ std::uint32_t SpirvValueEmitContext::Ballot(const IrValue* predicate) {
     return ballot;
 }
 
+std::uint32_t SpirvValueEmitContext::HalfBallot(const IrValue* predicate) {
+    if (otherHalf != nullptr) return Ballot(predicate);
+    const auto ballot = state.module.AllocateId();
+    EmitSubgroupBallot(state, ballot, Def(predicate));
+    return EmitHalfBallot(state, ballot);
+}
+
 std::uint32_t SpirvValueEmitContext::FirstLane(std::uint32_t ballot) {
-    if (otherHalf == nullptr && state.waveSpansSubgroups) {
+    if (otherHalf == nullptr && state.waveSpansSubgroups && !state.waveExchange) {
         const auto low = state.module.AllocateId();
         const auto high = state.module.AllocateId();
         const auto result = state.module.AllocateId();
@@ -143,7 +150,7 @@ std::uint32_t SpirvValueEmitContext::FirstLane(std::uint32_t ballot) {
         state.module.AddFunction(spv::OpExtInst, TypeU32(state), result, GlslStd450(state), GLSLstd450FindILsb, EmitBinaryU32(state, spv::OpBitwiseOr, low, high));
         return result;
     }
-    if (otherHalf == nullptr) {
+    if (otherHalf == nullptr && !state.waveExchange) {
         const auto result = state.module.AllocateId();
         EmitSubgroupBallotFindLsb(state, result, ballot);
         return result;
@@ -274,6 +281,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.laneCount = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u ? 2u : 1u;
     if (state.laneCount == 2u) state.sharedLaneValues = WaveUniformValues(program);
     state.waveSpansSubgroups = workgroup != nullptr && program.WaveSize() == 64u && state.laneCount == 1u && target.subgroupSize == 32u;
+    state.waveExchange = state.waveSpansSubgroups && workgroup->waveExchange && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) > target.subgroupSize;
     if (program.Resources().stage == IrShaderStage::Compute && workgroup != nullptr) {
         // The key comes from a subgroup ballot (ReadFirstLane), so the slot is uniform over the
         // workgroup only when the workgroup is one wave held by one host subgroup; a wave64 program
@@ -285,7 +293,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.waveLdsScope = WaveLdsScope(program, workgroup, state.laneCount);
     if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
     // Stopped invocations would leave the wave LDS barriers incomplete.
-    state.bdaStopsInvocations = state.waveLdsScope == 0 && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
+    state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.waveExchange && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);

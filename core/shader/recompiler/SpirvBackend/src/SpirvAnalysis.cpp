@@ -741,6 +741,32 @@ OneLaneRejection Wave64OneLaneRejection(const IrProgram& program, std::uint32_t 
     return OneLaneRejection::None;
 }
 
+bool Wave64ExchangeAllowed(const IrProgram& program, std::uint32_t workgroupThreads, std::span<const std::uint32_t> capabilities) {
+    const auto supported = [&](std::uint32_t capability) { return std::find(capabilities.begin(), capabilities.end(), capability) != capabilities.end(); };
+    if (program.WaveSize() != 64u || workgroupThreads > program.WaveSize() || !supported(spv::CapabilityGroupNonUniformBallot)) return false;
+    for (const IrBlock* block : program.BlockOrder()) {
+        for (const IrValue* inst : block->Instructions()) {
+            switch (inst->Opcode()) {
+            case IrOpcode::Sendmsg:
+            case IrOpcode::EmitVertex:
+            case IrOpcode::MeshAllocate:
+            case IrOpcode::DataAppend:
+            case IrOpcode::DataConsume:
+            case IrOpcode::ShaderClock:
+            case IrOpcode::RealtimeClock:
+                return false;
+            default:
+                break;
+            }
+        }
+    }
+    const auto& memory = program.Resources().memoryInfo;
+    if (std::any_of(memory.begin(), memory.end(), [](const MemoryInfo& info) { return info.coherent && (info.kind == ResourceKind::ScalarBuffer || info.kind == ResourceKind::ScalarAddress); })) return false;
+    const auto& images = program.Info().images;
+    const bool bindless = std::any_of(images.begin(), images.end(), [](const auto& image) { return image.table != NoTable; });
+    return !bindless || (supported(spv::CapabilityShaderNonUniform) && supported(spv::CapabilitySampledImageArrayNonUniformIndexing) && supported(spv::CapabilityStorageImageArrayNonUniformIndexing));
+}
+
 const char* OneLaneRejectionName(OneLaneRejection rejection) {
     switch (rejection) {
     case OneLaneRejection::None: return "one lane per invocation";

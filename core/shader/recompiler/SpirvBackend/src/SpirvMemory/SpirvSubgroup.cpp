@@ -3,6 +3,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
+#include <array>
 #include <stdexcept>
 #include <string>
 #include <SpirvBackend/SpirvEmitterInstructions.hpp>
@@ -82,7 +83,55 @@ namespace ShaderRecompiler
         return EmitAddU32(state, base, lane);
     }
 
+    void DefineWaveExchange(SpirvEmitterState& state) {
+        if (!state.waveExchange) return;
+        if (state.waveExchangeVariable == 0) {
+            state.waveExchangeVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, WaveExchangeDwords), spv::StorageClassWorkgroup);
+            state.module.AddName(state.waveExchangeVariable, "wave_exchange");
+            state.waveExchangeParity = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), spv::StorageClassPrivate);
+        }
+        state.module.AddFunction(spv::OpStore, state.waveExchangeParity, ConstantU32(state, 0u));
+    }
+
+    std::array<std::uint32_t, 4> EmitWaveExchange(SpirvEmitterState& state, std::uint32_t first, std::uint32_t second) {
+        if (state.waveExchangeVariable == 0) FailEmit("the wave exchange was not defined before function emission");
+        const auto u32 = TypeU32(state);
+        const auto pointer = TypePointer(state, spv::StorageClassWorkgroup, u32);
+        const auto parity = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, u32, parity, state.waveExchangeParity);
+        state.module.AddFunction(spv::OpStore, state.waveExchangeParity, EmitBinaryU32(state, spv::OpBitwiseXor, parity, ConstantU32(state, 1u)));
+        const auto base = EmitBinaryU32(state, spv::OpShiftLeftLogical, parity, ConstantU32(state, 2u));
+        const auto half = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, EmitLocalInvocationIndex(state), ConstantU32(state, 4u)), ConstantU32(state, 2u));
+        const auto element = [&](std::uint32_t index) {
+            const auto result = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAccessChain, pointer, result, state.waveExchangeVariable, index);
+            return result;
+        };
+        const auto own = EmitAddU32(state, base, half);
+        const auto scope = ConstantU32(state, spv::ScopeWorkgroup);
+        const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
+        state.module.AddFunction(spv::OpAtomicStore, element(own), scope, relaxed, first);
+        state.module.AddFunction(spv::OpAtomicStore, element(EmitAddU32(state, own, ConstantU32(state, 1u))), scope, relaxed, second);
+        state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
+        std::array<std::uint32_t, 4> values{};
+        for (std::uint32_t index = 0; index < 4u; ++index) {
+            values[index] = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, u32, values[index], element(EmitAddU32(state, base, ConstantU32(state, index))));
+        }
+        return values;
+    }
+
     std::uint32_t EmitWaveBallot(SpirvEmitterState& state, std::uint32_t ballot) {
+        if (!state.waveExchange) return EmitHalfBallot(state, ballot);
+        const auto word = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, ballot, 0u);
+        const auto words = EmitWaveExchange(state, word, ConstantU32(state, 0u));
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), result, words[0], words[2], ConstantU32(state, 0u), ConstantU32(state, 0u));
+        return result;
+    }
+
+    std::uint32_t EmitHalfBallot(SpirvEmitterState& state, std::uint32_t ballot) {
         if (state.waveSpansSubgroups) {
             const auto mask = state.module.AllocateId();
             state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), mask, ballot, 0u);
@@ -243,6 +292,6 @@ namespace ShaderRecompiler
     std::uint32_t EmitSubgroupLaneActiveBool(SpirvEmitterState& state, std::uint32_t lane) {
         const auto activeBallot = state.module.AllocateId();
         EmitSubgroupBallot(state, activeBallot, ConstantBool(state, true));
-        return EmitBallotLaneActiveBool(state, EmitWaveBallot(state, activeBallot), lane);
+        return EmitBallotLaneActiveBool(state, EmitHalfBallot(state, activeBallot), lane);
     }
 }
