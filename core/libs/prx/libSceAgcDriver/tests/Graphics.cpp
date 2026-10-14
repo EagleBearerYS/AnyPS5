@@ -1784,6 +1784,62 @@ void depthMaintenanceTests() {
     }
 }
 
+// Resident Evil Village's (PPSA01556) out-of-place DB expand, with the game's register values: the
+// 1920x2160 Z_32_FLOAT SW_64KB_Z_X surface at DB_Z_READ_BASE is expanded to DB_Z_WRITE_BASE.
+void depthExpandPassTests() {
+    const auto expand = [] {
+        auto queue = makeState();
+        for (const auto [offset, value] : {std::pair{0x000u, 0x60u}, {0x002u, 0u}, {0x005u, 0x20293e00u}, {0x007u, (2159u << 16u) | 1919u}, {0x00au, 0u}, {0x00bu, 0u},
+                 {0x010u, 0x20000183u}, {0x011u, 0x20000181u}, {0x012u, 0x202a8a00u}, {0x013u, 0x20294300u}, {0x014u, 0x20298b00u}, {0x015u, 0x20294300u},
+                 {0x01au, 0u}, {0x01bu, 0u}, {0x01cu, 0u}, {0x01du, 0u}, {0x01eu, 0u}, {0x200u, 0u}, {0x201u, 0u}, {0x202u, 0x00cc0000u}, {0x203u, 0u},
+                 {0x8eu, 0xffffffffu}, {0x8fu, 0u}, {0x2f8u, 0x00108001u}, {0xdu, (2160u << 16u) | 1920u}, {0x82u, (2160u << 16u) | 1920u}, {0x91u, (2160u << 16u) | 1920u}, {0x95u, (2160u << 16u) | 1920u}}) {
+            queue.context[offset] = value;
+        }
+        queue.context[0x10f] = std::bit_cast<std::uint32_t>(960.0f);
+        queue.context[0x110] = std::bit_cast<std::uint32_t>(960.0f);
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(-1080.0f);
+        queue.context[0x112] = std::bit_cast<std::uint32_t>(1080.0f);
+        return queue;
+    };
+    const auto pass = AgcDriver::Graphics::DecodeDepthExpandPass(expand());
+    Require(pass.has_value(), "the game's out-of-place DB expand was not recognised");
+    const auto& source = pass->source;
+    Require(source.address == 0x202a8a0000ull && pass->destination == 0x20298b0000ull && source.stencilAddress == 0x2029430000ull && source.htileAddress == 0x20293e0000ull, "the DB expand's bases changed");
+    Require(source.extent.width == 1920u && source.extent.height == 2160u && source.format == VK_FORMAT_D32_SFLOAT_S8_UINT && source.samples == 1u, "the DB expand's read surface changed");
+    for (const auto [offset, value] : {std::pair{0x000u, 0u}, {0x000u, 0x2000u}, {0x014u, 0x202a8a00u}, {0x002u, 0x01000000u}}) {
+        auto other = expand();
+        other.context[offset] = value;
+        Require(!AgcDriver::Graphics::DecodeDepthExpandPass(other).has_value(), "a draw without compress-disable bits, an in-place expand or a read-only depth view was taken for an out-of-place DB expand");
+    }
+    auto absent = expand();
+    absent.context.erase(0x000);
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(absent).has_value(), "a draw without DB_RENDER_CONTROL was taken for a DB expand");
+    const std::vector<std::tuple<std::uint32_t, std::uint32_t, std::string_view>> rejections{
+        {0x015u, 0x20294400u, "of the stencil plane"},
+        {0x000u, 0x61u, "with clear, copy, resummarize or decompress bits"},
+        {0x000u, 0x20u, "without DEPTH_COMPRESS_DISABLE"},
+        {0x200u, 0x2u, "with depth, stencil or depth bounds tests"},
+        {0x200u, 0x8u, "with depth, stencil or depth bounds tests"},
+        {0x010u, 0x20000181u, "of a depth plane other than Z_32_FLOAT"},
+        {0x010u, 0x20000187u, "of a multisampled depth surface"},
+        {0x010u, 0x20000003u, "in a swizzle mode other than SW_64KB_Z_X"},
+        {0x010u, 0x20010183u, "of a partially resident or mipmapped depth surface"},
+        {0x002u, 1u, "of a depth view with a base slice"},
+        {0x014u, 0x20298b01u, "between bases that are not 64 KiB aligned"},
+        {0x10fu, std::bit_cast<std::uint32_t>(480.0f), "over part of the depth surface"},
+        {0x91u, (1080u << 16u) | 1920u, "over part of the depth surface"},
+    };
+    for (const auto& [offset, value, reason] : rejections) {
+        auto other = expand();
+        other.context[offset] = value;
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(other); }, reason);
+    }
+    auto colored = expand();
+    colored.context[0x202] = 0x00cc0010u;
+    colored.context[0x8f] = 0xfu;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(colored); }, "with color writes");
+}
+
 // SPI_SHADER_Z_FORMAT (0x1c4) and the export enables of DB_SHADER_CONTROL (0x203): Z export needs a
 // format with a depth channel (1, 2, 3 or 32_ABGR 9), the sample mask needs 32_ABGR, and the
 // formats the export path does not lay out are refused. A missing 0x1c4 gives no verdict here.
@@ -6044,6 +6100,7 @@ int main(int argc, char** argv) {
         pipelineLibrarySetTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
+        depthExpandPassTests();
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();
