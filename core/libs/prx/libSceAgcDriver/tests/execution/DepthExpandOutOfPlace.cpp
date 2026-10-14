@@ -89,8 +89,15 @@ constexpr std::array<std::uint32_t, 17> HtileClearCode{
     0x00120a05u, 0xd771000au, 0x00120c05u, 0xd771000bu, 0x00120e05u, 0xdc788000u, 0x00020800u, 0xbf810000u,
 };
 
-alignas(256) std::array<std::array<float, 4>, 3> Vertices{{
+using Triangle = std::array<std::array<float, 4>, 3>;
+
+alignas(256) Triangle Vertices{{
     {-1.0f, -1.0f, 0.0f, 1.0f}, {3.0f, -1.0f, XSlope, 1.0f}, {-1.0f, 3.0f, YSlope, 1.0f},
+}};
+
+constexpr float Raise = 0.25f;
+alignas(256) Triangle RaisedVertices{{
+    {-1.0f, -1.0f, Raise, 1.0f}, {3.0f, -1.0f, Raise + XSlope, 1.0f}, {-1.0f, 3.0f, Raise + YSlope, 1.0f},
 }};
 
 struct RegisteredShader {
@@ -199,7 +206,7 @@ struct Launch {
     std::uint64_t indices = 0;
 };
 
-std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool twoSamples, const Launch& launch = {}, float clearDepth = 1.0f) {
+std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool twoSamples, const Launch& launch = {}, float clearDepth = 1.0f, const Triangle& vertices = Vertices) {
     const auto extent = (Height << 16u) | Width;
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000}, {0x1b6, 0}, {0x203, 0}, {0x2dc, 0xaa00}, {0x293, 0},
@@ -232,8 +239,8 @@ std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool
     SetRegister(words, SetShReg, 0x0c8, static_cast<std::uint32_t>(vertex >> 8u));
     SetRegister(words, SetShReg, 0x0c9, static_cast<std::uint32_t>(vertex >> 40u));
     SetRegister(words, SetShReg, 0x08b, 4u << 1u);
-    const auto address = Address(Vertices.data());
-    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Vertices.size()), 0x01016facu};
+    const auto address = Address(vertices.data());
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(vertices.size()), 0x01016facu};
     for (std::uint32_t i = 0; i < descriptor.size(); ++i) SetRegister(words, SetShReg, 0x08c + i, descriptor[i]);
     if (launch.opcode == DrawIndexAuto) {
         words.insert(words.end(), {0xc0000000u | (1u << 16u) | (DrawIndexAuto << 8u), static_cast<std::uint32_t>(Vertices.size()), 2u});
@@ -383,11 +390,11 @@ std::uint32_t Compare(const std::vector<std::uint32_t>& actual, const std::vecto
     return matching;
 }
 
-std::vector<std::uint32_t> DrawnDepth(TexelReader& reader, const Surfaces& surfaces, const std::string& name) {
+std::vector<std::uint32_t> DrawnDepth(TexelReader& reader, const Surfaces& surfaces, const std::string& name, float raise = 0.0f) {
     const auto depth = reader.Read(surfaces.depth, name + ": texture read of the read base");
     std::uint32_t drawn = 0;
     for (std::uint32_t texel = 0; texel < Texels; ++texel) {
-        if (std::fabs(std::bit_cast<float>(depth[texel]) - Expected(texel % Width, texel / Width)) <= 4e-6f) ++drawn;
+        if (std::fabs(std::bit_cast<float>(depth[texel]) - (raise + Expected(texel % Width, texel / Width))) <= 4e-6f) ++drawn;
     }
     std::printf("  read base: %u of %u texels hold the drawn depth gradient; texel (0, 0) %s, (%u, %u) %s\n", drawn, Texels, Hex(depth.front()).c_str(), Width - 1u, Height - 1u, Hex(depth.back()).c_str());
     Require(drawn == Texels, name + ": the depth draw did not write its gradient at the read base");
@@ -487,6 +494,44 @@ bool RunBufferRead(TexelReader& reader, bool addressBased) {
     return Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  buffer copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels;
 }
 
+bool RunRepeatedExpand(TexelReader& reader) {
+    const auto name = std::string("the game's expand repeated");
+    const auto surfaces = NewSurfaces();
+    const auto copy = Address(NewBlock(PlaneBytes()));
+    std::printf("%s: read base 0x%llx, write base 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written));
+    Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
+    const auto start = DepthExpandCounts();
+    std::uint64_t expands = 0, written = 0;
+    bool counted = true;
+    const auto expand = [&](const std::string& after, bool writes) {
+        Submit(DepthDraw(surfaces, true, true), name + ": DB expand " + after);
+        ++expands;
+        if (writes) ++written;
+        const auto counts = DepthExpandCounts();
+        const auto ran = counts.expands - start.expands;
+        const auto copied = ran - (counts.skipped - start.skipped);
+        std::printf("  DB expand %s: %llu expands, %llu of them wrote the plane (expected %llu and %llu)\n", after.c_str(), static_cast<unsigned long long>(ran), static_cast<unsigned long long>(copied), static_cast<unsigned long long>(expands), static_cast<unsigned long long>(written));
+        counted = counted && ran == expands && copied == written;
+    };
+    expand("of the drawn surface", true);
+    expand("again", false);
+    expand("a third time", false);
+    auto depth = DrawnDepth(reader, surfaces, name);
+    bool expanded = Expanded(reader, surfaces.written, depth, name);
+    expand("after reads of the write base", false);
+    reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": address-based buffer copy of the write base");
+    expanded = Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  address-based buffer copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels && expanded;
+    expand("after an address-based copy of the write base", false);
+    Submit(DepthDraw(surfaces, false, false, {}, 1.0f, RaisedVertices), name + ": second depth draw at the read base, 0.25 deeper");
+    expand("after a second draw to the surface", true);
+    depth = DrawnDepth(reader, surfaces, name, Raise);
+    expanded = Expanded(reader, surfaces.written, depth, name) && expanded;
+    Fill(surfaces.written, PlaneBytes(), CpuWritten);
+    expand("after a CPU write to the write base", true);
+    expanded = Expanded(reader, surfaces.written, depth, name) && expanded;
+    return counted && expanded;
+}
+
 struct Case {
     const char* name;
     std::function<bool(TexelReader&)> run;
@@ -510,6 +555,7 @@ int main(int argc, char** argv) {
             {"guest-read-base", RunGuestReadBase, "depth expand: the write base does not hold the read base's guest bytes after the DB expand of a read base without a depth surface"},
             {"buffer-read", [](TexelReader& reader) { return RunBufferRead(reader, false); }, "depth expand: a buffer copy of the write base right after the DB expand does not hold the read surface's depth"},
             {"address-based-buffer-read", [](TexelReader& reader) { return RunBufferRead(reader, true); }, "depth expand: an address-based buffer copy of the write base right after the DB expand does not hold the read surface's depth"},
+            {"repeated-expand", RunRepeatedExpand, "depth expand: a repeated DB expand wrote the plane when nothing changed, or did not write it after a change"},
         };
         const std::string_view only = argc == 2 ? std::string_view(argv[1]) : std::string_view();
         Require(argc <= 2 && (only.empty() || std::any_of(cases.begin(), cases.end(), [&](const Case& entry) { return only == entry.name; })), "usage: [case name]");
