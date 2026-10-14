@@ -1732,17 +1732,25 @@ bool LoopGuardEnabled() {
     return enabled;
 }
 
+bool AddressReuseEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_ADDRESS_DRAW_REUSE") == nullptr;
+    return enabled;
+}
+
 }
 
 void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
     reusable = false;
+    addressReuse = false;
     directRegions.clear();
-    if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || (bda != nullptr && LoopGuardEnabled())) return;
+    addressWrites.clear();
+    const bool addressBased = usesBda && drawBuild && AddressReuseEnabled();
+    if (guestMemory.HasCopiedWrites() || (!addressBased && (HoldsLease() || usesBda)) || (bda != nullptr && LoopGuardEnabled())) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.size > MaxRefreshBytes; })) return;
-    const auto regions = guestMemory.DirectRegions();
+    const auto regions = addressBased ? guestMemory.SpaceRegions() : guestMemory.DirectRegions();
     if (!regions.has_value()) return;
     for (const auto& [begin, end] : *regions) {
         // No reconcile here: the upload just took these imports, and the set is about to be recorded
@@ -1754,13 +1762,16 @@ void ShaderResources::noteReusable() {
         if (serial == 0) return;
         directRegions.push_back({begin, end, serial});
     }
+    if (addressBased) addressWrites = guestMemory.DirectWrites();
     reusable = true;
+    addressReuse = addressBased;
 }
 
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     const bool loopGuard = LoopGuardEnabled();
-    return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
-        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
+    const bool addressReuse = AddressReuseEnabled();
+    return std::any_of(shaders.begin(), shaders.end(), [loopGuard, addressReuse](const CompiledShader& shader) {
+        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard, addressReuse](const ShaderRecompiler::DescriptorBinding& binding) { return (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && !addressReuse) || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
     });
 }
 
@@ -2333,7 +2344,28 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     return false;
 }
 
-bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
+bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report, std::span<const GuestMemorySnapshot> snapshots) {
+    if (!addressReuse) return proveBuild(shaders, report);
+    if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
+    if (!reusable || InUse() || !guestMemory.SameSnapshots(snapshots)) return false;
+    struct Suspend {
+        GuestBufferMemory& memory;
+        bool armed = true;
+        ~Suspend() {
+            if (armed) memory.SuspendSpace();
+        }
+    } suspend{guestMemory};
+    if (!guestMemory.ResumeSpace()) return false;
+    const bool proved = proveBuild(shaders, report);
+    if (proved && guestMemory.SpaceImportsCurrent()) {
+        suspend.armed = false;
+        return true;
+    }
+    if (proved && report != nullptr) report->failure = ProofFailure::Imports;
+    return false;
+}
+
+bool ShaderResources::proveBuild(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
     if (!reusable || shaders.empty()) return false;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -3520,7 +3552,7 @@ ShaderResources::DrawBindings::~DrawBindings() {
 
 std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const {
     std::vector<MovedBuffer> moved;
-    if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return moved;
+    if (_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) return moved;
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) return std::nullopt;
         for (const auto& binding : shader.program->bindings) {
@@ -3563,6 +3595,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
             }
         }
     }
+    if (usesBda && !moved.empty()) return std::nullopt;
     return moved;
 }
 
@@ -3712,6 +3745,35 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
 
 void ShaderResources::CheckFaults() const {
     if (bda) bda->CheckFault();
+}
+
+std::shared_ptr<const void> ShaderResources::BeginUse() {
+    if (!addressReuse) return {};
+    usesInFlight.fetch_add(1, std::memory_order_acq_rel);
+    return guestMemory.SpaceHold();
+}
+
+void ShaderResources::CompleteUse() {
+    if (!addressReuse) {
+        CheckFaults();
+        return;
+    }
+    struct Completed {
+        std::atomic<std::uint32_t>& uses;
+        ~Completed() { uses.fetch_sub(1, std::memory_order_acq_rel); }
+    } completed{usesInFlight};
+    try {
+        CheckFaults();
+    } catch (...) {
+        reusable = false;
+        throw;
+    }
+    if (SkipWriteBack()) return;
+    for (const auto& [begin, end] : addressWrites) GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+}
+
+void ShaderResources::EndUse() noexcept {
+    if (addressReuse) guestMemory.SuspendSpace();
 }
 
 void ShaderResources::WriteBackBuffers() {

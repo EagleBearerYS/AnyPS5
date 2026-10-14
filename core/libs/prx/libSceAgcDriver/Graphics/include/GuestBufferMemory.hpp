@@ -288,8 +288,20 @@ public:
     // For the recorder's read tracking (ShaderResources::MarkGpuWrites); nothing once committed.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const;
+    std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> SpaceRegions() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> DirectWrites() const;
+    bool SameSnapshots(std::span<const GuestMemorySnapshot> snapshots) const;
+    void SuspendSpace() noexcept;
+    bool ResumeSpace();
+    bool SpaceImportsCurrent();
+    std::shared_ptr<const void> SpaceHold() const { return space; }
 
 private:
+    struct SnapshotUse {
+        std::uint64_t address;
+        std::size_t bytes;
+        bool live;
+    };
     struct Region {
         std::uint64_t begin;
         std::uint64_t end;
@@ -409,6 +421,8 @@ private:
     bool regionsSorted = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;
+    std::vector<SnapshotUse> snapshotUses;
+    std::uint64_t suspendedSpace = 0;
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
     bool uploaded = false;
