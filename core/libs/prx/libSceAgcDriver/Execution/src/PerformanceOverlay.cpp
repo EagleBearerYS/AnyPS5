@@ -342,6 +342,27 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
     }
 }
 
+void AppendOverlayLine(std::vector<OverlayRect>& rects, std::string_view line, std::int32_t left, std::int32_t top, std::int32_t row, std::int32_t scale) {
+    for (std::size_t column = 0; column < line.size(); ++column) {
+        const auto& glyph = OverlayGlyph(line[column]);
+        const auto glyphLeft = left + (OverlayMetrics::Padding + static_cast<std::int32_t>(column) * OverlayMetrics::Advance) * scale;
+        for (std::int32_t y = 0; y < OverlayMetrics::GlyphHeight; ++y) {
+            const auto bits = glyph[static_cast<std::size_t>(y)];
+            std::int32_t x = 0;
+            while (x < OverlayMetrics::GlyphWidth) {
+                if ((bits & (0x10u >> x)) == 0) {
+                    ++x;
+                    continue;
+                }
+                auto end = x;
+                while (end < OverlayMetrics::GlyphWidth && (bits & (0x10u >> end)) != 0) ++end;
+                rects.push_back({glyphLeft + x * scale, top + (row + y) * scale, (end - x) * scale, scale, static_cast<std::uint32_t>(OverlayColor::Text)});
+                x = end;
+            }
+        }
+    }
+}
+
 std::string FormatOverlayValue(double value) {
     const double clamped = std::isfinite(value) ? std::clamp(value, 0.0, 9999.0) : 0.0;
     char text[16];
@@ -461,24 +482,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
     layout.rects.push_back(layout.bounds);
     const auto text = [&](const std::string& line, std::int32_t row) {
         Graphics::Require(line.size() <= static_cast<std::size_t>(OverlayMetrics::Columns), "a performance overlay line is wider than the panel");
-        for (std::size_t column = 0; column < line.size(); ++column) {
-            const auto& glyph = OverlayGlyph(line[column]);
-            const auto glyphLeft = left + (OverlayMetrics::Padding + static_cast<std::int32_t>(column) * OverlayMetrics::Advance) * scale;
-            for (std::int32_t y = 0; y < OverlayMetrics::GlyphHeight; ++y) {
-                const auto bits = glyph[static_cast<std::size_t>(y)];
-                std::int32_t x = 0;
-                while (x < OverlayMetrics::GlyphWidth) {
-                    if ((bits & (0x10u >> x)) == 0) {
-                        ++x;
-                        continue;
-                    }
-                    auto end = x;
-                    while (end < OverlayMetrics::GlyphWidth && (bits & (0x10u >> end)) != 0) ++end;
-                    layout.rects.push_back({glyphLeft + x * scale, top + (row + y) * scale, (end - x) * scale, scale, static_cast<std::uint32_t>(OverlayColor::Text)});
-                    x = end;
-                }
-            }
-        }
+        AppendOverlayLine(layout.rects, line, left, top, row, scale);
     };
     auto row = OverlayMetrics::Padding;
     for (const auto& line : content.above) {
@@ -715,26 +719,48 @@ VkPipeline PerformanceOverlay::pipeline(VkFormat format, VkRenderPass compatible
     return pipelines.emplace(format, created).first->second;
 }
 
-OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
+OverlayLayout PerformanceOverlay::PanelLayout(VkExtent2D extent) const {
     auto shown = details;
     shown.window = extent;
-    return Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, ComposeOverlay(statistics, PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled(), shown), Corner());
+    return LayOutOverlay(ComposeOverlay(statistics, PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled(), shown), extent, Corner());
 }
 
-OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner) {
+OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
+    Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "the performance overlay destination is unavailable");
+    const auto layout = PanelLayout(extent);
+    Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, std::span<const OverlayLayout>(&layout, 1));
+    return layout.bounds;
+}
+
+OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner) {
+    Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "the performance overlay destination is unavailable");
+    const auto layout = LayOutOverlay(content, extent, corner);
+    Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, std::span<const OverlayLayout>(&layout, 1));
+    return layout.bounds;
+}
+
+void PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, std::span<const OverlayLayout> layouts) {
     Graphics::Require(index < slots.size(), "performance overlay slot is out of range");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "the performance overlay destination is unavailable");
+    Graphics::Require(!layouts.empty(), "the performance overlay has nothing to draw");
     auto& slot = slots[index];
     releaseTransient(slot);
-    const auto layout = LayOutOverlay(content, extent, corner);
-    if (slot.capacity < layout.rects.size()) {
-        const auto capacity = std::max<std::size_t>(layout.rects.size(), 1024);
+    std::size_t total = 0;
+    for (const auto& layout : layouts) total += layout.rects.size();
+    if (slot.capacity < total) {
+        const auto capacity = std::max<std::size_t>(total, 1024);
         slot.rects = std::make_unique<Graphics::Buffer>(context, capacity * sizeof(OverlayRect), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         slot.capacity = capacity;
     }
-    std::memcpy(slot.rects->Bytes().data(), layout.rects.data(), layout.rects.size() * sizeof(OverlayRect));
-    const auto pass = renderPass(format, initialLayout, finalLayout);
-    const auto drawing = pipeline(format, pass);
+    auto* written = slot.rects->Bytes().data();
+    for (const auto& layout : layouts) {
+        std::memcpy(written, layout.rects.data(), layout.rects.size() * sizeof(OverlayRect));
+        written += layout.rects.size() * sizeof(OverlayRect);
+    }
+    const auto passBetween = [&](std::size_t drawn) {
+        return renderPass(format, drawn == 0 ? initialLayout : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, drawn + 1 == layouts.size() ? finalLayout : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    };
+    const auto firstPass = passBetween(0);
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = destination;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -747,7 +773,7 @@ OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t ind
     VkImageView view = VK_NULL_HANDLE;
     Graphics::Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView performance overlay");
     VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    framebufferInfo.renderPass = pass;
+    framebufferInfo.renderPass = firstPass;
     framebufferInfo.attachmentCount = 1;
     framebufferInfo.pAttachments = &view;
     framebufferInfo.width = extent.width;
@@ -757,26 +783,33 @@ OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t ind
     const auto created = context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer);
     slot.transient.emplace_back(view, framebuffer);
     Graphics::Check(created, "vkCreateFramebuffer performance overlay");
-    const auto right = std::min<std::int32_t>(layout.bounds.x + layout.bounds.width, static_cast<std::int32_t>(extent.width));
-    const auto bottom = std::min<std::int32_t>(layout.bounds.y + layout.bounds.height, static_cast<std::int32_t>(extent.height));
-    const VkRect2D area{{layout.bounds.x, layout.bounds.y}, {static_cast<std::uint32_t>(std::max(1, right - layout.bounds.x)), static_cast<std::uint32_t>(std::max(1, bottom - layout.bounds.y))}};
-    VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    begin.renderPass = pass;
-    begin.framebuffer = framebuffer;
-    begin.renderArea = area;
-    context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
-    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &area);
     const OverlayParameters parameters{OverlayPalette(format, colorSpace), {static_cast<float>(extent.width), static_cast<float>(extent.height)}};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
+    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
     const VkBuffer buffer = slot.rects->Handle();
     const VkDeviceSize offset = 0;
-    context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers")(commands, 0, 1, &buffer, &offset);
-    context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 4, static_cast<std::uint32_t>(layout.rects.size()), 0, 0);
-    context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
-    return layout.bounds;
+    std::uint32_t first = 0;
+    for (std::size_t drawn = 0; drawn < layouts.size(); ++drawn) {
+        const auto& layout = layouts[drawn];
+        const auto pass = drawn == 0 ? firstPass : passBetween(drawn);
+        const auto drawing = pipeline(format, pass);
+        const auto right = std::min<std::int32_t>(layout.bounds.x + layout.bounds.width, static_cast<std::int32_t>(extent.width));
+        const auto bottom = std::min<std::int32_t>(layout.bounds.y + layout.bounds.height, static_cast<std::int32_t>(extent.height));
+        const VkRect2D area{{layout.bounds.x, layout.bounds.y}, {static_cast<std::uint32_t>(std::max(1, right - layout.bounds.x)), static_cast<std::uint32_t>(std::max(1, bottom - layout.bounds.y))}};
+        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        begin.renderPass = pass;
+        begin.framebuffer = framebuffer;
+        begin.renderArea = area;
+        context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
+        context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
+        context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &area);
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
+        context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers")(commands, 0, 1, &buffer, &offset);
+        const auto count = static_cast<std::uint32_t>(layout.rects.size());
+        context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 4, count, 0, first);
+        context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+        first += count;
+    }
 }
 
 }
