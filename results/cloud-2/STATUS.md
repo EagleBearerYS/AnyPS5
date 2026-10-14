@@ -1,4 +1,12 @@
-BUSY PM-012
-since: 2026-10-14T18:32:04Z
-claimed: tasks/claimed/PM-012.md (cloud-tasks 077b3120f)
-previous: BF-003 done, results/cloud-2/BF-003.md
+READY
+RESULT:
+- Last task: PM-012 (2-sample depth layout on GFX10 vs Village's R32F at 0x20298b0000), done: results/cloud-2/PM-012.md. Before it: BF-003, PRM-005, PRM-004, PM-003, PRM-002 (results/cloud-2/<id>.md).
+- Tree: /home/user/AnyPS5 detached at fork perf/agc-collect-memo-index 49f062fd03 (upstream 276608d2cf + 1 commit), clean, recursive submodules; build/ fully built there (all + libs) with CI's Linux flags and ccache.
+- Research aids kept: /home/user/main-ro = read-only worktree of upstream main cb893e0ff; refs/open-pr/<n> = heads of the 460 open mergeable upstream PRs (fetched 2026-10-14 ~18:45 UTC); /home/user/research = Mesa 25.2.8 AMD sources (Ubuntu source package) and an addrlib harness (addr_probe) for GFX10 surface, HTILE and sample-address math.
+- Machine: host vm, 4 vCPU Intel Xeon (1 thread/core, AVX2/AVX-512F), now reported as 2.80 GHz (lscpu said 2.10 GHz at setup; the VM appears to have been resumed on a different host model, so build times from before and after may not compare), 15 GiB RAM, no swap, about 27 GB disk free. Ubuntu 24.04.5, kernel 6.18 booted with ipv6.disable=1, no udmabuf, no display. Write watching works (userfaultfd with UFFD_USER_MODE_ONLY, WP_ASYNC, PAGEMAP_SCAN). gitlab.freedesktop.org is blocked by the egress proxy; Ubuntu's archive (incl. source packages) is reachable.
+- Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1, Python 3.13.16, git 2.43.0, lavapipe from mesa-vulkan-drivers 25.2.8 (LLVM 20.1.2), libvulkan1 1.3.275; Xvfb and vulkan-validationlayers 1.3.275 for display tests.
+- Build times: cold full build 1105 s; incremental 446-1018 s depending on what changed (705 s for 58 upstream commits on 2026-10-14); no-op rebuild about 1 s.
+- Tests run as an unprivileged user, as on CI.
+- Full-suite baseline (ctest -j4): upstream main a453108cf7: 1170 tests, 1107 passed, 58 skipped, 5 failed; overlay branch: 1176, 1113/58/5; BF-003's M (on main 276608d2cf): 1182, 1119/58/5. The same 5 fail every time: guest_datagram_recv, guest_datagram_recvfrom, guest_datagram_sceNetRecv, guest_datagram_sceNetRecvfrom and guest_tcp, all from IPv6 being off; the same 58 skip; check_skips flags guest_sce_net for the same reason. guest_avplayer is intermittent on the other workers but has not failed here. Anything beyond these is a real change.
+- Remotes: upstream = boykopovar/AnyPS5 (fetch only, push disabled); origin and fork = EagleBearerYS/AnyPS5.
+- Board watcher: skips open tasks whose for: names cloud-1 or cloud-3, so a task left for another worker doesn't wake it in a loop. An hourly check-in (trig_01HhjrdD6JFV26ZRvjq2Jzbt, about :35 UTC) restarts the watcher if the VM is recycled while idle.
