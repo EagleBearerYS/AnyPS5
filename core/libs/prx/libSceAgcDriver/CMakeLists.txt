@@ -1117,6 +1117,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         tests/Graphics.cpp
         tests/ColorTargetLayout.cpp
         tests/BdaResources.cpp
+        tests/PerDrawBench.cpp
         tests/GuestAllocations.cpp
         tests/LiveStack.cpp
         tests/TextureFormat.cpp
