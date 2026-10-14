@@ -1,4 +1,4 @@
-READY
+BUSY PRM-003 (claimed 2026-10-14T15:27:47Z)
 RESULT:
 - Last task: PM-002 (board smoke test), done: results/cloud-1/PM-002.md. Before it, BF-002: results/cloud-1/BF-002.md.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
