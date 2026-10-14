@@ -1938,6 +1938,46 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
     return true;
 }
 
+std::uint64_t Digest(std::span<const std::byte> bytes) {
+    constexpr std::uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+    const auto step = [](std::uint64_t lane, std::uint64_t chunk) {
+        chunk *= 0xff51afd7ed558ccdull;
+        chunk ^= chunk >> 32u;
+        return std::rotl((lane ^ chunk) * multiplier, 27);
+    };
+    std::array<std::uint64_t, 4> lanes{};
+    for (std::size_t lane = 0; lane < lanes.size(); ++lane) lanes[lane] = (static_cast<std::uint64_t>(bytes.size()) + lane + 1u) * multiplier;
+    std::array<std::uint64_t, 4> chunks{};
+    std::size_t index = 0;
+    for (; index + sizeof(chunks) <= bytes.size(); index += sizeof(chunks)) {
+        std::memcpy(chunks.data(), bytes.data() + index, sizeof(chunks));
+        for (std::size_t lane = 0; lane < lanes.size(); ++lane) lanes[lane] = step(lanes[lane], chunks[lane]);
+    }
+    if (index < bytes.size()) {
+        chunks = {};
+        std::memcpy(chunks.data(), bytes.data() + index, bytes.size() - index);
+        for (std::size_t lane = 0; lane < lanes.size(); ++lane) lanes[lane] = step(lanes[lane], chunks[lane]);
+    }
+    auto hash = static_cast<std::uint64_t>(bytes.size());
+    for (const auto lane : lanes) hash = step(hash, lane);
+    hash ^= hash >> 33u;
+    hash *= 0xff51afd7ed558ccdull;
+    hash ^= hash >> 33u;
+    hash *= 0xc4ceb9fe1a85ec53ull;
+    hash ^= hash >> 33u;
+    return hash;
+}
+
+std::uint64_t DigestCommitted(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0) return Digest({});
+    FlushGpuWrites(address, bytes);
+    const TimedAccess timed(CounterCompare, bytes);
+    if (Accessible(reinterpret_cast<const void*>(address), bytes)) return Digest(std::span(reinterpret_cast<const std::byte*>(address), bytes));
+    std::vector<std::byte> copy(bytes);
+    copyCommitted(address, copy);
+    return Digest(copy);
+}
+
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return Compare::Equal;
     if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
