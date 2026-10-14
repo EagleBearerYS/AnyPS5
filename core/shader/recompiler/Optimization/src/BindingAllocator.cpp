@@ -98,7 +98,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     IrBindingLayout next;
     next.userDataRegisters = collectUserData(program);
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
-    next.memoryOffsetCount = static_cast<std::uint32_t>(info.buffers.size());
     next.dispatchThreadLimit = info.dispatchThreadLimit;
     if (info.images.size() > RuntimeAbi::ImageCapacity) fail("shader binding layout exceeds runtime metadata capacity");
     next.samplerSlotCount = 2u * static_cast<std::uint32_t>(std::ranges::count_if(info.samplers, [](const SamplerResource& sampler) { return sampler.table == NoTable; }));
@@ -113,14 +112,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
             }
         }
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
-    }
-
-    if (!info.buffers.empty()) {
-        std::vector<std::uint32_t> resources(info.buffers.size());
-        for (std::uint32_t i = 0; i < resources.size(); i++) {
-            resources[i] = i;
-        }
-        addBinding(next, DescriptorBindingKind::Buffers, std::move(resources));
     }
 
     std::array<std::vector<std::uint32_t>, ImageBindingCount> imageGroups;

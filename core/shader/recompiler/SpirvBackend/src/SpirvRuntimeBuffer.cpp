@@ -76,7 +76,7 @@ bool runtimeWords(const SpirvEmitterState& state, const MemoryInfo& memory) {
 }
 
 bool runtimeFormatWord(const SpirvEmitterState& state, const MemoryInfo& memory) {
-    return memory.gpuDescriptor || (state.registrationModules && !state.program.Info().buffers.at(memory.resource).descriptorFormatted);
+    return memory.gpuDescriptor || state.registrationModules;
 }
 
 bool computedBase(const IrValue& instruction, const MemoryInfo& memory) {

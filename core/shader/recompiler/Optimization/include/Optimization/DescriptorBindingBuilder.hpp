@@ -19,8 +19,6 @@ struct PreparedDescriptorBinding {
     std::vector<std::uint32_t> samplerFilterElements;
     std::vector<bool> inactive;
     std::vector<std::vector<std::uint32_t>> tableSamplerElements;
-    std::size_t writtenBuffers = 0;
-    std::size_t readOnlyBuffers = 0;
 };
 
 struct PreparedImageMetadata {

@@ -159,10 +159,6 @@ struct Context {
     bool nonSeamlessCubeMap = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
-    // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
-    // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
-    // draw whose records one of them produces reads them on the CPU. Null in tests.
-    const std::vector<std::shared_ptr<ShaderResources>>* copiedWriters = nullptr;
     // The device's resolved entry points (see DeviceFunctions); null until the device set up.
     const DeviceFunctions* functions = nullptr;
     // VK_EXT_descriptor_indexing with non-uniform sampled/storage image array indexing enabled

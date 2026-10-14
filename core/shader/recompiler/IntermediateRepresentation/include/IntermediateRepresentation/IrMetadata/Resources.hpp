@@ -11,25 +11,6 @@
 
 namespace ShaderRecompiler {
 
-struct BufferResource {
-    static constexpr std::uint32_t NoImageAlias = std::numeric_limits<std::uint32_t>::max();
-
-    std::uint32_t source = 0;
-    std::uint32_t firstUsePc = 0;
-    std::uint32_t maxByteExtent = 0;
-    std::uint32_t imageAlias = NoImageAlias;
-    bool read = false;
-    bool written = false;
-    bool atomic = false;
-    bool formatted = false;
-    bool descriptorFormatted = false;
-    std::uint32_t formattedReadMask = 0;
-    bool scalar = false;
-    std::uint8_t typedAlignment = 1;
-
-    bool operator==(const BufferResource& other) const = default;
-};
-
 enum class ImageMipMode { None, DynamicStorage };
 
 namespace EmulatedCompare {

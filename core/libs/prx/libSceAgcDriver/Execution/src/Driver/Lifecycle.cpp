@@ -66,7 +66,6 @@ void Driver::stop() {
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     device.Reset();
     replacedDevices.clear();
-    Graphics::ShutdownGuestBufferWorkers();
     PerformanceTrace::StopOutput();
     StopProfileOutput_nid_no_patch();
     stopped = true;

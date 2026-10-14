@@ -1070,7 +1070,6 @@ namespace {
 
 const char* roleName(ShaderRecompiler::DescriptorRole role) {
     switch (role) {
-        case ShaderRecompiler::DescriptorRole::GuestBuffers: return "GuestBuffers";
         case ShaderRecompiler::DescriptorRole::GuestImages: return "GuestImages";
         case ShaderRecompiler::DescriptorRole::GuestSamplers: return "GuestSamplers";
         case ShaderRecompiler::DescriptorRole::Gds: return "Gds";
@@ -1119,13 +1118,13 @@ bool SameAsPreviousStorageElement(const ShaderRecompiler::DescriptorBinding& bin
 
 ShaderResources::ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes) : ShaderResources(context, std::array<CompiledShader, 2>{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, static_cast<std::uint32_t>(vertex.pushConstants.size())}}}, target, 1, indexAddress, indexBytes) {}
 
-ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots) : context(context), guestMemory(context) {
+ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) : context(context), guestMemory(context) {
     drawBuild = true;
-    prepareAddressBindings(shaders, snapshots);
+    prepareAddressBindings(shaders);
     build(shaders, &target, colorAttachments, indexAddress, indexBytes);
 }
 
-ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots) : ShaderResources(context, compute, snapshots, false) {}
+ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute) : ShaderResources(context, compute, false) {}
 
 namespace {
 
@@ -1137,14 +1136,11 @@ bool UsesAddressTables(const CompiledShader& compute) {
 
 }
 
-ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), deferredCompute(compute), deferredSnapshots(snapshots) {
+ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, bool deferred, std::uint64_t dispatchThreads) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), deferredCompute(compute) {
     Require(compute.stage == ShaderRecompiler::ShaderStage::Compute, "compute resources require a compute shader");
-    // Every use of a compute build is a recorded dispatch that calls MarkGpuWrites, which staged
-    // buffers need (a synchronous draw's use would not).
-    guestMemory.AllowDeviceStaging();
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (!deferred) {
-        prepareAddressBindings(shaders, snapshots);
+        prepareAddressBindings(shaders);
         build(shaders, nullptr, 0, 0, 0);
         forgetDeferredInputs();
         return;
@@ -1156,7 +1152,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     lockedBuild = UsesAddressTables(compute);
     if (lockedBuild) return;
     unlockedPrepare = true;
-    prepareAddressBindings(shaders, snapshots);
+    prepareAddressBindings(shaders);
     buildPrepare(shaders, nullptr, 0, 0, 0);
 }
 
@@ -1164,7 +1160,7 @@ void ShaderResources::Complete() {
     Require(!completed, "shader resources were already completed");
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (lockedBuild) {
-        prepareAddressBindings(shaders, deferredSnapshots);
+        prepareAddressBindings(shaders);
         buildPrepare(shaders, nullptr, 0, 0, 0);
     }
     buildComplete();
@@ -1176,7 +1172,6 @@ void ShaderResources::forgetDeferredInputs() {
     // object lives on in the resource cache and the recorder: nothing may reach for them after the
     // build, so they are dropped rather than left dangling.
     deferredCompute = {};
-    deferredSnapshots = {};
 }
 
 void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
@@ -1269,21 +1264,6 @@ ThreadBuildProfile& ThreadBuilds() {
 
 void addBuildPhase(ShaderResources::BuildPhase which, double ms) {
     ThreadBuilds().ms[static_cast<std::size_t>(which)] += ms;
-}
-
-// APS5_PROFILE_DRAW: guest buffer elements bound by descriptor (addGuestBuffer) and how many the
-// recompiler proved read-only, plus the pending-write notes their uses skipped (MarkGpuWrites),
-// printed as [buffers] every 10 s from MarkGpuWrites. Cumulative.
-struct BufferWriteCounters {
-    std::atomic<std::uint64_t> elements{0};
-    std::atomic<std::uint64_t> readOnly{0};
-    std::atomic<std::uint64_t> notesSkipped{0};
-    std::atomic<std::int64_t> lastReport{0};
-};
-
-BufferWriteCounters& BufferWrites() {
-    static BufferWriteCounters counters;
-    return counters;
 }
 
 }
@@ -1487,7 +1467,6 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         for (const auto& shader : shaders) {
             Require(shader.program != nullptr, "missing compiled shader");
             ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
-            Require(std::count_if(shader.program->bindings.begin(), shader.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers; }) <= 1, "a shader's guest buffers must be one binding: their addresses are placed by element");
             const VkShaderStageFlags flags = VulkanStage(shader.stage);
             std::uint64_t stageStorageBuffers = 0;
             std::uint64_t stageResources = shader.stage == ShaderRecompiler::ShaderStage::Fragment ? colorAttachments : 0;
@@ -1539,38 +1518,6 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {allocations.size() - 1u}});
                     continue;
                 }
-                if (binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
-                    Require(binding.kind == ShaderRecompiler::DescriptorKind::DeviceAddress, std::string("unsupported descriptor kind ") + kindName(binding.kind) + " for role GuestBuffers: guest buffers are read through device addresses");
-                    Require(!binding.readOnly, "read-only descriptors are unsupported because the recompiler emits no NonWritable decoration");
-                    Require(binding.count != 0, "empty descriptor binding");
-                    Require(binding.guestDescriptor.size() == static_cast<std::uint64_t>(binding.count) * 4, "guest buffer descriptor must contain four DWORDs per array element");
-                    Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, binding.count, flags, nullptr}, {}};
-                    item.noDescriptor = true;
-                    const auto& push = shader.program->pushConstants;
-                    for (std::uint32_t element = 0; element < binding.count; ++element) {
-                        // An element the recompiler did not classify (a producer without the
-                        // vector) counts as written, like imageWritten below.
-                        const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-                        const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
-                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic);
-                        const auto position = shader.program->memoryOffsetDword * 4u + element;
-                        const auto addressPosition = (shader.program->bufferAddressDword + element * ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u;
-                        auto& allocation = allocations[index];
-                        allocation.deviceAddressed = true;
-                        if (!push.empty()) {
-                            Require(position < push.size() && addressPosition + ShaderRecompiler::RuntimeAbi::BufferAddressDwords * 4u <= push.size(), "guest buffer offset or address lies outside the shader's push constants");
-                            allocation.pushByte = static_cast<std::int32_t>(shader.pushConstantOffset + position);
-                            allocation.addressPushByte = static_cast<std::int32_t>(shader.pushConstantOffset + addressPosition);
-                        } else {
-                            allocation.dataByte = position;
-                            allocation.addressDataByte = addressPosition;
-                            offsetsInData.push_back(index);
-                        }
-                        item.allocations.push_back(index);
-                    }
-                    bindings.push_back(std::move(item));
-                    continue;
-                }
                 const bool addressRole = binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer;
                 const bool bufferRole = addressRole || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
                 if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) {
@@ -1592,7 +1539,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 } else if (binding.role == ShaderRecompiler::DescriptorRole::Gds) {
                     Require(binding.count == 1 && binding.guestDescriptor.empty(), "invalid GDS descriptor contract");
                     const auto gds = Pm4::GdsAddress();
-                    guestMemory.AddWritable(gds, Pm4::GdsBytes, true);
+                    guestMemory.AddInPlace(gds, Pm4::GdsBytes, true);
                     item.allocations.push_back(allocations.size());
                     allocations.push_back({gds, Pm4::GdsBytes, true, nullptr, ShaderRecompiler::DescriptorRole::ShaderData, true});
                 } else {
@@ -1641,8 +1588,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         // For every build, locked ones included: their stage B then takes the fast path too, and the
         // collects cost the same wherever they run.
         if (precollectImages()) phase(BuildPhase::Precollect);
-        if (drawBuild && !usesBda && std::all_of(allocations.begin(), allocations.end(), [&](const Allocation& allocation) { return !allocation.guest || allocation.pushByte >= 0 || (allocation.dataAllocation >= 0 && allocation.dataByte < allocations[static_cast<std::size_t>(allocation.dataAllocation)].size); })) guestMemory.AllowAdjustedRegions();
-        guestMemory.UploadPrepare(usesBda);
+        guestMemory.UploadPrepare();
         timing.uploadMs = phase(BuildPhase::Upload);
         splitSets = SplitsSets(context, shaders);
         std::array<std::vector<VkDescriptorSetLayoutBinding>, 2> descriptions;
@@ -1811,7 +1757,7 @@ void ShaderResources::buildComplete() {
         Require(textures.size() == plannedSampledImages && storageTextures.size() == plannedStorageImages, "image lookups disagree with the descriptor plan");
         resolveImageTables();
         timing.bindingsMs += phase(BuildPhase::Images);
-        guestMemory.UploadFinish(usesBda);
+        guestMemory.UploadFinish();
         timing.uploadMs += phase(BuildPhase::Upload);
         if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory);
         else if (usesFaultBuffer) bda = std::make_unique<BdaResources>(context);
@@ -1946,12 +1892,10 @@ void ShaderResources::noteReusable() {
     captureValidation();
     reusable = false;
     directRegions.clear();
-    if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || (bda != nullptr && LoopGuardEnabled())) return;
+    if (HoldsLease() || usesBda || (bda != nullptr && LoopGuardEnabled())) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
-    const auto regions = guestMemory.DirectRegions();
-    if (!regions.has_value()) return;
-    for (const auto& [begin, end] : *regions) {
+    for (const auto& [begin, end] : guestMemory.InPlaceReads()) {
         // No reconcile here: the upload just took these imports, and the set is about to be recorded
         // against them.
         auto serial = HostImportSerial(context, begin, static_cast<std::size_t>(end - begin), false);
@@ -2007,15 +1951,7 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
     };
     for (const auto& binding : program.bindings) {
         for (const auto word : {static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count, binding.readOnly ? 1u : 0u, binding.imageShape.has_value() ? static_cast<std::uint32_t>(*binding.imageShape) + 1u : 0u, static_cast<std::uint32_t>(binding.guestDescriptor.size())}) visit(word);
-        if (movableBuffers && binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers && binding.guestDescriptor.size() == static_cast<std::size_t>(binding.count) * 4u) {
-            for (std::uint32_t element = 0; element < binding.count; ++element) {
-                const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
-                const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-                const bool empty = words[2] == 0 || (words[0] == 0 && (words[1] & 0xffffu) == 0);
-                if (written || empty) { for (std::uint32_t index = 0; index < 4u; ++index) visit(words[index]); }
-                else { for (const auto word : {0u, words[1] & 0xffff0000u, 0u, words[3]}) visit(word); }
-            }
-        } else if ((dataWords && !movableBuffers) || !DataRole(binding.role)) {
+        if ((dataWords && !movableBuffers) || !DataRole(binding.role)) {
             for (const auto word : binding.guestDescriptor) visit(word);
         }
         packBits(binding.imageWritten);
@@ -2029,9 +1965,6 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         for (const auto dword : binding.imageSlotDwords) visit(dword);
         packBits(binding.imageUnnormalized);
         packBits(binding.imageUnnormalizedBaseLevel);
-        // Read-only elements are bound without a write set: an object built for one written set
-        // must not serve a build with another (the variant implies it, this makes it explicit).
-        packBits(binding.bufferWritten);
         visit(static_cast<std::uint32_t>(binding.imageSamplers.size()));
         for (const auto& samplers : binding.imageSamplers) {
             visit(static_cast<std::uint32_t>(samplers.size()));
@@ -2542,14 +2475,9 @@ void CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     if (bytes == 0 || Recorder::InCompletion()) return;
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) return;
-    const auto drawWriters = DrawCopiedWriters();
-    const bool labels = Recorder::PendingCompletionLabels() != 0;
-    if ((context.copiedWriters == nullptr || context.copiedWriters->empty()) && drawWriters->empty() && !labels) return;
+    if (Recorder::PendingCompletionLabels() == 0) return;
     if (!recorder->PendingWriteOverlaps(address, bytes)) return;
-    const auto overlaps = [&](const auto& writers) {
-        return std::any_of(writers.begin(), writers.end(), [&](const auto& writer) { return writer->WritesOverlap(address, bytes); });
-    };
-    if ((context.copiedWriters != nullptr && overlaps(*context.copiedWriters)) || overlaps(*drawWriters) || (labels && recorder->PendingLabelIn(address, bytes))) {
+    if (recorder->PendingLabelIn(address, bytes)) {
         Recorder::CountSync(4);
         recorder->SyncThrough(address, bytes);
     }
@@ -2770,17 +2698,6 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         for (const auto& [begin, end] : guestMemory.Writes()) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
         if (!serialLoop()) return finish(fast, false, ProofFailure::Imports);
     }
-    // (3) Buffers staged in device memory (GuestBufferMemory::AllowDeviceStaging) are copied in
-    // from their imports anew for this use, after the flushes above and before the work is
-    // recorded; a failure to record leaves the object unusable for this dispatch, not the batch.
-    if (auto* recorder = Recorder::Active(); recorder != nullptr) {
-        try {
-            guestMemory.RecordStagingCopies(*recorder);
-        } catch (const std::exception& error) {
-            std::fprintf(stderr, "[resources] staging copies of a reused build failed: %s\n", error.what());
-            return finish(fast, false);
-        }
-    }
     pendingSerialSeen = EpochRevalidate() && StorageTexture::PendingSerial() == serialBefore ? serialBefore : 0;
     for (const auto& texture : textures) {
         if (texture != nullptr) texture->RefreshCopy();
@@ -2840,8 +2757,7 @@ bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::s
         if (diff < at + descriptorWords) {
             if (role < profile.roles.size()) ++profile.roles[role];
             const auto index = diff - at;
-            if (role == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorRole::GuestBuffers)) ++profile.bufferWords[index % 4];
-            else if (role == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorRole::GuestImages) && (kind == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorKind::SampledImage) || kind == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorKind::StorageImage))) ++profile.imageWords[index % 8];
+            if (role == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorRole::GuestImages) && (kind == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorKind::SampledImage) || kind == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorKind::StorageImage))) ++profile.imageWords[index % 8];
             return true;
         }
         at += descriptorWords;
@@ -2930,10 +2846,7 @@ void ResourceCache::noteMiss(const Key& key) {
             if (churn.roles[role] == 0) continue;
             std::snprintf(item, sizeof(item), " %s %llu", roleName(static_cast<ShaderRecompiler::DescriptorRole>(role)), static_cast<unsigned long long>(churn.roles[role]));
             line += item;
-            if (role == static_cast<std::size_t>(ShaderRecompiler::DescriptorRole::GuestBuffers)) {
-                std::snprintf(item, sizeof(item), " (V# word %llu/%llu/%llu/%llu)", static_cast<unsigned long long>(churn.bufferWords[0]), static_cast<unsigned long long>(churn.bufferWords[1]), static_cast<unsigned long long>(churn.bufferWords[2]), static_cast<unsigned long long>(churn.bufferWords[3]));
-                line += item;
-            } else if (role == static_cast<std::size_t>(ShaderRecompiler::DescriptorRole::GuestImages)) {
+            if (role == static_cast<std::size_t>(ShaderRecompiler::DescriptorRole::GuestImages)) {
                 std::snprintf(item, sizeof(item), " (T# word %llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu)", static_cast<unsigned long long>(churn.imageWords[0]), static_cast<unsigned long long>(churn.imageWords[1]), static_cast<unsigned long long>(churn.imageWords[2]), static_cast<unsigned long long>(churn.imageWords[3]), static_cast<unsigned long long>(churn.imageWords[4]), static_cast<unsigned long long>(churn.imageWords[5]), static_cast<unsigned long long>(churn.imageWords[6]), static_cast<unsigned long long>(churn.imageWords[7]));
                 line += item;
             }
@@ -3165,47 +3078,6 @@ DescriptorCache::Stats DescriptorCache::Counters() const {
     return stats;
 }
 
-std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic) {
-    Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
-    Require((words[1] & 0x40000000u) == 0, "buffer descriptor has reserved bits set");
-    const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
-    Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
-    const auto address = descriptor.Base48();
-    const auto byteSize = descriptor.GetSize();
-    if (byteSize == 0 || address == 0) {
-        allocations.push_back({0, 0, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
-        return allocations.size() - 1;
-    }
-    Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
-    auto size = static_cast<std::size_t>(byteSize);
-    if (const std::uint64_t stride = descriptor.Stride(); stride != 0) {
-        constexpr std::uint64_t GuestPageBytes = 0x4000;
-        const auto end = address + size;
-        const auto overhang = end % GuestPageBytes;
-        if (overhang != 0 && overhang < stride) {
-            const auto allocationEnd = RegisteredReadableEnd(address);
-            if (allocationEnd > address && allocationEnd < end && end - allocationEnd < stride) size = static_cast<std::size_t>(allocationEnd - address);
-        }
-    }
-    Require(target == nullptr || !overlap(address, size, target->address, target->bytes), "shader buffer aliases the render target");
-    // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
-    static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
-    Require(!written || !overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");
-    written = written || allWritten;
-    const bool swept = dispatchThreads != 0 && descriptor.Stride() != 0 && dispatchThreads * descriptor.Stride() * 2u >= byteSize;
-    if (written) guestMemory.AddWritable(address, size, atomic, swept);
-    else {
-        guestMemory.AddReadable(address, size);
-        ++readOnlyBuffers;
-    }
-    if (BuildProfiled()) {
-        auto& counters = BufferWrites();
-        counters.elements.fetch_add(1, std::memory_order_relaxed);
-        if (!written) counters.readOnly.fetch_add(1, std::memory_order_relaxed);
-    }
-    allocations.push_back({address, size, true, nullptr, ShaderRecompiler::DescriptorRole::ShaderData, written});
-    return allocations.size() - 1;
-}
 
 std::string ShaderResources::Describe() const {
     const auto sample = [](std::uint64_t address, std::uint64_t bytes) {
@@ -4140,87 +4012,27 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 moved.push_back({index, 0, item.size, binding.guestDescriptor});
                 continue;
             }
-            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
-            const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
-            if (kept == bindings.end() || kept->allocations.size() != binding.count || binding.guestDescriptor.size() != static_cast<std::size_t>(binding.count) * 4u) return std::nullopt;
-            for (std::uint32_t element = 0; element < binding.count; ++element) {
-                const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
-                const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
-                const auto address = descriptor.Base48();
-                const auto size = descriptor.GetSize();
-                const auto index = kept->allocations[element];
-                const auto& item = allocations[index];
-                const bool empty = size == 0 || address == 0;
-                if (!item.guest) {
-                    if (empty) continue;
-                    return std::nullopt;
-                }
-                if (item.address == address && item.size == size) continue;
-                const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-                if (written || empty || item.written || size > context.limits.maxStorageBufferRange) return std::nullopt;
-                const auto begin = address - item.adjustment;
-                const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
-                if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
-                if (guestMemory.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
-                moved.push_back({index, address, static_cast<std::size_t>(size)});
-            }
         }
     }
     return moved;
 }
 
-std::size_t ShaderResources::MaxDrawSnapshotBytes() {
-    const char* text = std::getenv("APS5_DRAW_SNAPSHOT_MAX_MIB");
-    const auto mib = text != nullptr ? std::strtoull(text, nullptr, 10) : 64ull;
-    return static_cast<std::size_t>(mib * 1024ull * 1024ull);
-}
-
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved) const {
     const bool addressBuffers = std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.deviceAddressed; });
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE && !addressBuffers) || usesBda) return {};
-    const auto reads = guestMemory.InPlaceReads();
-    const auto maxSnapshotBytes = MaxDrawSnapshotBytes();
-    std::size_t totalSnapshotBytes = 0;
     auto result = std::make_shared<DrawBindings>();
     std::vector<std::size_t> selected;
     for (std::size_t index = 0; index < allocations.size(); ++index) {
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
-        if (override != moved.end() && !override->words.empty()) {
-            auto buffer = std::make_shared<Buffer>(context, override->size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (item.deviceAddressed ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
-            std::memcpy(buffer->Bytes().data(), override->words.data(), override->size);
-            for (const auto& patch : dataPatches) {
-                if (patch.allocation == index && patch.byte < override->size) buffer->Bytes()[patch.byte] = static_cast<std::byte>(patch.adjustment);
-            }
-            selected.push_back(index);
-            result->snapshots.push_back({0, std::move(buffer)});
-            continue;
-        }
-        std::uint64_t address = item.address;
-        std::size_t size = item.size;
-        if (override != moved.end()) {
-            address = override->address;
-            size = override->size;
-        } else {
-            if (!item.guest || item.written || guestMemory.WritesOverlap(item.address, item.size)) continue;
-            const bool direct = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return item.address >= range.first && item.address < range.second && item.size <= range.second - item.address; });
-            if (!direct || recorder.PendingWriteOverlaps(item.address, item.size)) continue;
-        }
-        const auto begin = address - item.adjustment;
-        const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
-        if (override == moved.end() && (bytes > maxSnapshotBytes || totalSnapshotBytes + bytes > maxSnapshotBytes)) continue;
-        const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        const auto generation = GuestMemory::CollectWrites(begin, bytes);
-        auto buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, generation);
-        if (buffer == nullptr) {
-            buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-            std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
-            recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+        if (override == moved.end() || override->words.empty()) continue;
+        auto buffer = std::make_shared<Buffer>(context, override->size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (item.deviceAddressed ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
+        std::memcpy(buffer->Bytes().data(), override->words.data(), override->size);
+        for (const auto& patch : dataPatches) {
+            if (patch.allocation == index && patch.byte < override->size) buffer->Bytes()[patch.byte] = static_cast<std::byte>(patch.adjustment);
         }
         selected.push_back(index);
-        result->snapshots.push_back({begin, std::move(buffer)});
-        totalSnapshotBytes += bytes;
-        CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
+        result->snapshots.push_back({0, std::move(buffer)});
     }
     if (selected.empty()) return {};
     std::vector<std::size_t> addressed;
@@ -4334,25 +4146,9 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         storageTextures[index]->MarkDirty();
         static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
     }
-    // Written sub-ranges of buffers the GPU copied out of a host import go back into it by the GPU,
-    // recorded here after the work: those regions then need no CPU write-back (HasCopiedWrites),
-    // and the note and mark below cover them like direct writes.
-    guestMemory.RecordCopyBacks(recorder);
-    // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
-    // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
+    if (pageTableStores) recorder.NotePendingWrite(0, std::numeric_limits<std::size_t>::max());
     guestMemory.MarkDirectWrites();
-    if (!BuildProfiled()) return;
-    auto& counters = BufferWrites();
-    // Recorded uses only (dispatches and recorded draws): a synchronous draw writes back in
-    // WriteBack() and publishes no pending writes, so it has no notes to skip.
-    counters.notesSkipped.fetch_add(readOnlyBuffers, std::memory_order_relaxed);
-    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    auto last = counters.lastReport.load();
-    if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
-    const auto elements = counters.elements.load();
-    const auto readOnly = counters.readOnly.load();
-    AgcDriver::ProfilePrint_nid_no_patch("[buffers] descriptor elements bound: %llu total, %llu written, %llu read-only; %llu pending-write notes skipped\n", static_cast<unsigned long long>(elements), static_cast<unsigned long long>(elements - readOnly), static_cast<unsigned long long>(readOnly), static_cast<unsigned long long>(counters.notesSkipped.load()));
 }
 
 void ShaderResources::CheckFaults() const {
@@ -4361,7 +4157,7 @@ void ShaderResources::CheckFaults() const {
 
 void ShaderResources::WriteBackBuffers() {
     if (bda) bda->CheckFault();
-    guestMemory.WriteBack();
+    guestMemory.Release();
 }
 
 bool ShaderResources::ReadsOverlap(std::uint64_t address, std::size_t bytes) const {

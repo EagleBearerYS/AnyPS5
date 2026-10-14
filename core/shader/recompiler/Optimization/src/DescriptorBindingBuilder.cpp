@@ -21,18 +21,6 @@ namespace {
     throw std::runtime_error(message);
 }
 
-// Debug aid: APS5_TRACE_BUFFER_WRITTEN=1 prints, after every Populate, how many guest buffer
-// elements the program may store to and how many it only loads (this call and cumulative), so the
-// replay tool shows what a driver gains from DescriptorBinding::bufferWritten.
-bool bufferWrittenTraceEnabled() {
-    static const bool enabled = std::getenv("APS5_TRACE_BUFFER_WRITTEN") != nullptr;
-    return enabled;
-}
-struct BufferWrittenCounts {
-    std::atomic<unsigned long long> written{0};
-    std::atomic<unsigned long long> readOnly{0};
-};
-BufferWrittenCounts bufferWrittenCounts;
 
 void MergeSamplerElements(std::vector<std::uint32_t>& into, std::span<const std::uint32_t> from) {
     into.insert(into.end(), from.begin(), from.end());
@@ -41,9 +29,6 @@ void MergeSamplerElements(std::vector<std::uint32_t>& into, std::span<const std:
 }
 
 DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
-    if (kind == DescriptorBindingKind::Buffers) {
-        return DescriptorKind::DeviceAddress;
-    }
     if (kind == DescriptorBindingKind::Samplers || kind == DescriptorBindingKind::SamplerTable) {
         return DescriptorKind::SamplerSlot;
     }
@@ -61,9 +46,6 @@ DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
 }
 
 DescriptorRole RoleFor(DescriptorBindingKind kind) {
-    if (kind == DescriptorBindingKind::Buffers) {
-        return DescriptorRole::GuestBuffers;
-    }
     if (kind == DescriptorBindingKind::Samplers) {
         return DescriptorRole::GuestSamplers;
     }
@@ -95,24 +77,6 @@ DescriptorRole RoleFor(DescriptorBindingKind kind) {
         return DescriptorRole::GuestImages;
     }
     fail("DescriptorBindingBuilder::Populate binding kind has no descriptor role");
-}
-
-std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
-    std::vector<std::uint32_t> result;
-    result.reserve(resources.size() * 4u);
-    for (const std::uint32_t r : resources) {
-        if (r >= snapshot.buffers.size()) {
-            fail("DescriptorBindingBuilder::Populate guest buffer index is out of range");
-        }
-        const DescriptorValue& value = snapshot.buffers[r];
-        if (value.dwordCount != 4u) {
-            fail("DescriptorBindingBuilder::Populate guest buffer descriptor has an invalid width");
-        }
-        for (std::uint32_t dword = 0; dword < 4u; dword++) {
-            result.push_back(value.dwords[dword]);
-        }
-    }
-    return result;
 }
 
 std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
@@ -300,35 +264,6 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::size_t index = 0; index < info.images.size(); ++index) {
         if (info.images[index].table == NoTable) imageModes[index] = ResourceMaterializer::RuntimeImageMode(info.images[index], snapshot.images.at(index), info.runtimeImageModes.at(index));
     }
-    for (std::uint32_t index = 0; index < info.buffers.size(); ++index) {
-        const auto& descriptor = snapshot.buffers.at(index);
-        if (descriptor.dwordCount != 4u) fail("buffer specialization requires four descriptor words");
-        const auto& buffer = info.buffers[index];
-        const auto format = (descriptor.dwords[3] >> 12u) & 0x7fu;
-        const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
-        if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (present && format == 0u))) fail("buffer specialization has an unsupported format");
-        const auto misalignment = present ? descriptor.dwords[0] & 3u : 0u;
-        if (buffer.atomic && misalignment != 0u) fail("buffer atomic on a V# whose base is not DWORD aligned");
-        auto alignment = static_cast<std::uint32_t>(buffer.typedAlignment);
-        if (buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
-        if (alignment == 0u || misalignment % alignment != 0u) fail("is a formatted buffer access through a V# whose base is not aligned to its element");
-        if (registrationModules && buffer.descriptorFormatted) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 1u, descriptor.dwords[3]});
-        if (registrationModules) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 3u, misalignment});
-        if (!registrationModules) {
-            const auto first = PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords;
-            plan.specialization.push_back({first, descriptor.dwords[1] & 0xffff0000u});
-            plan.specialization.push_back({first + 1u, descriptor.dwords[3]});
-            plan.specialization.push_back({first + 2u, present ? 1u : 0u});
-            plan.specialization.push_back({first + 3u, misalignment});
-        }
-        if (buffer.formattedReadMask != 0u) {
-            for (std::uint32_t component = 0; component < 4u; ++component) {
-                if ((buffer.formattedReadMask & (1u << component)) == 0u) continue;
-                const auto selector = (descriptor.dwords[3] >> (component * 3u)) & 7u;
-                if (selector == 2u || selector == 3u) fail("buffer specialization has a reserved component selector");
-            }
-        }
-    }
     for (std::uint32_t index = 0; index < info.images.size() && !registrationModules; ++index) {
         if (info.images[index].table != NoTable) continue;
         const auto first = PipelineSpecialization::ImageBase + index * PipelineSpecialization::ImageWords;
@@ -410,16 +345,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
         if (imageHeap) physical.imageSlotDwords = std::move(slotDwords);
-        if (physical.role == DescriptorRole::GuestBuffers) {
-            for (const auto resource : compact.resources) {
-                const auto& buffer = info.buffers.at(resource);
-                physical.bufferAtomic.push_back(buffer.atomic);
-                physical.bufferWritten.push_back(buffer.written || buffer.atomic);
-                physical.bufferRead.push_back(buffer.read);
-                if (buffer.written || buffer.atomic) ++entry.writtenBuffers;
-                else ++entry.readOnlyBuffers;
-            }
-        } else if (physical.role == DescriptorRole::GuestImages) {
+        if (physical.role == DescriptorRole::GuestImages) {
             const auto& modes = info.runtimeImageModes.at(compact.resources.front());
             const auto shape = std::ranges::find_if(modes, [&](const ImageResource& mode) { return DescriptorBindingForImage(mode) == compact.kind; });
             if (shape == modes.end()) fail("runtime image heap has no static image type");
@@ -528,16 +454,9 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     auto shaderData = needsShaderData ? ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState) : std::vector<std::uint32_t>{};
     std::vector<DescriptorBinding> bindings;
     bindings.reserve(plan.bindings.size());
-    std::size_t writtenHere = 0;
-    std::size_t readOnlyHere = 0;
     for (const auto& entry : plan.bindings) {
         auto physical = entry.descriptor;
         switch (physical.role) {
-        case DescriptorRole::GuestBuffers:
-            physical.guestDescriptor = GuestBuffersDescriptor(entry.resources, snapshot);
-            writtenHere += entry.writtenBuffers;
-            readOnlyHere += entry.readOnlyBuffers;
-            break;
         case DescriptorRole::GuestImages:
             physical.guestDescriptor.reserve(entry.resources.size() * 8u);
             for (std::size_t element = 0; element < entry.resources.size(); ++element) {
@@ -610,7 +529,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             break;
         }
 
-        if (physical.role == DescriptorRole::GuestBuffers || physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
+        if (physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
             if (physical.count == 0u || physical.guestDescriptor.size() % physical.count != 0u) {
                 fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
             }
@@ -619,13 +538,6 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         bindings.push_back(std::move(physical));
     }
 
-    if (bufferWrittenTraceEnabled()) {
-        // Cumulative counts include every Populate of the process (the replay tool populates
-        // each program twice), so the per-call counts are the ones to sum per program.
-        const auto written = bufferWrittenCounts.written.fetch_add(writtenHere) + writtenHere;
-        const auto readOnly = bufferWrittenCounts.readOnly.fetch_add(readOnlyHere) + readOnlyHere;
-        std::fprintf(stderr, "[bindings] guest buffer elements: %zu written, %zu read-only (total so far: %llu / %llu)\n", writtenHere, readOnlyHere, written, readOnly);
-    }
     allocation.bindings = std::move(bindings);
     allocation.pushConstants.clear();
     if (layout.UsesPushData()) {

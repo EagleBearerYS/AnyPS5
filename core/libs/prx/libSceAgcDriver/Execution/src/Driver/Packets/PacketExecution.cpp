@@ -116,11 +116,6 @@ void Driver::execute(const Submission& submission) {
     ++packetProfile.submissions;
 
     bumpEpoch(&EpochBumps::submissions);
-    clearResolvedAhead();
-    gateOpened() = true;
-    struct ClearAhead {
-        ~ClearAhead() { clearResolvedAhead(); }
-    } clearAhead;
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
         CheckFailure();
@@ -245,11 +240,6 @@ void Driver::execute(const Submission& submission) {
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15 || opcode == 0x16) {
             landPendingWaits(submission.queue);
-            currentPacketOffset() = cursor;
-            if (gateOpened()) {
-                gateOpened() = false;
-                timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
-            }
             if (opcode == 0x15) timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
             else timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
             Graphics::Recorder::CountRecordedWork();
@@ -258,7 +248,6 @@ void Driver::execute(const Submission& submission) {
             static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
             const auto waitStart = std::chrono::steady_clock::now();
             timed(&WorkerProfile::waitMs, [&] { waitMemory(packet, submission.queue, recent, submission.received, submission.heldAtSubmit.contains(cursor)); });
-            gateOpened() = true;
             if (traceGpu && std::chrono::steady_clock::now() - waitStart > std::chrono::milliseconds(200)) {
 
                 for (std::size_t next = cursor + count, shown = 0; next < submission.commands.size() && shown < 48; ++shown) {

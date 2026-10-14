@@ -13,7 +13,6 @@ struct ShaderInfo {
     std::uint32_t scratchDwords = 0;
     std::uint32_t sharedMemoryBytes = 0;
 
-    std::vector<BufferResource> buffers;
     std::vector<ImageResource> images;
     std::vector<std::vector<ImageResource>> runtimeImageModes;
     std::vector<SamplerResource> samplers;

@@ -576,9 +576,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     }
     for (const auto& binding : shader.bindings) {
         if (binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) Require(binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable, "only samplers take slots in the descriptor heap");
-        if (binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress) continue;
-        Require(binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers, "only guest buffers are read through device addresses");
-        Require(!binding.readOnly, "read-only descriptor metadata is unsupported because the recompiler emits no NonWritable decoration");
+        Require(binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress, "no descriptor binding is read through a device address");
     }
     Require(descriptors.size() == static_cast<std::size_t>(std::count_if(shader.bindings.begin(), shader.bindings.end(), [](const auto& binding) { return binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress && binding.kind != ShaderRecompiler::DescriptorKind::SamplerSlot && binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::ImageTable; })), "recompiler binding metadata contains undeclared resources");
     Require(push == (!shader.pushConstants.empty() || mesh || (control && !rectListControl)), "recompiler push constant metadata disagrees with SPIR-V");

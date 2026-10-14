@@ -89,17 +89,9 @@ std::uint32_t possibleU32Bits(const IrValue* value) {
     }
 }
 
-std::uint32_t byteExtent(const MemoryInfo& memory) {
-    const auto bytes = std::max((memory.dataBits + 7u) / 8u, 1u);
-    const auto count = std::max(memory.dataDwords, 1u);
-    const auto end = static_cast<std::uint64_t>(memory.offset) + static_cast<std::uint64_t>(bytes) * count;
-    return end > std::numeric_limits<std::uint32_t>::max() ? std::numeric_limits<std::uint32_t>::max() : static_cast<std::uint32_t>(end);
-}
-
 class Tracker {
 public:
     Tracker(IrProgram& program, bool deviceImageTables) : m_program(program), m_info(program.Resources().info), m_builder(program), m_deviceImageTables(deviceImageTables) {
-        m_info.buffers.clear();
         m_info.images.clear();
         m_info.samplers.clear();
         m_info.sampledPairs.clear();
@@ -134,7 +126,6 @@ public:
         if (m_bdaTraces > bdaTraceLimit) std::fprintf(stderr, "[bda] %u more address accesses in this program not shown\n", m_bdaTraces - bdaTraceLimit);
         CheckTableStores();
         AssignTables();
-        LinkImageAliases();
         for (const auto& patch : m_handlePatches) {
             patch.handle->SetFlags<std::uint32_t>(patch.resource);
         }
@@ -1425,16 +1416,9 @@ private:
     }
 
     void CheckTableStores() {
+        if (!m_info.bdaWrites) return;
         for (auto& source : m_sources) {
-            if (!source.tableColumn.has_value() || !source.tableColumn->keyDomain.has_value()) {
-                continue;
-            }
-            for (const auto& buffer : m_info.buffers) {
-                if ((buffer.written || buffer.atomic) && buffer.source == source.tableColumn->keyDomain->source) {
-                    source.tableColumn->keyDomain.reset();
-                    break;
-                }
-            }
+            if (source.tableColumn.has_value()) source.tableColumn->keyDomain.reset();
         }
     }
 
@@ -1487,20 +1471,8 @@ private:
         if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) {
             return false;
         }
-        DescriptorSource descriptor;
-        MakeSource(*handle, 4u, false, false, descriptor);
-        std::uint32_t badDword = 0;
         auto& memory = m_program.Resources().memoryInfo[memoryIndex];
         const auto access = BufferAccessOf(inst.Opcode());
-        if (ValidateSource(descriptor, badDword)) {
-            const auto source = InternSource(descriptor);
-            const auto resource = AddBuffer(source, memory, inst.Opcode(), inst.Flags<MemoryFlags>().pc);
-            if (resource == std::numeric_limits<std::uint32_t>::max()) fail("buffer resource limit exceeded");
-            AddMemoryPatch(memoryIndex, resource, 0u, false);
-            memory.gpuDescriptor = false;
-            m_info.usesFaultBuffer = m_info.usesFaultBuffer || access == BufferAccess::Atomic;
-            return true;
-        }
         memory.gpuDescriptor = true;
         m_info.usesDma = true;
         m_info.bdaWrites = m_info.bdaWrites || access == BufferAccess::Write || access == BufferAccess::Atomic;
@@ -1515,41 +1487,6 @@ private:
         if (handle->ArgumentCount() != 2) {
             fail("GetAddressResource must have two address dwords");
         }
-    }
-
-    std::uint32_t AddBuffer(std::uint32_t source, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
-        for (std::uint32_t i = 0; i < m_info.buffers.size(); i++) {
-            if (m_info.buffers[i].source == source) {
-                Merge(m_info.buffers[i], memory, op, pc);
-                return i;
-            }
-        }
-        BufferResource resource;
-        resource.source = source;
-        resource.firstUsePc = pc;
-        Merge(resource, memory, op, pc);
-        m_info.buffers.push_back(resource);
-        return static_cast<std::uint32_t>(m_info.buffers.size() - 1);
-    }
-
-    static void Merge(BufferResource& resource, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
-        const auto access = BufferAccessOf(op);
-        const bool atomic = access == BufferAccess::Atomic;
-        const bool write = access == BufferAccess::Write || atomic;
-        resource.firstUsePc = std::min(resource.firstUsePc, pc);
-        resource.maxByteExtent = std::max(resource.maxByteExtent, byteExtent(memory));
-        resource.read = resource.read || !write || atomic;
-        resource.written = resource.written || write;
-        resource.atomic = resource.atomic || atomic;
-        resource.formatted = resource.formatted || memory.formatted;
-        resource.descriptorFormatted = resource.descriptorFormatted || (memory.formatted && !memory.typed);
-        if (memory.formatted && memory.typed) {
-            const auto format = GetFormatInfo(DecodeTBufferFormat(memory.dataFormat, memory.numberFormat));
-            if (format.byteSize == 0u) fail("typed buffer instruction has an invalid format");
-            resource.typedAlignment = std::max(resource.typedAlignment, static_cast<std::uint8_t>(std::min(format.byteSize, 4u)));
-        }
-        if (memory.formatted && !memory.typed && !write) resource.formattedReadMask |= (1u << std::min(memory.dataDwords, 4u)) - 1u;
-        resource.scalar = resource.scalar || op == IrOpcode::ReadConstBuffer || memory.kind == ResourceKind::ScalarBuffer;
     }
 
     std::uint32_t AddImage(std::uint32_t source, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
@@ -1767,29 +1704,6 @@ private:
 
     const DescriptorSource* Source(std::uint32_t source) const {
         return source < m_sources.size() ? &m_sources[source] : nullptr;
-    }
-
-    void LinkImageAliases() {
-        for (auto& buffer : m_info.buffers) {
-            const DescriptorSource* bufferSource = Source(buffer.source);
-            if (bufferSource == nullptr || bufferSource->dwordCount != 4) {
-                continue;
-            }
-            for (std::uint32_t image = 0; image < m_info.images.size(); image++) {
-                const DescriptorSource* imageSource = Source(m_info.images[image].source);
-                if (imageSource == nullptr || imageSource->dwordCount != 8 || imageSource->tableColumn.has_value() || imageSource->runtime) {
-                    continue;
-                }
-                bool alias = true;
-                for (std::uint32_t dword = 0; dword < 4; dword++) {
-                    alias = alias && EquivalentValue(m_program.Resources(), bufferSource->dwords[dword], imageSource->dwords[dword]);
-                }
-                if (alias) {
-                    buffer.imageAlias = image;
-                    break;
-                }
-            }
-        }
     }
 
     IrProgram& m_program;

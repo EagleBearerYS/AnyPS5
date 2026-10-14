@@ -798,11 +798,6 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
     walker.EvaluateRuntimeSources(plan, plan.materializationSources, runtime, values, snapshot.flattenedSrt, plan.cleanFlatSlots, activeSources, &snapshot.srtPoison, &snapshot.nullRootReads);
 
     std::size_t cursor = 0;
-    if (values.size() < plan.info.buffers.size()) {
-        throw std::runtime_error("materialization sources are missing buffer descriptors");
-    }
-    snapshot.buffers.assign(values.begin(), values.begin() + plan.info.buffers.size());
-    cursor += plan.info.buffers.size();
 
     snapshot.images.resize(plan.info.images.size());
     for (std::uint32_t i = 0; i < plan.info.images.size(); i++) {
@@ -929,11 +924,6 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
 }
 
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
-    for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
-        const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
-        if (decoded.Type() != 0u) throw std::runtime_error("buffer descriptor uses an unsupported type");
-        if (plan.stage != IrShaderStage::Compute && decoded.AddTid()) throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
-    }
     if (snapshot.flattenedSrt.size() != plan.srtReads.size()) throw std::runtime_error("runtime SRT size differs from the static interface");
     for (std::uint32_t i = 0u; i < plan.info.images.size(); ++i) {
         const auto& image = plan.info.images[i];
@@ -1795,7 +1785,6 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         }
         plan.materializationSources.push_back(index);
     };
-    for (const auto& buffer : plan.info.buffers) addSource(buffer.source);
     for (const auto& image : plan.info.images) {
         if (image.source >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan image references an unknown descriptor source");

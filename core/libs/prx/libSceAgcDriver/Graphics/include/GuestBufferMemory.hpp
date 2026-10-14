@@ -15,13 +15,6 @@ namespace AgcDriver::Graphics {
 
 class BdaPageTable;
 
-void ShutdownGuestBufferWorkers();
-
-struct GuestMemorySnapshot {
-    std::uint64_t address;
-    std::span<const std::byte> bytes;
-};
-
 // A guest allocation imported with VK_EXT_external_memory_host, usable by the GPU in place.
 struct HostImport {
     std::uint64_t base;
@@ -157,69 +150,25 @@ struct AddressSpaceStats {
 AddressSpaceStats AddressSpaceCounters();
 
 struct MirrorStats {
-    std::uint64_t heapMirrors = 0;
-    std::uint64_t heapBytes = 0;
+    std::uint64_t mirrors = 0;
+    std::uint64_t bytes = 0;
     std::uint64_t rebuilds = 0;
-    std::uint64_t blocksCopied = 0;
-    std::uint64_t heapRefills = 0;
     std::uint64_t sweeps = 0;
-    std::uint64_t heapChecks = 0;
-    std::uint64_t sparseBinds = 0;
 };
 MirrorStats MirrorCounters();
 void ClearImageMirrors(VkDevice device);
 void ClearHostImports(VkDevice device);
 void BumpHostImportsEpoch();
 
-struct AddressCopy {
-    std::uint64_t begin;
-    std::uint64_t end;
-    std::uint64_t committed;
-    const char* reason;
-};
-std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit);
-
 class GuestBufferMemory {
 public:
     explicit GuestBufferMemory(const Context& context);
-    ~GuestBufferMemory();
     void AcquireRegistered();
-    // APS5_PROFILE_DRAW: the parts of one address-based build ([address] line every 10 s): the
-    // registry lease, the imports pass, the mirror preparation and the mirror compare (blocks and
-    // copied blocks) are timed by AcquireRegistered on the calling thread; the caller adds the
-    // snapshot compares it made after it (ShaderResources::prepareAddressBindings).
-    static void CountAddressBuild(double snapshotsUs);
-    // A guest range bound through a descriptor. Both read live guest memory at upload and bind the
-    // same way (a storage buffer); AddWritable also notes the range in Writes(), so it gets the
-    // write-back's reference copy, a write-back, the recorder's pending-write note and the
-    // direct-write marks. AddReadable is for an element the shader is proved never to store to
-    // (DescriptorBinding::bufferWritten): the CPU never has to wait for it. `atomic` marks an
-    // element the shader updates atomically (DescriptorBinding::bufferAtomic), staged in device
-    // memory whatever its size (see AllowDeviceStaging).
-    void AddWritable(std::uint64_t address, std::size_t bytes, bool atomic = false, bool swept = false);
-    void AddReadable(std::uint64_t address, std::size_t bytes);
-    // Device-local staging of written and atomic elements inside host imports (see
-    // GuestBufferMemory.cpp): allowed only for a build whose every use records its work and then
-    // calls RecordCopyBacks (a dispatch), since a staged region's results reach guest memory by
-    // that copy alone. Call before Upload.
-    void AllowDeviceStaging() { stagingAllowed = true; }
-    void AllowAdjustedRegions() { adjustedRegions = true; }
-    // Records the copy-in of every staged region anew for another use of this upload (a resource
-    // cache hit, from ShaderResources::Revalidate, under GuestMemory::GpuMutex, once the imports
-    // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
-    // RecordCopyBacks copies it back again. Nothing to do without staged regions.
-    void RecordStagingCopies(Recorder& recorder);
-    void AddSnapshot(const GuestMemorySnapshot& snapshot);
-    // Upload is the two stages below back to back. UploadPrepare needs no device lock: it merges the
-    // regions, binds the image mirrors and host imports that already serve them (an import pointer is
-    // re-checked against the registry epoch later) and copies read-only regions. UploadFinish runs
-    // under GuestMemory::GpuMutex: it reconciles and makes imports (retiring one hands its buffer to
-    // the recorder), refreshes writable mirrors and flushes pending results (both may wait for
-    // recorded work) and copies the regions a descriptor may write, so the window between that copy
-    // and the recorder's pending-write note stays closed.
-    void Upload(bool addressable);
-    void UploadPrepare(bool addressable);
-    void UploadFinish(bool addressable);
+    static void CountAddressBuild();
+    void AddInPlace(std::uint64_t address, std::size_t bytes, bool written);
+    void Upload();
+    void UploadPrepare();
+    void UploadFinish();
     VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
     static constexpr std::uint64_t AddressAlignment = 16;
     std::pair<VkDeviceAddress, std::uint64_t> Address(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
@@ -228,166 +177,38 @@ public:
     std::vector<ShaderRecompiler::BdaAbi::Grant> WriteGrants() const;
     std::vector<ShaderRecompiler::BdaAbi::Range> OwnRanges() const;
     std::shared_ptr<const BdaPageTable> PageTable(const Context& context) const;
-    // The registered memory an address-based build maps, shared by consecutive builds (see
-    // GuestBufferMemory.cpp): its lease and the sorted, immutable regions of the ranges served in
-    // place by imports and mirrors. Opaque outside GuestBufferMemory.cpp.
     struct AddressSpace;
-    void WriteBack();
+    void Release();
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const;
-    bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const;
-    // Guest ranges the shader may write through descriptors, as [begin, end).
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& Writes() const { return writes; }
-    // Whether any written range lives in a copied buffer, so a write-back must run once the GPU is done.
-    bool HasCopiedWrites() const;
-    // Reports writes into host-imported memory (made by the GPU in place, or copied back into it by
-    // RecordCopyBacks) to the write tracking now.
     void MarkDirectWrites() const;
-    // Records, into the recorder's open batch, the copy of every written sub-range of a region the
-    // GPU copied out of a host import (see Region::gpuCopy) back into the import: what the shader
-    // wrote lands in guest memory by the GPU, ordered after the recorded work, so the region needs
-    // no CPU write-back (HasCopiedWrites no longer counts it) and the caller notes the ranges as
-    // pending writes and marks them as MarkDirectWrites does. Called right after the work using the
-    // regions was recorded (ShaderResources::MarkGpuWrites), under GuestMemory::GpuMutex. A use that
-    // never calls it (a synchronous draw) stores the staging bytes from the CPU in WriteBack.
-    void RecordCopyBacks(Recorder& recorder);
-    // Whether registered allocations are pinned until write-back (address-based shaders): by this
-    // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
-    std::size_t CopiedBytes() const {
-        std::size_t bytes = 0;
-        for (const auto& region : regions) if (region.buffer != nullptr) bytes += static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
-        return bytes;
-    }
-    // Every uploaded region as [begin, end) when all of them are served by host imports, in place or
-    // through a device-local staging copy of the import (nothing was copied through the CPU, so the
-    // upload can serve a later identical build), else nothing.
-    std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> DirectRegions() const;
-    // Every region the recorded work reads in place through a host import, as [begin, end): the
-    // regions bound in place (`direct`), an address-based build's leased heaps included. A region
-    // the GPU copies out of an import (gpuCopy) notes its read itself when the copy is recorded.
-    // For the recorder's read tracking (ShaderResources::MarkGpuWrites); nothing once committed.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const;
 
 private:
     struct Region {
         std::uint64_t begin;
         std::uint64_t end;
         bool writable;
-        std::vector<std::byte> snapshot;
-        // Shared so a recorded GPU copy into it (see gpuCopy) can keep it in the batch itself, before
-        // the caller keeps the whole resources: a throw between the two would otherwise return it to
-        // the pool under an unsubmitted copy command.
-        std::shared_ptr<Buffer> buffer;
-        // Guest bytes as uploaded; write-back only stores bytes the GPU changed.
-        std::vector<std::byte> uploaded {};
-        // Registered allocation that is imported: its bytes are read from live guest memory, not a snapshot.
-        bool hostBacked = false;
-        // Set when the region is served by an imported allocation; nothing is copied or written back.
         const HostImport* direct = nullptr;
-        // Set when the region covers uncommitted pages: only the `backed` parts (possibly none) are guest
-        // memory; the rest reads as zeros and is never stored.
-        bool sparse = false;
-        bool sparseHeap = false;
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> backed {};
-        std::uint64_t lastView = 0;
-        std::uint64_t bufferEnd = 0;
-        // Set when the region is served by an image mirror: nothing is copied; writable mirrors are
-        // written back by comparing with the mirror's shadow. Kept alive here for recorded work.
         std::shared_ptr<ImageMirror> mirror {};
-        // The mirror is a descriptor sub-range one found by UploadPrepare (not a lease mirror), which
-        // UploadFinish confirms still has its Range before the region binds it.
-        bool subrangeMirror = false;
-        // Set by UploadPrepare when UploadFinish still has device-lock work for the region: a copy a
-        // descriptor writes, a writable mirror's refresh, an import to reconcile or make, or the
-        // pending-results flush of an import it took.
         bool pending = false;
-        // The region lies inside a host import but is misaligned for binding in place: `buffer` is
-        // filled by a vkCmdCopyBuffer from the import recorded into the batch (no CPU read, so no
-        // flush-hook wait), from `copySource` (the import's VkBuffer, alive until the batch
-        // completed, with the guest address of its first byte). `copiedBack` once RecordCopyBacks
-        // recorded the written sub-ranges' copies back into the import.
-        bool gpuCopy = false;
-        VkBuffer copySource = VK_NULL_HANDLE;
-        std::uint64_t copySourceBase = 0;
-        bool copiedBack = false;
-        // An element the shader updates atomically lies inside (AddWritable's `atomic`).
-        bool atomic = false;
-        bool swept = false;
-        // The gpuCopy buffer is a device-local staging shadow (see stagingEligible): no host
-        // mapping, so nothing is ever stored from it by the CPU, and the region is taken even when
-        // the import could bind it in place.
-        bool deviceLocal = false;
-        // The device refused the shadow (memory or allocations exhausted): the region takes the
-        // path it would take without staging, in both upload stages.
-        bool unstaged = false;
     };
 
-    // How [begin, end) lies against the space's base regions.
     enum class BaseOverlap { None, Inside, Partial };
     BaseOverlap baseOverlap(std::uint64_t begin, std::uint64_t end, const Region** owner) const;
-    // Copies the space's base regions into this build's own regions (today's per-build form) and
-    // drops the space: for a region that partially overlaps a base region, and for a build whose
-    // imports changed under the space (`resolve`: the direct regions are re-resolved by UploadFinish).
     void dissolveSpace(bool resolve);
-    // The region containing `address`: this build's own regions (sorted after UploadPrepare) or
-    // the space's base regions, or null.
     const Region* owner(std::uint64_t address) const;
-    // Builds this build's regions from a lease as the per-build path always did: `base` gets the
-    // ranges served in place (imports, mirrors), `copied` the ones copied per build.
-    struct CopiedRange {
-        std::uint64_t begin;
-        std::uint64_t end;
-        bool writable;
-    };
-    void addCopiedRange(const CopiedRange& range);
-    // The BDA table entry of an uploaded region.
     static ShaderRecompiler::BdaAbi::Range addressRange(const Region& region);
-    bool mappedInPlace(const Region& region) const;
-    static std::uint64_t servedEnd(const Region& region);
     void validate(std::uint64_t address, std::size_t bytes) const;
-    // The region of a descriptor-bound range (AddWritable/AddReadable), committed pages only. A
-    // range inside a base region of the space adds nothing: the region serves it, as today's merge
-    // of the two did.
-    void addDescriptorRegion(std::uint64_t address, std::size_t bytes, bool atomic, bool swept);
-    static bool servesView(const Region& region, std::uint64_t view);
-    static bool sparseHeapCandidate(const Region& region);
-    bool bindSparseMirror(Region& region, const GuestAllocations::Lease& lease);
-    // Gives a region a buffer of its own with its bytes (guest memory for host-backed and writable
-    // ranges, plus the write-back's reference copy for a range a descriptor writes; else its snapshot).
-    void copyRegion(Region& region, bool addressable);
-    // Whether a region inside a host import that cannot be bound in place is copied by the GPU
-    // instead of the CPU (see Region::gpuCopy): live guest bytes, not sparse, at most the size
-    // APS5_GPU_COPY_MAX_KIB allows, and APS5_CPU_COPIES unset.
-    bool gpuCopyEligible(const Region& region) const;
-    // Whether a region inside a host import is staged in device memory instead of bound in place
-    // (see GuestBufferMemory.cpp): staging allowed, not address-based, a written element inside,
-    // and an atomic element or a size within the written-shadow window. Independent of the import,
-    // so UploadPrepare and UploadFinish decide alike.
-    bool stagingEligible(const Region& region, bool addressable) const;
-    bool bindableInPlace(std::uint64_t offset, bool addressable) const;
-    // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
-    // the barriers that order them after earlier recorded writes and before the shaders reading them.
-    void recordGpuCopies(std::span<Region* const> copies, bool addressable);
-    void takeHeapReferences();
     Context context;
-    bool stagingAllowed = false;
-    bool adjustedRegions = false;
     GuestAllocations::Lease lease;
-    // The cached address space this build maps through (its lease pins the ranges); `regions` then
-    // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
-    // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while
-    // no import was destroyed since.
     std::uint64_t importsEpoch = 0;
     std::uint64_t importFloor = 0;
     std::vector<Region> regions;
-    // Whether `regions` is in ascending address order (true right after AcquireRegistered, whose
-    // regions follow the registry's order), so AddSnapshot can search instead of scanning.
     bool regionsSorted = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
-    std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;
-    // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
     bool uploaded = false;
     bool committed = false;

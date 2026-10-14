@@ -137,8 +137,7 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
-static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 22, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 36, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 9, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
@@ -421,8 +420,6 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageAtomic);
     writer.Flags(binding.imageAtomic64);
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
-    writer.Flags(binding.bufferAtomic);
-    writer.Flags(binding.bufferWritten);
     writer.Flags(binding.samplerUnnormalized);
     writer.Flags(binding.imageUnnormalized);
     writer.Flags(binding.imageUnnormalizedBaseLevel);
@@ -430,7 +427,6 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.samplerUsed);
     writer.Values(std::span<const std::uint32_t>(binding.imageSlotDwords));
     writer.List(binding.imageSamplers, [](Writer& out, const std::vector<std::uint32_t>& samplers) { out.Values(std::span<const std::uint32_t>(samplers)); });
-    writer.Flags(binding.bufferRead);
 }
 
 void decodeBinding(Reader& reader, DescriptorBinding& binding) {
@@ -451,8 +447,6 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageAtomic);
     reader.Flags(binding.imageAtomic64);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });
-    reader.Flags(binding.bufferAtomic);
-    reader.Flags(binding.bufferWritten);
     reader.Flags(binding.samplerUnnormalized);
     reader.Flags(binding.imageUnnormalized);
     reader.Flags(binding.imageUnnormalizedBaseLevel);
@@ -460,7 +454,6 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.samplerUsed);
     reader.Values(binding.imageSlotDwords);
     reader.List(binding.imageSamplers, 4, [](Reader& in, std::vector<std::uint32_t>& samplers) { in.Values(samplers); });
-    reader.Flags(binding.bufferRead);
 }
 
 void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
@@ -675,20 +668,6 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
 void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.Value(info.scratchDwords);
     writer.Value(info.sharedMemoryBytes);
-    writer.List(info.buffers, [](Writer& out, const BufferResource& buffer) {
-        out.Value(buffer.source);
-        out.Value(buffer.firstUsePc);
-        out.Value(buffer.maxByteExtent);
-        out.Value(buffer.imageAlias);
-        out.Value(buffer.read);
-        out.Value(buffer.written);
-        out.Value(buffer.atomic);
-        out.Value(buffer.formatted);
-        out.Value(buffer.descriptorFormatted);
-        out.Value(buffer.formattedReadMask);
-        out.Value(buffer.scalar);
-        out.Value(buffer.typedAlignment);
-    });
     writer.List(info.images, [](Writer& out, const ImageResource& image) {
         out.Value(image.source);
         out.Value(image.firstUsePc);
@@ -776,20 +755,6 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
 void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.scratchDwords);
     reader.Value(info.sharedMemoryBytes);
-    reader.List(info.buffers, 27, [](Reader& in, BufferResource& buffer) {
-        in.Value(buffer.source);
-        in.Value(buffer.firstUsePc);
-        in.Value(buffer.maxByteExtent);
-        in.Value(buffer.imageAlias);
-        in.Value(buffer.read);
-        in.Value(buffer.written);
-        in.Value(buffer.atomic);
-        in.Value(buffer.formatted);
-        in.Value(buffer.descriptorFormatted);
-        in.Value(buffer.formattedReadMask);
-        in.Value(buffer.scalar);
-        in.Value(buffer.typedAlignment);
-    });
     reader.List(info.images, 75, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
         in.Value(image.firstUsePc);
@@ -1244,7 +1209,6 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     const auto knownSource = [&](std::uint32_t source) { return source < plan.descriptorSources.size(); };
     if (!std::ranges::all_of(plan.materializationSources, knownSource)) return false;
     if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size() && (!source.tableColumn.has_value() || (knownSource(source.tableColumn->heapSource) && (!source.tableColumn->keyDomain.has_value() || knownSource(source.tableColumn->keyDomain->source)))); })) return false;
-    if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;
     if (!std::ranges::all_of(plan.info.samplers, [&](const SamplerResource& sampler) { return knownSource(sampler.source); })) return false;
     return std::ranges::all_of(plan.controlFlow, [&](const ResourceBlock& block) {

@@ -25,7 +25,7 @@ void Driver::classifyDiffering(std::uint64_t program, std::uint64_t key, const D
         counters.differingFirstPosition = std::min(counters.differingFirstPosition, i);
         counters.differingLastPosition = std::max(counters.differingLastPosition, i);
         const auto value = fresh.words[i];
-        if (capture != nullptr && (baseWord(capture->snapshot.buffers, value) || baseWord(capture->snapshot.images, value))) ++addressWords;
+        if (capture != nullptr && baseWord(capture->snapshot.images, value)) ++addressWords;
         else if (capture != nullptr && std::find(capture->snapshot.flattenedSrt.begin(), capture->snapshot.flattenedSrt.end(), value) != capture->snapshot.flattenedSrt.end()) ++dataWords;
     }
     counters.differingWords += words;

@@ -144,9 +144,6 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
         if (shader.program == nullptr) continue;
         for (const auto& binding : shader.program->bindings) {
             switch (binding.role) {
-            case ShaderRecompiler::DescriptorRole::GuestBuffers:
-                if (binding.kind != ShaderRecompiler::DescriptorKind::UniformBuffer && binding.kind != ShaderRecompiler::DescriptorKind::UniformTexelBuffer && any(binding.bufferWritten, binding.count)) return true;
-                break;
             case ShaderRecompiler::DescriptorRole::GuestImages:
                 if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage && any(binding.imageWritten, binding.count)) return true;
                 break;

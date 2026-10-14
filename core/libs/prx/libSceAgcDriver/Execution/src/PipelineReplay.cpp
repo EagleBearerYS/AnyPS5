@@ -36,7 +36,6 @@ ReplayTotals& ReplayCounters() {
 
 std::uint32_t Written(const ShaderRecompiler::DescriptorBinding& binding) {
     const auto any = [&](const std::vector<bool>& written) { return written.size() < binding.count || std::ranges::any_of(written, [](bool element) { return element; }); };
-    if (binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) return any(binding.bufferWritten) ? 1u : 0u;
     if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) return any(binding.imageWritten) ? 1u : 0u;
     return 0u;
 }
@@ -133,7 +132,6 @@ void PipelineReplay::create(const GraphicsPipelineRecord& record, const std::sha
                 binding.descriptorSet = shape.descriptorSet;
                 binding.binding = shape.binding;
                 binding.count = shape.count;
-                binding.bufferWritten.assign(shape.count, shape.written != 0u);
                 binding.imageWritten.assign(shape.count, shape.written != 0u);
             }
             shaders.push_back({static_cast<ShaderRecompiler::ShaderStage>(stage.stage), result.get(), stage.pushOffset});

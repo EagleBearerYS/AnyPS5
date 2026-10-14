@@ -61,7 +61,7 @@ bool Driver::syncPendingRuns(std::uint64_t program, std::uint32_t queue, const S
         if (traceCapSync() && traceBudget()) {
             const auto begin = region.guestAddress;
             const auto end = begin + region.bytes.size();
-            std::fprintf(stderr, "[capsync] dispatch-cache q0x%x program 0x%llx region 0x%llx+0x%zx synced before the gate: waited %.1f ms;%s; writers:%s\n", queue, static_cast<unsigned long long>(program), static_cast<unsigned long long>(begin), region.bytes.size(), waited, describeSelf(compiled, begin, end).c_str(), describeWriters(begin, end).c_str());
+            std::fprintf(stderr, "[capsync] dispatch-cache q0x%x program 0x%llx region 0x%llx+0x%zx synced before the gate: waited %.1f ms; writers:%s\n", queue, static_cast<unsigned long long>(program), static_cast<unsigned long long>(begin), region.bytes.size(), waited, describeWriters(begin, end).c_str());
         }
     }
     return true;
