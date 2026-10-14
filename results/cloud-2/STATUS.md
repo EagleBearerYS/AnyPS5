@@ -1,4 +1,3 @@
-BUSY GAC-008
-since: 2026-10-14T23:21:30Z
-claimed: tasks/claimed/GAC-008.md (cloud-tasks 5c49303b0)
-previous: PM-023 done, results/cloud-2/PM-023.md (test/stop24-dcc-clear-red at f0e163f32, test/stop24-dcc-clear-fix at 21c4fde93)
+READY
+since: 2026-10-14T23:45:17Z
+previous: GAC-008 done, results/cloud-2/GAC-008.md (fix/agc-note-dcc-key-packet-stores at b412d4709)
