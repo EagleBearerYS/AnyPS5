@@ -2969,6 +2969,14 @@ std::string ShaderResources::Describe() const {
         if (FrameTraceOn()) {
             std::snprintf(line, sizeof(line), " w[%08x %08x %08x %08x %08x %08x %08x %08x]", range.words[0], range.words[1], range.words[2], range.words[3], range.words[4], range.words[5], range.words[6], range.words[7]);
             text += line;
+            if (range.served != 0) {
+                std::snprintf(line, sizeof(line), " src=%c copy%d", range.served, range.copyKind);
+                text += line;
+                if (range.source != 0) {
+                    std::snprintf(line, sizeof(line), " from 0x%llx f%u", static_cast<unsigned long long>(range.source), range.sourceFormat);
+                    text += line;
+                }
+            }
         }
         if (range.dccAddress != 0) {
             const auto keys = ReadDccKeys(range.dccAddress, range.bytes);
@@ -3403,6 +3411,15 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             textureSrgb.push_back(forcedSrgb);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             std::copy_n(words.begin(), std::min<std::size_t>(words.size(), 8u), describedRanges.back().words.begin());
+            if (const auto* bound = textures.back().get(); bound != nullptr) {
+                auto& described = describedRanges.back();
+                described.served = bound->StorageSource() != nullptr ? 's' : 'g';
+                described.copyKind = static_cast<int>(bound->CopyKind());
+                if (const auto* source = bound->StorageSource(); source != nullptr) {
+                    described.source = source->Descriptor().baseAddress;
+                    described.sourceFormat = source->Descriptor().format;
+                }
+            }
             item.imageAllocations.push_back(textures.size() - 1);
         }
         // The line is due even when every element took the fast path (cachedTexture reports too).
