@@ -4177,6 +4177,31 @@ void verifySrgbDepthCompareModes() {
     }
 }
 
+void verifyConvertedImageModes() {
+    using namespace ShaderRecompiler;
+    for (const auto format : {IrBufferFormat::Format11_11_10UNorm, IrBufferFormat::Format10_11_11Float}) {
+        const DescriptorValue descriptor{{0x100u, static_cast<std::uint32_t>(format) << 20u, 0u, 0x900003acu, 0u, 0u, 0u, 0u}, 8u};
+        ImageResource loaded{};
+        loaded.resourceClass = ImageResourceClass::Sampled;
+        loaded.dimension = RdnaImageDimension::Dim2D;
+        const auto loadModes = ResourceMaterializer::RuntimeImageModes(loaded);
+        const auto& load = loadModes.at(ResourceMaterializer::RuntimeImageMode(loaded, descriptor, loadModes));
+        require(load.numericClass == IrTextureNumericClass::Uint && load.conversionFormat == format && !ResourceMaterializer::BindsDecodedCopy(load, descriptor), "a converted image the shader only loads did not select its R32_UINT conversion mode");
+        ImageResource sampled = loaded;
+        sampled.srgbDecodeCompatible = false;
+        const auto sampleModes = ResourceMaterializer::RuntimeImageModes(sampled);
+        const auto& sample = sampleModes.at(ResourceMaterializer::RuntimeImageMode(sampled, descriptor, sampleModes));
+        require(sample.numericClass == IrTextureNumericClass::Float && sample.conversionFormat == IrBufferFormat::Invalid && sample.shaderSwizzle == ShaderImageIdentitySwizzle && ResourceMaterializer::BindsDecodedCopy(sample, descriptor), "a converted image the shader samples did not select a float mode bound through its decoded copy");
+        const DescriptorValue native{{0x100u, static_cast<std::uint32_t>(IrBufferFormat::Format32Float) << 20u, 0u, 0x900003acu, 0u, 0u, 0u, 0u}, 8u};
+        require(!ResourceMaterializer::BindsDecodedCopy(sample, native), "a float mode binds a native format through a decoded copy");
+        ImageResource compared = sampled;
+        compared.depthCompare = true;
+        const auto compareModes = ResourceMaterializer::RuntimeImageModes(compared);
+        const auto match = ResourceMaterializer::TryRuntimeImageMode(compared, descriptor, compareModes);
+        require(!match.mode.has_value() && match.detail.find("compares against a converted") != std::string::npos, ("depth comparison against a converted image was not refused: " + match.detail).c_str());
+    }
+}
+
 int main(int argc, char** argv) {
     try {
         using namespace ShaderRecompiler;
@@ -4250,6 +4275,7 @@ int main(int argc, char** argv) {
         verifyGuardedNullPointers();
         verifyCubeDepthCompareMode();
         verifySrgbDepthCompareModes();
+        verifyConvertedImageModes();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{

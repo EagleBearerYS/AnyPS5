@@ -48,6 +48,7 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t RoundTripOffset = 16384;
 constexpr std::size_t StoreOffset = 32768;
 constexpr std::array<std::uint32_t, 4> PointSampler{0x00000092u, 0x00fff000u, 0u, 0u};
+constexpr std::array<std::uint32_t, 4> CompareSampler{0x00003092u, 0x00fff000u, 0u, 0u};
 
 alignas(256) std::array<std::uint32_t, LoadWidth * 4> Output{};
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
@@ -66,10 +67,10 @@ constexpr std::array<std::uint32_t, 9> StoreCode(std::uint32_t dmask, std::uint3
     };
 }
 
-constexpr std::array<std::uint32_t, 9> SamplerCode(std::uint32_t word0) {
+constexpr std::array<std::uint32_t, 10> SamplerCode(std::uint32_t word0) {
     return {
-        0x34060084u, 0x7e280280u, 0x7e2a0280u, word0, 0x00610a14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u,
-        0xbf810000u,
+        0x34060084u, 0x7e280280u, 0x7e2a0280u, 0x7e2c0280u, word0, 0x00610a14u, 0xbf8c3f70u, 0xe0781000u,
+        0x80000a03u, 0xbf810000u,
     };
 }
 
@@ -85,9 +86,7 @@ alignas(256) constexpr auto LoadD16 = LoadCode(0xfu, D16);
 alignas(256) constexpr auto StoreXyz = StoreCode(0x7u, 0u);
 alignas(256) constexpr auto StoreXz = StoreCode(0x5u, 0u);
 alignas(256) constexpr auto StoreD16 = StoreCode(0x7u, D16);
-alignas(256) constexpr auto SampleLz = SamplerCode(0xf09c0f08u);
-alignas(256) constexpr auto Gather4Lz = SamplerCode(0xf11c0108u);
-alignas(256) constexpr auto GetLod = SamplerCode(0xf1800308u);
+alignas(256) constexpr auto SampleCompareLz = SamplerCode(0xf0bc0108u);
 
 constexpr std::array<std::uint32_t, 11> StoreValues{
     0x00000000u, 0x3f800000u, 0x3f000000u, 0x3eaaaaabu, 0x80000000u, 0xbf800000u,
@@ -354,10 +353,8 @@ int main() {
         CheckStore(*device, texels + StoreOffset, StoreXz, 0x5u, "image_store dmask:0x5");
         CheckFloatStore(*device, texels + FloatOffset);
         CheckFloatLoad(*device, texels + FloatOffset);
-        RequireRefused(*device, SampleLz, texels + FloatOffset, SwizzleXYZ1, PointSampler, "samples or gathers a converted float image", "image_sample_lz of R10_G11_B11_FLOAT", FloatFormat);
-        RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_sample_lz");
-        RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_gather4_lz");
-        RequireRefused(*device, GetLod, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_get_lod");
+        RequireRefused(*device, SampleCompareLz, texels + FloatOffset, SwizzleXYZ1, CompareSampler, "compares against a converted float image", "image_sample_c_lz of R10_G11_B11_FLOAT", FloatFormat);
+        RequireRefused(*device, SampleCompareLz, texels, SwizzleXYZ1, CompareSampler, "compares against a converted unorm image", "image_sample_c_lz");
         RequireRefused(*device, LoadD16, texels, SwizzleXYZ1, {}, "converted unorm image with 16-bit data", "image_load d16");
         RequireRefused(*device, StoreD16, texels + StoreOffset, SwizzleXYZ1, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), "converted unorm image with 16-bit data", "image_store d16");
         RequireRefused(*device, LoadXyzw, texels, SwizzleXYZW, {}, "selects a channel the converted image format does not have", "image_load with DST_SEL X Y Z W");

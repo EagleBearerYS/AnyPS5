@@ -220,10 +220,11 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
                                                                      : "MIMG BY2/BY4 requires a direct, identity-swizzled 2D image whose elements fill one dword: R8, R16 or RG8 for BY2, R8 for BY4");
         }
     }
-    decoded.conversionFormat = RemapTextureFormat(format) != format ? format : IrBufferFormat::Invalid;
+    const bool decodedCopy = !storage && !base.srgbDecodeCompatible && SampledThroughDecodedCopy(format);
+    decoded.conversionFormat = !decodedCopy && RemapTextureFormat(format) != format ? format : IrBufferFormat::Invalid;
     if (format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format10_11_11Float) {
         const bool floating = format == IrBufferFormat::Format10_11_11Float;
-        if (!base.srgbDecodeCompatible) return rejectImage(PoisonReason::Conversion, floating ? "samples or gathers a converted float image, or queries its LOD, which is not implemented" : "sampling, gathering or querying LOD of a converted unorm image is not implemented");
+        if (base.depthCompare) return rejectImage(PoisonReason::Conversion, floating ? "compares against a converted float image, which is not implemented" : "compares against a converted unorm image, which is not implemented");
         if (!base.depthBitsCompatible) return rejectImage(PoisonReason::Conversion, floating ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
         for (std::uint32_t component = 0; component < 4u; ++component) {
             if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::Conversion, "selects a channel the converted image format does not have");
@@ -239,7 +240,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
     const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
-    decoded.numericClass = base.atomic ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
+    decoded.numericClass = base.atomic ? IrTextureNumericClass::Uint : decodedCopy ? IrTextureNumericClass::Float : SampledTextureNumericClass(format);
     if (!storage && !base.depthCompare && IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) {
         decoded.depthBits = true;
         if (!base.depthBitsCompatible) return rejectImage(PoisonReason::DepthBits16, "runtime image reads depth bits as unsupported 16-bit results");
@@ -1063,7 +1064,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                     elementIndex.erase(found);
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
-                    if (inserted) out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, {}});
+                    if (inserted) out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, {}, BindsDecodedCopy(mode, words)});
                     auto& samplers = out.elements[found->second].samplers;
                     samplers.insert(samplers.end(), directSamplers[resource].begin(), directSamplers[resource].end());
                     std::ranges::sort(samplers);
@@ -1321,6 +1322,10 @@ const char* ResourceMaterializer::UnnormalizedSampleMismatch(const ImageResource
     if (image.depthCompare) return "is used with depth comparison";
     if (image.conversionFormat != IrBufferFormat::Invalid || image.packed) return "samples an image that needs a format conversion or packed access";
     return nullptr;
+}
+
+bool ResourceMaterializer::BindsDecodedCopy(const ImageResource& mode, const DescriptorValue& descriptor) {
+    return mode.resourceClass == ImageResourceClass::Sampled && mode.numericClass == IrTextureNumericClass::Float && mode.conversionFormat == IrBufferFormat::Invalid && !mode.constantSwizzle && descriptor.dwordCount == 8u && !nullImageDescriptor(descriptor) && SampledThroughDecodedCopy(rawImageFormat(descriptor));
 }
 
 RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes) {

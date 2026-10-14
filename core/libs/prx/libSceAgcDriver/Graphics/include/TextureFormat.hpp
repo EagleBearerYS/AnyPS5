@@ -21,6 +21,9 @@ std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes);
 std::uint32_t BytesPerElement(std::uint32_t guestFormat);
 bool IsConvertedTextureFormat(std::uint32_t guestFormat);
+VkFormat DecodedCopyFormat(std::uint32_t guestFormat);
+std::uint32_t DecodedCopyElementBytes(std::uint32_t guestFormat);
+VkComponentSwizzle DecodedCopyChannel(std::uint32_t guestFormat, VkComponentSwizzle component);
 bool IsBlockCompressed(std::uint32_t guestFormat);
 std::uint32_t BlockWidth(std::uint32_t guestFormat);
 std::uint32_t BlockHeight(std::uint32_t guestFormat);

@@ -5,11 +5,20 @@
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetile_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/CmaskClear_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImage_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TexelDecode_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage10_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage11_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage20_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage21_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage30_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage31_spv.h"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -107,6 +116,19 @@ TextureDetiler::~TextureDetiler() {
 }
 
 void TextureDetiler::release() noexcept {
+    for (const auto decodePipeline : decodePipelines) {
+        if (decodePipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, decodePipeline, nullptr);
+    }
+    if (decodeModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, decodeModule, nullptr);
+    for (const auto decodePipeline : decodeImagePipelines) {
+        if (decodePipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, decodePipeline, nullptr);
+    }
+    for (const auto decodeImageModule : decodeImageModules) {
+        if (decodeImageModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, decodeImageModule, nullptr);
+    }
+    for (const auto pool : decodeImageDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    if (decodeImagePipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, decodeImagePipelineLayout, nullptr);
+    if (decodeImageDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, decodeImageDescriptorLayout, nullptr);
     for (const auto pool : cmaskDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     if (cmaskPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, cmaskPipeline, nullptr);
     if (cmaskPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, cmaskPipelineLayout, nullptr);
@@ -256,6 +278,112 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
     const auto groupsY = (rowEnd - window.rowBegin + 7u) / 8u;
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, groupsY, 1);
+}
+
+void TextureDetiler::DispatchDecode(VkCommandBuffer commands, std::uint32_t guestFormat, VkBuffer source, VkBuffer destination, std::uint64_t texels) {
+    Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a texel decode needs a command buffer and its source and destination buffers");
+    const auto outputBytes = DecodedCopyElementBytes(guestFormat);
+    const auto variant = outputBytes == 16u ? 1u : 0u;
+    if (decodeModule == VK_NULL_HANDLE) {
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = sizeof(TEXEL_DECODE_SPV);
+        moduleInfo.pCode = TEXEL_DECODE_SPV;
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &decodeModule), "vkCreateShaderModule texel decode");
+    }
+    auto& target = decodePipelines[variant];
+    if (target == VK_NULL_HANDLE) {
+        const VkSpecializationMapEntry entry{0, 0, sizeof(std::uint32_t)};
+        const std::uint32_t value = variant;
+        const VkSpecializationInfo specialization{1, &entry, sizeof(value), &value};
+        VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        createInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        createInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        createInfo.stage.module = decodeModule;
+        createInfo.stage.pName = "main";
+        createInfo.stage.pSpecializationInfo = &specialization;
+        createInfo.layout = pipelineLayout;
+        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &target), "vkCreateComputePipelines texel decode");
+    }
+    const std::uint64_t step = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16u) / 4u;
+    const std::uint64_t chunk = context.limits.maxStorageBufferRange / outputBytes / step * step;
+    Require(chunk != 0u, "the device's storage buffer range is too small for a texel decode");
+    for (std::uint64_t first = 0; first < texels; first += chunk) {
+        const auto count = std::min(chunk, texels - first);
+        const auto set = allocateSet();
+        const VkDescriptorBufferInfo sourceInfo{source, first * 4u, count * 4u};
+        const VkDescriptorBufferInfo destinationInfo{destination, first * outputBytes, count * outputBytes};
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (std::uint32_t index = 0; index < writes.size(); ++index) {
+            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[index].dstSet = set;
+            writes[index].dstBinding = index;
+            writes[index].descriptorCount = 1;
+            writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[index].pBufferInfo = index == 0u ? &sourceInfo : &destinationInfo;
+        }
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
+        context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+        const auto pushed = static_cast<std::uint32_t>(count);
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushed), &pushed);
+        const auto groups = (count + 255u) / 256u;
+        const auto groupsX = static_cast<std::uint32_t>(std::min<std::uint64_t>(groups, 65535u));
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, static_cast<std::uint32_t>((groups + groupsX - 1u) / groupsX), 1);
+    }
+}
+
+void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent) {
+    Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a texel decode needs a command buffer and its source and destination views");
+    const auto dimension = viewType == VK_IMAGE_VIEW_TYPE_1D_ARRAY ? 0u : viewType == VK_IMAGE_VIEW_TYPE_2D_ARRAY ? 1u : viewType == VK_IMAGE_VIEW_TYPE_3D ? 2u : 3u;
+    Require(dimension < 3u, "a texel decode between images takes 1D array, 2D array or 3D views");
+    const auto variant = dimension * 2u + (DecodedCopyElementBytes(guestFormat) == 16u ? 1u : 0u);
+    if (decodeImageDescriptorLayout == VK_NULL_HANDLE) {
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+        for (std::uint32_t index = 0; index < bindings.size(); ++index) {
+            bindings[index].binding = index;
+            bindings[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            bindings[index].descriptorCount = 1;
+            bindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &decodeImageDescriptorLayout), "vkCreateDescriptorSetLayout texel decode");
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &decodeImageDescriptorLayout;
+        Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &decodeImagePipelineLayout), "vkCreatePipelineLayout texel decode");
+    }
+    auto& target = decodeImagePipelines[variant];
+    if (target == VK_NULL_HANDLE) {
+        constexpr std::array<std::span<const std::uint32_t>, 6> codes{TEXEL_DECODE_IMAGE_10_SPV, TEXEL_DECODE_IMAGE_11_SPV, TEXEL_DECODE_IMAGE_20_SPV, TEXEL_DECODE_IMAGE_21_SPV, TEXEL_DECODE_IMAGE_30_SPV, TEXEL_DECODE_IMAGE_31_SPV};
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = codes[variant].size_bytes();
+        moduleInfo.pCode = codes[variant].data();
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &decodeImageModules[variant]), "vkCreateShaderModule texel decode");
+        VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        createInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        createInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        createInfo.stage.module = decodeImageModules[variant];
+        createInfo.stage.pName = "main";
+        createInfo.layout = decodeImagePipelineLayout;
+        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &target), "vkCreateComputePipelines texel decode");
+    }
+    const auto set = allocateDecodeImageSet();
+    const std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, source, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, destination, VK_IMAGE_LAYOUT_GENERAL}}};
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    for (std::uint32_t index = 0; index < writes.size(); ++index) {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = set;
+        writes[index].dstBinding = index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[index].pImageInfo = &images[index];
+    }
+    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
+    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, decodeImagePipelineLayout, 0, 1, &set, 0, nullptr);
+    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (extent.width + 7u) / 8u, (extent.height + 7u) / 8u, extent.depth);
 }
 
 std::uint32_t TextureDetiler::CmaskErrors() {

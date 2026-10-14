@@ -380,6 +380,7 @@ struct DescriptorBinding {
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
     std::vector<bool> imageWritten;
     std::vector<bool> imageDepthCompare;
+    std::vector<bool> imageDecodedCopy;
     std::vector<bool> imageAtomic;
     std::vector<bool> imageAtomic64;
     std::vector<DescriptorImageShape> imageShapes;

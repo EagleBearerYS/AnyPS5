@@ -847,12 +847,6 @@ void EmitQueryDimensionsOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
 
 void EmitQueryLodOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
-    if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Unorm) {
-        ctx.Fail(access.inst, "queries the level of detail of a converted unorm image, which is not implemented");
-    }
-    if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Float) {
-        ctx.Fail(access.inst, "queries the level of detail of a converted float image, which is not implemented");
-    }
     state.module.EmitCapability(spv::CapabilityImageQuery);
     const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler);
     const auto coord = CoordF32(ctx, access, 0, RdnaImageDimensionInfoFor(access.image.dimension).spatialComponents, AddressDimension(access).spatialComponents);
@@ -1050,12 +1044,6 @@ SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& a
     const bool dref = HasFlag(access.mem, RdnaImageSampleFlagCompare);
     if (dref && access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "uses depth comparison with a packed integer image");
-    }
-    if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Unorm) {
-        ctx.Fail(access.inst, "samples or gathers a converted unorm image, which needs filtering in the shader and is not implemented");
-    }
-    if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Float) {
-        ctx.Fail(access.inst, "samples or gathers a converted float image, which needs filtering in the shader and is not implemented");
     }
     const auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
     return {dimensionInfo, layout, access.image.numericClass, dref, coord};

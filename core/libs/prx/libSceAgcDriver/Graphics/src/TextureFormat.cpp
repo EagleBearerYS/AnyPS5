@@ -176,6 +176,24 @@ bool IsConvertedTextureFormat(std::uint32_t guestFormat) {
     return remapGuestFormat(guestFormat) != guestFormat;
 }
 
+VkFormat DecodedCopyFormat(std::uint32_t guestFormat) {
+    switch (static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat)) {
+        case ShaderRecompiler::IrBufferFormat::Format11_11_10UNorm: return VK_FORMAT_R32G32B32A32_SFLOAT;
+        case ShaderRecompiler::IrBufferFormat::Format10_11_11Float: return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+        default: throw std::runtime_error("AGC graphics: guest texture format " + std::to_string(guestFormat) + " has no decoded copy");
+    }
+}
+
+std::uint32_t DecodedCopyElementBytes(std::uint32_t guestFormat) {
+    return DecodedCopyFormat(guestFormat) == VK_FORMAT_R32G32B32A32_SFLOAT ? 16u : 4u;
+}
+
+VkComponentSwizzle DecodedCopyChannel(std::uint32_t guestFormat, VkComponentSwizzle component) {
+    Require(component != VK_COMPONENT_SWIZZLE_A, "a decoded copy of guest texture format " + std::to_string(guestFormat) + " selects the channel the format does not have");
+    if (component < VK_COMPONENT_SWIZZLE_R || component > VK_COMPONENT_SWIZZLE_B || DecodedCopyFormat(guestFormat) != VK_FORMAT_B10G11R11_UFLOAT_PACK32) return component;
+    return component == VK_COMPONENT_SWIZZLE_R ? VK_COMPONENT_SWIZZLE_B : component == VK_COMPONENT_SWIZZLE_B ? VK_COMPONENT_SWIZZLE_R : component;
+}
+
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes) {
     switch (format) {
         case VK_FORMAT_B8G8R8A8_UNORM: format = VK_FORMAT_R8G8B8A8_UNORM; break;

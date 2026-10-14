@@ -18,6 +18,7 @@ struct ImageTableElement {
     bool depthCompare = false;
     DescriptorBindingKind kind = DescriptorBindingKind::Buffers;
     std::vector<std::uint32_t> samplers;
+    bool decodedCopy = false;
 };
 
 struct ImageTableSamplerElement {
@@ -56,6 +57,7 @@ public:
     static std::uint32_t RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes);
     static void PrepareImageModes(ShaderInfo& info);
     static const char* UnnormalizedSampleMismatch(const ImageResource& image);
+    static bool BindsDecodedCopy(const ImageResource& mode, const DescriptorValue& descriptor);
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;

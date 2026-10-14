@@ -83,6 +83,39 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcTexelDecodeShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TexelDecode.comp)
+set(agcTexelDecodeShaderSpv ${agcTextureDetileGeneratedDir}/TexelDecode.spv)
+set(agcTexelDecodeShaderHeader ${agcTextureDetileGeneratedDir}/TexelDecode_spv.h)
+add_custom_command(
+        OUTPUT "${agcTexelDecodeShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcTexelDecodeShaderSpv}" "${agcTexelDecodeShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTexelDecodeShaderSpv} -DOUTPUT=${agcTexelDecodeShaderHeader}
+        -DSYMBOL=TEXEL_DECODE_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTexelDecodeShaderSource}" glslang-standalone
+        VERBATIM
+)
+
+set(agcTexelDecodeImageShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TexelDecodeImage.comp)
+set(agcTexelDecodeImageShaderHeaders)
+foreach(agcTexelDecodeDimension 1 2 3)
+    foreach(agcTexelDecodeUnorm 0 1)
+        set(agcTexelDecodeVariant ${agcTexelDecodeDimension}${agcTexelDecodeUnorm})
+        set(agcTexelDecodeVariantSpv ${agcTextureDetileGeneratedDir}/TexelDecodeImage${agcTexelDecodeVariant}.spv)
+        set(agcTexelDecodeVariantHeader ${agcTextureDetileGeneratedDir}/TexelDecodeImage${agcTexelDecodeVariant}_spv.h)
+        add_custom_command(
+                OUTPUT "${agcTexelDecodeVariantHeader}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+                COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DDIMENSION=${agcTexelDecodeDimension} -DUNORM_11_11_10=${agcTexelDecodeUnorm} -o "${agcTexelDecodeVariantSpv}" "${agcTexelDecodeImageShaderSource}"
+                COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTexelDecodeVariantSpv} -DOUTPUT=${agcTexelDecodeVariantHeader}
+                -DSYMBOL=TEXEL_DECODE_IMAGE_${agcTexelDecodeVariant}_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+                DEPENDS "${agcTexelDecodeImageShaderSource}" glslang-standalone
+                VERBATIM
+        )
+        list(APPEND agcTexelDecodeImageShaderHeaders ${agcTexelDecodeVariantHeader})
+    endforeach()
+endforeach()
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -207,6 +240,8 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorHeap.cpp
         ${agcTextureDetileShaderHeader}
         ${agcCmaskClearShaderHeader}
+        ${agcTexelDecodeShaderHeader}
+        ${agcTexelDecodeImageShaderHeaders}
         ${agcMeshArgumentsShaderHeader}
         ${agcTextureDetileImageShaderHeader}
         ${agcSampleCounterShaderHeader}

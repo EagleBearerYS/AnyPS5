@@ -430,6 +430,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 entry.identityImageSwizzle.push_back(mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits);
                 physical.imageWritten.push_back(image.written || image.atomic);
                 physical.imageDepthCompare.push_back(mode.depthCompare);
+                physical.imageDecodedCopy.push_back(ResourceMaterializer::BindsDecodedCopy(mode, snapshot.images.at(resource)));
                 physical.imageAtomic.push_back(image.atomic);
                 physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
@@ -566,6 +567,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 shape.dimension = element.dimension;
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
                 physical.imageDepthCompare.push_back(element.depthCompare);
+                physical.imageDecodedCopy.push_back(element.decodedCopy);
                 physical.imageWritten.push_back(false);
                 physical.imageAtomic.push_back(false);
                 std::vector<std::uint32_t> samplers;

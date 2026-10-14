@@ -1,0 +1,44 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+#if DIMENSION == 1
+#define IMAGE_TYPE uimage1DArray
+#define COORDINATE ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.z)
+#define INSIDE(size) (gl_GlobalInvocationID.x < uint(size.x) && gl_GlobalInvocationID.y == 0u && gl_GlobalInvocationID.z < uint(size.y))
+#elif DIMENSION == 2
+#define IMAGE_TYPE uimage2DArray
+#define COORDINATE ivec3(gl_GlobalInvocationID)
+#define INSIDE(size) (gl_GlobalInvocationID.x < uint(size.x) && gl_GlobalInvocationID.y < uint(size.y) && gl_GlobalInvocationID.z < uint(size.z))
+#else
+#define IMAGE_TYPE uimage3D
+#define COORDINATE ivec3(gl_GlobalInvocationID)
+#define INSIDE(size) (gl_GlobalInvocationID.x < uint(size.x) && gl_GlobalInvocationID.y < uint(size.y) && gl_GlobalInvocationID.z < uint(size.z))
+#endif
+
+layout(set = 0, binding = 0, r32ui) uniform readonly IMAGE_TYPE source;
+#if UNORM_11_11_10
+layout(set = 0, binding = 1, rgba32ui) uniform writeonly IMAGE_TYPE destination;
+#else
+layout(set = 0, binding = 1, r32ui) uniform writeonly IMAGE_TYPE destination;
+#endif
+
+uint unormBits(uint value, uint bits) {
+    if (value == 0u) return 0u;
+    uint msb = uint(findMSB(value));
+    uint leading = bits - 1u - msb;
+    uint rotated = ((value << leading) | (value >> (bits - leading))) & ((1u << bits) - 1u);
+    uint pattern = rotated << (32u - bits);
+    for (uint shift = bits; shift < 32u; shift *= 2u) pattern |= pattern >> shift;
+    return ((msb + 126u - bits) << 23u) + (pattern >> 8u) + ((pattern >> 7u) & 1u);
+}
+
+void main() {
+    if (!INSIDE(imageSize(destination))) return;
+    uint texel = imageLoad(source, COORDINATE).x;
+#if UNORM_11_11_10
+    imageStore(destination, COORDINATE, uvec4(unormBits(texel & 0x7ffu, 11u), unormBits((texel >> 11u) & 0x7ffu, 11u), unormBits(texel >> 22u, 10u), 0x3f800000u));
+#else
+    imageStore(destination, COORDINATE, uvec4((texel >> 21u) | (((texel >> 10u) & 0x7ffu) << 11u) | ((texel & 0x3ffu) << 22u), 0u, 0u, 0u));
+#endif
+}

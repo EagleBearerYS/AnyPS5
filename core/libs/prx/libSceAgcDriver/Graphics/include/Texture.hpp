@@ -53,9 +53,21 @@ struct OwnedImage {
     VkDeviceMemory memory;
 };
 
+struct OwnedViews {
+    OwnedViews(const Context& context, std::shared_ptr<OwnedImage> image) : context(context), image(std::move(image)) {}
+    OwnedViews(const OwnedViews&) = delete;
+    OwnedViews& operator=(const OwnedViews&) = delete;
+    ~OwnedViews() {
+        for (const auto view : views) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+    }
+    Context context;
+    std::shared_ptr<OwnedImage> image;
+    std::vector<VkImageView> views;
+};
+
 class Texture {
 public:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool decodedCopy = false);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
@@ -66,13 +78,17 @@ public:
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, DepthCopyTag);
     static VkFormat DepthCopyFormat(VkFormat colorFormat);
     static bool CanDepthCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
-    bool IsDepthCopy() const { return perUseCopy == PerUseCopy::RefreshedOnReuse; }
-    bool RefreshDepthCopy();
+    struct DecodedCopyTag {};
+    Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, DecodedCopyTag);
+    static bool CanDecodedCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
+    bool IsRefreshedCopy() const { return perUseCopy == PerUseCopy::RefreshedOnReuse; }
+    bool RefreshCopy();
     struct DepthCopyCounts {
         std::uint64_t textures;
         std::uint64_t refreshes;
     };
     static DepthCopyCounts TakeDepthCopyCounts();
+    static DepthCopyCounts TakeDecodedCopyCounts();
     static bool CanCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
     ~Texture();
     Texture(const Texture&) = delete;
@@ -109,6 +125,8 @@ private:
     void release() noexcept;
     void createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
     void prepareBaseLevelView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
+    void recordDepthCopy(VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept);
+    void recordDecodedCopy(VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept);
 
     // Held by value: cached textures outlive the Context of the draw that created them.
     Context context;
@@ -136,7 +154,11 @@ private:
     bool copiedOnce = false;
     std::uint64_t copiedVersion = 0;
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
-    std::uint32_t copyWidth = 0, copyHeight = 0, copyLevels = 0, copyLayers = 0, copyElementBytes = 0;
+    std::uint32_t decodedGuestFormat = 0;
+    VkImageUsageFlags viewUsage = 0;
+    VkImageViewType copyViewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    std::shared_ptr<OwnedViews> copyViews;
+    std::uint32_t copyWidth = 0, copyHeight = 0, copyLevels = 0, copyLayers = 0, copyElementBytes = 0, copyDepth = 1;
 };
 
 VkFormat AttachmentProxyFormat(const Context& context, VkFormat format);
@@ -167,6 +189,7 @@ public:
     static ViewLayers LayersOf(const GuestTextureResource& viewed, bool flat);
     VkImageView StorageView(std::uint32_t mip, ViewLayers layers);
     VkImageView ElementView();
+    VkImageView DecodeSourceView(std::uint32_t mip);
     VkImageView AtomicView(std::uint32_t mip, ViewLayers layers);
     VkImageView Atomic64View(std::uint32_t mip, ViewLayers layers);
     std::uint32_t StorageSlot(VkImageView view);
@@ -548,6 +571,7 @@ private:
     std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, bool, VkFormat>, VkImageView> layerViews;
     VkImageView elementView = VK_NULL_HANDLE;
     std::map<std::uint32_t, VkImageView> elementLayerViews;
+    std::map<std::uint32_t, VkImageView> decodeSourceViews;
     std::int8_t singlePassState = -1;
     bool attachable = false;
     std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;

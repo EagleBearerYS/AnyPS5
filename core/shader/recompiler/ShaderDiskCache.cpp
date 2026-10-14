@@ -260,6 +260,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.samplerDepthCompare);
     writer.Flags(binding.imageWritten);
     writer.Flags(binding.imageDepthCompare);
+    writer.Flags(binding.imageDecodedCopy);
     writer.Flags(binding.imageAtomic);
     writer.Flags(binding.imageAtomic64);
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
@@ -289,6 +290,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.samplerDepthCompare);
     reader.Flags(binding.imageWritten);
     reader.Flags(binding.imageDepthCompare);
+    reader.Flags(binding.imageDecodedCopy);
     reader.Flags(binding.imageAtomic);
     reader.Flags(binding.imageAtomic64);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });

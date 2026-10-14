@@ -405,6 +405,7 @@ private:
     struct PreviousSampled {
         std::array<std::uint32_t, 8> words{};
         bool depthCompare = false;
+        bool decodedCopy = false;
         std::shared_ptr<Texture> texture;
     };
     PreviousSampled previousSampled;

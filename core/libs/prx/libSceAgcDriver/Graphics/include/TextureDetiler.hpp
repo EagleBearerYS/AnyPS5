@@ -54,8 +54,11 @@ namespace AgcDriver::Graphics {
         void BeginBatch();
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
         std::uint32_t CmaskErrors();
+        void DispatchDecode(VkCommandBuffer commands, std::uint32_t guestFormat, VkBuffer source, VkBuffer destination, std::uint64_t texels);
+        void DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent);
 
     private:
+        VkDescriptorSet allocateDecodeImageSet();
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
         void release() noexcept;
         VkDescriptorSet allocateSet(bool image = false);
@@ -79,6 +82,14 @@ namespace AgcDriver::Graphics {
         VkShaderModule imageModule = VK_NULL_HANDLE;
         std::vector<VkDescriptorPool> imageDescriptorPools;
         std::size_t allocatedImageSets = 0;
+        VkShaderModule decodeModule = VK_NULL_HANDLE;
+        std::array<VkPipeline, 2> decodePipelines{};
+        VkDescriptorSetLayout decodeImageDescriptorLayout = VK_NULL_HANDLE;
+        VkPipelineLayout decodeImagePipelineLayout = VK_NULL_HANDLE;
+        std::array<VkShaderModule, 6> decodeImageModules{};
+        std::array<VkPipeline, 6> decodeImagePipelines{};
+        std::vector<VkDescriptorPool> decodeImageDescriptorPools;
+        std::size_t allocatedDecodeImageSets = 0;
     };
 
 }
