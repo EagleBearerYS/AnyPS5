@@ -157,7 +157,7 @@ ShaderRecompiler::RecompileResult PlaneProgram(AgcDriver::VulkanDevice& device, 
 
 void RunPlane(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& program, std::span<const std::uint32_t> code, std::span<std::uint32_t> output, std::uint32_t expected, const std::string& what) {
     std::fill(output.begin(), output.end(), 0xdeadbeefu);
-    device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(program, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t lane = 0; lane < Threads; ++lane) {
         Require(output[lane] == expected, what + ": the dispatch read " + std::to_string(output[lane]) + " at texel " + std::to_string(lane) + ", expected " + std::to_string(expected));
@@ -253,7 +253,7 @@ void ArrayViewCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, std:
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     userData[14] = std::bit_cast<std::uint32_t>(1.0f / 64.0f);
     const auto program = Compile(device, StoreLayerCode, userData);
-    ExpectRefusal([&] { device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreLayerCode.data())); }, "storage image access to depth/stencil surface", "a two-layer 2D array storage view of the depth plane");
+    ExpectRefusal([&] { device.Dispatch(program, 1, 1, 1, reinterpret_cast<std::uintptr_t>(StoreLayerCode.data())); }, "storage image access to depth/stencil surface", "a two-layer 2D array storage view of the depth plane");
 }
 
 void MultisampledCase(AgcDriver::VulkanDevice& device, const Shaders& compiled, std::uint8_t* block) {
@@ -290,7 +290,7 @@ void MultisampledCase(AgcDriver::VulkanDevice& device, const Shaders& compiled, 
     const auto texture = TextureDescriptor(depth, Format32Float);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     const auto program = Compile(device, StoreCode, userData);
-    ExpectRefusal([&] { device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data())); }, "storage image access to a multisampled depth surface", "a storage view of a multisampled depth plane");
+    ExpectRefusal([&] { device.Dispatch(program, 1, 1, 1, reinterpret_cast<std::uintptr_t>(StoreCode.data())); }, "storage image access to a multisampled depth surface", "a storage view of a multisampled depth plane");
 }
 
 void SampledCopyCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, std::uint8_t* block) {
@@ -321,7 +321,7 @@ void TwoViewsCase(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::copy(first.begin(), first.end(), userData.begin() + 4);
     std::copy(second.begin(), second.end(), userData.begin() + 12);
     const auto program = Compile(device, StoreTwoViewsCode, userData);
-    ExpectRefusal([&] { device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreTwoViewsCode.data())); }, "through a view that another view of the plane", "a dispatch storing to two views of one depth plane");
+    ExpectRefusal([&] { device.Dispatch(program, 1, 1, 1, reinterpret_cast<std::uintptr_t>(StoreTwoViewsCode.data())); }, "through a view that another view of the plane", "a dispatch storing to two views of one depth plane");
 }
 
 }

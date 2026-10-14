@@ -1134,15 +1134,13 @@ void ShadersWriteMemoryTests() {
         result.kind = kind;
         result.role = role;
         result.count = 1;
-        if (role == ShaderRecompiler::DescriptorRole::GuestImages) result.imageWritten = std::move(written);
-        else result.bufferWritten = std::move(written);
+        result.imageWritten = std::move(written);
         return result;
     };
     ShaderRecompiler::RecompileResult reads;
-    reads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::GuestBuffers, {false}));
     reads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageImage, ShaderRecompiler::DescriptorRole::GuestImages, {false}));
     ShaderRecompiler::RecompileResult stores;
-    stores.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::GuestBuffers, {true}));
+    stores.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::BdaPagetable, {}));
     using Stage = ShaderRecompiler::ShaderStage;
     const auto writes = [](std::initializer_list<AgcDriver::Graphics::CompiledShader> shaders) { return AgcDriver::Graphics::ShadersWriteMemory(std::vector<AgcDriver::Graphics::CompiledShader>(shaders)); };
     Require(!writes({{Stage::Vertex, &reads, 0}, {Stage::Fragment, &reads, 0}}), "shaders that only read memory were reported as writing it");
@@ -2977,44 +2975,13 @@ std::vector<std::uint32_t> join(std::vector<std::uint32_t> first, const std::vec
 
 ShaderRecompiler::DescriptorBinding makeBinding(Role role, std::uint32_t binding, std::uint32_t count, std::vector<std::uint32_t> words) {
     ShaderRecompiler::DescriptorBinding result;
-    result.kind = role == Role::GuestBuffers ? Kind::DeviceAddress : Kind::StorageBuffer;
+    result.kind = Kind::StorageBuffer;
     result.role = role;
     result.descriptorSet = 0;
     result.binding = binding;
     result.count = count;
     result.guestDescriptor = std::move(words);
     return result;
-}
-
-void pushBufferData(ShaderRecompiler::RecompileResult& program, std::uint32_t buffers) {
-    program.memoryOffsetDword = 0;
-    program.bufferAddressDword = (buffers + 3u) / 4u;
-    program.pushConstants.assign((program.bufferAddressDword + buffers * ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u, std::byte{0});
-}
-
-struct PatchedBuffer {
-    VkBuffer buffer;
-    std::size_t offset;
-    std::uint32_t bytes;
-
-    bool operator==(const PatchedBuffer&) const = default;
-};
-
-PatchedBuffer patchedBuffer(std::span<const std::byte> data, std::uint32_t dword) {
-    std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::BufferAddressDwords> words{};
-    std::memcpy(words.data(), data.data() + dword * 4u, sizeof(words));
-    const auto relative = ((static_cast<std::uint64_t>(words[1]) << 32u) | words[0]) - 0x100000000000ULL;
-    return {reinterpret_cast<VkBuffer>(static_cast<std::uintptr_t>(relative >> 32u)), static_cast<std::size_t>(relative & 0xffffffffu), words[2] * 4u};
-}
-
-PatchedBuffer patchedBuffer(std::span<const std::byte> push, const AgcDriver::Graphics::CompiledShader& shader, std::uint32_t element) {
-    return patchedBuffer(push.subspan(shader.pushConstantOffset), shader.program->bufferAddressDword + element * ShaderRecompiler::RuntimeAbi::BufferAddressDwords);
-}
-
-PatchedBuffer pushedBuffer(const AgcDriver::Graphics::ShaderResources& resources, const AgcDriver::Graphics::CompiledShader& shader, std::uint32_t element) {
-    std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> push{};
-    resources.PatchPushConstants(push);
-    return patchedBuffer(push, shader, element);
 }
 
 std::vector<std::uint32_t> ShaderDataWords(std::initializer_list<std::uint32_t> userData) {
@@ -3058,7 +3025,6 @@ void expectSingleFailure(const ShaderRecompiler::DescriptorBinding& binding, std
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::RecompileResult fragment;
     vertex.bindings.push_back(binding);
-    if (binding.role == Role::GuestBuffers) pushBufferData(vertex, binding.count);
     expectResourceFailure(vertex, fragment, reason);
 }
 
@@ -3066,7 +3032,6 @@ void expectSingleAccepted(const ShaderRecompiler::DescriptorBinding& binding, st
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::RecompileResult fragment;
     vertex.bindings.push_back(binding);
-    if (binding.role == Role::GuestBuffers) pushBufferData(vertex, binding.count);
     mock = MockVulkan{};
     const auto context = mockContext();
     const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
@@ -3097,9 +3062,7 @@ void descriptorLayoutFlagTests() {
         {
             ShaderRecompiler::RecompileResult program;
             const std::uint32_t count = updateAfterBind ? 17 : 1;
-            program.bindings.push_back(makeBinding(Role::GuestBuffers, 0, count, std::vector<std::uint32_t>(4 * count)));
             program.bindings.push_back(makeBinding(Role::FlattenedSrt, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt), 1, {1u}));
-            pushBufferData(program, count);
             context.limits.maxPerStageDescriptorStorageBuffers = updateAfterBind ? 0 : 16;
             const AgcDriver::Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
             AgcDriver::Graphics::ShaderResources resources(context, compute);
@@ -3197,63 +3160,6 @@ void pushConstantTests() {
     expectFailure([&] { AgcDriver::Graphics::AssemblePushConstants(shaders); }, "missing compiled shader");
 }
 
-void descriptorSnapshotTests() {
-    using AgcDriver::Graphics::DescriptorCache;
-    using AgcDriver::Graphics::Recorder;
-    using AgcDriver::Graphics::ShaderResources;
-    for (const unsigned selected : {1u, 2u, 3u}) {
-        mock = MockVulkan{};
-        mock.allowCopies = true;
-        auto context = mockContext();
-        {
-            DescriptorCache cache(context);
-            context.descriptorCache = &cache;
-            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-            Recorder recorder(context);
-            ShaderRecompiler::RecompileResult vertex, fragment;
-            auto binding = makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)));
-            binding.bufferWritten = {false, false};
-            vertex.bindings.push_back(binding);
-            fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 4, 1, vsharp(guestThird.data(), 8)));
-            pushBufferData(vertex, 2);
-            pushBufferData(fragment, 1);
-            const auto state = AgcDriver::Graphics::DecodeState(makeState());
-            ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
-            const AgcDriver::Graphics::CompiledShader vertexShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0};
-            const AgcDriver::Graphics::CompiledShader fragmentShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, static_cast<std::uint32_t>(vertex.pushConstants.size())};
-            std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> original{};
-            resources.PatchPushConstants(original);
-            std::vector<ShaderResources::MovedBuffer> moved;
-            for (std::size_t index = 0; index < 2; ++index) {
-                if ((selected & (1u << index)) == 0) continue;
-                const std::size_t bytes = index == 0 ? 24 : 12;
-                moved.push_back({index, 0, bytes, std::vector<std::uint32_t>(bytes / 4, static_cast<std::uint32_t>(0x12340000u + index))});
-            }
-            mock.writes.clear();
-            const auto snapshots = resources.PrepareDrawBindings(recorder, moved);
-            Require(snapshots != nullptr && snapshots->snapshots.size() == moved.size(), "draw snapshots are missing");
-            Require(!snapshots->HasSets() && mock.writes.empty() && mock.copies.empty(), "snapshots of guest buffers read through device addresses wrote a descriptor set");
-            auto patched = original;
-            snapshots->PatchPushConstants(patched);
-            Require(patchedBuffer(patched, fragmentShader, 0) == patchedBuffer(original, fragmentShader, 0), "a snapshot changed the address of a buffer without snapshots");
-            std::size_t snapshot = 0;
-            for (std::uint32_t index = 0; index < 2; ++index) {
-                const auto address = patchedBuffer(patched, vertexShader, index);
-                if ((selected & (1u << index)) == 0) {
-                    Require(address == patchedBuffer(original, vertexShader, index), "a snapshot changed an untouched buffer's address");
-                } else {
-                    const auto& item = snapshots->snapshots[snapshot];
-                    Require(address.buffer == item.buffer->Handle() && address.offset == 0 && address.bytes == moved[snapshot].size, "a snapshot address names another element's buffer or size");
-                    Require(sameBytes(bufferBytes(address.buffer), moved[snapshot].words.data(), moved[snapshot].size), "a snapshot lost its buffer data");
-                    ++snapshot;
-                }
-            }
-            recorder.Sync();
-        }
-        Require(mock.live == 0, "snapshot descriptor resources leaked Vulkan objects");
-    }
-}
-
 void resourceTests() {
     mock = MockVulkan{};
     const auto context = mockContext();
@@ -3262,40 +3168,23 @@ void resourceTests() {
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
-        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
         vertex.bindings.push_back(makeBinding(Role::ShaderData, 5, 1, ShaderDataWords({7, 8, 9})));
         vertex.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
-        vertex.memoryOffsetDword = ShaderRecompiler::RuntimeAbi::BufferOffsetsDword;
-        vertex.bufferAddressDword = ShaderRecompiler::RuntimeAbi::BufferAddressesDword;
         fragment.bindings.push_back(makeBinding(Role::FlattenedSrt, 43, 1, {1, 2}));
-        fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 44, 1, vsharp(guestThird.data(), 8)));
-        pushBufferData(fragment, 1);
         AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
         Require(resources.Layout() != VK_NULL_HANDLE, "descriptor set layout was not created");
-        Require(mock.layoutBindings.size() == 2 && mock.writes.size() == 2, "guest buffers read through device addresses must have no layout binding or descriptor write");
+        Require(mock.layoutBindings.size() == 2 && mock.writes.size() == 2, "the two data descriptors do not have one layout binding and one write each");
         Require(findLayoutBinding(5).descriptorCount == 1 && findLayoutBinding(5).stageFlags == VK_SHADER_STAGE_VERTEX_BIT, "shader data layout binding is incorrect");
         Require(findLayoutBinding(43).descriptorCount == 1 && findLayoutBinding(43).stageFlags == VK_SHADER_STAGE_FRAGMENT_BIT, "flattened SRT layout binding is incorrect");
         Require(mock.poolMaxSets == 1 && mock.poolSizes.size() == 1 && mock.poolSizes[0].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && mock.poolSizes[0].descriptorCount == 2, "descriptor pool must hold one set with the two data descriptors");
         const auto shaderData = mockBufferMemory(findWrite(5).buffers[0].buffer);
-        const auto firstBuffer = patchedBuffer(shaderData, ShaderRecompiler::RuntimeAbi::BufferAddressesDword);
-        const auto secondBuffer = patchedBuffer(shaderData, ShaderRecompiler::RuntimeAbi::BufferAddressesDword + ShaderRecompiler::RuntimeAbi::BufferAddressDwords);
-        const AgcDriver::Graphics::CompiledShader fragmentShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0};
-        const auto thirdBuffer = pushedBuffer(resources, fragmentShader, 0);
-        Require(firstBuffer.offset == 0 && firstBuffer.bytes == 16 && secondBuffer.offset == 0 && secondBuffer.bytes == 32, "guest buffers must be addressed at zero offset with their descriptor size");
-        Require(sameBytes(bufferBytes(firstBuffer.buffer), guestFirst.data(), 16) && sameBytes(bufferBytes(secondBuffer.buffer), guestSecond.data(), 32), "guest buffer contents were not uploaded");
         const auto data = ShaderDataWords({7, 8, 9});
-        Require(findWrite(5).buffers.size() == 1 && findWrite(5).buffers[0].range == data.size() * 4u && sameBytes(shaderData, data.data(), ShaderRecompiler::RuntimeAbi::BufferAddressesDword * 4u), "shader data buffer is incorrect");
+        Require(findWrite(5).buffers.size() == 1 && findWrite(5).buffers[0].range == data.size() * 4u && sameBytes(shaderData, data.data(), data.size() * 4u), "shader data buffer is incorrect");
         const std::array<std::uint32_t, 2> srt{1, 2};
         Require(findWrite(43).buffers.size() == 1 && findWrite(43).buffers[0].range == 8 && sameBytes(bufferBytes(findWrite(43).buffers[0].buffer), srt.data(), 8), "flattened SRT buffer is incorrect");
-        Require(thirdBuffer.bytes == 8 && sameBytes(bufferBytes(thirdBuffer.buffer).subspan(thirdBuffer.offset), guestThird.data(), 8), "fragment guest buffer is incorrect");
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, VK_NULL_HANDLE);
         Require(mock.boundPoint == VK_PIPELINE_BIND_POINT_GRAPHICS && mock.boundFirst == 0 && mock.boundSets == 1, "exactly one descriptor set must be bound at set zero");
-        auto first = mockBufferMemory(firstBuffer.buffer);
-        std::memset(first.data(), 0xab, 16);
-        std::memset(shaderData.data(), 0xcd, 12);
         resources.WriteBack();
-        Require(guestFirst[0] == 0xabababab && guestFirst[3] == 0xabababab, "guest buffer was not written back");
-        Require(guestSecond[0] == 1 && guestSecond[7] == 8 && guestThird[0] == 0xaaaaaaaa, "unmodified guest buffers changed on write back");
     }
     Require(mock.live == 0, "shader resources leaked Vulkan objects");
     mock = MockVulkan{};
@@ -3309,52 +3198,12 @@ void resourceTests() {
         resources.WriteBack();
     }
     Require(mock.live == 0, "empty shader resources leaked Vulkan objects");
-    mock = MockVulkan{};
-    {
-        ShaderRecompiler::RecompileResult compute;
-        compute.bindings.push_back(makeBinding(Role::GuestBuffers, 3, 1, vsharp(guestThird.data(), 8)));
-        pushBufferData(compute, 1);
-        const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
-        AgcDriver::Graphics::ShaderResources resources(context, shader);
-        Require(mock.layoutBindings.empty() && mock.writes.empty(), "a compute guest buffer read through its device address got a descriptor");
-        resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, VK_NULL_HANDLE);
-        Require(mock.boundSets == 0, "a compute build without descriptors bound a set");
-        guestThird = {0xaaaaaaaa, 0xbbbbbbbb};
-        const auto buffer = pushedBuffer(resources, shader, 0);
-        Require(buffer.bytes == 8, "the compute guest buffer's size is not its descriptor's");
-        std::memset(mockBufferMemory(buffer.buffer).data() + buffer.offset, 0x5a, 8);
-        resources.WriteBack();
-        Require(guestThird[0] == 0x5a5a5a5a && guestThird[1] == 0x5a5a5a5a, "compute buffer was not written back");
-        guestThird = {0xaaaaaaaa, 0xbbbbbbbb};
-    }
-    Require(mock.live == 0, "compute resources leaked Vulkan objects");
-    mock = MockVulkan{};
-    {
-        auto descriptor = vsharp(guestSecond.data(), 2);
-        descriptor[1] |= 16u << 16u;
-        descriptor[3] = 0x0004dfacu;
-        ShaderRecompiler::RecompileResult compute;
-        compute.bindings.push_back(makeBinding(Role::GuestBuffers, 3, 1, descriptor));
-        pushBufferData(compute, 1);
-        const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
-        AgcDriver::Graphics::ShaderResources resources(context, shader);
-        const auto buffer = pushedBuffer(resources, shader, 0);
-        Require(buffer.bytes == sizeof(guestSecond), "strided buffer range does not cover every record");
-        Require(sameBytes(bufferBytes(buffer.buffer).subspan(buffer.offset), guestSecond.data(), sizeof(guestSecond)), "strided buffer contents were not uploaded");
-        const std::uint32_t changed = 0x12345678u;
-        auto bytes = mockBufferMemory(buffer.buffer);
-        std::memcpy(bytes.data() + buffer.offset + 16, &changed, sizeof(changed));
-        resources.WriteBack();
-        Require(guestSecond[4] == changed && guestSecond[0] == 1 && guestSecond[7] == 8, "strided buffer write back changed the wrong record");
-        guestSecond[4] = 5;
-    }
-    Require(mock.live == 0, "strided buffer resources leaked Vulkan objects");
     {
         ShaderRecompiler::RecompileResult vertex;
         const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0};
         expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, shader); }, "compute resources require a compute shader");
     }
-    const auto base = makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestThird.data(), 8));
+    const auto base = makeBinding(Role::FlattenedSrt, 0, 1, vsharp(guestThird.data(), 8));
     const auto changed = [&](auto mutate) {
         auto binding = base;
         mutate(binding);
@@ -3371,42 +3220,20 @@ void resourceTests() {
     expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::UniformBuffer; }), "unsupported descriptor kind UniformBuffer");
     expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::UniformTexelBuffer; }), "unsupported descriptor kind UniformTexelBuffer");
     expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::StorageTexelBuffer; }), "unsupported descriptor kind StorageTexelBuffer");
+    expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::DeviceAddress; }), "unsupported descriptor kind DeviceAddress");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::SampledImage; }), "unsupported descriptor kind SampledImage");
     expectSingleFailure(changed([](auto& binding) { binding.descriptorSet = 1; }), "unexpected descriptor set");
     expectSingleFailure(changed([](auto& binding) { binding.readOnly = true; }), "read-only descriptors are unsupported");
     expectSingleFailure(changed([](auto& binding) { binding.count = 0; }), "empty descriptor binding");
-    expectSingleFailure(changed([](auto& binding) { binding.count = 2; }), "four DWORDs per array element");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.count = 2; binding.guestDescriptor = {1, 2}; }), "must not be arrays");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "empty shader data descriptor");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; }), "invalid compact shader data size");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.guestDescriptor = ShaderDataWords({}); binding.guestDescriptor.pop_back(); }), "invalid compact shader data size");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::FlattenedSrt; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "empty shader data descriptor");
-    expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[1] |= 0x40000000u; }), "reserved bits");
-    expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[3] |= 0x40000000u; }), "unsupported type");
-    expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(guestLarge.data(), static_cast<std::uint32_t>(sizeof(guestLarge))); }), "a guest buffer larger than the storage buffer range limit");
-    expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(0x1000), 8); }), "an unmapped V#");
-    expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(state.color.address), 64); }), "aliases the render target");
-    expectSingleAccepted(changed([](auto& binding) { binding.count = 3; binding.guestDescriptor = join(join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)), vsharp(reinterpret_cast<const void*>(0x1000), 8)); }), "an unmapped V# element");
-    expectSingleFailure(changed([&](auto& binding) { binding.count = 2; binding.guestDescriptor = join(vsharp(guestFirst.data(), 16), vsharp(reinterpret_cast<const void*>(state.color.address), 64)); }), "aliases the render target");
-    expectSingleAccepted(changed([](auto& binding) { binding.count = 17; binding.guestDescriptor.assign(68, 0); }), "seventeen guest buffers past the per-stage storage buffer limit");
+    expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor.clear(); }), "empty shader data descriptor");
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
-        std::vector<std::uint32_t> words;
-        for (int index = 0; index < 17; ++index) words = join(words, vsharp(reinterpret_cast<const void*>(0x1000), 8));
-        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 17, words));
-        pushBufferData(vertex, 17);
-        mock = MockVulkan{};
-        { AgcDriver::Graphics::ShaderResources resources(mockContext(), vertex, fragment, state.color, 0, 0); }
-        Require(mock.layoutBindings.empty() && mock.layoutFlags == 0 && mock.layoutBindingFlags.empty() && mock.poolFlags == 0, "guest buffers past the per-stage storage buffer limit took the update-after-bind path");
-        Require(mock.live == 0, "guest buffers past the per-stage storage buffer limit leaked Vulkan objects");
-    }
-    {
-        ShaderRecompiler::RecompileResult vertex;
-        ShaderRecompiler::RecompileResult fragment;
-        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
         vertex.bindings.push_back(makeBinding(Role::GuestImages, 1, 1, std::vector<std::uint32_t>(8, 0)));
-        pushBufferData(vertex, 2);
         const auto expectStageResources = [&](Role role, Kind kind, std::uint32_t words, std::uint32_t limit, std::string_view reason) {
             vertex.bindings.back().role = role;
             vertex.bindings.back().kind = kind;
@@ -3426,8 +3253,6 @@ void resourceTests() {
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
-        fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
-        pushBufferData(fragment, 2);
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
         auto limited = mockContext();
         limited.limits.maxPerStageResources = 1;
@@ -3440,20 +3265,15 @@ void resourceTests() {
             }
             Require(mock.live == 0, std::string(what) + " leaked Vulkan objects");
         };
-        expectAttachments(1, true, "a pixel stage at the per-stage limit with its colour attachment and two guest buffers");
+        expectAttachments(1, true, "a pixel stage at the per-stage limit with its colour attachment");
         expectAttachments(2, false, "a pixel stage over the per-stage limit with its colour attachments");
-        std::swap(vertex, fragment);
-        expectAttachments(1, true, "a vertex stage's guest buffers and the pixel stage's colour attachment");
-        expectAttachments(3, false, "colour attachments over the per-stage limit");
     }
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
-        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestFirst.data(), 16)));
-        fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestSecond.data(), 32)));
+        vertex.bindings.push_back(makeBinding(Role::FlattenedSrt, 0, 1, {1, 2}));
+        fragment.bindings.push_back(makeBinding(Role::FlattenedSrt, 0, 1, {3, 4}));
         expectResourceFailure(vertex, fragment, "duplicate shader binding");
-        fragment.bindings.front().binding = 1;
-        fragment.bindings.front().guestDescriptor = vsharp(guestFirst.data(), 16);
     }
 }
 
@@ -3589,55 +3409,6 @@ void imageTableAllocationTests() {
             Require(mock.live == 0, "the image table leaked Vulkan objects");
         }
     }
-}
-
-void imageTableSnapshotAllocationTests() {
-    namespace Abi = ShaderRecompiler::ImageTableAbi;
-    using namespace AgcDriver::Graphics;
-    mock = MockVulkan{};
-    auto context = mockContext();
-    context.limits.maxDescriptorSetSampledImages = 0;
-    context.limits.maxPerStageDescriptorSampledImages = 0;
-    {
-        DescriptorCache cache(context);
-        context.descriptorCache = &cache;
-        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-        Recorder recorder(context);
-        ShaderRecompiler::RecompileResult vertex, fragment;
-        auto buffer = makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestFirst.data(), 16));
-        buffer.bufferWritten = {false};
-        vertex.bindings.push_back(buffer);
-        vertex.bindings.push_back(makeBinding(Role::FlattenedSrt, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt), 1, {1, 2, 3, 4}));
-        pushBufferData(vertex, 1);
-        auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords));
-        map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
-        map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
-        map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords;
-        map.guestDescriptor[Abi::HeaderImageSlots] = Abi::HeaderWords;
-        vertex.bindings.push_back(map);
-        auto images = makeBinding(Role::ImageTable, ShaderRecompiler::RuntimeAbi::ImageTableBinding, 0, {});
-        images.kind = Kind::SampledImage;
-        vertex.bindings.push_back(images);
-        const auto state = DecodeState(makeState());
-        ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
-        const auto originalMap = findWrite(map.binding).buffers.at(0);
-        const std::array<ShaderResources::MovedBuffer, 1> moved{{{1, 0, 16, {11, 22, 33, 44}}}};
-        const auto sets = cache.Counters().sets;
-        mock.writes.clear();
-        mock.variableDescriptorCount.reset();
-        const auto snapshots = resources.PrepareDrawBindings(recorder, moved);
-        Require(snapshots != nullptr && snapshots->snapshots.size() == 1 && cache.Counters().sets == sets + 1, "an empty image table prevented draw snapshot allocation");
-        Require(!mock.variableDescriptorCount.has_value(), "an empty draw snapshot table reserved a variable descriptor count");
-        Require(sameBytes(bufferBytes(snapshots->snapshots[0].buffer->Handle()), moved[0].words.data(), moved[0].size), "an empty image table changed draw snapshot contents");
-        const auto& currentMap = findWrite(map.binding).buffers.at(0);
-        Require(currentMap.buffer == originalMap.buffer && currentMap.offset == originalMap.offset && currentMap.range == originalMap.range, "draw snapshots replaced the empty image table map");
-        std::array<std::uint32_t, Abi::HeaderWords> header{};
-        std::memcpy(header.data(), bufferBytes(currentMap.buffer).data() + currentMap.offset, sizeof(header));
-        Require(header[Abi::HeaderElementCount] == 0u, "draw snapshots changed the empty guest table domain");
-        Require(std::none_of(mock.writes.begin(), mock.writes.end(), [](const auto& write) { return write.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || write.binding == ShaderRecompiler::RuntimeAbi::ImageTableBinding; }), "an empty draw snapshot table wrote an image descriptor");
-        recorder.Sync();
-    }
-    Require(mock.live == 0, "the empty image table draw snapshot leaked Vulkan objects");
 }
 
 void samplerTableNonSeamlessCubeTests() {
@@ -3963,42 +3734,6 @@ void sampledBudgetReportTests() {
     Require(SampledBudgetReportDue(4000 * MiB, 4401 * MiB, seconds(10)), "a budget more than 10% above the reported one is not due after 10 s");
     Require(SampledBudgetReportDue(4000 * MiB, 3599 * MiB, seconds(10)), "a budget more than 10% below the reported one is not due after 10 s");
     Require(!SampledBudgetReportDue(4000 * MiB, 2048 * MiB, seconds(9)), "a budget change is reported again within 10 s of the last report");
-}
-
-void misalignedShaderDataTests() {
-    mock = MockVulkan{};
-    auto context = mockContext();
-    context.limits.minStorageBufferOffsetAlignment = 16;
-    const auto commands = reinterpret_cast<VkCommandBuffer>(std::uintptr_t{1});
-    alignas(64) std::array<std::uint32_t, 8> guest{1, 2, 3, 4, 5, 6, 7, 8};
-    {
-        ShaderRecompiler::RecompileResult compute;
-        compute.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guest.data(), 32), vsharp(guest.data() + 1, 8))));
-        compute.bindings.push_back(makeBinding(Role::ShaderData, 1, 1, ShaderDataWords({0x11, 0x22})));
-        compute.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
-        compute.memoryOffsetDword = ShaderRecompiler::RuntimeAbi::BufferOffsetsDword;
-        compute.bufferAddressDword = ShaderRecompiler::RuntimeAbi::BufferAddressesDword;
-        auto live = compute;
-        live.bindings[1].guestDescriptor = ShaderDataWords({0x33, 0x44});
-        const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
-        const AgcDriver::Graphics::CompiledShader liveShader{ShaderRecompiler::ShaderStage::Compute, &live, 0};
-        AgcDriver::Graphics::ShaderResources resources(context, shader);
-        const auto data = findWrite(1).buffers.at(0).buffer;
-        const auto first = patchedBuffer(bufferBytes(data), ShaderRecompiler::RuntimeAbi::BufferAddressesDword);
-        const auto second = patchedBuffer(bufferBytes(data), ShaderRecompiler::RuntimeAbi::BufferAddressesDword + ShaderRecompiler::RuntimeAbi::BufferAddressDwords);
-        Require(first.bytes == 32 && second.bytes == 12 && second.buffer == first.buffer && second.offset == first.offset, "the misaligned view is not addressed from the aligned address below it");
-        constexpr auto checked = (ShaderRecompiler::RuntimeAbi::BufferOffsetsDword + 1u) * 4u;
-        auto patched = ShaderDataWords({0x11, 0x22});
-        patched[ShaderRecompiler::RuntimeAbi::BufferOffsetsDword] = 0x400u;
-        Require(sameBytes(bufferBytes(data), patched.data(), checked), "the shader data buffer does not hold the misaligned view's offset");
-        Require(resources.RefreshData(commands, liveShader), "a refresh with different words recorded nothing");
-        auto refreshed = ShaderDataWords({0x33, 0x44});
-        refreshed[ShaderRecompiler::RuntimeAbi::BufferOffsetsDword] = 0x400u;
-        Require(sameBytes(bufferBytes(data), refreshed.data(), checked), "a data refresh dropped the misaligned view's offset");
-        Require(patchedBuffer(bufferBytes(data), ShaderRecompiler::RuntimeAbi::BufferAddressesDword) == first, "a data refresh dropped the guest buffer addresses");
-        Require(!resources.DataWordsDiffer(liveShader) && resources.DataWordsHash() == AgcDriver::Graphics::ShaderResources::DataWordsHash(liveShader), "the refreshed template's words are not the dispatch's");
-    }
-    Require(mock.live == 0, "misaligned shader data resources leaked Vulkan objects");
 }
 
 void imageTableTemplateRefreshTests() {
@@ -4802,98 +4537,6 @@ void barycentricEmulationTests() {
     expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits)); }, "not exported by the vertex shader");
 }
 
-void copiedWriterIndirectOverlapTests() {
-    using namespace ShaderRecompiler;
-    using namespace AgcDriver::Graphics;
-
-    constexpr std::size_t half = 65536;
-
-    void* directBlock = ::operator new(half, std::align_val_t{half});
-    std::memset(directBlock, 0xaa, half);
-    const auto directAddress = reinterpret_cast<std::uintptr_t>(directBlock);
-
-    void* copiedBlock = ::operator new(half, std::align_val_t{half});
-    std::memset(copiedBlock, 0xbb, half);
-    const auto copiedAddress = reinterpret_cast<std::uintptr_t>(copiedBlock);
-
-    {
-        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, directBlock, half, true, true, true);
-        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
-    }
-
-    mock = MockVulkan{};
-    auto context = mockContext();
-    context.hostImportAlignment = half;
-    context.limits.minStorageBufferOffsetAlignment = 16;
-    context.limits.maxStorageBufferRange = 1u << 27;
-
-    {
-        GuestBufferMemory memory(context);
-        memory.AcquireRegistered();
-        Require(HostImportCovers(context, directAddress, half), "direct registered range must be covered by host import");
-        Require(!HostImportCovers(context, copiedAddress, half), "copied unregistered range must NOT be covered by host import");
-
-        memory.AddWritable(copiedAddress, 1024);
-        memory.AddWritable(directAddress, 1024);
-        memory.Upload(false);
-
-        Require(memory.HasCopiedWrites(), "writer with one copied region must report HasCopiedWrites() == true");
-
-        Require(memory.WritesOverlap(directAddress, 16), "WritesOverlap must return true for direct written region");
-        Require(memory.WritesOverlap(copiedAddress, 16), "WritesOverlap must return true for copied written region");
-        Require(!memory.WritesOverlap(directAddress + 2048, 16), "WritesOverlap must return false for unwritten range");
-
-        Require(!memory.CopiedWritesOverlap(directAddress, 16), "CopiedWritesOverlap must return false for direct written region");
-        Require(memory.CopiedWritesOverlap(copiedAddress, 16), "CopiedWritesOverlap must return true for copied written region");
-        Require(!memory.CopiedWritesOverlap(directAddress + 2048, 16), "CopiedWritesOverlap must return false for unwritten range");
-
-        memory.WriteBack();
-    }
-
-    {
-        RecompileResult shader;
-        shader.runtimeAbiVersion = RuntimeAbi::Version;
-        auto buffers = makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(copiedBlock, 1024), vsharp(directBlock, 1024)));
-        buffers.bufferWritten = {true, true};
-        shader.bindings = {buffers};
-        pushBufferData(shader, 2);
-        CompiledShader compiled{ShaderStage::Compute, &shader, 0};
-        auto writer = std::make_shared<ShaderResources>(context, compiled);
-
-        Require(writer->HasCopiedWrites(), "ShaderResources with copied region must report HasCopiedWrites() == true");
-        Require(writer->WritesOverlap(directAddress, 16), "ShaderResources must report WritesOverlap for direct region");
-        Require(!writer->CopiedWritesOverlap(directAddress, 16), "ShaderResources must NOT report CopiedWritesOverlap for direct region");
-        Require(writer->CopiedWritesOverlap(copiedAddress, 16), "ShaderResources must report CopiedWritesOverlap for copied region");
-
-        auto copiedWriters = DrawCopiedWriters();
-        copiedWriters->push_back(writer);
-
-        const auto overlapsMain = [&](const auto& w) { return w->WritesOverlap(directAddress, 16); };
-        const auto overlapsPR = [&](const auto& w) { return w->CopiedWritesOverlap(directAddress, 16); };
-
-        const bool mainOverlaps = std::any_of(copiedWriters->begin(), copiedWriters->end(), overlapsMain);
-        const bool prOverlaps = std::any_of(copiedWriters->begin(), copiedWriters->end(), overlapsPR);
-
-        Require(mainOverlaps, "main's check (WritesOverlap) must flag an overlap over direct arguments");
-        Require(!prOverlaps, "PR's check (CopiedWritesOverlap) must disambiguate and NOT flag an overlap over direct arguments");
-
-        const auto copiedOverlapsPR = [&](const auto& w) { return w->CopiedWritesOverlap(copiedAddress, 16); };
-        Require(std::any_of(copiedWriters->begin(), copiedWriters->end(), copiedOverlapsPR), "PR's check must flag an overlap over copied arguments");
-
-        copiedWriters->erase(std::remove(copiedWriters->begin(), copiedWriters->end(), writer), copiedWriters->end());
-        writer->WriteBack();
-    }
-
-    {
-        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, directBlock);
-        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
-    }
-    ::operator delete(directBlock, std::align_val_t{half});
-    ::operator delete(copiedBlock, std::align_val_t{half});
-}
-
 void rectListTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -4907,7 +4550,7 @@ void rectListTests() {
     target.spirvVersion = 0x00010300u;
     target.supportedCapabilities = capabilities;
     target.tessellation = TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
-    vertex.bindings = {{DescriptorKind::StorageBuffer, DescriptorRole::GuestBuffers, 0, 0, 1, {}}};
+    vertex.bindings = {{DescriptorKind::StorageBuffer, DescriptorRole::FlattenedSrt, 0, 0, 1, {1u}}};
     const auto faultAuxiliary = BuildRectListShaders(vertex, fragment, target);
     Require(faultAuxiliary.control.bindings.size() == 1 && faultAuxiliary.control.bindings[0].role == DescriptorRole::FaultBuffer && faultAuxiliary.control.bindings[0].binding == RuntimeAbi::BindingNumber(RuntimeAbi::Stage::TessellationControl, RuntimeAbi::Binding::FaultBuffer), "the rect-list control shader's fault buffer is not in the tessellation control binding group");
     vertex.bindings.clear();
@@ -5426,8 +5069,7 @@ void deviceAddressBufferTests() {
         request.context.userDataBaseRegister = 0;
         request.context.userData = userData;
         const auto pixel = ShaderRecompiler::Recompile(request);
-        const auto buffers = std::find_if(pixel.bindings.begin(), pixel.bindings.end(), [](const auto& binding) { return binding.role == Role::GuestBuffers; });
-        Require(buffers != pixel.bindings.end() && buffers->kind == Kind::DeviceAddress, "the pixel shader's guest buffers are not read through device addresses");
+        Require(std::none_of(pixel.bindings.begin(), pixel.bindings.end(), [](const auto& binding) { return binding.kind == Kind::DeviceAddress; }) && std::any_of(pixel.bindings.begin(), pixel.bindings.end(), [](const auto& binding) { return binding.role == Role::BdaPagetable; }), "the pixel shader's buffers are not read through the page table");
         const auto storageBindings = static_cast<std::size_t>(std::count_if(pixel.bindings.begin(), pixel.bindings.end(), [](const auto& binding) { return binding.kind == Kind::StorageBuffer; }));
         Require(storageBufferVariables(pixel.spirv.Words()) == storageBindings && convertsAddresses(pixel.spirv.Words()), "the pixel shader declared its guest buffers as descriptors");
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}}};
@@ -6163,7 +5805,6 @@ void validationTests() {
         ShaderRecompiler::RecompileResult vertex;
         vertex.spirv = makeModule(shape);
         vertex.pushConstants.assign(8, std::byte{1});
-        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, words));
         return vertex;
     };
     validate(pushed({.push = true}), 8);
@@ -6176,7 +5817,6 @@ void validationTests() {
     {
         ShaderRecompiler::RecompileResult vertex;
         vertex.spirv = makeModule({.shaderData = true});
-        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, {1, 2, 3, 4}));
         vertex.bindings.push_back(makeBinding(Role::ShaderData, 5, 1, {1, 2}));
         validate(vertex, 0);
     }
@@ -6459,29 +6099,10 @@ void parallelCompareTests() {
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
-    _putenv_s("APS5_HEAP_MIRROR_MIB", "4");
 #else
     setenv("APS5_PIN_WAIT_MS", "200", 1);
-    setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
-        if (argc == 2 && std::string_view(argv[1]) == "--sparse-buffer-holes") {
-            bool passed = false;
-            {
-                auto context = mockContext();
-                context.limits.maxStorageBufferRange = 1u << 27;
-                passed = RunSparseBufferHoleTests(context, {
-                    [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); }, {},
-                    [](VkDeviceAddress address) -> std::span<std::byte> {
-                        const auto relative = address - 0x100000000000ULL;
-                        return mockBufferMemory(reinterpret_cast<VkBuffer>(static_cast<std::uintptr_t>(relative >> 32u))).subspan(static_cast<std::size_t>(relative & 0xffffffffu));
-                    }, {}, {}
-                });
-            }
-            Require(mock.live == 0, "sparse buffer hole tests leaked Vulkan objects");
-            std::cout << "sparse buffer hole tests " << (passed ? "passed" : "failed") << '\n';
-            return passed ? 0 : 1;
-        }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-layout-flags") {
             descriptorLayoutFlagTests();
             std::cout << "Descriptor layout native and captured binding flags passed\n";
@@ -6492,7 +6113,6 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--image-table-snapshot") {
-            imageTableSnapshotAllocationTests();
             return 0;
         }
         const std::array<std::string_view, 3> samplerCases{"--sampler-table-lod-bias", "--sampler-table-anisotropy", "--sampler-table-reduction-compare"};
@@ -6603,16 +6223,13 @@ int main(int argc, char** argv) {
         descriptorPoolTests();
         pushConstantTests();
         resourceTests();
-        descriptorSnapshotTests();
         descriptorCacheTests();
         imageTableAllocationTests();
-        imageTableSnapshotAllocationTests();
         samplerTableNonSeamlessCubeTests();
         samplerTableDeviceLimitTests();
         guestSamplerSlotTests();
         guestImageSlotTests();
         descriptorHeapImageSlotTests();
-        misalignedShaderDataTests();
         imageTableTemplateRefreshTests();
         debugBranchTests();
         textureCacheBudgetTests();
@@ -6633,7 +6250,6 @@ int main(int argc, char** argv) {
         rectListTests();
         floatControlsModeTests();
         barycentricEmulationTests();
-        copiedWriterIndirectOverlapTests();
         mock = MockVulkan{};
         auto bdaContext = mockContext();
         bdaContext.bufferDeviceAddress = true;

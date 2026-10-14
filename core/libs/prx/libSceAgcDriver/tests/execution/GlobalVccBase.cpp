@@ -134,7 +134,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std
     userData[0] = static_cast<std::uint32_t>(address);
     userData[1] = static_cast<std::uint32_t>(address >> 32u);
     const auto result = Recompile(code, waveSize, userData, target);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     std::memcpy(memory.data(), guest.Data(), BlockBytes);
     for (std::size_t dword = 0; dword < memory.size(); ++dword) {

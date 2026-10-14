@@ -240,7 +240,7 @@ ShaderRecompiler::RecompileResult Dispatch(AgcDriver::VulkanDevice& device, Prog
     };
     request.useCache = false;
     auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, groups, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     return result;
 }

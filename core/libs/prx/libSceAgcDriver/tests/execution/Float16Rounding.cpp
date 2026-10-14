@@ -675,7 +675,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t cou
     if (denorm16 < 4u) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{denorm16 << 6u, true, ieee, overflow};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
@@ -702,7 +702,7 @@ void RunDirected(AgcDriver::VulkanDevice& device, std::uint32_t rounding, std::u
     request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u | (rounding << 2u) | round32, true, true, overflow != 0u};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t lane = 0; lane < std::size(DirectedVectors); ++lane) {
         for (std::uint32_t column = 0; column < 4u; ++column) {
@@ -781,7 +781,7 @@ void RunLdexpDenormal(AgcDriver::VulkanDevice& device, std::uint32_t denorm16) {
     request.context.floatMode = ShaderRecompiler::ShaderFloatMode{denorm16 << 6u, true, true, false};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 

@@ -520,7 +520,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRe
             Buffer[lane * Inputs + 2u] = input.comparator;
             Buffer[lane * Inputs + 3u] = 0u;
         }
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
         constexpr std::array<const char*, Checked> names{"fmin returned", "fmin texel", "fmax returned", "fmax texel", "fcmpswap returned", "fcmpswap texel", "fmin without glc vdata", "fmin without glc texel"};
         for (std::uint32_t lane = 0; lane < waveSize; ++lane) {

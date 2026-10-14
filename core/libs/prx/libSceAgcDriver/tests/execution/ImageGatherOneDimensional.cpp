@@ -137,7 +137,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
 void Run(AgcDriver::VulkanDevice& device, const Variant& variant) {
     Output.fill(-1.0f);
     const auto result = Compile(device, variant);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(variant.code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(variant.code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = Expected(tid, variant);

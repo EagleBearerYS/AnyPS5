@@ -134,7 +134,7 @@ std::optional<std::string> Run(AgcDriver::VulkanDevice& device, Levelled first, 
     request.useCache = false;
     try {
         const auto result = ShaderRecompiler::Recompile(request);
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
     } catch (const std::runtime_error& error) {
         return std::string(error.what());

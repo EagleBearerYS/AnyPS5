@@ -101,7 +101,7 @@ std::uint32_t Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     const auto& words = result.spirv.Words();
     for (std::size_t index = 5; index < words.size() && (words[index] >> 16u) != 0u; index += words[index] >> 16u) {

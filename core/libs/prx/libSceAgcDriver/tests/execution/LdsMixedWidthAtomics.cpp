@@ -200,7 +200,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     const auto result = ShaderRecompiler::Recompile(request);
     for (std::uint32_t run = 0; run < repeats; ++run) {
         Output.fill(0xdeadbeefu);
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
         Check(name, operations, run);
     }

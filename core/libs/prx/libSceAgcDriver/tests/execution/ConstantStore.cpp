@@ -73,7 +73,7 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::uint32_t
         device.Target(), {0, 0, 0, 128}, std::nullopt, false,
     };
     const auto result = Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::size_t offset = 0; offset < BlockBytes; ++offset) {
         const auto expected = offset < Threads * LaneBytes ? ExpectedLane[offset % LaneBytes] : Fill;

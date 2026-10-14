@@ -124,7 +124,7 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::uint32_t
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     std::vector<std::uint32_t> memory(BlockBytes / 4u);
     std::memcpy(memory.data(), guest.Data(), BlockBytes);

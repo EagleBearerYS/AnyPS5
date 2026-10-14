@@ -66,7 +66,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     Require(result.bdaWrites, "masked global store: a program that stores through guest pointers is not marked as storing through the page table");
-    device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, groups, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::size_t index = 0; index < BlockBytes / 4u; ++index) {
         const auto original = static_cast<std::uint32_t>(index * 0x9e3779b1u);

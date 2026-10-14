@@ -150,7 +150,7 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
     outcome.cacheable = AgcDriver::DriverDetail::CacheableResult(*result);
     StderrCapture log;
     try {
-        device.Dispatch(*result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
+        device.Dispatch(*result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(span.data()));
         device.WaitIdle();
     } catch (...) {
         static_cast<void>(log.Finish());

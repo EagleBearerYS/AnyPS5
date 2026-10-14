@@ -263,7 +263,7 @@ int main() {
         request.useCache = false;
         request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false};
         const auto result = ShaderRecompiler::Recompile(request);
-        device->Dispatch(result, static_cast<std::uint32_t>(cases.size() / Threads), 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->Dispatch(result, static_cast<std::uint32_t>(cases.size() / Threads), 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device->WaitIdle();
         for (std::size_t index = 0; index < cases.size(); ++index) {
             const auto& entry = cases[index];

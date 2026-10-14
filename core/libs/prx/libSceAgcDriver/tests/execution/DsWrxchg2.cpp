@@ -91,7 +91,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     }
     Output.fill(0xdeadbeefu);
     Translate(device, Code, [&](const auto& result) {
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
         device.WaitIdle();
     });
 }

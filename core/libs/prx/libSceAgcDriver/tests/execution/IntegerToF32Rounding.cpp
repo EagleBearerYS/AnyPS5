@@ -101,7 +101,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t rounding) {
     request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u | (rounding << 2u) | rounding, true, true, false};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t lane = 0; lane < Threads; ++lane) {
         for (std::uint32_t column = 0; column < 2u; ++column) {

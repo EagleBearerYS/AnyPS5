@@ -126,7 +126,7 @@ void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
     const auto userData = UserData();
     const std::span<const std::uint32_t> code(Code);
     const auto result = Recompile(device, code, workgroup, userData);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 

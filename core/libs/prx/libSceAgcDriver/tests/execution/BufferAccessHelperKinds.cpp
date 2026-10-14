@@ -292,7 +292,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, Program& program, c
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     const std::string name = std::string("buffer access helper kinds ") + c.name;
     if (c.kind == Kind::Scalar) {

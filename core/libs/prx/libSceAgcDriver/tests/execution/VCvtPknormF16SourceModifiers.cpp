@@ -136,7 +136,7 @@ void Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloatMode mode
     request.useCache = false;
     request.context.floatMode = mode;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 

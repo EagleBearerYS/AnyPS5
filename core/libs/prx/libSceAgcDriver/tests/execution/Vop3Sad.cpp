@@ -86,7 +86,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     Output.fill(0xdeadbeefu);
     const std::span<const std::uint32_t> code(SadCode);
     const auto result = Compile(device, code);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 

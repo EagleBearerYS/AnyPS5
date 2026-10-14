@@ -197,7 +197,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     const auto userData = UserData(guest.Data());
     const std::span<const std::uint32_t> code(Code);
     const auto result = Recompile(device, code, waveSize, userData);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 
     const auto wave = "global atomic csub: wave" + std::to_string(waveSize) + " ";

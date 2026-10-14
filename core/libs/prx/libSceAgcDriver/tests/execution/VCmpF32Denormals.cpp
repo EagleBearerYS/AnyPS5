@@ -123,7 +123,7 @@ std::uint32_t Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloat
     request.useCache = false;
     request.context.floatMode = mode;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     std::uint32_t mask = 0u;
     for (std::uint32_t lane = 0; lane < Threads; ++lane) {

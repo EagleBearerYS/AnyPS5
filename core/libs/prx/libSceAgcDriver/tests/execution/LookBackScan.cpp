@@ -60,7 +60,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t groups) {
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, groups, 1, 1, {}, address);
+    device.Dispatch(result, groups, 1, 1, address);
     device.WaitIdle();
 }
 

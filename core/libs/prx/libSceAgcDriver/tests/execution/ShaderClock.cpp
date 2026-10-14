@@ -98,7 +98,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     constexpr std::uint32_t Passes = 128;
     for (std::uint32_t pass = 0; pass < Passes; ++pass) {
         Output.fill(0xdeadbeefu);
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
         Check();
     }

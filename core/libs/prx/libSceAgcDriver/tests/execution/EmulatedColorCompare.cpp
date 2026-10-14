@@ -251,7 +251,7 @@ std::uint64_t Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const
         Require(binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers, "emulated comparison retained a sampler binding");
         Require(std::all_of(binding.imageSamplers.begin(), binding.imageSamplers.end(), [](const auto& samplers) { return samplers.empty(); }), "emulated comparison retained an unused sampler association");
     }
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float expected = Expected(tid, sampler, offsets);
@@ -271,7 +271,7 @@ void RunChannels(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t>
     Output.fill(-2.0f);
     const auto result = Compile(device, Format1616UNorm, sampler, code);
     Swizzle = 0xfacu;
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float compared = Expected(tid, sampler, false);
@@ -301,7 +301,7 @@ void RunCube(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char
         Require(binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers, "cube emulated comparison retained a sampler binding");
         Require(std::all_of(binding.imageSamplers.begin(), binding.imageSamplers.end(), [](const auto& samplers) { return samplers.empty(); }), "cube emulated comparison retained an unused sampler association");
     }
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Require(Output[tid] == 1.0f, std::string(name) + ": +X cube face comparison returned " + std::to_string(Output[tid]) + ", expected 1");
@@ -325,7 +325,7 @@ void RunSrgbCubeZero(AgcDriver::VulkanDevice& device, std::uint32_t format, cons
     Output.fill(-1.0f);
     const auto result = Compile(device, format, sampler, CubeCode, false, true, true);
     Require(!BindsDepthCompare(result), std::string(name) + " kept a depth-compare binding");
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Require(Output[tid] == 0.0f, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected 0");
@@ -337,7 +337,7 @@ void RunSrgbZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sa
     const auto result = Compile(device, format, sampler, Code, useCache);
     if (useCache) Require(result.cacheHit && result.variantId == expectedVariant, std::string(name) + " did not reuse the compiled comparison artifact");
     Require(!BindsDepthCompare(result), std::string(name) + " kept a depth-compare binding");
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Require(Output[tid] == 0.0f, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected 0");

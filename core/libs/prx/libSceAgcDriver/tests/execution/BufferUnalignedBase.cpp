@@ -113,7 +113,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset, std::uint32_
     }
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(Code.data()), std::as_bytes(std::span(Code))}}};
     const auto result = ShaderRecompiler::Recompile(Request(Code, userData, device.Target(), memory));
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
     device.WaitIdle();
     const auto run = "view +" + std::to_string(viewOffset) + ", stores +" + std::to_string(storeOffset);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
@@ -158,7 +158,7 @@ void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
     }
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
     const auto result = ShaderRecompiler::Recompile(Request(code, userData, device.Target(), memory));
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     const auto run = "buffer unaligned base glc dwordx2, view +" + std::to_string(viewOffset);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
@@ -196,7 +196,7 @@ void RunFormattedLoad(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset)
     Output.fill(Fill);
     const auto* view = Input.data() + viewOffset;
     const auto result = RecompileFormatted(device, Load16Code, view, ViewBytes);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Load16Code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Load16Code.data()));
     device.WaitIdle();
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         const auto expected = ViewField(view, lane * 4u + 2u, 0xffffu);
@@ -208,7 +208,7 @@ void RunFormattedStore(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset
     Output.fill(Fill);
     auto* output = reinterpret_cast<std::uint8_t*>(Output.data());
     const auto result = RecompileFormatted(device, Store16Code, output + viewOffset, Lanes * 4u);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Store16Code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Store16Code.data()));
     device.WaitIdle();
     for (std::size_t offset = 0; offset < Output.size() * 4u; ++offset) {
         const auto relative = static_cast<std::int64_t>(offset) - static_cast<std::int64_t>(viewOffset);
@@ -225,7 +225,7 @@ void RunAtomic(AgcDriver::VulkanDevice& device) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(AtomicCode.data()), std::as_bytes(std::span(AtomicCode))}}};
     try {
         const auto result = ShaderRecompiler::Recompile(Request(AtomicCode, userData, device.Target(), memory));
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(AtomicCode.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(AtomicCode.data()));
         device.WaitIdle();
     } catch (const std::exception& error) {
         Require(std::string(error.what()).find("buffer atomic on a V# whose base is not DWORD aligned") != std::string::npos, std::string("buffer unaligned base atomic: unexpected error: ") + error.what());

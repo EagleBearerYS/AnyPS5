@@ -132,7 +132,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRe
     Output.fill(Sentinel);
     alignas(256) const auto code = Code(waveSize, offset, destination, inactive, contended);
     Translate(code, waveSize, target, [&](const auto& result) {
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
     });
     for (std::uint32_t tid = 0u; tid < waveSize; ++tid) {

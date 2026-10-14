@@ -168,7 +168,7 @@ void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& s
     userData[13] = mip;
     userData[14] = Bits(scale);
     const auto result = Compile(device, code, userData);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
@@ -198,7 +198,7 @@ void Sample(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileRe
     }
     std::fill(Output.begin(), Output.end(), -1.0f);
     const auto* code = shape.array ? SampleLayerMipCode.data() : SampleCode.data();
-    device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code));
+    device.Dispatch(program, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float expected = (tid & 1u) != 0u ? 1.0f : 0.0f;

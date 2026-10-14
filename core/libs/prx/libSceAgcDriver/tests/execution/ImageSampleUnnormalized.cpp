@@ -233,7 +233,7 @@ Samples Run(AgcDriver::VulkanDevice& device, const Program& program, const std::
         };
         request.useCache = false;
         const auto result = ShaderRecompiler::Recompile(request);
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
         for (std::uint32_t lane = 0; lane < Threads && first + lane < coordinates.size(); ++lane) {
             std::array<std::uint32_t, Results> values{};

@@ -424,7 +424,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     if (outcome.deviceTable && warm) {
         StderrCapture first;
         try {
-            device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
+            device.Dispatch(result, groups, 1, 1, reinterpret_cast<std::uintptr_t>(span.data()));
             device.WaitIdle();
         } catch (...) {
             static_cast<void>(first.Finish());
@@ -435,7 +435,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     }
     StderrCapture capture;
     try {
-        device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
+        device.Dispatch(result, groups, 1, 1, reinterpret_cast<std::uintptr_t>(span.data()));
         device.WaitIdle();
     } catch (...) {
         static_cast<void>(capture.Finish());

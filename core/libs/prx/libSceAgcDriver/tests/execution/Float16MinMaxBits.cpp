@@ -280,7 +280,7 @@ int main() {
                 }
                 const auto run = [&](const ShaderRecompiler::RecompileResult& result, std::span<const std::uint32_t> code, std::span<const Check> checks, bool isPacked) {
                     Output.fill(0xdeadbeefu);
-                    device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+                    device->Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
                     device->WaitIdle();
                     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
                         const std::uint32_t* row = &Input[tid * Inputs];

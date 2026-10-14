@@ -211,7 +211,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
 void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name) {
     Output.fill(-1.0f);
     const auto result = Compile(device, Format32Float, sampler);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float expected = Expected(tid, sampler);
@@ -222,7 +222,7 @@ void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* na
 void Gather(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name) {
     Output.fill(-1.0f);
     const auto result = Compile(device, Format32Float, sampler, GatherCode);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(GatherCode.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(GatherCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = ExpectedGather(tid);
@@ -254,7 +254,7 @@ float ExpectedColor(std::uint32_t tid, bool sampled) {
 void RunWithColors(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, std::span<const std::uint32_t> code, bool sampled, const char* name) {
     const Sampler sampler{ReductionMin, FilterBilinear, MipPoint};
     Output.fill(-1.0f);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float expected = Expected(tid, sampler);

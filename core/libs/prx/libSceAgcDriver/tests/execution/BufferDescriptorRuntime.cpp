@@ -83,7 +83,7 @@ void Run(AgcDriver::VulkanDevice& device, bool registrationModules) {
         const auto capture = ShaderRecompiler::CaptureResources(request, runtime, *handle);
         const auto result = ShaderRecompiler::MaterializeShader(request, *capture, *handle);
         Require(!result->registrationModule, "buffer descriptor runtime, " + mode + ", " + test.name + ": a compute shader was emitted in registration form");
-        device.Dispatch(*result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+        device.Dispatch(*result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
         device.WaitIdle();
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
             std::uint32_t expected = 0;

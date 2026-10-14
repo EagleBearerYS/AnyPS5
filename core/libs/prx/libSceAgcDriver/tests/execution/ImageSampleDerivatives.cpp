@@ -307,7 +307,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWo
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(span.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < threads; ++tid) {
         for (std::uint32_t k = 0; k < Cases; ++k) {

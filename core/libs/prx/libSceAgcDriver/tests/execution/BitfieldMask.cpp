@@ -59,7 +59,7 @@ void run(AgcDriver::VulkanDevice& device) {
                 Input[offset * 2u + 1u] = offset | upperBits;
             }
             Output.fill(0xdeadbeefu);
-            device.Dispatch(result, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+            device.Dispatch(result, 1u, 1u, 1u, reinterpret_cast<std::uintptr_t>(code.data()));
             device.WaitIdle();
             for (std::uint32_t offset = 0u; offset < Threads; ++offset) {
                 const auto expected = expectedMask(width, offset);

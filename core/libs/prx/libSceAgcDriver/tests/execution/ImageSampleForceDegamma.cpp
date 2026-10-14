@@ -115,7 +115,7 @@ std::array<float, Threads * 4> Sample(AgcDriver::VulkanDevice& device, std::uint
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     Output.fill(-1.0f);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
     device.WaitIdle();
     return Output;
 }

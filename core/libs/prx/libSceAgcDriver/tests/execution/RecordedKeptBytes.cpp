@@ -159,7 +159,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* target) {
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
 }
 
 const ColorTargetLayout TargetLayout(Width, Height, ColorTileMode::RenderTarget, 4);

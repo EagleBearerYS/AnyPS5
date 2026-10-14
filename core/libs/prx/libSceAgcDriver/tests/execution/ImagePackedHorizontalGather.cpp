@@ -150,7 +150,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t dmask) {
     PckGather4h[4] = 0xf1880008u | (dmask << 8u);
     Output.fill(0xdeadbeefu);
     const auto result = Compile(device);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(PckGather4h.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(PckGather4h.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = Expected(tid, dmask);

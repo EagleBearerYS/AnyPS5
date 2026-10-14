@@ -226,7 +226,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.before = device.DeviceImageCounts();
     StderrCapture capture;
     try {
-        device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
+        device.Dispatch(result, groups, 1, 1, reinterpret_cast<std::uintptr_t>(span.data()));
         device.WaitIdle();
     } catch (...) {
         static_cast<void>(capture.Finish());
@@ -529,7 +529,7 @@ void RunTwoQueues(AgcDriver::VulkanDevice& device) {
     std::thread compute([&] {
         try {
             AgcDriver::GuestMemory::TagGpuLockThread(0x20);
-            device.Dispatch(first, groups, 1, 1, {}, program);
+            device.Dispatch(first, groups, 1, 1, program);
         } catch (...) {
             failure = std::current_exception();
         }
@@ -537,7 +537,7 @@ void RunTwoQueues(AgcDriver::VulkanDevice& device) {
     compute.join();
     if (failure) std::rethrow_exception(failure);
     const auto second = Compile(device, span, TableMemory(LoadTableCode, true, OtherOutput));
-    device.Dispatch(second, groups, 1, 1, {}, program);
+    device.Dispatch(second, groups, 1, 1, program);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());

@@ -90,7 +90,7 @@ void CheckSplitCoverage(AgcDriver::VulkanDevice& device) {
         {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(), {0, 0, 0, 128}, std::nullopt, false};
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, Groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, Groups, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(guest.Data()), guest.Bytes);
     for (std::uint32_t i = 0; i < Stores; ++i) {
@@ -137,7 +137,7 @@ void CheckLdsSplitThrows(AgcDriver::VulkanDevice& device) {
     Require(result.workgroupMemoryDwords != 0u, "oversized dispatch: the LDS shader did not take the device-memory path");
     bool threw = false;
     try {
-        device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -161,7 +161,7 @@ void CheckNvidiaSplitThrows(AgcDriver::VulkanDevice& device) {
     const auto result = ShaderRecompiler::Recompile(request);
     bool threw = false;
     try {
-        device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     } catch (const std::runtime_error&) {
         threw = true;
     }

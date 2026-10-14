@@ -177,7 +177,7 @@ int main() {
         };
         const auto run = [&](const auto& result) {
             Output.fill(0xdeadbeefu);
-            device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+            device->Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
             device->WaitIdle();
             return Output;
         };

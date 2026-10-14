@@ -800,7 +800,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     if (Denorm16 < 4u) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{Denorm16 << 6u, true, Ieee, false};
     else if (Ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 

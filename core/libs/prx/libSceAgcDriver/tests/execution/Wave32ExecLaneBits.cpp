@@ -81,7 +81,7 @@ int main() {
         const auto result = ShaderRecompiler::Recompile(request);
         const auto ballots = Ballots(result.spirv.Words());
         Require(ballots == 0u, "wave32 compares, saveexec and exec restores emitted " + std::to_string(ballots) + " subgroup ballots, expected none");
-        device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
         device->WaitIdle();
         for (std::uint32_t lane = 0; lane < Threads; ++lane) {
             Require(Output[lane] == Expected(lane), "wave32 lane " + std::to_string(lane) + " is " + std::to_string(Output[lane]) + ", expected " + std::to_string(Expected(lane)));

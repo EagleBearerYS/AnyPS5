@@ -98,7 +98,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t buffers, bool shaderData) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t buffers) {
     const std::string label = "many buffers (" + std::to_string(buffers) + "): ";
     Data.fill(0xdeadbeefu);
     for (std::uint32_t buffer = 0; buffer < buffers; ++buffer) {
@@ -123,11 +123,8 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    const auto guest = std::find_if(result.bindings.begin(), result.bindings.end(), [](const auto& binding) { return binding.role == DescriptorRole::GuestBuffers; });
-    Require(guest != result.bindings.end() && guest->count == buffers, label + "the program does not bind every buffer");
-    const bool hasShaderData = std::any_of(result.bindings.begin(), result.bindings.end(), [](const auto& binding) { return binding.role == DescriptorRole::ShaderData; });
-    Require(hasShaderData == shaderData, label + (shaderData ? "the buffer offsets are not in shader data" : "the buffer offsets are not in push constants"));
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    Require(std::none_of(result.bindings.begin(), result.bindings.end(), [](const auto& binding) { return binding.kind == ShaderRecompiler::DescriptorKind::DeviceAddress; }) && std::any_of(result.bindings.begin(), result.bindings.end(), [](const auto& binding) { return binding.role == DescriptorRole::BdaPagetable; }), label + "the program does not read its buffers through the page table");
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t buffer = 0; buffer < buffers; ++buffer) {
         const auto base = BufferBase(buffer);
@@ -147,9 +144,9 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, PushCode, PushBuffers, false);
-        Run(*device, DataCode, DataBuffers, true);
-        Run(*device, LargeCode, LargeBuffers, true);
+        Run(*device, PushCode, PushBuffers);
+        Run(*device, DataCode, DataBuffers);
+        Run(*device, LargeCode, LargeBuffers);
         std::puts("many buffers tests passed");
         return 0;
     } catch (const std::exception& error) {

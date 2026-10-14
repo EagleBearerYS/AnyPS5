@@ -128,7 +128,7 @@ void Run(AgcDriver::VulkanDevice& device, Program& program, std::uint32_t first,
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     std::array<std::int32_t, RegionBytes> owner{};
     owner.fill(-1);

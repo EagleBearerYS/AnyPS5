@@ -163,10 +163,10 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRe
     fits(result, "LDS above the device limit");
     if (indirect) {
         IndirectGroups = {groupsX, groupsY, groupsZ, 0u};
-        const auto outcome = device.DispatchIndirect(result, reinterpret_cast<std::uintptr_t>(IndirectGroups.data()), {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+        const auto outcome = device.DispatchIndirect(result, reinterpret_cast<std::uintptr_t>(IndirectGroups.data()), reinterpret_cast<std::uintptr_t>(Code.data()));
         Require(outcome.cpuReason == 8, "lds beyond the device limit " + run + ": the indirect group counts were not read on the CPU (reason " + std::to_string(outcome.cpuReason) + ")");
     } else {
-        device.Dispatch(result, groupsX, groupsY, groupsZ, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+        device.Dispatch(result, groupsX, groupsY, groupsZ, reinterpret_cast<std::uintptr_t>(Code.data()));
     }
     device.WaitIdle();
     std::vector<bool> dispatched(MaxGroups, false);

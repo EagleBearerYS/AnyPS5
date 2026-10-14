@@ -156,7 +156,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const auto result = ShaderRecompiler::Recompile(Request(code, target, userData, memory));
     Output.fill(0xdeadbeefu);
-    device.Dispatch(result, Halves / Threads, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, Halves / Threads, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 

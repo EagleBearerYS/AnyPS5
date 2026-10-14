@@ -33,7 +33,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         }
         throw std::runtime_error("driver accepted an incompatible shader runtime ABI");
     };
-    rejectAbi([&] { device.PrepareDispatch(incompatible, {}); });
+    rejectAbi([&] { device.PrepareDispatch(incompatible); });
     rejectAbi([&] { device.Dispatch(incompatible, 1u, 1u, 1u); });
     rejectAbi([&] { device.DispatchIndirect(incompatible, 0u); });
     const std::array<AgcDriver::Graphics::CompiledShader, 1> incompatibleShaders{{{ShaderStage::Vertex, &incompatible, 0u}}};

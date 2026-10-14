@@ -298,8 +298,8 @@ int main(int argc, char** argv) {
                 FillInputs(set);
                 Merged.fill(0xdeadbeefu);
                 Reloaded.fill(0xfeedfaceu);
-                device->Dispatch(merged, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(MergedCode.data()));
-                device->Dispatch(reloaded, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(ReloadedCode.data()));
+                device->Dispatch(merged, 1, 1, 1, reinterpret_cast<std::uintptr_t>(MergedCode.data()));
+                device->Dispatch(reloaded, 1, 1, 1, reinterpret_cast<std::uintptr_t>(ReloadedCode.data()));
                 device->WaitIdle();
                 for (std::uint32_t lane = 0; lane < Threads; ++lane) {
                     const std::uint32_t* row = &Input[lane * Inputs];

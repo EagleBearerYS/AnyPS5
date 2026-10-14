@@ -122,7 +122,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t tileMode, std::uint32_t 
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = Texel(Input[tid * 4u], Input[tid * 4u + 1u]);

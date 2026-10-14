@@ -431,7 +431,7 @@ void Run(AgcDriver::VulkanDevice& device, const Row& row, const GuestBlock& gues
     auto request = MakeRequest(device, codeSpan, memory, userData, compute, row.waveSize);
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codeSpan.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(codeSpan.data()));
     device.WaitIdle();
     if (wideAtomic) {
         Check64(row, output);

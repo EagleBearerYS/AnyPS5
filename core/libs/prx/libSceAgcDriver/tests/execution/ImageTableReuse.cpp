@@ -186,14 +186,14 @@ void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, AddressOf(code.data()));
+    device.Dispatch(result, 1, 1, 1, AddressOf(code.data()));
     device.WaitIdle();
 }
 
 std::vector<std::uint32_t> Dispatch(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, std::uint32_t record) {
     Keys[0] = record;
     std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
-    device.Dispatch(result, 1, 1, 1, {}, AddressOf(TableCode.data()));
+    device.Dispatch(result, 1, 1, 1, AddressOf(TableCode.data()));
     device.WaitIdle();
     std::vector<std::uint32_t> red(Lanes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) red[lane] = Output[lane * 4u];

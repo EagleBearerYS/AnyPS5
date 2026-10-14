@@ -80,7 +80,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const std::array<s
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     bool permuted = false;
     for (std::uint32_t lane = 0; lane < wave; ++lane) {

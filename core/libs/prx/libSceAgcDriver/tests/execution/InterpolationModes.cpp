@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
@@ -8,8 +9,17 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <string>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -65,9 +75,9 @@ constexpr std::array<Row, 32> Rows{{
 
 constexpr std::uint32_t Words = 12;
 constexpr std::uint32_t Sentinel = 0xdeadbeefu;
-alignas(256) std::array<std::uint32_t, Rows.size() * Words + 4> Data{};
+constexpr std::size_t DataWords = Rows.size() * Words + 4;
 
-RecompileResult Compile(std::uint32_t mode) {
+RecompileResult Compile(std::uint32_t mode, VkDeviceAddress data) {
     IrProgram program;
     const ShaderStageInputInfo inputs{};
     SpirvEmitterState state(program, inputs);
@@ -142,19 +152,17 @@ RecompileResult Compile(std::uint32_t mode) {
     module.AddFunction(spv::OpFunctionEnd);
     RecompileResult result{};
     result.spirv = module.Finalize();
-    const auto base = reinterpret_cast<std::uintptr_t>(Data.data());
-    result.bindings.push_back({DescriptorKind::DeviceAddress, DescriptorRole::GuestBuffers, 0u, 0u, 1u,
-        {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Data)), 0x31016facu}, false});
-    result.memoryOffsetDword = 0u;
-    result.bufferAddressDword = 1u;
-    result.pushConstants.assign((1u + ShaderRecompiler::RuntimeAbi::BufferAddressDwords) * 4u, std::byte{0});
+    const std::array<std::uint32_t, 1u + ShaderRecompiler::RuntimeAbi::BufferAddressDwords> pushWords{0u, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>(data >> 32u), static_cast<std::uint32_t>(DataWords)};
+    result.pushConstants.resize(sizeof(pushWords));
+    std::memcpy(result.pushConstants.data(), pushWords.data(), sizeof(pushWords));
     return result;
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t mode) {
-    Data.fill(Sentinel);
+void Run(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::Buffer& buffer, std::uint32_t mode) {
+    const std::span<std::uint32_t> Data(reinterpret_cast<std::uint32_t*>(buffer.Bytes().data()), DataWords);
+    std::fill(Data.begin(), Data.end(), Sentinel);
     for (std::uint32_t row = 0; row < Rows.size(); ++row) std::copy(Rows[row].input.begin(), Rows[row].input.end(), Data.begin() + row * Words);
-    device.Dispatch(Compile(ModeFlags[mode]), 1u, 1u, 1u);
+    device.Dispatch(Compile(ModeFlags[mode], buffer.DeviceAddress()), 1u, 1u, 1u);
     device.WaitIdle();
     for (std::uint32_t row = 0; row < Rows.size(); ++row) {
         for (std::uint32_t input = 0; input < 9u; ++input) Require(Data[row * Words + input] == Rows[row].input[input], "interpolation modes changed an input");
@@ -180,7 +188,8 @@ int main() {
             std::puts("skipped, interpolation modes require Float64");
             return VulkanTestSkipped;
         }
-        for (std::uint32_t mode = 0; mode < ModeFlags.size(); ++mode) Run(*device, mode);
+        AgcDriver::Graphics::Buffer buffer(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device), DataWords * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        for (std::uint32_t mode = 0; mode < ModeFlags.size(); ++mode) Run(*device, buffer, mode);
         std::puts("interpolation modes passed: 32 hardware rows, 3 ops, 8 float modes");
         return 0;
     } catch (const std::exception& error) {

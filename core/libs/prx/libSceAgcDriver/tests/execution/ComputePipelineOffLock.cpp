@@ -119,7 +119,7 @@ void Concurrent(AgcDriver::VulkanDevice& device) {
     const auto after = AgcDriver::VulkanDevice::ComputePipelineCreations();
     Require(after.inFrames == before.inFrames + 1u, "eight threads that needed one new compute pipeline at once created " + std::to_string(after.inFrames - before.inFrames));
     Output.fill(Untouched);
-    device.Dispatch(*result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Other.data()));
+    device.Dispatch(*result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Other.data()));
     device.WaitIdle();
     Expect(Input, 1u, "a dispatch whose pipeline was created before it");
     Require(AgcDriver::VulkanDevice::ComputePipelineCreations().inFrames == after.inFrames, "a dispatch whose pipeline was created before it created another one");
