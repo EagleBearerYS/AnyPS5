@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RESIDENCY_HPP
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -121,6 +122,8 @@ public:
     ~ResidencyManager();
 
     void SetBudget(std::uint64_t bytes);
+    bool Advance();
+    void Apply();
     void Prepare();
     void Use(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access);
     void Pin(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access, const ResidencyToken& token);
@@ -143,7 +146,7 @@ public:
     std::uint64_t ChunkAddress(std::uint32_t chunk) const;
     std::uint32_t ChunkSlots() const { return chunkSlots; }
     std::uint64_t Serial() const { return serial; }
-    std::uint64_t Epoch() const { return epoch; }
+    std::uint64_t Epoch() const { return epoch.load(std::memory_order_relaxed); }
     bool Hot(std::uint64_t page) const { return hot.contains(page); }
     ResidencyCounts Counts() const;
 
@@ -245,7 +248,8 @@ private:
     std::unordered_map<std::uint64_t, Cooling> hot;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;
     std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> aliasKeys;
-    std::uint64_t epoch = 1;
+    std::atomic<std::uint64_t> epoch{1};
+    std::atomic<bool> queued{false};
     std::uint64_t serial = 0;
     std::uint64_t rangesSerial = ~std::uint64_t{0};
     std::vector<ResidencyRange> ranges;

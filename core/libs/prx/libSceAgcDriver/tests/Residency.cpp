@@ -729,6 +729,23 @@ void GuardedPagesRefreshAfterFaults() {
     Expect(counts.faults == 1 && counts.hot == 0 && counts.refreshed == 1, "one fault, one refresh, no hot page");
 }
 
+void OrderingPointsReportQueuedWork() {
+    scope = "ordering points report queued work";
+    Fixture fixture(4, 1);
+    fixture.Use(0, BasePage + 0);
+    fixture.gpu.Drain();
+    const auto epoch = fixture.manager->Epoch();
+    Expect(!fixture.manager->Advance() && fixture.manager->Epoch() == epoch + 1, "an ordering point with nothing queued only advances the epoch");
+    fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 3);
+    Expect(fixture.manager->Advance(), "a queued fault is reported");
+    fixture.manager->Apply();
+    Expect(!fixture.manager->Advance(), "applying clears the report");
+    fixture.manager->DropRange(Address(BasePage + 0), ResidencyPageBytes);
+    Expect(fixture.manager->Advance(), "a queued drop is reported");
+    fixture.manager->Apply();
+    Expect(!fixture.manager->Advance() && !fixture.manager->Slot(BasePage + 0), "the drop was applied");
+}
+
 void HotPagesLeaveAndCool() {
     scope = "hot pages leave and cool";
     Fixture fixture(4, 1, 2, 2);
@@ -1219,6 +1236,7 @@ int main() {
         FlushWaitsForWritersAndWritesBack();
         ImportWritesRefreshMirrors();
         GuardedPagesRefreshAfterFaults();
+        OrderingPointsReportQueuedWork();
         HotPagesLeaveAndCool();
         UnguardablePages();
         DemotionAndDrops();

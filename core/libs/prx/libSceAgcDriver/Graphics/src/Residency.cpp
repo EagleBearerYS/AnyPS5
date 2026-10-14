@@ -347,6 +347,7 @@ void ResidencyManager::applyDrops() {
     {
         const std::lock_guard lock(queueMutex);
         queue.swap(dropQueue);
+        queued.store(!cpuQueue.empty(), std::memory_order_release);
     }
     for (const auto& range : queue) {
         for (const auto id : residentIn(range.address, range.bytes)) {
@@ -368,6 +369,7 @@ void ResidencyManager::applyQueued() {
     {
         const std::lock_guard lock(queueMutex);
         written.swap(cpuQueue);
+        queued.store(!dropQueue.empty(), std::memory_order_release);
     }
     if (!written.empty()) applyFaults(std::move(written));
 }
@@ -376,6 +378,7 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
     std::sort(written.begin(), written.end());
     written.erase(std::unique(written.begin(), written.end()), written.end());
     const auto window = hotEpochs >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << hotEpochs) - 1;
+    const auto now = Epoch();
     std::vector<std::uint32_t> leaving;
     std::vector<Fill> fills;
     for (const auto index : written) {
@@ -383,12 +386,12 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
         if (!id) continue;
         auto& page = pages[*id];
         ++counts.faults;
-        const auto distance = epoch - page.faultEpoch;
+        const auto distance = now - page.faultEpoch;
         page.faultHistory = (distance >= 64 ? 0 : page.faultHistory << distance) | 1u;
-        page.faultEpoch = epoch;
+        page.faultEpoch = now;
         if (static_cast<std::uint32_t>(std::popcount(page.faultHistory & window)) >= hotFaults) {
             ++counts.hot;
-            hot[index] = {0, epoch};
+            hot[index] = {0, now};
             leaving.push_back(*id);
             continue;
         }
@@ -404,7 +407,7 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
         demote(leaving);
         const auto generation = device.Generation();
         for (auto& [index, cooling] : hot) {
-            if (cooling.epoch == epoch && cooling.generation == 0) cooling.generation = generation;
+            if (cooling.epoch == now && cooling.generation == 0) cooling.generation = generation;
         }
     }
     refresh(fills);
@@ -412,23 +415,33 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
 
 void ResidencyManager::coolHot(std::uint64_t first, std::span<const std::uint8_t> written) {
     const auto generation = device.Generation();
+    const auto now = Epoch();
     for (std::size_t k = 0; k < written.size(); ++k) {
         const auto entry = hot.find(first + k);
         if (entry == hot.end()) continue;
         if (written[k] != 0) {
-            entry->second = {generation, epoch};
+            entry->second = {generation, now};
             continue;
         }
-        if (epoch - entry->second.epoch < hotEpochs) continue;
+        if (now - entry->second.epoch < hotEpochs) continue;
         hot.erase(entry);
         ++counts.cooled;
     }
 }
 
-void ResidencyManager::Prepare() {
-    ++epoch;
+bool ResidencyManager::Advance() {
+    epoch.fetch_add(1, std::memory_order_relaxed);
+    return queued.load(std::memory_order_acquire);
+}
+
+void ResidencyManager::Apply() {
     applyQueued();
     retireReached();
+}
+
+void ResidencyManager::Prepare() {
+    Advance();
+    Apply();
 }
 
 void ResidencyManager::SetBudget(std::uint64_t bytes) {
@@ -580,6 +593,7 @@ void ResidencyManager::DropRange(std::uint64_t address, std::uint64_t bytes) {
     if (bytes == 0) return;
     const std::lock_guard lock(queueMutex);
     dropQueue.push_back({address, bytes});
+    queued.store(true, std::memory_order_release);
 }
 
 void ResidencyManager::NoteImportWritten(std::uint64_t address, std::uint64_t bytes) {
@@ -596,8 +610,10 @@ void ResidencyManager::NoteImportWritten(std::uint64_t address, std::uint64_t by
 }
 
 void ResidencyManager::QueueCpuWritten(std::span<const std::uint64_t> written) {
+    if (written.empty()) return;
     const std::lock_guard lock(queueMutex);
     cpuQueue.insert(cpuQueue.end(), written.begin(), written.end());
+    queued.store(true, std::memory_order_release);
 }
 
 void ResidencyManager::NoteGpuWritten(std::uint64_t address, std::uint64_t bytes) {
