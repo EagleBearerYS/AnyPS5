@@ -3,15 +3,18 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Translation/InstructionTranslator.hpp"
 #include <spirv/unified1/spirv.hpp>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -38,12 +41,34 @@ constexpr std::uint32_t SampleV8V2S0S8 = 0x00400802u;
 constexpr std::uint32_t AddV8V1V8 = 0x4a101101u;
 constexpr std::uint32_t BufferStoreDword = 0xe0700000u;
 constexpr std::uint32_t StoreV8WithS12 = 0x80030800u;
+constexpr std::uint32_t MovrelsV3V4 = 0x7e068704u;
+constexpr std::uint32_t CompareGroupXZero = 0xbf068004u;
+constexpr std::uint32_t BranchSccOverOne = 0xbf850001u;
+constexpr std::uint32_t MoveS5Three = 0xbe850383u;
+constexpr std::uint32_t AddV2V1V2 = 0x4a040501u;
+constexpr std::uint32_t AddV4OneV4 = 0x4a080881u;
+constexpr std::uint32_t SubtractS5One = 0x80858105u;
+constexpr std::uint32_t CompareS5NotZero = 0xbf078005u;
+constexpr std::uint32_t BranchSccBackSix = 0xbf85fffau;
+
+constexpr std::uint32_t MoveVector(std::uint32_t reg, std::uint32_t value) {
+    return 0x7e000200u | (reg << 17u) | (128u + value);
+}
+
+struct WindowAccess {
+    bool store = false;
+    std::optional<std::uint32_t> slot;
+    std::optional<std::uint32_t> value;
+
+    bool operator==(const WindowAccess& other) const = default;
+};
 
 struct Shape {
     std::size_t functionArrays = 0;
     std::uint32_t arrayLength = 0;
     std::size_t accessChains = 0;
     std::size_t selects = 0;
+    std::vector<WindowAccess> windowAccesses;
 };
 
 void Require(bool condition, const std::string& message) {
@@ -86,6 +111,13 @@ Shape Scan(std::span<const std::uint32_t> words) {
     std::vector<std::pair<std::uint32_t, std::uint32_t>> arrays;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> functionPointers;
     std::vector<std::uint32_t> windowVariables;
+    std::unordered_map<std::uint32_t, std::optional<std::uint32_t>> windowElements;
+    const auto constantValue = [&](std::uint32_t id) -> std::optional<std::uint32_t> {
+        for (const auto& [constant, value] : constants) {
+            if (constant == id) return value;
+        }
+        return std::nullopt;
+    };
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> spv::WordCountShift;
         const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
@@ -108,13 +140,30 @@ Shape Scan(std::span<const std::uint32_t> words) {
         }
         if (op == spv::OpAccessChain) {
             for (const auto variable : windowVariables) {
-                if (words[cursor + 3] == variable) ++shape.accessChains;
+                if (words[cursor + 3] != variable) continue;
+                ++shape.accessChains;
+                windowElements[words[cursor + 2]] = count == 5 ? constantValue(words[cursor + 4]) : std::nullopt;
             }
         }
+        if (op == spv::OpStore && windowElements.contains(words[cursor + 1])) shape.windowAccesses.push_back({true, windowElements[words[cursor + 1]], constantValue(words[cursor + 2])});
+        if (op == spv::OpLoad && windowElements.contains(words[cursor + 3])) shape.windowAccesses.push_back({false, windowElements[words[cursor + 3]], std::nullopt});
         if (op == spv::OpSelect) ++shape.selects;
         cursor += count;
     }
     return shape;
+}
+
+bool WindowAccessesAre(std::span<const std::uint32_t> code, std::initializer_list<WindowAccess> expected) {
+    const auto accesses = Scan(RecompileProgram(code)).windowAccesses;
+    if (std::ranges::equal(accesses, expected)) return true;
+    std::string text;
+    for (const auto& access : accesses) {
+        text += access.store ? " store[" : " load[";
+        text += access.slot ? std::to_string(*access.slot) : std::string("index");
+        text += access.store ? (access.value ? "]=" + std::to_string(*access.value) : std::string("]=value")) : std::string("]");
+    }
+    std::fprintf(stderr, "  window accesses:%s\n", text.c_str());
+    return false;
 }
 
 IrProgram TranslateStage(ShaderStageKind stage, std::uint32_t waveSize, std::uint32_t base = 0u, std::uint32_t fetchStart = 0u, std::uint32_t fetchCount = 0u) {
@@ -291,6 +340,22 @@ int main(int argc, char** argv) {
         const std::array<std::uint32_t, 16> userData{};
         const auto shape = Scan(RecompileProgram(code, userData));
         return shape.functionArrays == 1;
+    });
+
+    passed &= run("a register rewritten before a relative read is stored once, and not after the last read", [] {
+        const std::array<std::uint32_t, 11> code{MoveM0GroupX, MoveVector(4, 1), MoveVector(5, 2), MoveVector(4, 3), MoveVector(5, 4), MovrelsV1V4, 0xe0700000u, 0x80000100u, MoveVector(4, 5), MoveVector(5, 6), EndProgram};
+        return WindowAccessesAre(code, {{true, 0u, 3u}, {true, 1u, 4u}, {false, std::nullopt, std::nullopt}});
+    });
+
+    passed &= run("a register written in one arm of a branch is stored in the arm for the relative read after the merge", [] {
+        const std::array<std::uint32_t, 11> code{MoveM0GroupX, MoveVector(4, 1), MoveVector(5, 7), MoveVector(4, 2), CompareGroupXZero, BranchSccOverOne, MoveVector(4, 3), MovrelsV1V4, 0xe0700000u, 0x80000100u, EndProgram};
+        return WindowAccessesAre(code, {{true, 1u, 7u}, {true, 0u, 2u}, {true, 0u, 3u}, {false, std::nullopt, std::nullopt}});
+    });
+
+    passed &= run("a register rewritten in a loop is stored for the relative read of the next iteration", [] {
+        const std::array<std::uint32_t, 18> code{MoveM0GroupX, MoveVector(4, 1), MoveVector(5, 2), MoveS5Three, MovrelsV1V4, AddV2V1V2, AddV4OneV4, SubtractS5One, CompareS5NotZero, BranchSccBackSix,
+            MoveVector(4, 8), MovrelsV3V4, 0xe0700000u, 0x80000200u, 0xe0700004u, 0x80000300u, MoveVector(5, 9), EndProgram};
+        return WindowAccessesAre(code, {{true, 0u, 1u}, {true, 1u, 2u}, {false, std::nullopt, std::nullopt}, {true, 0u, std::nullopt}, {true, 0u, 8u}, {false, std::nullopt, std::nullopt}});
     });
 
     if (passed) std::puts("Vector window shape and SSA control tests passed");

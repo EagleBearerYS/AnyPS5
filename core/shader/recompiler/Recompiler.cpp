@@ -40,6 +40,7 @@
 #include "Optimization/include/Optimization/SrtWalker.hpp"
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
 #include "Optimization/include/Optimization/TessellationLowering.hpp"
+#include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
 #include "SpirvBackend/include/SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/include/SpirvBackend/SpirvEmitter.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -271,6 +272,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     constexpr DenormalFlushEliminator denormalFlushEliminator;
     if (denormalFlushEliminator.Eliminate(program).removedFlushes != 0u) {
+        deadCodeEliminator.Eliminate(program);
+    }
+
+    constexpr VectorWindowStoreEliminator vectorWindowStoreEliminator;
+    if (vectorWindowStoreEliminator.Eliminate(program).removedStores != 0u) {
         deadCodeEliminator.Eliminate(program);
     }
 
