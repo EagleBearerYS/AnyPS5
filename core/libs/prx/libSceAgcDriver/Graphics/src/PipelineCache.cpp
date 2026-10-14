@@ -85,6 +85,7 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
     session = create({});
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     Check(getData(context.device, session, &savedSessionBytes, nullptr), "vkGetPipelineCacheData session");
+    initialSessionBytes = savedSessionBytes;
     char id[17];
     std::snprintf(id, sizeof(id), "%016llx", static_cast<unsigned long long>((static_cast<std::uint64_t>(std::random_device{}()) << 32u) ^ static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count())));
     sessionPath = path.parent_path() / (prefix + id + ".bin");
@@ -201,24 +202,28 @@ bool PipelineCache::write(VkPipelineCache source, const std::filesystem::path& f
 
 void PipelineCache::save(bool final) {
     std::lock_guard lock(saveMutex);
-    if (baseStale) {
-        const auto started = std::chrono::steady_clock::now();
+    const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
+    std::size_t size = 0;
+    if (getData(context.device, session, &size, nullptr) != VK_SUCCESS) return;
+    const auto started = std::chrono::steady_clock::now();
+    if (final) {
+        if (!baseStale && size == initialSessionBytes) return;
+        Check(context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, base, 1, &session), "vkMergePipelineCaches teardown");
         std::size_t bytes = 0;
         if (!write(base, path, bytes)) return;
         std::error_code error;
         for (const auto& merged : mergedSessions) std::filesystem::remove(merged, error);
-        std::fprintf(stderr, "[pipeline-cache] rewrote %s with %zu earlier sessions merged: %.1f KiB in %.1f ms\n", path.string().c_str(), mergedSessions.size(), static_cast<double>(bytes) / 1024.0, millisecondsSince(started));
+        std::filesystem::remove(sessionPath, error);
+        std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s with this session and %zu earlier ones merged in %.1f ms (teardown)\n", static_cast<double>(bytes) / 1024.0, path.string().c_str(), mergedSessions.size(), millisecondsSince(started));
         mergedSessions.clear();
         baseStale = false;
+        return;
     }
-    const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
-    std::size_t size = 0;
-    if (getData(context.device, session, &size, nullptr) != VK_SUCCESS || size == savedSessionBytes) return;
-    const auto started = std::chrono::steady_clock::now();
+    if (size == savedSessionBytes) return;
     std::size_t bytes = 0;
     if (!write(session, sessionPath, bytes)) return;
     savedSessionBytes = bytes;
-    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved this session's %.1f KiB to %s in %.1f ms%s\n", static_cast<double>(bytes) / 1024.0, sessionPath.string().c_str(), millisecondsSince(started), final ? " (teardown)" : "");
+    if (profiling()) std::fprintf(stderr, "[pipeline-cache] saved this session's %.1f KiB to %s in %.1f ms\n", static_cast<double>(bytes) / 1024.0, sessionPath.string().c_str(), millisecondsSince(started));
 }
 
 void PipelineCache::run() {

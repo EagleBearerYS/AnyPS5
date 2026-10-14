@@ -44,6 +44,7 @@ private:
     std::vector<std::filesystem::path> mergedSessions;
     bool baseStale = false;
     std::size_t savedSessionBytes = 0;
+    std::size_t initialSessionBytes = 0;
     std::mutex saveMutex;
     std::mutex mutex;
     std::condition_variable wake;

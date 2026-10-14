@@ -145,7 +145,7 @@ int main() {
     SetVariable("ANYPS5_NO_SHADER_CACHE", "");
     SetVariable("ANYPS5_SHADER_CACHE_DIR", directory.string());
     std::filesystem::path base;
-    std::filesystem::path firstSession;
+    const auto crashed = directory / "crashed-session.bin";
     {
         PipelineCache cache(context, gpu.properties, true);
         auto with = context;
@@ -153,22 +153,27 @@ int main() {
         for (std::uint32_t index = 0; index < 8; ++index) build(with, seed + index);
         cache.Save();
         base = cache.BasePath();
-        firstSession = cache.SessionPath();
-        Require(!base.empty() && !std::filesystem::exists(base), "the first session wrote the base file");
+        Require(!base.empty() && !std::filesystem::exists(base), "a session wrote the base file before its teardown");
+        if (!std::filesystem::exists(cache.SessionPath())) {
+            std::printf("pipeline cache files: the device keeps no pipeline data in its caches; the file checks were not run\n");
+            std::filesystem::remove_all(directory);
+            return 0;
+        }
+        std::filesystem::copy_file(cache.SessionPath(), crashed);
     }
-    if (!std::filesystem::exists(firstSession)) {
-        std::printf("pipeline cache files: the device keeps no pipeline data in its caches; the file checks were not run\n");
-        std::filesystem::remove_all(directory);
-        return 0;
-    }
-    const auto firstBytes = std::filesystem::file_size(firstSession);
+    Require(std::filesystem::exists(base), "the teardown did not merge its session into the base file");
+    const auto prefix = base.stem().string() + ".session-";
+    const auto sessionFiles = [&] {
+        std::size_t count = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) count += entry.path().filename().string().starts_with(prefix) ? 1u : 0u;
+        return count;
+    };
+    Require(sessionFiles() == 0, "the teardown kept its session file after merging it");
+    std::filesystem::rename(crashed, directory / (prefix + "crashed.bin"));
     {
         PipelineCache cache(context, gpu.properties, true);
         auto with = context;
         with.pipelineCache = &cache;
-        cache.Save();
-        Require(std::filesystem::exists(base) && std::filesystem::file_size(base) * 2 > firstBytes, "the earlier session's pipelines were not merged into the base file");
-        Require(!std::filesystem::exists(firstSession), "a session file merged into the base file was kept");
         const auto baseBytes = std::filesystem::file_size(base);
         const auto baseTime = std::filesystem::last_write_time(base);
         for (std::uint32_t index = 0; index < 8; ++index) build(with, seed + index);
@@ -178,10 +183,11 @@ int main() {
         Require(std::filesystem::file_size(cache.SessionPath()) * 2 < baseBytes, "the session file holds more than the pipeline this session added");
         Require(std::filesystem::file_size(base) == baseBytes && std::filesystem::last_write_time(base) == baseTime, "the base file was rewritten during a session");
     }
+    Require(sessionFiles() == 0, "a session file of a crashed run or of this run was kept after the teardown merged it");
     reinterpret_cast<PFN_vkDestroyPipelineLayout>(function("vkDestroyPipelineLayout"))(gpu.device, layout, nullptr);
     reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(function("vkDestroyDescriptorSetLayout"))(gpu.device, setLayout, nullptr);
     reinterpret_cast<PFN_vkDestroyShaderModule>(function("vkDestroyShaderModule"))(gpu.device, module, nullptr);
     std::filesystem::remove_all(directory);
-    std::printf("pipeline cache files: a session writes only its new pipelines, the next start merges them into the base file\n");
+    std::printf("pipeline cache files: a session writes only its new pipelines, its teardown and the start after a crash merge them into the base file\n");
     return 0;
 }
