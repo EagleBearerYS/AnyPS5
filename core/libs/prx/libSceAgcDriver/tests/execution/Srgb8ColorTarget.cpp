@@ -9,6 +9,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -61,7 +62,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
 
 alignas(256) std::array<std::array<std::uint32_t, 64>, 8> Programs{};
 std::size_t programCount = 0;
-alignas(256) std::array<std::uint8_t, KeyBytes> Keys{};
+TestGuest::Array<std::uint8_t, KeyBytes> Keys;
 
 double Eotf(std::uint32_t code) {
     const double encoded = code / 255.0;

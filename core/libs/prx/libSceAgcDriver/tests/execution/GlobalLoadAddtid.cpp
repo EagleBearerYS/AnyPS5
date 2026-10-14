@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -25,8 +26,8 @@ constexpr std::uint32_t Sentinel = 0xabcdabcdu;
 constexpr std::uint32_t PositiveOffsetDword = 16;
 constexpr std::uint32_t NegativeOffsetDword = 121;
 constexpr std::uint32_t MaskedExecLo = 0x55555555u;
-alignas(256) std::array<std::uint32_t, TableDwords> Table{};
-alignas(256) std::array<std::uint32_t, MaxThreads * Results> Output{};
+TestGuest::Array<std::uint32_t, TableDwords> Table;
+TestGuest::Array<std::uint32_t, MaxThreads * Results> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 41> AddtidCode{
     0x34020085, 0x34040082, 0xbe880300, 0x8709ff01, 0x0000ffff, 0x800aff08, 0x00000200, 0x820b8009,

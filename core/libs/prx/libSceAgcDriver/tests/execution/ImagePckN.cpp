@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -28,9 +29,9 @@ constexpr std::uint32_t R8UInt = 5;
 constexpr std::uint32_t R16UInt = 11;
 constexpr std::uint32_t Rg8UInt = 18;
 constexpr std::uint32_t R32UInt = 20;
-alignas(256) std::array<std::uint8_t, Bytes> Texels{};
-alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
-alignas(256) std::array<std::uint32_t, Threads * 4> Output{};
+TestGuest::Array<std::uint8_t, Bytes> Texels;
+TestGuest::Array<std::uint32_t, Threads * 4> Input;
+TestGuest::Array<std::uint32_t, Threads * 4> Output;
 
 struct Format {
     std::uint32_t id;
@@ -106,9 +107,9 @@ void FillInput() {
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t format, std::uint32_t dmask, std::uint32_t swizzle = 0xfacu) {
     const auto code = Code(opcode, dmask);
     std::vector<std::uint32_t> userData(16, 0u);
-    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto descriptor = Descriptor(format, swizzle);
-    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4);
     std::copy(input.begin(), input.end(), userData.begin() + 12);

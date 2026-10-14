@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -55,8 +56,8 @@ constexpr std::array<std::uint32_t, 32> Sources{
     0x80007fffu, 0x7fff8000u, 0xc3a5815au, 0x5a81a5c3u, 0x0f1e2d3cu, 0xf0e1d2c3u, 0x40c08001u, 0xdeadbeefu,
 };
 
-alignas(256) std::array<std::uint32_t, MaxLanes * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, MaxLanes * Results> Output{};
+TestGuest::Array<std::uint32_t, MaxLanes * Inputs> Input;
+TestGuest::Array<std::uint32_t, MaxLanes * Results> Output;
 
 constexpr std::uint32_t Sop1(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source) {
     return 0xbe800000u | (destination << 16u) | (opcode << 8u) | source;

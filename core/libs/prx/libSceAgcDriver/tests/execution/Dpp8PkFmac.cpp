@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,8 +18,8 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
 constexpr std::uint32_t Stride = 4;
-alignas(256) std::array<std::uint32_t, MaxThreads * Stride> Input{};
-alignas(256) std::array<std::uint32_t, MaxThreads * Stride> Output{};
+TestGuest::Array<std::uint32_t, MaxThreads * Stride> Input;
+TestGuest::Array<std::uint32_t, MaxThreads * Stride> Output;
 
 std::array<std::uint32_t, 17> Code(std::uint32_t selectors) {
     const auto dpp8 = [&](std::uint32_t source) { return (selectors << 8u) | source; };
@@ -66,7 +67,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const std::array<s
     Output.fill(0xdeadbeefu);
     const auto code = Code(Selectors(lanes));
     std::vector<std::uint32_t> userData;
-    for (const auto& descriptor : {BufferDescriptor(Input.data(), sizeof(Input)), BufferDescriptor(Output.data(), sizeof(Output))}) {
+    for (const auto& descriptor : {BufferDescriptor(Input.data(), decltype(Input)::ByteSize), BufferDescriptor(Output.data(), decltype(Output)::ByteSize)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
     const std::span<const std::uint32_t> program(code);

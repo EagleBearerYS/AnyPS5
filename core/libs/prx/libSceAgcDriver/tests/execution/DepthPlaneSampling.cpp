@@ -6,6 +6,7 @@
 #include "DepthFastClearHarness.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -80,7 +81,7 @@ alignas(256) std::array<std::uint32_t, 11> Load2D = LoadCode(LoadDims[0]);
 alignas(256) std::array<std::uint32_t, 11> LoadCube = LoadCode(LoadDims[1]);
 alignas(256) std::array<std::uint32_t, 11> LoadArray = LoadCode(LoadDims[2]);
 
-alignas(256) std::array<std::byte, 256 * 128 * 4> Pixels{};
+TestGuest::Array<std::byte, 256 * 128 * 4> Pixels;
 
 class GuestBlock {
 public:

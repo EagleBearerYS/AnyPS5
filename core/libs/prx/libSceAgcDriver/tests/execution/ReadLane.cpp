@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdio>
 #include <iostream>
@@ -15,8 +16,8 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Stride = 4;
-alignas(256) std::array<std::uint32_t, Threads * Stride> Input{};
-alignas(256) std::array<std::uint32_t, Threads * Stride> Output{};
+TestGuest::Array<std::uint32_t, Threads * Stride> Input;
+TestGuest::Array<std::uint32_t, Threads * Stride> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 21> ReadLaneCode{
     0x34020082, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xbf8c3f70, 0xd7600008, 0x00014b04,

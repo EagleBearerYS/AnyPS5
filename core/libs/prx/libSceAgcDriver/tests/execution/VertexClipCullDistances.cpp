@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -18,7 +19,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Width = 192;
 constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t DistanceVector = 0x00400000u;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
 
 alignas(256) constexpr std::array<std::uint32_t, 10> VertexCode{
     0xe0382000, 0x80000005, 0xe0382010, 0x80000405, 0xbf8c3f70,

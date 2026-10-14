@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -43,17 +44,17 @@ constexpr std::uint32_t Format11_11_10UInt = 34;
 constexpr std::uint32_t Format8_8_8_8UNorm = 56;
 constexpr std::uint32_t Type2D = 9;
 
-alignas(256) std::array<float, Width * Height> FloatTexels{};
-alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
-alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
-alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
-alignas(256) std::array<std::uint32_t, Width * Height> PackedTexels{};
-alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
-alignas(256) std::array<std::uint32_t, 64> Keys{};
-alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
-alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> OtherOutput{};
-alignas(256) std::array<std::uint32_t, 32> Srt{};
-alignas(256) std::array<std::uint32_t, 5 * Width * Height> RuntimeTexels{};
+TestGuest::Array<float, Width * Height> FloatTexels;
+TestGuest::Array<float, Width * Height> OtherFloatTexels;
+TestGuest::Array<std::uint32_t, Width * Height> UintTexels;
+TestGuest::Array<std::int32_t, Width * Height> SintTexels;
+TestGuest::Array<std::uint32_t, Width * Height> PackedTexels;
+TestGuest::Array<std::uint32_t, Records * Stride / 4> Table;
+TestGuest::Array<std::uint32_t, 64> Keys;
+TestGuest::Array<std::uint32_t, MaxGroups * 128 * 4> Output;
+TestGuest::Array<std::uint32_t, MaxGroups * 128 * 4> OtherOutput;
+TestGuest::Array<std::uint32_t, 32> Srt;
+TestGuest::Array<std::uint32_t, 5 * Width * Height> RuntimeTexels;
 std::vector<std::uint32_t> RuntimeBlocks(0x8000u);
 constexpr std::uint32_t PointerBytes = MaxGroups * 16u;
 constexpr std::uint32_t ArgumentWord = 1024u;
@@ -240,8 +241,8 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
 
 template <std::size_t CodeWords>
 std::vector<ShaderRecompiler::MemoryRegion> TableMemory(const std::array<std::uint32_t, CodeWords>& code, bool tableInMemory, std::span<std::uint32_t> written = Output) {
-    const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table)));
-    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(decltype(Table)::ByteSize));
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(decltype(Keys)::ByteSize));
     const auto output = Buffer(written.data(), static_cast<std::uint32_t>(written.size_bytes()));
     std::copy(table.begin(), table.end(), Srt.begin());
     std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
@@ -265,7 +266,7 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
 
 template <std::size_t CodeWords>
 Outcome RunDirect(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, const std::array<std::uint32_t, 4>& image, const std::array<std::uint32_t, 4>& sampler = PointClamp) {
-    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
     std::copy(sampler.begin(), sampler.end(), Srt.begin() + 12);
     std::fill(Srt.begin() + 16, Srt.begin() + 24, 0u);
@@ -281,7 +282,7 @@ Outcome RunDirect(AgcDriver::VulkanDevice& device, const std::array<std::uint32_
 template <std::size_t CodeWords>
 Outcome RunRuntime(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups) {
     const auto pointers = Buffer(RuntimeBlocks.data(), PointerBytes);
-    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     std::copy(pointers.begin(), pointers.end(), Srt.begin());
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
     const std::span<const std::uint32_t> span(code);

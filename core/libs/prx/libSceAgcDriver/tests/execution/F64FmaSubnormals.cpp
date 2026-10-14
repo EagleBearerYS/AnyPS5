@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -21,8 +22,8 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Inputs = 8;
 constexpr std::uint32_t Results = 2;
-alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+TestGuest::Array<std::uint32_t, Threads * Inputs> Input;
+TestGuest::Array<std::uint32_t, Threads * Results> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 12> Code{
     0x34020085, 0x34060083, 0xe0381000, 0x80000401, 0xe0381010, 0x80000801, 0xbf8c3f70, 0xd54c000c,

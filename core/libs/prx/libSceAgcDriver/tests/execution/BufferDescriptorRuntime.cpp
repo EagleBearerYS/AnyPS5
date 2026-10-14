@@ -3,6 +3,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -20,8 +21,8 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Lanes = 32;
 constexpr std::uint32_t InputBytes = 256;
 constexpr std::uint32_t Fill = 0xdeadbeefu;
-alignas(256) std::array<std::uint8_t, InputBytes> Input{};
-alignas(256) std::array<std::uint32_t, Lanes> Output{};
+TestGuest::Array<std::uint8_t, InputBytes> Input;
+TestGuest::Array<std::uint32_t, Lanes> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 7> Code{
     0x34020082, 0xe0301000, 0x80000201, 0xbf8c3f70, 0xe0701000, 0x80010201, 0xbf810000,
@@ -75,7 +76,7 @@ void Run(AgcDriver::VulkanDevice& device, bool registrationModules) {
     for (const auto& test : cases) {
         Output.fill(Fill);
         const auto input = test.present ? BufferDescriptor(Input.data() + test.baseOffset, test.records) : std::array<std::uint32_t, 4>{0u, 0u, 0u, 0x31016facu};
-        const auto output = BufferDescriptor(Output.data(), sizeof(Output));
+        const auto output = BufferDescriptor(Output.data(), decltype(Output)::ByteSize);
         std::copy(input.begin(), input.end(), userData.begin());
         std::copy(output.begin(), output.end(), userData.begin() + 4);
         ShaderRecompiler::SrtRuntime runtime{};

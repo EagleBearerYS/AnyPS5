@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -50,8 +51,8 @@ constexpr std::size_t StoreOffset = 32768;
 constexpr std::array<std::uint32_t, 4> PointSampler{0x00000092u, 0x00fff000u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> CompareSampler{0x00003092u, 0x00fff000u, 0u, 0u};
 
-alignas(256) std::array<std::uint32_t, LoadWidth * 4> Output{};
-alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
+TestGuest::Array<std::uint32_t, LoadWidth * 4> Output;
+TestGuest::Array<std::uint32_t, Threads * 4> Input;
 
 constexpr std::array<std::uint32_t, 15> LoadCode(std::uint32_t dmask, std::uint32_t d16) {
     return {

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -38,8 +39,8 @@ constexpr std::uint32_t WaitScalarLoads = 0xbf8cc07fu;
 constexpr std::uint32_t WaitVectorLoads = 0xbf8c3f70u;
 constexpr std::uint32_t Endpgm = 0xbf810000u;
 
-alignas(4096) std::array<std::uint32_t, (MaxBuffers + 1u) * RegionWords> Data{};
-alignas(256) std::array<std::uint32_t, MaxBuffers * 4u> Table{};
+TestGuest::Array<std::uint32_t, (MaxBuffers + 1u) * RegionWords> Data;
+TestGuest::Array<std::uint32_t, MaxBuffers * 4u> Table;
 
 constexpr std::uint32_t Vop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0, std::uint32_t source1) {
     return (opcode << 25u) | (destination << 17u) | (source1 << 9u) | source0;

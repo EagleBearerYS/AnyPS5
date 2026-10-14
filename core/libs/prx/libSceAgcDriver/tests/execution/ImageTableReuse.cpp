@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -59,9 +60,9 @@ constexpr std::uint64_t CpuWriteResolutions = 2;
 constexpr std::uint64_t CpuWriteResolutions = 1;
 #endif
 
-alignas(256) std::array<std::uint32_t, Records> Keys{};
-alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
-alignas(256) std::array<std::uint32_t, 32> Srt{};
+TestGuest::Array<std::uint32_t, Records> Keys;
+TestGuest::Array<std::uint32_t, Lanes * 4> Output;
+TestGuest::Array<std::uint32_t, 32> Srt;
 
 alignas(256) constexpr std::array<std::uint32_t, 28> TableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0x8f108202u, 0xf4200444u,
@@ -167,7 +168,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
 }
 
 void SetOutput(const void* output) {
-    const auto view = Buffer(output, static_cast<std::uint32_t>(sizeof(Output)));
+    const auto view = Buffer(output, static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     std::copy(view.begin(), view.end(), Srt.begin() + 8);
 }
 
@@ -252,7 +253,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     Fill(block, Moved, 0.5f);
     for (std::uint32_t key = 0; key < Records; ++key) Keys[key] = key;
     const auto srt = Buffer(block.Table(), Records * Stride);
-    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(decltype(Keys)::ByteSize));
     std::copy(srt.begin(), srt.end(), Srt.begin());
     std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
     SetOutput(Output.data());

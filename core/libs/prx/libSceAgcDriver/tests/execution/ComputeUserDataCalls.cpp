@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -26,14 +27,14 @@ alignas(256) constexpr std::array<std::uint32_t, 64> Caller{
 alignas(256) constexpr std::array<std::uint32_t, 2> AddFive{0x4a020285u, 0xbe80200eu};
 alignas(256) constexpr std::array<std::uint32_t, 2> AddSixtyFour{0x4a0202c0u, 0xbe80200eu};
 alignas(256) constexpr std::array<std::uint32_t, 2> AddOne{0x4a020281u, 0xbe80200eu};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 std::array<std::uint32_t, 8> UserData(const void* first, const void* second) {
     const auto low = reinterpret_cast<std::uintptr_t>(first);
     const auto high = reinterpret_cast<std::uintptr_t>(second);
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
     return {static_cast<std::uint32_t>(low), static_cast<std::uint32_t>(low >> 32u), static_cast<std::uint32_t>(high), static_cast<std::uint32_t>(high >> 32u),
-        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Output)), 0x31016facu};
+        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Output)::ByteSize), 0x31016facu};
 }
 
 std::vector<std::uint32_t> Commands(const std::array<std::uint32_t, 8>& data, bool wave32) {
@@ -61,7 +62,7 @@ void Dispatch(const void* first, const void* second, bool wave32) {
     Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
 }
 
 void Check(const void* first, const void* second, bool wave32, std::uint32_t expected, const std::string& what) {

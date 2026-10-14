@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -21,8 +22,8 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
 constexpr std::uint32_t IdentitySelect = 0xfacu;
 constexpr std::uint32_t ReverseSelect = 0x977u;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<std::uint32_t, 12> Output{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::uint32_t, 12> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 7> VertexCode{
     0xbe822100, 0x34020a84, 0xe0781000, 0x80010801, 0xf80008cf, 0x0b0a0908, 0xbf810000,
@@ -45,7 +46,7 @@ std::array<std::uint32_t, 4> VertexBufferDescriptor(std::uint32_t select, std::u
 
 std::array<std::uint32_t, 4> OutputDescriptor() {
     const auto address = reinterpret_cast<std::uintptr_t>(Output.data());
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Output)), 0x31016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Output)::ByteSize), 0x31016facu};
 }
 
 ShaderRecompiler::RecompileRequest VertexRequest(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderVertexStageInfo& info, std::span<const ShaderRecompiler::MemoryRegion> memory) {

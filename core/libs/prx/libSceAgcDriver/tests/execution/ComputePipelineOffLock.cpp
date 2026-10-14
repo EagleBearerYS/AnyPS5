@@ -5,6 +5,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <barrier>
 #include <cstdint>
@@ -31,9 +32,9 @@ alignas(256) constexpr std::array<std::uint32_t, 7> Code{
 alignas(256) constexpr std::array<std::uint32_t, 8> Other{
     0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a040481u, 0xe0701000u, 0x80010201u, 0xbf810000u,
 };
-alignas(256) std::array<std::uint32_t, Threads> Input{};
-alignas(256) std::array<std::uint32_t, Threads> Shifted{};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, Threads> Input;
+TestGuest::Array<std::uint32_t, Threads> Shifted;
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 std::array<std::uint32_t, 4> Descriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -41,8 +42,8 @@ std::array<std::uint32_t, 4> Descriptor(const void* data, std::uint32_t bytes) {
 }
 
 std::array<std::uint32_t, 8> UserData(const void* input) {
-    const auto source = Descriptor(input, sizeof(Input));
-    const auto target = Descriptor(Output.data(), sizeof(Output));
+    const auto source = Descriptor(input, decltype(Input)::ByteSize);
+    const auto target = Descriptor(Output.data(), decltype(Output)::ByteSize);
     return {source[0], source[1], source[2], source[3], target[0], target[1], target[2], target[3]};
 }
 
@@ -71,7 +72,7 @@ void Dispatch(const std::uint32_t* program, const void* input) {
     Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
 }
 
 void Expect(const std::array<std::uint32_t, Threads>& expected, std::uint32_t added, const std::string& what) {

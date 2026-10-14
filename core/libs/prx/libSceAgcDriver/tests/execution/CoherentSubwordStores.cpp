@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -28,7 +29,7 @@ constexpr std::uint32_t PartialShared = 208;
 constexpr std::uint32_t PartialDistinct = 212;
 constexpr std::uint32_t VccWord = 288;
 
-alignas(256) std::array<std::uint8_t, OutputBytes> Output{};
+TestGuest::Array<std::uint8_t, OutputBytes> Output;
 
 std::uint32_t Vop1Move(std::uint32_t vdst, std::uint32_t src) {
     return 0x7e000200u | (vdst << 17u) | src;

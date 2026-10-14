@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -31,9 +32,9 @@ constexpr std::uint32_t FilterAnisoBilinear = 3;
 constexpr std::uint32_t AnisoOverride = 1u << 29u;
 constexpr std::uint32_t ForceDegamma = 1u << 20u;
 
-alignas(256) std::array<float, Threads * 3> Input{};
-alignas(256) std::array<float, Threads * 4> Output{};
-alignas(4096) std::array<std::uint8_t, 4096> Texels{};
+TestGuest::Array<float, Threads * 3> Input;
+TestGuest::Array<float, Threads * 4> Output;
+TestGuest::Array<std::uint8_t, 4096> Texels;
 
 alignas(256) constexpr std::array<std::uint32_t, 13> Code{
     0x1614008c, 0xe03c1000, 0x8000010a, 0xbf8c3f70, 0xf0900f08, 0x00820401, 0xbf8c3f70,
@@ -96,8 +97,8 @@ float SrgbToLinear(std::uint8_t code) {
 
 std::array<float, Threads * 4> Sample(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t filter, std::uint32_t forced, std::uint32_t filters = 0u) {
     std::vector<std::uint32_t> userData(20, 0u);
-    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
-    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(format);
     const auto sampler = SamplerDescriptor(filter, forced, filters);
     std::copy(input.begin(), input.end(), userData.begin());

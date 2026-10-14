@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -26,8 +27,8 @@ constexpr std::uint32_t SampledLevel = 2;
 constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t DemoteToHelperInvocation = 5379;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(4096) std::array<std::byte, 256u * 1024u> Texels{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::byte, 256u * 1024u> Texels;
 alignas(256) std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{

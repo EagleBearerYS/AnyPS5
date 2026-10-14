@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -21,8 +22,8 @@ constexpr std::uint32_t Words = 8;
 constexpr std::uint32_t LdsDwords = 4096;
 constexpr std::uint32_t Sign = 0x80000000u;
 constexpr std::uint32_t Sentinel = 0xdeadbeefu;
-alignas(256) std::array<std::uint32_t, MaxThreads * Words> Input{};
-alignas(256) std::array<std::uint32_t, MaxThreads * Words> Output{};
+TestGuest::Array<std::uint32_t, MaxThreads * Words> Input;
+TestGuest::Array<std::uint32_t, MaxThreads * Words> Output;
 
 auto Code(std::uint32_t waveSize, std::uint32_t offset, std::uint32_t destination, bool inactive, bool contended) {
     const std::uint32_t saveExec = waveSize == 32u ? 0xbe943c6au : 0xbe94246au;

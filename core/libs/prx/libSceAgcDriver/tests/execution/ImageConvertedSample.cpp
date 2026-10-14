@@ -11,6 +11,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -67,10 +68,10 @@ constexpr std::uint32_t LodWidth = 64;
 constexpr std::uint32_t LodHeight = 4;
 constexpr std::uint32_t Float32AbgrExport = 9;
 
-alignas(256) std::array<std::uint32_t, MaxSamples * 4> Output{};
-alignas(256) std::array<std::uint32_t, MaxSamples * 4> Input{};
-alignas(4096) std::array<std::uint8_t, RegionBytes * 16> Snapshots{};
-alignas(256) std::array<std::uint32_t, LodWidth * LodHeight * 4> LodPixels{};
+TestGuest::Array<std::uint32_t, MaxSamples * 4> Output;
+TestGuest::Array<std::uint32_t, MaxSamples * 4> Input;
+TestGuest::Array<std::uint8_t, RegionBytes * 16> Snapshots;
+TestGuest::Array<std::uint32_t, LodWidth * LodHeight * 4> LodPixels;
 
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 

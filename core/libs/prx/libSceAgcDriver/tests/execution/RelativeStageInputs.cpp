@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -14,8 +15,8 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Extent = 64u;
-alignas(256) std::array<std::byte, Extent * Extent * 4u> pixels{};
-alignas(256) std::array<std::uint32_t, 16> output{};
+TestGuest::Array<std::byte, Extent * Extent * 4u> pixels;
+TestGuest::Array<std::uint32_t, 16> output;
 alignas(256) constexpr std::array<std::array<float, 4>, 6> positions{{
     {0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f},
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
@@ -101,7 +102,7 @@ void Draw(AgcDriver::VulkanDevice& device, bool relativeVertex) {
 
 void Dispatch(AgcDriver::VulkanDevice& device) {
     output.fill(0xdeadbeefu);
-    const auto userData = BufferDescriptor(output.data(), 0u, sizeof(output));
+    const auto userData = BufferDescriptor(output.data(), 0u, decltype(output)::ByteSize);
     const ShaderRecompiler::ShaderComputeStageInfo compute{{8u, 1u, 2u}, 0u, {false, false, false}, false, 3u};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(computeCode.data()), computeCode, 0, {}},

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -19,8 +20,8 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t MaxThreads = 64;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 4;
-alignas(256) std::array<std::uint32_t, MaxThreads * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, MaxThreads * Results> Output{};
+TestGuest::Array<std::uint32_t, MaxThreads * Inputs> Input;
+TestGuest::Array<std::uint32_t, MaxThreads * Results> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 21> SwappcForward{0x34020084u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xbe8a1f00u, 0x800aff0au, 0x00000014u, 0x820b800bu, 0xbe88210au, 0xbf820008u, 0x4a0808ffu, 0x13579bdfu, 0x3a0a0affu, 0xa5a5a5a5u, 0x4a0c0f06u, 0x3a0e0effu, 0x5a5a5a5au, 0xbe802008u, 0xe0781000u, 0x80010401u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 17> CallForward{0x34020084u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xbb080001u, 0xbf820008u, 0x4a0808ffu, 0x13579bdfu, 0x3a0a0affu, 0xa5a5a5a5u, 0x4a0c0f06u, 0x3a0e0effu, 0x5a5a5a5au, 0xbe802008u, 0xe0781000u, 0x80010401u, 0xbf810000u};

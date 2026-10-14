@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <bit>
 #include <chrono>
@@ -32,11 +33,11 @@ alignas(256) constexpr std::array<std::uint32_t, 64> Caller{
     0x30306c73u, 0x00000040u, 0x00000008u};
 alignas(256) constexpr std::array<std::uint32_t, 2> AddFive{0x4a020285u, 0xbe80200eu};
 alignas(256) constexpr std::array<std::uint32_t, 2> AddSixtyFour{0x4a0202c0u, 0xbe80200eu};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0x7e000200u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
-alignas(256) std::array<std::byte, 1024> ColorMemory{};
+TestGuest::Array<std::byte, 1024> ColorMemory;
 
 void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
     commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u));
@@ -95,7 +96,7 @@ void Dispatch() {
     const auto high = reinterpret_cast<std::uintptr_t>(AddSixtyFour.data());
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
     const std::array<std::uint32_t, 8> data{static_cast<std::uint32_t>(low), static_cast<std::uint32_t>(low >> 32u), static_cast<std::uint32_t>(high), static_cast<std::uint32_t>(high >> 32u),
-        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Output)), 0x31016facu};
+        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Output)::ByteSize), 0x31016facu};
     std::vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
@@ -114,7 +115,7 @@ void Dispatch() {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
     for (std::uint32_t lane = 0; lane < Threads; ++lane) Require(Output[lane] == 3u * (5u + 64u), "the user-data callees: lane " + std::to_string(lane) + " is " + std::to_string(Output[lane]));
 }
 

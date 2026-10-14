@@ -12,6 +12,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -58,7 +59,7 @@ alignas(256) constexpr std::array<std::uint32_t, 9> StoringVertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xe0700000, 0x80010000, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
-alignas(256) std::array<std::uint32_t, 64> Stored{};
+TestGuest::Array<std::uint32_t, 64> Stored;
 
 constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
@@ -178,7 +179,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     const std::array<std::uint32_t, 4> vertexBuffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const auto stored = reinterpret_cast<std::uintptr_t>(Stored.data());
-    const std::array<std::uint32_t, 4> storeBuffer{static_cast<std::uint32_t>(stored), static_cast<std::uint32_t>((stored >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Stored)), 0x01016facu};
+    const std::array<std::uint32_t, 4> storeBuffer{static_cast<std::uint32_t>(stored), static_cast<std::uint32_t>((stored >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Stored)::ByteSize), 0x01016facu};
     std::copy(storeBuffer.begin(), storeBuffer.end(), vertexUserData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(vertexCode.data()), std::as_bytes(vertexCode)}}};
     ShaderRecompiler::RecompileRequest vertex{

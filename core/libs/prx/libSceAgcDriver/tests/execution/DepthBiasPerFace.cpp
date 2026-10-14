@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdio>
 #include <iostream>
@@ -22,8 +23,8 @@ constexpr std::uint32_t WaveSize = 64;
 constexpr std::byte Kept{0x40};
 constexpr float SurfaceDepth = 0.5f;
 constexpr float Bias = 1048576.0f;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<float, Width * Height> DepthMemory{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<float, Width * Height> DepthMemory;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,

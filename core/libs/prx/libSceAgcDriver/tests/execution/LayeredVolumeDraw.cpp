@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -79,7 +80,7 @@ struct Vertex {
     std::uint32_t layer;
 };
 
-alignas(256) std::array<Vertex, 6 * Layers> Vertices{};
+TestGuest::Array<Vertex, 6 * Layers> Vertices;
 
 constexpr ShaderRecompiler::MeshConfiguration Subgroup{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u};
 

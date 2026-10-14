@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -26,9 +27,9 @@ constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t IdentitySwizzle = 0xfacu;
 
-alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
-alignas(256) std::array<std::uint32_t, Threads * 4> Output{};
-alignas(4096) std::array<std::uint8_t, 4096> Texels{};
+TestGuest::Array<std::uint32_t, Threads * 4> Input;
+TestGuest::Array<std::uint32_t, Threads * 4> Output;
+TestGuest::Array<std::uint8_t, 4096> Texels;
 
 alignas(256) std::array<std::uint32_t, 10> PckGather4h{
     0x34020084, 0xe0381000, 0x80000401, 0xbf8c3f70, 0xf1880f08, 0x00820804, 0xbf8c3f70, 0xe0781000,
@@ -126,8 +127,8 @@ std::array<std::uint32_t, 4> Expected(std::uint32_t tid, std::uint32_t dmask) {
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device) {
     std::vector<std::uint32_t> userData(20, 0u);
-    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
-    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor();
     const auto sampler = SamplerDescriptor();
     std::copy(input.begin(), input.end(), userData.begin());

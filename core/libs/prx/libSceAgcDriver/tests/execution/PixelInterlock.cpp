@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -29,8 +30,8 @@ constexpr std::uint32_t Height = 32;
 constexpr std::uint32_t Layers = 64;
 constexpr std::size_t GuestBytes = 65536;
 constexpr std::uint32_t FaultColumns = 8;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<std::uint32_t, Width * Height> Counters{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::uint32_t, Width * Height> Counters;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -168,7 +169,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::span<con
 
 std::vector<std::uint32_t> CounterUserData() {
     std::vector<std::uint32_t> userData(4, 0u);
-    const auto counters = BufferDescriptor(Counters.data(), 0u, static_cast<std::uint32_t>(sizeof(Counters)));
+    const auto counters = BufferDescriptor(Counters.data(), 0u, static_cast<std::uint32_t>(decltype(Counters)::ByteSize));
     std::copy(counters.begin(), counters.end(), userData.begin());
     return userData;
 }

@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -33,11 +34,11 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t DataBytes = 0x400;
 constexpr std::uint32_t ProgramWords = 256;
 constexpr std::uint32_t LaneDwords = 8;
-alignas(256) std::array<std::uint32_t, Lanes * 8> Params{};
-alignas(256) std::array<std::uint32_t, Formats * Lanes * LaneDwords> RuntimeOutput{};
-alignas(256) std::array<std::uint32_t, 7 * Lanes * LaneDwords> TypedOutput{};
-alignas(256) std::array<std::uint32_t, Formats * 4> Descriptors{};
-alignas(256) std::array<std::uint8_t, DataBytes> Bound{};
+TestGuest::Array<std::uint32_t, Lanes * 8> Params;
+TestGuest::Array<std::uint32_t, Formats * Lanes * LaneDwords> RuntimeOutput;
+TestGuest::Array<std::uint32_t, 7 * Lanes * LaneDwords> TypedOutput;
+TestGuest::Array<std::uint32_t, Formats * 4> Descriptors;
+TestGuest::Array<std::uint8_t, DataBytes> Bound;
 
 struct alignas(256) Program {
     std::array<std::uint32_t, ProgramWords> words{};
@@ -247,7 +248,7 @@ ShaderRecompiler::RecompileResult Dispatch(AgcDriver::VulkanDevice& device, Prog
 
 std::vector<std::uint32_t> UserData(const std::array<std::uint32_t, 4>& resource, const std::array<std::uint32_t, 4>& output) {
     std::vector<std::uint32_t> userData;
-    for (const auto& descriptor : {resource, output, BufferDescriptor(Params.data(), sizeof(Params), Raw), BufferDescriptor(Descriptors.data(), sizeof(Descriptors), Raw)}) {
+    for (const auto& descriptor : {resource, output, BufferDescriptor(Params.data(), decltype(Params)::ByteSize, Raw), BufferDescriptor(Descriptors.data(), decltype(Descriptors)::ByteSize, Raw)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
     return userData;
@@ -280,13 +281,13 @@ int main() {
         RuntimeOutput.fill(0xcdcdcdcdu);
         static Program runtime;
         AssembleRuntime(runtime);
-        static_cast<void>(Dispatch(*device, runtime, UserData({}, BufferDescriptor(RuntimeOutput.data(), sizeof(RuntimeOutput), Raw)), Formats));
+        static_cast<void>(Dispatch(*device, runtime, UserData({}, BufferDescriptor(RuntimeOutput.data(), decltype(RuntimeOutput)::ByteSize, Raw)), Formats));
         static Program typed[Layouts.size()];
         for (std::uint32_t index = 0; index < Layouts.size(); ++index) {
             const auto& layout = Layouts[index];
             TypedOutput.fill(0xcdcdcdcdu);
             AssembleTyped(typed[index], layout);
-            static_cast<void>(Dispatch(*device, typed[index], UserData(BufferDescriptor(Bound.data(), Records, Raw), BufferDescriptor(TypedOutput.data(), sizeof(TypedOutput), Raw)), 1u));
+            static_cast<void>(Dispatch(*device, typed[index], UserData(BufferDescriptor(Bound.data(), Records, Raw), BufferDescriptor(TypedOutput.data(), decltype(TypedOutput)::ByteSize, Raw)), 1u));
             for (std::uint32_t format = layout.first; format <= layout.last; ++format) {
                 for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
                     for (std::uint32_t dword = 0; dword < 6u; ++dword) {

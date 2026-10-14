@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -33,10 +34,10 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t PastBlock = 0x20000u;
 constexpr std::uint32_t Unmapped = 0x10010u;
 constexpr std::uint32_t ProgramWords = 64;
-alignas(256) std::array<std::uint8_t, InputBytes> Input{};
-alignas(256) std::array<std::uint32_t, Lanes * 4> Params{};
-alignas(256) std::array<std::uint32_t, Lanes * 8> Output{};
-alignas(256) std::array<std::uint32_t, 4> Descriptor{};
+TestGuest::Array<std::uint8_t, InputBytes> Input;
+TestGuest::Array<std::uint32_t, Lanes * 4> Params;
+TestGuest::Array<std::uint32_t, Lanes * 8> Output;
+TestGuest::Array<std::uint32_t, 4> Descriptor;
 
 struct alignas(256) Program {
     std::array<std::uint32_t, ProgramWords> words{};
@@ -221,7 +222,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, Program& program, c
     const auto input = BufferDescriptor(view, c.records, c.word3);
     Descriptor = input;
     std::vector<std::uint32_t> userData;
-    for (const auto& descriptor : {c.gpu ? std::array<std::uint32_t, 4>{} : input, BufferDescriptor(Output.data(), sizeof(Output), Raw), BufferDescriptor(Params.data(), sizeof(Params), Raw), BufferDescriptor(Descriptor.data(), sizeof(Descriptor), Raw)}) {
+    for (const auto& descriptor : {c.gpu ? std::array<std::uint32_t, 4>{} : input, BufferDescriptor(Output.data(), decltype(Output)::ByteSize, Raw), BufferDescriptor(Params.data(), decltype(Params)::ByteSize, Raw), BufferDescriptor(Descriptor.data(), decltype(Descriptor)::ByteSize, Raw)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
     const std::span<const std::uint32_t> code(program.words);

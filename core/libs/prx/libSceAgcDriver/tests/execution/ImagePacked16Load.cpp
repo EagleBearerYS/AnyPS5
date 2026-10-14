@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -38,8 +39,8 @@ constexpr std::array<Packed, 3> Formats{{
     {136u, {0x000fu, 0x00f0u, 0x0f00u, 0xf000u}, "4_4_4_4_UNORM"},
 }};
 
-alignas(256) std::array<std::uint32_t, Width * 4> Output{};
-alignas(256) std::array<std::uint16_t, Width> Texels{};
+TestGuest::Array<std::uint32_t, Width * 4> Output;
+TestGuest::Array<std::uint16_t, Width> Texels;
 
 alignas(256) constexpr std::array<std::uint32_t, 15> LoadXyzw{
     0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x34063c84u, 0x7e3e0280u, 0x7e140280u, 0x7e160280u, 0x7e180280u,

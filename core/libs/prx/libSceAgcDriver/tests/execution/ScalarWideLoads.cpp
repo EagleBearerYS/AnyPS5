@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -30,8 +31,8 @@ constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Results = 96;
-alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+TestGuest::Array<std::uint32_t, Threads * Inputs> Input;
+TestGuest::Array<std::uint32_t, Threads * Results> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 313> Code{
     0x34020084, 0x160600ff, 0x00000180, 0xe0381000, 0x80000401, 0xbf8c3f70, 0xbea40400, 0xbea60402,

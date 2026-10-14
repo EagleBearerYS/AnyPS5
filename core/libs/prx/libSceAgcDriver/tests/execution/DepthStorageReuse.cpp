@@ -1,5 +1,6 @@
 #include "DepthFastClearHarness.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <algorithm>
 #include <array>
@@ -15,8 +16,8 @@ using AgcDriver::Graphics::Require;
 using DepthFastClearHarness::Height;
 using DepthFastClearHarness::Width;
 
-alignas(4096) std::array<float, 65536> Depth{};
-alignas(256) std::array<std::uint32_t, 64> Output{};
+TestGuest::Array<float, 65536> Depth;
+TestGuest::Array<std::uint32_t, 64> Output;
 alignas(256) constexpr std::array<std::uint32_t, 13> LoadCode{
     0x7e3c0280u, 0x7e3e0280u, 0x7e140280u, 0xf0001108u, 0x00010a1eu,
     0xbf8c3f70u, 0xf0201108u, 0x00010a1eu, 0x34060082u, 0xe0701000u, 0x80000a03u, 0xbf810000u, 0xbf810000u,
@@ -31,7 +32,7 @@ void Read(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t w
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
     const auto depth = reinterpret_cast<std::uintptr_t>(Depth.data());
     const std::array<std::uint32_t, 16> data{
-        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), sizeof(Output), 0x31016facu,
+        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), decltype(Output)::ByteSize, 0x31016facu,
         static_cast<std::uint32_t>(depth >> 8u), static_cast<std::uint32_t>(depth >> 40u) | (format << 20u) | (((width - 1u) & 3u) << 30u),
         ((width - 1u) >> 2u) | ((Height - 1u) << 14u), 0x90000facu, 0u, 0u, 0u, 0u,
         0x92u, 0u, 0u, 0u,

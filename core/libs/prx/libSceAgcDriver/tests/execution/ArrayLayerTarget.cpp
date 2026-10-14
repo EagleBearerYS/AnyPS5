@@ -10,6 +10,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -59,8 +60,8 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
 }};
 
 alignas(256) std::array<std::array<std::uint32_t, 9>, Layers> LoadCodes{};
-alignas(256) std::array<std::uint32_t, 16> PixelCode{};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, 16> PixelCode;
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 std::uint64_t AddressOf(const void* data) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));

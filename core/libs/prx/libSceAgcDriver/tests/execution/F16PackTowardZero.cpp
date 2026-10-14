@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -18,8 +19,8 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Capacity = 1u << 18;
-alignas(256) std::array<std::uint32_t, Capacity> Input{};
-alignas(256) std::array<std::uint32_t, Capacity> Output{};
+TestGuest::Array<std::uint32_t, Capacity> Input;
+TestGuest::Array<std::uint32_t, Capacity> Output;
 
 std::uint32_t HalfToFloatBits(std::uint32_t half) {
     const std::uint32_t exponent = (half >> 10u) & 0x1fu;

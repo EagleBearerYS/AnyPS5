@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -71,7 +72,7 @@ constexpr std::uint32_t Literal = 0xffu;
 constexpr std::uint32_t Endpgm = 0xbf810000u;
 constexpr std::size_t CodeWords = 2u + Values.size() * Immediates.size() * (4u + Compares.size() * 4u);
 
-alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+TestGuest::Array<std::uint32_t, Threads * Results> Output;
 
 constexpr std::uint32_t Sop1(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source) {
     return 0xbe800000u | (destination << 16u) | (opcode << 8u) | source;

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -35,7 +36,7 @@ constexpr float Tolerance = 1.0f / 64.0f;
 constexpr std::array<std::uint32_t, 4> AnisoSampler{0x00000092u | (4u << 9u), 0x00fff000u, (3u << 20u) | (3u << 22u), 0u};
 constexpr std::uint32_t AnisoOverride = 1u << 29u;
 
-alignas(256) std::array<std::uint32_t, Threads * 8> Output{};
+TestGuest::Array<std::uint32_t, Threads * 8> Output;
 using Storage = std::array<std::uint8_t, 16384>;
 alignas(256) Storage SingleIntegers{};
 alignas(256) Storage SingleColors{};

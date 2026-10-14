@@ -4,6 +4,7 @@
 #include "Recompiler.hpp"
 #include "FlatGlobalLoadsRegion.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -30,7 +31,7 @@ constexpr std::uint32_t Results = 16;
 constexpr std::uint32_t Sentinel = 0x05e471e1;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t RegionOffset = Threads * 16u;
-alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+TestGuest::Array<std::uint32_t, Threads * Results> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 68> LoadsCode{
     0x34020084, 0x34040086, 0xdc388000, 0x04080001, 0xbf8c3f70, 0x7e1402ff, 0x5a5a0000, 0x7e1602ff,

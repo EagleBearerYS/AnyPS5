@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -27,8 +28,8 @@ constexpr std::uint32_t Faces = 6;
 constexpr std::uint32_t Gradients = 4;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t TypeCube = 11;
-alignas(256) std::array<std::uint32_t, Threads * Words> Buffer{};
-alignas(256) std::array<std::uint8_t, 65536> Texels{};
+TestGuest::Array<std::uint32_t, Threads * Words> Buffer;
+TestGuest::Array<std::uint8_t, 65536> Texels;
 
 alignas(256) constexpr std::array<std::uint32_t, 28> Code{
     0x34020087, 0xe0301000, 0x80000501, 0xe0301004, 0x80000601, 0xe0301008, 0x80000701, 0xe030100c,

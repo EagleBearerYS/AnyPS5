@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -27,8 +28,8 @@ constexpr std::uint32_t One = 0x3f800000u;
 constexpr std::uint32_t ClampBorder = 0x1b6u;
 constexpr std::uint32_t AnisoOverride = (1u << 29u) | (2u << 22u) | (2u << 20u);
 
-alignas(256) std::array<std::uint32_t, Threads * 4> Output{};
-alignas(256) std::array<std::uint32_t, Width> Texels{};
+TestGuest::Array<std::uint32_t, Threads * 4> Output;
+TestGuest::Array<std::uint32_t, Width> Texels;
 
 alignas(256) constexpr std::array<std::uint32_t, 9> SampleOutside{
     0x34060084u, 0x7e2802f4u, 0x7e2a02f4u, 0xf09c0f08u, 0x00610a14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u,

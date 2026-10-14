@@ -1,5 +1,6 @@
 #include <spirv/unified1/spirv.hpp>
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -16,8 +17,8 @@ using namespace ShaderRecompiler;
 using AgcDriver::Graphics::Require;
 
 constexpr std::uint32_t Extent = 16;
-alignas(256) std::array<std::uint32_t, Extent * Extent * 4> pixels{};
-alignas(256) std::array<std::uint32_t, Extent * Extent * 4> otherPixels{};
+TestGuest::Array<std::uint32_t, Extent * Extent * 4> pixels;
+TestGuest::Array<std::uint32_t, Extent * Extent * 4> otherPixels;
 constexpr std::array<std::array<float, 4>, 3> positions{{{-1, -1, 0, 1}, {3, -1, 0, 1}, {-1, 3, 0, 1}}};
 constexpr std::array<std::uint32_t, 6> vertexCode{0xe0382000u, 0x80000005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 
@@ -50,7 +51,7 @@ void Run(AgcDriver::VulkanDevice& device, bool integer) {
     request.shader.code = snapshot.code;
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0, 32, 32, {}, {}};
-    state.color = {reinterpret_cast<std::uintptr_t>(pixels.data()), {Extent, Extent}, integer ? VK_FORMAT_R32G32B32A32_UINT : VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(pixels), 0};
+    state.color = {reinterpret_cast<std::uintptr_t>(pixels.data()), {Extent, Extent}, integer ? VK_FORMAT_R32G32B32A32_UINT : VK_FORMAT_R32G32B32A32_SFLOAT, decltype(pixels)::ByteSize, 0};
     state.color.elementBytes = 16;
     auto other = state.color;
     other.address = reinterpret_cast<std::uintptr_t>(otherPixels.data());

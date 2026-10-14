@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "DepthFastClearHarness.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdio>
 #include <iostream>
@@ -16,9 +17,9 @@ using DepthFastClearHarness::Require;
 using DepthFastClearHarness::Surface;
 using DepthFastClearHarness::Width;
 
-alignas(4096) std::array<float, Width * Height * 2> Depth{};
-alignas(256) std::array<std::uint32_t, 1024> Htile{};
-alignas(16) std::array<std::uint32_t, 4> FillValue{};
+TestGuest::Array<float, Width * Height * 2> Depth;
+TestGuest::Array<std::uint32_t, 1024> Htile;
+TestGuest::Array<std::uint32_t, 4> FillValue;
 constexpr std::array<std::uint32_t, 9> MemoryValueFillKernel{0xd7460000u, 0x04010c08u, 0xf4201a82u, 0xfa000000u, 0xbf8cc07fu, 0x7e02026au, 0xe0102000u, 0x80000100u, 0xbf810000u};
 
 void FillFromMemory(std::uint64_t htile, std::uint32_t groups, std::uint32_t value) {

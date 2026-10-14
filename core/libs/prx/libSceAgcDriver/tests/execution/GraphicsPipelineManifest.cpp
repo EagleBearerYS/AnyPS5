@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <bit>
 #include <chrono>
@@ -24,7 +25,7 @@ using Registers = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0x7e000200u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
-alignas(256) std::array<std::byte, 1024> ColorMemory{};
+TestGuest::Array<std::byte, 1024> ColorMemory;
 
 constexpr std::uint32_t Rgba8 = 0x28028u;
 constexpr std::uint32_t Unorm10_11_11 = 0x28018u;

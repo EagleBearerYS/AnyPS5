@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -20,7 +21,7 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
 constexpr std::uint32_t Columns = 7;
 constexpr std::uint32_t Rows = 5;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
 
 alignas(256) constexpr std::array<std::uint32_t, 44> VertexCode{
     0xd7650015, 0x000100c1, 0xd7660015, 0x00022ac1, 0x7e0e0280, 0x7da206f9, 0x81060015, 0x360e0a81,

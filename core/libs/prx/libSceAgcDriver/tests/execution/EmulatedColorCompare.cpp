@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -53,12 +54,12 @@ constexpr std::uint32_t FilterAnisoBilinear = 3;
 constexpr std::uint32_t ReductionMin = 1;
 constexpr std::array<std::uint8_t, 4> Red{0, 64, 128, 255};
 
-alignas(256) std::array<float, Threads * 3> Input{};
-alignas(256) std::array<float, Threads * 4> CubeInput{};
-alignas(256) std::array<float, Threads * 4> Output{};
+TestGuest::Array<float, Threads * 3> Input;
+TestGuest::Array<float, Threads * 4> CubeInput;
+TestGuest::Array<float, Threads * 4> Output;
 std::uint32_t Swizzle = 0xfacu;
-alignas(256) std::array<std::uint32_t, Threads * 3> Extra{};
-alignas(4096) std::array<std::uint8_t, 4096> Texels{};
+TestGuest::Array<std::uint32_t, Threads * 3> Extra;
+TestGuest::Array<std::uint8_t, 4096> Texels;
 
 alignas(256) constexpr std::array<std::uint32_t, 13> Code{
     0x1614008c, 0xe03c1000, 0x8000010a, 0xbf8c3f70, 0xf0bc0108, 0x00820401, 0xbf8c3f70,
@@ -219,15 +220,15 @@ float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, bool useCache = false, bool nativeSampleOffsets = true, bool cube = false) {
     std::vector<std::uint32_t> userData(24, 0u);
-    const auto input = cube ? BufferDescriptor(CubeInput.data(), static_cast<std::uint32_t>(sizeof(CubeInput))) : BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
-    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto input = cube ? BufferDescriptor(CubeInput.data(), static_cast<std::uint32_t>(decltype(CubeInput)::ByteSize)) : BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(format, cube);
     const auto samplerWords = SamplerDescriptor(sampler);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
     std::copy(samplerWords.begin(), samplerWords.end(), userData.begin() + 16);
-    const auto extra = BufferDescriptor(Extra.data(), static_cast<std::uint32_t>(sizeof(Extra)));
+    const auto extra = BufferDescriptor(Extra.data(), static_cast<std::uint32_t>(decltype(Extra)::ByteSize));
     std::copy(extra.begin(), extra.end(), userData.begin() + 20);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};

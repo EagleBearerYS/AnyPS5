@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -41,8 +42,8 @@ constexpr std::array<std::uint32_t, 4> Box16Children{0x2000u, 0x2001u, 0x2002u, 
 constexpr std::array<std::uint32_t, 4> PastEndChildren{0x3000u, 0x3001u, 0x3002u, 0x3003u};
 constexpr std::array<const char*, Forms> FormNames{"image_bvh64_intersect_ray", "image_bvh_intersect_ray", "image_bvh64_intersect_ray a16", "image_bvh_intersect_ray a16"};
 
-alignas(256) std::array<std::uint32_t, Threads * Record> Input{};
-alignas(256) std::array<std::uint32_t, Threads * Record> Output{};
+TestGuest::Array<std::uint32_t, Threads * Record> Input;
+TestGuest::Array<std::uint32_t, Threads * Record> Output;
 
 constexpr std::array<std::uint32_t, 82> MakeCode() {
     std::array<std::uint32_t, 82> code{};

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -31,22 +32,22 @@ alignas(256) constexpr std::array<std::uint32_t, 25> Caller{
 alignas(256) constexpr std::array<std::uint32_t, 9> LoadThroughArgument{
     0xf40c0905u, 0xfa000000u, 0xbf8cc07fu, 0x7e0a0300u, 0x7e0c0280u, 0xf0000108u, 0x00090205u, 0xbf8c3f70u,
     0xbe80200eu};
-alignas(256) std::array<std::uint32_t, 9> MovedLoadThroughArgument{};
+TestGuest::Array<std::uint32_t, 9> MovedLoadThroughArgument;
 alignas(256) constexpr std::array<std::uint32_t, 12> LoadThroughArgumentBuffer{
     0xf4080b05u, 0xfa000020u, 0xbf8cc07fu, 0xf42c0916u, 0xfa000020u, 0xbf8cc07fu, 0x7e0a0300u, 0x7e0c0280u,
     0xf0000108u, 0x00090205u, 0xbf8c3f70u, 0xbe80200eu};
-alignas(256) std::array<std::uint32_t, Width * Height> FirstTexels{};
-alignas(256) std::array<std::uint32_t, Width * Height> SecondTexels{};
-alignas(256) std::array<std::uint32_t, Width * Height> ThirdTexels{};
-alignas(256) std::array<std::uint32_t, 12> FirstArgument{};
-alignas(256) std::array<std::uint32_t, 12> SecondArgument{};
-alignas(256) std::array<std::uint32_t, 12> ThirdArgument{};
-alignas(256) std::array<std::uint32_t, 16> FirstHeap{};
-alignas(256) std::array<std::uint32_t, 16> SecondHeap{};
-alignas(256) std::array<std::uint32_t, 16> ThirdHeap{};
-alignas(256) std::array<std::uint32_t, 16> Table{};
-alignas(256) std::array<std::uint32_t, 8> Srt{};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, Width * Height> FirstTexels;
+TestGuest::Array<std::uint32_t, Width * Height> SecondTexels;
+TestGuest::Array<std::uint32_t, Width * Height> ThirdTexels;
+TestGuest::Array<std::uint32_t, 12> FirstArgument;
+TestGuest::Array<std::uint32_t, 12> SecondArgument;
+TestGuest::Array<std::uint32_t, 12> ThirdArgument;
+TestGuest::Array<std::uint32_t, 16> FirstHeap;
+TestGuest::Array<std::uint32_t, 16> SecondHeap;
+TestGuest::Array<std::uint32_t, 16> ThirdHeap;
+TestGuest::Array<std::uint32_t, 16> Table;
+TestGuest::Array<std::uint32_t, 8> Srt;
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 std::array<std::uint32_t, 4> Image(const void* texels) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
@@ -94,7 +95,7 @@ void Dispatch() {
     Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
 }
 
 void Check(const std::array<std::uint32_t, Width * Height>& even, const std::array<std::uint32_t, Width * Height>& odd, const std::string& what) {
@@ -120,9 +121,9 @@ int main() {
         }
         {
             GuestAllocations::Mutation mutation;
-            mutation.Add(FirstTexels.data(), sizeof(FirstTexels), true, true, true);
-            mutation.Add(SecondTexels.data(), sizeof(SecondTexels), true, true, true);
-            mutation.Add(ThirdTexels.data(), sizeof(ThirdTexels), true, true, true);
+            mutation.Add(FirstTexels.data(), decltype(FirstTexels)::ByteSize, true, true, true);
+            mutation.Add(SecondTexels.data(), decltype(SecondTexels)::ByteSize, true, true, true);
+            mutation.Add(ThirdTexels.data(), decltype(ThirdTexels)::ByteSize, true, true, true);
         }
         const auto first = Image(FirstTexels.data());
         const auto second = Image(SecondTexels.data());
@@ -133,14 +134,14 @@ int main() {
         std::copy(first.begin(), first.end(), FirstHeap.begin() + 8);
         std::copy(second.begin(), second.end(), SecondHeap.begin() + 8);
         std::copy(third.begin(), third.end(), ThirdHeap.begin() + 8);
-        const auto firstHeap = Buffer(FirstHeap.data(), static_cast<std::uint32_t>(sizeof(FirstHeap)));
-        const auto secondHeap = Buffer(SecondHeap.data(), static_cast<std::uint32_t>(sizeof(SecondHeap)));
-        const auto thirdHeap = Buffer(ThirdHeap.data(), static_cast<std::uint32_t>(sizeof(ThirdHeap)));
+        const auto firstHeap = Buffer(FirstHeap.data(), static_cast<std::uint32_t>(decltype(FirstHeap)::ByteSize));
+        const auto secondHeap = Buffer(SecondHeap.data(), static_cast<std::uint32_t>(decltype(SecondHeap)::ByteSize));
+        const auto thirdHeap = Buffer(ThirdHeap.data(), static_cast<std::uint32_t>(decltype(ThirdHeap)::ByteSize));
         std::copy(firstHeap.begin(), firstHeap.end(), FirstArgument.begin() + 8);
         std::copy(secondHeap.begin(), secondHeap.end(), SecondArgument.begin() + 8);
         std::copy(thirdHeap.begin(), thirdHeap.end(), ThirdArgument.begin() + 8);
-        const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table)));
-        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(decltype(Table)::ByteSize));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
         std::copy(table.begin(), table.end(), Srt.begin());
         std::copy(output.begin(), output.end(), Srt.begin() + 4);
         SetRecord(0, LoadThroughArgumentBuffer.data(), FirstArgument.data());

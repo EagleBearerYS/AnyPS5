@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -188,11 +189,11 @@ alignas(256) constexpr std::array<std::uint32_t, 5> PixelCode{0x7e0002f2u, 0x7e0
 
 constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<std::uint32_t, 4 * Slots> Output{};
-alignas(256) std::array<std::uint32_t, 2048> VertexSlots{};
-alignas(256) std::array<std::uint32_t, 60000> InstanceSlots{};
-alignas(256) std::array<std::uint32_t, 8> BufferTable{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::uint32_t, 4 * Slots> Output;
+TestGuest::Array<std::uint32_t, 2048> VertexSlots;
+TestGuest::Array<std::uint32_t, 60000> InstanceSlots;
+TestGuest::Array<std::uint32_t, 8> BufferTable;
 alignas(256) constexpr std::array<std::uint16_t, 4> Indices{2, 0, 1, 0};
 
 std::array<std::uint32_t, 4> SlotDescriptor(const void* data, std::uint32_t records) {
@@ -202,7 +203,7 @@ std::array<std::uint32_t, 4> SlotDescriptor(const void* data, std::uint32_t reco
 
 std::array<std::uint32_t, 4> OutputDescriptor() {
     const auto address = reinterpret_cast<std::uintptr_t>(Output.data());
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Output)), 0x31016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Output)::ByteSize), 0x31016facu};
 }
 
 struct Expected {

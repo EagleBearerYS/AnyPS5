@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -38,10 +39,10 @@ constexpr float Margin = 0.05f;
 constexpr std::array<float, Size * Size> Level0{17, 11, 23, 14, 20, 25, 12, 19, 13, 22, 16, 24, 21, 10, 18, 15};
 constexpr std::array<float, (Size / 2) * (Size / 2)> Level1{5, 30, 16.5f, 9};
 
-alignas(256) std::array<float, Threads * 3> Input{};
-alignas(256) std::array<float, Threads * 4> Output{};
-alignas(4096) std::array<std::uint8_t, 4096> Texels{};
-alignas(4096) std::array<std::uint8_t, 4096> Colors{};
+TestGuest::Array<float, Threads * 3> Input;
+TestGuest::Array<float, Threads * 4> Output;
+TestGuest::Array<std::uint8_t, 4096> Texels;
+TestGuest::Array<std::uint8_t, 4096> Colors;
 
 alignas(256) constexpr std::array<std::uint32_t, 13> Code{
     0x1614008c, 0xe03c1000, 0x8000010a, 0xbf8c3f70, 0xf0900108, 0x00820401, 0xbf8c3f70,
@@ -186,8 +187,8 @@ std::array<float, 4> ExpectedGather(std::uint32_t tid) {
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code) {
     std::vector<std::uint32_t> userData(28, 0u);
-    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
-    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(format);
     const auto samplerWords = SamplerDescriptor(sampler);
     const auto colors = TextureDescriptor(Format8888UNorm, Colors.data(), 1);

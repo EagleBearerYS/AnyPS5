@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -27,8 +28,8 @@ constexpr std::uint32_t Untouched = 0xcafebabeu;
 alignas(256) constexpr std::array<std::uint32_t, 8> Code{
     0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a040483u, 0xe0701000u, 0x80010201u, 0xbf810000u,
 };
-alignas(256) std::array<std::uint32_t, Threads> Input{};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, Threads> Input;
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 std::array<std::uint32_t, 4> Descriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -36,8 +37,8 @@ std::array<std::uint32_t, 4> Descriptor(const void* data, std::uint32_t bytes) {
 }
 
 std::vector<std::uint32_t> Commands() {
-    const auto source = Descriptor(Input.data(), sizeof(Input));
-    const auto target = Descriptor(Output.data(), sizeof(Output));
+    const auto source = Descriptor(Input.data(), decltype(Input)::ByteSize);
+    const auto target = Descriptor(Output.data(), decltype(Output)::ByteSize);
     const std::array<std::uint32_t, 8> data{source[0], source[1], source[2], source[3], target[0], target[1], target[2], target[3]};
     std::vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
@@ -84,7 +85,7 @@ void Dispatch(const std::string& what) {
     Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
     for (std::uint32_t lane = 0; lane < Threads; ++lane) Require(Output[lane] == Input[lane] + 3u, what + ": lane " + std::to_string(lane) + " is " + std::to_string(Output[lane]) + ", expected " + std::to_string(Input[lane] + 3u));
 }
 

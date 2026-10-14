@@ -3,6 +3,7 @@
 #include "Recompiler.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -21,7 +22,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Width = 256;
 constexpr std::uint32_t Height = 80;
 constexpr std::array<std::uint8_t, 4> Background{16, 24, 40, 255};
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
 
 alignas(256) constexpr std::array<std::uint32_t, 29> LocalCode{
     0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,

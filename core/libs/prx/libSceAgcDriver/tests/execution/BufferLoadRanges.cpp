@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -22,9 +23,9 @@ constexpr std::uint32_t Raw = 0x31016facu;
 constexpr std::uint32_t RawNoRecordCheck = 0x21016facu;
 constexpr std::uint32_t InputBytes = 512;
 constexpr std::uint32_t ProgramWords = 40;
-alignas(256) std::array<std::uint8_t, InputBytes> Input{};
-alignas(256) std::array<std::uint32_t, Lanes * 2> Params{};
-alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
+TestGuest::Array<std::uint8_t, InputBytes> Input;
+TestGuest::Array<std::uint32_t, Lanes * 2> Params;
+TestGuest::Array<std::uint32_t, Lanes * 4> Output;
 
 struct alignas(256) Program {
     std::array<std::uint32_t, ProgramWords> words{};
@@ -145,7 +146,7 @@ void Run(AgcDriver::VulkanDevice& device, Program& program, const Case& c) {
     Assemble(program, c);
     const auto* view = Input.data() + c.view;
     std::vector<std::uint32_t> userData;
-    for (const auto& descriptor : {BufferDescriptor(view, c.records, c.word3), BufferDescriptor(Output.data(), sizeof(Output), Raw), BufferDescriptor(Params.data(), sizeof(Params), Raw)}) {
+    for (const auto& descriptor : {BufferDescriptor(view, c.records, c.word3), BufferDescriptor(Output.data(), decltype(Output)::ByteSize, Raw), BufferDescriptor(Params.data(), decltype(Params)::ByteSize, Raw)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
     const std::span<const std::uint32_t> code(program.words);

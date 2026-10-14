@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -21,8 +22,8 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Capacity = 1u << 18;
-alignas(256) std::array<std::uint32_t, Capacity * 4u> Input{};
-alignas(256) std::array<std::uint32_t, Capacity> Output{};
+TestGuest::Array<std::uint32_t, Capacity * 4u> Input;
+TestGuest::Array<std::uint32_t, Capacity> Output;
 
 struct Case {
     std::uint32_t a;

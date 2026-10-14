@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -27,10 +28,10 @@ constexpr std::uint32_t Height = 70;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type2D = 9;
 
-alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
-alignas(256) std::array<float, Threads * 4> Output{};
+TestGuest::Array<std::uint32_t, Threads * 4> Input;
+TestGuest::Array<float, Threads * 4> Output;
 constexpr std::size_t TexelBytes = 1u << 20u;
-alignas(4096) std::array<std::uint8_t, TexelBytes + 65536u> TexelStorage{};
+TestGuest::Array<std::uint8_t, TexelBytes + 65536u> TexelStorage;
 const std::span<std::uint8_t, TexelBytes> Texels(TexelStorage.data() + ((0u - reinterpret_cast<std::uintptr_t>(TexelStorage.data())) & 0xffffu), TexelBytes);
 
 alignas(256) constexpr std::array<std::uint32_t, 10> Code{
@@ -105,8 +106,8 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t tileMode, std::uint32_t 
     FillTexels(tileMode, pipeBankXor);
     Output.fill(-1.0f);
     std::vector<std::uint32_t> userData(16, 0u);
-    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
-    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(decltype(Input)::ByteSize));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     const auto texture = TextureDescriptor(tileMode, pipeBankXor);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);

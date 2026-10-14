@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -27,10 +28,10 @@ alignas(256) constexpr std::array<std::uint32_t, 43> ScanCode{
 constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t Blocks = 4096;
 
-alignas(256) std::array<std::uint32_t, 4> Counter{};
-alignas(256) std::array<std::uint32_t, Blocks> Aggregates{};
-alignas(256) std::array<std::uint32_t, Blocks * 2> Pairs{};
-alignas(256) std::array<std::uint32_t, Blocks> Prefixes{};
+TestGuest::Array<std::uint32_t, 4> Counter;
+TestGuest::Array<std::uint32_t, Blocks> Aggregates;
+TestGuest::Array<std::uint32_t, Blocks * 2> Pairs;
+TestGuest::Array<std::uint32_t, Blocks> Prefixes;
 
 std::uint32_t Value(std::uint32_t index, std::uint32_t seed) {
     return ((index * 2654435761u + seed * 40503u) >> 13u) % 1000u;
@@ -45,7 +46,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t groups) {
     alignas(256) static std::array<std::uint32_t, ScanCode.size()> code{};
     code = ScanCode;
     std::vector<std::uint32_t> userData;
-    for (const auto& descriptor : {BufferDescriptor(Counter.data(), sizeof(Counter)), BufferDescriptor(Aggregates.data(), sizeof(Aggregates)), BufferDescriptor(Pairs.data(), sizeof(Pairs)), BufferDescriptor(Prefixes.data(), sizeof(Prefixes))}) {
+    for (const auto& descriptor : {BufferDescriptor(Counter.data(), decltype(Counter)::ByteSize), BufferDescriptor(Aggregates.data(), decltype(Aggregates)::ByteSize), BufferDescriptor(Pairs.data(), decltype(Pairs)::ByteSize), BufferDescriptor(Prefixes.data(), decltype(Prefixes)::ByteSize)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
     const auto address = reinterpret_cast<std::uintptr_t>(code.data());

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -77,8 +78,8 @@ alignas(256) constexpr std::array<std::uint32_t, Threads * Inputs> Input{
     0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f030000, 0x3f600000, 0x3f400000, 0x00000000,
     0x00000000, 0x00000000, 0x3a800000, 0x00000000, 0x00000000, 0x3a800000, 0x00000000, 0x00000000,
 };
-alignas(256) std::array<std::uint32_t, Wave64Threads * Inputs + Wave64Threads * Results> Buffer{};
-alignas(256) std::array<float, Width * Height * Depth> Texels{};
+TestGuest::Array<std::uint32_t, Wave64Threads * Inputs + Wave64Threads * Results> Buffer;
+TestGuest::Array<float, Width * Height * Depth> Texels;
 
 alignas(256) constexpr std::array<std::uint32_t, 168> Code2D{
     0x160200b0, 0x34060086, 0xe0381000, 0x80000401, 0xe0381010, 0x80002801, 0xe0381020, 0x80003201,

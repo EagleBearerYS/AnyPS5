@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -23,8 +24,8 @@ constexpr std::uint32_t VectorSourceBase = 256u;
 constexpr std::uint32_t ShaderCmpEqF16 = 0xcau;
 constexpr std::uint32_t ShaderCmpLeF64 = 0x23u;
 constexpr std::uint32_t ShaderCmpNgtF64 = 0x2bu;
-alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+TestGuest::Array<std::uint32_t, Threads * Inputs> Input;
+TestGuest::Array<std::uint32_t, Threads * Results> Output;
 
 struct Row {
     std::array<std::uint32_t, 4> sources;

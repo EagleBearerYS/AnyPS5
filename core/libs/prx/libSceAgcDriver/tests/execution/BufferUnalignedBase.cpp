@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -24,8 +25,8 @@ constexpr std::uint32_t ViewBytes = 60;
 constexpr std::uint32_t ResultBytes = Lanes * Slots * 4;
 constexpr std::uint32_t StoredBytes = 8 * 28;
 constexpr std::uint32_t Fill = 0xdeadbeefu;
-alignas(256) std::array<std::uint8_t, InputBytes> Input{};
-alignas(256) std::array<std::uint32_t, 384> Output{};
+TestGuest::Array<std::uint8_t, InputBytes> Input;
+TestGuest::Array<std::uint32_t, 384> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 56> Code{
     0x34020082, 0x34040085, 0x34100081, 0x4a101082, 0x34140081, 0x4a141500, 0x4a141481, 0x34180083,

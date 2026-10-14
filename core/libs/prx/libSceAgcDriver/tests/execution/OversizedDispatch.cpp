@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -110,8 +111,8 @@ constexpr std::array<std::uint32_t, 69> LdsCode{
     0x33000005, 0x343c1086, 0x4a3c3d00, 0x343c3c86, 0xbf8c0000, 0xe0781000, 0x8001281e, 0xe0781010,
     0x80012c1e, 0xe0781020, 0x8001301e, 0xbf8c0000, 0xbf810000,
 };
-alignas(256) std::array<std::uint32_t, Threads * 4> LdsInput{};
-alignas(256) std::array<std::uint32_t, Threads * 4> LdsOutput{};
+TestGuest::Array<std::uint32_t, Threads * 4> LdsInput;
+TestGuest::Array<std::uint32_t, Threads * 4> LdsOutput;
 
 void CheckLdsSplitThrows(AgcDriver::VulkanDevice& device) {
     const auto target = device.Target();

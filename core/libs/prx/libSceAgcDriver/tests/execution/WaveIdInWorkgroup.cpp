@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdio>
 #include <iostream>
@@ -15,7 +16,7 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 128;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
-alignas(256) std::array<std::uint32_t, MaxThreads> Output{};
+TestGuest::Array<std::uint32_t, MaxThreads> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 10> WaveIdCode{
     0x34060283, 0x4a060700, 0x34080486, 0x4a060704, 0xf4a80100, 0x00000000, 0x7e080204, 0xe0702000,

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdio>
 #include <iostream>
@@ -14,8 +15,8 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
-alignas(256) std::array<std::uint32_t, 4> Input{3u, 5u, 0u, 0u};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, 4> Input{3u, 5u, 0u, 0u};
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 alignas(256) constexpr std::array<std::uint32_t, 22> WaveCode{
     0xf4240200, 0xfa000000, 0xbf8cc07f, 0xbe8a0380, 0xbe8b0380, 0x800a080a, 0x930c0b0a, 0x800a0c0a,

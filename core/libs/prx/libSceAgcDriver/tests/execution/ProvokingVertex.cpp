@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include "ProvokingVertex_vert_spv.h"
 #include "ProvokingVertex_frag_spv.h"
 #include <array>
@@ -21,7 +22,7 @@ constexpr std::uint32_t Panel = 64;
 constexpr std::uint32_t Width = Panel * 3;
 constexpr std::uint32_t Height = Panel;
 constexpr std::byte Sentinel{0x40};
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
 using Color = std::array<unsigned, 4>;
 constexpr Color Red{255, 0, 0, 255};
 constexpr Color Green{0, 255, 0, 255};

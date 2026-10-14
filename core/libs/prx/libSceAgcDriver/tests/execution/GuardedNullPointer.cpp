@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -34,11 +35,11 @@ constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t Default = 0x11111111u;
 constexpr std::uint32_t Payload = 0x3f800000u;
 
-alignas(256) std::array<std::uint32_t, Lanes> Output{};
-alignas(256) std::array<std::uint32_t, 16> Root{};
-alignas(256) std::array<std::uint32_t, 4> Data{Payload, 0u, 0u, 0u};
-alignas(256) std::array<std::uint64_t, 1> Indirect{};
-alignas(256) std::array<std::uint32_t, 8> Table{};
+TestGuest::Array<std::uint32_t, Lanes> Output;
+TestGuest::Array<std::uint32_t, 16> Root;
+TestGuest::Array<std::uint32_t, 4> Data{Payload, 0u, 0u, 0u};
+TestGuest::Array<std::uint64_t, 1> Indirect;
+TestGuest::Array<std::uint32_t, 8> Table;
 
 alignas(256) constexpr std::array<std::uint32_t, 19> BranchCode{
     0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u,
@@ -122,7 +123,7 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
     Root = {};
     Root[0] = static_cast<std::uint32_t>(output);
     Root[1] = static_cast<std::uint32_t>((output >> 32u) & 0xffffu);
-    Root[2] = static_cast<std::uint32_t>(sizeof(Output));
+    Root[2] = static_cast<std::uint32_t>(decltype(Output)::ByteSize);
     Root[3] = 0x30027facu;
     Root[4] = guard;
     Root[6] = static_cast<std::uint32_t>(pointer);
@@ -228,7 +229,7 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     Require(!Faulted(chainMapped) && chainMapped.poisoned == 0u && chainMapped.cacheable && chainMapped.pipelineVariantId == chainTaken.pipelineVariantId && chainSkipped.pipelineVariantId == chainTaken.pipelineVariantId, "guarded pointer: a chain's poison changed its pipeline variant, or a mapped chain faulted:\n" + chainMapped.log);
     RequireWords(chainMapped, Lanes, Payload, "guarded pointer: a read through a mapped pointer chain");
 
-    Table = {0u, 0u, 0u, 0u, static_cast<std::uint32_t>(valid), static_cast<std::uint32_t>((valid >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Data)), 0x30027facu};
+    Table = {0u, 0u, 0u, 0u, static_cast<std::uint32_t>(valid), static_cast<std::uint32_t>((valid >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Data)::ByteSize), 0x30027facu};
     const auto table = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Table.data()));
     const auto descriptorTaken = Run(device, DescriptorCode, table, 1u);
     Require(!Faulted(descriptorTaken) && descriptorTaken.poisoned == 0u && descriptorTaken.cacheable, "guarded pointer: a V# behind a mapped pointer faulted, was poisoned or left the caches:\n" + descriptorTaken.log);

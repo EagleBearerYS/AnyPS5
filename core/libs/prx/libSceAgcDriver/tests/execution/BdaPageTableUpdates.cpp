@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -37,7 +38,7 @@ constexpr std::uint32_t Fill = 0xcdcdcdcdu;
 constexpr std::uint32_t LoadBase = 0xfe00;
 constexpr std::uint32_t OutputBase = 0x18000;
 
-alignas(256) std::array<std::uint32_t, 20> Program{};
+TestGuest::Array<std::uint32_t, 20> Program;
 
 std::span<const std::uint32_t> Code() {
     const std::vector<std::uint32_t> code{0x34040084, 0x4a0404ff, LoadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff, OutputBase, 0xdc388ff8, 0x04000002, 0xbf8c3f70, 0xdc708000, 0x00000503, 0xdc708004, 0x00000703, 0xbf810000};

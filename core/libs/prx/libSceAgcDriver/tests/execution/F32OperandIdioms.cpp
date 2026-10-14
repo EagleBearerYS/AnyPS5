@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -28,9 +29,9 @@ constexpr std::uint32_t Operands = 4;
 constexpr std::uint32_t Results = 32;
 constexpr std::array<std::uint32_t, Inputs - Operands> Constants{0x3f000000u, 0x3f800000u, 0x40000000u, 0x00000000u};
 constexpr std::uint32_t Sets = 8;
-alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, Threads * Results> Merged{};
-alignas(256) std::array<std::uint32_t, Threads * Results> Reloaded{};
+TestGuest::Array<std::uint32_t, Threads * Inputs> Input;
+TestGuest::Array<std::uint32_t, Threads * Results> Merged;
+TestGuest::Array<std::uint32_t, Threads * Results> Reloaded;
 
 alignas(256) constexpr std::array<std::uint32_t, 73> MergedCode{
     0x34020085u, 0x160600ffu, 0x00000080u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x06140b04u, 0x10160d04u,

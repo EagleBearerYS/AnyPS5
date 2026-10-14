@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -26,7 +27,7 @@ alignas(256) std::array<std::uint32_t, Threads> Input{
     0xc0800001u, 0x3f800000u, 0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7f800001u, 0x7f7fffffu,
     0xff7fffffu, 0x00400000u, 0x80400000u, 0x0000ffffu, 0x3e800000u, 0xbe800000u, 0x80000000u, 0x01000000u,
 };
-alignas(256) std::array<std::uint32_t, Threads * Words> Output{};
+TestGuest::Array<std::uint32_t, Threads * Words> Output;
 
 struct Constant {
     std::uint32_t bits;

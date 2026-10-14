@@ -6,6 +6,7 @@
 #include "Recompiler.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -55,16 +56,16 @@ constexpr std::uint32_t Type2DArray = 13;
 constexpr std::uint32_t ArrayLayers = 2;
 constexpr std::uint32_t DepthSwizzleMode = 0x18;
 
-alignas(256) std::array<float, Width * Height> FloatTexels{};
-alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
-alignas(256) std::array<float, ArrayLayers * Width * Height> ArrayTexels{};
-alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
-alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
-alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
-alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
-alignas(256) std::array<std::uint32_t, 64> Keys{};
-alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
-alignas(256) std::array<std::uint32_t, 32> Srt{};
+TestGuest::Array<float, Width * Height> FloatTexels;
+TestGuest::Array<float, Width * Height> OtherFloatTexels;
+TestGuest::Array<float, ArrayLayers * Width * Height> ArrayTexels;
+TestGuest::Array<std::uint32_t, Width * Height> UintTexels;
+TestGuest::Array<std::int32_t, Width * Height> SintTexels;
+TestGuest::Array<std::uint32_t, 49152> DepthStorage;
+TestGuest::Array<std::uint32_t, Records * Stride / 4> Table;
+TestGuest::Array<std::uint32_t, 64> Keys;
+TestGuest::Array<std::uint32_t, MaxGroups * 128 * 4> Output;
+TestGuest::Array<std::uint32_t, 32> Srt;
 constexpr std::uint32_t PaletteOffset = 0x40;
 constexpr std::uint32_t PaletteBytes = PaletteOffset + 256u * 32u;
 std::vector<std::uint32_t> Root(0x100000u);
@@ -263,7 +264,7 @@ alignas(256) constexpr std::array<std::uint32_t, 32> IndirectRecordCode{
     0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
-alignas(256) std::array<std::uint32_t, Records * 16> Indirect{};
+TestGuest::Array<std::uint32_t, Records * 16> Indirect;
 
 alignas(256) constexpr std::array<std::uint32_t, 32> LaneKeyCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xbf8cc07fu, 0xe030200cu,
@@ -291,9 +292,9 @@ alignas(256) constexpr std::array<std::uint32_t, 34> LaneKeyPartialWave32Code{
     0x80070205u, 0xbf810000u,
 };
 constexpr std::uint32_t LaneKeyEntries = 16;
-alignas(256) std::array<std::uint32_t, LaneKeyEntries * Width * Height> LaneKeyTexels{};
-alignas(256) std::array<std::uint32_t, LaneKeyEntries * 8> LaneKeyHeap{};
-alignas(256) std::array<std::uint32_t, Lanes * 8> LaneKeyElements{};
+TestGuest::Array<std::uint32_t, LaneKeyEntries * Width * Height> LaneKeyTexels;
+TestGuest::Array<std::uint32_t, LaneKeyEntries * 8> LaneKeyHeap;
+TestGuest::Array<std::uint32_t, Lanes * 8> LaneKeyElements;
 
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
@@ -448,9 +449,9 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
 
 template <std::size_t CodeWords>
 Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize, bool outputIntoTable = false) {
-    const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table)));
-    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
-    const auto output = outputIntoTable ? Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table))) : Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(decltype(Table)::ByteSize));
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(decltype(Keys)::ByteSize));
+    const auto output = outputIntoTable ? Buffer(Table.data(), static_cast<std::uint32_t>(decltype(Table)::ByteSize)) : Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     std::copy(table.begin(), table.end(), Srt.begin());
     std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
@@ -468,8 +469,8 @@ template <std::size_t CodeWords>
 Outcome RunPointer(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups) {
     auto* root = Root.data();
     const auto palette = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root)) + PaletteOffset + 0x100u;
-    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
-    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(decltype(Keys)::ByteSize));
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     std::copy(keys.begin(), keys.end(), root);
     std::copy(output.begin(), output.end(), root + 4);
     std::copy(PointClamp.begin(), PointClamp.end(), root + 8);
@@ -486,9 +487,9 @@ Outcome RunPointer(AgcDriver::VulkanDevice& device, const std::array<std::uint32
 
 template <std::size_t CodeWords>
 Outcome RunIndirectRecords(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups) {
-    const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table)));
-    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
-    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(decltype(Table)::ByteSize));
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(decltype(Keys)::ByteSize));
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     std::copy(table.begin(), table.end(), Srt.begin());
     std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
@@ -990,10 +991,10 @@ void RunLaneKeyTests(AgcDriver::VulkanDevice& device) {
         LaneKeyElements[lane * 8u + 2u] = 0xab000005u | (key(lane) << 4u);
         LaneKeyElements[lane * 8u + 3u] = 0x5a000000u | key(lane);
     }
-    const auto heap = Buffer(LaneKeyHeap.data(), static_cast<std::uint32_t>(sizeof(LaneKeyHeap)));
+    const auto heap = Buffer(LaneKeyHeap.data(), static_cast<std::uint32_t>(decltype(LaneKeyHeap)::ByteSize));
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(LaneKeyElements.data()));
     const std::array<std::uint32_t, 4> elements{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (32u << 16u), Lanes, 0x31016facu};
-    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
     Srt.fill(0u);
     std::copy(heap.begin(), heap.end(), Srt.begin());
     std::copy(elements.begin(), elements.end(), Srt.begin() + 4);
@@ -1198,7 +1199,7 @@ void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
         void* data;
         Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
         ~Registration() { GuestAllocations::Mutation().Remove(data); }
-    } registeredIndirect(Indirect.data(), sizeof(Indirect));
+    } registeredIndirect(Indirect.data(), decltype(Indirect)::ByteSize);
 
     Table = {};
     Indirect = {};
@@ -1285,7 +1286,7 @@ void RunPointerStorageWriteTests(AgcDriver::VulkanDevice& device) {
         void* data;
         Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
         ~Registration() { GuestAllocations::Mutation().Remove(data); }
-    } registeredRecords(records.data(), sizeof(records)), registeredOtherRecords(otherRecords.data(), sizeof(otherRecords)), registeredOtherTexels(OtherFloatTexels.data(), sizeof(OtherFloatTexels));
+    } registeredRecords(records.data(), sizeof(records)), registeredOtherRecords(otherRecords.data(), sizeof(otherRecords)), registeredOtherTexels(OtherFloatTexels.data(), decltype(OtherFloatTexels)::ByteSize);
 
     for (std::uint32_t x = 0; x < isolatedTexels.size(); ++x) isolatedTexels[x] = 1024.0f + static_cast<float>(x);
     const auto run = [&](std::span<const std::uint32_t> code, bool alias, std::uint32_t waveSize = 64u, std::uint32_t selectedLanes = 0u, bool warm = false) {
@@ -1295,8 +1296,8 @@ void RunPointerStorageWriteTests(AgcDriver::VulkanDevice& device) {
         std::copy(sampled.begin(), sampled.end(), records.begin());
         const auto isolated = Image(isolatedTexels.data(), Format32Float);
         std::copy(isolated.begin(), isolated.end(), otherRecords.begin());
-        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
-        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(decltype(Keys)::ByteSize));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
         const auto* storageData = alias ? static_cast<const void*>(records.data()) : OtherFloatTexels.data();
         const auto storage = Image(storageData, Format32Float);
         Srt.fill(0u);
@@ -1320,7 +1321,7 @@ void RunPointerStorageWriteTests(AgcDriver::VulkanDevice& device) {
             {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
         }};
         const auto outcome = Execute(device, code, Srt.data(), memory, 1u, waveSize, waveSize, false);
-        AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(storageData), sizeof(FloatTexels), nullptr, "test");
+        AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(storageData), decltype(FloatTexels)::ByteSize, nullptr, "test");
         device.WaitIdle();
         return outcome;
     };
@@ -1365,10 +1366,10 @@ alignas(256) constexpr std::array<std::uint32_t, 15> PixelTableCode{
 
 constexpr std::uint32_t TargetWidth = 64;
 constexpr std::uint32_t TargetHeight = 32;
-alignas(256) std::array<std::byte, TargetWidth * TargetHeight * 4> Pixels{};
-alignas(256) std::array<std::uint32_t, 4 * 4> VertexResults{};
-alignas(256) std::array<std::uint32_t, 4> PixelResults{};
-alignas(256) std::array<std::uint32_t, 4 * 4> GraphicsTable{};
+TestGuest::Array<std::byte, TargetWidth * TargetHeight * 4> Pixels;
+TestGuest::Array<std::uint32_t, 4 * 4> VertexResults;
+TestGuest::Array<std::uint32_t, 4> PixelResults;
+TestGuest::Array<std::uint32_t, 4 * 4> GraphicsTable;
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
 std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey) {
@@ -1376,7 +1377,7 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     Pixels.fill(std::byte{0});
     VertexResults.fill(0xdeadbeefu);
     PixelResults.fill(0xdeadbeefu);
-    const auto table = Buffer(GraphicsTable.data(), static_cast<std::uint32_t>(sizeof(GraphicsTable)));
+    const auto table = Buffer(GraphicsTable.data(), static_cast<std::uint32_t>(decltype(GraphicsTable)::ByteSize));
     std::vector<std::uint32_t> vertexUserData(20, 0u);
     const auto vertices = VertexBuffer(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     const auto vertexOutput = VertexBuffer(VertexResults.data(), 16u, 4u);
@@ -1402,7 +1403,7 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(12, 0u);
-    const auto pixelOutput = Buffer(PixelResults.data(), static_cast<std::uint32_t>(sizeof(PixelResults)));
+    const auto pixelOutput = Buffer(PixelResults.data(), static_cast<std::uint32_t>(decltype(PixelResults)::ByteSize));
     std::copy(table.begin(), table.end(), pixelUserData.begin());
     pixelUserData[4] = pixelKey;
     std::copy(pixelOutput.begin(), pixelOutput.end(), pixelUserData.begin() + 8);
