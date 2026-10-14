@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <future>
 #include <list>
 #include <mutex>
 #include <string_view>
@@ -864,11 +865,15 @@ struct PipelineStore {
         std::vector<std::byte> key;
         std::shared_ptr<Pipeline> pipeline;
     };
+    struct Building {
+        std::vector<std::byte> key;
+        std::shared_future<std::shared_ptr<Pipeline>> pipeline;
+    };
     std::mutex mutex;
-    std::vector<std::byte> scratchKey;
     // Least recently used first.
     std::list<Entry> entries;
     std::unordered_map<std::uint64_t, std::list<Entry>::iterator> index;
+    std::unordered_map<std::uint64_t, Building> building;
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
     std::uint64_t uncached = 0;
@@ -919,50 +924,75 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
-    std::lock_guard lock(store.mutex);
-    reportPipelines(store);
-    auto& key = store.scratchKey;
+    thread_local std::vector<std::byte> key;
     pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
-    if (key.empty()) {
-        ++store.uncached;
-        return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    }
-    const auto hash = hashKey(key);
-    if (const auto found = store.index.find(hash); found != store.index.end()) {
-        const auto it = found->second;
-        if (it->key == key) {
-            // The key names the device handle, which the loader may reuse for a device created after
-            // this one was destroyed without ClearCachedPipelines: such an entry is a miss.
-            if (alive(*it, context)) {
-                ++store.hits;
-                store.entries.splice(store.entries.end(), store.entries, it);
-                return it->pipeline;
+    const auto hash = key.empty() ? 0u : hashKey(key);
+    std::shared_future<std::shared_ptr<Pipeline>> other;
+    std::promise<std::shared_ptr<Pipeline>> building;
+    bool shared = !key.empty();
+    {
+        std::lock_guard lock(store.mutex);
+        reportPipelines(store);
+        if (!shared) ++store.uncached;
+        if (const auto found = shared ? store.index.find(hash) : store.index.end(); found != store.index.end()) {
+            const auto it = found->second;
+            if (it->key == key) {
+                if (alive(*it, context)) {
+                    ++store.hits;
+                    store.entries.splice(store.entries.end(), store.entries, it);
+                    return it->pipeline;
+                }
+                abandon(store, it);
+            } else {
+                ++store.uncached;
+                shared = false;
             }
-            abandon(store, it);
-        } else {
-            // A different configuration with the same hash keeps the resident entry; this one stays private.
-            ++store.uncached;
-            return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        }
+        if (shared) {
+            if (const auto pending = store.building.find(hash); pending != store.building.end()) {
+                if (pending->second.key == key) other = pending->second.pipeline;
+                else {
+                    ++store.uncached;
+                    shared = false;
+                }
+            } else {
+                ++store.misses;
+                for (auto it = store.entries.begin(); it != store.entries.end();) {
+                    it = alive(*it, context) ? std::next(it) : abandon(store, it);
+                }
+                store.building.emplace(hash, PipelineStore::Building{key, building.get_future().share()});
+            }
         }
     }
-    ++store.misses;
-    // Entries of another device belong to one the driver replaced (it does so under the GpuMutex
-    // before any draw reaches the new device), whose objects went with it: forget them.
-    for (auto it = store.entries.begin(); it != store.entries.end();) {
-        it = alive(*it, context) ? std::next(it) : abandon(store, it);
+    if (!shared) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+    if (other.valid()) return other.get();
+    const auto ownKey = key;
+    std::shared_ptr<Pipeline> pipeline;
+    try {
+        pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+    } catch (...) {
+        {
+            std::lock_guard lock(store.mutex);
+            store.building.erase(hash);
+        }
+        building.set_exception(std::current_exception());
+        throw;
     }
-    auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    store.entries.push_back({context.device, context.bufferPool, hash, key, pipeline});
-    store.index[hash] = std::prev(store.entries.end());
-    constexpr std::size_t bound = 1024;
-    while (store.entries.size() > bound) {
-        // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
-        const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
-        if (victim == store.entries.end()) break;
-        store.index.erase(victim->hash);
-        store.entries.erase(victim);
-        ++store.evicted;
+    {
+        std::lock_guard lock(store.mutex);
+        store.building.erase(hash);
+        store.entries.push_back({context.device, context.bufferPool, hash, ownKey, pipeline});
+        store.index[hash] = std::prev(store.entries.end());
+        constexpr std::size_t bound = 1024;
+        while (store.entries.size() > bound) {
+            const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
+            if (victim == store.entries.end()) break;
+            store.index.erase(victim->hash);
+            store.entries.erase(victim);
+            ++store.evicted;
+        }
     }
+    building.set_value(pipeline);
     return pipeline;
 }
 

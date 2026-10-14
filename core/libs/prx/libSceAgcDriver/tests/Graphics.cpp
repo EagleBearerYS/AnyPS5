@@ -4462,6 +4462,80 @@ void pipelineLibraryConcurrencyTests() {
     Require(mock.live == 0, "graphics library concurrency tests leaked Vulkan objects");
 }
 
+void cachedPipelineConcurrencyTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    const State state{};
+    ShaderRecompiler::RecompileResult vertex, cachedFragment, newFragment;
+    vertex.spirv = makeModule({});
+    cachedFragment.spirv = makeModule({.fragment = true});
+    newFragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 1;
+    cachedFragment.variantId = 2;
+    newFragment.variantId = 3;
+    const std::array<CompiledShader, 2> cached{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &cachedFragment, PipelinePushSlotBytes}}};
+    const std::array<CompiledShader, 2> created{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &newFragment, PipelinePushSlotBytes}}};
+    std::array<std::uint32_t, 1> mainKey{11}, fragmentKey{22};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+    auto resident = CachedPipeline(context, state, VertexInputLayout{}, resources, cached, VK_IMAGE_LAYOUT_GENERAL);
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool blocked = false;
+    bool release = false;
+    bool armed = true;
+    mock.libraryHook = [&](VkGraphicsPipelineLibraryFlagsEXT flags) {
+        if (flags != VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) return;
+        std::unique_lock lock(mutex);
+        if (!armed) return;
+        armed = false;
+        blocked = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return release; });
+    };
+    std::shared_ptr<Pipeline> first, second;
+    std::thread creating([&] { first = CachedPipeline(context, state, VertexInputLayout{}, resources, created, VK_IMAGE_LAYOUT_GENERAL); });
+    {
+        std::unique_lock lock(mutex);
+        Require(changed.wait_for(lock, std::chrono::seconds(10), [&] { return blocked; }), "the first graphics pipeline creation never started");
+    }
+    bool found = false;
+    std::shared_ptr<Pipeline> hit;
+    std::thread looking([&] {
+        hit = CachedPipeline(context, state, VertexInputLayout{}, resources, cached, VK_IMAGE_LAYOUT_GENERAL);
+        std::lock_guard lock(mutex);
+        found = true;
+        changed.notify_all();
+    });
+    bool overlapped = false;
+    {
+        std::unique_lock lock(mutex);
+        overlapped = changed.wait_for(lock, std::chrono::seconds(2), [&] { return found; });
+    }
+    std::thread waiting([&] { second = CachedPipeline(context, state, VertexInputLayout{}, resources, created, VK_IMAGE_LAYOUT_GENERAL); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+    creating.join();
+    looking.join();
+    waiting.join();
+    mock.libraryHook = nullptr;
+    Require(overlapped && hit == resident, "a draw whose pipeline was cached waited for another pipeline's creation");
+    Require(first != nullptr && second == first && mock.linkCreates == 2u, "two draws that needed one new pipeline created it " + std::to_string(mock.linkCreates - 1u) + " times");
+    resident.reset();
+    hit.reset();
+    first.reset();
+    second.reset();
+    ClearCachedPipelines(context.device);
+    Require(mock.live == 0, "cached pipeline concurrency tests leaked Vulkan objects");
+}
+
 void barycentricEmulationTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -6313,6 +6387,7 @@ int main(int argc, char** argv) {
         pipelineLibrarySetTests();
         pipelineLibraryRetentionTests();
         pipelineLibraryConcurrencyTests();
+        cachedPipelineConcurrencyTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
         hardwareScreenOffsetTests();
