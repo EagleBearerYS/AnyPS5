@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -26,6 +27,14 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -319,15 +328,41 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     RunImageStore(device, stores);
 }
 
+void RunImportedTable(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(block, texture, 0.75f);
+        SetRecord(block, texture, texture);
+    }
+    for (std::uint32_t key = 0; key < Records; ++key) Keys[key] = key;
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    SetOutput(Output.data());
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    Require(AgcDriver::Graphics::HostImportFor(context, AddressOf(block.Table()), BlockBytes) != nullptr, "image table reuse: the block could not be imported");
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, result, 6) == Row(block.Texels(6)), "image table reuse: the first dispatch over imported memory sampled the wrong entry");
+    Require(Dispatch(device, result, 8) == Row(block.Texels(8)), "image table reuse: a dispatch reusing a table of storage views sampled the wrong entry");
+    Require(Dispatch(device, result, 6) == Row(block.Texels(6)), "image table reuse: the third dispatch over imported memory sampled the wrong entry");
+    if (!AgcDriver::GuestMemory::Watched(AddressOf(block.Table()), BlockBytes)) {
+        std::puts("imported memory is not write-watched: table reuse over storage views is not tested");
+        return;
+    }
+    Expect(before, 2, 1, "three dispatches of one table whose entries view storage images of imported memory");
+}
+
 }
 
 int main() {
     try {
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
+        GuestBlock imported;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         RunTests(*device, block, stores);
+        RunImportedTable(*device, imported);
         std::puts("image table reuse tests passed");
         return 0;
     } catch (const std::exception& error) {
