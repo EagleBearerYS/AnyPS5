@@ -41,6 +41,13 @@ float HostDepthBiasConstant(const Context& context, VkFormat format, float const
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip);
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage);
 void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass);
+// The out-of-place DB expands run, and the ones of those skipped because the write base's image
+// already held the read surface's unchanged depth (see RunDepthExpandPass); for tests and profiles.
+struct DepthExpandStatistics {
+    std::uint64_t expands = 0;
+    std::uint64_t skipped = 0;
+};
+DepthExpandStatistics DepthExpandCounts();
 
 }
 
