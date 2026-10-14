@@ -429,9 +429,16 @@ void verifyPlanConditionPruning() {
     resources.controlFlow.push_back({&equal(load, constant(0)), {1, 2}, {}, {}});
     resources.controlFlow.push_back({&equal(low, constant(7)), {3, 4}, {}, {}});
     resources.controlFlow.push_back({&equal(read, constant(5)), {5, 6}, {}, {}});
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&equal(userData(4), constant(0)));
+    choice.AddArgument(&load);
+    choice.AddArgument(&constant(1));
+    resources.controlFlow.push_back({&equal(choice, constant(1)), {7, 8}, {}, {}});
     const auto plan = ResourceMaterializer{}.ExtractPlan(program);
     const auto copied = std::ranges::count_if(plan.valueStorage, [](const auto& value) { return value->Opcode() == IrOpcode::IAdd32; });
     require(copied == 0, "plan pruning: the address computation under a load the evaluator cannot read was copied");
+    require(plan.controlFlow[0].condition == nullptr && plan.controlFlow[3].condition == nullptr, "plan pruning: a condition the evaluator can never read was kept");
+    require(plan.controlFlow[1].condition != nullptr && plan.controlFlow[2].condition != nullptr, "plan pruning: a condition the evaluator can read was dropped");
     const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const auto& value) { return value->Opcode() == IrOpcode::LoadBufferU32; });
     require(copiedLoad != plan.valueStorage.end() && (*copiedLoad)->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
     require(std::ranges::all_of(plan.valueStorage, [](const auto& value) { return value->Uses().empty() && value->OperandUses().empty() && value->Arguments().capacity() == value->ArgumentCount(); }), "plan compaction: a plan value keeps use lists or spare operand capacity");
@@ -439,7 +446,6 @@ void verifyPlanConditionPruning() {
     SrtRuntime runtime{data};
     Detail::Evaluator evaluator(plan, runtime);
     std::uint32_t result = 0;
-    require(!evaluator.Evaluate(plan.controlFlow[0].condition, result), "plan pruning: a condition on a vector load was evaluated");
     require(evaluator.Evaluate(plan.controlFlow[1].condition, result) && result == 1u, "plan pruning: a condition read through an extracted pair was not evaluated");
     require(evaluator.Evaluate(plan.controlFlow[2].condition, result) && result == 1u, "plan pruning: a condition on a raw read lost its handle");
 }

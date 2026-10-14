@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -1467,6 +1468,135 @@ void ResourceMaterializer::PrepareImageModes(ShaderInfo& info) {
 
 namespace {
 
+enum class Evaluability : std::uint8_t { Maybe, Never, Open };
+
+Evaluability classifyEvaluability(const IrResourcePlan& plan, IrValue* value, std::array<IrValue*, 4>& operands, std::size_t& count) {
+    count = 0;
+    if (value->HasImmediate()) {
+        switch (value->Type()) {
+            case IrType::Bool:
+            case IrType::U8:
+            case IrType::U16:
+            case IrType::U32:
+            case IrType::U64:
+            case IrType::F32: return Evaluability::Maybe;
+            default: return Evaluability::Never;
+        }
+    }
+    if (value->Opcode() == IrOpcode::Void || Detail::Evaluator::Reads(plan, *value) == Detail::EvaluatorReads::Nothing) return Evaluability::Never;
+    const auto strict = [&](std::size_t arity) {
+        if (value->ArgumentCount() < arity) return Evaluability::Maybe;
+        for (std::size_t index = 0; index < arity; ++index) {
+            if (value->Argument(index) == nullptr) return Evaluability::Maybe;
+            operands[count++] = value->Argument(index)->Resolve();
+        }
+        return Evaluability::Open;
+    };
+    switch (value->Opcode()) {
+        case IrOpcode::UndefU1:
+        case IrOpcode::UndefU8:
+        case IrOpcode::UndefU16:
+        case IrOpcode::UndefU32:
+        case IrOpcode::UndefU64: return Evaluability::Never;
+        case IrOpcode::Phi: {
+            IrValue* invariant = ResolveInvariantPhi(plan, value);
+            if (invariant == nullptr) return Evaluability::Never;
+            operands[count++] = invariant->Resolve();
+            return Evaluability::Open;
+        }
+        case IrOpcode::BitCastU32F32:
+        case IrOpcode::BitCastF32U32:
+        case IrOpcode::ConvertF32U32:
+        case IrOpcode::ConvertU32F32:
+        case IrOpcode::FPTrunc32:
+        case IrOpcode::FPIsNan32:
+        case IrOpcode::BitwiseNot32:
+        case IrOpcode::LogicalNot: return strict(1);
+        case IrOpcode::CompositeConstructU64:
+        case IrOpcode::IAdd32:
+        case IrOpcode::IAdd64:
+        case IrOpcode::ISub32:
+        case IrOpcode::ISub64:
+        case IrOpcode::IMul32:
+        case IrOpcode::IMul64:
+        case IrOpcode::SMin32:
+        case IrOpcode::UMin32:
+        case IrOpcode::FPMul32:
+        case IrOpcode::FPOrdLessThanEqual32:
+        case IrOpcode::FPOrdGreaterThanEqual32:
+        case IrOpcode::BitwiseAnd32:
+        case IrOpcode::BitwiseAnd64:
+        case IrOpcode::BitwiseOr32:
+        case IrOpcode::BitwiseXor32:
+        case IrOpcode::ShiftLeftLogical32:
+        case IrOpcode::ShiftLeftLogical64:
+        case IrOpcode::ShiftRightLogical32:
+        case IrOpcode::ShiftRightLogical64:
+        case IrOpcode::ShiftRightArithmetic32:
+        case IrOpcode::ShiftRightArithmetic64:
+        case IrOpcode::IEqual32:
+        case IrOpcode::INotEqual32:
+        case IrOpcode::SLessThan32:
+        case IrOpcode::ULessThan32:
+        case IrOpcode::UGreaterThan32:
+        case IrOpcode::LogicalAnd:
+        case IrOpcode::LogicalOr:
+        case IrOpcode::LogicalXor: return strict(2);
+        case IrOpcode::BitFieldUExtract:
+        case IrOpcode::BitFieldSExtract:
+        case IrOpcode::SelectU32:
+        case IrOpcode::SelectU1:
+        case IrOpcode::SelectF32: return strict(3);
+        case IrOpcode::BitFieldInsert: return strict(4);
+        default: return Evaluability::Maybe;
+    }
+}
+
+bool neverEvaluable(const IrResourcePlan& plan, IrValue* root, std::unordered_map<const IrValue*, Evaluability>& known) {
+    root = root->Resolve();
+    std::vector<std::pair<IrValue*, bool>> pending{{root, false}};
+    std::array<IrValue*, 4> operands{};
+    std::size_t count = 0;
+    while (!pending.empty()) {
+        IrValue* value = pending.back().first;
+        const bool expanded = pending.back().second;
+        const auto found = known.find(value);
+        if (found != known.end() && found->second != Evaluability::Open) {
+            pending.pop_back();
+            continue;
+        }
+        const auto kind = classifyEvaluability(plan, value, operands, count);
+        if (kind != Evaluability::Open) {
+            known[value] = kind;
+            pending.pop_back();
+            continue;
+        }
+        if (!expanded) {
+            pending.back().second = true;
+            known[value] = Evaluability::Open;
+            for (std::size_t index = 0; index < count; ++index) {
+                if (!known.contains(operands[index])) pending.emplace_back(operands[index], false);
+            }
+            continue;
+        }
+        bool never = false;
+        for (std::size_t index = 0; index < count && !never; ++index) {
+            const auto operand = known.find(operands[index]);
+            never = operand != known.end() && operand->second == Evaluability::Never;
+        }
+        known[value] = never ? Evaluability::Never : Evaluability::Maybe;
+        pending.pop_back();
+    }
+    return known.at(root) == Evaluability::Never;
+}
+
+void dropUnevaluableConditions(IrResourcePlan& plan) {
+    std::unordered_map<const IrValue*, Evaluability> known;
+    for (auto& block : plan.controlFlow) {
+        if (block.condition != nullptr && neverEvaluable(plan, block.condition, known)) block.condition = nullptr;
+    }
+}
+
 void ownPlanValues(IrResourcePlan& plan) {
     std::vector<IrValue**> roots;
     for (auto& source : plan.descriptorSources) {
@@ -1584,6 +1714,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
             addSource(sampler.source);
         }
     }
+    dropUnevaluableConditions(plan);
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
     ownPlanValues(plan);
