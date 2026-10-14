@@ -32,9 +32,11 @@ public:
     explicit CreationGate(std::size_t words) : words(words) {
         auto& gate = State();
         std::unique_lock lock(gate.mutex);
-        const auto ticket = gate.issued++;
-        gate.changed.wait(lock, [&] { return ticket == gate.admitted && (gate.inFlight == 0 || gate.inFlight + words <= WordsInFlight); });
-        ++gate.admitted;
+        if (CreationAhead::Active()) {
+            const auto ticket = gate.issued++;
+            gate.changed.wait(lock, [&] { return ticket == gate.admitted && (gate.inFlight == 0 || gate.inFlight + words <= WordsInFlight); });
+            ++gate.admitted;
+        }
         gate.inFlight += words;
         ++gate.creations;
         lock.unlock();

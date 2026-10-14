@@ -11,6 +11,7 @@
 
 namespace {
 
+using AgcDriver::CreationAhead;
 using AgcDriver::CreationGate;
 
 void Require(bool condition, const std::string& message) {
@@ -24,6 +25,7 @@ void Bounded() {
     std::vector<std::thread> threads;
     for (const auto size : words) {
         threads.emplace_back([&, size] {
+            const CreationAhead ahead;
             const CreationGate gate(size);
             const auto inFlight = CreationGate::InFlight();
             const auto creations = CreationGate::Creations();
@@ -47,18 +49,21 @@ void InOrder() {
     };
     std::atomic<bool> release{false};
     std::thread first([&] {
+        const CreationAhead ahead;
         const CreationGate gate(600000);
         note('a');
         while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     });
     while (CreationGate::Creations() == 0u) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     std::thread large([&] {
+        const CreationAhead ahead;
         const CreationGate gate(2000000);
         note('b');
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     std::thread small([&] {
+        const CreationAhead ahead;
         const CreationGate gate(100000);
         note('c');
     });
@@ -70,12 +75,63 @@ void InOrder() {
     Require(admitted == std::vector<char>{'a', 'b', 'c'}, "a small creation passed a large one that waited before it");
 }
 
+void FramesFirst() {
+    std::atomic<bool> release{false};
+    std::atomic<bool> waiterAdmitted{false};
+    std::thread large([&] {
+        const CreationAhead ahead;
+        const CreationGate gate(1500000);
+        while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    });
+    while (CreationGate::Creations() == 0u) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::thread waiter([&] {
+        const CreationAhead ahead;
+        const CreationGate gate(100000);
+        waiterAdmitted = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::atomic<bool> frameAdmitted{false};
+    std::atomic<std::size_t> frameInFlight{0};
+    std::thread inFrame([&] {
+        const CreationGate gate(50000);
+        frameInFlight = CreationGate::InFlight();
+        frameAdmitted = true;
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!frameAdmitted && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool admittedAtOnce = frameAdmitted;
+    const bool waiterWaited = !waiterAdmitted;
+    release = true;
+    large.join();
+    waiter.join();
+    inFrame.join();
+    Require(admittedAtOnce && frameInFlight == 1550000u, "a creation inside a frame waited for creations ahead of frames");
+    Require(waiterWaited, "a creation ahead of frames passed a running one larger than the words in flight");
+    std::atomic<bool> frameDone{false};
+    std::atomic<bool> aheadAdmittedEarly{false};
+    std::thread frame([&] {
+        const CreationGate gate(900000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        frameDone = true;
+    });
+    while (CreationGate::Creations() == 0u) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::thread ahead([&] {
+        const CreationAhead marked;
+        const CreationGate gate(200000);
+        if (!frameDone) aheadAdmittedEarly = true;
+    });
+    frame.join();
+    ahead.join();
+    Require(!aheadAdmittedEarly, "a creation ahead of frames did not count the words of a creation inside a frame");
+}
+
 }
 
 int main() {
     try {
         Bounded();
         InOrder();
+        FramesFirst();
         std::puts("pipeline creation gate tests passed");
         return 0;
     } catch (const std::exception& error) {
