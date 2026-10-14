@@ -32,6 +32,8 @@
 
 namespace AgcDriver::Graphics {
 
+void WatchWrite(const char* what, std::uint64_t address, std::uint64_t bytes, std::uint64_t detail);
+
 namespace {
 
 Recorder* activeRecorder = nullptr;
@@ -2642,6 +2644,7 @@ void Recorder::OnComplete(std::function<void()> action) {
 bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value) {
     CaptureTrace::Log("buffer-write batch=%llu address=%llx bytes=%zu label=%d", static_cast<unsigned long long>(submissions + 1), static_cast<unsigned long long>(address), bytes, ownLabel);
     if (bytes == 0) return false;
+    WatchWrite(ownLabel ? "note-label" : "note", address, bytes, static_cast<std::uint64_t>(static_cast<std::int64_t>(value)));
     ensureOpen();
     const auto end = address + bytes;
     open->writes.emplace_back(address, end);

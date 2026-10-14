@@ -41,6 +41,7 @@
 namespace AgcDriver::Graphics {
 bool FrameTraceOn();
 std::uint64_t DepthSurfaceOverlapping(std::uint64_t address, std::uint64_t bytes);
+void WatchWrite(const char* what, std::uint64_t address, std::uint64_t bytes, std::uint64_t detail);
 namespace {
 
 bool overlap(std::uint64_t first, std::size_t firstSize, std::uint64_t second, std::size_t secondSize) {
@@ -3694,6 +3695,7 @@ void ShaderResources::WriteBack() {
     if (SkipWriteBack()) return;
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index]) continue;
+        WatchWrite("storage-written-sync", storageTextures[index]->Descriptor().baseAddress, storageTextures[index]->GuestBytes(), static_cast<std::uint64_t>(storageTextures[index]->Descriptor().format));
         storageTextures[index]->MarkDirty();
         static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
     }
@@ -3704,6 +3706,10 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     // alike, and an address-based build's whole leased heaps), before the writes: a CPU store into
     // one of them (the copy HLE) must not land before the recorded work read it.
     recorder.NotePendingReads(guestMemory.InPlaceReads(), guestMemory.HoldsLease() ? Recorder::ReadKind::AddressBased : Recorder::ReadKind::DispatchElement);
+    for (std::size_t index = 0; index < storageTextures.size(); ++index) {
+        if (storageWritten[index] && storageTextures[index] != nullptr) WatchWrite(SkipWriteBack() ? "storage-written-skipped" : "storage-written", storageTextures[index]->Descriptor().baseAddress, storageTextures[index]->GuestBytes(), static_cast<std::uint64_t>(storageTextures[index]->Descriptor().format));
+    }
+    for (const auto& [begin, end] : guestMemory.Writes()) WatchWrite(SkipWriteBack() ? "shader-writes-skipped" : "shader-writes", begin, end - begin, usesBda ? 1 : 0);
     if (SkipWriteBack()) return;
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index]) continue;

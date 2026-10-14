@@ -41,6 +41,10 @@
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
 
+namespace AgcDriver::Graphics {
+void WatchWrite(const char* what, std::uint64_t address, std::uint64_t bytes, std::uint64_t detail);
+}
+
 namespace AgcDriver::GuestMemory {
 namespace {
 void require(bool condition, const char* reason) {
@@ -1081,6 +1085,7 @@ void stampWrittenRun(void* context, std::uintptr_t begin, std::uintptr_t end) {
     auto& tracker = runs.tracker;
     const auto kind = runs.kind;
     if (end <= begin) return;
+    if (kind != StampKind::Driver) Graphics::WatchWrite(kind == StampKind::Fresh ? "cpu-fresh" : "cpu-dirty", begin, end - begin, static_cast<std::uint64_t>(kind));
     ++runs.stamped;
     const auto generation = tracker.generation.load(std::memory_order_relaxed);
     if (kind != StampKind::Driver) tracker.noteCpuStore(begin, end, generation);
@@ -1414,6 +1419,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
+    Graphics::WatchWrite("mark-written", address, bytes, reinterpret_cast<std::uint64_t>(__builtin_return_address(0)));
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
@@ -2092,6 +2098,7 @@ void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> cur
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     if (current.empty()) return;
+    Graphics::WatchWrite("write-changed", address, current.size(), reinterpret_cast<std::uint64_t>(__builtin_return_address(0)));
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
     // site above it was doing (the [hooksync] line counts stores apart).
     const ReadSiteScope site(ReadSite::Store);
@@ -2129,6 +2136,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
 
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment) {
     if (source.empty()) return;
+    Graphics::WatchWrite("write", address, source.size(), reinterpret_cast<std::uint64_t>(__builtin_return_address(0)));
     // A store, as in WriteChanged.
     const ReadSiteScope site(ReadSite::Store);
     FlushGpuWrites(address, source.size());

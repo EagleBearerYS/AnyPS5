@@ -11,6 +11,8 @@
 
 namespace AgcDriver::Graphics {
 bool FrameTraceOn();
+void WatchWork(char kind, std::uint64_t shader);
+void WatchWrite(const char* what, std::uint64_t address, std::uint64_t bytes, std::uint64_t detail);
 }
 
 namespace AgcDriver::DriverDetail {
@@ -102,11 +104,27 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     auto pixel = decode->pixel;
     std::vector<DrawProgram> programs = decode->programs;
     if (const auto skipped = SkippedShader(); skipped != 0 && std::any_of(programs.begin(), programs.end(), [skipped](const DrawProgram& program) { return program.binary.codeAddress == skipped; })) return drawn();
+    Graphics::WatchWork('D', programs.empty() ? 0 : programs.back().binary.codeAddress);
+    for (const auto& color : graphics.colors) Graphics::WatchWrite("color-target", color.address, color.bytes, static_cast<std::uint64_t>(color.format));
+    if (graphics.depth) {
+        const std::uint64_t depthBytes = std::uint64_t{graphics.depth->extent.width} * graphics.depth->extent.height * 4u * std::max(graphics.depth->samples, 1u);
+        Graphics::WatchWrite(graphics.depthWrite ? "depth-target-written" : "depth-target", graphics.depth->address, depthBytes, graphics.depth->stencilAddress);
+    }
     if (Graphics::FrameTraceOn()) {
         std::string traced;
         for (const auto& program : programs) {
             char item[32];
             std::snprintf(item, sizeof(item), " 0x%llx", static_cast<unsigned long long>(program.binary.codeAddress));
+            traced += item;
+        }
+        for (const auto& color : graphics.colors) {
+            char item[48];
+            std::snprintf(item, sizeof(item), " color 0x%llx", static_cast<unsigned long long>(color.address));
+            traced += item;
+        }
+        if (graphics.depth) {
+            char item[64];
+            std::snprintf(item, sizeof(item), " depth 0x%llx%s", static_cast<unsigned long long>(graphics.depth->address), graphics.depthWrite ? " written" : "");
             traced += item;
         }
         std::fprintf(stderr, "[ftrace] programs%s\n", traced.c_str());

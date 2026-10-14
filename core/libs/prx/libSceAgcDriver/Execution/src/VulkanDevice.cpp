@@ -67,6 +67,7 @@
 
 namespace AgcDriver::Graphics {
 bool FrameTraceOn();
+void WatchWrite(const char* what, std::uint64_t address, std::uint64_t bytes, std::uint64_t detail);
 }
 
 namespace AgcDriver {
@@ -2213,6 +2214,7 @@ VulkanDevice::CopyAliasing VulkanDevice::CopyAliasCounts() {
 
 VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, std::uint64_t source, std::size_t bytes, std::size_t cpuMax, std::size_t gpuMax, std::size_t knownMax, std::uint64_t programAddress, std::uint32_t queue, const CopyWriterNote& noteWriter) {
     CopyOutcome outcome{2, false, 0, CopyOutcome::None, false, false, 0, 0, 0, 0, false};
+    Graphics::WatchWrite("copy-buffer", destination, bytes, source);
     if (!state->recorder || bytes == 0) return outcome;
     auto& recorder = *state->recorder;
     // Finished batches were retired by the caller (Driver.cpp copyBuffer, on the graphics worker

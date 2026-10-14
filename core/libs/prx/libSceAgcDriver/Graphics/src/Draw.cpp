@@ -1853,6 +1853,66 @@ bool FrameTraceOn() {
     return on.load(std::memory_order_relaxed);
 }
 
+namespace {
+
+thread_local char watchWorkKind = '-';
+thread_local std::uint64_t watchWorkShader = 0;
+std::atomic<std::uint64_t> watchPresents{0};
+
+struct WatchTag {
+    std::atomic<const char*> what{nullptr};
+    std::atomic<std::uint64_t> hits{0};
+};
+
+std::array<WatchTag, 32> watchTags;
+
+std::uint64_t watchHit(const char* what) {
+    for (auto& tag : watchTags) {
+        const char* current = tag.what.load(std::memory_order_acquire);
+        if (current == nullptr) {
+            const char* expected = nullptr;
+            current = tag.what.compare_exchange_strong(expected, what, std::memory_order_acq_rel) ? what : expected;
+        }
+        if (current == what || std::strcmp(current, what) == 0) return tag.hits.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+    return 1;
+}
+
+}
+
+void WatchWork(char kind, std::uint64_t shader) {
+    watchWorkKind = kind;
+    watchWorkShader = shader;
+}
+
+void WatchPresent() {
+    watchPresents.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool WatchOverlaps(std::uint64_t address, std::uint64_t bytes) {
+    static const auto range = [] {
+        std::pair<std::uint64_t, std::uint64_t> parsed{0, 0};
+        const char* text = std::getenv("APS5_RE8_WATCH");
+        if (text == nullptr) return parsed;
+        char* end = nullptr;
+        parsed.first = std::strtoull(text, &end, 0);
+        if (end != nullptr && *end == '+') parsed.second = std::strtoull(end + 1, nullptr, 0);
+        return parsed;
+    }();
+    return range.second != 0 && bytes != 0 && address < range.first + range.second && range.first < address + bytes;
+}
+
+void WatchWrite(const char* what, std::uint64_t address, std::uint64_t bytes, std::uint64_t detail) {
+    if (!WatchOverlaps(address, bytes)) return;
+    static const auto start = std::chrono::steady_clock::now();
+    static std::once_flag anchor;
+    std::call_once(anchor, [] { std::fprintf(stderr, "[watch] anchor: WatchWrite at 0x%llx\n", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(&WatchWrite))); });
+    const auto hit = watchHit(what);
+    if (hit > 100 && hit % 1000 != 0) return;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+    std::fprintf(stderr, "[watch] %s #%llu 0x%llx+0x%llx detail 0x%llx work %c 0x%llx present %llu t+%lld ms\n", what, static_cast<unsigned long long>(hit), static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(detail), watchWorkKind, static_cast<unsigned long long>(watchWorkShader), static_cast<unsigned long long>(watchPresents.load(std::memory_order_relaxed)), static_cast<long long>(ms));
+}
+
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state) {
     std::vector<std::uint64_t> key;
     if (!ValidationKey(context, shaders, state, key)) return std::nullopt;
