@@ -665,6 +665,7 @@ if(BUILD_TESTING)
     set_tests_properties(guest_pthread_stack PROPERTIES TIMEOUT 20)
     add_asan_test_options(guest_pthread_stack detect_stack_use_after_return=0)
     if(WIN32)
+        target_compile_definitions(guest_pthread_stack_tests PRIVATE _WIN32_WINNT=0x0602)
         set_tests_properties(guest_pthread_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
