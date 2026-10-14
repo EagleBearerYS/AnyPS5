@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
@@ -930,7 +931,8 @@ std::shared_ptr<Pipeline> cachedPipeline(const Context& context, const State& st
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
-    thread_local std::vector<std::byte> key;
+    struct PipelineKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
     pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
     const auto hash = key.empty() ? 0u : hashKey(key);
     std::shared_future<std::shared_ptr<Pipeline>> other;
