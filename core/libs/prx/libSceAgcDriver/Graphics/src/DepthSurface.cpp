@@ -1074,7 +1074,10 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         std::snprintf(text, sizeof(text), "AGC graphics: an out-of-place DB expand from 0x%llx (%ux%u) to 0x%llx %s is not implemented", static_cast<unsigned long long>(source.address), source.extent.width, source.extent.height, static_cast<unsigned long long>(pass.destination), what);
         return std::runtime_error(text);
     };
-    if (DepthSurfaceAt(pass.destination)) throw failure("into a live depth surface");
+    {
+        std::lock_guard lock(surfacesMutex());
+        if (planeSurface(context.device, pass.destination) != nullptr) throw failure("into a live depth surface");
+    }
     const auto destination = CachedStorageSurface(context, depthPlaneView(pass.destination, source.extent));
     if (destination == nullptr) throw failure("without a storage image of the write base");
     expandsRun.fetch_add(1, std::memory_order_relaxed);
