@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include <array>
 #include <condition_variable>
 #include <cstdlib>
@@ -62,6 +63,7 @@ LibraryStore& Libraries() {
 }
 
 void runJobs(LibraryStore& store) {
+    const CreationAhead ahead;
     std::unique_lock lock(store.mutex);
     for (;;) {
         store.work.wait(lock, [&] { return !store.jobs.empty(); });

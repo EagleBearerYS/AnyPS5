@@ -362,6 +362,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     auto* const attachTo = stampValidate() ? nullptr : keepVariant != nullptr ? keepVariant.get() : attachVariant.get();
     bool writersNoted = false;
     const bool noteWrites = writeEvidenceEnabled() || traceCapSync();
+    try {
+        localDevice->PrepareComputePipeline(compiled, address);
+    } catch (const std::exception& error) {
+        if (rethrow(error)) return;
+    }
 
     for (;;) {
 
