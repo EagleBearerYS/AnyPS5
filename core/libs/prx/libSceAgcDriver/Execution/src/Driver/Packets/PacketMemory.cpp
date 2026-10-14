@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -152,6 +153,8 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 if (const auto localDevice = device.Load()) {
                     recordDeferredLabels(localDevice.get(), submission.queue);
                     const auto outcome = localDevice->CopyBuffer(copy->destination, copy->source, copy->bytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0, submission.queue, [](std::span<const std::byte>, std::uint64_t) {});
+                    static const bool traceDma = std::getenv("APS5_RE8_TRACE_DMA") != nullptr;
+                    if (traceDma) std::fprintf(stderr, "[dma] DMA_DATA copy 0x%llx -> 0x%llx bytes 0x%llx queue 0x%llx path %d%s%s\n", static_cast<unsigned long long>(copy->source), static_cast<unsigned long long>(copy->destination), static_cast<unsigned long long>(copy->bytes), static_cast<unsigned long long>(submission.queue), static_cast<int>(outcome.path), Graphics::DepthSurfaceAt(copy->source) ? " (source is a depth surface plane)" : "", Graphics::DepthSurfaceAt(copy->destination) ? " (destination is a depth surface plane)" : "");
                     if (outcome.path == 1 || outcome.path == 3) {
                         wroteOnGpu = true;
                         drained = false;
