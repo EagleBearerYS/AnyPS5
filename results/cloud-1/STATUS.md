@@ -1,4 +1,4 @@
-READY
+BUSY PM-020 (claimed 2026-10-14T21:40:29Z)
 RESULT:
 - Last task: PM-017 (trophies part 2: .ucp reader, trophy names in Trophy2 queries, stat-driven unlocks, platinum; feat/np-trophy-stats at 954118b81 on the fork), done: results/cloud-1/PM-017.md. Before it: GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
