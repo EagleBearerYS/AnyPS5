@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -87,6 +88,8 @@ std::atomic<std::uint64_t> collectDirtyRuns{0};
 #endif
 std::atomic<std::uint64_t> trackerWaits{0};
 std::atomic<std::uint64_t> trackerAcquisitions{0};
+std::atomic<const ResidencyHooks*> residencyHooks{nullptr};
+std::atomic<void (*)(std::uint64_t, std::size_t, GuestArena::MappingChange, std::uint32_t)> mappingListener{nullptr};
 std::uintptr_t PagesBase();
 std::size_t PagesSize();
 std::uintptr_t ImagePagesBase();
@@ -503,6 +506,7 @@ void ForgetPages(std::uintptr_t address, std::size_t bytes) {
     forgetSerial.fetch_add(1, std::memory_order_release);
     Pages().forget(address, bytes);
     forgetSerial.fetch_add(1, std::memory_order_release);
+    if (const auto* hooks = residencyHooks.load(std::memory_order_acquire); hooks != nullptr && hooks->dropRange != nullptr) hooks->dropRange(address, bytes);
 }
 
 void PageStates::initialize() {
@@ -759,7 +763,7 @@ constexpr std::size_t WriteBlockBytes = 65536;
 constexpr std::size_t WritePageBytes = 4096;
 constexpr std::size_t WritePagesPerBlock = WriteBlockBytes / WritePageBytes;
 
-enum class StampKind : std::uint8_t { Cpu, Driver, ImportWindow, Fresh };
+enum class StampKind : std::uint8_t { Cpu, Driver, ImportWindow, Fresh, Consumed };
 
 struct WindowCopy {
     std::uint64_t first;
@@ -771,7 +775,7 @@ struct WindowCopy {
 };
 
 #ifdef _WIN32
-void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation);
+void observeMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation, GuestArena::MappingChange change, std::uint32_t protection);
 #endif
 
 struct WriteTracker {
@@ -826,12 +830,13 @@ struct WriteTracker {
 #ifdef _WIN32
         GuestArena::GuestArenaRange_nid_postfix(&base, &size);
         watched = size != 0 && GuestArena::GuestArenaWriteWatched_nid_postfix();
-        if (!watched) return;
-        blocks.assign(size / WriteBlockBytes + 1, 0);
-        cpuBlocks.assign(size / WriteBlockBytes + 1, 0);
-        coverage.Initialize(base, size);
-        pages.resize(1u << 16);
-        GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&watchPrivateMapping);
+        if (watched) {
+            blocks.assign(size / WriteBlockBytes + 1, 0);
+            cpuBlocks.assign(size / WriteBlockBytes + 1, 0);
+            coverage.Initialize(base, size);
+            pages.resize(1u << 16);
+        }
+        if (size != 0) GuestArena::GuestArenaSetMappingObserver_nid_postfix(&observeMapping);
 #else
         watched = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
         if (watched) leaves.resize(LeafCount);
@@ -981,9 +986,21 @@ struct WriteTracker {
 #endif
     }
 
+    std::vector<std::uint64_t> residentWrites;
+
+    void noteResidentWrite(std::uint64_t block) {
+        const auto* hooks = residencyHooks.load(std::memory_order_acquire);
+        if (hooks == nullptr || hooks->anyResident == nullptr || hooks->cpuWritten == nullptr) return;
+        const auto begin = blockBegin(block);
+        if (!hooks->anyResident(begin, WriteBlockBytes)) return;
+        const auto page = begin >> ResidencyPageShift;
+        if (residentWrites.empty() || residentWrites.back() != page) residentWrites.push_back(page);
+    }
+
     void stamp(std::uint64_t block, std::uint32_t stampGeneration, StampKind kind) {
         const bool cpu = kind == StampKind::Cpu || kind == StampKind::ImportWindow;
         const bool stored = kind != StampKind::ImportWindow;
+        if (stored) noteResidentWrite(block);
 #ifdef _WIN32
         if (stored) blocks[block] = stampGeneration;
         if (cpu) cpuBlocks[block] = stampGeneration;
@@ -1001,18 +1018,39 @@ WriteTracker& Tracker() {
     return tracker;
 }
 
+class TrackerLock {
+public:
+    TrackerLock(WriteTracker& tracker, std::unique_lock<std::mutex> lock) : tracker(tracker), lock(std::move(lock)) {}
+    TrackerLock(const TrackerLock&) = delete;
+    TrackerLock& operator=(const TrackerLock&) = delete;
+    ~TrackerLock() { unlock(); }
+
+    void unlock() {
+        if (!lock.owns_lock()) return;
+        std::vector<std::uint64_t> pages;
+        pages.swap(tracker.residentWrites);
+        lock.unlock();
+        if (pages.empty()) return;
+        if (const auto* hooks = residencyHooks.load(std::memory_order_acquire); hooks != nullptr && hooks->cpuWritten != nullptr) hooks->cpuWritten(pages);
+    }
+
+private:
+    WriteTracker& tracker;
+    std::unique_lock<std::mutex> lock;
+};
+
 // Takes the tracker mutex; under APS5_PROFILE_DRAW an acquisition that found it held is counted
 // ('tracker waits N / M' in [guestmem]), which says whether walking outside the lock would pay.
-std::unique_lock<std::mutex> lockTracker(WriteTracker& tracker) {
+TrackerLock lockTracker(WriteTracker& tracker) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (!profile) return std::unique_lock(tracker.mutex);
+    if (!profile) return TrackerLock(tracker, std::unique_lock(tracker.mutex));
     std::unique_lock lock(tracker.mutex, std::try_to_lock);
     if (!lock.owns_lock()) {
         trackerWaits.fetch_add(1, std::memory_order_relaxed);
         lock.lock();
     }
     trackerAcquisitions.fetch_add(1, std::memory_order_relaxed);
-    return lock;
+    return TrackerLock(tracker, std::move(lock));
 }
 
 #ifdef _WIN32
@@ -1028,6 +1066,11 @@ void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_
         tracker.stamp(block, tracker.generation, StampKind::Cpu);
     }
     unwatchSerial.fetch_add(1, std::memory_order_release);
+}
+
+void observeMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation, GuestArena::MappingChange change, std::uint32_t protection) {
+    if (change == GuestArena::MappingChange::Committed) watchPrivateMapping(address, bytes, generation);
+    if (const auto listener = mappingListener.load(std::memory_order_acquire)) listener(address, bytes, change, protection);
 }
 #endif
 
@@ -1075,7 +1118,7 @@ void stampWrittenRun(void* context, std::uintptr_t begin, std::uintptr_t end) {
     auto& runs = *static_cast<StampRuns*>(context);
     auto& tracker = runs.tracker;
     const auto kind = runs.kind;
-    if (end <= begin) return;
+    if (end <= begin || kind == StampKind::Consumed) return;
     ++runs.stamped;
     const auto generation = tracker.generation.load(std::memory_order_relaxed);
     if (kind != StampKind::Driver) tracker.noteCpuStore(begin, end, generation);
@@ -1873,6 +1916,144 @@ void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes)) {
 
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes) {
     if (const auto hook = flushHook.load(std::memory_order_acquire)) hook(address, bytes);
+    if (const auto* hooks = residencyHooks.load(std::memory_order_acquire); hooks != nullptr && hooks->writeBack != nullptr) hooks->writeBack(address, bytes);
+}
+
+namespace {
+
+#ifdef _WIN32
+void reportGuardedWrites(const std::uintptr_t* pages, std::size_t count) {
+    const auto* hooks = residencyHooks.load(std::memory_order_acquire);
+    if (hooks == nullptr || hooks->cpuWritten == nullptr || count == 0) return;
+    std::vector<std::uint64_t> indices(count);
+    for (std::size_t index = 0; index < count; ++index) indices[index] = pages[index] >> ResidencyPageShift;
+    hooks->cpuWritten(indices);
+}
+#endif
+
+}
+
+void SetResidencyHooks(const ResidencyHooks* hooks) {
+    Pages().initialize();
+    if (hooks != nullptr) GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
+#ifdef _WIN32
+    GuestArena::GuestArenaSetWriteGuardObserver_nid_postfix(hooks != nullptr ? &reportGuardedWrites : nullptr);
+#endif
+    residencyHooks.store(hooks, std::memory_order_release);
+}
+
+bool GuardWrites(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    return GuestArena::GuestArenaGuardWrites_nid_postfix(static_cast<std::uintptr_t>(address), bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+void UnguardWrites(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    GuestArena::GuestArenaUnguardWrites_nid_postfix(static_cast<std::uintptr_t>(address), bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+#endif
+}
+
+bool WriteGuarded(std::uint64_t page) {
+#ifdef _WIN32
+    return GuestArena::GuestArenaWriteGuarded_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift));
+#else
+    static_cast<void>(page);
+    return false;
+#endif
+}
+
+std::vector<std::pair<std::uint64_t, std::size_t>> Aliases(std::uint64_t address, std::size_t bytes) {
+    std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+#ifdef _WIN32
+    GuestArena::GuestArenaAliases_nid_postfix(static_cast<std::uintptr_t>(address), bytes, [](void* context, std::uintptr_t alias, std::size_t size) { static_cast<std::vector<std::pair<std::uint64_t, std::size_t>>*>(context)->emplace_back(alias, size); }, &ranges);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+#endif
+    return ranges;
+}
+
+PageBacking Backing(std::uint64_t page) {
+    PageBacking backing;
+    backing.offset = page << ResidencyPageShift;
+#ifdef _WIN32
+    backing.shared = GuestArena::GuestArenaBacking_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift), &backing.section, &backing.offset, &backing.uniform, &backing.aliased);
+#endif
+    return backing;
+}
+
+void SetMappingListener(void (*listener)(std::uint64_t address, std::size_t bytes, GuestArena::MappingChange change, std::uint32_t protection)) {
+    mappingListener.store(listener, std::memory_order_release);
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+}
+
+void ConsumeImportMarks(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || !tracker.covers(address, bytes)) return;
+    constexpr std::uint64_t page = 4096;
+    const auto first = address & ~(page - 1);
+    const auto stop = (address + bytes + page - 1) & ~(page - 1);
+    if (!walkWrites(tracker, first, stop, StampKind::Consumed)) unwatchLocked(tracker, first, static_cast<std::size_t>(stop - first));
+}
+
+bool StackHasRoom(std::size_t bytes) {
+#ifdef _WIN32
+    ULONG_PTR low = 0;
+    ULONG_PTR high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+#else
+    struct Bounds {
+        std::uintptr_t low = 0;
+        std::uintptr_t high = 0;
+        Bounds() {
+            pthread_attr_t attributes;
+            if (pthread_getattr_np(pthread_self(), &attributes) != 0) return;
+            void* base = nullptr;
+            std::size_t size = 0;
+            if (pthread_attr_getstack(&attributes, &base, &size) == 0 && base != nullptr) {
+                low = reinterpret_cast<std::uintptr_t>(base);
+                high = low + size;
+            }
+            pthread_attr_destroy(&attributes);
+        }
+    };
+    thread_local const Bounds bounds;
+    const auto low = bounds.low;
+    const auto high = bounds.high;
+#endif
+    const volatile unsigned char marker = 0;
+    const auto frame = reinterpret_cast<std::uintptr_t>(&marker);
+    return frame >= low && frame < high && frame - low >= bytes;
+}
+
+void RunWithStack(std::size_t bytes, const std::function<void()>& work) {
+    if (StackHasRoom(bytes)) {
+        work();
+        return;
+    }
+    std::exception_ptr failure;
+    std::thread host([&] {
+        try {
+            work();
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    host.join();
+    if (failure) std::rethrow_exception(failure);
 }
 
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment) {

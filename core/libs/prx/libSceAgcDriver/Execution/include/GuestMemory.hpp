@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 
+#include "prx/libc/include/GuestArena.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -191,6 +192,33 @@ unsigned long long CodeOffset(const void* address);
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
+
+struct ResidencyHooks {
+    bool (*anyResident)(std::uint64_t address, std::size_t bytes) = nullptr;
+    void (*cpuWritten)(std::span<const std::uint64_t> pages) = nullptr;
+    void (*dropRange)(std::uint64_t address, std::size_t bytes) = nullptr;
+    void (*writeBack)(std::uint64_t address, std::size_t bytes) = nullptr;
+};
+constexpr unsigned ResidencyPageShift = 16;
+void SetResidencyHooks(const ResidencyHooks* hooks);
+bool GuardWrites(std::uint64_t address, std::size_t bytes);
+void UnguardWrites(std::uint64_t address, std::size_t bytes);
+bool WriteGuarded(std::uint64_t page);
+std::vector<std::pair<std::uint64_t, std::size_t>> Aliases(std::uint64_t address, std::size_t bytes);
+struct PageBacking {
+    std::uint64_t section = 0;
+    std::uint64_t offset = 0;
+    bool shared = false;
+    bool uniform = true;
+    bool aliased = false;
+};
+PageBacking Backing(std::uint64_t page);
+
+void SetMappingListener(void (*listener)(std::uint64_t address, std::size_t bytes, GuestArena::MappingChange change, std::uint32_t protection));
+void ConsumeImportMarks(std::uint64_t address, std::size_t bytes);
+bool StackHasRoom(std::size_t bytes);
+void RunWithStack(std::size_t bytes, const std::function<void()>& work);
+
 // Moves with every ForgetPages call (the libc invalidator: memory unmapped or re-registered): odd
 // while the call stores its page states, moved past it after, so a reader that loads an even
 // value before consulting the page states and reading directly, and the same value after, knows

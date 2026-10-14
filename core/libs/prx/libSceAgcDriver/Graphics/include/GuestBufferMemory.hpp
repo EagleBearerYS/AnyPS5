@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "BdaAbi.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -116,11 +117,9 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 // says whether the build's work must instead be synced as soon as it is recorded
 // (APS5_SYNC_LEASE_DISPATCH=1, the behaviour before deferral). The driver and the draw path count
 // their choice with CountLeaseOutcome right after the lease-holding resources were kept by the open
-// batch: `batchSerial` is that batch's serial (Recorder::Submissions() + 1 under the device lock), 0
-// when synced, and the waiter targets the newest of them. Under APS5_PROFILE_DRAW CountLeaseOutcome
 // prints the [address-sync] leases line every 10 s from LeaseCounters (cumulative).
 bool SyncLeaseWork();
-void CountLeaseOutcome(bool synced, std::uint64_t batchSerial);
+void CountLeaseOutcome(bool synced, const std::array<std::uint64_t, MaxRecorderStreams>& batch);
 struct LeaseStats {
     std::uint64_t deferred = 0;
     std::uint64_t synced = 0;
@@ -170,6 +169,7 @@ struct MirrorStats {
 MirrorStats MirrorCounters();
 void ClearImageMirrors(VkDevice device);
 void ClearHostImports(VkDevice device);
+void BumpHostImportsEpoch();
 
 struct AddressCopy {
     std::uint64_t begin;

@@ -31,6 +31,8 @@ public:
         return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
     }
 
+    using Guarded = std::vector<std::uintptr_t>;
+
     std::vector<std::pair<std::uintptr_t, std::size_t>> Commit(void* address, std::size_t bytes, DWORD protection, std::size_t granule, bool watched) {
         std::vector<std::pair<std::uintptr_t, std::size_t>> created;
         std::lock_guard lock(mutex);
@@ -60,6 +62,7 @@ public:
                     mapped->second.protection = protection;
                     mapped->second.armed = 0;
                     invalidate(*mapped->second.page);
+                    dropGuard(*mapped->second.page);
                 }
                 DWORD previous;
                 if (!VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous)) fail("protect guest memory");
@@ -94,6 +97,8 @@ public:
             auto shared = physical[key].lock();
             if (!shared) {
                 shared = std::make_shared<SharedPage>();
+                shared->section = key.first;
+                shared->offset = key.second;
                 physical[key] = shared;
             }
             const auto base = cursor + done;
@@ -110,7 +115,98 @@ public:
             it->second.protection = protection;
             it->second.armed = 0;
             invalidate(*it->second.page);
+            dropGuard(*it->second.page);
         }
+    }
+
+    bool Guard(std::uintptr_t address, std::size_t bytes) {
+        if (address % guardBytes != 0 || bytes % guardBytes != 0) throw std::invalid_argument("guest write guards cover whole 64 KiB pages");
+        std::lock_guard lock(mutex);
+        std::vector<std::shared_ptr<SharedPage>> pages;
+        for (auto piece = address; piece < address + bytes; piece += pageBytes) {
+            const auto view = views.find(piece);
+            if (view == views.end() || view->second.page->pins != 0) return false;
+            for (const auto alias : view->second.page->aliases) {
+                if (views.at(alias).hostWrites != 0) return false;
+            }
+            pages.push_back(view->second.page);
+        }
+        for (const auto& page : pages) {
+            page->guarded = true;
+            for (const auto alias : page->aliases) {
+                auto& view = views.at(alias);
+                const auto arming = static_cast<std::uint8_t>(allSubpages & ~view.armed);
+                if (!writable(view.protection) || arming == 0) continue;
+                protectSubpages(alias, arming, view.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY, "arm a guest write guard");
+                view.armed |= arming;
+            }
+        }
+        return true;
+    }
+
+    void Unguard(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) it->second.page->guarded = false;
+    }
+
+    bool IsGuarded(std::uintptr_t address) {
+        std::lock_guard lock(mutex);
+        const auto view = views.find(address & ~(pageBytes - 1));
+        return view != views.end() && view->second.page->guarded;
+    }
+
+    Guarded TakeGuardReports() {
+        std::lock_guard lock(mutex);
+        Guarded reports;
+        reports.swap(guardReports);
+        return reports;
+    }
+
+    std::vector<std::pair<std::uintptr_t, std::size_t>> Aliases(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        std::vector<std::pair<std::uintptr_t, std::size_t>> ranges;
+        const auto end = address + bytes;
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) {
+            const auto from = std::max(address, it->first) - it->first;
+            const auto to = std::min<std::uintptr_t>(end, it->first + pageBytes) - it->first;
+            for (const auto alias : it->second.page->aliases) {
+                if (alias != it->first) ranges.emplace_back(alias + from, to - from);
+            }
+        }
+        std::sort(ranges.begin(), ranges.end());
+        std::vector<std::pair<std::uintptr_t, std::size_t>> merged;
+        for (const auto& range : ranges) {
+            if (!merged.empty() && merged.back().first + merged.back().second >= range.first) merged.back().second = std::max(merged.back().first + merged.back().second, range.first + range.second) - merged.back().first;
+            else merged.push_back(range);
+        }
+        return merged;
+    }
+
+    bool Backing(std::uintptr_t page, std::uint64_t* section, std::uint64_t* offset, bool* uniform, bool* aliased) {
+        std::lock_guard lock(mutex);
+        const auto base = page & ~(guardBytes - 1);
+        const auto first = views.find(base);
+        *uniform = true;
+        *aliased = false;
+        if (first == views.end()) {
+            *section = 0;
+            *offset = base;
+            for (auto piece = base; piece < base + guardBytes; piece += pageBytes) {
+                if (views.contains(piece)) *uniform = false;
+            }
+            return false;
+        }
+        *section = first->second.page->section;
+        *offset = first->second.page->offset;
+        for (auto piece = base; piece < base + guardBytes; piece += pageBytes) {
+            const auto view = views.find(piece);
+            if (view == views.end() || view->second.page->section != *section || view->second.page->offset != *offset + (piece - base)) {
+                *uniform = false;
+                continue;
+            }
+            if (view->second.page->aliases.size() > 1) *aliased = true;
+        }
+        return true;
     }
 
     void Pin(std::uintptr_t address, std::size_t bytes) {
@@ -147,6 +243,7 @@ public:
         invalidate(*view.page, written);
         protectSubpages(base, written, view.protection, "resume shared memory write");
         view.armed &= static_cast<std::uint8_t>(~written);
+        dropGuard(*view.page);
         return true;
     }
 
@@ -162,6 +259,7 @@ public:
             ++view.hostWrites;
             const auto written = subpagesOf(it->first, address, end);
             invalidate(*view.page, written);
+            dropGuard(*view.page);
             const auto opened = static_cast<std::uint8_t>(view.armed & written);
             if (opened == 0) continue;
             protectSubpages(it->first, opened, view.protection, "open shared memory to a host write");
@@ -388,7 +486,24 @@ private:
         }();
         std::vector<std::uintptr_t> aliases;
         std::uint32_t pins = 0;
+        bool guarded = false;
+        std::uintptr_t section = 0;
+        std::uint64_t offset = 0;
     };
+    static constexpr std::size_t guardBytes = 0x10000;
+
+    void dropGuard(SharedPage& page) {
+        if (!page.guarded) return;
+        page.guarded = false;
+        for (const auto alias : page.aliases) {
+            const auto guardPage = alias & ~(guardBytes - 1);
+            if (std::find(guardReports.begin(), guardReports.end(), guardPage) != guardReports.end()) continue;
+            guardReports.push_back(guardPage);
+            for (auto piece = guardPage; piece < guardPage + guardBytes; piece += pageBytes) {
+                if (const auto view = views.find(piece); view != views.end()) view->second.page->guarded = false;
+            }
+        }
+    }
     struct Section {
         HANDLE handle;
         explicit Section(HANDLE handle) : handle(handle) {}
@@ -594,6 +709,7 @@ private:
     Ranges cleanRanges;
     Ranges freshRanges;
     std::map<std::uintptr_t, View> views;
+    Guarded guardReports;
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::weak_ptr<SharedPage>> physical;
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::mutex mutex;

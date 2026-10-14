@@ -1498,7 +1498,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     // Counted for the [address-sync] line: a lease released by the completion (the pin waiter
     // finishes the recorder up to the open batch, which holds the kept resources and gets the
     // next serial), or waited for by the caller (any wait releases it at once).
-    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1);
+    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? Recorder::Token{} : recorder.CallerToken());
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is

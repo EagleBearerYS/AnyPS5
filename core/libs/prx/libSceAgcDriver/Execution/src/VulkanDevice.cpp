@@ -37,6 +37,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -1708,7 +1709,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         Graphics::FillDeviceFunctions(graphicsContext(), state->deviceFunctions);
         state->functionsReady = true;
     }
-    Graphics::PrepareImportWatch(graphicsContext());
+    Graphics::AttachCommittedImports(graphicsContext(), Graphics::PrepareImportWatch(graphicsContext()) == Graphics::ImportWatch::Watch);
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, state->pipelineCreationCacheControl);
     if (const auto directory = ShaderRecompiler::ShaderCacheDirectory(); !directory.empty()) {
@@ -4565,7 +4566,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         const auto syncStart = std::chrono::steady_clock::now();
         recorder.Sync();
         timer.phase(PhaseSync);
-        if (resources->HoldsLease()) Graphics::CountLeaseOutcome(true, 0);
+        if (resources->HoldsLease()) Graphics::CountLeaseOutcome(true, {});
         if (profile) {
             // APS5_PROFILE_DRAW: the [recorder] line's "address-based" syncs by program, every 10 s,
             // so the programs still waiting here are known (under the GpuMutex, like the rest).
@@ -4594,7 +4595,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     } else if (resources->HoldsLease()) {
         // The lease is in the open batch (kept above, nothing submitted since): the pin waiter
         // finishes the recorder up to that batch's serial. Prints the [address-sync] leases line.
-        Graphics::CountLeaseOutcome(false, recorder.Submissions() + 1);
+        Graphics::CountLeaseOutcome(false, recorder.CallerToken());
     }
     if (TraceDispatchIo()) std::fprintf(stderr, "[dispatch-io] %s:%s\n", groupsText, resources->Describe().c_str());
     WatchMemory(programAddress);

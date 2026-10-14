@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
@@ -168,7 +169,7 @@ struct HostImports {
     std::uint64_t refreshedGeneration = 0;
     // Bumped whenever an import is dropped, so HostImport pointers taken under the lock earlier can be
     // reused while it is unchanged.
-    std::uint64_t epoch = 1;
+    std::atomic<std::uint64_t> epoch{1};
     VkDevice watchDevice = VK_NULL_HANDLE;
     bool unwatchImports = false;
     bool unwatchDmaBufImports = false;
@@ -719,34 +720,11 @@ std::uint64_t retireLeastRecent(const Context& context, HostImports& state, cons
     return freed;
 }
 
-std::uint64_t physicalMemoryBytes() {
-#ifdef _WIN32
-    MEMORYSTATUSEX status{};
-    status.dwLength = sizeof(status);
-    return GlobalMemoryStatusEx(&status) ? status.ullTotalPhys : 0;
-#else
-    const auto pages = sysconf(_SC_PHYS_PAGES);
-    const auto pageSize = sysconf(_SC_PAGESIZE);
-    return pages > 0 && pageSize > 0 ? static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize) : 0;
-#endif
-}
-
 std::atomic<std::uint64_t> budgetOverride{0};
 
 std::uint64_t importBudget(const Context& context) {
     if (const auto set = budgetOverride.load(std::memory_order_relaxed); set != 0) return set;
-    static const std::uint64_t configured = []() -> std::uint64_t {
-        const char* value = std::getenv("APS5_HOST_IMPORT_MIB");
-        return value != nullptr ? std::strtoull(value, nullptr, 10) << 20u : 0u;
-    }();
-    if (configured != 0) return configured;
-    std::uint64_t hostHeap = 0;
-    for (std::uint32_t index = 0; index < context.memory.memoryHeapCount; ++index) {
-        if ((context.memory.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) hostHeap = std::max<std::uint64_t>(hostHeap, context.memory.memoryHeaps[index].size);
-    }
-    const auto fromMemory = std::max<std::uint64_t>(6144ull << 20u, physicalMemoryBytes() / 2);
-    constexpr std::uint64_t reserve = 2048ull << 20u;
-    return hostHeap > reserve ? std::min(fromMemory, hostHeap - reserve) : fromMemory;
+    return GuestImportBudget(context);
 }
 
 std::atomic<std::uint64_t> rangeImportWindow{64ull << 20u};
@@ -840,7 +818,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         replaced += it->second.bytes;
     }
     const auto budget = importBudget(context);
-    const auto live = state.liveBytes - replaced;
+    const auto live = state.liveBytes - replaced + CommittedImportPinnedBytes();
     if (live + bytes > budget && (!evict || live + bytes - evictableBytes(state, base, base + bytes) > budget)) {
         // A refused import turns every later use of the range into CPU copies, so say so.
         static std::uint64_t refused = 0, refusedBytes = 0;
@@ -849,7 +827,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         refusedBytes += bytes;
         if (std::chrono::steady_clock::now() - lastReport > std::chrono::seconds(10)) {
             lastReport = std::chrono::steady_clock::now();
-            std::fprintf(stderr, "[gpu] host import budget: %llu MiB live of %llu MiB (APS5_HOST_IMPORT_MIB); %llu imports (%llu MiB) refused so far, last 0x%llx+0x%llx\n", static_cast<unsigned long long>(state.liveBytes >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(refused), static_cast<unsigned long long>(refusedBytes >> 20u), static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes));
+            std::fprintf(stderr, "[gpu] host import budget: %llu MiB live and %llu MiB of committed imports of %llu MiB; %llu imports (%llu MiB) refused so far, last 0x%llx+0x%llx\n", static_cast<unsigned long long>(state.liveBytes >> 20u), static_cast<unsigned long long>(CommittedImportPinnedBytes() >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(refused), static_cast<unsigned long long>(refusedBytes >> 20u), static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes));
         }
         return nullptr;
     }
@@ -858,7 +836,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    if (state.liveBytes + bytes > budget) retireLeastRecent(context, state, lease, state.liveBytes + bytes - budget);
+    if (state.liveBytes + CommittedImportPinnedBytes() + bytes > budget) retireLeastRecent(context, state, lease, state.liveBytes + CommittedImportPinnedBytes() + bytes - budget);
     HostImport entry{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0};
     entry.range = run.ranges.front();
     entry.ranges = std::move(run.ranges);
@@ -919,6 +897,13 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     const bool watchedHostPointer = !state.unwatchImports;
     const bool watchedDmaBuf = !state.unwatchDmaBufImports;
 #endif
+    if (!watchedHostPointer && CommittedImportsOverlap(context.device, base, base + bytes)) {
+#ifdef _WIN32
+        GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
+#endif
+        failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
+        return nullptr;
+    }
     GuestMemory::ImportWatched(base, bytes, [&] {
         step = watchedDmaBuf == watchedHostPointer ? createImport(context, entry, result) : createHostPointerImport(context, entry, result);
         return step == nullptr;
@@ -983,6 +968,7 @@ const GuestAllocations::Range* containingRange(const GuestAllocations::Lease& le
 // Drops imports whose registered range changed or disappeared: their pages may no longer back the
 // guest addresses. Walks the imports only when the registry changed since the last walk.
 void refreshImports(const Context& context, HostImports& state, const GuestAllocations::Lease& lease) {
+    ReleaseRetiredCommittedImports();
     if (state.device != context.device) {
         while (!state.imports.empty()) {
             auto node = state.imports.extract(state.imports.begin());
@@ -1025,6 +1011,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
 }
 
 const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    if (const auto* committed = CommittedImportCovering(state.device, begin, end)) return committed;
     auto found = state.imports.upper_bound(begin);
     if (found == state.imports.begin()) return nullptr;
     --found;
@@ -1705,12 +1692,8 @@ struct LeaseState {
     std::mutex mutex;
     LeaseStats stats;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
-    // Under GuestMemory::GpuMutex: the recorder whose batches hold leases (serials restart with a
-    // replaced device's recorder), the serial of its newest batch recorded with a lease, and the
-    // newest one a waiter finished.
     const Recorder* leaseRecorder = nullptr;
-    std::uint64_t newestLeaseSerial = 0;
-    std::uint64_t finishedLeaseSerial = 0;
+    Recorder::Token newestLeaseToken{};
 };
 
 LeaseState& Leases() {
@@ -1794,13 +1777,12 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) noexcept
             std::lock_guard lock(GuestMemory::GpuMutex());
             auto& state = Leases();
             auto* recorder = Recorder::Active();
-            const auto target = state.newestLeaseSerial;
-            if (recorder != nullptr && recorder == state.leaseRecorder && target > state.finishedLeaseSerial) {
-                // The open batch may be the target; FinishUpTo waits front to back up to it only.
+            const auto target = state.newestLeaseToken;
+            if (recorder != nullptr && recorder == state.leaseRecorder && !recorder->Reached(target)) {
                 Recorder::CountSync(4);
                 recorder->Submit();
-                recorder->FinishUpTo(target);
-                state.finishedLeaseSerial = target;
+                recorder->WaitToken(target);
+                recorder->Reap();
                 synced = true;
             } else if (recorder != nullptr && !recorder->Idle()) {
                 Recorder::CountSync(4);
@@ -1884,19 +1866,16 @@ bool SyncLeaseWork() {
     return sync;
 }
 
-void CountLeaseOutcome(bool synced, std::uint64_t batchSerial) {
+void CountLeaseOutcome(bool synced, const std::array<std::uint64_t, MaxRecorderStreams>& batch) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& state = Leases();
     if (!synced) {
-        // Serials grow with the submissions, so the newest noted one covers every earlier lease batch
-        // of the same recorder.
         GuestMemory::AssertGpuLockHeld("CountLeaseOutcome");
         if (const auto* recorder = Recorder::Active(); recorder != state.leaseRecorder) {
             state.leaseRecorder = recorder;
-            state.newestLeaseSerial = 0;
-            state.finishedLeaseSerial = 0;
+            state.newestLeaseToken = {};
         }
-        state.newestLeaseSerial = std::max(state.newestLeaseSerial, batchSerial);
+        for (std::size_t stream = 0; stream < batch.size(); ++stream) state.newestLeaseToken[stream] = std::max(state.newestLeaseToken[stream], batch[stream]);
     }
     std::lock_guard lock(state.mutex);
     ++(synced ? state.stats.synced : state.stats.deferred);
@@ -1960,7 +1939,12 @@ void ClearImageMirrors(VkDevice device) {
     Spaces().current.store(nullptr);
 }
 
+void BumpHostImportsEpoch() {
+    Imports().epoch.fetch_add(1, std::memory_order_acq_rel);
+}
+
 void ClearHostImports(VkDevice device) {
+    DetachCommittedImports(device);
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     state.parked.erase(device);
@@ -2265,6 +2249,7 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address) {
 
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    if (CommittedImportCovering(context.device, address, address + bytes) != nullptr) return true;
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     // Imports of a replaced device are not this device's; a stale registry only means an import
@@ -4007,6 +3992,7 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 
 std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, std::size_t bytes, bool reconcile) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
+    if (const auto* committed = CommittedImportCovering(context.device, address, address + bytes)) return committed->serial;
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     // An import whose registered range changed must not be reused: reconcile first, as an upload
@@ -4019,8 +4005,7 @@ std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, st
     if (address < entry.base || address + bytes > entry.base + entry.bytes) return 0;
     // Serials are handed out on first use: a fresh import starts at 0, so one made after an earlier
     // import of the same range was dropped can never repeat that import's serial.
-    static std::uint64_t serials = 0;
-    if (entry.serial == 0) entry.serial = ++serials;
+    if (entry.serial == 0) entry.serial = NewHostImportSerial();
     return entry.serial;
 }
 
