@@ -76,6 +76,7 @@ namespace ShaderRecompiler
     }
 
     std::uint32_t EmitHostSubgroupLane(SpirvEmitterState& state, std::uint32_t lane) {
+        if (state.waveSpansSubgroups) return EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u));
         if (!state.splitSubgroup) return lane;
         const auto base = EmitBinaryU32(state, spv::OpBitwiseAnd, HostInvocationId(state), ConstantU32(state, ~31u));
         return EmitAddU32(state, base, lane);

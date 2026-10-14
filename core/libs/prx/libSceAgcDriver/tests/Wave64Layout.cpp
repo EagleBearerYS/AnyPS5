@@ -96,6 +96,11 @@ int main() {
         Expect("execz region with vector work only", HostLanes({0x7d880085u, 0xbe8a246au, 0xbf880001u, 0x4a040481u, 0x88fe0a7eu}, 64u, 0u), 64u);
         Expect("LDS in a one-wave workgroup", HostLanes({0xd8340000u, 0x00000201u, 0xbf8cc07fu, 0xd8d80000u, 0x02000001u, 0xbf8cc07fu}, 64u, 64u), 64u);
         Expect("LDS writes in a two-wave workgroup", HostLanes({0xd8340000u, 0x00000201u, 0xbf8cc07fu, 0xd8d80000u, 0x02000001u, 0xbf8cc07fu}, 128u, 128u), 32u);
+        Expect("DPP row shift", HostLanes({0x7e0402fau, 0xff011102u}, 64u, 0u), 64u);
+        Expect("v_permlane16", HostLanes({0xd7770002u, 0x02010102u}, 64u, 0u), 64u);
+        Expect("v_permlanex16", HostLanes({0xd7780002u, 0x02010102u}, 64u, 0u), 64u);
+        Expect("ds_swizzle", HostLanes({0xd8d4041fu, 0x02000002u, 0xbf8cc07fu}, 64u, 0u), 64u);
+        Expect("ds_bpermute", HostLanes({0xdacc0000u, 0x02000201u, 0xbf8cc07fu}, 64u, 0u), 64u);
         ExpectRejection("ballot word of the lane's own half", BallotWordRead(true, 0u), OneLaneRejection::None);
         ExpectRejection("low ballot word read by every lane", BallotWordRead(false, 0u), OneLaneRejection::WaveOperation);
         ExpectRejection("high ballot word read by every lane", BallotWordRead(false, 1u), OneLaneRejection::WaveOperation);
