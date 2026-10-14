@@ -132,8 +132,7 @@ std::vector<std::byte> dmaSourceBytes(std::span<const std::uint32_t> packet) {
         if (dmaSource(packet) != 2) GuestMemory::Read(source, head);
         std::size_t nonzero = 0;
         for (const auto b : head) nonzero += b != std::byte{0};
-        std::fprintf(stderr, "[dma] DMA_DATA 0x%llx -> 0x%llx bytes 0x%zx (source select %u, first 64 bytes %zu nonzero)
-", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, dmaSource(packet), nonzero);
+        std::fprintf(stderr, "[dma] DMA_DATA 0x%llx -> 0x%llx bytes 0x%zx (source select %u, first 64 bytes %zu nonzero)\n", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, dmaSource(packet), nonzero);
     }
     if (dmaSource(packet) != DmaSelectGds) return copySource(address(packet[2], packet[3]), bytes, dmaSource(packet) == 2);
     return copySource(GdsAddress() + packet[2], bytes, false);
