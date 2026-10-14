@@ -3036,6 +3036,34 @@ AgcDriver::Graphics::Context mockContext() {
     return context;
 }
 
+AgcDriver::Graphics::Context mockBdaContext() {
+    auto context = mockContext();
+    context.bufferDeviceAddress = true;
+    context.limits.maxStorageBufferRange = 1u << 27;
+    return context;
+}
+
+BdaTestAccess mockBdaAccess() {
+    return {
+        [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
+        [](std::uint32_t binding) {
+            for (auto it = mock.writes.rbegin(); it != mock.writes.rend(); ++it) {
+                if (it->binding == binding) return it->buffers.at(0);
+            }
+            throw std::runtime_error("missing BDA test descriptor");
+        },
+        [](VkDeviceAddress address) {
+            const auto offset = address - 0x100000000000ULL;
+            const auto buffer = reinterpret_cast<VkBuffer>(offset / 0x10000);
+            return mockBufferMemory(buffer).subspan(offset % 0x10000);
+        },
+        [](std::optional<VkDeviceSize> headroom) {
+            mock.memoryLimit = headroom.has_value() ? std::optional<VkDeviceSize>(mock.allocatedBytes + *headroom) : std::nullopt;
+        },
+        [] { return mock.allocationAttempts; }
+    };
+}
+
 void addressSpaceTeardownTests() {
 #ifdef _WIN32
     _putenv_s("APS5_NO_LEASE_MIRROR", "1");
@@ -5782,6 +5810,15 @@ int main(int argc, char** argv) {
             std::cout << "address-space device teardown releases cached guest allocations\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--heap-mirror-unwatched-window") {
+            {
+                const auto context = mockBdaContext();
+                RunHeapMirrorUnwatchedWindowTests(context, mockBdaAccess());
+            }
+            Require(mock.live == 0, "heap mirror tests over an unwatched import window leaked Vulkan objects");
+            std::cout << "heap mirror over an import window that left the write watch tests passed\n";
+            return 0;
+        }
         {
             AgcDriver::Graphics::PipelineCacheSynchronization synchronization;
             auto pipelineUse = synchronization.LockForPipelineUse();
@@ -5918,27 +5955,8 @@ int main(int argc, char** argv) {
         barycentricEmulationTests();
         copiedWriterIndirectOverlapTests();
         mock = MockVulkan{};
-        auto bdaContext = mockContext();
-        bdaContext.bufferDeviceAddress = true;
-        bdaContext.limits.maxStorageBufferRange = 1u << 27;
-        RunBdaResourceTests(bdaContext, {
-            [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
-            [](std::uint32_t binding) {
-                for (auto it = mock.writes.rbegin(); it != mock.writes.rend(); ++it) {
-                    if (it->binding == binding) return it->buffers.at(0);
-                }
-                throw std::runtime_error("missing BDA test descriptor");
-            },
-            [](VkDeviceAddress address) {
-                const auto offset = address - 0x100000000000ULL;
-                const auto buffer = reinterpret_cast<VkBuffer>(offset / 0x10000);
-                return mockBufferMemory(buffer).subspan(offset % 0x10000);
-            },
-            [](std::optional<VkDeviceSize> headroom) {
-                mock.memoryLimit = headroom.has_value() ? std::optional<VkDeviceSize>(mock.allocatedBytes + *headroom) : std::nullopt;
-            },
-            [] { return mock.allocationAttempts; }
-        });
+        const auto bdaContext = mockBdaContext();
+        RunBdaResourceTests(bdaContext, mockBdaAccess());
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();
         RunUnmappedGapTests();

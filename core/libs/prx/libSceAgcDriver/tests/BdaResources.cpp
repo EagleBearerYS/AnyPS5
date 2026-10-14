@@ -1565,6 +1565,134 @@ void addressMovedBufferTests(const Context& context) {
     recorder.Sync();
 }
 
+class DirectHeap {
+public:
+    static constexpr std::size_t Guard = 65536;
+
+    explicit DirectHeap(std::size_t bytes) : bytes(bytes) {
+        const auto reserved = bytes + 2 * Guard;
+        chunk = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(GuestArena::GuestArenaHighestFree_nid_no_patch(reserved, Guard), reserved, Guard));
+        Require(chunk != nullptr, "cannot place the direct memory heap");
+        data = chunk + Guard;
+#ifdef _WIN32
+        section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, static_cast<DWORD>(bytes), nullptr);
+        Require(section != nullptr, "cannot create the direct memory backing of the heap");
+        GuestArena::GuestArenaMapDirect_nid_postfix(data, bytes, section, 0, PAGE_READWRITE);
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(data, &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT && info.Type == MEM_PRIVATE, "singly mapped direct memory is not resident");
+#else
+        Require(mmap(data, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == data, "cannot map the heap in the guest arena");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, bytes);
+#endif
+    }
+
+    ~DirectHeap() {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        CloseHandle(section);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, bytes);
+        GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+#endif
+        GuestArena::GuestArenaRelease_nid_postfix(chunk, bytes + 2 * Guard);
+    }
+
+    DirectHeap(const DirectHeap&) = delete;
+    DirectHeap& operator=(const DirectHeap&) = delete;
+
+    std::uint8_t* Data() const { return data; }
+    std::uintptr_t Address() const { return reinterpret_cast<std::uintptr_t>(data); }
+
+private:
+    std::size_t bytes;
+    std::uint8_t* chunk = nullptr;
+    std::uint8_t* data = nullptr;
+#ifdef _WIN32
+    HANDLE section = nullptr;
+#endif
+};
+
+void RunHeapMirrorUnwatchedWindowTests(const Context& context, const BdaTestAccess& access) {
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "guest arena or write watching unavailable: heap mirrors over an import window that left the watch not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 2 * piece;
+    constexpr std::size_t bytes = 4 * window;
+    DirectHeap heap(bytes);
+    auto* guest = heap.Data();
+    const auto address = heap.Address();
+    std::memset(guest, 0x11, bytes);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest, bytes, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() {
+            SetImportWatch(context, decided);
+            SetHostImportBudget(0);
+            SetHostImportRangeWindow(std::uint64_t{64} << 20u);
+        }
+    } restore{importing, PrepareImportWatch(importing)};
+    SetImportWatch(importing, ImportWatch::Unwatch);
+    SetHostImportRangeWindow(window);
+    SetHostImportBudget(HostImportLiveBytes() + window + piece);
+    registry(true);
+    const auto* windowed = HostImportFor(importing, address + 16, 32);
+    Require(windowed != nullptr && windowed->base == address && windowed->bytes == window && windowed->unwatched, "an access to the first window of the heap was not imported as that window out of the write watch");
+    Require(!AgcDriver::GuestMemory::Watched(address, window) && AgcDriver::GuestMemory::Watched(address + window, bytes - window), "the window import did not take exactly its window out of the write watch");
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address; });
+        Require(found != ranges.end() && found->deviceAddress != 0u, "the heap range is missing from the BDA table");
+        const auto device = found->deviceAddress;
+        leased.WriteBack();
+        return device;
+    };
+    const auto before = MirrorCounters();
+    const auto device = build();
+    const auto made = MirrorCounters();
+    Require(made.heapMirrors == before.heapMirrors + 1 && made.heapBytes == before.heapBytes + bytes, "a heap whose window import left the write watch was not heap mirrored when its whole import was refused");
+    Require(HostImportCovers(importing, address + 16, 32), "the refused import of the whole heap retired its window import");
+    Require(access.addressBytes(device)[16] == std::byte{0x11} && access.addressBytes(device)[bytes - 1] == std::byte{0x11}, "the heap mirror was not filled");
+    guest[window / 2] = 0x22;
+    guest[window + 8] = 0x33;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(build() == device && MirrorCounters().heapMirrors == made.heapMirrors, "the heap mirror was replaced");
+    Require(access.addressBytes(device)[window / 2] == std::byte{0x22}, "a CPU store into the window outside the write watch did not reach the heap mirror");
+    Require(access.addressBytes(device)[window + 8] == std::byte{0x33}, "a CPU store beside the window outside the write watch did not reach the heap mirror");
+    access.addressBytes(device)[window / 2 + 192] = std::byte{0x77};
+    Require(build() == device && access.addressBytes(device)[window / 2 + 192] == std::byte{0x77}, "the window outside the write watch was compared again in the same collect epoch");
+    const std::array<std::byte, 4> stored{std::byte{0x44}, std::byte{0x44}, std::byte{0x44}, std::byte{0x44}};
+    AgcDriver::GuestMemory::Write(address + window / 2 + 64, stored);
+    Require(build() == device && access.addressBytes(device)[window / 2 + 64] == std::byte{0x44}, "a driver store into the window outside the write watch did not reach the heap mirror in its collect epoch");
+    Require(access.addressBytes(device)[window / 2 + 192] == std::byte{0x11}, "a compare after a driver store left the heap mirror's other bytes stale");
+    access.addressBytes(device)[window / 2 + 192] = std::byte{0x77};
+    guest[window / 2 + 128] = 0x55;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(build() == device && access.addressBytes(device)[window / 2 + 128] == std::byte{0x55}, "a CPU store into the window outside the write watch did not reach the heap mirror in the next collect epoch");
+    Require(access.addressBytes(device)[window / 2 + 192] == std::byte{0x11}, "the window outside the write watch was not compared in the next collect epoch");
+    registry(false);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    }
+    Require(!HostImportCovers(importing, address + 16, 32) && MirrorCounters().heapMirrors == before.heapMirrors && MirrorCounters().heapBytes == before.heapBytes, "the window import or the heap mirror outlived the heap");
+}
+
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     alignas(64) std::array<std::uint32_t, 16> guest{};
     guest[0] = 123;

@@ -698,6 +698,94 @@ void CheckCommittedRanges() {
     Require(!UnchangedCommittedSince(first, 0), "an unknown generation was accepted for the committed parts");
 }
 
+class DirectHeap {
+public:
+    explicit DirectHeap(std::size_t bytes) : bytes(bytes) {
+        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(GuestArena::GuestArenaHighestFree_nid_no_patch(bytes, Block), bytes, Block));
+        Require(memory != nullptr, "cannot place the direct memory heap");
+#ifdef _WIN32
+        section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, static_cast<DWORD>(bytes), nullptr);
+        Require(section != nullptr, "cannot create the direct memory backing of the heap");
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory, bytes, section, 0, PAGE_READWRITE);
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(memory, &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT && info.Type == MEM_PRIVATE, "singly mapped direct memory is not resident");
+#else
+        Require(mmap(memory, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == memory, "cannot map the heap in the guest arena");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, bytes);
+#endif
+        Require(Watched(Address(), bytes), "the heap is not watched");
+    }
+
+    ~DirectHeap() {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        CloseHandle(section);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, bytes);
+        GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+#endif
+        GuestArena::GuestArenaRelease_nid_postfix(memory, bytes);
+    }
+
+    DirectHeap(const DirectHeap&) = delete;
+    DirectHeap& operator=(const DirectHeap&) = delete;
+
+    std::uint8_t* Data() const { return memory; }
+    std::uint64_t Address(std::size_t block = 0) const { return reinterpret_cast<std::uint64_t>(memory) + block * Block; }
+
+private:
+    std::size_t bytes;
+    std::uint8_t* memory = nullptr;
+#ifdef _WIN32
+    HANDLE section = nullptr;
+#endif
+};
+
+void CheckWatchedParts() {
+    if (!GuestArena::GuestArenaAvailable_nid_postfix()) {
+        std::cout << "guest arena unavailable: ranges partly outside the write watch not tested\n";
+        return;
+    }
+    constexpr std::size_t blocks = 4;
+    DirectHeap heap(blocks * Block);
+    const auto base = heap.Address();
+    const auto bytes = blocks * Block;
+    std::memset(heap.Data(), 0x11, bytes);
+    BumpCollectEpoch();
+    const auto synced = CollectWrites(base, bytes);
+    Require(synced != 0 && CollectWatchedWrites(base, bytes) != 0, "a watched heap is not collected");
+    Require(ImportWatched(heap.Address(1), Block, [] { return true; }, false), "an import of the heap's second block that leaves the watch failed");
+    Require(!Watched(heap.Address(1), Block) && Watched(base, Block) && Watched(heap.Address(2), 2 * Block), "an import that leaves the watch did not take exactly its block out of it");
+    Require(CollectWrites(base, bytes) == 0, "a range partly outside the write watch was collected whole");
+    const auto collected = CollectWatchedWrites(base, bytes);
+    Require(collected != 0, "the watched blocks of a range partly outside the write watch were not collected");
+    std::array<std::uint64_t, blocks> generations{};
+    generations.fill(collected);
+    std::array<std::uint8_t, blocks> changed{};
+    Require(ChangedWatchedBlocks(base, bytes, generations, changed), "a range partly outside the write watch reads as untracked");
+    Require(changed == std::array<std::uint8_t, blocks>{BlockUnchanged, BlockUnwatched, BlockUnchanged, BlockUnchanged}, "the blocks of a range partly outside the write watch read wrong after a collect");
+    static_cast<volatile std::uint8_t*>(heap.Data())[8] = 0x22;
+    static_cast<volatile std::uint8_t*>(heap.Data())[Block + 8] = 0x33;
+    BumpCollectEpoch();
+    const auto written = CollectWatchedWrites(base, bytes);
+    Require(written > collected && ChangedWatchedBlocks(base, bytes, generations, changed), "a CPU store into a range partly outside the write watch was not collected");
+    Require(changed == std::array<std::uint8_t, blocks>{BlockWritten, BlockUnwatched, BlockUnchanged, BlockUnchanged}, "a CPU store into a watched block of a range partly outside the write watch was missed");
+    generations.fill(written);
+    Require(MarkWritten(heap.Address(3) + 16, 4) != 0 && ChangedWatchedBlocks(base, bytes, generations, changed) && changed[3] == BlockWritten && changed[2] == BlockUnchanged, "a driver store into a watched block of a range partly outside the write watch was missed");
+    std::uintptr_t arena = 0;
+    std::size_t arenaBytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaBytes);
+    const auto outside = static_cast<std::uint64_t>(arena + arenaBytes);
+    const std::array<std::uint64_t, 1> stamp{written};
+    std::array<std::uint8_t, 1> one{};
+    Require(CollectWatchedWrites(outside, Block) == 0 && !ChangedWatchedBlocks(outside, Block, stamp, one), "memory outside the guest arena is collected as partly watched");
+    Require(ImportWatched(base, bytes, [] { return true; }, false) && !Watched(base, Block), "an import of the whole heap that leaves the watch failed");
+    Require(CollectWatchedWrites(base, bytes) != 0 && ChangedWatchedBlocks(base, bytes, generations, changed), "a heap wholly outside the write watch is not collected");
+    Require(changed == std::array<std::uint8_t, blocks>{BlockUnwatched, BlockUnwatched, BlockUnwatched, BlockUnwatched}, "the blocks of a heap wholly outside the write watch do not read as unwatched");
+}
+
 int main() {
     try {
         if (!WriteWatched()) {
@@ -724,6 +812,7 @@ int main() {
         CheckImportWindow();
         CheckUnwatchedImport();
         CheckCommittedRanges();
+        CheckWatchedParts();
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
         return 1;

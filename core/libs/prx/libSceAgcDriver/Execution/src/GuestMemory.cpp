@@ -1158,6 +1158,34 @@ std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes) {
     return collectWrites(address, bytes, false);
 }
 
+std::uint64_t CollectWatchedWrites(std::uint64_t address, std::size_t bytes) {
+    if (const auto generation = collectWrites(address, bytes, true); generation != 0) return generation;
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(address), bytes)) return 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> watched;
+    std::uint64_t generation = 0;
+    {
+        auto& tracker = Tracker();
+        const auto lock = lockTracker(tracker);
+        tracker.initialize();
+        if (!tracker.watched) return 0;
+        const auto end = address + bytes;
+        for (auto block = tracker.blockOf(address); block <= tracker.blockOf(end - 1); ++block) {
+            const auto from = std::max<std::uint64_t>(address, tracker.blockBegin(block));
+            const auto to = std::min<std::uint64_t>(end, tracker.blockBegin(block) + WriteBlockBytes);
+            if (!tracker.covers(from, static_cast<std::size_t>(to - from))) continue;
+            if (!watched.empty() && watched.back().second == from) watched.back().second = to;
+            else watched.emplace_back(from, to);
+        }
+        if (watched.size() == 1 && watched.front().first == address && watched.front().second == end) return 0;
+        generation = tracker.generation.load(std::memory_order_relaxed);
+    }
+    for (const auto& [first, last] : watched) {
+        generation = collectWrites(first, static_cast<std::size_t>(last - first), true);
+        if (generation == 0) return 0;
+    }
+    return generation;
+}
+
 void BumpCollectEpoch() {
     threadCollectEpoch = nextCollectEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
     collectEpochBumps.fetch_add(1, std::memory_order_relaxed);
@@ -1492,6 +1520,33 @@ bool ChangedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std
         const auto generation = generations[k];
         changed[k] = generation == 0 || tracker.stampOf(block) > generation ? BlockWritten : BlockUnchanged;
         if (k < cpu.size()) cpu[k] = generation == 0 || tracker.cpuStampOf(block) > generation ? 1 : 0;
+    }
+    return true;
+}
+
+bool ChangedWatchedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> generations, std::span<std::uint8_t> changed) {
+    std::fill(changed.begin(), changed.end(), BlockWritten);
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) return false;
+    const bool whole = tracker.covers(address, bytes);
+    if (!whole && !GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(address), bytes)) return false;
+    const auto end = address + bytes;
+    const auto first = tracker.blockOf(address);
+    const auto last = tracker.blockOf(end - 1);
+    for (auto block = first; block <= last; ++block) {
+        const auto k = block - first;
+        if (k >= generations.size() || k >= changed.size()) break;
+        const auto from = std::max<std::uint64_t>(address, tracker.blockBegin(block));
+        const auto to = std::min<std::uint64_t>(end, tracker.blockBegin(block) + WriteBlockBytes);
+        if (!whole && !tracker.covers(from, static_cast<std::size_t>(to - from))) {
+            changed[k] = BlockUnwatched;
+            continue;
+        }
+        const auto generation = generations[k];
+        changed[k] = generation == 0 || tracker.stampOf(block) > generation ? BlockWritten : BlockUnchanged;
     }
     return true;
 }

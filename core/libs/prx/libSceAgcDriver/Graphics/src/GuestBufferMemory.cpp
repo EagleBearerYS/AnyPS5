@@ -73,6 +73,8 @@ struct ImageMirror {
     // Identity for the life of this mirror (see ImageMirrorSerial); the top bit keeps mirror serials
     // apart from host import serials.
     std::uint64_t serial = 0;
+    std::array<std::uint64_t, 3> unwatchedCompared{};
+    std::array<std::uint64_t, 3> unwatchedPending{};
 };
 
 // The address space. An address-based build maps every readable registered range; building that
@@ -1245,19 +1247,22 @@ struct RefreshBlock {
 
 constexpr std::uint8_t SparseCopy = 1;
 constexpr std::uint8_t SparseZero = 2;
+constexpr std::uint8_t HeapCompare = 3;
 
 // Compares a block's guest bytes with the mirror's shadow and copies a changed block into the device
 bool compareBlock(const RefreshBlock& block) {
     const auto offset = static_cast<std::size_t>(block.address - block.mirror->base);
     const auto* guest = reinterpret_cast<const std::byte*>(block.address);
-    if (block.fill != 0) {
+    if (block.fill == SparseCopy || block.fill == SparseZero) {
         auto* target = block.mirror->buffer->Bytes().data() + offset;
         if (block.fill == SparseZero) std::memset(target, 0, block.length);
         else std::memcpy(target, guest, block.length);
         return true;
     }
     if (block.mirror->heap) {
-        std::memcpy(block.mirror->buffer->Bytes().data() + offset, guest, block.length);
+        auto* target = block.mirror->buffer->Bytes().data() + offset;
+        if (block.fill == HeapCompare && std::memcmp(target, guest, block.length) == 0) return false;
+        std::memcpy(target, guest, block.length);
         block.mirror->generations[static_cast<std::size_t>(block.address / 65536 - block.mirror->base / 65536)] = block.generation;
         return true;
     }
@@ -1404,6 +1409,9 @@ void appendBlocks(std::vector<RefreshBlock>& blocks, ImageMirror& mirror, std::u
 void compareBlocks(std::span<const RefreshBlock> blocks) {
     if (blocks.empty()) return;
     const auto copied = RefreshPool::Get().Run(blocks);
+    for (const auto& block : blocks) {
+        if (block.fill == HeapCompare) block.mirror->unwatchedCompared = block.mirror->unwatchedPending;
+    }
     auto& state = Mirrors();
     state.blocksCompared += blocks.size();
     state.blocksCopied += copied;
@@ -1425,15 +1433,24 @@ void appendChangedBlocks(std::span<ImageMirror* const> mirrors, std::uint64_t ge
     for (auto* const pointer : mirrors) {
         auto& mirror = *pointer;
         changed.assign(mirror.generations.size(), 0);
-        GuestMemory::ChangedBlocks(mirror.base, static_cast<std::size_t>(mirror.bytes), mirror.generations, changed);
+        GuestMemory::ChangedWatchedBlocks(mirror.base, static_cast<std::size_t>(mirror.bytes), mirror.generations, changed);
+        bool compared = false;
+        if (std::find(changed.begin(), changed.end(), GuestMemory::BlockUnwatched) != changed.end()) {
+            const std::array<std::uint64_t, 3> key{GuestMemory::CollectEpoch(), GuestMemory::ForgetSerial(), GuestMemory::NewestStamp(mirror.base, static_cast<std::size_t>(mirror.bytes))};
+            const bool memoized = key[0] != 0 && (key[1] & 1u) == 0;
+            compared = memoized && mirror.unwatchedCompared == key;
+            mirror.unwatchedPending = memoized ? key : std::array<std::uint64_t, 3>{};
+        }
         const auto aligned = mirror.base / block * block;
         const auto end = mirror.base + mirror.bytes;
         bool refilled = false;
         for (std::size_t at = 0; at < changed.size(); ++at) {
-            if (changed[at] == 0) continue;
+            if (changed[at] == GuestMemory::BlockUnchanged) continue;
+            const bool unwatched = changed[at] == GuestMemory::BlockUnwatched;
+            if (unwatched && compared) continue;
             const auto from = std::max(mirror.base, aligned + at * block);
-            blocks.push_back({&mirror, from, static_cast<std::size_t>(std::min(end, aligned + (at + 1) * block) - from), generation});
-            refilled = true;
+            blocks.push_back({&mirror, from, static_cast<std::size_t>(std::min(end, aligned + (at + 1) * block) - from), generation, unwatched ? HeapCompare : std::uint8_t{0}});
+            refilled = refilled || !unwatched;
         }
         if (refilled) ++Mirrors().heapRefills;
     }
@@ -1447,7 +1464,7 @@ void refreshHeapMirrors(std::vector<ImageMirror*>& mirrors, std::vector<RefreshB
         const auto begin = mirrors[first]->base;
         const auto bytes = mirrors[last - 1]->base + mirrors[last - 1]->bytes - begin;
         prepareRange(begin, bytes);
-        const auto generation = GuestMemory::CollectWrites(begin, static_cast<std::size_t>(bytes));
+        const auto generation = GuestMemory::CollectWatchedWrites(begin, static_cast<std::size_t>(bytes));
         Require(generation != 0, "a heap mirror's range is no longer write-watched");
         appendChangedBlocks(std::span<ImageMirror* const>(mirrors).subspan(first, last - first), generation, blocks);
         first = last;
@@ -1582,7 +1599,7 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
     for (std::size_t index = 0; index < space.heapRuns.size(); ++index) {
         const auto& run = space.heapRuns[index];
         prepareRange(run.begin, run.bytes);
-        const auto generation = GuestMemory::CollectWrites(run.begin, static_cast<std::size_t>(run.bytes));
+        const auto generation = GuestMemory::CollectWatchedWrites(run.begin, static_cast<std::size_t>(run.bytes));
         Require(generation != 0, "a heap mirror's range is no longer write-watched");
         const auto since = space.verified[index].load(std::memory_order_relaxed);
         if (since == 0 || !GuestMemory::UnchangedSince(run.begin, static_cast<std::size_t>(run.bytes), since)) appendChangedBlocks(std::span<ImageMirror* const>(space.heapMirrors).subspan(run.first, run.last - run.first), generation, blocks);
@@ -1673,7 +1690,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
             if (GuestMemory::Watched(mirror->base, static_cast<std::size_t>(mirror->bytes))) generation = collectPieces(pieces);
         } else {
             prepareRefresh(*mirror, range->address, range->bytes);
-            generation = GuestMemory::CollectWrites(range->address, range->bytes);
+            generation = GuestMemory::CollectWatchedWrites(range->address, range->bytes);
         }
         constexpr std::uint64_t block = 65536;
         mirror->generations.assign(static_cast<std::size_t>(((mirror->base + mirror->bytes + block - 1) / block) - mirror->base / block), generation);
