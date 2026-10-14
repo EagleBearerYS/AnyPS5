@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdio>
 #include <exception>
+#include <set>
 #include <span>
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
@@ -41,14 +42,16 @@ struct Counts {
 Counts Count(std::span<const std::uint32_t> words) {
     Check(words.size() >= 5 && words[0] == spv::MagicNumber, "formatted buffer once: missing SPIR-V module");
     Counts counts{words.size()};
+    std::set<std::uint32_t> formatted;
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> spv::WordCountShift;
         Check(count != 0 && count <= words.size() - offset, "formatted buffer once: malformed SPIR-V instruction");
         const auto opcode = words[offset] & spv::OpCodeMask;
+        if (opcode == spv::OpName && std::string(reinterpret_cast<const char*>(words.data() + offset + 2), (count - 2u) * 4u).find("formatted") != std::string::npos) formatted.insert(words[offset + 1]);
         if (opcode == spv::OpSwitch) ++counts.switches;
-        if (opcode == spv::OpFunctionCall) ++counts.calls;
+        if (opcode == spv::OpFunctionCall && formatted.contains(words[offset + 3])) ++counts.calls;
         if (opcode == spv::OpAtomicCompareExchange) ++counts.compareExchanges;
-        if (opcode == spv::OpFunction) {
+        if (opcode == spv::OpFunction && formatted.contains(words[offset + 2])) {
             ++counts.functions;
             if (count > 3 && (words[offset + 3] & spv::FunctionControlDontInlineMask) != 0) ++counts.notInlined;
         }
