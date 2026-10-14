@@ -2132,7 +2132,7 @@ std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t l
 MirrorStats MirrorCounters() {
     auto& state = Mirrors();
     std::lock_guard lock(state.mutex);
-    MirrorStats stats{0, state.heapBytes, state.rebuilds, state.blocksCopied, state.heapRefills, state.sweeps, state.heapChecks, state.sparseBinds};
+    MirrorStats stats{0, state.heapBytes, state.rebuilds, state.blocksCopied, state.heapRefills, state.sweeps, state.heapChecks, state.sparseBinds, state.blocksCompared};
     for (const auto& [base, mirror] : state.entries) stats.heapMirrors += mirror->heap ? 1 : 0;
     return stats;
 }

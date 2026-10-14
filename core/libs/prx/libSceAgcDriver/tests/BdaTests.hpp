@@ -16,6 +16,7 @@ struct BdaTestAccess {
 
 void RunBdaResourceTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
 bool RunSparseBufferHoleTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
+void RunImageMirrorEpochTests(const AgcDriver::Graphics::Context& context, const BdaTestAccess& access);
 void RunGuestAllocationTests();
 void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
