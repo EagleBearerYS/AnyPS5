@@ -2573,6 +2573,7 @@ struct MockVulkan {
     std::map<VkPipelineLayout, VkPipelineLayoutCreateFlags> pipelineLayoutFlags;
     std::map<VkPipelineLayout, std::vector<VkPushConstantRange>> pipelineLayoutPushRanges;
     std::map<VkGraphicsPipelineLibraryFlagsEXT, VkPipelineLayout> libraryLayouts;
+    std::map<VkGraphicsPipelineLibraryFlagsEXT, VkPipelineCreateFlags> libraryFlags;
     std::uint32_t pipelineCreateCount = 0;
     std::vector<std::array<std::uint32_t, 3>> pipelineSpecializations;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
@@ -2768,6 +2769,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateGraphicsPipelines(VkDevice, VkPipelineC
     const auto* library = static_cast<const VkGraphicsPipelineLibraryCreateInfoEXT*>(infos[0].pNext);
     Require(library != nullptr && library->sType == VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, "missing graphics pipeline library description");
     mock.libraryLayouts[library->flags] = infos[0].layout;
+    mock.libraryFlags[library->flags] = infos[0].flags;
     *pipelines = makeHandle<VkPipeline>();
     ++mock.live;
     return VK_SUCCESS;
@@ -4285,6 +4287,33 @@ void pipelineLibrarySetTests() {
         expectFailure(prebuild, "descriptor set exceeds two slots");
         ClearPipelineLibraries(context.device);
         Require(mock.live == 0, "shader library tests leaked Vulkan objects");
+    }
+}
+
+void pipelineLibraryRetentionTests() {
+    using namespace AgcDriver::Graphics;
+    for (const bool optimized : {true, false}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.graphicsPipelineLibrary = true;
+        context.pipelineLinkTimeOptimization = optimized;
+        context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        State state{};
+        ShaderRecompiler::RecompileResult vertex, fragment;
+        vertex.spirv = makeModule({});
+        fragment.spirv = makeModule({.fragment = true});
+        vertex.variantId = 1;
+        fragment.variantId = 2;
+        const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+        std::array<std::uint32_t, 1> mainKey{11}, fragmentKey{22};
+        PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+        Require(Pipeline::Prebuild(context, state, VertexInputLayout{}, resources, shaders), "graphics pipeline library prebuild was skipped");
+        for (const auto part : {VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT}) {
+            const bool retained = (mock.libraryFlags.at(part) & VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT) != 0u;
+            Require(retained == optimized, optimized ? "a library for an optimized link lost its link-time information" : "a library no optimized link uses retained link-time information");
+        }
+        ClearPipelineLibraries(context.device);
+        Require(mock.live == 0, "shader library retention tests leaked Vulkan objects");
     }
 }
 
@@ -6137,6 +6166,7 @@ int main(int argc, char** argv) {
         RunGuestLeaseWaitTests();
         stateTests();
         pipelineLibrarySetTests();
+        pipelineLibraryRetentionTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
         hardwareScreenOffsetTests();
