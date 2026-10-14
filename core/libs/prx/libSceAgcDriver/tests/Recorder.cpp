@@ -3177,8 +3177,17 @@ void importWatchTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
 #ifdef _WIN32
-    Require(PrepareImportWatch(context) == ImportWatch::Unwatch, "Windows host imports stayed watched by default");
-    std::cout << "import watch decisions: Windows host imports use comparisons\n";
+    if (context.hostImportAlignment == 0 || !WriteWatched()) {
+        std::cout << "host imports or write watching unavailable: import watch decisions not tested\n";
+        return;
+    }
+    const auto probe = ProbeImportWriteProtection(context);
+    Require(probe.failure == nullptr, std::string("(w) the import probe failed at ") + (probe.failure != nullptr ? probe.failure : "") + " (" + std::to_string(static_cast<int>(probe.result)) + ")");
+    std::cout << "import probe: " << probe.writtenAtImport << " of " << probe.pages << " scratch pages marked inside the import, " << probe.writtenAfterSubmit << " after a GPU read, " << probe.writtenAfterFill << " after a GPU write, " << probe.writtenByCpu << " after a CPU store\n";
+    Require(probe.writtenByCpu == 1, "(w) a CPU store into an imported scratch page was not collected exactly");
+    const bool late = probe.writtenAfterSubmit != 0 || probe.writtenAfterFill != 0;
+    Require(PrepareImportWatch(context) == (late ? ImportWatch::Unwatch : ImportWatch::Watch), "(w) the Windows import watch decision does not follow the probe");
+    std::cout << "import watch decisions: Windows host imports " << (late ? "use comparisons" : "stay watched") << "\n";
 #else
     if (context.hostImportAlignment == 0 || !WriteWatched()) {
         std::cout << "host imports or write watching unavailable: import watch decisions not tested\n";
@@ -6491,6 +6500,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--parked-import-unmap-only") {
             gpu.unlock();
             parkedImportUnmapTests(device);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--import-watch-only") {
+            importWatchTests(device);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {

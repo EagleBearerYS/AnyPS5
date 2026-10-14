@@ -334,6 +334,7 @@ int main() {
     setenv("APS5_WRITE_WATCH_IMPORTS", "unwatch", 1);
 #endif
     try {
+        SetImportWatch(mockContext(), ImportWatch::Unwatch);
         IdleRetireOutlivesTheHold();
         BusyRetireOutlivesALaterBatch();
     } catch (const std::exception& error) {

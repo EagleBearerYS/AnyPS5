@@ -1182,8 +1182,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_multisample_guest_access PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_draw_inputs_in_place COMMAND agc_driver_recorder_tests --draw-inputs-in-place-only)
     set_tests_properties(agc_draw_inputs_in_place PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME agc_import_watch COMMAND agc_driver_recorder_tests --import-watch-only)
+    set_tests_properties(agc_import_watch PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_host_import_unmap agc_parked_import_unmap agc_host_import_retirement agc_unit_shadow agc_written_staging agc_label_memory_match agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_multisample_guest_access agc_draw_inputs_in_place PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_host_import_unmap agc_parked_import_unmap agc_host_import_retirement agc_unit_shadow agc_written_staging agc_label_memory_match agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_multisample_guest_access agc_draw_inputs_in_place agc_import_watch PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

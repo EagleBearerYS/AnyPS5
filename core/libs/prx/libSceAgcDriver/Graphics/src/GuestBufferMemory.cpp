@@ -539,9 +539,13 @@ void decideImportWatch(const Context& context, HostImports& state) {
     if (state.watchDevice == context.device) return;
 #ifdef _WIN32
     state.watchDevice = context.device;
-    state.unwatchImports = true;
+    state.unwatchImports = false;
     state.unwatchDmaBufImports = false;
-    if (context.hostImportAlignment != 0 && GuestMemory::WriteWatched()) std::fprintf(stderr, "[write-watch] Windows direct host imports use comparisons; separate shared aliases retain guest write tracking\n");
+    if (context.hostImportAlignment == 0 || !GuestMemory::WriteWatched()) return;
+    const auto probe = ProbeImportWriteProtection(context);
+    state.unwatchImports = probe.failure != nullptr || probe.writtenAfterSubmit != 0 || probe.writtenAfterFill != 0 || probe.writtenByCpu == 0;
+    if (probe.failure != nullptr) std::fprintf(stderr, "[write-watch] host imports and the write watch: unknown (probe failed at %s, %d); imported ranges are compared\n", probe.failure, static_cast<int>(probe.result));
+    else std::fprintf(stderr, "[write-watch] host imports and the write watch: %u of %u scratch pages marked inside the import, %u after a GPU read, %u after a GPU write, %u after a CPU store; imported ranges %s\n", probe.writtenAtImport, probe.pages, probe.writtenAfterSubmit, probe.writtenAfterFill, probe.writtenByCpu, state.unwatchImports ? "are compared" : "stay watched");
 #else
     const auto request = importWatchRequest();
     state.watchDevice = context.device;
@@ -1977,11 +1981,12 @@ void ClearHostImports(VkDevice device) {
     ++state.epoch;
 }
 
-#ifndef _WIN32
 namespace {
 
 void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t bytes, const std::function<const char*(HostImport&, VkResult&)>& importStep, ImportProbe& probe) {
+#ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(base), bytes);
+#endif
     HostImport import{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0};
     VkBuffer destination = VK_NULL_HANDLE;
     VkDeviceMemory destinationMemory = VK_NULL_HANDLE;
@@ -1990,7 +1995,16 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
     bool submitted = false;
     const auto collect = [&](std::uint32_t& pages) {
         pages = 0;
+#ifdef _WIN32
+        std::vector<void*> written(static_cast<std::size_t>(bytes / 4096));
+        ULONG_PTR count = written.size();
+        DWORD granularity = 0;
+        if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, reinterpret_cast<void*>(base), static_cast<SIZE_T>(bytes), written.data(), &count, &granularity) != 0) return false;
+        pages = static_cast<std::uint32_t>(count);
+        return true;
+#else
         return GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes), [](void* count, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::uint32_t*>(count) += static_cast<std::uint32_t>((end - begin) / 4096); }, &pages);
+#endif
     };
     const auto run = [&]() -> const char* {
         std::uint32_t quiet = 0;
@@ -2054,17 +2068,34 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
     if (destination != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, destination, nullptr);
     if (destinationMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, destinationMemory, nullptr);
     if (import.buffer != VK_NULL_HANDLE) destroyImport(context, import);
+#ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(base), bytes);
+#endif
 }
 
 }
-#endif
 
 ImportProbe ProbeImportWriteProtection(const Context& context) {
     ImportProbe probe;
 #ifdef _WIN32
-    static_cast<void>(context);
-    probe.failure = "the Linux write watch";
+    if (context.hostImportAlignment == 0) {
+        probe.failure = "host import support";
+        return probe;
+    }
+    constexpr std::uint64_t page = 4096;
+    const std::uint64_t alignment = std::max<std::uint64_t>(context.hostImportAlignment, page);
+    const std::uint64_t bytes = (4 * page + alignment - 1) / alignment * alignment;
+    probe.pages = static_cast<std::uint32_t>(bytes / page);
+    void* raw = VirtualAlloc(nullptr, static_cast<SIZE_T>(bytes), MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE);
+    if (raw == nullptr) {
+        probe.failure = "VirtualAlloc";
+        return probe;
+    }
+    const auto base = reinterpret_cast<std::uint64_t>(raw);
+    auto* scratch = static_cast<volatile std::uint8_t*>(raw);
+    for (std::uint64_t offset = 0; offset < bytes; offset += page) scratch[offset] = 1;
+    runImportProbe(context, base, bytes, [&](HostImport& import, VkResult& result) { return createHostPointerImport(context, import, result); }, probe);
+    VirtualFree(raw, 0, MEM_RELEASE);
     return probe;
 #else
     if (context.hostImportAlignment == 0) {
