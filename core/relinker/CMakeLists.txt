@@ -452,6 +452,9 @@ if(BUILD_TESTING)
         add_test(NAME linux_gnu_segments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_gnu_segments.py $<TARGET_FILE:relinker>)
         set_tests_properties(linux_gnu_segments PROPERTIES TIMEOUT 20)
+        add_test(NAME windows_main_stack COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_main_stack.py $<TARGET_FILE:relinker>)
+        set_tests_properties(windows_main_stack PROPERTIES TIMEOUT 20)
         add_test(NAME elf_offsets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_elf_offsets.py $<TARGET_FILE:relinker>)
         add_test(NAME conversion_diagnostics COMMAND ${Python3_EXECUTABLE}
