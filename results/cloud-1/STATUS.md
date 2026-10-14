@@ -1,4 +1,4 @@
-READY
+BUSY PM-004 (claimed 2026-10-14T16:09:01Z)
 RESULT:
 - Last task: PRM-003 (#5703 + #5815 + #5851 on main a453108cf7), done: results/cloud-1/PRM-003.md. Before it, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
