@@ -40,6 +40,7 @@
 
 namespace AgcDriver::Graphics {
 bool FrameTraceOn();
+std::uint64_t DepthSurfaceOverlapping(std::uint64_t address, std::uint64_t bytes);
 namespace {
 
 bool overlap(std::uint64_t first, std::size_t firstSize, std::uint64_t second, std::size_t secondSize) {
@@ -2919,6 +2920,15 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
         }
     }
     Require(target == nullptr || !overlap(address, size, target->address, target->bytes), "shader buffer aliases the render target");
+    static const bool traceDepth = std::getenv("APS5_RE8_TRACE_DEPTH") != nullptr;
+    if (traceDepth) {
+        if (const auto plane = DepthSurfaceOverlapping(address, size); plane != 0) {
+            static std::mutex seenMutex;
+            static std::set<std::pair<std::uint64_t, std::uint64_t>> seen;
+            std::lock_guard seenLock(seenMutex);
+            if (seen.insert({address, plane}).second) std::fprintf(stderr, "[depth-overlap] shader buffer 0x%llx+0x%zx (%s) overlaps the depth plane of the surface at 0x%llx\n", static_cast<unsigned long long>(address), size, written ? "written" : "read", static_cast<unsigned long long>(plane));
+        }
+    }
     // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
     static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
     Require(!written || !overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");

@@ -21,6 +21,7 @@
 #include <vector>
 
 namespace AgcDriver::Graphics {
+bool FrameTraceOn();
 namespace {
 
 std::uint64_t depthWrites = 0;
@@ -682,6 +683,8 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
     if (created) {
         surfaces().push_back(std::make_unique<DepthSurface>(context, target));
         surface = surfaces().back().get();
+        static const bool traceDepth = std::getenv("APS5_RE8_TRACE_DEPTH") != nullptr;
+        if (traceDepth) std::fprintf(stderr, "[depth-surface] new: Z 0x%llx stencil 0x%llx htile 0x%llx %ux%u vk%d samples %u (%zu surfaces)\n", static_cast<unsigned long long>(target.address), static_cast<unsigned long long>(target.stencilAddress), static_cast<unsigned long long>(target.htileAddress), target.extent.width, target.extent.height, static_cast<int>(target.format), target.samples, surfaces().size());
     }
     const bool inherits = depthOwners().contains({context.device, target.address});
     surface->clearDepth = target.clearDepth;
@@ -754,7 +757,9 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     };
     {
         std::lock_guard lock(surfacesMutex());
-        if (std::none_of(surfaces().begin(), surfaces().end(), held)) return nullptr;
+        const bool any = std::any_of(surfaces().begin(), surfaces().end(), held);
+        if (static_cast<unsigned>(resource.format) == 22u && FrameTraceOn()) std::fprintf(stderr, "[ftrace] depth-texture 0x%llx %ux%u %s\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, any ? "served by a depth surface" : "no depth surface at this address");
+        if (!any) return nullptr;
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
@@ -913,6 +918,18 @@ bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage
 bool DepthSurfaceAt(std::uint64_t address) {
     std::lock_guard lock(surfacesMutex());
     return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->target.address == address || surface->target.stencilAddress == address; });
+}
+
+std::uint64_t DepthSurfaceOverlapping(std::uint64_t address, std::uint64_t bytes) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        const auto& target = surface->target;
+        if (target.address == 0) continue;
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        const auto plane = DepthSliceBytes(target.extent, d16 ? 2u : 4u);
+        if (address < target.address + plane && target.address < address + bytes) return target.address;
+    }
+    return 0;
 }
 
 }
