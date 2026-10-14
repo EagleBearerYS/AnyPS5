@@ -41,6 +41,7 @@ public:
     [[nodiscard]] std::uint32_t ImmediateU32() const;
 
     void AddArgument(IrValue* argument);
+    void SetOperandsWithoutUses(std::vector<IrValue*> operands, std::vector<IrBlock*> blocks);
     void ReplaceArgument(std::size_t index, IrValue* argument);
     void ReplaceAllUsesWith(IrValue* replacement);
     void SetImmediateU32(std::uint32_t value);

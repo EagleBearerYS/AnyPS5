@@ -1519,16 +1519,16 @@ void ownPlanValues(IrResourcePlan& plan) {
     };
     for (const auto* value : order) {
         if (!closed.contains(value) && !opened.contains(value)) continue;
-        auto* clone = clones.at(value);
+        std::vector<IrValue*> operands;
+        std::vector<IrBlock*> predecessors;
+        operands.reserve(value->ArgumentCount());
+        if (value->IsPhi()) predecessors.reserve(value->ArgumentCount());
         for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
             const auto* argument = value->Argument(index);
-            auto* mapped = argument == nullptr ? nullptr : clones.at(argument);
-            if (value->IsPhi()) {
-                clone->AddPhiOperand(blockFor(value->PhiBlock(index)), mapped);
-            } else {
-                clone->AddArgument(mapped);
-            }
+            operands.push_back(argument == nullptr ? nullptr : clones.at(argument));
+            if (value->IsPhi()) predecessors.push_back(blockFor(value->PhiBlock(index)));
         }
+        clones.at(value)->SetOperandsWithoutUses(std::move(operands), std::move(predecessors));
     }
     for (auto* root : roots) {
         if (*root != nullptr) *root = clones.at(*root);

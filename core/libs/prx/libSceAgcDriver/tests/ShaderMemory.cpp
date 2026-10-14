@@ -434,6 +434,7 @@ void verifyPlanConditionPruning() {
     require(copied == 0, "plan pruning: the address computation under a load the evaluator cannot read was copied");
     const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const auto& value) { return value->Opcode() == IrOpcode::LoadBufferU32; });
     require(copiedLoad != plan.valueStorage.end() && (*copiedLoad)->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
+    require(std::ranges::all_of(plan.valueStorage, [](const auto& value) { return value->Uses().empty() && value->OperandUses().empty() && value->Arguments().capacity() == value->ArgumentCount(); }), "plan compaction: a plan value keeps use lists or spare operand capacity");
     const std::array<std::uint32_t, 4> data{0x100u, 7u, static_cast<std::uint32_t>(wordAddress), static_cast<std::uint32_t>(wordAddress >> 32u)};
     SrtRuntime runtime{data};
     Detail::Evaluator evaluator(plan, runtime);

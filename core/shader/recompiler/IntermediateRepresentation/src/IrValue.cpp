@@ -37,6 +37,17 @@ void IrValue::AddArgument(IrValue* argument) {
     argument->operandUses.push_back(IrUse{this, arguments.size() - 1});
 }
 
+void IrValue::SetOperandsWithoutUses(std::vector<IrValue*> operands, std::vector<IrBlock*> blocks) {
+    if (!arguments.empty() || !phiBlocks.empty()) {
+        throw std::logic_error("IrValue::SetOperandsWithoutUses called on a value that already has operands");
+    }
+    if (IsPhi() ? blocks.size() != operands.size() || std::ranges::find(blocks, nullptr) != blocks.end() : !blocks.empty()) {
+        throw std::invalid_argument("IrValue::SetOperandsWithoutUses needs one predecessor per Phi operand and none for other values");
+    }
+    arguments = std::move(operands);
+    phiBlocks = std::move(blocks);
+}
+
 void IrValue::ReplaceArgument(std::size_t index, IrValue* argument) {
     if (index >= arguments.size()) {
         throw std::out_of_range("IrValue::ReplaceArgument index is out of range");
