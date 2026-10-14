@@ -22,5 +22,6 @@ void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
 void RunColorTargetLayoutTests();
 void RunLiveStackAccessTests();
+void RunPerDrawBench(const AgcDriver::Graphics::Context& context);
 
 #endif
