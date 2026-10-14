@@ -4219,7 +4219,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
             std::fprintf(stderr, "[compute-capture] %s\n", path.string().c_str());
         }
         if (profile && shader.spirv.size() > 100000) std::fprintf(stderr, "[dispatch] creating a pipeline for %zu SPIR-V words (program 0x%llx)\n", shader.spirv.size(), static_cast<unsigned long long>(programAddress));
-        CreateComputePipeline([&](const VkComputePipelineCreateInfo& info, VkPipeline* created) { return Graphics::CreateComputePipeline(context, info, created); }, objects->module, objects->layout, pipelineFlags, 0, specialization.Info(), subgroupSize, &objects->pipeline);
+        CreateComputePipeline([&](const VkComputePipelineCreateInfo& info, VkPipeline* created) { return Graphics::CreateComputePipeline(context, info, created, shader.spirv.size()); }, objects->module, objects->layout, pipelineFlags, 0, specialization.Info(), subgroupSize, &objects->pipeline);
         objects->destroyModule(objects->device, objects->module, nullptr);
         objects->module = VK_NULL_HANDLE;
         Graphics::LogPipelineStatistics_nid_no_patch(context, objects->pipeline);

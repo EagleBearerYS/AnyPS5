@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
+#include <optional>
 #include "ShaderCacheDirectory.hpp"
 #include <chrono>
 #include <cstdio>
@@ -104,23 +106,33 @@ PipelineCache::~PipelineCache() {
     destroy(context.device, base, nullptr);
 }
 
-VkResult PipelineCache::CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) const {
+VkResult PipelineCache::CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const {
     const auto create = caller.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
-    if (session == VK_NULL_HANDLE) return create(caller.device, base, 1, &info, nullptr, pipeline);
+    std::optional<CreationGate> gate;
+    if (session == VK_NULL_HANDLE) {
+        if (words != 0) gate.emplace(words);
+        return create(caller.device, base, 1, &info, nullptr, pipeline);
+    }
     auto lookup = info;
     lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
     const auto found = create(caller.device, base, 1, &lookup, nullptr, pipeline);
     if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
+    if (words != 0) gate.emplace(words);
     return create(caller.device, session, 1, &info, nullptr, pipeline);
 }
 
-VkResult PipelineCache::CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline) const {
+VkResult PipelineCache::CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const {
     const auto create = caller.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
-    if (session == VK_NULL_HANDLE) return create(caller.device, base, 1, &info, nullptr, pipeline);
+    std::optional<CreationGate> gate;
+    if (session == VK_NULL_HANDLE) {
+        if (words != 0) gate.emplace(words);
+        return create(caller.device, base, 1, &info, nullptr, pipeline);
+    }
     auto lookup = info;
     lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
     const auto found = create(caller.device, base, 1, &lookup, nullptr, pipeline);
     if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
+    if (words != 0) gate.emplace(words);
     return create(caller.device, session, 1, &info, nullptr, pipeline);
 }
 
@@ -218,13 +230,17 @@ void PipelineCache::run() {
     }
 }
 
-VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) {
-    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateCompute(context, info, pipeline);
+VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
+    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateCompute(context, info, pipeline, words);
+    std::optional<CreationGate> gate;
+    if (words != 0) gate.emplace(words);
     return context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline);
 }
 
-VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline) {
-    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateGraphics(context, info, pipeline);
+VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
+    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateGraphics(context, info, pipeline, words);
+    std::optional<CreationGate> gate;
+    if (words != 0) gate.emplace(words);
     return context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline);
 }
 

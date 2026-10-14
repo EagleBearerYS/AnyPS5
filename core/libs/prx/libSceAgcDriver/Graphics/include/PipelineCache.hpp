@@ -22,8 +22,8 @@ public:
     PipelineCache(const PipelineCache&) = delete;
     PipelineCache& operator=(const PipelineCache&) = delete;
 
-    VkResult CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) const;
-    VkResult CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline) const;
+    VkResult CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0) const;
+    VkResult CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0) const;
     void Save();
     const std::filesystem::path& BasePath() const { return path; }
     const std::filesystem::path& SessionPath() const { return sessionPath; }
@@ -51,8 +51,8 @@ private:
     std::thread saver;
 };
 
-VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline);
-VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline);
+VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0);
+VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0);
 
 }
 
