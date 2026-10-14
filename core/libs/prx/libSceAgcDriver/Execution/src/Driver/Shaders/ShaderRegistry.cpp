@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/LogMacros.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "ControlFlow/CalleeLinker.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -25,7 +26,6 @@
 #include <list>
 #include <map>
 #include <atomic>
-#include <pthread.h>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -832,17 +832,9 @@ public:
 
 private:
     explicit RegistrationPreparePool(unsigned count) {
-        pthread_attr_t attributes;
-        pthread_attr_init(&attributes);
-        pthread_attr_setstacksize(&attributes, 64u << 20u);
         for (unsigned index = 0; index < count; ++index) {
-            pthread_t thread;
-            if (pthread_create(&thread, &attributes, &RegistrationPreparePool::Main, this) == 0) {
-                pthread_detach(thread);
-                ++threads;
-            }
+            if (HostThread::StartDetached(std::size_t{64} << 20u, &RegistrationPreparePool::Main, this)) ++threads;
         }
-        pthread_attr_destroy(&attributes);
     }
 
     static void* Main(void* argument) {
