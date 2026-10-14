@@ -225,6 +225,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestBufferMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Residency.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
@@ -460,6 +461,24 @@ target_include_directories(agc_shared_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(agc_shared_write_tests PRIVATE libSceAgcDriver libkernel libc)
 set_target_properties(agc_shared_write_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_shared_write_tests)
+
+add_test_executable(agc_residency_tests EXCLUDE_FROM_ALL
+        tests/Residency.cpp
+        Graphics/src/Residency.cpp
+)
+target_include_directories(agc_residency_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_residency_tests PRIVATE libc)
+set_target_properties(agc_residency_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_residency_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_residency_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_residency COMMAND agc_residency_tests)
+    set_tests_properties(agc_residency PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_residency PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 
 add_test_executable(agc_write_tracking_tests EXCLUDE_FROM_ALL
         tests/WriteTracking.cpp
