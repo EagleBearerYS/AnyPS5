@@ -38,6 +38,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -349,6 +350,8 @@ struct VulkanDevice::State {
     bool contextReady = false;
     std::unique_ptr<Graphics::TextureDetiler> detiler;
     std::unique_ptr<Graphics::Recorder> recorder;
+    std::unique_ptr<Graphics::ResidencyGuest> residencyGuest;
+    std::unique_ptr<Graphics::ResidencyDriver> residency;
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
     // last; each is filled once by a doubling chain in device memory.
     std::vector<std::pair<std::array<std::uint32_t, 4>, std::shared_ptr<Graphics::DeviceBuffer>>> patternBuffers;
@@ -682,6 +685,9 @@ struct VulkanDevice::State {
                 }
             }
             Graphics::DestroyShadows(device);
+            if (residency != nullptr) Graphics::RemoveResidencyHooks();
+            residency.reset();
+            residencyGuest.reset();
             recorder.reset();
             // Cached graphics pipelines (with their framebuffers, modules, render passes and layouts)
             // belong to this device and must be destroyed while it lives.
@@ -1726,6 +1732,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores);
     state->recorder->Activate();
+    state->residencyGuest = std::make_unique<Graphics::ResidencyGuest>(state->device);
+    state->residency = std::make_unique<Graphics::ResidencyDriver>(graphicsContext(), *state->recorder, *state->residencyGuest, Graphics::DeviceResidencyPolicy(graphicsContext()));
+    Graphics::InstallResidencyHooks();
     state->context = buildContext();
     state->contextReady = true;
     if (window != nullptr) {
@@ -1814,6 +1823,9 @@ void VulkanDevice::PrepareForReplacement() {
     Graphics::PublishAllShadows(state->context, Graphics::PublishReason::Teardown);
     WaitIdle();
     Graphics::DestroyShadows(state->device);
+    Graphics::RemoveResidencyHooks();
+    state->residency.reset();
+    state->residencyGuest.reset();
 }
 
 void VulkanDevice::WaitIdle() {
@@ -1983,6 +1995,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
         if (drain) return 2;
         recordStore();
         GuestMemory::MarkWritten(address, bytes.size());
+        Graphics::NoteImportWritten(address, bytes.size());
         // Commands() opened the batch the store went into, so the completion is appended to that
         // batch and runs at its reap, after the write-backs of every batch before it.
         recorder.AfterCompletions(address, bytes, stamp, queue, true);
@@ -1992,6 +2005,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // The table entry and the label's own pending-write note (Recorder::NoteLabel).
     recorder.NoteLabel(address, bytes, stamp, queue);
     GuestMemory::MarkWritten(address, bytes.size());
+    Graphics::NoteImportWritten(address, bytes.size());
     // No submit per label: the batch goes out at the queue worker's next non-label packet, at a
     // wait on its range, after APS5_LABEL_FLUSH_US, or at the submission's end (Driver.cpp).
     // Debug aid: APS5_LABEL_SUBMIT_NOW=1 submits every label at once, as before.
@@ -2022,6 +2036,7 @@ bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
     if (!recorder.DumpSamples(import->address + (address - import->base), address)) return false;
     recorder.NotePendingWrite(address, bytes);
     GuestMemory::MarkWritten(address, bytes);
+    Graphics::NoteImportWritten(address, bytes);
     return true;
 }
 
@@ -2207,6 +2222,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     if (uniform && pattern[0] == (pattern[0] & 0xffu) * 0x01010101u) recorder.NotePendingFill(address, bytes, static_cast<std::uint8_t>(pattern[0]));
     else recorder.NotePendingWrite(address, bytes);
     GuestMemory::MarkWritten(address, bytes);
+    Graphics::NoteImportWritten(address, bytes);
     phase(notesMs);
     return true;
 }
@@ -2444,6 +2460,7 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     const bool sourceCurrent = bytes <= knownMax && generation != 0 && !recorder.PendingWriteOverlaps(source, bytes) && !recorder.PendingLabelIn(source, bytes) && !completionStoreOverlaps(source) && !Graphics::StorageTexture::AnyPendingOverlaps(sourceRange) && !Graphics::AnyShadowedOverlaps(sourceRange);
     noteWriter(sourceCurrent ? std::span(reinterpret_cast<const std::byte*>(source), bytes) : std::span<const std::byte>{}, sourceCurrent ? generation : 0);
     recorder.NotePendingWrite(destination, bytes);
+    Graphics::NoteImportWritten(destination, bytes);
     outcome.path = 1;
     return outcome;
 }
@@ -4078,6 +4095,9 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     recordStep(PhaseRecordCommands);
     recorder.Keep(record.objects);
     recorder.Keep(record.resources);
+    if (resources.UsesAddressTable()) {
+        if (auto* residency = Graphics::ResidencyDriver::Active()) residency->KeepChunks();
+    }
     recordStep(PhaseRecordKeeps);
     if (record.dataRefresh != RecordedDispatch::DataRefresh::None) {
         // The template's data buffers take this dispatch's words: a transfer write the pre-dispatch

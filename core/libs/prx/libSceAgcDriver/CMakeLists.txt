@@ -230,6 +230,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Residency.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyMirrors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyDriver.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyGuest.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaPageTable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp

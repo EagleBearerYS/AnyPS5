@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -255,6 +256,7 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
     recorder.QueueKeyStore(import->buffer, first, last, std::move(seed), begin, begin + count);
     recorder.NotePendingFill(begin, count, 0xff);
     GuestMemory::MarkWritten(begin, count);
+    NoteImportWritten(begin, count);
     // After the note: an unlocked memo lookup drops an entry the snapshot does not cover yet. The
     // entry is kept only for the active recorder (the one the flush hook and the lookups consult).
     {

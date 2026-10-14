@@ -4,6 +4,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -1759,8 +1760,16 @@ void ShaderResources::buildComplete() {
         timing.bindingsMs += phase(BuildPhase::Images);
         guestMemory.UploadFinish();
         timing.uploadMs += phase(BuildPhase::Upload);
-        if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory);
-        else if (usesFaultBuffer) bda = std::make_unique<BdaResources>(context);
+        if (usesBda) {
+            if (auto* residency = ResidencyDriver::Active(); residency != nullptr && (pageTableStores || !guestMemory.Writes().empty())) {
+                std::vector<ResidencyRange> grants;
+                for (const auto& [begin, end] : guestMemory.Writes()) grants.push_back({begin, end - begin});
+                residency->BeforeWritingDispatch(grants, pageTableStores);
+            }
+            bda = std::make_unique<BdaResources>(context, guestMemory);
+        } else if (usesFaultBuffer) {
+            bda = std::make_unique<BdaResources>(context);
+        }
         finishImageTables();
         phase(BuildPhase::Bda);
         if (_set != VK_NULL_HANDLE || fragment.set != VK_NULL_HANDLE) {

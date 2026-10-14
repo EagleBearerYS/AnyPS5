@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
@@ -68,6 +69,7 @@ struct GuestBufferMemory::AddressSpace {
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     mutable std::mutex tableMutex;
     mutable std::shared_ptr<const BdaPageTable> pageTable;
+    mutable std::uint64_t residencySerial = 0;
 };
 
 namespace {
@@ -2043,15 +2045,20 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::OwnRanges() cons
 
 std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& context) const {
     Require(uploaded && !committed, "guest GPU address ranges are not available");
+    auto* residency = ResidencyDriver::Active();
+    const auto serial = residency != nullptr ? residency->Manager().Serial() : 0;
     if (space != nullptr) {
         if (space->ranges.empty()) return nullptr;
         std::lock_guard lock(space->tableMutex);
-        if (space->pageTable == nullptr) space->pageTable = BdaPageTable::Build(context, space->ranges);
+        if (space->pageTable == nullptr || space->residencySerial != serial) {
+            space->pageTable = BdaPageTable::Build(context, WithResidentPages(space->ranges));
+            space->residencySerial = serial;
+        }
         return space->pageTable;
     }
     std::vector<ShaderRecompiler::BdaAbi::Range> mapped;
     for (const auto& region : regions) mapped.push_back(addressRange(region));
-    return mapped.empty() ? nullptr : BdaPageTable::Build(context, mapped);
+    return mapped.empty() ? nullptr : BdaPageTable::Build(context, WithResidentPages(mapped));
 }
 
 void GuestBufferMemory::MarkDirectWrites() const {
