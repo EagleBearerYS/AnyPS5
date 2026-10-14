@@ -1848,6 +1848,48 @@ void depthExpandPassTests() {
     colored.context[0x202] = 0x00cc0010u;
     colored.context[0x8f] = 0xfu;
     expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(colored); }, "with color writes");
+
+    auto alwaysPass = expand();
+    alwaysPass.context[0x014] = alwaysPass.context[0x012];
+    alwaysPass.context[0x200] = 0x76u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(alwaysPass).has_value(), "an always-pass depth draw with equal bases and compress-disable bits was taken for a DB expand");
+    alwaysPass.context[0x000] = 0u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(alwaysPass).has_value(), "an always-pass depth draw with equal bases was taken for a DB expand");
+    auto noTarget = expand();
+    noTarget.context[0x010] = 0x20000180u;
+    noTarget.context[0x011] = 0x20000180u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(noTarget).has_value(), "a draw without depth or stencil planes was taken for a DB expand");
+    auto readOnlyStencil = expand();
+    readOnlyStencil.context[0x014] = readOnlyStencil.context[0x012];
+    readOnlyStencil.context[0x015] = 0x20294400u;
+    readOnlyStencil.context[0x002] = 0x02000000u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(readOnlyStencil).has_value(), "a read-only stencil plane with another write base was taken for a DB expand");
+    auto noStencil = expand();
+    noStencil.context[0x011] = 0x20000180u;
+    noStencil.context[0x015] = 0x20294400u;
+    const auto depthOnly = AgcDriver::Graphics::DecodeDepthExpandPass(noStencil);
+    Require(depthOnly.has_value() && depthOnly->source.format == VK_FORMAT_D32_SFLOAT && depthOnly->source.stencilAddress == 0 && depthOnly->destination == 0x20298b0000ull, "the DB expand of a surface without a stencil plane was not taken as a depth-only expand");
+    auto noHtile = expand();
+    noHtile.context[0x010] = 0x00000183u;
+    const auto withoutHtile = AgcDriver::Graphics::DecodeDepthExpandPass(noHtile);
+    Require(withoutHtile.has_value() && withoutHtile->source.htileAddress == 0, "the DB expand of a surface without HTILE kept an HTILE address");
+    auto stencilOnly = expand();
+    stencilOnly.context[0x014] = stencilOnly.context[0x012];
+    stencilOnly.context[0x015] = 0x20294400u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(stencilOnly); }, "of the stencil plane");
+    for (const auto format : {1u, 2u}) {
+        for (const auto stencilInfo : {0x20000181u, 0x20000180u}) {
+            auto other = expand();
+            other.context[0x010] = (0x20000183u & ~3u) | format;
+            other.context[0x011] = stencilInfo;
+            expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(other); }, "of a depth plane other than Z_32_FLOAT");
+        }
+    }
+    for (const auto swizzle : {8u, 20u, 27u, 28u}) {
+        auto other = expand();
+        other.context[0x010] = (0x20000183u & ~0x1f0u) | (swizzle << 4u);
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(other); }, "in a swizzle mode other than SW_64KB_Z_X");
+    }
 }
 
 // SPI_SHADER_Z_FORMAT (0x1c4) and the export enables of DB_SHADER_CONTROL (0x203): Z export needs a
