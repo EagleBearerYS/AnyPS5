@@ -151,6 +151,57 @@ void skipsLeavesThatCopyRsp() {
     require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 2, "a leaf that copies rsp into another register was framed");
 }
 
+Image calledThenUncalled(const std::vector<std::uint8_t>& called, const std::vector<std::uint8_t>& uncalled) {
+    Image result;
+    result.bytes = callTo(0, 0x40);
+    result.bytes.push_back(0xc3);
+    result.bytes = padTo(result.bytes, 0x40);
+    append(result.bytes, called);
+    result.bytes.resize(0x60, 0x90);
+    append(result.bytes, uncalled);
+    result.bytes = padTo(result.bytes, 0x80);
+    result.segments.push_back({1, 5, 0, Base, Base, result.bytes.size(), result.bytes.size(), 16});
+    return result;
+}
+
+void endsBodiesAtAlignedCodeAfterARet() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, LoadBelowRsp);
+    const auto input = calledThenUncalled(framelessLeaf(FramelessPrologue, body, FramelessExit), framelessLeaf(FramelessPrologue, StoreBelowRsp, FramelessExit));
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, {}, report, displacements);
+    require(report.Framed == 1 && report.Exits == 1 && sites.size() == 2 && displacements.size() == 2, "the called leaf was not framed on its own");
+    for (const auto& site : sites) require(site.Address < Base + 0x60, "a leaf reached without a call was framed as part of the leaf before it");
+    for (const auto& displacement : displacements) require(displacement.Offset < 0x60, "an rsp operand of a leaf reached without a call was moved");
+}
+
+void endsBodiesAtTailCallsToTheNextFunction() {
+    std::vector<std::uint8_t> called = FramelessPrologue;
+    append(called, StoreBelowRsp);
+    append(called, {0x85, 0xff, 0x75, 0x06});
+    append(called, FramelessExit);
+    append(called, {0x41, 0x5f, 0x41, 0x5e, 0x5b, 0xe9, 0x02, 0x00, 0x00, 0x00});
+    const auto input = calledThenUncalled(called, framelessLeaf(FramelessPrologue, StoreBelowRsp, FramelessExit));
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, {}, report, displacements);
+    require(sites.empty() && displacements.empty(), "a leaf that tail-calls the function after it was framed together with that function");
+    require(report.Skipped.at("branch leaves the function") == 1, "the tail call was not reported as leaving the function");
+}
+
+void keepsLoopsAlignedAfterAJump() {
+    std::vector<std::uint8_t> loop = FramelessPrologue;
+    append(loop, StoreBelowRsp);
+    append(loop, {0x31, 0xc0, 0xeb, 0x04, 0x66, 0x90, 0xff, 0xc0, 0x3b, 0x44, 0x24, 0xf0, 0x72, 0xf8});
+    append(loop, FramelessExit);
+    const auto input = image({loop});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, {}, report, displacements);
+    require(report.Framed == 1 && sites.size() == 2 && displacements.size() == 2, "a leaf whose loop header is aligned after a jump was not framed");
+}
+
 void leavesOtherFunctions() {
     std::vector<std::uint8_t> nonLeaf = Prologue;
     append(nonLeaf, StoreBelowPushes);
@@ -184,6 +235,9 @@ int main() {
         framesLeafWithoutFramePointer();
         skipsLeavesWithOperandsThatCannotMove();
         skipsLeavesThatCopyRsp();
+        endsBodiesAtAlignedCodeAfterARet();
+        endsBodiesAtTailCallsToTheNextFunction();
+        keepsLoopsAlignedAfterAJump();
         std::cout << "red-zone framer tests passed\n";
         return 0;
     } catch (const std::exception& error) {

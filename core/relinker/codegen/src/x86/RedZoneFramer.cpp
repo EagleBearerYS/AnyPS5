@@ -199,6 +199,16 @@ void frameSegment(
         if (found == insns.end() || found->Offset != offset) return std::nullopt;
         return static_cast<std::size_t>(found - insns.begin());
     };
+    const auto padding = [&](const Insn& insn) {
+        if (insn.Info.IsTwoByteOpcode) return insn.Info.Opcode == 0x1f;
+        return seg[insn.Offset + insn.Info.OpcodeOffset] == 0x90 && (insn.Info.RexPrefix & 1) == 0;
+    };
+    const auto jumpTarget = [](const Insn& insn) -> std::optional<std::size_t> {
+        if (insn.Info.FlowKind != ControlFlowKind::UnconditionalJump || !insn.Info.HasBranchTarget || insn.Info.HasRipRelativeDisp) return std::nullopt;
+        const auto target = static_cast<std::int64_t>(insn.Offset + insn.Length) + insn.Info.BranchDisp;
+        if (target < 0) return std::nullopt;
+        return static_cast<std::size_t>(target);
+    };
 
     for (auto it = starts.begin(); it != starts.end(); ++it) {
         const auto start = *it;
@@ -210,8 +220,15 @@ void frameSegment(
         const auto skip = [&](const char* reason) { ++report.Skipped[reason]; };
 
         std::vector<std::size_t> body;
+        bool afterReturn = false;
+        std::optional<std::size_t> jumpedTo;
         for (auto i = *first; i < insns.size() && insns[i].Offset < limit; ++i) {
             if (seg[insns[i].Offset] == 0xcc && insns[i].Length == 1) break;
+            if (!padding(insns[i])) {
+                if (insns[i].Offset % 16 == 0 && (afterReturn || jumpedTo == insns[i].Offset)) break;
+                afterReturn = insns[i].Info.FlowKind == ControlFlowKind::Return || insns[i].Info.FlowKind == ControlFlowKind::Trap;
+                jumpedTo = jumpTarget(insns[i]);
+            }
             body.push_back(i);
         }
         if (body.size() < 3) continue;
