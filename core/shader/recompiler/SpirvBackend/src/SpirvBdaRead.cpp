@@ -21,7 +21,12 @@ void EmitBdaOverflowCheck(SpirvEmitterState& state, std::uint32_t address, std::
 bool BdaCoherent(const SpirvEmitterState& state, const IrValue& inst) {
     const auto index = inst.Flags<MemoryFlags>().index;
     const auto& memory = state.program.Resources().memoryInfo;
-    return index < memory.size() && memory[index].coherent;
+    if (index >= memory.size()) return false;
+    if (memory[index].coherent) return true;
+    const auto access = BufferAccessOf(inst.Opcode());
+    if (access == BufferAccess::None) return false;
+    const bool store = access == BufferAccess::Write || access == BufferAccess::Atomic;
+    return state.requirements.coherentBuffers && (store || !state.requirements.coherentBufferAlias);
 }
 
 std::uint32_t BdaAccessMask(bool coherent) {

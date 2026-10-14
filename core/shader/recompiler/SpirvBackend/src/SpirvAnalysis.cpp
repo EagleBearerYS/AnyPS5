@@ -365,7 +365,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     throw std::runtime_error("buffer operation has invalid memory metadata");
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
-                requirements.coherentBuffers = requirements.coherentBuffers || (memory.coherent && !memory.gpuDescriptor);
+                requirements.coherentBuffers = requirements.coherentBuffers || memory.coherent;
                 if (!memory.planningOnly) {
                     requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage == IrShaderStage::Compute;
                 }
