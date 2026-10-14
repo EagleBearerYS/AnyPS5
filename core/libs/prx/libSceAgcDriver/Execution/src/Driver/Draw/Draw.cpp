@@ -128,6 +128,30 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             traced += item;
         }
         std::fprintf(stderr, "[ftrace] programs%s\n", traced.c_str());
+        const auto reg = [&](std::uint32_t offset) {
+            const auto found = queue.context.find(offset);
+            return found == queue.context.end() ? 0xffffffffu : static_cast<std::uint32_t>(found->second);
+        };
+        std::string regs;
+        char item[160];
+        std::snprintf(item, sizeof(item), " rc=%08x view=%08x zinfo=%08x sinfo=%08x", reg(0x000), reg(0x002), reg(0x010), reg(0x011));
+        regs += item;
+        std::snprintf(item, sizeof(item), " zread=%02x%08x zwrite=%02x%08x sread=%02x%08x swrite=%02x%08x htile=%02x%08x", reg(0x01a) & 0xffu, reg(0x012), reg(0x01c) & 0xffu, reg(0x014), reg(0x01b) & 0xffu, reg(0x013), reg(0x01d) & 0xffu, reg(0x015), reg(0x01e) & 0xffu, reg(0x005));
+        regs += item;
+        std::snprintf(item, sizeof(item), " dctl=%08x eqaa=%08x cctl=%08x shctl=%08x tmask=%08x smask=%08x aa=%08x samples=%u", reg(0x200), reg(0x201), reg(0x202), reg(0x203), reg(0x08e), reg(0x08f), reg(0x2f8), static_cast<unsigned>(graphics.samples));
+        regs += item;
+        regs += " locs";
+        for (std::uint32_t index = 0; index < 16; ++index) {
+            std::snprintf(item, sizeof(item), "%c%08x", index == 0 ? '=' : ',', reg(0x2fe + index));
+            regs += item;
+        }
+        for (std::uint32_t slot = 0; slot < 8; ++slot) {
+            const auto info = reg(0x31c + slot * 0xfu);
+            if (info == 0xffffffffu || ((info >> 2u) & 0x1fu) == 0) continue;
+            std::snprintf(item, sizeof(item), " cb%u=%02x%08x info=%08x attr=%08x attr2=%08x attr3=%08x view=%08x", slot, reg(0x390 + slot) & 0xffu, reg(0x318 + slot * 0xfu), info, reg(0x31d + slot * 0xfu), reg(0x3b0 + slot), reg(0x3b8 + slot), reg(0x31b + slot * 0xfu));
+            regs += item;
+        }
+        std::fprintf(stderr, "[ftrace] regs%s\n", regs.c_str());
     }
     const auto setMeshIndexBuffer = [&](const Pm4::DrawParameters& parameters) {
         if (!graphics.stages.mesh) return;
