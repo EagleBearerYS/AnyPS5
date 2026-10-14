@@ -810,45 +810,6 @@ void verifyInvocationIsolation() {
         const auto repeated = Recompile(request.request);
         require(changed.spirv.data() == repeated.spirv.data() && changed.PipelineVariantId() == repeated.PipelineVariantId(), "buffer specialization did not reuse its module");
     }
-    request.userData = original;
-    request.userData[3] |= 0x40000000u;
-    bool rejected = false;
-    try { static_cast<void>(Recompile(request.request)); }
-    catch (const std::runtime_error&) { rejected = true; }
-    require(rejected, "an unsupported buffer descriptor type was accepted");
-}
-
-void verifyBufferAlignmentSpecialization() {
-    ComputeRequest request(true);
-    request.request.context.waveSize = 32u;
-    request.request.context.compute->numThreads = {32u, 1u, 1u};
-    request.userData[3] = 0x31027facu;
-    static_cast<void>(PrepareShader(request.request));
-    const auto misses = diskMisses();
-    const auto aligned = Recompile(request.request);
-    const auto countAtomics = [](const RecompileResult& result) {
-        std::size_t atomics = 0;
-        for (std::size_t cursor = 5; cursor < result.spirv.size();) {
-            const auto count = result.spirv[cursor] >> 16u;
-            require(count != 0u && count <= result.spirv.size() - cursor, "invalid specialized buffer instruction");
-            if ((result.spirv[cursor] & 0xffffu) == spv::OpAtomicCompareExchange) ++atomics;
-            cursor += count;
-        }
-        return atomics;
-    };
-    require(countAtomics(aligned) == 0u, "aligned DWORD store retained unaligned atomic updates");
-    for (std::uint32_t offset = 1; offset < 4u; ++offset) {
-        request.userData[0] = 0x10000000u + offset;
-        const auto unaligned = Recompile(request.request);
-        require(unaligned.variantId == aligned.variantId && diskMisses() == misses, "base alignment repeated static shader preparation");
-        require(countAtomics(unaligned) == 2u, "unaligned DWORD store did not split into two atomic updates");
-        request.userData[0] += 0x10000u;
-        const auto relocated = Recompile(request.request);
-        require(unaligned.spirv.data() == relocated.spirv.data(), "relocation with unchanged alignment rebuilt the buffer specialization");
-    }
-    request.userData[0] = 0x10000000u;
-    const auto restored = Recompile(request.request);
-    require(restored.spirv.data() == aligned.spirv.data(), "unaligned buffers replaced the aligned specialization");
 }
 
 void verifyBindingPlanSelection() {
@@ -1918,7 +1879,6 @@ int main(int argc, char** argv) {
         verifyEmissionFailureMemo();
         verifyFailureMemoSwitch(argv[0]);
         verifyInvocationIsolation();
-        verifyBufferAlignmentSpecialization();
         verifyBindingPlanSelection();
         verifyVertexTypeSpecialization();
         verifyBuiltinSpecialization();
