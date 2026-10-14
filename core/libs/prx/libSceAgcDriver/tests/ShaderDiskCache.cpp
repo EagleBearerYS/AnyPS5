@@ -1501,7 +1501,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
             if (!sameBlock(a.PhiBlock(operand), b.PhiBlock(operand))) return false;
         }
     }
-    if (left.stage != right.stage || left.shaderHash != right.shaderHash || left.userDataBase != right.userDataBase || left.userDataCount != right.userDataCount || left.srgbDecodeFormats != right.srgbDecodeFormats) return false;
+    if (left.stage != right.stage || left.shaderHash != right.shaderHash || left.userDataBase != right.userDataBase || left.userDataCount != right.userDataCount || left.srgbDecodeFormats != right.srgbDecodeFormats || left.workgroupThreads != right.workgroupThreads) return false;
     if (left.memoryInfo != right.memoryInfo || left.descriptorSources.size() != right.descriptorSources.size() || left.controlFlow.size() != right.controlFlow.size() || left.srtReads.size() != right.srtReads.size()) return false;
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
@@ -1697,7 +1697,6 @@ void verifyPlanRoundTrip() {
     require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
     require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
     require(samePlan(handBuilt, handDecoded), "the decoded hand-built plan differs from the plan in a field or a value");
-    require(handDecoded.workgroupThreads == handBuilt.workgroupThreads, "the decoded plan lost the workgroup threads");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);
