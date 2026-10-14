@@ -83,9 +83,6 @@ target_compile_features(relinker_core PUBLIC cxx_std_20)
 set_target_properties(relinker_core PROPERTIES CXX_EXTENSIONS OFF)
 
 if(BUILD_TESTING)
-    add_test_executable(red_zone_framer_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerTests.cpp)
-    target_link_libraries(red_zone_framer_tests PRIVATE relinker_core)
-    add_test(NAME red_zone_framer COMMAND red_zone_framer_tests)
     add_test_executable(relinker_conversion_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ConversionTests.cpp)
     target_link_libraries(relinker_conversion_tests PRIVATE relinker_core)
     add_test(NAME relinker_conversion COMMAND relinker_conversion_tests)
@@ -242,6 +239,10 @@ if(BUILD_TESTING)
     )
     add_test(NAME rewrite_boundaries COMMAND rewrite_boundaries_tests)
     set_tests_properties(rewrite_boundaries PROPERTIES TIMEOUT 20)
+
+    add_test_executable(red_zone_framer_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerTests.cpp)
+    target_link_libraries(red_zone_framer_tests PRIVATE relinker_core)
+    add_test(NAME red_zone_framer COMMAND red_zone_framer_tests)
 
     add_test_executable(cli_args_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/CliArgsTests.cpp
