@@ -50,10 +50,10 @@ std::size_t Driver::drawCacheEntries() {
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
     if (added) {
         ++drawCacheVariants;
-        drawCacheVariantBytes += variantBytes(variant);
+        drawCacheVariantBytes += DispatchVariantBytes(variant);
     } else {
         --drawCacheVariants;
-        drawCacheVariantBytes -= variantBytes(variant);
+        drawCacheVariantBytes -= DispatchVariantBytes(variant);
     }
 }
 
