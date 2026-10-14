@@ -1,4 +1,4 @@
-READY
+BUSY GAC-002 (claimed 2026-10-14T19:34:22Z)
 RESULT:
 - Last task: PM-010 (depth read through an aliased mapping: code map, fix sketches and a red test; test/depth-alias-red at b3c988d36 on the fork), done: results/cloud-1/PM-010.md. Before it: PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
