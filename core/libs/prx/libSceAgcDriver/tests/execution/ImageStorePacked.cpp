@@ -49,6 +49,13 @@ alignas(256) constexpr std::array<std::uint32_t, 17> MipCode{
     0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 16> DeepMipCode{
+    0x4a500081, 0xd5690014, 0x0201ff28, 0x9e3779b1, 0x4a2a28ff, 0x7f4a7c15, 0x4a2c28ff, 0xfe94f82a,
+    0x4a2e28ff, 0x7ddf743f, 0x7e3c0280, 0x7e3e0280, 0x7e400300, 0xf02c1b08, 0x0001141e, 0xbf810000,
+};
+
+enum class Pattern { Rows, Mips, DeepMips };
+
 class GuestBlock {
 public:
     GuestBlock() {
@@ -98,12 +105,12 @@ constexpr std::array<Format, 10> Formats{{
     {"32_32_32_32_FLOAT", 77u, 16u},
 }};
 
-std::uint32_t Levels(bool mip) {
-    return mip ? 2u : 1u;
+std::uint32_t Levels(Pattern pattern) {
+    return pattern == Pattern::DeepMips ? 6u : pattern == Pattern::Mips ? 2u : 1u;
 }
 
-std::vector<AgcDriver::Graphics::TileMipLayout> Mips(const Format& format, bool mip) {
-    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width, Height, Levels(mip));
+std::vector<AgcDriver::Graphics::TileMipLayout> Mips(const Format& format, Pattern pattern) {
+    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width, Height, Levels(pattern));
 }
 
 std::uint64_t TexelOffset(const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x, std::uint32_t y) {
@@ -133,11 +140,15 @@ void Store(std::vector<std::uint8_t>& bytes, const AgcDriver::Graphics::TileMipL
     std::memcpy(bytes.data() + TexelOffset(mip, format, x, y), words.data(), format.bytes);
 }
 
-std::vector<std::uint8_t> Expected(const Format& format, bool mip) {
-    const auto mips = Mips(format, mip);
+std::vector<std::uint8_t> Expected(const Format& format, Pattern pattern) {
+    const auto mips = Mips(format, pattern);
     auto bytes = Initial();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        if (mip) {
+        if (pattern == Pattern::DeepMips) {
+            if (tid < mips.size()) Store(bytes, mips[tid], format, 0u, 0u, 0xbu, tid);
+            continue;
+        }
+        if (pattern == Pattern::Mips) {
             const auto level = tid & 1u;
             Store(bytes, mips[level], format, tid >> 1u, 4u - 2u * level, 0xbu, tid);
             continue;
@@ -164,13 +175,13 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t f
     };
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, const Format& format, std::uint32_t swizzle, bool mip) {
-    const auto mips = Mips(format, mip);
+void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, const Format& format, std::uint32_t swizzle, Pattern pattern) {
+    const auto mips = Mips(format, pattern);
     Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= TexelBytes, std::string("image store packed: the mip chain of ") + format.name + " does not fit the texel storage");
     const auto initial = Initial();
     std::copy(initial.begin(), initial.end(), texels);
     std::vector<std::uint32_t> userData(16, 0u);
-    const auto texture = TextureDescriptor(texels, format.format, swizzle, Levels(mip));
+    const auto texture = TextureDescriptor(texels, format.format, swizzle, Levels(pattern));
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
@@ -191,9 +202,9 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const 
     device.WaitIdle();
 }
 
-void Check(const std::uint8_t* texels, const Format& format, bool mip, const std::string& what) {
-    const auto expected = Expected(format, mip);
-    const auto mips = Mips(format, mip);
+void Check(const std::uint8_t* texels, const Format& format, Pattern pattern, const std::string& what) {
+    const auto expected = Expected(format, pattern);
+    const auto mips = Mips(format, pattern);
     for (std::uint32_t level = 0; level < mips.size(); ++level) {
         for (std::uint32_t y = 0; y < mips[level].height; ++y) {
             for (std::uint32_t x = 0; x < mips[level].width; ++x) {
@@ -218,7 +229,7 @@ void Check(const std::uint8_t* texels, const Format& format, bool mip, const std
 void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& format, const std::string& reason) {
     std::string refusal;
     try {
-        Run(device, texels, StoreCode, format, IdentitySwizzle, false);
+        Run(device, texels, StoreCode, format, IdentitySwizzle, Pattern::Rows);
     } catch (const std::exception& error) {
         refusal = error.what();
     }
@@ -234,14 +245,16 @@ int main() {
         GuestBlock block;
         auto* texels = block.Data();
         for (const auto& format : Formats) {
-            Run(*device, texels, StoreCode, format, IdentitySwizzle, false);
-            Check(texels, format, false, "image_store_pck");
+            Run(*device, texels, StoreCode, format, IdentitySwizzle, Pattern::Rows);
+            Check(texels, format, Pattern::Rows, "image_store_pck");
         }
-        Run(*device, texels, StoreCode, Formats[6], ReversedSwizzle, false);
-        Check(texels, Formats[6], false, "image_store_pck with a swizzled descriptor");
+        Run(*device, texels, StoreCode, Formats[6], ReversedSwizzle, Pattern::Rows);
+        Check(texels, Formats[6], Pattern::Rows, "image_store_pck with a swizzled descriptor");
         for (const auto& format : {Formats[6], Formats[9]}) {
-            Run(*device, texels, MipCode, format, IdentitySwizzle, true);
-            Check(texels, format, true, "image_store_mip_pck");
+            Run(*device, texels, MipCode, format, IdentitySwizzle, Pattern::Mips);
+            Check(texels, format, Pattern::Mips, "image_store_mip_pck");
+            Run(*device, texels, DeepMipCode, format, IdentitySwizzle, Pattern::DeepMips);
+            Check(texels, format, Pattern::DeepMips, "image_store_mip_pck into each of six levels, the lanes past the last level writing nothing");
         }
         RequireRefused(*device, texels, {"8_8_8_8_UNORM", 56u, 4u}, "not reproducible");
         RequireRefused(*device, texels, {"32_32_32_FLOAT", 74u, 12u}, "does not write");
