@@ -1,0 +1,3 @@
+BASE=933b8f4d68695d368642ff9bdc7650f9afa59fb8
+REPEAT=20
+EXTRA_TESTS='agc_driver_waterfall_images'
