@@ -212,6 +212,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceOverlay.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TrophyPopup.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DepthSurface.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTarget.cpp
@@ -301,6 +302,7 @@ target_link_libraries(libSceAgcDriver PRIVATE
         SDL2-static
         libc
         libkernel
+        libSceNpTrophy2
         jpeg_turbo
         ${CMAKE_DL_LIBS}
 )
@@ -1254,6 +1256,37 @@ target_link_libraries(agc_performance_overlay_tests PRIVATE
 )
 set_target_properties(agc_performance_overlay_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_performance_overlay_tests)
+
+add_test_executable(agc_trophy_popup_tests EXCLUDE_FROM_ALL
+        tests/TrophyPopup.cpp
+)
+target_include_directories(agc_trophy_popup_tests PRIVATE
+        ${LIBS_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+)
+target_link_libraries(agc_trophy_popup_tests PRIVATE
+        libSceAgcDriver
+        libSceNpTrophy2
+        libc
+)
+set_target_properties(agc_trophy_popup_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_trophy_popup_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_trophy_popup_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_trophy_popup COMMAND agc_trophy_popup_tests)
+    add_test(NAME agc_trophy_popup_listener COMMAND agc_trophy_popup_tests listener)
+    add_test(NAME agc_trophy_popup_disabled COMMAND agc_trophy_popup_tests disabled)
+    set_tests_properties(agc_trophy_popup agc_trophy_popup_listener PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION "ANYPS5_TROPHY_POPUP=unset:")
+    set_tests_properties(agc_trophy_popup_disabled PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_TROPHY_POPUP=0")
+    if(WIN32)
+        set_tests_properties(agc_trophy_popup agc_trophy_popup_listener PROPERTIES ENVIRONMENT_MODIFICATION
+            "ANYPS5_TROPHY_POPUP=unset:;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(agc_trophy_popup_disabled PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     set_target_properties(agc_performance_overlay_statistics_tests agc_performance_overlay_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
