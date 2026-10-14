@@ -367,9 +367,43 @@ void ReportThreadCounts(const char* prefix, std::size_t limit) {
     }
 }
 
+struct AliasedRun {
+    std::atomic<std::uint64_t> start {0};
+    std::atomic<std::uint64_t> stop {0};
+};
+
+constexpr std::size_t kAliasedRuns = 4096;
+AliasedRun g_aliasedRuns[kAliasedRuns];
+std::atomic<std::size_t> g_aliasedRunCount {0};
+std::atomic<std::uint64_t> g_resumedInAliased {0};
+
+void RecordAliasedRun(std::uintptr_t start, std::uintptr_t stop) {
+    const auto index = g_aliasedRunCount.fetch_add(1, std::memory_order_acq_rel);
+    if (index < kAliasedRuns) {
+        g_aliasedRuns[index].start.store(start, std::memory_order_relaxed);
+        g_aliasedRuns[index].stop.store(stop, std::memory_order_release);
+    }
+    if (index < 200) Report("[resumed-faults] run 0x%llx+0x%llx moved into its section for an aliased import\n", static_cast<unsigned long long>(start), static_cast<unsigned long long>(stop - start));
+}
+
+bool InAliasedRun(std::uint64_t address) {
+    const auto count = std::min(g_aliasedRunCount.load(std::memory_order_acquire), kAliasedRuns);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto stop = g_aliasedRuns[index].stop.load(std::memory_order_acquire);
+        if (address < stop && address >= g_aliasedRuns[index].start.load(std::memory_order_relaxed)) return true;
+    }
+    return false;
+}
+
+const bool g_aliasedRunHookInstalled = [] {
+    if (std::getenv("APS5_RE8_RESUMED_FAULTS") != nullptr) GuestArena::SetAliasedRunHook(&RecordAliasedRun);
+    return true;
+}();
+
 void ReportResumedPeriodically() {
     static const bool periodic = std::getenv("APS5_RE8_RESUMED_FAULTS") != nullptr;
     if (!periodic) return;
+    static_cast<void>(g_aliasedRunHookInstalled);
     const auto now = GetTickCount64();
     auto last = g_lastResumedReport.load(std::memory_order_relaxed);
     if (last == 0) {
@@ -379,7 +413,7 @@ void ReportResumedPeriodically() {
     if (now - last < 10000u || !g_lastResumedReport.compare_exchange_strong(last, now)) return;
     const auto total = g_resumedWriteCount.load(std::memory_order_relaxed);
     const auto before = g_resumedAtLastReport.exchange(total, std::memory_order_relaxed);
-    Report("[resumed-faults] %llu in the last %llu ms, %llu in all\n", static_cast<unsigned long long>(total - before), static_cast<unsigned long long>(now - last), static_cast<unsigned long long>(total));
+    Report("[resumed-faults] %llu in the last %llu ms, %llu in all; %llu in all inside the %llu runs moved into sections for aliased imports\n", static_cast<unsigned long long>(total - before), static_cast<unsigned long long>(now - last), static_cast<unsigned long long>(total), static_cast<unsigned long long>(g_resumedInAliased.load(std::memory_order_relaxed)), static_cast<unsigned long long>(g_aliasedRunCount.load(std::memory_order_relaxed)));
     ReportThreadCounts("[resumed-faults]   ", 6);
     std::pair<std::uint64_t, std::uint64_t> regions[6] {};
     for (const auto& slot : g_faultRegions) {
@@ -399,6 +433,7 @@ void ReportResumedPeriodically() {
 void NoteResumedWrite(const EXCEPTION_POINTERS* info) {
     g_resumedWriteCount.fetch_add(1, std::memory_order_relaxed);
     CountFaultRegion(static_cast<std::uint64_t>(info->ExceptionRecord->ExceptionInformation[1]));
+    if (InAliasedRun(static_cast<std::uint64_t>(info->ExceptionRecord->ExceptionInformation[1]))) g_resumedInAliased.fetch_add(1, std::memory_order_relaxed);
     ReportResumedPeriodically();
     auto* entry = ResumedWritesOf(GetCurrentThreadId(), true);
     if (entry == nullptr) return;

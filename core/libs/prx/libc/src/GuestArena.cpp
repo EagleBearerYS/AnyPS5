@@ -301,6 +301,12 @@ void GuestArenaRange_nid_postfix(std::uintptr_t* base, std::size_t* bytes) {
     *bytes = Arena::Get().Size();
 }
 
+#ifdef _WIN32
+void SetAliasedRunHook(void (*hook)(std::uintptr_t start, std::uintptr_t stop)) {
+    aliasedRunHook.store(hook, std::memory_order_release);
+}
+#endif
+
 namespace {
 
 std::invalid_argument OutsideArena(const char* operation, const void* pointer, std::size_t bytes) {

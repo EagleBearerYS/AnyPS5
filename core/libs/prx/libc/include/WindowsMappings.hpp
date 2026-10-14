@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,8 @@
 #include <system_error>
 
 namespace GuestArena {
+
+inline std::atomic<void (*)(std::uintptr_t, std::uintptr_t)> aliasedRunHook {nullptr};
 
 class WindowsMappings {
 public:
@@ -613,6 +616,7 @@ private:
         const auto run = std::prev(residentRuns.upper_bound(address));
         const auto start = run->first;
         const auto stop = run->second.end;
+        if (const auto hook = aliasedRunHook.load(std::memory_order_acquire)) hook(start, stop);
         DWORD previous;
         if (!VirtualProtect(reinterpret_cast<void*>(start), stop - start, PAGE_READONLY, &previous)) fail("fence resident guest pages");
         const auto section = views.at(start).section;

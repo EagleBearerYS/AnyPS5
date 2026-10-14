@@ -73,6 +73,10 @@ private:
     bool open;
 };
 
+#ifdef _WIN32
+void SetAliasedRunHook(void (*hook)(std::uintptr_t start, std::uintptr_t stop));
+#endif
+
 }
 
 #endif
