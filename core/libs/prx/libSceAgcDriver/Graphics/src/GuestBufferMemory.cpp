@@ -2507,6 +2507,16 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     return state.device == context.device && findImport(state, address, address + bytes) != nullptr;
 }
 
+bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device) return false;
+    const auto next = state.imports.lower_bound(address);
+    if (next != state.imports.end() && next->first < address + bytes) return true;
+    return next != state.imports.begin() && std::prev(next)->second.base + std::prev(next)->second.bytes > address;
+}
+
 GuestBufferMemory::GuestBufferMemory(const Context& context) : context(context) {}
 
 bool GuestBufferMemory::WritesOverlap(std::uint64_t address, std::size_t bytes) const {
