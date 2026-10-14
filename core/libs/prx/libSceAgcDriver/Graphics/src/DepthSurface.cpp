@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -1067,6 +1068,13 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         recordPlaneCopy(context, plane, destination, source.extent);
     }
     destination->MarkDirty();
+    // Stored at once into a host-imported write base, where the store is only recorded: an
+    // address-based build reads the imported heaps in place without storing the results pending in
+    // them (GuestBufferMemory), so such a program reading the write base as a buffer would see the
+    // CPU's bytes. Elsewhere the plane stays pending like a shader's results, which every reader of
+    // that memory stores first.
+    const auto bytes = static_cast<std::size_t>(destination->GuestBytes());
+    if (HostImportFor(context, pass.destination, bytes) != nullptr) StorageTexture::FlushPending(pass.destination, bytes, nullptr, "DB expand");
     static bool reported[3] = {};
     if (!std::exchange(reported[static_cast<int>(read)], true)) {
         const auto address = static_cast<unsigned long long>(source.address);
