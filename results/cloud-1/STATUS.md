@@ -1,4 +1,4 @@
-READY
+BUSY PM-017 (claimed 2026-10-14T20:28:58Z)
 RESULT:
 - Last task: GAC-002 (execute the DB out-of-place depth expand, red/green test; fix/agc-db-depth-expand-out-of-place at 0a4f81005 on the fork), done: results/cloud-1/GAC-002.md. Before it: PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
