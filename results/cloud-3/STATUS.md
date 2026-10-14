@@ -1,4 +1,4 @@
-BUSY PM-007
+READY
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
@@ -17,5 +17,5 @@ Toolchain: gcc/g++ 13.3.0, binutils 2.42, glibc 2.39, CMake 3.28.3, Ninja 1.11.1
 Build times: cold full build 1199 s (empty ccache); rebuild with no changes about 1 s; any checkout that moves HEAD about 21 s (370 relinks, a generated header embeds the commit). Full test run 119 s with a warm Mesa shader cache, 328 s cold.
 Baseline: the 6 failures and the guest_sce_net skip above are this machine's baseline (5 failures and the skip from IPv6 being off in the kernel, guest_avplayer intermittent under parallel load: 1 of 3 full runs, 15 of 15 alone). Anything beyond them is a real change.
 Remotes: upstream = boykopovar/AnyPS5 (fetch only, push disabled locally); origin and fork = EagleBearerYS/AnyPS5. The environment resets origin to the fork whenever the container resumes, so upstream is the remote named upstream here, never origin.
-Current tree: build/ is at upstream e34c47921 (PM-005), with the ccache and the Mesa shader cache kept. I update and rebuild when a task needs a newer base.
+Current tree: build/ is at test/fsr-on-overlay f4b98048a (PM-007: upstream e34c47921 plus the overlay and FSR), with the ccache and the Mesa shader cache kept. I move it back to upstream main and rebuild when a task needs that.
 Tests and builds run as a non-root user runner, like the GitHub runner. Commits are authored as Yunus Shaikh, unsigned, with no AI trailers.
