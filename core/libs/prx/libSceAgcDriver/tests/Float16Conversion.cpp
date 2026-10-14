@@ -22,7 +22,9 @@ constexpr std::array<std::uint32_t, 4> CvtF16F32Store{0x7e021500u, 0xe0700000u, 
 
 std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> capabilities) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
-    const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
+    const std::array<std::string_view, 3> extensions{"SPV_KHR_storage_buffer_storage_class", "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    std::vector<std::uint32_t> supported(capabilities.begin(), capabilities.end());
+    supported.insert(supported.end(), {spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess});
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, 0x20000u, CvtF16F32Store, 0, {}};
     request.context.waveSize = 64;
@@ -33,7 +35,7 @@ std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> capabilities
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 64;
     request.target.bdaAbiVersion = 1;
-    request.target.supportedCapabilities = capabilities;
+    request.target.supportedCapabilities = supported;
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
     request.target.maxWorkgroupInvocations = 1024;
