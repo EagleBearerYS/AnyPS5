@@ -438,6 +438,15 @@ void decodeSampleLocations(const Registers& cx, State& state) {
             state.sampleLocationGrid |= bits != state.sampleLocations[sample];
         }
     }
+    static const bool strict = std::getenv("APS5_RE8_STRICT_SAMPLE_LOCATIONS") != nullptr;
+    if (state.sampleLocationGrid && !strict) {
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            std::fprintf(stderr, "[re8-sample-grid] sample locations varying between pixels (%u samples) use pixel (0,0)'s for every pixel\n", samples);
+        }
+        state.sampleLocationGrid = false;
+    }
 }
 
 bool colorControlSupported(std::uint32_t colorControl, bool hasColorTarget) {
