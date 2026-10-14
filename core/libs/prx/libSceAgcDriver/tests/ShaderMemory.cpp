@@ -368,6 +368,81 @@ void verifyRegisterSources() {
     require(!EquivalentValue(plan, &samplerRegister, &firstVector), "different register types were merged");
 }
 
+void verifyPlanConditionPruning() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t ids = 0;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t value) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(value);
+        return immediate;
+    };
+    const auto userData = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto equal = [&](IrValue& left, IrValue& right) -> IrValue& {
+        auto& compare = make(IrOpcode::IEqual32, IrType::Bool);
+        compare.AddArgument(&left);
+        compare.AddArgument(&right);
+        return compare;
+    };
+    constexpr std::uint32_t Additions = 64;
+    IrValue* address = &userData(0);
+    for (std::uint32_t index = 0; index < Additions; ++index) {
+        auto& sum = make(IrOpcode::IAdd32, IrType::U32);
+        sum.AddArgument(address);
+        sum.AddArgument(&constant(4));
+        address = &sum;
+    }
+    auto& load = make(IrOpcode::LoadBufferU32, IrType::U32);
+    load.AddArgument(address);
+    auto& pair = make(IrOpcode::CompositeConstructU32x2, IrType::U32x2);
+    pair.AddArgument(&userData(1));
+    pair.AddArgument(&load);
+    auto& low = make(IrOpcode::CompositeExtractU32x2, IrType::U32);
+    low.AddArgument(&pair);
+    low.AddArgument(&constant(0));
+    static std::uint32_t word = 5;
+    const auto wordAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&word));
+    auto& handle = make(IrOpcode::CompositeConstructU64, IrType::U64);
+    handle.AddArgument(&userData(2));
+    handle.AddArgument(&userData(3));
+    auto& read = make(IrOpcode::LoadAddressU32, IrType::U32);
+    read.SetFlags(MemoryFlags{0, 0});
+    read.AddArgument(&handle);
+    read.AddArgument(&constant(0));
+    IrProgram program;
+    auto& resources = program.Resources();
+    resources.srtPlanComplete = true;
+    resources.resourceTrackingComplete = true;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    resources.memoryInfo.push_back(memory);
+    resources.controlFlow.push_back({&equal(load, constant(0)), {1, 2}, {}, {}});
+    resources.controlFlow.push_back({&equal(low, constant(7)), {3, 4}, {}, {}});
+    resources.controlFlow.push_back({&equal(read, constant(5)), {5, 6}, {}, {}});
+    const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+    const auto copied = std::ranges::count_if(plan.valueStorage, [](const auto& value) { return value->Opcode() == IrOpcode::IAdd32; });
+    require(copied == 0, "plan pruning: the address computation under a load the evaluator cannot read was copied");
+    const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const auto& value) { return value->Opcode() == IrOpcode::LoadBufferU32; });
+    require(copiedLoad != plan.valueStorage.end() && (*copiedLoad)->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
+    const std::array<std::uint32_t, 4> data{0x100u, 7u, static_cast<std::uint32_t>(wordAddress), static_cast<std::uint32_t>(wordAddress >> 32u)};
+    SrtRuntime runtime{data};
+    Detail::Evaluator evaluator(plan, runtime);
+    std::uint32_t result = 0;
+    require(!evaluator.Evaluate(plan.controlFlow[0].condition, result), "plan pruning: a condition on a vector load was evaluated");
+    require(evaluator.Evaluate(plan.controlFlow[1].condition, result) && result == 1u, "plan pruning: a condition read through an extracted pair was not evaluated");
+    require(evaluator.Evaluate(plan.controlFlow[2].condition, result) && result == 1u, "plan pruning: a condition on a raw read lost its handle");
+}
+
 void verifySignedMinimum() {
     using namespace ShaderRecompiler;
     IrResourcePlan plan;
@@ -4047,6 +4122,7 @@ int main(int argc, char** argv) {
         verifyOutOfRangeConstantReads();
         verifySignedMinimum();
         verifyPureFlatSlots();
+        verifyPlanConditionPruning();
         verifyGuardedDescriptorSources();
         verifyImageTableKeys();
         verifyImageTables();

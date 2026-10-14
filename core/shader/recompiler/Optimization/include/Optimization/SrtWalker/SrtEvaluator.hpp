@@ -71,8 +71,15 @@ struct InaccessibleRead {
     std::uint64_t address = 0;
 };
 
+enum class EvaluatorReads : std::uint8_t {
+    Nothing,
+    Arguments,
+    Closure,
+};
+
 class Evaluator {
 public:
+    static EvaluatorReads Reads(const IrResourcePlan& program, const IrValue& value);
     Evaluator(const IrResourcePlan& program, const SrtRuntime& runtime, std::span<const std::uint8_t> cleanFlatSlots = {}, Evaluator* cleanEvaluator = nullptr, IrValue* activeMask = nullptr) : _program(program), _runtime(runtime), _cleanFlatSlots(cleanFlatSlots), _cleanEvaluator(cleanEvaluator), _activeMask(activeMask != nullptr ? activeMask->Resolve() : nullptr) {}
 
     bool Evaluate(IrValue* value, std::uint32_t& result);
