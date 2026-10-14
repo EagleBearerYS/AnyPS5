@@ -1750,7 +1750,17 @@ void verifyDescriptorPhis() {
     require(countOps(twoLaneResult->spirv, OpImageSampleExplicitLod) == 2u * lanesPerInvocation, "descriptor Phi: the specialized wave64 SPIR-V does not sample once per edge and lane");
 
     auto dynamic = makeRequest(dynamicCode);
-    expectFailure([&] { static_cast<void>(GetResourcePlan(dynamic)); }, "GetSamplerResource dword 0 is not a valid runtime value", "descriptor Phi: an edge without an SRT slot was accepted");
+    const auto devicePlan = GetResourcePlan(dynamic);
+    require(devicePlan->info.images.size() == 1u && devicePlan->info.images[0].deviceTable && devicePlan->info.samplers.size() == 1u && devicePlan->info.samplers[0].deviceTable && devicePlan->info.samplers[0].table == NoTable, "descriptor Phi: an S# with an edge without an SRT slot was not read through the device image table");
+    const std::array<std::uint32_t, 2> snapshotCapabilities{29u, spv::CapabilityInt64};
+    dynamic.target.supportedCapabilities = snapshotCapabilities;
+    expectFailure([&] { static_cast<void>(GetResourcePlan(dynamic)); }, "GetSamplerResource dword 0 is not a valid runtime value", "descriptor Phi: an edge without an SRT slot was accepted on a target without device image tables");
+    const std::vector<std::uint32_t> relativeCode{0xf4080100u, 0xfa000000u, 0xbe941f00u, 0x8014ff14u, 0x00000100u, 0x82158015u, 0xbe9603ffu, 0x00000040u, 0xbe9703ffu, 0x31016facu,
+        0x36060083u, 0x34060682u, 0xe0301000u, 0x80050403u, 0x7e200504u, 0x8f108410u, 0xf4240282u, 0x20000000u, 0xf4080b05u, 0xfa000020u, 0xf42c0916u, 0xfa000020u,
+        0xf4080700u, 0xfa000020u, 0x360200bfu, 0x7e040280u, 0xf0008f08u, 0x00090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u};
+    auto relative = makeRequest(relativeCode);
+    const auto relativePlan = GetResourcePlan(relative);
+    require(relativePlan->info.images.size() == 1u && relativePlan->info.images[0].deviceTable, "run-time T#: a T# selected through data the shader reads relative to its program counter was not read through the device image table");
 
     const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
     const auto loopCapture = compile(loopCode, 2u, 1u);
@@ -1783,7 +1793,15 @@ void verifyDescriptorPhis() {
     }};
     for (const auto& [code, message] : invalidEntries) {
         auto request = makeRequest(code);
+        request.target.supportedCapabilities = snapshotCapabilities;
         expectFailure([&] { static_cast<void>(GetResourcePlan(request)); }, "GetImageResource dword 0 is not a valid runtime value", message);
+    }
+    auto programCounter = makeRequest(invalidEntries[0].first);
+    expectFailure([&] { static_cast<void>(GetResourcePlan(programCounter)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a T# holding the program counter, which the shader does not know, was read through the device image table");
+    for (std::size_t entry = 1; entry < invalidEntries.size(); ++entry) {
+        auto request = makeRequest(invalidEntries[entry].first);
+        const auto plan = GetResourcePlan(request);
+        require(std::ranges::any_of(plan->info.images, [](const ImageResource& image) { return image.deviceTable; }), "descriptor Phi: a T# holding a mask the shader computes was not read through the device image table");
     }
     auto unwritten = loopCode;
     unwritten[4] = 0xf4080200u;
@@ -1792,12 +1810,16 @@ void verifyDescriptorPhis() {
 
     const std::array<std::uint32_t, 7> prologue{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu};
     const std::array<std::uint32_t, 7> epilogue{0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
-    const auto planImages = [&](std::span<const std::uint32_t> body) {
+    const auto planOf = [&](std::span<const std::uint32_t> body, bool deviceTables) {
         std::vector<std::uint32_t> code(prologue.begin(), prologue.end());
         code.insert(code.end(), body.begin(), body.end());
         code.insert(code.end(), epilogue.begin(), epilogue.end());
         auto request = makeRequest(code);
-        return GetResourcePlan(request)->info.images.size();
+        if (!deviceTables) request.target.supportedCapabilities = snapshotCapabilities;
+        return GetResourcePlan(request);
+    };
+    const auto planImages = [&](std::span<const std::uint32_t> body, bool deviceTables = true) {
+        return planOf(body, deviceTables)->info.images.size();
     };
     const auto distinctLoads = [](std::uint32_t loads) {
         std::vector<std::uint32_t> body;
@@ -1807,7 +1829,9 @@ void verifyDescriptorPhis() {
         return body;
     };
     require(planImages(distinctLoads(63u)) == 64u, "descriptor Phi: 64 distinct T#s were not given one image each");
-    expectFailure([&] { static_cast<void>(planImages(distinctLoads(64u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: more than 64 distinct T#s were accepted");
+    expectFailure([&] { static_cast<void>(planImages(distinctLoads(64u), false)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: more than 64 distinct T#s were accepted on a target without device image tables");
+    const auto unsplit = planOf(distinctLoads(64u), true);
+    require(unsplit->info.images.size() == 1u && unsplit->info.images[0].deviceTable, "descriptor Phi: more than 64 distinct T#s were not read through the device image table as one run-time T#");
 
     const auto splitReloads = [](std::uint32_t joins) {
         std::vector<std::uint32_t> body;
@@ -1817,7 +1841,9 @@ void verifyDescriptorPhis() {
         return body;
     };
     require(planImages(splitReloads(8u)) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s");
-    expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted");
+    expectFailure([&] { static_cast<void>(planImages(splitReloads(260u), false)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted on a target without device image tables");
+    const auto web = planOf(splitReloads(260u), true);
+    require(web->info.images.size() == 1u && web->info.images[0].deviceTable, "descriptor Phi: a web over more than 512 descriptor tuples was not read through the device image table as one run-time T#");
 }
 
 void verifyLaneSelectedDescriptors() {

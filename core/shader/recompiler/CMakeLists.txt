@@ -258,6 +258,7 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::SpecializationNanoseconds
             ResourceMaterializer::TryRuntimeImageMode
             ImageShapeForResource
+            PointFilteredSamplerWord
             ReducesBetweenTexels
             RuntimeAbi::RequireVersion
             RuntimeAbi::HeapCapacity

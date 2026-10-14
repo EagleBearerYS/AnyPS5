@@ -18,6 +18,7 @@ namespace AgcDriver::Graphics {
 
 class Buffer;
 class Recorder;
+class Sampler;
 class Texture;
 
 class DeviceImageTable {
@@ -57,6 +58,7 @@ public:
 private:
     struct Entry {
         std::shared_ptr<Texture> texture;
+        std::shared_ptr<Sampler> sampler;
         std::uint64_t address = 0;
         std::uint64_t guestBytes = 0;
         std::uint64_t generation = 0;
@@ -76,7 +78,7 @@ private:
     DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry);
     std::uint32_t reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message);
     void insert(const DeviceImageKeys::Key& key, const DeviceImageValue& value, Recorder& recorder);
-    void retire(const std::shared_ptr<Texture>& texture, Recorder& recorder);
+    void retire(const Entry& entry, Recorder& recorder);
     void drain(const std::shared_ptr<Buffer>& ring);
     void report();
 

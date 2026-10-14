@@ -167,7 +167,7 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
     for (std::uint32_t r = 0; r < info.samplers.size(); r++) {
         if (snapshot.samplers.at(r).dwordCount != 4u) fail("sampler descriptor must contain four dwords");
         const auto& sampler = info.samplers[r];
-        if (sampler.table != NoTable) continue;
+        if (sampler.table != NoTable || sampler.deviceTable) continue;
         if ((snapshot.samplers[r].dwords[0] & ForceUnnormalizedBit) == 0u) {
             if (sampler.foldTexelOffsetsOnly) {
                 fail("DescriptorBindingBuilder::Populate normalized guest sampler is used with a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
@@ -350,6 +350,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     };
     for (const auto& pair : info.sampledPairs) {
         const auto& image = info.images.at(pair.image);
+        if (info.samplers.at(pair.sampler).deviceTable) continue;
         if (image.table == NoTable) {
             const auto mode = samplerMode(info.runtimeImageModes.at(pair.image).at(imageModes[pair.image]));
             pairSampler(pair.sampler, info.runtimeImageModes.at(pair.image).at(imageModes[pair.image]));

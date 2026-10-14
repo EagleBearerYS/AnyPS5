@@ -1,7 +1,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -48,6 +50,17 @@ bool PointSampled(const ShaderRecompiler::ImageResource& mode) {
 
 bool Multisampled(const ShaderRecompiler::ImageResource& mode) {
     return mode.dimension == ShaderRecompiler::RdnaImageDimension::Dim2DMsaa || mode.dimension == ShaderRecompiler::RdnaImageDimension::Dim2DMsaaArray;
+}
+
+bool IntegerMode(const ShaderRecompiler::ImageResource& mode) {
+    return mode.numericClass == ShaderRecompiler::IrTextureNumericClass::Uint || mode.numericClass == ShaderRecompiler::IrTextureNumericClass::Sint;
+}
+
+std::shared_ptr<Sampler> ModeSampler(const Context& build, std::span<const std::uint32_t, 4> words, bool compare, bool integerBorder) {
+    if (build.samplerCache != nullptr) return build.samplerCache->Get(build, words, compare, false, false, integerBorder);
+    auto resource = DecodeSamplerResource(words, false, false, integerBorder);
+    resource.compareEnable = compare;
+    return std::make_shared<Sampler>(build, resource);
 }
 
 }
@@ -103,18 +116,34 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
     descriptor.dwordCount = Abi::DescriptorWords;
     std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
     const auto rejected = [&](Reason reason, const std::string& message) {
-        return DeviceImageValue{0u, 0u, reject(key, pc, static_cast<std::uint32_t>(reason), message) + 1u};
+        const bool runtimeSampler = (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u;
+        const auto text = runtimeSampler ? message + " (S# " + HexWords(std::span<const std::uint32_t>(key).subspan(Abi::SamplerWord, Abi::SamplerWords)) + ")" : message;
+        return DeviceImageValue{0u, 0u, reject(key, pc, static_cast<std::uint32_t>(reason), text) + 1u};
     };
     const auto match = ShaderRecompiler::ResourceMaterializer::TryRuntimeImageMode(interface->image, descriptor, interface->modes);
     if (!match.mode.has_value()) return rejected(match.reason, match.detail);
     const auto& mode = interface->modes.at(*match.mode);
     if (Multisampled(mode)) return rejected(Reason::Multisampled, "an image table entry is multisampled");
-    if (PointSampled(mode) && (key[Abi::SamplerClassWord] & Abi::SamplerReduction) != 0u) return rejected(Reason::Reduction, "a min or max reduction sampler that filters between texels or mip levels samples an image that needs point filtering (sint, converted or depth-bits format), which is not implemented");
+    const auto reduction = "a min or max reduction sampler that filters between texels or mip levels samples an image that needs point filtering (sint, converted or depth-bits format), which is not implemented";
+    const bool runtimeSampler = (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u;
+    std::array<std::uint32_t, Abi::SamplerWords> samplerWords{};
+    std::copy_n(key.begin() + Abi::SamplerWord, Abi::SamplerWords, samplerWords.begin());
+    if (runtimeSampler && (samplerWords[0] & (1u << 15u)) != 0u) return rejected(Reason::Unnormalized, "an S# with unnormalized coordinates samples an image selected at run time, which is not implemented");
+    const bool reducing = runtimeSampler ? ShaderRecompiler::ReducesBetweenTexels(samplerWords[0], samplerWords[2]) : (key[Abi::SamplerClassWord] & Abi::SamplerReduction) != 0u;
+    if (PointSampled(mode) && reducing) return rejected(Reason::Reduction, reduction);
     try {
+        auto samplerClass = key[Abi::SamplerClassWord];
+        std::shared_ptr<Sampler> sampler;
+        if (runtimeSampler) {
+            if (PointSampled(mode)) samplerWords[2] = ShaderRecompiler::PointFilteredSamplerWord(samplerWords[0], samplerWords[2]);
+            sampler = ModeSampler(build, samplerWords, mode.depthCompare, IntegerMode(mode));
+            samplerClass = DeviceTableSamplerClass(sampler.get(), samplerWords, false, IntegerMode(mode));
+        }
         const DeviceTableView view{ShaderRecompiler::ImageShapeForResource(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits, ShaderRecompiler::ResourceMaterializer::BindsDecodedCopy(mode, descriptor)};
-        auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view, key[Abi::SamplerClassWord]);
-        entry = {std::move(texture.texture), texture.address, texture.guestBytes, texture.generation, texture.snapshot};
-        return {texture.slot, *match.mode, 0u};
+        auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view, samplerClass);
+        const auto samplerSlot = sampler != nullptr ? sampler->Slot() : 0u;
+        entry = {std::move(texture.texture), std::move(sampler), texture.address, texture.guestBytes, texture.generation, texture.snapshot};
+        return {texture.slot, *match.mode, 0u, samplerSlot};
     } catch (const std::runtime_error& error) {
         return rejected(Reason::DriverRejected, error.what());
     }
@@ -140,14 +169,15 @@ void DeviceImageTable::insert(const DeviceImageKeys::Key& key, const DeviceImage
     if (keys.Insert(key, value) != DeviceImageKeys::Insertion::Full) return;
     ++totals.clears;
     std::fprintf(stderr, "[device-images] the table is full at %u entries in %u buckets: every entry is dropped and resolved again on its next use\n", keys.Entries(), keys.Buckets());
-    for (auto& [held, entry] : entries) retire(entry.texture, recorder);
+    for (auto& [held, entry] : entries) retire(entry, recorder);
     entries.clear();
     keys.Clear();
     Require(keys.Insert(key, value) != DeviceImageKeys::Insertion::Full, "the device image table refused a key while empty");
 }
 
-void DeviceImageTable::retire(const std::shared_ptr<Texture>& texture, Recorder& recorder) {
-    if (texture != nullptr) recorder.Keep(texture);
+void DeviceImageTable::retire(const Entry& entry, Recorder& recorder) {
+    if (entry.texture != nullptr) recorder.Keep(entry.texture);
+    if (entry.sampler != nullptr) recorder.Keep(entry.sampler);
 }
 
 void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
@@ -183,8 +213,8 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
         Entry fresh;
         const auto value = lookup(build, key, 0u, fresh);
         Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a refreshed device image entry was not in the table");
-        if (fresh.texture != entry.texture) {
-            retire(entry.texture, recorder);
+        if (fresh.texture != entry.texture || fresh.sampler != entry.sampler) {
+            retire(entry, recorder);
             ++totals.replaced;
         }
         if (fresh.texture == nullptr) {

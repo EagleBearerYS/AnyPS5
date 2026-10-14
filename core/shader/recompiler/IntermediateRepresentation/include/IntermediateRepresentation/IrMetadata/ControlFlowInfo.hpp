@@ -51,6 +51,7 @@ struct DescriptorSource {
     std::array<IrValue*, 8> dwords {};
     std::uint32_t dwordCount = 0;
     std::optional<TableColumn> tableColumn;
+    bool runtime = false;
 
     bool operator==(const DescriptorSource& other) const = default;
 };

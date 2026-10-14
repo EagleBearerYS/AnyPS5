@@ -17,6 +17,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -246,7 +247,7 @@ private:
     std::uint32_t InternSource(const DescriptorSource& descriptor) {
         for (std::uint32_t candidate = 0; candidate < m_sources.size(); candidate++) {
             const auto& current = m_sources[candidate];
-            if (current.dwordCount != descriptor.dwordCount || current.tableColumn != descriptor.tableColumn) {
+            if (current.dwordCount != descriptor.dwordCount || current.tableColumn != descriptor.tableColumn || current.runtime != descriptor.runtime) {
                 continue;
             }
             bool same = true;
@@ -1223,6 +1224,7 @@ private:
             return;
         }
         IndexMemoryUsers();
+        std::vector<const IrValue*> sampled;
         for (auto& block : m_program.Blocks()) {
             for (IrValue* inst : block->Instructions()) {
                 const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
@@ -1235,10 +1237,16 @@ private:
                 }
                 const auto memory = m_program.Resources().memoryInfo[flags.index];
                 static_cast<void>(PlanTableColumn(*inst->Argument(0)->Resolve(), false, memory.imageR128));
-                if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
-                    static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
-                }
+                if (imageInfo.needsSampler && inst->ArgumentCount() > 1u) sampled.push_back(inst);
             }
+        }
+        std::vector<const IrValue*> runtimeSamplers;
+        for (const IrValue* inst : sampled) {
+            if (DeviceTables() && DeviceAccessKind(*inst) && RuntimeImage(*inst->Argument(0)->Resolve())) runtimeSamplers.push_back(inst->Argument(1)->Resolve());
+        }
+        for (const IrValue* inst : sampled) {
+            IrValue& sampler = *inst->Argument(1)->Resolve();
+            if (!DirectSampler(sampler) && std::ranges::find(runtimeSamplers, &sampler) == runtimeSamplers.end()) static_cast<void>(PlanTableColumn(sampler, true, false));
         }
         PlanDeviceColumns();
         for (const auto& plan : m_tableColumns) {
@@ -1259,7 +1267,56 @@ private:
         m_memoryUsers.clear();
     }
 
+    bool DeviceTables() const {
+        return m_deviceImageTables && m_program.Resources().stage == IrShaderStage::Compute;
+    }
+
     bool DeviceAccess(const IrValue& inst) {
+        if (!DeviceAccessKind(inst)) return false;
+        if (!ImageOpcodeInfoOf(inst.Opcode()).needsSampler) return true;
+        if (inst.ArgumentCount() <= 1u) return false;
+        const IrValue& sampler = *inst.Argument(1)->Resolve();
+        return DirectSampler(sampler) || RuntimeSampler(sampler);
+    }
+
+    bool CaptureResolved(const IrValue& handle) {
+        if (handle.Opcode() != IrOpcode::GetBufferResource || handle.ArgumentCount() != 4u) return false;
+        DescriptorSource descriptor;
+        MakeSource(handle, 4u, false, false, descriptor);
+        std::uint32_t badDword = 0;
+        return ValidateSource(descriptor, badDword);
+    }
+
+    bool ShaderComputable(const IrValue& handle) {
+        std::vector<const IrValue*> pending;
+        for (std::size_t dword = 0; dword < handle.ArgumentCount(); ++dword) {
+            const IrValue* value = handle.Argument(dword)->Resolve();
+            if (value->Type() != IrType::U32) return false;
+            pending.push_back(value);
+        }
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* value = pending.back()->Resolve();
+            pending.pop_back();
+            if (!seen.insert(value).second || value->HasImmediate() || value->Type() == IrType::Bool) continue;
+            if (value->Opcode() == IrOpcode::GetShaderBase) return false;
+            const bool bound = AccessesMemory(value->Opcode()) && value->ArgumentCount() != 0u && CaptureResolved(*value->Argument(0)->Resolve());
+            for (std::size_t index = bound ? 1u : 0u; index < value->ArgumentCount(); ++index) {
+                if (value->Argument(index) != nullptr) pending.push_back(value->Argument(index));
+            }
+        }
+        return true;
+    }
+
+    bool RuntimeImage(const IrValue& handle) {
+        if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || FindTableColumn(handle) != nullptr) return false;
+        DescriptorSource descriptor;
+        MakeSource(handle, 8u, false, false, descriptor);
+        std::uint32_t badDword = 0;
+        return !ValidateSource(descriptor, badDword) && ShaderComputable(handle);
+    }
+
+    bool DeviceAccessKind(const IrValue& inst) const {
         switch (inst.Opcode()) {
             case IrOpcode::ImageSampleRaw:
             case IrOpcode::ImageGatherRaw:
@@ -1273,14 +1330,12 @@ private:
         const auto flags = inst.Flags<MemoryFlags>();
         if (flags.index >= m_program.Resources().memoryInfo.size()) return false;
         const auto& memory = m_program.Resources().memoryInfo[flags.index];
-        if (memory.imagePacked || memory.imageByElements != 0u) return false;
-        if (!ImageOpcodeInfoOf(inst.Opcode()).needsSampler) return true;
-        return inst.ArgumentCount() > 1u && DirectSampler(*inst.Argument(1)->Resolve());
+        return !memory.imagePacked && memory.imageByElements == 0u;
     }
 
     void PlanDeviceColumns() {
         m_deviceSources.assign(m_sources.size(), 0u);
-        if (!m_deviceImageTables || m_program.Resources().stage != IrShaderStage::Compute) return;
+        if (!DeviceTables()) return;
         for (const auto& plan : m_tableColumns) {
             if (!m_sources[plan.source].tableColumn->sampler) m_deviceSources[plan.source] = 1u;
         }
@@ -1297,7 +1352,42 @@ private:
     }
 
     bool DeviceSource(std::uint32_t source) const {
-        return source < m_deviceSources.size() && m_deviceSources[source] != 0u;
+        return RuntimeSource(source) || (source < m_deviceSources.size() && m_deviceSources[source] != 0u);
+    }
+
+    bool RuntimeSource(std::uint32_t source) const {
+        return source < m_sources.size() && m_sources[source].runtime;
+    }
+
+    bool RuntimeImageSource(const IrValue& inst, const IrValue& handle, std::uint32_t& source) {
+        if (!DeviceTables() || handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || !DeviceAccess(inst)) return false;
+        const bool runtimeSampler = ImageOpcodeInfoOf(inst.Opcode()).needsSampler && RuntimeSampler(*inst.Argument(1)->Resolve());
+        if (!RuntimeImage(handle) && !(runtimeSampler && ShaderComputable(handle))) return false;
+        DescriptorSource descriptor;
+        MakeSource(handle, 8u, false, false, descriptor);
+        descriptor.runtime = true;
+        source = InternSource(descriptor);
+        return true;
+    }
+
+    bool RuntimeSampler(const IrValue& handle) {
+        return handle.Opcode() == IrOpcode::GetSamplerResource && handle.ArgumentCount() == 4u && FindTableColumn(handle) == nullptr && !DirectSampler(handle) && ShaderComputable(handle);
+    }
+
+    bool RuntimeSamplerSource(IrValue& inst, IrValue*& handle, bool sampleAdjust, std::uint32_t& source) {
+        if (!RuntimeSampler(*handle)) return false;
+        DescriptorSource descriptor;
+        MakeSource(*handle, 4u, true, sampleAdjust, descriptor);
+        bool canonical = true;
+        for (std::uint32_t dword = 0; dword < 4u; ++dword) canonical = canonical && descriptor.dwords[dword] == handle->Argument(dword)->Resolve();
+        if (!canonical) {
+            const std::array<IrValue*, 4> arguments{descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3]};
+            handle = EmitBefore(inst, IrOpcode::GetSamplerResource, handle->Type(), arguments);
+            inst.ReplaceArgument(1, handle);
+        }
+        descriptor.runtime = true;
+        source = InternSource(descriptor);
+        return true;
     }
 
     bool DeviceColumn(const TableColumnPlan& plan) const {
@@ -1351,7 +1441,7 @@ private:
     void AssignTables() {
         std::uint32_t next = 0;
         for (auto& image : m_info.images) {
-            if (!TableSource(image.source)) {
+            if (!TableSource(image.source) && !RuntimeSource(image.source)) {
                 continue;
             }
             image.table = next++;
@@ -1365,6 +1455,7 @@ private:
             if (TableSource(sampler.source)) {
                 sampler.table = next++;
             }
+            sampler.deviceTable = RuntimeSource(sampler.source);
         }
     }
 
@@ -1641,7 +1732,7 @@ private:
         const TableColumnPlan* column = FindTableColumn(*handle);
         if (column != nullptr) {
             source = column->source;
-        } else {
+        } else if (!RuntimeImageSource(inst, *handle, source)) {
             GetHandle(inst.Argument(0), IrOpcode::GetImageResource, 8, handle, source);
         }
         resource = AddImage(source, memory, op, flags.pc);
@@ -1658,10 +1749,10 @@ private:
             IrValue* samplerHandle = inst.Argument(1)->Resolve();
             std::uint32_t samplerSource = 0;
             const TableColumnPlan* samplerColumn = FindTableColumn(*samplerHandle);
+            const bool sampleAdjust = (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0;
             if (samplerColumn != nullptr) {
                 samplerSource = samplerColumn->source;
-            } else {
-                const bool sampleAdjust = (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0;
+            } else if (!DeviceSource(source) || !RuntimeSamplerSource(inst, samplerHandle, sampleAdjust, samplerSource)) {
                 GetHandle(inst.Argument(1), IrOpcode::GetSamplerResource, 4, samplerHandle, samplerSource, true, sampleAdjust);
             }
             sampler = AddSampler(samplerSource, flags.pc);
@@ -1686,7 +1777,7 @@ private:
             }
             for (std::uint32_t image = 0; image < m_info.images.size(); image++) {
                 const DescriptorSource* imageSource = Source(m_info.images[image].source);
-                if (imageSource == nullptr || imageSource->dwordCount != 8 || imageSource->tableColumn.has_value()) {
+                if (imageSource == nullptr || imageSource->dwordCount != 8 || imageSource->tableColumn.has_value() || imageSource->runtime) {
                     continue;
                 }
                 bool alias = true;

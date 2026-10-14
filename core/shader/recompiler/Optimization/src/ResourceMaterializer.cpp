@@ -835,7 +835,7 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
 
     snapshot.samplers.resize(plan.info.samplers.size());
     for (std::uint32_t i = 0; i < plan.info.samplers.size(); i++) {
-        if (plan.info.samplers[i].table != NoTable) {
+        if (plan.info.samplers[i].table != NoTable || plan.info.samplers[i].deviceTable) {
             snapshot.samplers[i].dwordCount = 4u;
             continue;
         }
@@ -1042,7 +1042,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     std::vector<bool> reducingSampler(info.images.size(), false);
     for (const auto& pair : info.sampledPairs) {
         const auto& sampler = info.samplers.at(pair.sampler);
-        if (sampler.table != NoTable) continue;
+        if (sampler.table != NoTable || sampler.deviceTable) continue;
         directSamplers.at(pair.image).push_back(pair.sampler);
         const auto& words = snapshot.samplers.at(pair.sampler).dwords;
         if (reducesBetweenTexels(words[0], words[2])) reducingSampler.at(pair.image) = true;
@@ -1526,7 +1526,7 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
                 if (component.bitWidth == 32u && argument < address->ArgumentCount() && address->Argument(argument)->Resolve()->HasImmediate()) continue;
                 if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
                     images.at(memory.resource).emulatedCompare |= EmulatedCompare::NativeOffsetUnsupported;
-                } else if (resources.info.samplers.at(memory.sampler).table == NoTable) {
+                } else if (resources.info.samplers.at(memory.sampler).table == NoTable && !resources.info.samplers.at(memory.sampler).deviceTable) {
                     images.at(memory.resource).foldTexelOffsetsOnly = true;
                     resources.info.samplers.at(memory.sampler).foldTexelOffsetsOnly = true;
                 }
@@ -1777,6 +1777,9 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.workgroupThreads = source.workgroupThreads;
     plan.memoryInfo = source.memoryInfo;
     plan.descriptorSources = source.descriptorSources;
+    for (auto& descriptor : plan.descriptorSources) {
+        if (descriptor.runtime) descriptor.dwords.fill(nullptr);
+    }
     plan.controlFlow = source.controlFlow;
     plan.srtReads = source.srtReads;
     plan.cleanFlatSlots = source.cleanFlatSlots;
@@ -1806,7 +1809,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     for (const auto& sampler : plan.info.samplers) {
         if (sampler.table != NoTable) {
             plan.requiresSpecializationMemory = true;
-        } else {
+        } else if (!sampler.deviceTable) {
             addSource(sampler.source);
         }
     }

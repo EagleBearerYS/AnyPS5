@@ -1990,13 +1990,27 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     const auto null = both(equal(words[0], zero), equal(Binary(state, spv::OpBitwiseAnd, u32, words[1], ConstantU32(state, 0xffu)), zero));
     const auto header = DeviceAddress(state, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceLow)), LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceHigh)));
     auto samplerClass = zero;
-    if (ImageOpcodeInfoOf(inst.Opcode()).needsSampler) samplerClass = LoadTableMap(state, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerClasses)), ConstantU32(state, memory.sampler)));
+    std::array<std::uint32_t, Abi::SamplerWords> samplerWords{zero, zero, zero, zero};
+    bool deviceSampler = false;
+    if (ImageOpcodeInfoOf(inst.Opcode()).needsSampler) {
+        const auto& sampler = state.program.Info().samplers.at(memory.sampler);
+        if (sampler.deviceTable) {
+            const IrValue* samplerHandle = inst.ArgumentCount() > 1u ? inst.Argument(1)->Resolve() : nullptr;
+            if (samplerHandle == nullptr || samplerHandle->ArgumentCount() != Abi::SamplerWords) ctx.Fail(inst, "has a device-table sampler handle without its four descriptor dwords");
+            for (std::uint32_t word = 0; word < samplerWords.size(); ++word) samplerWords[word] = ctx.Def(samplerHandle->Argument(word));
+            samplerClass = ConstantU32(state, Abi::RuntimeSampler);
+            deviceSampler = true;
+        } else {
+            samplerClass = LoadTableMap(state, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerClasses)), ConstantU32(state, memory.sampler)));
+        }
+    }
     const auto id = ResourceMaterializer::DeviceImageInterfaceId(base, modes);
     const auto record = both(exec, Unary(state, spv::OpLogicalNot, boolean, null));
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 4u), result, state.deviceImageLookupFunction, header,
         CompositeU32x4(state, words[0], words[1], words[2], words[3]), CompositeU32x4(state, words[4], words[5], words[6], words[7]),
-        CompositeU32x4(state, ConstantU32(state, static_cast<std::uint32_t>(id)), ConstantU32(state, static_cast<std::uint32_t>(id >> 32u)), samplerClass, pc), record);
+        CompositeU32x4(state, ConstantU32(state, static_cast<std::uint32_t>(id)), ConstantU32(state, static_cast<std::uint32_t>(id >> 32u)), samplerClass, pc),
+        CompositeU32x4(state, samplerWords[0], samplerWords[1], samplerWords[2], samplerWords[3]), record);
     const auto extract = [&](std::uint32_t index) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, u32, value, result, index);
@@ -2005,7 +2019,8 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     const auto slot = extract(0u);
     const auto mode = extract(1u);
     const auto fault = extract(2u);
-    const auto hit = Binary(state, spv::OpINotEqual, boolean, extract(3u), zero);
+    const auto found = extract(3u);
+    const auto hit = Binary(state, spv::OpINotEqual, boolean, found, zero);
     const auto faulted = Binary(state, spv::OpINotEqual, boolean, fault, zero);
     EmitIfCondition(state, both(both(record, hit), faulted), [&] {
         RecordBdaFaultWords(state, zero, zero, Binary(state, spv::OpBitwiseOr, u32, ConstantU32(state, Abi::FaultFlag), Binary(state, spv::OpISub, u32, fault, ConstantU32(state, 1u))), pc, BdaAbi::FaultReason::ImageTable);
@@ -2015,8 +2030,12 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     state.tableAccess.element = Select(state, u32, valid, slot, zero);
     DecorateTableNonUniform(state, state.tableAccess.element);
     state.tableAccess.dword3 = words[3];
+    if (deviceSampler) {
+        state.tableAccess.samplerElement = Select(state, u32, valid, Binary(state, spv::OpISub, u32, found, ConstantU32(state, 1u)), zero);
+        DecorateTableNonUniform(state, state.tableAccess.samplerElement);
+    }
     state.tableAccess.active = true;
-    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, mode, ConstantU32(state, InvalidTableSelector)), false);
+    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, mode, ConstantU32(state, InvalidTableSelector)), deviceSampler);
     state.tableAccess = {};
 }
 
@@ -2044,16 +2063,18 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
     };
     const auto function = state.module.AllocateId();
     state.module.AddName(function, "device_image_lookup");
-    state.module.AddFunction(spv::OpFunction, uvec4, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, uvec4, u64, uvec4, uvec4, uvec4, boolean));
+    state.module.AddFunction(spv::OpFunction, uvec4, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, uvec4, u64, uvec4, uvec4, uvec4, uvec4, boolean));
     const auto header = state.module.AllocateId();
     const auto low = state.module.AllocateId();
     const auto high = state.module.AllocateId();
     const auto extra = state.module.AllocateId();
+    const auto sampler = state.module.AllocateId();
     const auto record = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionParameter, u64, header);
     state.module.AddFunction(spv::OpFunctionParameter, uvec4, low);
     state.module.AddFunction(spv::OpFunctionParameter, uvec4, high);
     state.module.AddFunction(spv::OpFunctionParameter, uvec4, extra);
+    state.module.AddFunction(spv::OpFunctionParameter, uvec4, sampler);
     state.module.AddFunction(spv::OpFunctionParameter, boolean, record);
     EmitLabel(state, state.module.AllocateId());
     const auto stepVariable = state.module.AllocateId();
@@ -2068,6 +2089,7 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
         key[word + 4u] = extract(high, word);
     }
     for (std::uint32_t word = 0; word < 3u; ++word) key[Abi::InterfaceWord + word] = extract(extra, word);
+    for (std::uint32_t word = 0; word < Abi::SamplerWords; ++word) key[Abi::SamplerWord + word] = extract(sampler, word);
     const auto pc = extract(extra, 3u);
     const auto hash = DeviceKeyHash(state, key);
     const auto table = DeviceAddress(state, LoadDeviceWord(state, header, constant(Abi::HeaderTableLow)), LoadDeviceWord(state, header, constant(Abi::HeaderTableHigh)));
@@ -2093,7 +2115,7 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
     const auto live = binary(spv::OpIEqual, boolean, at(Abi::StateWord), constant(Abi::LiveState));
     auto same = live;
     for (std::uint32_t word = 0; word < Abi::KeyWords; ++word) same = binary(spv::OpLogicalAnd, boolean, same, binary(spv::OpIEqual, boolean, at(word), key[word]));
-    const auto found = CompositeU32x4(state, at(Abi::SlotWord), at(Abi::ModeWord), at(Abi::FaultWord), constant(1u));
+    const auto found = CompositeU32x4(state, at(Abi::SlotWord), at(Abi::ModeWord), at(Abi::FaultWord), binary(spv::OpIAdd, u32, at(Abi::SamplerSlotWord), constant(1u)));
     const auto previous = load(resultVariable, uvec4);
     state.module.AddFunction(spv::OpStore, resultVariable, Select(state, uvec4, same, found, previous));
     state.module.AddFunction(spv::OpStore, doneVariable, binary(spv::OpLogicalOr, boolean, Unary(state, spv::OpLogicalNot, boolean, live), same));

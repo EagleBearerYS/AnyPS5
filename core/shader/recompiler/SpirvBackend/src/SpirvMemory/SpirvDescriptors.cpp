@@ -185,6 +185,16 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
     const auto samplerType = state.module.Type(spv::OpTypeSampler);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, samplerType);
     if (state.heapSamplerVariable == 0u) ExitDescriptorBindingFailure(state, samplerResource.table != NoTable ? DescriptorBindingKind::SamplerTable : DescriptorBindingKind::Samplers, sampler, "sampler heap was not emitted");
+    if (samplerResource.deviceTable) {
+        if (!state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::Samplers, sampler, "device sampler access was not emitted");
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.heapSamplerVariable, state.tableAccess.samplerElement);
+        DecorateTableNonUniform(state, pointer);
+        const auto loaded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, samplerType, loaded, pointer);
+        DecorateTableNonUniform(state, loaded);
+        return loaded;
+    }
     if (samplerResource.table != NoTable) {
         if (!state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::SamplerTable, sampler, "sampler table access was not emitted");
         const auto variant = image != nullptr && image->depthCompare ? 2u : 0u;

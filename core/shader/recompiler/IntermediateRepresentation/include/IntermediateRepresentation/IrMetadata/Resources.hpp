@@ -129,6 +129,7 @@ struct SamplerResource {
     std::uint16_t uses = 0;
     bool foldTexelOffsetsOnly = false;
     std::uint32_t table = NoTable;
+    bool deviceTable = false;
 
     bool operator==(const SamplerResource& other) const = default;
 };

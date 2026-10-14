@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 #ifdef _WIN32
 #include <io.h>
@@ -45,6 +47,10 @@ alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
 alignas(256) std::array<std::uint32_t, 64> Keys{};
 alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
 alignas(256) std::array<std::uint32_t, 32> Srt{};
+alignas(256) std::array<std::uint32_t, 5 * Width * Height> RuntimeTexels{};
+std::vector<std::uint32_t> RuntimeBlocks(0x8000u);
+constexpr std::uint32_t PointerBytes = MaxGroups * 16u;
+constexpr std::uint32_t ArgumentWord = 1024u;
 
 alignas(256) constexpr std::array<std::uint32_t, 30> SampleTableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
@@ -78,7 +84,45 @@ alignas(256) constexpr std::array<std::uint32_t, 17> LoadDirectCode{
     0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 22> GatherDirectCode{
+    0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u, 0xf4080900u, 0xfa000040u, 0x360200bfu, 0x7e020d01u,
+    0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf11c8108u, 0x01090401u, 0x7e120202u,
+    0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 16> QueryDirectCode{
+    0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u, 0xf4080900u, 0xfa000040u, 0x7e020280u, 0xf0388f08u,
+    0x00090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 29> RuntimeSampleCode{
+    0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000020u, 0x8f108402u, 0xf4240282u, 0x20000000u, 0xf4080b05u,
+    0xfa000020u, 0xf4080805u, 0xfa000000u, 0xf42c0916u, 0xfa000020u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u, 0x01090401u, 0x7e120202u, 0x34101286u,
+    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 29> RuntimeGatherCode{
+    0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000020u, 0x8f108402u, 0xf4240282u, 0x20000000u, 0xf4080b05u,
+    0xfa000020u, 0xf4080805u, 0xfa000000u, 0xf42c0916u, 0xfa000020u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf11c8108u, 0x01090401u, 0x7e120202u, 0x34101286u,
+    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 24> RuntimeLoadCode{
+    0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000020u, 0x8f108402u, 0xf4240282u, 0x20000000u, 0xf4080b05u,
+    0xfa000020u, 0xf4080805u, 0xfa000000u, 0xf42c0916u, 0xfa000020u, 0x360200bfu, 0x7e040280u, 0xf0008f08u,
+    0x00090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 23> RuntimeQueryCode{
+    0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000020u, 0x8f108402u, 0xf4240282u, 0x20000000u, 0xf4080b05u,
+    0xfa000020u, 0xf4080805u, 0xfa000000u, 0xf42c0916u, 0xfa000020u, 0x7e020280u, 0xf0388f08u, 0x00090401u,
+    0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
+constexpr std::array<std::uint32_t, 4> LinearClamp{0x92u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 
 std::array<std::uint32_t, 4> Image(const void* texels, std::uint32_t format, std::uint32_t type = Type2D) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
@@ -204,10 +248,10 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
 }
 
 template <std::size_t CodeWords>
-Outcome RunDirect(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, const std::array<std::uint32_t, 4>& image) {
+Outcome RunDirect(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, const std::array<std::uint32_t, 4>& image, const std::array<std::uint32_t, 4>& sampler = PointClamp) {
     const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
-    std::copy(PointClamp.begin(), PointClamp.end(), Srt.begin() + 12);
+    std::copy(sampler.begin(), sampler.end(), Srt.begin() + 12);
     std::fill(Srt.begin() + 16, Srt.begin() + 24, 0u);
     std::copy(image.begin(), image.end(), Srt.begin() + 16);
     const std::span<const std::uint32_t> span(code);
@@ -216,6 +260,32 @@ Outcome RunDirect(AgcDriver::VulkanDevice& device, const std::array<std::uint32_
         {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
     }};
     return Execute(device, span, memory, 1);
+}
+
+template <std::size_t CodeWords>
+Outcome RunRuntime(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups) {
+    const auto pointers = Buffer(RuntimeBlocks.data(), PointerBytes);
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    std::copy(pointers.begin(), pointers.end(), Srt.begin());
+    std::copy(output.begin(), output.end(), Srt.begin() + 8);
+    const std::span<const std::uint32_t> span(code);
+    const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{
+        {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
+        {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+    }};
+    return Execute(device, span, memory, groups);
+}
+
+void SetArgument(std::uint32_t record, const std::array<std::uint32_t, 4>& sampler, const std::array<std::uint32_t, 4>& image) {
+    auto* words = RuntimeBlocks.data() + ArgumentWord + record * 64u;
+    std::fill(words, words + 64, 0u);
+    std::copy(sampler.begin(), sampler.end(), words);
+    const auto heap = Buffer(words + 16, 64u);
+    std::copy(heap.begin(), heap.end(), words + 8);
+    std::copy(image.begin(), image.end(), words + 24);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words));
+    RuntimeBlocks[record * 4u] = static_cast<std::uint32_t>(address);
+    RuntimeBlocks[record * 4u + 1u] = static_cast<std::uint32_t>(address >> 32u);
 }
 
 std::vector<std::uint32_t> Group(const Outcome& outcome, std::uint32_t group) {
@@ -332,6 +402,72 @@ void RunChanges(AgcDriver::VulkanDevice& device) {
     RequireRed(unread, 0, [](std::uint32_t x) { return std::bit_cast<std::uint32_t>(OtherFloatTexels[x]); }, "device image table changes: texels read through a table the capture never read");
 }
 
+void RunRuntimeDescriptors(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } blocks(RuntimeBlocks.data(), RuntimeBlocks.size() * sizeof(std::uint32_t));
+    Fill();
+    constexpr auto texels = Width * Height;
+    std::copy_n(reinterpret_cast<const std::uint32_t*>(FloatTexels.data()), texels, RuntimeTexels.begin());
+    std::copy_n(UintTexels.begin(), texels, RuntimeTexels.begin() + texels);
+    std::copy_n(reinterpret_cast<const std::uint32_t*>(SintTexels.data()), texels, RuntimeTexels.begin() + 2 * texels);
+    std::copy_n(UintTexels.begin(), texels, RuntimeTexels.begin() + 3 * texels);
+    std::copy_n(PackedTexels.begin(), texels, RuntimeTexels.begin() + 4 * texels);
+    const std::array<std::array<std::uint32_t, 4>, 5> images{
+        Image(RuntimeTexels.data(), Format32Float),
+        Image(RuntimeTexels.data() + texels, Format32UInt),
+        Image(RuntimeTexels.data() + 2 * texels, Format32SInt),
+        Image(RuntimeTexels.data() + 3 * texels, Format8_8_8_8UNorm),
+        Image(RuntimeTexels.data() + 4 * texels, Format11_11_10UInt),
+    };
+    std::fill(RuntimeBlocks.begin(), RuntimeBlocks.end(), 0u);
+    for (std::uint32_t record = 0; record < images.size(); ++record) SetArgument(record, PointClamp, images[record]);
+    const auto first = RunRuntime(device, RuntimeLoadCode, 5);
+    Require(!Faulted(first), "run-time descriptors: the first load of valid T#s faulted:\n" + first.log);
+    for (std::uint32_t group = 0; group < 5u; ++group) Require(ZeroGroup(first, group), "run-time descriptors: the first load through record " + std::to_string(group) + " did not read zeros");
+    Require(NewMisses(first) == 5u * Lanes, "run-time descriptors: the first load did not miss once per lane (" + std::to_string(NewMisses(first)) + ")");
+    Require(first.tableElements == 0u && first.tableRanges == 0u, "run-time descriptors: the build bound table elements or captured table ranges");
+    const auto loaded = RunRuntime(device, RuntimeLoadCode, 5);
+    Require(!Faulted(loaded) && NewMisses(loaded) == 0u && loaded.after.inserted - loaded.before.inserted == 5u, "run-time descriptors: the drain did not insert the five T#s, or the second load missed:\n" + loaded.log);
+    for (std::uint32_t group = 0; group < 5u; ++group) Require(Group(loaded, group) == Group(RunDirect(device, LoadDirectCode, images[group]), 0), "run-time descriptors: the load through record " + std::to_string(group) + " differs from the direct binding of its T#");
+    RequireRed(loaded, 2, [](std::uint32_t x) { return static_cast<std::uint32_t>(SintTexels[x]); }, "run-time descriptors: sint texels");
+
+    const auto queriedFirst = RunRuntime(device, RuntimeQueryCode, 5);
+    Require(!Faulted(queriedFirst) && NewMisses(queriedFirst) == 5u * Lanes, "run-time descriptors: the first query did not miss once per lane");
+    const auto queried = RunRuntime(device, RuntimeQueryCode, 5);
+    Require(!Faulted(queried) && NewMisses(queried) == 0u, "run-time descriptors: the second query faulted or missed:\n" + queried.log);
+    for (std::uint32_t group = 0; group < 5u; ++group) Require(Group(queried, group) == Group(RunDirect(device, QueryDirectCode, images[group]), 0), "run-time descriptors: the query through record " + std::to_string(group) + " differs from the direct binding of its T#");
+    Require(queried.words[0] == Width && queried.words[1] == Height, "run-time descriptors: the query did not return the T#'s size");
+
+    const auto sampled = [&](const std::array<std::uint32_t, 29>& runtimeCode, const std::array<std::uint32_t, 22>& directCode, const std::string& what) {
+        const auto missed = RunRuntime(device, runtimeCode, 3);
+        Require(!Faulted(missed) && NewMisses(missed) == 3u * Lanes, "run-time descriptors: the first " + what + " through a run-time S# did not miss once per lane:\n" + missed.log);
+        for (std::uint32_t group = 0; group < 3u; ++group) Require(ZeroGroup(missed, group), "run-time descriptors: the first " + what + " through record " + std::to_string(group) + " did not return zeros");
+        const auto hit = RunRuntime(device, runtimeCode, 3);
+        Require(!Faulted(hit) && NewMisses(hit) == 0u, "run-time descriptors: the second " + what + " faulted or missed:\n" + hit.log);
+        for (std::uint32_t group = 0; group < 3u; ++group) Require(Group(hit, group) == Group(RunDirect(device, directCode, images[group]), 0), "run-time descriptors: the " + what + " through record " + std::to_string(group) + " differs from the direct binding of its T# and S#");
+    };
+    sampled(RuntimeSampleCode, SampleDirectCode, "sample");
+    sampled(RuntimeGatherCode, GatherDirectCode, "gather");
+
+    SetArgument(3, LinearClamp, images[0]);
+    const auto other = RunRuntime(device, RuntimeSampleCode, 4);
+    Require(!Faulted(other) && NewMisses(other) == Lanes && ZeroGroup(other, 3) && !ZeroGroup(other, 0), "run-time descriptors: another S# beside a known T# did not miss once per lane and read zeros:\n" + other.log);
+    const auto linear = RunRuntime(device, RuntimeSampleCode, 4);
+    Require(!Faulted(linear) && NewMisses(linear) == 0u && linear.after.inserted - linear.before.inserted == 1u, "run-time descriptors: the T# with another S# was not inserted as its own entry:\n" + linear.log);
+    Require(Group(linear, 3) == Group(RunDirect(device, SampleDirectCode, images[0], LinearClamp), 0), "run-time descriptors: the sample through the second S# differs from the direct binding of that S#");
+
+    auto unnormalized = PointClamp;
+    unnormalized[0] |= 1u << 15u;
+    SetArgument(4, unnormalized, images[0]);
+    const auto unread = RunRuntime(device, RuntimeSampleCode, 5);
+    Require(!Faulted(unread) && ZeroGroup(unread, 4) && NewMisses(unread) == Lanes, "run-time descriptors: the first use of an unnormalized run-time S# faulted, sampled or did not miss:\n" + unread.log);
+    const auto rejected = RunRuntime(device, RuntimeSampleCode, 5);
+    Require(rejected.after.rejected == rejected.before.rejected + 1u && Faulted(rejected) && rejected.log.find("unnormalized") != std::string::npos && rejected.log.find("00008092") != std::string::npos, "run-time descriptors: an unnormalized run-time S# was not rejected with its words and reason:\n" + rejected.log);
+}
+
 void RunRejections(AgcDriver::VulkanDevice& device) {
     Fill();
     Table = {};
@@ -360,6 +496,7 @@ int main() {
         RunFirstUse(*device);
         RunChanges(*device);
         RunRejections(*device);
+        RunRuntimeDescriptors(*device);
         std::puts("device image table tests passed");
         return 0;
     } catch (const std::exception& error) {

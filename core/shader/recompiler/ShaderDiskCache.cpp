@@ -140,14 +140,14 @@ constexpr std::size_t fieldCount() {
 static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 36, "ImageResource changed: update the info encoder");
-static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
+static_assert(fieldCount<SamplerResource>() == 9, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
 static_assert(fieldCount<IrResourcePlan>() == 22, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
-static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
+static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
 static_assert(fieldCount<TableColumn>() == 12, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 5, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
@@ -735,6 +735,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(sampler.uses);
         out.Value(sampler.foldTexelOffsetsOnly);
         out.Value(sampler.table);
+        out.Value(sampler.deviceTable);
     });
     writer.List(info.sampledPairs, [](Writer& out, const SampledResourcePair& pair) {
         out.Value(pair.image);
@@ -837,6 +838,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(sampler.uses);
         in.Value(sampler.foldTexelOffsetsOnly);
         in.Value(sampler.table);
+        in.Value(sampler.deviceTable);
     });
     reader.List(info.sampledPairs, 12, [](Reader& in, SampledResourcePair& pair) {
         in.Value(pair.image);
@@ -1030,6 +1032,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
     writer.List(plan.descriptorSources, [&](Writer& out, const DescriptorSource& source) {
         for (const auto* dword : source.dwords) out.Value(valueIndex(dword));
         out.Value(source.dwordCount);
+        out.Value(source.runtime);
         const auto column = source.tableColumn.value_or(TableColumn{});
         out.Value(source.tableColumn.has_value());
         out.Value(column.heapSource);
@@ -1182,9 +1185,10 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         value.SetOperandsWithoutUses(std::move(operands), std::move(predecessors));
     }
     reader.List(plan.memoryInfo, 78, decodeMemoryInfo);
-    reader.List(plan.descriptorSources, 87, [&](Reader& in, DescriptorSource& source) {
+    reader.List(plan.descriptorSources, 88, [&](Reader& in, DescriptorSource& source) {
         for (auto& dword : source.dwords) dword = valueAt(in.Get<std::uint32_t>());
         in.Value(source.dwordCount);
+        in.Value(source.runtime);
         const bool tabled = in.Get<bool>();
         TableColumn column;
         in.Value(column.heapSource);
