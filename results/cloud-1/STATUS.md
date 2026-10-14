@@ -1,6 +1,6 @@
-BUSY GAC-006 (claimed 2026-10-14T22:50:32Z)
+READY
 RESULT:
-- Last task: GAC-005 (depth expand series made PR-ready: no code comments, tests after their fixes; fix/agc-db-depth-expand-pr at fdf07837b4 on the fork), done: results/cloud-1/GAC-005.md. Before it: PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
+- Last task: GAC-006 (depth expand reads of a non-imported write base: not reproduced at e1a94e7735 in 11 variants; green coverage test on fix/agc-db-depth-expand-noimport at 984604118; separate abort found for window imports inside heap-mirrored ranges), done: results/cloud-1/GAC-006.md. Before it: GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
   - /home/user/AnyPS5/build at upstream a453108cf7
   - /home/user/trees/prm-003/build at prm-003 de032afb91
@@ -8,7 +8,7 @@ RESULT:
   - /home/user/trees/fsr/build at feat/agc-fsr1-presentation-upscaling fea68147a (the old submodule head stays as local branch pm004-submodule-245f786b0)
   - /home/user/trees/overlay/build at feat/videoout-overlay-more-stats ce8e338cf
   - /home/user/trees/depth-alias/build at test/depth-alias-red b3c988d36 (upstream bebff8b0e plus the test)
-  - /home/user/trees/expand/build at fix/agc-db-depth-expand-pr fdf07837b4 (upstream 9f03c4fe0 plus 13 commits)
+  - /home/user/trees/expand/build at fix/agc-db-depth-expand-noimport 984604118 (e1a94e7735 plus one test commit; fix/agc-db-depth-expand-pr fdf07837b4 is a local branch there too)
   - /home/user/trees/trophy/build at feat/np-trophy-stats 954118b81 (PM-016's d04a01659 on upstream f785b88a6, plus five commits)
   - /home/user/trees/perdraw/build at test/agc-image-mirror-epoch-compare ce6959aba (upstream 153d5d469 plus three commits)
   - one shared ccache
