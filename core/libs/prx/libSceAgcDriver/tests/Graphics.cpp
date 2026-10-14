@@ -6089,7 +6089,8 @@ int main(int argc, char** argv) {
                 });
             }
             Require(mock.live == 0, "image mirror epoch tests leaked Vulkan objects");
-            std::cout << "a writable image mirror is compared once per collect epoch unless the driver stores into it\n";
+            std::cout << "a writable image mirror is compared once per collect epoch unless the driver stores into it
+";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--perdraw-bench") {
@@ -6097,6 +6098,32 @@ int main(int argc, char** argv) {
             context.bufferDeviceAddress = true;
             context.limits.maxStorageBufferRange = 1u << 27;
             RunPerDrawBench(context);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--address-copy-cap") {
+#ifdef _WIN32
+            _putenv_s("APS5_ADDRESS_COPY_MAX_MIB", "1");
+#else
+            setenv("APS5_ADDRESS_COPY_MAX_MIB", "1", 1);
+#endif
+            {
+                mock = MockVulkan{};
+                auto context = mockContext();
+                context.bufferDeviceAddress = true;
+                context.limits.maxStorageBufferRange = 1u << 27;
+                RunAddressCopyCapTests(context, {
+                    [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
+                    {},
+                    [](VkDeviceAddress address) {
+                        const auto offset = address - 0x100000000000ULL;
+                        const auto buffer = reinterpret_cast<VkBuffer>(offset / 0x10000);
+                        return mockBufferMemory(buffer).subspan(offset % 0x10000);
+                    },
+                    {},
+                    {}
+                });
+            }
+            Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--address-space-teardown") {
