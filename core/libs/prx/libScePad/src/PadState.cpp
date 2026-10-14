@@ -172,7 +172,7 @@ PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uin
         }
         ++touchNum;
     }
-    if (touchNum == 0 && (state.touchLeft || state.touchRight)) {
+    if (touchNum == 0 && (state.touchLeft || state.touchRight || (injected.buttons & 0x100000) != 0)) {
         data.buttons |= 0x100000;
         touchNum = 1;
         data.touch_data_touch0_x = state.touchRight ? 1440 : 480;

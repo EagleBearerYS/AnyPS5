@@ -238,6 +238,23 @@ static void CheckInjectedState(const std::filesystem::path& path) {
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
+static void CheckInjectedTouchPad(const std::filesystem::path& path) {
+    PadPublishInput_nid_postfix(PadInputState{});
+    std::ofstream(path) << "3 1048576 300\n";
+    PadData pressed{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        pressed = Pad::ReadState();
+        if ((pressed.buttons & 0x100000) != 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+    Require((pressed.buttons & 0x100000) != 0);
+    Require(pressed.touch_data_touch_num == 1 && pressed.touch_data_touch0_x == 480 && pressed.touch_data_touch0_y == 471);
+    std::this_thread::sleep_for(std::chrono::milliseconds(310));
+    const auto released = Pad::ReadState();
+    Require((released.buttons & 0x100000) == 0 && released.touch_data_touch_num == 0);
+}
+
 int main() {
     CheckInputCommands();
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-pad-state-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -278,6 +295,7 @@ int main() {
     CheckReadStateHandle(handle);
     CheckRemoteController(handle);
     CheckInjectedState(path);
+    CheckInjectedTouchPad(path);
     Require(scePadSetVibrationMode(handle, 1) == 0);
     Require(scePadSetVibrationMode(handle, 2) == 0);
     Require(scePadSetVibrationMode(handle, 3) == 0);
