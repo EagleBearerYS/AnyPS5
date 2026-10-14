@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Execution/include/SubgroupClock.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentMode.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -372,6 +373,7 @@ struct VulkanDevice::State {
     VkPhysicalDeviceMeshShaderPropertiesEXT meshLimits{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT};
     std::unique_ptr<PresentationScaler> scaler;
     std::unique_ptr<PresentationPass> presentation;
+    std::unique_ptr<PerformanceOverlay> overlay;
     VkFormat surfaceFormat = VK_FORMAT_B8G8R8A8_UNORM;
     VkColorSpaceKHR surfaceColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     bool swapchainColorSpaces = false;
@@ -723,6 +725,7 @@ struct VulkanDevice::State {
             textureCache.reset();
             detiler.reset();
             colorTransfer.reset();
+            overlay.reset();
             presentation.reset();
             scaler.reset();
             hdrScaler.reset();
@@ -2944,6 +2947,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     if (state->presentSlots[state->presentCursor].inFlight) RetirePresents(state->presentSlots.size() - 1);
     auto& slot = state->presentSlots[state->presentCursor];
     require(!slot.inFlight, "presentation slot is still in flight");
+    const bool overlay = PerformanceOverlay::Visible();
     if (display != nullptr && resident == nullptr) {
         static_cast<void>(DisplayBufferSize(*display));
         state->colorTransfer->Upload(display->address, width, height, Graphics::ColorTileMode::RenderTarget, DisplayTexelBytes(display->pixelFormat));
@@ -3035,7 +3039,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         }
         if (drawn) {
             state->presentation->Bind(slotIndex, resident->Image(), width, height, display->pixelFormat, whiteNits, residentLayer);
-            state->presentation->RecordPresent(commands, slotIndex, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+            state->presentation->RecordPresent(commands, slotIndex, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         } else {
             scaler->RecordLetterbox(commands, width, height, barrier.image, state->extent.width, state->extent.height);
             if (direct) PresentationScaler::RecordBlitFrom(graphicsContext(), commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, width, height, residentFilter, barrier.image, state->extent.width, state->extent.height, residentLayer);
@@ -3073,7 +3077,11 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             Graphics::Recorder::CountBarriers(CommandClass::PresentBlit);
         }
     }
-    if (!drawn) {
+    if (overlay) {
+        if (!state->overlay) state->overlay = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
+        state->overlay->NotePresent(std::chrono::steady_clock::now());
+        state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    } else if (!drawn) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = 0;
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;

@@ -165,6 +165,21 @@ Do not disable Dozen if it is the only Vulkan driver available; the application 
 
 HDR output is available on Windows only. Titles see it when the monitor showing the window runs in HDR mode (Settings > Display > Use HDR), the window's Vulkan surface offers an HDR10 (`VK_COLOR_SPACE_HDR10_ST2084_EXT`) swapchain in a 10-bit format, the instance has `VK_EXT_swapchain_colorspace` and the device `VK_EXT_hdr_metadata`. The monitor's luminance comes from DXGI; a monitor that reports no peak luminance is taken as 1000 nits peak and full-frame, 0 nits black. On Linux and other hosts the output is always SDR, because the surface's formats do not show whether the display is in HDR. A title's BT.2100 PQ display buffers then reach the display unchanged; without HDR output they are converted to SDR.
 
+### Performance overlay
+
+F10 shows or hides a performance overlay over the presented image; `ANYPS5_OVERLAY=1` shows it from the first frame. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits.
+
+| Line | Meaning |
+|------|---------|
+| `FPS` | Frames presented per second, over the last second. Every present counts, including frames a title presents cleared, for example while it loads. |
+| `FRAME` | Time between the last two presented frames, in ms. |
+| graph | The last 120 frame times, the newest on the right. The full height is the longest of them or twice their average, whichever is larger. |
+| `MIN/AVG/MAX` | The shortest, average and longest of the 120 frame times, in ms. |
+| `GPU` | GPU time per frame over the last second, in ms: the span of each recorded batch from its first to its last command, from the timestamp queries of `APS5_PROFILE_GPU=1`. Shown only with that variable. Batches are counted when they complete, so the line trails a sudden change by up to a second. Batches that overlap on different queues each count in full, so the line can exceed `FRAME`. |
+| `DRIVER` | CPU time per frame over the last second, in ms, that the packet workers spent in dispatch and draw packets (the `dispatch` and `draw` time of the `[gpu] worker` line of `APS5_PROFILE_DRAW=1`). Shown only with that variable. |
+
+Times are shown with one decimal below 100 and as whole numbers above, up to 9999. While the overlay is hidden the presentation records nothing for it and the presented image is unchanged; while it is shown, one small render pass draws it over each presented frame.
+
 ### Storing GPU results at each flip
 
 GPU results in storage images and render targets stay on the GPU until something reads their memory. A title that frees such an image after waiting for its GPU work and reuses the memory can have its new data overwritten when the results are stored later ([TechnicalDebt](../dev/TechnicalDebt.md)). `APS5_STORE_AT_FLIP=1` stores every pending result when a display buffer is flipped, at the cost of one write-back per pending image and frame. Any other value stops the title at its first flip.
