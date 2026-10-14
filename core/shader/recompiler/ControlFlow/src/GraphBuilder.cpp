@@ -1505,17 +1505,18 @@ LinkedCode LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> u
                 throw std::logic_error(at + " name a record that is not the call's record");
             }
         }
-        const auto targetWord = [&](std::uint32_t dword) { return dword == targetDword || dword == targetDword + 1u; };
         std::vector<std::vector<std::uint32_t>> wordIndex(callees.size(), std::vector<std::uint32_t>(table.recordDwords, UINT32_MAX));
         for (std::size_t callee = 0; callee < callees.size(); ++callee) {
-            for (const auto& held : table.recordRegisters) {
-                if (targetWord(held.dword) || wordIndex[callee][held.dword] != UINT32_MAX) continue;
-                wordIndex[callee][held.dword] = static_cast<std::uint32_t>(result.linkedWords.size());
-                result.linkedWords.push_back(callees[callee].record[held.dword]);
-            }
+            const auto link = [&](std::uint32_t dword) {
+                if (wordIndex[callee][dword] != UINT32_MAX) return;
+                wordIndex[callee][dword] = static_cast<std::uint32_t>(result.linkedWords.size());
+                result.linkedWords.push_back(callees[callee].record[dword]);
+            };
+            link(targetDword);
+            link(targetDword + 1u);
+            for (const auto& held : table.recordRegisters) link(held.dword);
         }
         const auto literal = [&](std::size_t callee, std::uint32_t dword, std::uint32_t instruction) {
-            if (targetWord(dword)) return callees[callee].record[dword];
             result.linkedLiterals.push_back(instruction * 4u);
             return wordIndex[callee][dword];
         };

@@ -31,6 +31,7 @@ alignas(256) constexpr std::array<std::uint32_t, 25> Caller{
 alignas(256) constexpr std::array<std::uint32_t, 9> LoadThroughArgument{
     0xf40c0905u, 0xfa000000u, 0xbf8cc07fu, 0x7e0a0300u, 0x7e0c0280u, 0xf0000108u, 0x00090205u, 0xbf8c3f70u,
     0xbe80200eu};
+alignas(256) std::array<std::uint32_t, 9> MovedLoadThroughArgument{};
 alignas(256) constexpr std::array<std::uint32_t, 12> LoadThroughArgumentBuffer{
     0xf4080b05u, 0xfa000020u, 0xbf8cc07fu, 0xf42c0916u, 0xfa000020u, 0xbf8cc07fu, 0x7e0a0300u, 0x7e0c0280u,
     0xf0000108u, 0x00090205u, 0xbf8c3f70u, 0xbe80200eu};
@@ -155,6 +156,10 @@ int main() {
         SetRecord(1, LoadThroughArgumentBuffer.data(), ThirdArgument.data());
         SetRecord(3, LoadThroughArgument.data(), ThirdArgument.data());
         Check(SecondTexels, ThirdTexels, "two records given an argument no copy was linked for");
+        std::copy(LoadThroughArgument.begin(), LoadThroughArgument.end(), MovedLoadThroughArgument.begin());
+        SetRecord(2, MovedLoadThroughArgument.data(), SecondArgument.data());
+        SetRecord(3, MovedLoadThroughArgument.data(), ThirdArgument.data());
+        Check(SecondTexels, ThirdTexels, "two records whose callee's code moved to another address");
         {
             GuestAllocations::Mutation mutation;
             mutation.Remove(FirstTexels.data());
