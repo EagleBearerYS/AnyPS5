@@ -17,6 +17,8 @@ std::uint64_t RemainingMicros(std::uint64_t deadlineNanos);
 void SleepNanos(std::uint64_t nanos);
 void SleepUntil(std::uint64_t deadlineNanos);
 
+enum class Precision { Exact, Tick };
+
 struct Waiter;
 
 #ifdef _WIN32
@@ -59,6 +61,7 @@ bool AcquireUntil(const void* key, std::uint64_t deadlineNanos, TTryLock tryLock
 class Condition {
 public:
     Condition() = default;
+    explicit Condition(Precision precision) : precision(precision) {}
     ~Condition() = default;
     Condition(const Condition&) = delete;
     Condition& operator=(const Condition&) = delete;
@@ -119,6 +122,7 @@ private:
     Waiter* tail = nullptr;
 #endif
     std::condition_variable_any coarse;
+    Precision precision = Precision::Exact;
 };
 
 }  // namespace TimedWait

@@ -18,6 +18,7 @@ namespace {
 
 constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
 constexpr std::uint64_t LEAD_NANOS = 500000ULL;
+constexpr std::uint64_t POLL_BELOW_NANOS = 50000ULL;
 
 struct ThreadWaitState {
     std::atomic<int> own{0};
@@ -151,13 +152,15 @@ bool EventSet(HANDLE event, DWORD milliseconds) {
     return AlertableWait(1, &event, milliseconds) == WAIT_OBJECT_0;
 }
 
-bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
+bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos, Precision precision) {
+    const std::uint64_t lead = precision == Precision::Tick ? 0 : LEAD_NANOS;
+    const std::uint64_t pollBelow = precision == Precision::Tick ? POLL_BELOW_NANOS : LEAD_NANOS;
     for (;;) {
         const std::uint64_t now = NowNanos();
         if (now >= deadlineNanos) return EventSet(waiter->event, 0);
         const std::uint64_t remaining = deadlineNanos - now;
-        if (remaining > LEAD_NANOS) {
-            const std::uint64_t bulk = remaining - LEAD_NANOS;
+        if (remaining > pollBelow) {
+            const std::uint64_t bulk = remaining - lead;
             LARGE_INTEGER due{};
             due.QuadPart = -static_cast<LONGLONG>(bulk / 100ULL);
             if (waiter->timer && SetWaitableTimer(waiter->timer, &due, 0, nullptr, nullptr, FALSE)) {
@@ -203,7 +206,7 @@ void Condition::waitSignal(Waiter* waiter) {
 }
 
 bool Condition::waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
-    bool signaled = WaitEventUntil(waiter, deadlineNanos);
+    bool signaled = WaitEventUntil(waiter, deadlineNanos, precision);
     if (!signaled) {
         std::lock_guard lock(queueLock);
         if (waiter->queued) {
@@ -317,7 +320,7 @@ Waiter* BeginPark(const void* key) {
 
 bool FinishPark(const void* key, Waiter* waiter, const std::uint64_t* deadlineNanos) {
     auto& bucket = ParkBucketFor(key);
-    bool signaled = deadlineNanos ? WaitEventUntil(waiter, *deadlineNanos) : AlertableWait(1, &waiter->event, INFINITE) == WAIT_OBJECT_0;
+    bool signaled = deadlineNanos ? WaitEventUntil(waiter, *deadlineNanos, Precision::Tick) : AlertableWait(1, &waiter->event, INFINITE) == WAIT_OBJECT_0;
     if (!signaled) signaled = LeavePark(bucket, waiter);
     ReleaseParked(bucket, waiter);
     if (!signaled && !deadlineNanos) throw std::runtime_error("TimedWait: an untimed parked wait ended without a wake");

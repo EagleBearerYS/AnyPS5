@@ -13,7 +13,7 @@
 // The guest sem_t is at least 8 bytes; its first word holds a pointer to the host semaphore.
 struct PosixSemaphore {
     std::mutex lock;
-    TimedWait::Condition available;
+    TimedWait::Condition available{TimedWait::Precision::Tick};
     unsigned int count;
 };
 

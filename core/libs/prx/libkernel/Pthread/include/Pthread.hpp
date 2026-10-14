@@ -50,7 +50,7 @@ struct PthreadRwlockattrPrivate {
 
 struct PthreadRwlockPrivate {
     std::mutex _state;
-    TimedWait::Condition _changed;
+    TimedWait::Condition _changed{TimedWait::Precision::Tick};
     std::atomic<std::thread::id> _writer;
     std::atomic<int> _readers{0};
     int _waitingWriters = 0;
@@ -61,7 +61,7 @@ struct PthreadCondattrPrivate {
 };
 
 struct PthreadCondPrivate {
-    TimedWait::Condition _cv;
+    TimedWait::Condition _cv{TimedWait::Precision::Tick};
     int _clockid = 0;
 };
 

@@ -47,6 +47,8 @@ struct UmtxTime {
 };
 
 struct AddressWaiter {
+    explicit AddressWaiter(TimedWait::Precision precision) : condition(precision) {}
+
     TimedWait::Condition condition;
     bool woken = false;
 };
@@ -60,14 +62,14 @@ bool IsAlignedAddress(std::uintptr_t address) {
 }
 
 template <class TValue>
-bool WaitOnAddressUntil(TValue* address, TValue expected, std::optional<std::uint64_t> deadlineNanos, const void* caller) {
+bool WaitOnAddressUntil(TValue* address, TValue expected, std::optional<std::uint64_t> deadlineNanos, const void* caller, TimedWait::Precision precision) {
     const auto key = reinterpret_cast<std::uintptr_t>(address);
     std::unique_lock<std::mutex> lock(g_waitersLock);
     if (std::atomic_ref<TValue>(*address).load() != expected) {
         return true;
     }
 
-    AddressWaiter waiter;
+    AddressWaiter waiter(precision);
     auto& queue = g_waiters[key];
     const auto position = queue.insert(queue.end(), &waiter);
     const auto isWoken = [&] { return waiter.woken; };
@@ -94,7 +96,7 @@ bool WaitOnAddressUntil(TValue* address, TValue expected, std::optional<std::uin
 template <class TValue>
 int WaitOnAddress(TValue* address, TValue expected, const KernelUseconds* timeout, const void* caller) {
     const auto deadline = timeout == nullptr ? std::nullopt : std::optional<std::uint64_t>(TimedWait::DeadlineNanos(*timeout));
-    return WaitOnAddressUntil(address, expected, deadline, caller) ? SYNC_ON_ADDRESS_OK : SCE_KERNEL_ERROR_ETIMEDOUT;
+    return WaitOnAddressUntil(address, expected, deadline, caller, TimedWait::Precision::Exact) ? SYNC_ON_ADDRESS_OK : SCE_KERNEL_ERROR_ETIMEDOUT;
 }
 
 void WakeAddress(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
@@ -173,7 +175,7 @@ int UmtxWait(void* object, std::uint64_t expected, const void* sizeArgument, con
     if (expected > std::numeric_limits<TValue>::max()) {
         return 0;
     }
-    return WaitOnAddressUntil(static_cast<TValue*>(object), static_cast<TValue>(expected), deadline, caller) ? 0 : GUEST_ETIMEDOUT;
+    return WaitOnAddressUntil(static_cast<TValue*>(object), static_cast<TValue>(expected), deadline, caller, TimedWait::Precision::Tick) ? 0 : GUEST_ETIMEDOUT;
 }
 
 int UmtxWake(void* object, std::uint64_t count, bool isPrivate) {
