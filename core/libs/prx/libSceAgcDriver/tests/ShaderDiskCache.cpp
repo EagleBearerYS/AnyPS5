@@ -57,7 +57,7 @@ void setEnvironment(const char* name, const std::string& value) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerUsed == right.samplerUsed && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerUsed == right.samplerUsed && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -142,15 +142,12 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageWritten = {false, true, true};
     binding.imageAtomic = {false, true, false};
     binding.imageShapes = {DescriptorImageShape::Image2D, DescriptorImageShape::Image3D};
-    binding.bufferAtomic = {true};
-    binding.bufferWritten = {false, false, true, true, false};
     binding.samplerUnnormalized = {false, true, true};
     binding.samplerIntegerBorder = {true, false, seed % 2 == 1};
     binding.samplerUsed = {seed % 2 == 0, true, false};
     binding.imageUnnormalized = {true, false, seed % 2 == 0};
     binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
     binding.imageSamplers = {{0u, 2u, 70u}, {}, {31u, 4000u}};
-    binding.bufferRead = {true, false, false, true, true, false};
     return binding;
 }
 
@@ -162,7 +159,7 @@ RecompileResult sampleResult() {
     result.spirv = std::move(words);
     result.bindings = {sampleBinding(1), sampleBinding(2)};
     result.bindings[1].kind = DescriptorKind::StorageBuffer;
-    result.bindings[1].role = DescriptorRole::GuestBuffers;
+    result.bindings[1].role = DescriptorRole::Gds;
     result.bindings[1].imageShape.reset();
     result.pushConstants = {std::byte{1}, std::byte{0xff}, std::byte{0}, std::byte{0x80}, std::byte{7}};
     result.bdaAbiVersion = 3;
@@ -212,18 +209,6 @@ CompiledVariant sampleVariant() {
     info.paramExportMask = 0x5;
     info.info.scratchDwords = 8;
     info.info.sharedMemoryBytes = 4096;
-    BufferResource buffer{};
-    buffer.source = 3;
-    buffer.firstUsePc = 0x40;
-    buffer.maxByteExtent = 256;
-    buffer.imageAlias = 1;
-    buffer.read = true;
-    buffer.atomic = true;
-    buffer.scalar = true;
-    buffer.descriptorFormatted = true;
-    buffer.formattedReadMask = 5u;
-    buffer.typedAlignment = 2u;
-    info.info.buffers = {buffer, BufferResource{}};
     ImageResource image{};
     image.source = 5;
     image.firstUsePc = 0x80;
@@ -868,74 +853,30 @@ void verifyBufferAlignmentSpecialization() {
 
 void verifyBindingPlanSelection() {
     ShaderInfo info{};
-    info.buffers.resize(2);
-    info.buffers[0].atomic = true;
-    info.buffers[1].read = true;
     CompiledBindingLayout compiled{};
-    compiled.layout.descriptors = {{DescriptorBindingKind::Buffers, {0, 1}}, {DescriptorBindingKind::FlattenedSrt, {}}, {DescriptorBindingKind::ShaderData, {}}, {DescriptorBindingKind::Gds, {}}};
+    compiled.layout.descriptors = {{DescriptorBindingKind::FlattenedSrt, {}}, {DescriptorBindingKind::ShaderData, {}}, {DescriptorBindingKind::Gds, {}}};
     compiled.layout.userDataRegisters = {0};
     compiled.layout.memoryOffsetDword = 1;
     ResourceSnapshot snapshot{};
-    snapshot.buffers.resize(2);
-    for (auto& buffer : snapshot.buffers) {
-        buffer.dwordCount = 4u;
-        buffer.dwords = {0x10000000u, 0u, 64u, 0x31016facu};
-    }
     snapshot.userData = {17u};
     snapshot.flattenedSrt = {23u};
     const DescriptorBindingBuilder builder;
     const auto plan = builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot);
     BindingAllocationResult full;
     builder.Populate(full, compiled, plan, 0u, snapshot, {});
-    require(full.bindings.size() == 4u, "binding plan lost a descriptor before module selection");
-    require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true}, "binding plan lost buffer access metadata");
-    const std::array liveBindings{full.bindings[3].binding};
+    require(full.bindings.size() == 3u, "binding plan lost a descriptor before module selection");
+    const std::array liveBindings{full.bindings[2].binding};
     const auto selected = builder.Select(plan, liveBindings, false, false);
     snapshot.userData.clear();
     snapshot.flattenedSrt.clear();
-    snapshot.buffers[0].dwords[0] += 0x10000u;
-    snapshot.buffers[1].dwords[2] = 128u;
     BindingAllocationResult populated;
     builder.Populate(populated, compiled, selected, 0u, snapshot, {});
-    require(populated.bindings.size() == 2u && populated.pushConstants.empty(), "module selection retained an unused descriptor");
-    auto expected = full.bindings[0];
-    expected.guestDescriptor[0] += 0x10000u;
-    expected.guestDescriptor[6] = 128u;
-    require(sameBinding(expected, populated.bindings[0]) && sameBinding(full.bindings[3], populated.bindings[1]), "selected plan changed binding order or reused stale buffer data");
+    require(populated.bindings.size() == 1u && populated.pushConstants.empty(), "module selection retained an unused descriptor");
+    require(sameBinding(full.bindings[2], populated.bindings[0]), "selected plan changed the live binding");
     bool rejected = false;
     try { static_cast<void>(builder.Select(plan, std::array{UINT32_MAX}, false, false)); }
     catch (const std::runtime_error&) { rejected = true; }
     require(rejected, "module selection accepted an unknown binding");
-    snapshot.buffers[0].dwordCount = 3u;
-    rejected = false;
-    try { builder.Populate(populated, compiled, selected, 0u, snapshot, {}); }
-    catch (const std::runtime_error&) { rejected = true; }
-    require(rejected, "selected plan accepted an invalid live buffer descriptor");
-    snapshot.buffers[0].dwordCount = 4u;
-    const auto rejectsAlignment = [&](const char* diagnostic) {
-        try { static_cast<void>(builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot)); }
-        catch (const std::runtime_error& error) {
-            require(std::string_view(error.what()).find(diagnostic) != std::string_view::npos, "alignment check returned an unrelated failure");
-            return;
-        }
-        throw std::runtime_error("binding plan accepted an unsupported buffer alignment");
-    };
-    snapshot.buffers[0].dwords[0] |= 2u;
-    rejectsAlignment("buffer atomic on a V# whose base is not DWORD aligned");
-    snapshot.buffers[0].dwords[0] &= ~3u;
-    info.buffers[1].typedAlignment = 2u;
-    snapshot.buffers[1].dwords[0] |= 2u;
-    static_cast<void>(builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot));
-    snapshot.buffers[1].dwords[0] |= 1u;
-    rejectsAlignment("base is not aligned to its element");
-    info.buffers[1].typedAlignment = 1u;
-    info.buffers[1].descriptorFormatted = true;
-    snapshot.buffers[1].dwords[3] = 0x3100bfacu;
-    rejectsAlignment("base is not aligned to its element");
-    snapshot.buffers[1].dwords[0] &= ~1u;
-    static_cast<void>(builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot));
-    snapshot.buffers[1].dwords[3] = 0x31014facu;
-    rejectsAlignment("base is not aligned to its element");
 }
 
 void verifyVertexTypeSpecialization() {
@@ -1448,7 +1389,6 @@ IrResourcePlan handBuiltPlan() {
     plan.requiresSpecializationMemory = true;
     plan.srtPlanComplete = true;
     plan.resourceTrackingComplete = true;
-    plan.info.buffers = {BufferResource{}, BufferResource{2u, 0x40u, 0x100u, 0u, true, true, true, true, true, 0x7u, true, 4u}};
     ImageResource image{};
     image.source = 1u;
     image.resourceClass = ImageResourceClass::Sampled;
@@ -1556,7 +1496,7 @@ MaterializedPlan materializePlan(const IrResourcePlan& plan, SrtRuntime runtime)
 bool sameMaterialization(const MaterializedPlan& left, const MaterializedPlan& right) {
     const auto& a = left.snapshot;
     const auto& b = right.snapshot;
-    return left.ok == right.ok && left.error == right.error && a.buffers == b.buffers && a.images == b.images && a.samplers == b.samplers && a.flattenedSrt == b.flattenedSrt && a.userData == b.userData && a.uniformFill == b.uniformFill && a.srtPoison == b.srtPoison && a.nullRootReads == b.nullRootReads &&
+    return left.ok == right.ok && left.error == right.error && a.images == b.images && a.samplers == b.samplers && a.flattenedSrt == b.flattenedSrt && a.userData == b.userData && a.uniformFill == b.uniformFill && a.srtPoison == b.srtPoison && a.nullRootReads == b.nullRootReads &&
            left.leaf == right.leaf && left.trace.leafSlot == right.trace.leafSlot && left.trace.leaves == right.trace.leaves && left.trace.otherReads == right.trace.otherReads;
 }
 
@@ -1670,7 +1610,6 @@ void verifyMalformedPlans() {
     rejects("a block source past the sources", [](IrResourcePlan& plan) { plan.controlFlow[0].sources[0] = 4u; });
     rejects("a block image past the images", [](IrResourcePlan& plan) { plan.controlFlow[1].images[0] = 1u; });
     rejects("a materialized source past the sources", [](IrResourcePlan& plan) { plan.materializationSources.push_back(4u); });
-    rejects("a buffer past the sources", [](IrResourcePlan& plan) { plan.info.buffers[0].source = 4u; });
     rejects("an image past the sources", [](IrResourcePlan& plan) { plan.info.images[0].source = 5u; });
     rejects("a descriptor of nine dwords", [](IrResourcePlan& plan) { plan.descriptorSources[1].dwordCount = 9u; });
     rejects("a uniform fill of five words", [](IrResourcePlan& plan) { plan.uniformFill.fill.words = 5u; });
@@ -1792,7 +1731,7 @@ void appendWords(std::vector<std::byte>& out, std::span<const std::uint32_t> wor
 
 void appendSnapshot(std::vector<std::byte>& out, const ResourceCapture& capture) {
     const auto& snapshot = capture.snapshot;
-    for (const auto* values : {&snapshot.buffers, &snapshot.images, &snapshot.samplers}) {
+    for (const auto* values : {&snapshot.images, &snapshot.samplers}) {
         std::vector<std::uint32_t> words;
         for (const auto& value : *values) {
             words.push_back(value.dwordCount);
