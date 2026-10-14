@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <mutex>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -15,28 +16,43 @@ class PipelineCache {
 public:
     static constexpr int SaveIntervalSeconds = 10;
 
-    PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties);
+    PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties, bool creationCacheControl);
     ~PipelineCache();
 
     PipelineCache(const PipelineCache&) = delete;
     PipelineCache& operator=(const PipelineCache&) = delete;
-    VkPipelineCache Handle() const { return cache; }
+
+    VkResult CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) const;
+    VkResult CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline) const;
+    void Save();
+    const std::filesystem::path& BasePath() const { return path; }
+    const std::filesystem::path& SessionPath() const { return sessionPath; }
 
 private:
-    void load(std::vector<std::byte>& initialData);
+    bool read(const std::filesystem::path& file, std::vector<std::byte>& bytes, std::span<const std::byte>& data) const;
+    VkPipelineCache create(std::span<const std::byte> data) const;
+    bool write(VkPipelineCache source, const std::filesystem::path& file, std::size_t& bytes) const;
     void save(bool final);
     void run();
 
     Context context;
     VkPhysicalDeviceProperties properties{};
-    VkPipelineCache cache = VK_NULL_HANDLE;
+    VkPipelineCache base = VK_NULL_HANDLE;
+    VkPipelineCache session = VK_NULL_HANDLE;
     std::filesystem::path path;
-    std::size_t savedBytes = 0;
+    std::filesystem::path sessionPath;
+    std::vector<std::filesystem::path> mergedSessions;
+    bool baseStale = false;
+    std::size_t savedSessionBytes = 0;
+    std::mutex saveMutex;
     std::mutex mutex;
     std::condition_variable wake;
     bool stopping = false;
     std::thread saver;
 };
+
+VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline);
+VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline);
 
 }
 

@@ -974,6 +974,34 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcPipelineCacheFillSource ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/PipelineCacheFill.comp)
+set(agcPipelineCacheFillSpv ${agcTestShaderGeneratedRoot}/PipelineCacheFill.spv)
+set(agcPipelineCacheFillHeader ${agcTestShaderGeneratedRoot}/PipelineCacheFill_spv.h)
+add_custom_command(
+        OUTPUT "${agcPipelineCacheFillHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcPipelineCacheFillSpv}" "${agcPipelineCacheFillSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcPipelineCacheFillSpv} -DOUTPUT=${agcPipelineCacheFillHeader}
+        -DSYMBOL=PIPELINE_CACHE_FILL_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcPipelineCacheFillSource}" glslang-standalone
+        VERBATIM
+)
+
+add_test_executable(agc_driver_pipeline_cache_files_tests EXCLUDE_FROM_ALL tests/PipelineCacheFiles.cpp ${agcPipelineCacheFillHeader})
+target_include_directories(agc_driver_pipeline_cache_files_tests PRIVATE ${LIBS_INCLUDE_DIR} ${agcTestShaderGeneratedRoot} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_driver_pipeline_cache_files_tests PRIVATE libSceAgcDriver libkernel SDL2-static libc)
+set_target_properties(agc_driver_pipeline_cache_files_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_driver_pipeline_cache_files_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_driver_pipeline_cache_files_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_driver_pipeline_cache_files COMMAND agc_driver_pipeline_cache_files_tests)
+    set_tests_properties(agc_driver_pipeline_cache_files PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_pipeline_cache_files PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
         tests/ResidentPresent.cpp

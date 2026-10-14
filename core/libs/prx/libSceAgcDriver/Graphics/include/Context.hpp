@@ -15,6 +15,7 @@
 
 namespace AgcDriver::Graphics {
 
+class PipelineCache;
 class TextureDetiler;
 class GpuColorTransfer;
 class BufferPool;
@@ -122,7 +123,7 @@ struct Context {
     GpuColorTransfer* colorTransfer = nullptr;
     mutable std::shared_ptr<BufferPool> bufferPool;
     TextureCache* textureCache = nullptr;
-    VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+    const PipelineCache* pipelineCache = nullptr;
     bool depthClamp = false;
     // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;

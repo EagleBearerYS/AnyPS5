@@ -1,0 +1,10 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint Seed = 1u;
+layout(set = 0, binding = 0, std430) buffer Words { uint words[]; } data;
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint value = Seed;
+    for (uint step = 0u; step < 32u; ++step) value = value * 1664525u + 1013904223u + index;
+    data.words[index] = value;
+}

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -203,7 +204,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     createInfo.stage = stage;
     createInfo.layout = image ? imagePipelineLayout : pipelineLayout;
     VkPipeline result = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &result), "vkCreateComputePipelines");
+    Check(CreateComputePipeline(context, createInfo, &result), "vkCreateComputePipelines");
     pipelines.emplace_back(key, result);
     return result;
 }
@@ -302,7 +303,7 @@ void TextureDetiler::DispatchDecode(VkCommandBuffer commands, std::uint32_t gues
         createInfo.stage.pName = "main";
         createInfo.stage.pSpecializationInfo = &specialization;
         createInfo.layout = pipelineLayout;
-        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &target), "vkCreateComputePipelines texel decode");
+        Check(CreateComputePipeline(context, createInfo, &target), "vkCreateComputePipelines texel decode");
     }
     const std::uint64_t step = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16u) / 4u;
     const std::uint64_t chunk = context.limits.maxStorageBufferRange / outputBytes / step * step;
@@ -367,7 +368,7 @@ void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t
         createInfo.stage.module = decodeImageModules[variant];
         createInfo.stage.pName = "main";
         createInfo.layout = decodeImagePipelineLayout;
-        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &target), "vkCreateComputePipelines texel decode");
+        Check(CreateComputePipeline(context, createInfo, &target), "vkCreateComputePipelines texel decode");
     }
     const auto set = allocateDecodeImageSet();
     const std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, source, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, destination, VK_IMAGE_LAYOUT_GENERAL}}};
@@ -427,7 +428,7 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         pipelineInfo.stage.module = cmaskModule;
         pipelineInfo.stage.pName = "main";
         pipelineInfo.layout = cmaskPipelineLayout;
-        const auto created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &cmaskPipeline);
+        const auto created = CreateComputePipeline(context, pipelineInfo, &cmaskPipeline);
         context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, cmaskModule, nullptr);
         Check(created, "vkCreateComputePipelines CMASK clear");
         cmaskErrors = std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);

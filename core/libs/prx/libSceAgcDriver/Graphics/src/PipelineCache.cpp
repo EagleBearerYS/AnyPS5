@@ -4,8 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <span>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -28,11 +30,20 @@ bool profiling() {
     return profile;
 }
 
+double millisecondsSince(std::chrono::steady_clock::time_point started) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 }
 
-PipelineCache::PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties) : context(context), properties(properties) {
+std::string sessionPrefix(const std::filesystem::path& base) {
+    return base.stem().string() + ".session-";
+}
+
+}
+
+PipelineCache::PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties, bool creationCacheControl) : context(context), properties(properties) {
     const auto directory = ShaderRecompiler::ShaderCacheDirectory();
-    if (!directory.empty()) {
+    if (!directory.empty() && !creationCacheControl) std::fprintf(stderr, "[pipeline-cache] not kept on disk: the device lacks pipelineCreationCacheControl (VK_EXT_pipeline_creation_cache_control)\n");
+    if (!directory.empty() && creationCacheControl) {
         std::string uuid;
         for (const auto byte : properties.pipelineCacheUUID) {
             char digits[3];
@@ -43,22 +54,39 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
         std::snprintf(name, sizeof(name), "vk-pipelines-%04x-%04x-%08x-%s.bin", properties.vendorID, properties.deviceID, properties.driverVersion, uuid.c_str());
         path = directory / name;
     }
-    std::vector<std::byte> initialData;
-    if (!path.empty()) load(initialData);
-    VkPipelineCacheCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
-    info.initialDataSize = initialData.size();
-    info.pInitialData = initialData.empty() ? nullptr : initialData.data();
-    const auto create = context.Function<PFN_vkCreatePipelineCache>("vkCreatePipelineCache");
-    VkResult result = create(context.device, &info, nullptr, &cache);
-    if (result != VK_SUCCESS && !initialData.empty()) {
-        std::fprintf(stderr, "[pipeline-cache] the driver refused %s (Vulkan result %d); starting empty\n", path.string().c_str(), static_cast<int>(result));
-        info.initialDataSize = 0;
-        info.pInitialData = nullptr;
-        savedBytes = 0;
-        result = create(context.device, &info, nullptr, &cache);
+    {
+        std::vector<std::byte> file;
+        std::span<const std::byte> data;
+        if (!path.empty() && read(path, file, data)) std::fprintf(stderr, "[pipeline-cache] loaded %.1f KiB from %s\n", static_cast<double>(data.size()) / 1024.0, path.string().c_str());
+        base = create(data);
     }
-    Check(result, "vkCreatePipelineCache");
-    if (!path.empty()) saver = std::thread([this] { run(); });
+    if (path.empty()) return;
+    const auto merge = context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches");
+    const auto destroy = context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache");
+    const auto prefix = sessionPrefix(path);
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(path.parent_path(), error)) {
+        const auto name = entry.path().filename().string();
+        if (!name.starts_with(prefix) || entry.path().extension() != ".bin") continue;
+        std::vector<std::byte> file;
+        std::span<const std::byte> data;
+        if (read(entry.path(), file, data)) {
+            if (const auto earlier = create(data); earlier != VK_NULL_HANDLE) {
+                Check(merge(context.device, base, 1, &earlier), "vkMergePipelineCaches session");
+                destroy(context.device, earlier, nullptr);
+                std::fprintf(stderr, "[pipeline-cache] merged %.1f KiB from %s\n", static_cast<double>(data.size()) / 1024.0, entry.path().string().c_str());
+            }
+        }
+        mergedSessions.push_back(entry.path());
+    }
+    baseStale = !mergedSessions.empty();
+    session = create({});
+    const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
+    Check(getData(context.device, session, &savedSessionBytes, nullptr), "vkGetPipelineCacheData session");
+    char id[17];
+    std::snprintf(id, sizeof(id), "%016llx", static_cast<unsigned long long>((static_cast<std::uint64_t>(std::random_device{}()) << 32u) ^ static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count())));
+    sessionPath = path.parent_path() / (prefix + id + ".bin");
+    saver = std::thread([this] { run(); });
 }
 
 PipelineCache::~PipelineCache() {
@@ -71,22 +99,48 @@ PipelineCache::~PipelineCache() {
         saver.join();
         save(true);
     }
-    context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
+    const auto destroy = context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache");
+    if (session != VK_NULL_HANDLE) destroy(context.device, session, nullptr);
+    destroy(context.device, base, nullptr);
 }
 
-void PipelineCache::load(std::vector<std::byte>& initialData) {
-    std::vector<std::byte> file;
-    if (!ShaderRecompiler::ReadWholeFile(path, file)) return;
+VkResult PipelineCache::CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) const {
+    const auto create = caller.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
+    if (session == VK_NULL_HANDLE) return create(caller.device, base, 1, &info, nullptr, pipeline);
+    auto lookup = info;
+    lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
+    const auto found = create(caller.device, base, 1, &lookup, nullptr, pipeline);
+    if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
+    return create(caller.device, session, 1, &info, nullptr, pipeline);
+}
+
+VkResult PipelineCache::CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline) const {
+    const auto create = caller.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+    if (session == VK_NULL_HANDLE) return create(caller.device, base, 1, &info, nullptr, pipeline);
+    auto lookup = info;
+    lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
+    const auto found = create(caller.device, base, 1, &lookup, nullptr, pipeline);
+    if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
+    return create(caller.device, session, 1, &info, nullptr, pipeline);
+}
+
+void PipelineCache::Save() {
+    if (!path.empty()) save(false);
+}
+
+bool PipelineCache::read(const std::filesystem::path& file, std::vector<std::byte>& bytes, std::span<const std::byte>& data) const {
+    if (!ShaderRecompiler::ReadWholeFile(file, bytes)) return false;
     const auto reject = [&](const char* why) {
-        std::fprintf(stderr, "[pipeline-cache] ignoring %s: %s\n", path.string().c_str(), why);
+        std::fprintf(stderr, "[pipeline-cache] ignoring %s: %s\n", file.string().c_str(), why);
+        return false;
     };
     FileHeader header{};
-    if (file.size() < sizeof(header)) return reject("truncated");
-    std::memcpy(&header, file.data(), sizeof(header));
+    if (bytes.size() < sizeof(header)) return reject("truncated");
+    std::memcpy(&header, bytes.data(), sizeof(header));
     if (header.magic != FileMagic || header.format != FileFormat) return reject("another format");
-    if (header.dataBytes != file.size() - sizeof(header)) return reject("truncated");
-    const auto data = std::span(file).subspan(sizeof(header));
-    if (ShaderRecompiler::HashBytes(data) != header.dataHash) return reject("checksum mismatch");
+    if (header.dataBytes != bytes.size() - sizeof(header)) return reject("truncated");
+    const auto payload = std::span<const std::byte>(bytes).subspan(sizeof(header));
+    if (ShaderRecompiler::HashBytes(payload) != header.dataHash) return reject("checksum mismatch");
     struct VulkanHeader {
         std::uint32_t headerSize;
         std::uint32_t headerVersion;
@@ -95,31 +149,64 @@ void PipelineCache::load(std::vector<std::byte>& initialData) {
         std::uint8_t uuid[VK_UUID_SIZE];
     } vulkan{};
     static_assert(sizeof(VulkanHeader) == 32);
-    if (data.size() < sizeof(vulkan)) return reject("no Vulkan header");
-    std::memcpy(&vulkan, data.data(), sizeof(vulkan));
+    if (payload.size() < sizeof(vulkan)) return reject("no Vulkan header");
+    std::memcpy(&vulkan, payload.data(), sizeof(vulkan));
     if (vulkan.headerSize < sizeof(vulkan) || vulkan.headerVersion != VK_PIPELINE_CACHE_HEADER_VERSION_ONE || vulkan.vendorID != properties.vendorID || vulkan.deviceID != properties.deviceID || std::memcmp(vulkan.uuid, properties.pipelineCacheUUID, VK_UUID_SIZE) != 0) return reject("made for another device or driver");
-    initialData.assign(data.begin(), data.end());
-    savedBytes = initialData.size();
-    std::fprintf(stderr, "[pipeline-cache] loaded %.1f KiB from %s\n", static_cast<double>(initialData.size()) / 1024.0, path.string().c_str());
+    data = payload;
+    return true;
+}
+
+VkPipelineCache PipelineCache::create(std::span<const std::byte> data) const {
+    const auto createCache = context.Function<PFN_vkCreatePipelineCache>("vkCreatePipelineCache");
+    VkPipelineCacheCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    info.initialDataSize = data.size();
+    info.pInitialData = data.empty() ? nullptr : data.data();
+    VkPipelineCache result = VK_NULL_HANDLE;
+    const auto created = createCache(context.device, &info, nullptr, &result);
+    if (created == VK_SUCCESS) return result;
+    if (data.empty()) Check(created, "vkCreatePipelineCache");
+    std::fprintf(stderr, "[pipeline-cache] the driver refused %.1f KiB of cache data (Vulkan result %d)\n", static_cast<double>(data.size()) / 1024.0, static_cast<int>(created));
+    return base == VK_NULL_HANDLE ? create({}) : VK_NULL_HANDLE;
+}
+
+bool PipelineCache::write(VkPipelineCache source, const std::filesystem::path& file, std::size_t& bytes) const {
+    const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
+    std::size_t size = 0;
+    if (getData(context.device, source, &size, nullptr) != VK_SUCCESS) return false;
+    std::vector<std::byte> contents(sizeof(FileHeader) + size);
+    const auto result = getData(context.device, source, &size, contents.data() + sizeof(FileHeader));
+    if (result != VK_SUCCESS && result != VK_INCOMPLETE) return false;
+    contents.resize(sizeof(FileHeader) + size);
+    const FileHeader header{FileMagic, FileFormat, size, ShaderRecompiler::HashBytes(std::span(contents).subspan(sizeof(FileHeader)))};
+    std::memcpy(contents.data(), &header, sizeof(header));
+    if (!ShaderRecompiler::WriteFileAtomically(file, contents)) {
+        std::fprintf(stderr, "[pipeline-cache] cannot write %s\n", file.string().c_str());
+        return false;
+    }
+    bytes = size;
+    return true;
 }
 
 void PipelineCache::save(bool final) {
+    std::lock_guard lock(saveMutex);
+    if (baseStale) {
+        const auto started = std::chrono::steady_clock::now();
+        std::size_t bytes = 0;
+        if (!write(base, path, bytes)) return;
+        std::error_code error;
+        for (const auto& merged : mergedSessions) std::filesystem::remove(merged, error);
+        std::fprintf(stderr, "[pipeline-cache] rewrote %s with %zu earlier sessions merged: %.1f KiB in %.1f ms\n", path.string().c_str(), mergedSessions.size(), static_cast<double>(bytes) / 1024.0, millisecondsSince(started));
+        mergedSessions.clear();
+        baseStale = false;
+    }
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     std::size_t size = 0;
-    if (getData(context.device, cache, &size, nullptr) != VK_SUCCESS || size == 0 || size == savedBytes) return;
-    std::vector<std::byte> file(sizeof(FileHeader) + size);
-    const auto result = getData(context.device, cache, &size, file.data() + sizeof(FileHeader));
-    if (result != VK_SUCCESS && result != VK_INCOMPLETE) return;
-    file.resize(sizeof(FileHeader) + size);
-    const FileHeader header{FileMagic, FileFormat, size, ShaderRecompiler::HashBytes(std::span(file).subspan(sizeof(FileHeader)))};
-    std::memcpy(file.data(), &header, sizeof(header));
+    if (getData(context.device, session, &size, nullptr) != VK_SUCCESS || size == savedSessionBytes) return;
     const auto started = std::chrono::steady_clock::now();
-    if (!ShaderRecompiler::WriteFileAtomically(path, file)) {
-        std::fprintf(stderr, "[pipeline-cache] cannot write %s\n", path.string().c_str());
-        return;
-    }
-    savedBytes = size;
-    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), final ? " (teardown)" : "");
+    std::size_t bytes = 0;
+    if (!write(session, sessionPath, bytes)) return;
+    savedSessionBytes = bytes;
+    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved this session's %.1f KiB to %s in %.1f ms%s\n", static_cast<double>(bytes) / 1024.0, sessionPath.string().c_str(), millisecondsSince(started), final ? " (teardown)" : "");
 }
 
 void PipelineCache::run() {
@@ -129,6 +216,16 @@ void PipelineCache::run() {
         save(false);
         lock.lock();
     }
+}
+
+VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) {
+    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateCompute(context, info, pipeline);
+    return context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline);
+}
+
+VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline) {
+    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateGraphics(context, info, pipeline);
+    return context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline);
 }
 
 }
