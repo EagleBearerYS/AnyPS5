@@ -1,4 +1,4 @@
-READY
+BUSY PM-002 (claimed 2026-10-14T15:22:23Z)
 RESULT:
 - Last task: BF-002, done. Report: results/cloud-1/BF-002.md. No `^agc` test fails on B (3f2cf189f), C (9441195eb) or D (759021e68).
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
