@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <deque>
 #include <functional>
+#include <future>
 #include <thread>
 #include <map>
 #include <mutex>
@@ -44,6 +45,7 @@ struct DeviceLibraries {
     std::vector<VkShaderModule> modules;
     std::map<Key, VkPipelineLayout> layouts;
     std::array<std::map<Key, VkPipeline>, 4> parts;
+    std::array<std::map<Key, std::shared_future<VkPipeline>>, 4> building;
     PipelineLibraryCounters counters;
 };
 
@@ -105,7 +107,7 @@ std::span<const VkDynamicState> PipelineLibraryDynamicStates() {
     return dynamicStates;
 }
 
-VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, std::shared_ptr<OptimizedPipeline>* optimized, bool partsOnly, std::span<VkShaderModule> modules) {
+VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, std::shared_ptr<OptimizedPipeline>* optimized, bool partsOnly, std::span<VkShaderModule> modules, std::span<const std::size_t> stageWords) {
     Require(info.renderPass == VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need dynamic rendering and the library dynamic states");
     const bool split = (layout.flags & VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT) != 0;
     Require(!split || (layout.setLayoutCount == 3u && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~7u) == 0u), "split pipeline library layout requires three descriptor set slots and a valid mask");
@@ -137,10 +139,17 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     std::vector<VkPipelineShaderStageCreateInfo> preRasterization;
     const VkPipelineShaderStageCreateInfo* fragment = nullptr;
     bool mesh = false;
+    std::array<std::size_t, 4> partWords{};
     for (std::uint32_t index = 0; index < info.stageCount; ++index) {
         const auto& stage = info.pStages[index];
-        if (stage.stage == VK_SHADER_STAGE_FRAGMENT_BIT) fragment = &stage;
-        else preRasterization.push_back(stage);
+        const auto words = index < stageWords.size() ? stageWords[index] : 0u;
+        if (stage.stage == VK_SHADER_STAGE_FRAGMENT_BIT) {
+            fragment = &stage;
+            partWords[2] += words;
+        } else {
+            preRasterization.push_back(stage);
+            partWords[1] += words;
+        }
         mesh |= stage.stage == VK_SHADER_STAGE_MESH_BIT_EXT;
     }
     Require(fragment != nullptr && !preRasterization.empty(), "a pipeline built from libraries needs a fragment and a pre-rasterization stage");
@@ -174,6 +183,16 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             libraries.push_back(found->second);
             continue;
         }
+        if (const auto pending = device.building[part].find(key); pending != device.building[part].end()) {
+            const auto other = pending->second;
+            lock.unlock();
+            const auto handle = other.get();
+            lock.lock();
+            libraries.push_back(handle);
+            continue;
+        }
+        std::promise<VkPipeline> building;
+        device.building[part].emplace(key, building.get_future().share());
         PerformanceTimer timing("Vulkan.GraphicsPipelineLibrary");
         VkGraphicsPipelineLibraryCreateInfoEXT library{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, flags[part] == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT ? &rendering : &shaderRendering};
         library.flags = flags[part];
@@ -207,16 +226,19 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             break;
         }
         VkPipeline handle = VK_NULL_HANDLE;
-        if (partsOnly) lock.unlock();
-        const auto created = CreateGraphicsPipeline(context, create, &handle);
-        if (partsOnly) lock.lock();
-        Check(created, "vkCreateGraphicsPipelines library");
-        if (const auto raced = cache.find(key); raced != cache.end()) {
-            device.destroyPipeline(context.device, handle, nullptr);
-            libraries.push_back(raced->second);
-            continue;
+        lock.unlock();
+        try {
+            Check(CreateGraphicsPipeline(context, create, &handle, partWords[part]), "vkCreateGraphicsPipelines library");
+        } catch (...) {
+            lock.lock();
+            device.building[part].erase(key);
+            building.set_exception(std::current_exception());
+            throw;
         }
+        lock.lock();
+        device.building[part].erase(key);
         cache.emplace(key, handle);
+        building.set_value(handle);
         if (optimize) {
             for (std::uint32_t stage = 0; stage < create.stageCount; ++stage) {
                 for (auto& module : modules) {
@@ -237,7 +259,9 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
     create.layout = info.layout;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    lock.unlock();
     Check(CreateGraphicsPipeline(context, create, &pipeline), "vkCreateGraphicsPipelines link");
+    lock.lock();
     ++device.counters.linked;
     if (optimize && optimized != nullptr) {
         auto slot = std::make_shared<OptimizedPipeline>();

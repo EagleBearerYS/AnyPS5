@@ -503,14 +503,17 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             _modules.clear();
             return;
         }
+        std::vector<std::size_t> stageWords;
+        stageWords.reserve(shaders.size());
+        for (const auto& shader : shaders) stageWords.push_back(shader.program->spirv.size());
         if (prebuilding) {
-            static_cast<void>(LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, true, _modules));
+            static_cast<void>(LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, true, _modules, stageWords));
             for (const auto module : _modules) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             _modules.clear();
             prebuilt = true;
             return;
         }
-        if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules);
+        if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules, stageWords);
         else Check(CreateGraphicsPipeline(context, pipelineInfo, &pipeline), "vkCreateGraphicsPipelines");
         if (alternateAlpha) {
             blend.pAttachments = secondChannels.data();
