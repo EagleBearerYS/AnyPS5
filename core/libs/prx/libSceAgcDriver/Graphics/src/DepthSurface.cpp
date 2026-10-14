@@ -698,8 +698,16 @@ std::map<ExpandKey, ExpandWrite>& expandWrites() {
     return *writes;
 }
 
+// The write bases whose expanded plane may still be pending, with the plane's size, for the next
+// address-based build to store (StoreDepthExpandWrites).
+std::map<ExpandKey, std::size_t>& unstoredExpands() {
+    static auto* writes = new std::map<ExpandKey, std::size_t>();
+    return *writes;
+}
+
 std::atomic<std::uint64_t> expandsRun{0};
 std::atomic<std::uint64_t> expandsSkipped{0};
+std::atomic<std::uint64_t> expandsStored{0};
 
 const DepthSurface* drawnDepth = nullptr;
 
@@ -836,6 +844,7 @@ void ClearDepthSurfaces(VkDevice device) {
     std::erase_if(planeCopies(), [&](const auto& entry) { return std::get<0>(entry.first) == device; });
     std::erase_if(layeredStorages(), [&](const auto& entry) { return std::get<0>(entry.first) == device; });
     std::erase_if(expandWrites(), [&](const auto& entry) { return entry.first.first == device; });
+    std::erase_if(unstoredExpands(), [&](const auto& entry) { return entry.first.first == device; });
 }
 
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components) {
@@ -1119,14 +1128,11 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
     {
         std::lock_guard lock(surfacesMutex());
         expandWrites()[key] = std::move(wrote);
+        // The plane stays pending like a shader's results, which every reader of that memory stores
+        // first, except an address-based build: it reads the imported heaps in place without storing
+        // the results pending there, so StoreDepthExpandWrites stores the plane before the next one.
+        unstoredExpands()[key] = static_cast<std::size_t>(destination->GuestBytes());
     }
-    // Stored at once into a host-imported write base, where the store is only recorded: an
-    // address-based build reads the imported heaps in place without storing the results pending in
-    // them (GuestBufferMemory), so such a program reading the write base as a buffer would see the
-    // CPU's bytes. Elsewhere the plane stays pending like a shader's results, which every reader of
-    // that memory stores first.
-    const auto bytes = static_cast<std::size_t>(destination->GuestBytes());
-    if (HostImportFor(context, pass.destination, bytes) != nullptr) StorageTexture::FlushPending(pass.destination, bytes, nullptr, "DB expand");
     static bool reported[3] = {};
     if (!std::exchange(reported[static_cast<int>(read)], true)) {
         const auto address = static_cast<unsigned long long>(source.address);
@@ -1136,8 +1142,30 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
     }
 }
 
+void StoreDepthExpandWrites(const Context& context) {
+    std::vector<std::pair<std::uint64_t, std::size_t>> planes;
+    {
+        std::lock_guard lock(surfacesMutex());
+        auto& unstored = unstoredExpands();
+        for (auto entry = unstored.begin(); entry != unstored.end();) {
+            if (entry->first.first != context.device) {
+                ++entry;
+                continue;
+            }
+            planes.emplace_back(entry->first.second, entry->second);
+            entry = unstored.erase(entry);
+        }
+    }
+    // A write base that is not host-imported is mirrored or copied for the build, through the flush
+    // hook, which stores the plane; an imported one takes a store recorded into the import.
+    for (const auto& [address, bytes] : planes) {
+        if (HostImportFor(context, address, bytes) == nullptr) continue;
+        if (StorageTexture::FlushPending(address, bytes, nullptr, "DB expand")) expandsStored.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 DepthExpandStatistics DepthExpandCounts() {
-    return {expandsRun.load(std::memory_order_relaxed), expandsSkipped.load(std::memory_order_relaxed)};
+    return {expandsRun.load(std::memory_order_relaxed), expandsSkipped.load(std::memory_order_relaxed), expandsStored.load(std::memory_order_relaxed)};
 }
 
 }
