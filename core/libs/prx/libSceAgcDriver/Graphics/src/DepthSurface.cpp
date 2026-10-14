@@ -681,6 +681,23 @@ bool takeClearedHtile(const DepthTarget& target) {
     return true;
 }
 
+struct ExpandWrite {
+    const DepthSurface* source = nullptr;
+    std::uint64_t written = 0;
+    std::weak_ptr<StorageTexture> destination;
+    std::uint64_t version = 0;
+};
+
+using ExpandKey = std::pair<VkDevice, std::uint64_t>;
+
+std::map<ExpandKey, ExpandWrite>& expandWrites() {
+    static auto* writes = new std::map<ExpandKey, ExpandWrite>();
+    return *writes;
+}
+
+std::atomic<std::uint64_t> expandsRun{0};
+std::atomic<std::uint64_t> expandsSkipped{0};
+
 const DepthSurface* drawnDepth = nullptr;
 
 std::atomic<std::uint64_t> surfacesSerial{0};
@@ -815,6 +832,7 @@ void ClearDepthSurfaces(VkDevice device) {
     std::erase_if(surfaces(), [&](const auto& surface) { return surface->context.device == device; });
     std::erase_if(planeCopies(), [&](const auto& entry) { return std::get<0>(entry.first) == device; });
     std::erase_if(layeredStorages(), [&](const auto& entry) { return std::get<0>(entry.first) == device; });
+    std::erase_if(expandWrites(), [&](const auto& entry) { return entry.first.first == device; });
 }
 
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components) {
@@ -1052,7 +1070,10 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
     if (DepthSurfaceAt(pass.destination)) throw failure("into a live depth surface");
     const auto destination = CachedStorageSurface(context, depthPlaneView(pass.destination, source.extent));
     if (destination == nullptr) throw failure("without a storage image of the write base");
+    expandsRun.fetch_add(1, std::memory_order_relaxed);
+    const ExpandKey key{context.device, pass.destination};
     enum class Read { Surface, Clear, GuestBytes } read = Read::Surface;
+    ExpandWrite wrote;
     {
         std::lock_guard lock(surfacesMutex());
         const auto owner = depthOwners().find({context.device, source.address});
@@ -1061,7 +1082,15 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
             const auto& target = surface->target;
             const bool float32 = target.format == VK_FORMAT_D32_SFLOAT || target.format == VK_FORMAT_D32_SFLOAT_S8_UINT;
             if (!float32 || surface->hostFormat != target.format || target.samples != 1 || target.extent.width != source.extent.width || target.extent.height != source.extent.height) throw failure("from a depth surface of another extent, format or sample count");
+            surface->ApplyFastClear();
+            const auto last = expandWrites().find(key);
+            if (last != expandWrites().end() && last->second.source == surface && last->second.written == surface->written && last->second.destination.lock() == destination && last->second.version == destination->Version()) {
+                expandsSkipped.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
             surface->CopyDepthTo(destination);
+            wrote.source = surface;
+            wrote.written = surface->written;
         } else {
             read = findClearedHtile(source) != clearedHtiles().end() ? Read::Clear : Read::GuestBytes;
         }
@@ -1073,6 +1102,12 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         recordPlaneCopy(context, plane, destination, source.extent);
     }
     destination->MarkDirty();
+    wrote.destination = destination;
+    wrote.version = destination->Version();
+    {
+        std::lock_guard lock(surfacesMutex());
+        expandWrites()[key] = std::move(wrote);
+    }
     const auto bytes = static_cast<std::size_t>(destination->GuestBytes());
     if (HostImportFor(context, pass.destination, bytes) != nullptr) StorageTexture::FlushPending(pass.destination, bytes, nullptr, "DB expand");
     static bool reported[3] = {};
@@ -1082,6 +1117,10 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         if (read == Read::Surface) std::fprintf(stderr, "[gpu] DB expand: the depth plane of 0x%llx (%ux%u) is written at 0x%llx\n", address, source.extent.width, source.extent.height, written);
         else std::fprintf(stderr, "[gpu] DB expand: 0x%llx (%ux%u) has no depth surface; %s written at 0x%llx\n", address, source.extent.width, source.extent.height, read == Read::Clear ? "DB_DEPTH_CLEAR (an HTILE clear is pending) is" : "its guest bytes are", written);
     }
+}
+
+DepthExpandStatistics DepthExpandCounts() {
+    return {expandsRun.load(std::memory_order_relaxed), expandsSkipped.load(std::memory_order_relaxed)};
 }
 
 }
