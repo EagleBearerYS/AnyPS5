@@ -23,6 +23,7 @@ constexpr std::uint32_t StoreDword = 0xe0701000u;
 constexpr std::uint32_t StoreDwordX2 = 0xe0741000u;
 constexpr std::uint32_t StoreDwordX3 = 0xe07c1000u;
 constexpr std::uint32_t StoreDwordX4 = 0xe0781000u;
+constexpr std::uint32_t SBufferLoadDword = 0xf4200200u;
 constexpr std::uint32_t AlignedBase = 0x10000000u;
 constexpr std::uint32_t UnalignedBase = 0x10000001u;
 
@@ -68,15 +69,25 @@ Added Count(std::span<const std::uint32_t> words) {
     return added;
 }
 
+Added Delta(const std::vector<std::uint32_t>& loaded, const std::vector<std::uint32_t>& constant, std::uint32_t base) {
+    const auto with = Count(Recompiled(loaded, base));
+    const auto without = Count(Recompiled(constant, base));
+    if (with.blocks < without.blocks || with.guards < without.guards) throw std::runtime_error("the load removed blocks");
+    return {with.blocks - without.blocks, with.guards - without.guards};
+}
+
 Added LoadAdded(std::uint32_t load, std::uint32_t store, std::uint32_t components, std::uint32_t base) {
     std::vector<std::uint32_t> loaded{0x34020082u, load, 0x80000201u, 0xbf8c3f70u};
     std::vector<std::uint32_t> constant{0x34020082u};
     for (std::uint32_t component = 0; component < components; ++component) constant.push_back(0x7e000280u | ((2u + component) << 17u));
     for (auto* program : {&loaded, &constant}) program->insert(program->end(), {store, 0x80010201u, 0xbf810000u});
-    const auto with = Count(Recompiled(loaded, base));
-    const auto without = Count(Recompiled(constant, base));
-    if (with.blocks < without.blocks || with.guards < without.guards) throw std::runtime_error("the load removed blocks");
-    return {with.blocks - without.blocks, with.guards - without.guards};
+    return Delta(loaded, constant, base);
+}
+
+Added ScalarLoadAdded() {
+    const std::vector<std::uint32_t> loaded{0x34020082u, SBufferLoadDword, 0xfa000000u, 0xbf8cc07fu, 0x7e040208u, StoreDword, 0x80010201u, 0xbf810000u};
+    const std::vector<std::uint32_t> constant{0x34020082u, 0x7e040280u, StoreDword, 0x80010201u, 0xbf810000u};
+    return Delta(loaded, constant, AlignedBase);
 }
 
 void Expect(const char* name, const Added& added, const Added& limit) {
@@ -93,6 +104,7 @@ int main() {
         Expect("buffer_load_dwordx3", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, AlignedBase), {3u, 1u});
         Expect("buffer_load_dwordx4", LoadAdded(LoadDwordX4, StoreDwordX4, 4u, AlignedBase), {3u, 1u});
         Expect("buffer_load_dwordx3 with an unaligned base", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, UnalignedBase), {4u, 1u});
+        Expect("s_buffer_load_dword", ScalarLoadAdded(), {2u, 1u});
     } catch (const std::exception& error) {
         std::cerr << "SpirvBufferLoadBlocks: " << error.what() << '\n';
         return 1;

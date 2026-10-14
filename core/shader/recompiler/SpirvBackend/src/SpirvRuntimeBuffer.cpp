@@ -694,7 +694,11 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     const auto byte = EmitAndConstant(state, address, ~3u);
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
     const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
-    if (!context.Memory(instruction).gpuDescriptor) return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, byte, 32u); });
+    if (!context.Memory(instruction).gpuDescriptor) {
+        const auto access = directAccess(context, instruction, false);
+        const auto index = directWordIndex(state, directBaseWord(state, access), byte);
+        return EmitValueOrZeroIfCondition(state, both(state, inBounds, EmitMemoryElementInBounds(state, access, index)), [&] { return directWordLoad(state, access, index); });
+    }
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }
 
