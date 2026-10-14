@@ -154,6 +154,11 @@ struct ColorMetadataPass {
     std::optional<ColorTarget> source;
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
+struct DepthExpandPass {
+    DepthTarget source;
+    std::uint64_t destination;
+};
+std::optional<DepthExpandPass> DecodeDepthExpandPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
 bool DepthResummarizeDrawsNothing(const QueueState& queue);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
