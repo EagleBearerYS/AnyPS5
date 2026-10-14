@@ -1,6 +1,8 @@
 #include "prx/libSceNpUniversalDataSystem/include/UdsEvent.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 
 #include <cstdio>
+#include <optional>
 #include <type_traits>
 
 namespace Uds {
@@ -81,6 +83,31 @@ void appendValue(std::string& out, const Value& value) {
     }, value);
 }
 
+std::optional<std::uint64_t> unsignedValue(const Value& value) {
+    return std::visit([](const auto& held) -> std::optional<std::uint64_t> {
+        using Held = std::decay_t<decltype(held)>;
+        if constexpr (std::is_same_v<Held, std::uint32_t> || std::is_same_v<Held, std::uint64_t>) {
+            return held;
+        } else if constexpr (std::is_same_v<Held, std::int32_t> || std::is_same_v<Held, std::int64_t>) {
+            if (held < 0) return std::nullopt;
+            return static_cast<std::uint64_t>(held);
+        } else {
+            return std::nullopt;
+        }
+    }, value);
+}
+
+void flatten(const NpUniversalDataSystemEventPropertyObject& object, const std::string& prefix, std::vector<NpTrophy2EventProperty>& properties) {
+    for (const auto& [key, value] : object.properties) {
+        auto path = prefix.empty() ? key : prefix + "." + key;
+        if (const auto* child = std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyObject>>(&value)) {
+            flatten(**child, path, properties);
+            continue;
+        }
+        properties.push_back({std::move(path), unsignedValue(value), Describe(value)});
+    }
+}
+
 }
 
 TrophyEvent RecognizeTrophyEvent(const NpUniversalDataSystemEvent& event) {
@@ -99,6 +126,12 @@ TrophyEvent RecognizeTrophyEvent(const NpUniversalDataSystemEvent& event) {
     return result;
 }
 
+std::string Describe(const Value& value) {
+    std::string out;
+    appendValue(out, value);
+    return out;
+}
+
 std::string Describe(const NpUniversalDataSystemEventPropertyObject& object) {
     std::string out;
     appendObject(out, object);
@@ -107,6 +140,13 @@ std::string Describe(const NpUniversalDataSystemEventPropertyObject& object) {
 
 std::string Describe(const NpUniversalDataSystemEvent& event) {
     return event.name + " " + Describe(event.properties);
+}
+
+NpTrophy2Event StatEvent(const NpUniversalDataSystemEvent& event) {
+    NpTrophy2Event converted;
+    converted.name = event.name;
+    flatten(event.properties, {}, converted.properties);
+    return converted;
 }
 
 }

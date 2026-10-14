@@ -5,9 +5,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <vector>
 
 extern "C" {
 int APS5_VABI sceNpUniversalDataSystemCreateContext(int*, int, uint32_t, uint64_t);
@@ -198,6 +201,36 @@ void testRecognition() {
     }
 }
 
+void testStatEvent() {
+    NpUniversalDataSystemEvent event;
+    event.name = "STEPS";
+    event.properties.Set("count", std::uint32_t{4});
+    event.properties.Set("signed", std::int32_t{-2});
+    event.properties.Set("wide", std::int64_t{7});
+    event.properties.Set("huge", std::uint64_t{18000000000000000000ull});
+    event.properties.Set("ratio", 0.5);
+    event.properties.Set("name", std::string("x"));
+    auto player = std::make_shared<NpUniversalDataSystemEventPropertyObject>();
+    player->Set("steps", std::uint32_t{5});
+    auto inner = std::make_shared<NpUniversalDataSystemEventPropertyObject>();
+    inner->Set("depth", std::int32_t{1});
+    player->Set("inner", inner);
+    event.properties.Set("player", player);
+    auto list = std::make_shared<NpUniversalDataSystemEventPropertyArray>();
+    list->Add(std::int32_t{1});
+    event.properties.Set("list", list);
+    const auto converted = Uds::StatEvent(event);
+    const std::vector<std::tuple<std::string, std::optional<std::uint64_t>, std::string>> expected{
+        {"count", 4, "4"}, {"signed", std::nullopt, "-2"}, {"wide", 7, "7"}, {"huge", 18000000000000000000ull, "18000000000000000000"}, {"ratio", std::nullopt, "0.5"},
+        {"name", std::nullopt, "\"x\""}, {"player.steps", 5, "5"}, {"player.inner.depth", 1, "1"}, {"list", std::nullopt, "[1]"}};
+    check(converted.name == "STEPS" && converted.properties.size() == expected.size(), "the stat event does not hold every leaf property");
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        const auto& [path, value, text] = expected[i];
+        const auto& property = converted.properties[i];
+        check(property.path == path && property.value == value && property.text == text, "a stat event property has the wrong path, value or text");
+    }
+}
+
 struct Unlocks {
     int count = 0;
 };
@@ -252,6 +285,7 @@ int main() {
         testNestedValues();
         testEvents();
         testRecognition();
+        testStatEvent();
         testPostingIgnoredEvents();
         std::puts("UDS event tests passed");
         return 0;

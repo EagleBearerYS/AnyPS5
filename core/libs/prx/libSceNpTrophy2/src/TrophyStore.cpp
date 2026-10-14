@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 
 namespace NpTrophy2 {
@@ -22,6 +23,58 @@ bool parseNumber(std::string_view text, TValue& value) {
     const auto* end = text.data() + text.size();
     const auto [stop, error] = std::from_chars(text.data(), end, value);
     return error == std::errc{} && stop == end;
+}
+
+template <typename TKey>
+bool negative(TKey key) {
+    if constexpr (std::is_signed_v<TKey>) return key < 0;
+    return false;
+}
+
+template <typename TKey>
+std::map<TKey, std::uint64_t> readRecord(const std::filesystem::path& path, const std::string& what, const char* pair) {
+    std::map<TKey, std::uint64_t> values;
+    std::error_code error;
+    const bool exists = std::filesystem::exists(path, error);
+    if (error) throw std::filesystem::filesystem_error("cannot check the " + what, path, error);
+    if (!exists) return values;
+    std::ifstream file(path, std::ios::binary);
+    if (!file) throw std::runtime_error("cannot read the " + what + " " + path.string());
+    std::string line;
+    std::size_t number = 0;
+    while (std::getline(file, line)) {
+        ++number;
+        const auto space = line.find(' ');
+        TKey key{};
+        std::uint64_t value = 0;
+        const std::string_view text(line);
+        if (space == std::string::npos || !parseNumber(text.substr(0, space), key) || negative(key) || !parseNumber(text.substr(space + 1), value) || !values.emplace(key, value).second) {
+            throw std::runtime_error("the " + what + " " + path.string() + " has a line " + std::to_string(number) + " that is not a new '" + pair + "' pair");
+        }
+    }
+    if (file.bad()) throw std::runtime_error("cannot read the " + what + " " + path.string());
+    return values;
+}
+
+template <typename TKey>
+void writeRecord(const std::filesystem::path& directory, const std::filesystem::path& path, const std::map<TKey, std::uint64_t>& values, const std::string& what) {
+    std::error_code error;
+    if (std::filesystem::create_directories(directory, error)) RecordWrittenPath_nid_no_patch(directory);
+    if (error) throw std::filesystem::filesystem_error("cannot create the trophy directory", directory, error);
+    auto temporary = path;
+    temporary += ".tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        for (const auto& [key, value] : values) file << key << ' ' << value << '\n';
+        file.flush();
+        if (!file) throw std::runtime_error("cannot write the " + what + " " + temporary.string());
+    }
+    std::filesystem::rename(temporary, path);
+    RecordWrittenPath_nid_no_patch(path);
+}
+
+std::string recordName(std::int32_t userId, std::uint32_t serviceLabel) {
+    return std::to_string(userId) + "_" + std::to_string(serviceLabel);
 }
 
 struct Listener {
@@ -51,51 +104,17 @@ std::uint64_t CurrentTick() {
 TrophyStore::TrophyStore(std::filesystem::path directory) : directory(std::move(directory)) {}
 
 std::filesystem::path TrophyStore::RecordPath(std::int32_t userId, std::uint32_t serviceLabel) const {
-    return directory / (std::to_string(userId) + "_" + std::to_string(serviceLabel) + ".txt");
+    return directory / (recordName(userId, serviceLabel) + ".txt");
 }
 
 TrophyStore::Unlocks& TrophyStore::record(const Key& key) {
     if (const auto found = records.find(key); found != records.end()) return found->second;
-    Unlocks unlocks;
-    const auto path = RecordPath(key.first, key.second);
-    std::error_code error;
-    const bool exists = std::filesystem::exists(path, error);
-    if (error) throw std::filesystem::filesystem_error("cannot check the trophy record", path, error);
-    if (exists) {
-        std::ifstream file(path, std::ios::binary);
-        if (!file) throw std::runtime_error("cannot read the trophy record " + path.string());
-        std::string line;
-        std::size_t number = 0;
-        while (std::getline(file, line)) {
-            ++number;
-            const auto space = line.find(' ');
-            std::int32_t trophyId = 0;
-            std::uint64_t tick = 0;
-            const std::string_view text(line);
-            if (space == std::string::npos || !parseNumber(text.substr(0, space), trophyId) || trophyId < 0 || !parseNumber(text.substr(space + 1), tick) || !unlocks.emplace(trophyId, tick).second) {
-                throw std::runtime_error("the trophy record " + path.string() + " has a line " + std::to_string(number) + " that is not a new '<trophy id> <unlock tick>' pair");
-            }
-        }
-        if (file.bad()) throw std::runtime_error("cannot read the trophy record " + path.string());
-    }
+    auto unlocks = readRecord<std::int32_t>(RecordPath(key.first, key.second), "trophy record", "<trophy id> <unlock tick>");
     return records.emplace(key, std::move(unlocks)).first->second;
 }
 
 void TrophyStore::save(const Key& key, const Unlocks& unlocks) const {
-    std::error_code error;
-    if (std::filesystem::create_directories(directory, error)) RecordWrittenPath_nid_no_patch(directory);
-    if (error) throw std::filesystem::filesystem_error("cannot create the trophy directory", directory, error);
-    const auto path = RecordPath(key.first, key.second);
-    auto temporary = path;
-    temporary += ".tmp";
-    {
-        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        for (const auto& [trophyId, tick] : unlocks) file << trophyId << ' ' << tick << '\n';
-        file.flush();
-        if (!file) throw std::runtime_error("cannot write the trophy record " + temporary.string());
-    }
-    std::filesystem::rename(temporary, path);
-    RecordWrittenPath_nid_no_patch(path);
+    writeRecord(directory, RecordPath(key.first, key.second), unlocks, "trophy record");
 }
 
 bool TrophyStore::Unlock(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId, std::uint64_t tick) {
@@ -126,6 +145,47 @@ std::size_t TrophyStore::UnlockCount(std::int32_t userId, std::uint32_t serviceL
 
 TrophyStore& TitleStore() {
     static TrophyStore store(ResolvePath_nid_no_patch(TrophyRootGuest));
+    return store;
+}
+
+StatStore::StatStore(std::filesystem::path directory) : directory(std::move(directory)) {}
+
+std::filesystem::path StatStore::RecordPath(std::int32_t userId, std::uint32_t serviceLabel) const {
+    return directory / (recordName(userId, serviceLabel) + ".stats.txt");
+}
+
+StatStore::Stats& StatStore::record(const Key& key) {
+    if (const auto found = records.find(key); found != records.end()) return found->second;
+    auto stats = readRecord<std::uint64_t>(RecordPath(key.first, key.second), "stat record", "<stat id> <value>");
+    return records.emplace(key, std::move(stats)).first->second;
+}
+
+void StatStore::Set(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId, std::uint64_t value) {
+    std::lock_guard lock(mutex);
+    const Key key{userId, serviceLabel};
+    auto& stats = record(key);
+    if (const auto found = stats.find(statId); found != stats.end() && found->second == value) return;
+    auto updated = stats;
+    updated[statId] = value;
+    writeRecord(directory, RecordPath(userId, serviceLabel), updated, "stat record");
+    stats = std::move(updated);
+}
+
+std::optional<std::uint64_t> StatStore::Value(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId) {
+    std::lock_guard lock(mutex);
+    const auto& stats = record({userId, serviceLabel});
+    const auto found = stats.find(statId);
+    if (found == stats.end()) return std::nullopt;
+    return found->second;
+}
+
+std::map<std::uint64_t, std::uint64_t> StatStore::Values(std::int32_t userId, std::uint32_t serviceLabel) {
+    std::lock_guard lock(mutex);
+    return record({userId, serviceLabel});
+}
+
+StatStore& TitleStats() {
+    static StatStore store(ResolvePath_nid_no_patch(TrophyRootGuest));
     return store;
 }
 

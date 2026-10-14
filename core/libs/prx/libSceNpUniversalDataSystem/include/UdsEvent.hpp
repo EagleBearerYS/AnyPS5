@@ -11,6 +11,7 @@
 
 struct NpUniversalDataSystemEventPropertyObject;
 struct NpUniversalDataSystemEventPropertyArray;
+struct NpTrophy2Event;
 
 namespace Uds {
 
@@ -57,8 +58,10 @@ struct TrophyEvent {
 };
 
 TrophyEvent RecognizeTrophyEvent(const NpUniversalDataSystemEvent& event);
+std::string Describe(const Value& value);
 std::string Describe(const NpUniversalDataSystemEventPropertyObject& object);
 std::string Describe(const NpUniversalDataSystemEvent& event);
+NpTrophy2Event StatEvent(const NpUniversalDataSystemEvent& event);
 
 }
 
