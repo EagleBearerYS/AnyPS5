@@ -1,4 +1,4 @@
-READY
+BUSY PM-010 (claimed 2026-10-14T18:29:03Z)
 RESULT:
 - Last task: PM-008 (more performance overlay lines; feat/videoout-overlay-more-stats at ce8e338cf on the fork), done: results/cloud-1/PM-008.md. Before it: PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
