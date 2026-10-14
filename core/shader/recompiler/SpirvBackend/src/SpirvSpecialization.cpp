@@ -461,6 +461,7 @@ public:
         }
         removeDeadComputations();
         removeUnreachableBlocks();
+        mergeBlocks();
         removeUnusedConstants();
         internConstants();
         orderPhis();
@@ -713,7 +714,7 @@ private:
         std::map<std::uint32_t, std::vector<std::uint32_t>> edges;
         for (const auto& [label, indices] : blocks) {
             auto& terminal = instructions[indices.back()];
-            auto op = Opcode(terminal);
+            const auto op = Opcode(terminal);
             std::uint32_t target = 0;
             bool loop = false;
             for (const auto index : indices) loop |= Opcode(instructions[index]) == spv::OpLoopMerge;
@@ -740,17 +741,8 @@ private:
                     terminal = replacement;
                     changed = true;
                 }
-                op = Opcode(terminal);
             }
-            auto& successors = edges[label];
-            if (op == spv::OpBranch) successors.push_back(terminal.at(1));
-            else if (op == spv::OpBranchConditional) successors = {terminal.at(2), terminal.at(3)};
-            else if (op == spv::OpSwitch) {
-                successors.push_back(terminal.at(2));
-                const auto selectorType = resultTypes.find(terminal.at(1));
-                const auto stride = selectorType != resultTypes.end() && types.contains(selectorType->second) && types.at(selectorType->second).width == 64u ? 3u : 2u;
-                for (std::size_t index = 3; index + stride <= terminal.size(); index += stride) successors.push_back(terminal[index + stride - 1u]);
-            }
+            edges[label] = branchTargets(terminal);
         }
         std::set<std::uint32_t> live;
         auto pending = entries;
@@ -807,6 +799,102 @@ private:
             }
         }
         return changed;
+    }
+
+    std::vector<std::uint32_t> branchTargets(const Instruction& terminal) const {
+        const auto op = Opcode(terminal);
+        if (op == spv::OpBranch) return {terminal.at(1)};
+        if (op == spv::OpBranchConditional) return {terminal.at(2), terminal.at(3)};
+        if (op != spv::OpSwitch) return {};
+        std::vector<std::uint32_t> targets{terminal.at(2)};
+        const auto selectorType = resultTypes.find(terminal.at(1));
+        const auto stride = selectorType != resultTypes.end() && types.contains(selectorType->second) && types.at(selectorType->second).width == 64u ? 3u : 2u;
+        for (std::size_t index = 3; index + stride <= terminal.size(); index += stride) targets.push_back(terminal[index + stride - 1u]);
+        return targets;
+    }
+
+    void mergeBlocks() {
+        struct Block {
+            std::size_t label;
+            std::size_t terminator;
+            bool header;
+        };
+        std::map<std::uint32_t, Block> blocks;
+        std::map<std::uint32_t, std::size_t> predecessors;
+        std::set<std::uint32_t> pinned;
+        std::uint32_t current = 0;
+        for (std::size_t index = 0; index < instructions.size(); ++index) {
+            const auto& instruction = instructions[index];
+            if (instruction.empty()) continue;
+            const auto op = Opcode(instruction);
+            if (op == spv::OpFunctionEnd) current = 0;
+            if (op == spv::OpLabel) {
+                current = instruction.at(1);
+                blocks.emplace(current, Block{index, index, false});
+            }
+            if (current == 0u) continue;
+            auto& block = blocks.at(current);
+            block.terminator = index;
+            if (op == spv::OpSelectionMerge || op == spv::OpLoopMerge) {
+                block.header = true;
+                pinned.insert(instruction.at(1));
+            }
+            if (op == spv::OpLoopMerge) pinned.insert({instruction.at(2), current});
+            for (const auto target : branchTargets(instruction)) ++predecessors[target];
+        }
+        std::map<std::uint32_t, std::uint32_t> successors;
+        std::set<std::uint32_t> merged;
+        for (const auto& [label, block] : blocks) {
+            const auto& terminal = instructions[block.terminator];
+            if (block.header || Opcode(terminal) != spv::OpBranch) continue;
+            const auto target = terminal.at(1);
+            const auto found = blocks.find(target);
+            if (target == label || found == blocks.end() || pinned.contains(target) || predecessors.at(target) != 1u) continue;
+            auto first = found->second.label + 1u;
+            while (first < found->second.terminator && instructions[first].empty()) ++first;
+            if (Opcode(instructions[first]) == spv::OpPhi) continue;
+            successors.emplace(label, target);
+            merged.insert(target);
+        }
+        if (successors.empty()) return;
+        std::map<std::uint32_t, std::uint32_t> heads;
+        std::vector<Instruction> result;
+        result.reserve(instructions.size());
+        for (std::size_t index = 0; index < instructions.size(); ++index) {
+            auto& instruction = instructions[index];
+            if (instruction.empty()) continue;
+            if (Opcode(instruction) != spv::OpLabel) {
+                result.push_back(std::move(instruction));
+                continue;
+            }
+            const auto head = instruction.at(1);
+            const auto& block = blocks.at(head);
+            index = block.terminator;
+            if (merged.contains(head)) continue;
+            auto label = head;
+            auto first = block.label;
+            for (;;) {
+                const auto& part = blocks.at(label);
+                const auto next = successors.find(label);
+                const auto end = next == successors.end() ? part.terminator + 1u : part.terminator;
+                for (auto at = first; at < end; ++at) {
+                    if (!instructions[at].empty()) result.push_back(std::move(instructions[at]));
+                }
+                if (next == successors.end()) break;
+                label = next->second;
+                if (!heads.emplace(label, head).second) throw std::runtime_error("cyclic prepared block chain");
+                first = blocks.at(label).label + 1u;
+            }
+        }
+        if (heads.size() != merged.size()) throw std::runtime_error("prepared block chain without a head");
+        for (auto& instruction : result) {
+            if (Opcode(instruction) != spv::OpPhi) continue;
+            for (std::size_t operand = 4; operand < instruction.size(); operand += 2u) {
+                if (const auto found = heads.find(instruction[operand]); found != heads.end()) instruction[operand] = found->second;
+            }
+        }
+        for (const auto& [label, head] : heads) removed.insert(label);
+        instructions = std::move(result);
     }
 
     std::set<std::uint32_t> referencedIds() const {

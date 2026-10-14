@@ -277,7 +277,7 @@ void checkFoldedSwitch(const std::vector<std::uint32_t>& words, std::uint32_t de
     }
     const std::string context = std::string(" (") + what + ")";
     check(!counts.contains(spv::OpUnreachable), ("blocks the folded switch left unreachable were kept" + context).c_str());
-    check(counts.at(spv::OpLabel) == 3u, ("the specialized function does not have exactly its three live blocks" + context).c_str());
+    check(counts.at(spv::OpLabel) == 1u, ("the three live blocks the folded switch leaves in a chain were not merged into one" + context).c_str());
     check(storesFolded && constants.contains(14u), ("the folded product the live case stores is missing" + context).c_str());
     check(!constants.contains(deadSum), ("a folded constant without uses was kept" + context).c_str());
 }
@@ -518,10 +518,100 @@ void testOperationsOneOperandDecidesFold() {
     check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "folding decided operations is not stable");
 }
 
+void testSingleSuccessorChainsMerge() {
+    std::vector<std::uint32_t> words{spv::MagicNumber, 0x00010300u, 0u, 100u, 0u};
+    const auto emit = [&](spv::Op op, std::initializer_list<std::uint32_t> operands) {
+        words.push_back((static_cast<std::uint32_t>(operands.size() + 1u) << 16u) | op);
+        words.insert(words.end(), operands);
+    };
+    emit(spv::OpCapability, {spv::CapabilityShader});
+    emit(spv::OpMemoryModel, {spv::AddressingModelLogical, spv::MemoryModelGLSL450});
+    emit(spv::OpEntryPoint, {spv::ExecutionModelGLCompute, 40u, 0x6e69616du, 0u});
+    emit(spv::OpExecutionMode, {40u, spv::ExecutionModeLocalSize, 1u, 1u, 1u});
+    emit(spv::OpName, {16u, 0x00747865u});
+    emit(spv::OpTypeVoid, {1u});
+    emit(spv::OpTypeInt, {2u, 32u, 0u});
+    emit(spv::OpTypeBool, {3u});
+    emit(spv::OpTypePointer, {4u, spv::StorageClassPrivate, 2u});
+    emit(spv::OpTypeFunction, {5u, 1u});
+    emit(spv::OpConstant, {2u, 6u, 0u});
+    emit(spv::OpConstant, {2u, 7u, 1u});
+    emit(spv::OpConstant, {2u, 8u, 2u});
+    emit(spv::OpVariable, {4u, 9u, spv::StorageClassPrivate});
+    emit(spv::OpVariable, {4u, 50u, spv::StorageClassPrivate});
+    emit(spv::OpFunction, {1u, 40u, spv::FunctionControlMaskNone, 5u});
+    emit(spv::OpLabel, {10u});
+    emit(spv::OpLoad, {2u, 60u, 50u});
+    emit(spv::OpIEqual, {3u, 61u, 60u, 6u});
+    emit(spv::OpBranch, {11u});
+    emit(spv::OpLabel, {11u});
+    emit(spv::OpStore, {9u, 7u});
+    emit(spv::OpBranch, {12u});
+    emit(spv::OpLabel, {12u});
+    emit(spv::OpSelectionMerge, {15u, spv::SelectionControlMaskNone});
+    emit(spv::OpBranchConditional, {61u, 13u, 14u});
+    emit(spv::OpLabel, {13u});
+    emit(spv::OpStore, {9u, 8u});
+    emit(spv::OpBranch, {16u});
+    emit(spv::OpLabel, {16u});
+    emit(spv::OpBranch, {15u});
+    emit(spv::OpLabel, {14u});
+    emit(spv::OpBranch, {15u});
+    emit(spv::OpLabel, {15u});
+    emit(spv::OpPhi, {2u, 62u, 7u, 16u, 8u, 14u});
+    emit(spv::OpStore, {9u, 62u});
+    emit(spv::OpBranch, {20u});
+    emit(spv::OpLabel, {20u});
+    emit(spv::OpLoopMerge, {23u, 22u, spv::LoopControlMaskNone});
+    emit(spv::OpBranch, {21u});
+    emit(spv::OpLabel, {21u});
+    emit(spv::OpLoad, {2u, 63u, 50u});
+    emit(spv::OpIEqual, {3u, 64u, 63u, 7u});
+    emit(spv::OpBranchConditional, {64u, 23u, 24u});
+    emit(spv::OpLabel, {24u});
+    emit(spv::OpBranch, {22u});
+    emit(spv::OpLabel, {22u});
+    emit(spv::OpBranch, {20u});
+    emit(spv::OpLabel, {23u});
+    emit(spv::OpBranch, {30u});
+    emit(spv::OpLabel, {30u});
+    emit(spv::OpSelectionMerge, {33u, spv::SelectionControlMaskNone});
+    emit(spv::OpBranchConditional, {61u, 31u, 32u});
+    emit(spv::OpLabel, {31u});
+    emit(spv::OpReturn, {});
+    emit(spv::OpLabel, {32u});
+    emit(spv::OpBranch, {33u});
+    emit(spv::OpLabel, {33u});
+    emit(spv::OpReturn, {});
+    emit(spv::OpFunctionEnd, {});
+    const auto specialized = ShaderRecompiler::SpecializeSpirv(words);
+    std::vector<std::uint32_t> labels;
+    std::vector<std::uint32_t> parents;
+    std::size_t stores = 0;
+    std::size_t names = 0;
+    for (std::size_t cursor = 5; cursor < specialized.size(); cursor += specialized[cursor] >> 16u) {
+        const auto count = specialized[cursor] >> 16u;
+        if (count == 0u) break;
+        const auto opcode = specialized[cursor] & 0xffffu;
+        if (opcode == spv::OpLabel) labels.push_back(specialized[cursor + 1u]);
+        if (opcode == spv::OpPhi) {
+            for (std::size_t operand = 4; operand < count; operand += 2u) parents.push_back(specialized[cursor + operand]);
+        }
+        if (opcode == spv::OpStore) ++stores;
+        if (opcode == spv::OpName) ++names;
+    }
+    check(labels == std::vector<std::uint32_t>{10u, 13u, 14u, 15u, 20u, 21u, 24u, 22u, 23u, 31u, 32u, 33u}, "blocks whose only predecessor branches to them were not merged, or a merge block, continue target, loop header or loop body was merged");
+    check(parents == std::vector<std::uint32_t>{13u, 14u}, "a phi still names a merged block as its parent");
+    check(stores == 3u, "block merging lost a store");
+    check(names == 0u, "the name of a merged block was kept");
+    check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "block merging is not stable");
+}
+
 int main() {
     testFoldingLeavesNoDeadBlocksOrConstants();
     testFoldedValuesShareConstants();
     testOperationsOneOperandDecidesFold();
+    testSingleSuccessorChainsMerge();
     testStructExtractsAreNotShuffled();
     testRepeatedTypesShareOneId();
     testOperandShapesDoNotCollide();
