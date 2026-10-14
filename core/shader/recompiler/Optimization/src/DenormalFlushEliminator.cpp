@@ -1,31 +1,11 @@
 #include "Optimization/DenormalFlushEliminator.hpp"
+#include "Optimization/FloatIdioms.hpp"
 #include <cstdint>
 #include <unordered_map>
 
 namespace ShaderRecompiler {
 
 namespace {
-
-bool isImmediate(const IrValue* value, std::uint32_t bits) {
-    return value->HasImmediate() && value->ImmediateU32() == bits;
-}
-
-const IrValue* maskedOperand(const IrValue* value, IrOpcode opcode, std::uint32_t bits) {
-    if (value->Opcode() != opcode || value->ArgumentCount() != 2u) return nullptr;
-    const IrValue* lhs = value->Argument(0)->Resolve();
-    const IrValue* rhs = value->Argument(1)->Resolve();
-    if (isImmediate(rhs, bits)) return lhs;
-    if (isImmediate(lhs, bits)) return rhs;
-    return nullptr;
-}
-
-IrValue* flushedSource(const IrValue& value) {
-    if (value.Opcode() != IrOpcode::SelectU32 || value.ArgumentCount() != 3u) return nullptr;
-    IrValue* source = value.Argument(2)->Resolve();
-    const IrValue* exponent = maskedOperand(value.Argument(0)->Resolve(), IrOpcode::IEqual32, 0u);
-    if (exponent == nullptr || maskedOperand(exponent, IrOpcode::BitwiseAnd32, 0x7f800000u) != source) return nullptr;
-    return maskedOperand(value.Argument(1)->Resolve(), IrOpcode::BitwiseAnd32, 0x80000000u) == source ? source : nullptr;
-}
 
 class DenormalFreeValues {
 public:
@@ -44,7 +24,7 @@ private:
             const std::uint32_t bits = value.ImmediateU32();
             return (bits & 0x7f800000u) != 0u || (bits & 0x7fffffffu) == 0u;
         }
-        if (flushedSource(value) != nullptr) return true;
+        if (FlushedF32Source(value) != nullptr) return true;
         switch (value.Opcode()) {
             case IrOpcode::ConvertIToF32:
             case IrOpcode::ConvertUToF32:
@@ -59,10 +39,10 @@ private:
             case IrOpcode::FPSaturate32:
                 return Contains(value.Argument(0));
             case IrOpcode::BitwiseXor32:
-                if (const IrValue* operand = maskedOperand(&value, IrOpcode::BitwiseXor32, 0x80000000u)) return Contains(operand);
+                if (const IrValue* operand = MaskedOperand(value, IrOpcode::BitwiseXor32, 0x80000000u)) return Contains(operand);
                 return false;
             case IrOpcode::BitwiseAnd32:
-                if (const IrValue* operand = maskedOperand(&value, IrOpcode::BitwiseAnd32, 0x7fffffffu)) return Contains(operand);
+                if (const IrValue* operand = MaskedOperand(value, IrOpcode::BitwiseAnd32, 0x7fffffffu)) return Contains(operand);
                 return false;
             case IrOpcode::SelectU32:
             case IrOpcode::SelectF32:
@@ -88,7 +68,7 @@ DenormalFlushEliminationStats DenormalFlushEliminator::Eliminate(IrProgram& prog
     for (auto* block : program.BlockOrder()) {
         for (auto* inst : block->Instructions()) {
             if (!inst->HasUses()) continue;
-            IrValue* source = flushedSource(*inst);
+            IrValue* source = FlushedF32Source(*inst);
             if (source == nullptr || !denormalFree.Contains(source)) continue;
             inst->ReplaceAllUsesWith(source);
             ++stats.removedFlushes;

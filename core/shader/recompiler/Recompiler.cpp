@@ -31,6 +31,7 @@
 #include "Optimization/include/Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/include/Optimization/HostInterpolationChecker.hpp"
 #include "Optimization/include/Optimization/MaskedSelectEliminator.hpp"
+#include "Optimization/include/Optimization/OperandIdiomMerger.hpp"
 #include "Optimization/include/Optimization/ReadLaneEliminator.hpp"
 #include "Optimization/include/Optimization/RequestMemoryView.hpp"
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
@@ -290,6 +291,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     constexpr DenormalFlushEliminator denormalFlushEliminator;
     if (denormalFlushEliminator.Eliminate(program).removedFlushes != 0u) {
+        deadCodeEliminator.Eliminate(program);
+    }
+    constexpr OperandIdiomMerger operandIdiomMerger;
+    if (operandIdiomMerger.Merge(program).Changed()) {
         deadCodeEliminator.Eliminate(program);
     }
 
