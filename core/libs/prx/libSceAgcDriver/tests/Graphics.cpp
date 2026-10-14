@@ -4,6 +4,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "MockDescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -4536,6 +4538,41 @@ void cachedPipelineConcurrencyTests() {
     Require(mock.live == 0, "cached pipeline concurrency tests leaked Vulkan objects");
 }
 
+void largeCreationThreadTests() {
+    using namespace AgcDriver::Graphics;
+    using AgcDriver::CreationAhead;
+    using AgcDriver::CreationThread;
+    mock = MockVulkan{};
+    const auto context = mockContext();
+    std::thread::id compiled;
+    mock.libraryHook = [&](VkGraphicsPipelineLibraryFlagsEXT) { compiled = std::this_thread::get_id(); };
+    VkGraphicsPipelineLibraryCreateInfoEXT library{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT};
+    library.flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT;
+    VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &library};
+    info.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
+    const auto create = [&](std::size_t words) {
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        Check(CreateGraphicsPipeline(context, info, &pipeline, words), "vkCreateGraphicsPipelines library");
+        mockDestroyPipeline(context.device, pipeline, nullptr);
+        return compiled;
+    };
+    Require(create(CreationThread::Words()) == std::this_thread::get_id(), "a large pipeline needed inside a frame was not compiled on its caller's thread");
+    const auto ahead = [&](std::size_t words) {
+        std::thread::id where;
+        std::thread pool([&] {
+            const CreationAhead marked;
+            where = create(words);
+        });
+        pool.join();
+        return where;
+    };
+    const auto first = ahead(CreationThread::Words());
+    const auto second = ahead(CreationThread::Words() * 3u);
+    Require(first == second && ahead(CreationThread::Words() - 1u) != first, "large pipelines created ahead were not compiled on the one creation thread");
+    mock.libraryHook = nullptr;
+    Require(mock.live == 0, "large creation thread tests leaked Vulkan objects");
+}
+
 void barycentricEmulationTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -6388,6 +6425,7 @@ int main(int argc, char** argv) {
         pipelineLibraryRetentionTests();
         pipelineLibraryConcurrencyTests();
         cachedPipelineConcurrencyTests();
+        largeCreationThreadTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
         hardwareScreenOffsetTests();

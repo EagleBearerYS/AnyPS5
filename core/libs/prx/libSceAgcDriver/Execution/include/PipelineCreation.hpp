@@ -4,6 +4,9 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <functional>
+#include <future>
 #include <mutex>
 
 namespace AgcDriver {
@@ -17,12 +20,39 @@ public:
     static bool Active() { return Flag(); }
 
 private:
-    static bool& Flag() {
-        thread_local bool ahead = false;
-        return ahead;
-    }
+    static bool& Flag();
 
     bool previous;
+};
+
+class CreationThread {
+public:
+    static constexpr std::size_t RetainedBudgetBytes = std::size_t{1} << 30u;
+    static constexpr std::size_t RetainedBytesPerWord = 567;
+
+    static std::size_t Words();
+
+    template<typename TCreate>
+    static auto Run(std::size_t words, TCreate&& create) -> decltype(create()) {
+        if (!CreationAhead::Active() || words < Words() || Current()) return create();
+        using Result = decltype(create());
+        std::promise<Result> done;
+        auto result = done.get_future();
+        Submit([&] {
+            try {
+                done.set_value(create());
+            } catch (...) {
+                done.set_exception(std::current_exception());
+            }
+        });
+        return result.get();
+    }
+
+    static bool Current();
+    static std::uint64_t Routed();
+
+private:
+    static void Submit(std::function<void()> task);
 };
 
 class CreationGate {

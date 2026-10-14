@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -125,6 +126,41 @@ void FramesFirst() {
     Require(!aheadAdmittedEarly, "a creation ahead of frames did not count the words of a creation inside a frame");
 }
 
+void LargeOnOneThread() {
+    using AgcDriver::CreationThread;
+    const auto words = CreationThread::Words();
+    Require(words == CreationThread::RetainedBudgetBytes / (std::max(2u, std::thread::hardware_concurrency()) * CreationThread::RetainedBytesPerWord), "the large-module words are not the retained budget shared by the pool's threads");
+    const auto caller = std::this_thread::get_id();
+    const auto where = [](std::size_t size) {
+        return CreationThread::Run(size, [] { return std::this_thread::get_id(); });
+    };
+    Require(where(words) == caller, "a large creation inside a frame left its caller's thread");
+    const CreationAhead ahead;
+    Require(where(words - 1u) == caller, "a creation ahead below the large-module words left its caller's thread");
+    const auto dedicated = where(words);
+    Require(dedicated != caller && !CreationThread::Current(), "a large creation ahead ran on its caller's thread");
+    std::vector<std::thread::id> seen(4);
+    std::vector<std::thread> threads;
+    for (std::size_t index = 0; index < seen.size(); ++index) {
+        threads.emplace_back([&, index] {
+            const CreationAhead marked;
+            seen[index] = CreationThread::Run(words * (index + 1u), [] {
+                Require(CreationAhead::Active(), "a large creation lost its origin ahead of frames on the creation thread");
+                return std::this_thread::get_id();
+            });
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    for (const auto& id : seen) Require(id == dedicated, "large creations from several threads ran on more than one thread");
+    bool thrown = false;
+    try {
+        static_cast<void>(CreationThread::Run(words, []() -> int { throw std::runtime_error("creation failed"); }));
+    } catch (const std::runtime_error& error) {
+        thrown = std::string(error.what()) == "creation failed";
+    }
+    Require(thrown, "a large creation's failure did not reach its caller");
+}
+
 }
 
 int main() {
@@ -132,6 +168,7 @@ int main() {
         Bounded();
         InOrder();
         FramesFirst();
+        LargeOnOneThread();
         std::puts("pipeline creation gate tests passed");
         return 0;
     } catch (const std::exception& error) {
