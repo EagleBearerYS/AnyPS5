@@ -2,9 +2,26 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+// Whether a record of an indirect draw draws anything (a nonzero vertex or index count and instance
+// count), read as the draw path's CPU route reads them (Draw.cpp): through the flush hook, which
+// waits for the recorded work that writes the records.
+bool indirectRecordsDraw(const Pm4::DrawParameters::IndirectDraw& indirect) {
+    const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+    for (std::uint32_t record = 0; record < count; ++record) {
+        const auto arguments = Pm4::ReadDrawArguments(indirect, record);
+        if (arguments.count != 0 && arguments.instances != 0) return true;
+    }
+    return false;
+}
+
+}
 
 bool Driver::drawPrecheck() {
     static const bool precheck = std::getenv("APS5_NO_DRAW_PRECHECK") == nullptr;
@@ -24,7 +41,13 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         return DrawVerdict::Drawn;
     }
     if (const auto pass = Graphics::DecodeDepthExpandPass(queue)) {
-        require(!drawParameters.indirect, "indirect DB expands are unsupported");
+        // An indirect expand takes its counts from its records, after the queue's deferred labels
+        // are recorded as before every CPU read of indirect arguments; one whose records draw
+        // nothing writes nothing. Otherwise the pass covers the surface, as a direct one does.
+        if (drawParameters.indirect) {
+            recordQueuedLabelsBeforeRead(submission.queue);
+            if (!indirectRecordsDraw(*drawParameters.indirect)) return DrawVerdict::Nothing;
+        }
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (device == nullptr) device = std::make_shared<VulkanDevice>();
