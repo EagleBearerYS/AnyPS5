@@ -65,6 +65,10 @@
 #include <vector>
 #include <utility>
 
+namespace AgcDriver::Graphics {
+bool FrameTraceOn();
+}
+
 namespace AgcDriver {
 namespace {
 
@@ -3414,7 +3418,7 @@ bool SyncEachDispatch() {
 // Debug aid: APS5_TRACE_DISPATCH_IO prints every dispatch's resources (after write-back when synced).
 bool TraceDispatchIo() {
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
-    return traceIo;
+    return traceIo || Graphics::FrameTraceOn();
 }
 
 void WatchMemory(std::uint64_t programAddress) {

@@ -39,6 +39,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 
 namespace AgcDriver::Graphics {
+bool FrameTraceOn();
 namespace {
 
 bool overlap(std::uint64_t first, std::size_t firstSize, std::uint64_t second, std::size_t secondSize) {
@@ -2954,6 +2955,10 @@ std::string ShaderResources::Describe() const {
     for (const auto& range : describedRanges) {
         std::snprintf(line, sizeof(line), " %s 0x%llx+0x%llx(%ux%u f%u t%d) nz=%.2f", range.kind, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.width, range.height, range.format, range.tileMode, sample(range.address, range.bytes));
         text += line;
+        if (FrameTraceOn()) {
+            std::snprintf(line, sizeof(line), " w[%08x %08x %08x %08x %08x %08x %08x %08x]", range.words[0], range.words[1], range.words[2], range.words[3], range.words[4], range.words[5], range.words[6], range.words[7]);
+            text += line;
+        }
         if (range.dccAddress != 0) {
             const auto keys = ReadDccKeys(range.dccAddress, range.bytes);
             std::snprintf(line, sizeof(line), " dcc=%s@0x%llx", DccKeysName(keys), static_cast<unsigned long long>(range.dccAddress));
@@ -2991,6 +2996,12 @@ std::string ShaderResources::Describe() const {
             std::snprintf(line, sizeof(line), " data+0x%zx nz=%.2f", allocation.size, sample(reinterpret_cast<std::uint64_t>(bytes.data()), allocation.size));
             text += line;
             appendWords(reinterpret_cast<const std::uint32_t*>(bytes.data()), allocation.size);
+        }
+    }
+    if (FrameTraceOn()) {
+        for (const auto& sampler : samplerSources) {
+            std::snprintf(line, sizeof(line), " s[%08x %08x %08x %08x]", sampler.words[0], sampler.words[1], sampler.words[2], sampler.words[3]);
+            text += line;
         }
     }
     return text;
@@ -3380,6 +3391,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             textureBaseLevel.push_back(baseLevel);
             textureSrgb.push_back(forcedSrgb);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
+            std::copy_n(words.begin(), std::min<std::size_t>(words.size(), 8u), describedRanges.back().words.begin());
             item.imageAllocations.push_back(textures.size() - 1);
         }
         // The line is due even when every element took the fast path (cachedTexture reports too).
@@ -3420,6 +3432,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
         storageAtomic64.push_back(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]);
         describedRanges.push_back({"storage", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
+        std::copy_n(words.begin(), std::min<std::size_t>(words.size(), 8u), describedRanges.back().words.begin());
         item.imageAllocations.push_back(storageTextures.size() - 1);
     }
 }

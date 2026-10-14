@@ -273,6 +273,7 @@ private:
         std::uint32_t format = 0;
         int tileMode = 0;
         std::uint64_t dccAddress = 0;
+        std::array<std::uint32_t, 8> words{};
     };
     std::vector<DescribedRange> describedRanges;
     struct Allocation {

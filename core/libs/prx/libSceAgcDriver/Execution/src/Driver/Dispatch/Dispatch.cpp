@@ -11,6 +11,10 @@
 #include <cstdlib>
 #include <stdexcept>
 
+namespace AgcDriver::Graphics {
+bool FrameTraceOn();
+}
+
 namespace AgcDriver::DriverDetail {
 
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
@@ -328,10 +332,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
-    if (traceIo) {
+    if (traceIo || Graphics::FrameTraceOn()) {
 
         std::string words;
-        if (std::getenv("APS5_TRACE_DISPATCH_IO")[0] == '2') {
+        if (traceIo && std::getenv("APS5_TRACE_DISPATCH_IO")[0] == '2') {
             for (const auto word : userData) {
                 char text[12];
                 std::snprintf(text, sizeof(text), " %08x", word);

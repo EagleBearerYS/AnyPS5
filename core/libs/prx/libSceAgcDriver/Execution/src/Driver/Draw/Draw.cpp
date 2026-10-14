@@ -5,7 +5,13 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
+#include <string>
+
+namespace AgcDriver::Graphics {
+bool FrameTraceOn();
+}
 
 namespace AgcDriver::DriverDetail {
 
@@ -96,6 +102,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     auto pixel = decode->pixel;
     std::vector<DrawProgram> programs = decode->programs;
     if (const auto skipped = SkippedShader(); skipped != 0 && std::any_of(programs.begin(), programs.end(), [skipped](const DrawProgram& program) { return program.binary.codeAddress == skipped; })) return drawn();
+    if (Graphics::FrameTraceOn()) {
+        std::string traced;
+        for (const auto& program : programs) {
+            char item[32];
+            std::snprintf(item, sizeof(item), " 0x%llx", static_cast<unsigned long long>(program.binary.codeAddress));
+            traced += item;
+        }
+        std::fprintf(stderr, "[ftrace] programs%s\n", traced.c_str());
+    }
     const auto setMeshIndexBuffer = [&](const Pm4::DrawParameters& parameters) {
         if (!graphics.stages.mesh) return;
         auto& words = programs.front().userData;

@@ -1838,6 +1838,21 @@ bool RecordDraws() {
 
 }
 
+bool FrameTraceOn() {
+    static const char* gate = std::getenv("APS5_RE8_FRAME_TRACE");
+    if (gate == nullptr) return false;
+    static std::atomic<long long> checked{0};
+    static std::atomic<bool> on{false};
+    const long long now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now - checked.load(std::memory_order_relaxed) >= 200) {
+        checked.store(now, std::memory_order_relaxed);
+        std::FILE* file = std::fopen(gate, "rb");
+        on.store(file != nullptr, std::memory_order_relaxed);
+        if (file != nullptr) std::fclose(file);
+    }
+    return on.load(std::memory_order_relaxed);
+}
+
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state) {
     std::vector<std::uint64_t> key;
     if (!ValidationKey(context, shaders, state, key)) return std::nullopt;
@@ -1988,6 +2003,22 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     const bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
     auto& resources = resolved.resources;
+    if (FrameTraceOn()) {
+        std::string traced;
+        char item[160];
+        std::snprintf(item, sizeof(item), "[ftrace] draw %ux%u", state.renderExtent.width, state.renderExtent.height);
+        traced += item;
+        for (const auto& color : state.colors) {
+            std::snprintf(item, sizeof(item), " color 0x%llx(vk%d %ux%u s%u mip%u/%u slice%u blend%u)", static_cast<unsigned long long>(color.address), static_cast<int>(color.format), color.extent.width, color.extent.height, color.samples, color.mip, color.mipCount, color.arraySlice, static_cast<unsigned>(state.blends.at(color.exportIndex).blendEnable));
+            traced += item;
+        }
+        if (state.depth) {
+            std::snprintf(item, sizeof(item), " depth 0x%llx(vk%d %ux%u s%u test%d write%d)", static_cast<unsigned long long>(state.depth->address), static_cast<int>(state.depth->format), state.depth->extent.width, state.depth->extent.height, state.depth->samples, state.depthTest ? 1 : 0, state.depthWrite ? 1 : 0);
+            traced += item;
+        }
+        if (resources != nullptr) traced += resources->Describe();
+        std::fprintf(stderr, "%s\n", traced.c_str());
+    }
     const auto& contentKey = resolved.contentKey;
     const bool cacheable = resolved.cacheable;
     built = resolved.built;

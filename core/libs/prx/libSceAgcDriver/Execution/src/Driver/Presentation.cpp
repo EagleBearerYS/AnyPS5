@@ -5,7 +5,12 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
+#include <cstdio>
 #include <cstdlib>
+
+namespace AgcDriver::Graphics {
+bool FrameTraceOn();
+}
 
 namespace AgcDriver::DriverDetail {
 
@@ -38,6 +43,7 @@ void Driver::AttachWindow(const PresentationWindow& window) {
 }
 
 void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque, void (*gpuReady)(void*), void* context) {
+    if (Graphics::FrameTraceOn()) std::fprintf(stderr, "[ftrace] present\n");
     if (PerformanceTrace::Configured()) PerformanceTrace::Present(window.width, window.height, device.Load().get());
     PerformanceContext timingContext(window.timing.get());
     PerformanceTimer timing("Driver.Present");
