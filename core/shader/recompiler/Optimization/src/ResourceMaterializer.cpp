@@ -1548,6 +1548,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.userDataBase = source.userDataBase;
     plan.userDataCount = source.userDataCount;
     plan.srgbDecodeFormats = source.srgbDecodeFormats;
+    plan.workgroupThreads = source.workgroupThreads;
     plan.memoryInfo = source.memoryInfo;
     plan.descriptorSources = source.descriptorSources;
     plan.controlFlow = source.controlFlow;

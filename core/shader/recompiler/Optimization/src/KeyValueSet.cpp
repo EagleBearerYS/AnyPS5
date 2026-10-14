@@ -102,6 +102,7 @@ private:
                 for (std::uint32_t lane = 0; lane < LaneLimit; lane++) lanes.set.push_back(lane);
                 return lanes;
             }
+            case IrOpcode::GetBuiltin: return Builtin(inst);
             case IrOpcode::BitwiseAnd32: return Binary(inst, [](std::uint32_t a, std::uint32_t b) { return a & b; });
             case IrOpcode::BitwiseOr32: return Binary(inst, [](std::uint32_t a, std::uint32_t b) { return a | b; });
             case IrOpcode::BitwiseXor32: return Binary(inst, [](std::uint32_t a, std::uint32_t b) { return a ^ b; });
@@ -120,6 +121,20 @@ private:
         std::uint64_t result = 0;
         if (uniform.EvaluateWide(&inst, result)) return Single(static_cast<std::uint32_t>(result));
         return Unbounded();
+    }
+
+    Values Builtin(IrValue& inst) {
+        if (inst.ArgumentCount() != 2u || !inst.Argument(0)->Resolve()->HasImmediate() || !inst.Argument(1)->Resolve()->HasImmediate()) return Unbounded();
+        const auto kind = static_cast<StageInputKind>(inst.Argument(0)->Resolve()->ImmediateU32());
+        const auto component = inst.Argument(1)->Resolve()->ImmediateU32();
+        const auto& threads = plan.workgroupThreads;
+        std::uint64_t count = 0;
+        if (kind == StageInputKind::LocalInvocationId && component < threads.size()) count = threads[component];
+        if (kind == StageInputKind::LocalInvocationIndex) count = std::uint64_t{threads[0]} * threads[1] * threads[2];
+        if (count == 0u || count > SetLimit) return Unbounded();
+        Values values;
+        for (std::uint32_t value = 0; value < count; value++) values.set.push_back(value);
+        return values;
     }
 
     Values Union(IrValue& phi) {
