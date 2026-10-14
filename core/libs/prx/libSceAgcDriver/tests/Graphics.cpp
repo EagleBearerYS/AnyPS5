@@ -1917,6 +1917,10 @@ void depthExpandPassTests() {
     auto absent = expand();
     absent.context.erase(0x000);
     Require(!AgcDriver::Graphics::DecodeDepthExpandPass(absent).has_value(), "a draw without DB_RENDER_CONTROL was taken for a DB expand");
+    auto readOnlyStencilView = expand();
+    readOnlyStencilView.context[0x002] = 0x02000000u;
+    const auto stencilKept = AgcDriver::Graphics::DecodeDepthExpandPass(readOnlyStencilView);
+    Require(stencilKept.has_value() && stencilKept->destination == 0x20298b0000ull && stencilKept->source.stencilAddress == 0x2029430000ull, "the DB expand of a depth plane with a read-only stencil plane was not taken");
     const std::vector<std::tuple<std::uint32_t, std::uint32_t, std::string_view>> rejections{
         {0x015u, 0x20294400u, "of the stencil plane"},
         {0x000u, 0x61u, "with clear, copy, resummarize or decompress bits"},
@@ -1928,6 +1932,7 @@ void depthExpandPassTests() {
         {0x010u, 0x20000003u, "in a swizzle mode other than SW_64KB_Z_X"},
         {0x010u, 0x20010183u, "of a partially resident or mipmapped depth surface"},
         {0x002u, 1u, "of a depth view with a base slice"},
+        {0x002u, 0x02000000u | (1u << 26u), "of a depth view with a base slice or a mip level"},
         {0x014u, 0x20298b01u, "between bases that are not 64 KiB aligned"},
         {0x10fu, std::bit_cast<std::uint32_t>(480.0f), "over part of the depth surface"},
         {0x91u, (1080u << 16u) | 1920u, "over part of the depth surface"},
