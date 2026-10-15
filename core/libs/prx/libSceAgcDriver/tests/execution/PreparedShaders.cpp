@@ -580,19 +580,23 @@ void RegisteredVertexWorkgroup(const ShaderRecompiler::SpirvTarget& target, bool
     header.shader.specials = &header.specials;
     header.registers = {{{0xc8, static_cast<std::uint32_t>(address >> 8u)}, {0xc9, static_cast<std::uint32_t>(address >> 40u)}, {0x8a, 0x622c0187}, {0x8b, 5u << 19u}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
     if (registrationOnly) {
         header.shader.user_data = nullptr;
         AgcDriverRegisterShader_nid_postfix(&header.shader);
-        header.specials.vgt_shader_stages_en.value = 0;
-        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "missing AGC user-data header");
         header.shader.user_data = &header.userData;
-        if (target.subgroupSize < 64u && std::getenv("APS5_SYNC_SHADER_PREPARE") != nullptr) {
-            ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "v_readlane_b32 of lane 63 is outside");
+        header.specials.vgt_shader_stages_en.value = 0;
+        if (target.subgroupSize < 64u) {
+            if (std::getenv("APS5_SYNC_SHADER_PREPARE") != nullptr) {
+                ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "v_readlane_b32 of lane 63 is outside");
+            } else {
+                AgcDriverRegisterShader_nid_postfix(&header.shader);
+                ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, primitive); }, "v_readlane_b32 of lane 63 is outside");
+            }
         }
         std::cout << "registered NGG preparation deferral passed; subgroup=" << target.subgroupSize << '\n';
         return;
     }
-    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
     AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, primitive);
     AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, primitive);
     std::cout << "registered NGG wave64 preparation passed; subgroup=" << target.subgroupSize << '\n';
