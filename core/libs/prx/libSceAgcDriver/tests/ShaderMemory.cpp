@@ -29,7 +29,9 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -5369,9 +5371,70 @@ void verifySrgbDepthCompareModes() {
     }
 }
 
+void runImageTableBench() {
+    using namespace ShaderRecompiler;
+    const auto setting = [](const char* name, unsigned long long fallback) {
+        const char* value = std::getenv(name);
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : fallback;
+    };
+    const auto records = static_cast<std::uint32_t>(setting("BENCH_RECORDS", 32768));
+    const auto captures = static_cast<std::size_t>(setting("BENCH_CAPTURES", 20));
+    const auto writeEvery = static_cast<std::size_t>(setting("BENCH_WRITE_EVERY", 0));
+    const auto distinct = std::max<std::uint32_t>(1u, static_cast<std::uint32_t>(setting("BENCH_DISTINCT", records)));
+    const auto unwatched = setting("BENCH_UNWATCHED", 0) != 0u;
+    const auto bytes = (static_cast<std::size_t>(records) * 32u + 65535u) & ~std::size_t{65535};
+    std::vector<std::uint32_t> storage(unwatched ? bytes / 4u + 1024u : 0u);
+    auto* heap = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 4095u) & ~std::uintptr_t{4095});
+    if (!unwatched) {
+        heap = static_cast<std::uint32_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        require(heap != nullptr, "image table bench: cannot allocate the heap in the guest arena");
+        GuestArena::GuestArenaCommit_nid_postfix(heap, bytes, 0x04u, bytes);
+#ifndef _WIN32
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(heap, bytes);
+#endif
+    }
+    for (std::uint32_t record = 0; record < records; record++) {
+        const auto image = TableT(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x100000000ull + (record % distinct) * 256ull)), TableFormat8888UNorm, TableType2D, 1u + (record % distinct) % 5u);
+        std::copy(image.begin(), image.end(), heap + static_cast<std::size_t>(record) * 8u);
+    }
+    alignas(4096) static TableGuest guest;
+    FillTableSrt(guest, heap, 32u, records);
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableWholeCode, userData);
+    std::size_t capturedWords = 0;
+    const auto capture = [&] {
+        AgcDriver::ShaderMemory memory({});
+        const auto captured = memory.Capture(request);
+        capturedWords = 0;
+        for (const auto& region : memory.Regions()) capturedWords += region.bytes.size() / sizeof(std::uint32_t);
+        return captured->snapshot.tables.tables.at(0).keys;
+    };
+    const auto keys = capture();
+    const auto reuseBefore = ResourceMaterializer::TableReuse();
+    std::vector<double> micros;
+    for (std::size_t index = 0; index < captures; index++) {
+        if (writeEvery != 0u && index % writeEvery == 0u) {
+            auto& word = heap[static_cast<std::size_t>((index * 7919u) % records) * 8u + 2u];
+            word ^= 1u << 14u;
+        }
+        const auto started = std::chrono::steady_clock::now();
+        static_cast<void>(capture());
+        micros.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count());
+    }
+    const auto reuseAfter = ResourceMaterializer::TableReuse();
+    std::sort(micros.begin(), micros.end());
+    double total = 0;
+    for (const auto value : micros) total += value;
+    std::printf("IMAGETABLEBENCH %u records (%u distinct, %s), %u keys, %zu captures, write every %zu: median %.1f us, mean %.1f, min %.1f, max %.1f per capture; %zu words captured, %.0f read per capture; reused %llu unwritten, %llu compared\n", records, distinct, unwatched ? "unwatched" : "watched", keys, captures, writeEvery, micros[micros.size() / 2], total / static_cast<double>(micros.size()), micros.front(), micros.back(), capturedWords, static_cast<double>(reuseAfter.wordsRead - reuseBefore.wordsRead) / static_cast<double>(captures), static_cast<unsigned long long>(reuseAfter.unwritten - reuseBefore.unwritten), static_cast<unsigned long long>(reuseAfter.compared - reuseBefore.compared));
+}
+
 int main(int argc, char** argv) {
     try {
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--image-table-bench") {
+            runImageTableBench();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--quad-mask-no-demote") {
             verifyQuadMaskNeighbourReads();
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
