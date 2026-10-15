@@ -22,3 +22,4 @@ These are from Resident Evil Village's fast-tree boot (qfW-full.log 63498-63528)
 - **A Linux repro idea:** a heap over the budget, with a part of its range imported and then evicted, or imported unwatched (`APS5_WRITE_WATCH_IMPORTS=unwatch` as Windows' stand-in), then an address-based build.
 
 claimed-by: cloud-2 2026-10-15T20:58:19Z
+done: 2026-10-15T21:29:38Z, result: results/cloud-2/GAC-040.md (section 1.5)
