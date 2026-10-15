@@ -1098,6 +1098,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             if (images[image].deviceTable) result.deviceImageInterfaces[image] = ResourceMaterializer::DeviceImageInterfaceId(images[image], variant.info.info.runtimeImageModes.at(image));
         }
         result.deviceImages = snapshot.deviceImages;
+        result.deviceImagesComplete = snapshot.deviceImagesComplete;
         DeviceImageTableAbi::NameInterfaces(result.deviceImages, result.deviceImageInterfaces);
         std::optional<RuntimeImageModeMatch> refusal;
         for (const auto& expectation : result.deviceImages) {
@@ -1247,14 +1248,14 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
         auto program = PrepareResourceProgram(request);
         const auto plan = materializer.ExtractPlan(program);
         materializer.Materialize(plan, runtime, snapshot);
-        snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(plan, runtime);
+        snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(plan, runtime, &snapshot.deviceImagesComplete);
         keepMemoryBuffers(plan, runtime, snapshot);
         const auto variant = compileVariant(request, std::move(program));
         return materializeResult(variant, request, snapshot);
     }
     const auto source = getSource(request);
     materializer.Materialize(*source->plan, runtime, snapshot);
-    snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(*source->plan, runtime);
+    snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(*source->plan, runtime, &snapshot.deviceImagesComplete);
     keepMemoryBuffers(*source->plan, runtime, snapshot);
     return materializeVariant(*source, request, snapshot);
 }
@@ -1320,6 +1321,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     mixDescriptors(snapshot.stores);
     mixDescriptors(snapshot.loads);
     mix(snapshot.deviceImages.size());
+    mix(snapshot.deviceImagesComplete);
     for (const auto& image : snapshot.deviceImages) {
         mix(image.image);
         mix(image.pc);
@@ -1487,12 +1489,14 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     now.readTrace = nullptr;
     SrtRuntime settled = now;
     if (runtime.readAfterWrites != nullptr && plan.srtReads.empty()) settled.readMemory = runtime.readAfterWrites;
-    auto images = ResourceMaterializer::ExpectedDeviceImages(plan, settled);
+    bool imagesComplete = true;
+    auto images = ResourceMaterializer::ExpectedDeviceImages(plan, settled, &imagesComplete);
     std::vector<DescriptorValue> stores;
     std::vector<DescriptorValue> loads;
     ResourceMaterializer::EvaluateMemoryBuffers(plan, now, stores, loads);
     const auto keep = [&] {
         capture.snapshot.deviceImages = std::move(images);
+        capture.snapshot.deviceImagesComplete = imagesComplete;
         for (std::size_t index = 0; index < plan.info.bufferStores.size(); ++index) {
             if (plan.info.bufferStores[index].fromMemory) capture.snapshot.stores.at(index) = stores[index];
         }

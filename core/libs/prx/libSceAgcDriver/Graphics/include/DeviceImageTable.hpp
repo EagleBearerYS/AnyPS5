@@ -33,7 +33,7 @@ public:
     DeviceImageTable& operator=(const DeviceImageTable&) = delete;
 
     std::uint64_t HeaderAddress() const;
-    void Expect(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
+    void Expect(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images, bool complete);
     void BeforeDispatch(const Context& context, Recorder& recorder);
     void AfterDispatch(const Context& context, Recorder& recorder);
     std::vector<std::shared_ptr<StorageTexture>> DispatchStorage() const;
@@ -48,6 +48,8 @@ public:
 
     struct Counts {
         std::uint64_t misses = 0;
+        std::uint64_t missWaits = 0;
+        std::uint64_t missWaitNanoseconds = 0;
         std::uint64_t distinct = 0;
         std::uint64_t expected = 0;
         std::uint64_t dropped = 0;
@@ -111,6 +113,8 @@ private:
     std::vector<DeviceImageMiss> pending;
     std::vector<DeviceImageMiss> expected;
     std::vector<DeviceImageMiss> candidates;
+    bool incomplete = false;
+    std::optional<std::array<std::uint64_t, MaxRecorderStreams>> unnamedBatch;
     std::vector<DeviceImageKeys::Key> current;
     std::vector<DeviceImageKeys::Key> perUseKeys;
     std::uint64_t evictionCheck = 0;

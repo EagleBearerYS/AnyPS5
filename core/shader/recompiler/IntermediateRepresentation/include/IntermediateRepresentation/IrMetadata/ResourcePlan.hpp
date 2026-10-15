@@ -70,6 +70,7 @@ struct ResourceSnapshot {
     std::uint32_t nullRootReads = 0;
     ImageTableSnapshot tables;
     std::vector<DeviceImageTableAbi::Expectation> deviceImages;
+    bool deviceImagesComplete = true;
 };
 
 struct UniformFillPlan {

@@ -550,7 +550,7 @@ void RunTwoQueues(AgcDriver::VulkanDevice& device) {
     }
     device.WaitIdle();
     const auto after = device.DeviceImageCounts();
-    Require(after.misses - before.misses == 2u * groups * Lanes, "device image table: two queues' dispatches reaped one after the other drained " + std::to_string(after.misses - before.misses) + " miss records, not " + std::to_string(2u * groups * Lanes));
+    Require(after.misses - before.misses == groups * Lanes, "device image table: of two queues' dispatches whose CPU pre-pass named none of their T#s, the second missed keys the first's drained misses had inserted before it was recorded (" + std::to_string(after.misses - before.misses) + " miss records, not " + std::to_string(groups * Lanes) + ")");
 }
 
 int main() {

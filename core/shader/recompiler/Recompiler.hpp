@@ -552,6 +552,7 @@ struct ShaderInvocation {
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
     std::vector<DeviceImageTableAbi::Expectation> deviceImages;
+    bool deviceImagesComplete = true;
     std::vector<std::uint64_t> deviceImageInterfaces;
 };
 

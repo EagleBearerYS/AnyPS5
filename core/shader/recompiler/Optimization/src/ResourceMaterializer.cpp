@@ -1306,9 +1306,10 @@ void ResourceMaterializer::EvaluateMemoryBuffers(const IrResourcePlan& plan, con
     evaluate(plan.info.bufferLoads, loads);
 }
 
-std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime) {
+std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime, bool* complete) {
     namespace Abi = DeviceImageTableAbi;
     std::vector<Abi::Expectation> expected;
+    if (complete != nullptr) *complete = true;
     if (plan.info.deviceImageUses.empty()) return expected;
     Detail::Evaluator evaluator(plan, runtime);
     std::vector<std::uint8_t> active(plan.info.images.size(), 1u);
@@ -1440,14 +1441,18 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         if (active.at(use.image) == 0u) continue;
         const auto& image = plan.info.images.at(use.image);
         Words imageWords;
-        if (!wordsOf(image.source, Abi::DescriptorWords, imageWords)) continue;
         const bool deviceSampler = use.sampler != NoSampler && plan.info.samplers.at(use.sampler).deviceTable;
         Words samplerWords;
-        if (deviceSampler && !wordsOf(plan.info.samplers.at(use.sampler).source, Abi::SamplerWords, samplerWords)) continue;
+        if (!wordsOf(image.source, Abi::DescriptorWords, imageWords) || (deviceSampler && !wordsOf(plan.info.samplers.at(use.sampler).source, Abi::SamplerWords, samplerWords))) {
+            if (complete != nullptr) *complete = false;
+            continue;
+        }
         bool joinedImage = false;
         bool joinedSampler = false;
         const auto samplers = deviceSampler ? valuesOf(samplerWords, joinedSampler) : std::vector<Values>{};
-        for (const auto& value : valuesOf(imageWords, joinedImage)) {
+        const auto images = valuesOf(imageWords, joinedImage);
+        if (complete != nullptr && (images.empty() || (deviceSampler && samplers.empty()))) *complete = false;
+        for (const auto& value : images) {
             Abi::Expectation expectation;
             expectation.pc = use.firstUsePc;
             expectation.image = use.image;

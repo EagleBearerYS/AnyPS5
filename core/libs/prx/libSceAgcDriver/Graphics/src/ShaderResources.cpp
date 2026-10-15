@@ -3887,7 +3887,7 @@ void ShaderResources::ExpectDeviceImages(DeviceImageTable& table, const ShaderRe
     namespace Keys = ShaderRecompiler::DeviceImageTableAbi;
     const auto& expected = program.deviceImages;
     if (std::ranges::none_of(expected, [](const Keys::Expectation& image) { return image.mapSampler != Keys::NoMapSampler; })) {
-        table.Expect(expected);
+        table.Expect(expected, program.deviceImagesComplete);
         return;
     }
     const auto stage = std::ranges::find_if(tableStages, [&](const TableStage& candidate) { return candidate.program == &program; });
@@ -3900,7 +3900,7 @@ void ShaderResources::ExpectDeviceImages(DeviceImageTable& table, const ShaderRe
         Require(at < map.size(), "a device image expectation names sampler " + std::to_string(image.mapSampler) + ", which the image table map has no class for");
         image.key[Keys::SamplerClassWord] = map[at];
     }
-    table.Expect(keys);
+    table.Expect(keys, program.deviceImagesComplete);
 }
 
 void ShaderResources::finishImageTables() {

@@ -46,13 +46,15 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult
     bool waitForWrites = true;
     auto settled = runtime;
     settled.userContext = &waitForWrites;
-    auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, settled);
+    bool complete = true;
+    auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, settled, &complete);
     ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(expected, compiled.deviceImageInterfaces);
     ShaderRecompiler::ShaderInvocation ranges;
     const bool rebounded = memoryBuffers && ShaderRecompiler::RefreshMemoryBuffers(plan, runtime, compiled, ranges);
-    if (!rebounded && expected == compiled.deviceImages) return nullptr;
+    if (!rebounded && expected == compiled.deviceImages && complete == compiled.deviceImagesComplete) return nullptr;
     auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(compiled);
     patched->deviceImages = std::move(expected);
+    patched->deviceImagesComplete = complete;
     if (rebounded) {
         patched->writeRanges = std::move(ranges.writeRanges);
         patched->readRanges = std::move(ranges.readRanges);

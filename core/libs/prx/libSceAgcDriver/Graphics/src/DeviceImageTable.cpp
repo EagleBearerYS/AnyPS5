@@ -86,8 +86,9 @@ std::uint64_t DeviceImageTable::HeaderAddress() const {
     return header->DeviceAddress();
 }
 
-void DeviceImageTable::Expect(std::span<const Abi::Expectation> images) {
+void DeviceImageTable::Expect(std::span<const Abi::Expectation> images, bool complete) {
     std::lock_guard lock(mutex);
+    if (!complete) incomplete = true;
     const auto presents = Recorder::Presents();
     for (const auto& image : images) {
         current.push_back(image.key);
@@ -104,10 +105,20 @@ void DeviceImageTable::Expect(std::span<const Abi::Expectation> images) {
 
 void DeviceImageTable::BeforeDispatch(const Context& build, Recorder& recorder) {
     std::lock_guard lock(mutex);
+    const bool unnamed = std::exchange(incomplete, false);
+    if (unnamed && unnamedBatch.has_value()) {
+        const auto started = std::chrono::steady_clock::now();
+        const auto batch = *std::exchange(unnamedBatch, std::nullopt);
+        recorder.Submit();
+        recorder.FinishToken(batch);
+        ++totals.missWaits;
+        totals.missWaitNanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
+    }
     resolve(build, recorder);
     refresh(build, recorder);
     evict(build, recorder);
     record(recorder);
+    if (unnamed) unnamedBatch = ringBatch;
     report();
 }
 
@@ -509,11 +520,12 @@ void DeviceImageTable::report() {
     const auto presents = Recorder::Presents() - reportedPresents;
     const auto misses = totals.misses - reported.misses;
     const auto waits = ShaderMemory::PendingReadWaitCounts();
-    std::fprintf(stderr, "[device-images] (10 s): %llu misses (%llu distinct, %llu dropped), %.2f per present over %llu presents, %llu expected, %llu inserted, %llu rejected, %llu refreshed (%llu replaced), %u entries in %u buckets, %llu clears, %llu pre-pass reads waited for pending GPU writes (%.1f ms)\n",
+    std::fprintf(stderr, "[device-images] (10 s): %llu misses (%llu distinct, %llu dropped), %.2f per present over %llu presents, %llu expected, %llu inserted, %llu rejected, %llu refreshed (%llu replaced), %u entries in %u buckets, %llu clears, %llu pre-pass reads waited for pending GPU writes (%.1f ms), %llu waits for the misses of a dispatch with unnamed uses (%.1f ms)\n",
         static_cast<unsigned long long>(misses), static_cast<unsigned long long>(totals.distinct - reported.distinct), static_cast<unsigned long long>(totals.dropped - reported.dropped),
         presents != 0u ? static_cast<double>(misses) / static_cast<double>(presents) : 0.0, static_cast<unsigned long long>(presents), static_cast<unsigned long long>(totals.expected - reported.expected),
         static_cast<unsigned long long>(totals.inserted - reported.inserted), static_cast<unsigned long long>(totals.rejected - reported.rejected), static_cast<unsigned long long>(totals.refreshed - reported.refreshed), static_cast<unsigned long long>(totals.replaced - reported.replaced),
-        keys.Entries(), keys.Buckets(), static_cast<unsigned long long>(totals.clears - reported.clears), static_cast<unsigned long long>(waits.reads - reportedWaitReads), static_cast<double>(waits.nanoseconds - reportedWaitNanoseconds) / 1e6);
+        keys.Entries(), keys.Buckets(), static_cast<unsigned long long>(totals.clears - reported.clears), static_cast<unsigned long long>(waits.reads - reportedWaitReads), static_cast<double>(waits.nanoseconds - reportedWaitNanoseconds) / 1e6,
+        static_cast<unsigned long long>(totals.missWaits - reported.missWaits), static_cast<double>(totals.missWaitNanoseconds - reported.missWaitNanoseconds) / 1e6);
     reportedWaitReads = waits.reads;
     reportedWaitNanoseconds = waits.nanoseconds;
     reported = totals;
