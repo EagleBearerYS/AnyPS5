@@ -12,6 +12,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -34,6 +35,7 @@ public:
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
     bool Busy() const { return outstanding.load(std::memory_order_acquire) != 0; }
     bool Overlaps(std::uint64_t address, std::size_t bytes);
+    bool Overlaps(std::span<const Range> ranges);
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
 
 private:

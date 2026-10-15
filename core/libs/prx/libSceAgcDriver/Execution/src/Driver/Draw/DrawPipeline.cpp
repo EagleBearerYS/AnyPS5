@@ -182,4 +182,16 @@ bool DrawPipeline::Overlaps(std::uint64_t address, std::size_t bytes) {
     return false;
 }
 
+bool DrawPipeline::Overlaps(std::span<const Range> ranges) {
+    std::lock_guard lock(mutex);
+    for (const auto& item : items) {
+        for (const auto& [begin, limit] : item.writes) {
+            for (const auto& [first, end] : ranges) {
+                if (first < limit && begin < end) return true;
+            }
+        }
+    }
+    return false;
+}
+
 }
