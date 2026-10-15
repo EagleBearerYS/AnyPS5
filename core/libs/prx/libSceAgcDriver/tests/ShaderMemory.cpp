@@ -1587,13 +1587,13 @@ void verifyTableSnapshotReuse() {
     require(storedImages != nullptr && std::equal(heap + 6u * 8u, heap + 6u * 8u + 1u, storedImages->guestDescriptor.begin() + static_cast<std::ptrdiff_t>(storedElement) * 8) && std::equal(heap + 5u * 8u + 1u, heap + 5u * 8u + 8u, storedImages->guestDescriptor.begin() + static_cast<std::ptrdiff_t>(storedElement) * 8 + 1), "table snapshot reuse: the resolution after a CPU store does not hold the stored record");
 
     constexpr std::uint32_t SmallRecords = 64;
-    std::vector<std::vector<std::uint32_t>> small(17, std::vector<std::uint32_t>(SmallRecords * 8u + 1024u));
-    std::vector<TableGuest> smallGuests(small.size());
-    std::vector<std::array<std::uint32_t, 2>> smallUserData(small.size());
+    std::vector<std::vector<std::uint32_t>> smallStorage(17, std::vector<std::uint32_t>(SmallRecords * 8u + 1024u));
+    std::vector<TableGuest> smallGuests(smallStorage.size());
+    std::vector<std::array<std::uint32_t, 2>> smallUserData(smallStorage.size());
     std::vector<RecompileRequest> smallRequests;
     std::vector<std::uint32_t*> smallTables;
-    for (std::size_t index = 0; index < small.size(); index++) {
-        auto* table = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(small[index].data()) + 4095u) & ~std::uintptr_t{4095});
+    for (std::size_t index = 0; index < smallStorage.size(); index++) {
+        auto* table = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(smallStorage[index].data()) + 4095u) & ~std::uintptr_t{4095});
         fill(table, SmallRecords);
         FillTableSrt(smallGuests[index], table, 32u, SmallRecords);
         smallTables.push_back(table);
@@ -1607,7 +1607,7 @@ void verifyTableSnapshotReuse() {
     smallTables[0][5u * 8u] ^= 0x10u;
     const auto unwatchedStore = capture(smallRequests[0], smallTables[0], smallBytes, nullptr);
     require(unwatchedStore.reuse.compared == 0u && heldRecords(unwatchedStore, smallTables[0], SmallRecords), "table snapshot reuse: a store into a table outside the write watch was not seen");
-    for (std::size_t index = 1; index < small.size(); index++) static_cast<void>(capture(smallRequests[index], smallTables[index], smallBytes, nullptr));
+    for (std::size_t index = 1; index < smallStorage.size(); index++) static_cast<void>(capture(smallRequests[index], smallTables[index], smallBytes, nullptr));
     const auto evicted = capture(smallRequests[0], smallTables[0], smallBytes, nullptr);
     const auto kept = capture(smallRequests.back(), smallTables.back(), smallBytes, nullptr);
     require(evicted.reuse.unwritten == 0u && evicted.reuse.compared == 0u && kept.reuse.compared == 1u, "table snapshot reuse: the memo kept more than 16 columns");
