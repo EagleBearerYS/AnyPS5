@@ -274,6 +274,7 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
     const auto fetched = self.pages.lower_bound(address & ~static_cast<std::uint64_t>(PageBytes - 1));
     if (fetched != self.pages.end() && fetched->first < address + bytes) return {};
     if (self.pendingWrite != nullptr && self.pendingWrite(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
+    GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
     if (generation == 0) return {};
@@ -284,6 +285,7 @@ bool ShaderMemory::unchangedSince(void* context, std::uint64_t address, std::uin
     const auto& self = *static_cast<const ShaderMemory*>(context);
     if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
     if (self.pendingWrite != nullptr && self.pendingWrite(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return false;
+    GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     if (GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)) == 0) return false;
     return GuestMemory::UnchangedSince(address, static_cast<std::size_t>(bytes), stamp.generation);
 }
