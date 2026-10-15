@@ -1916,6 +1916,64 @@ void verifyTableVouch() {
     std::cout << "table vouch with write watching passed\n";
 }
 
+std::uint64_t spanQueryBegin = 0;
+std::uint64_t spanQueryEnd = 0;
+std::uint64_t spanQueriesToPages = 0;
+bool spanQueryQueued = false;
+
+AgcDriver::ShaderMemory::PendingWrite PageQuery(std::uint64_t address, std::size_t bytes, std::span<std::byte>) {
+    if (address <= spanQueryBegin && address + bytes >= spanQueryEnd) ++spanQueriesToPages;
+    return AgcDriver::ShaderMemory::PendingWrite::None;
+}
+
+AgcDriver::ShaderMemory::PendingWrite QueuedSpanQuery(std::uint64_t address, std::size_t bytes, std::span<std::byte>) {
+    return spanQueryQueued && address < spanQueryEnd && spanQueryBegin < address + bytes ? AgcDriver::ShaderMemory::PendingWrite::Sync : AgcDriver::ShaderMemory::PendingWrite::None;
+}
+
+void verifyTableSpanQuery() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Records = 4096;
+    constexpr std::uint32_t Stride = 48;
+    constexpr std::size_t Bytes = static_cast<std::size_t>(Records) * Stride;
+    constexpr std::size_t RecordWords = Stride / 4u;
+    auto* heap = AllocateWatchedTable(Bytes);
+    for (std::uint32_t record = 0; record < Records; record++) {
+        const auto words = TableT(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x100000000ull + (record % 1024u) * 256ull)), TableFormat8888UNorm, TableType2D, 1u + record % 5u);
+        std::copy(words.begin(), words.end(), heap + record * RecordWords);
+        std::fill_n(heap + record * RecordWords + 8u, 4u, 0x5a5a5a5au);
+    }
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(heap));
+    if (AgcDriver::GuestMemory::CollectWrites(address, Bytes) == 0) {
+        std::cout << "table span query without write watching skipped\n";
+        return;
+    }
+    alignas(4096) static TableGuest guest;
+    FillTableSrt(guest, heap, Stride, Records);
+    auto wideCode = TableWholeCode;
+    std::replace(wideCode.begin(), wideCode.end(), 0x8f108510u, 0x9310b010u);
+    const auto request = TableRequest(wideCode, TableUserData(guest));
+    spanQueryBegin = address;
+    spanQueryEnd = address + static_cast<std::uint64_t>(Records - 1u) * Stride + 32u;
+    spanQueriesToPages = 0;
+    spanQueryQueued = false;
+    const auto capture = [&] {
+        const auto before = ResourceMaterializer::TableReuse();
+        AgcDriver::ShaderMemory memory({}, &PageQuery, nullptr, nullptr, &QueuedSpanQuery);
+        static_cast<void>(memory.Capture(request));
+        const auto after = ResourceMaterializer::TableReuse();
+        return ImageTableReuseCounts{after.unwritten - before.unwritten, after.compared - before.compared, after.wordsRead - before.wordsRead, after.shared - before.shared, after.columns - before.columns};
+    };
+    require(capture().columns == 1u, "table span query: the first capture did not read the table");
+    require(capture().unwritten == 1u, "table span query: the unwritten table was not reused through the span query");
+    spanQueryQueued = true;
+    const auto queued = capture();
+    require(queued.unwritten == 0u && queued.compared == 1u && queued.columns == 0u, "table span query: a write queued over the table's span did not make the capture compare the table");
+    spanQueryQueued = false;
+    require(capture().unwritten == 1u, "table span query: the table was not reused unwritten once the queued write was gone");
+    require(spanQueriesToPages == 0u, ("table span query: " + std::to_string(spanQueriesToPages) + " whole-span checks went to the page query, which waits for queued draws").c_str());
+    std::cout << "table span query passed\n";
+}
+
 void verifyImageTables() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -5971,6 +6029,7 @@ int main(int argc, char** argv) {
             verifyTableSnapshotReuse();
             verifyTableStampRace();
             verifyTableVouch();
+            verifyTableSpanQuery();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {

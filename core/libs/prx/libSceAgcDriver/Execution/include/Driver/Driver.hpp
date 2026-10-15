@@ -74,6 +74,7 @@ public:
     };
     DispatchCacheFootprint DispatchCacheSize();
     static std::uint64_t DispatchCacheBytes();
+    static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
 
 private:
     friend class SampledReadScope;

@@ -100,7 +100,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
     thread_local std::vector<VouchedRegions>* vouchedSlot = nullptr;
     auto& vouched = ShaderRecompiler::ThreadOwned(vouchedSlot);
     vouched.clear();
-    if (!variant.shared.empty() && vouchedValidation() && !validateLegacy() && variant.runs.size() == regions.size()) VouchSharedRegions(variant.shared, regions.size(), &queryPendingWrite, vouched);
+    if (!variant.shared.empty() && vouchedValidation() && !validateLegacy() && variant.runs.size() == regions.size()) VouchSharedRegions(variant.shared, regions.size(), &QueryPendingSpan, vouched);
     PendingView pending;
     pending.Load();
     std::erase_if(vouched, [&](const VouchedRegions& range) { return pending.Overlaps(range.low, static_cast<std::size_t>(range.high - range.low)); });
