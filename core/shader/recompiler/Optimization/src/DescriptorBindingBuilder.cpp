@@ -109,17 +109,6 @@ constexpr std::uint32_t ForceUnnormalizedBit = 1u << 15u;
     fail(std::string("DescriptorBindingBuilder::Populate unnormalized guest sampler ") + reason + ", which is not implemented");
 }
 
-const char* UnnormalizedUseReason(std::uint32_t uses) {
-    switch (uses & (~uses + 1u)) {
-        case SamplerUseImplicitLod: return "is used by an implicit-LOD sample";
-        case SamplerUseGradient: return "is used by a sample with derivatives";
-        case SamplerUseCompare: return "is used with depth comparison";
-        case SamplerUseGather: return "is used by a gather";
-        case SamplerUseQueryLod: return "is used by image_get_lod";
-        default: return "is used by an image_sample_*_a variant";
-    }
-}
-
 struct UnnormalizedProof {
     std::vector<bool> samplers;
     std::vector<bool> images;
@@ -138,8 +127,7 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             }
             continue;
         }
-        const std::uint32_t unsupported = sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod);
-        if (unsupported != 0u && !SamplesBaseLevelIfUnnormalized(sampler)) {
+        if (const auto unsupported = UnnormalizedUnsupportedUses(sampler)) {
             failUnnormalized(UnnormalizedUseReason(unsupported));
         }
         if (sampler.depthCompare) {

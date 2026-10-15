@@ -123,6 +123,22 @@ inline bool SamplesBaseLevelIfUnnormalized(const SamplerResource& sampler) {
     return (sampler.uses & (SamplerUseImplicitLod | SamplerUseGradient)) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient | SamplerUseNonZeroLod)) == 0u && !sampler.depthCompare;
 }
 
+inline std::uint32_t UnnormalizedUnsupportedUses(const SamplerResource& sampler) {
+    const std::uint32_t unsupported = sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod);
+    return unsupported != 0u && !SamplesBaseLevelIfUnnormalized(sampler) ? unsupported : 0u;
+}
+
+inline const char* UnnormalizedUseReason(std::uint32_t uses) {
+    switch (uses & (~uses + 1u)) {
+        case SamplerUseImplicitLod: return "is used by an implicit-LOD sample";
+        case SamplerUseGradient: return "is used by a sample with derivatives";
+        case SamplerUseCompare: return "is used with depth comparison";
+        case SamplerUseGather: return "is used by a gather";
+        case SamplerUseQueryLod: return "is used by image_get_lod";
+        default: return "is used by an image_sample_*_a variant";
+    }
+}
+
 inline constexpr std::uint32_t NoSampler = std::numeric_limits<std::uint32_t>::max();
 
 struct DeviceImageUse {

@@ -3005,20 +3005,20 @@ void verifyUnnormalizedSamplers() {
         auditSpirv(result.spirv.Words());
     }
 
-    const auto keyed = [&](std::uint32_t mimg, const std::array<std::uint32_t, 16>& data, const char* what) {
-        require(proven(recompile(program(mimg), data), true), what);
+    const auto refused = [&](std::uint32_t mimg, const std::array<std::uint32_t, 16>& data, const char* reason, const char* what) {
+        expectFailure([&] { static_cast<void>(recompile(program(mimg), data)); }, reason, what);
     };
-    keyed(0xf0bc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized samplers: image_sample_c_lz did not key its device image table entry with the unnormalized S#");
-    keyed(0xf11c0108u, userData(unnormalized), "unnormalized samplers: image_gather4_lz did not key its device image table entry with the unnormalized S#");
-    keyed(0xf1800308u, userData(unnormalized), "unnormalized samplers: image_get_lod did not key its device image table entry with the unnormalized S#");
-    keyed(0xf0800f09u, userData(unnormalized), "unnormalized samplers: image_sample_a did not key its device image table entry with the unnormalized S#");
-    keyed(0xf09c0f18u, imageData(unnormalized, TypeCube, Format8888UNorm, 5u), "unnormalized samplers: a cube T# did not key its device image table entry with the unnormalized S#");
-    keyed(0xf09c0f10u, imageData(unnormalized, Type3D, Format8888UNorm, 3u), "unnormalized samplers: a 3D T# did not key its device image table entry with the unnormalized S#");
-    keyed(0xf09c0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized samplers: a 2D-array sample did not key its device image table entry with the unnormalized S#");
-    keyed(0xf09c0f08u, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u), "unnormalized samplers: a T# with a format conversion did not key its device image table entry with the unnormalized S#");
-    keyed(0xf15c0108u, userData(unnormalized), "unnormalized samplers: image_gather4_lz_o did not key its device image table entry with the unnormalized S#");
-    keyed(0xf0fc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized samplers: image_sample_c_lz_o did not key its device image table entry with the unnormalized S#");
-    keyed(0xf0dc0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized samplers: a 2D-array image_sample_lz_o did not key its device image table entry with the unnormalized S#");
+    refused(0xf0bc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "S# with unnormalized coordinates is used with depth comparison", "unnormalized samplers: image_sample_c_lz through a CPU-known unnormalized S# was accepted");
+    refused(0xf11c0108u, userData(unnormalized), "S# with unnormalized coordinates is used by a gather", "unnormalized samplers: image_gather4_lz through a CPU-known unnormalized S# was accepted");
+    refused(0xf1800308u, userData(unnormalized), "S# with unnormalized coordinates is used by image_get_lod", "unnormalized samplers: image_get_lod through a CPU-known unnormalized S# was accepted");
+    refused(0xf0800f09u, userData(unnormalized), "S# with unnormalized coordinates is used by an image_sample_*_a variant", "unnormalized samplers: image_sample_a through a CPU-known unnormalized S# was accepted");
+    refused(0xf09c0f18u, imageData(unnormalized, TypeCube, Format8888UNorm, 5u), "S# with unnormalized coordinates samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a cube T# through a CPU-known unnormalized S# was accepted");
+    refused(0xf09c0f10u, imageData(unnormalized, Type3D, Format8888UNorm, 3u), "S# with unnormalized coordinates samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 3D T# through a CPU-known unnormalized S# was accepted");
+    refused(0xf09c0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "S# with unnormalized coordinates samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array sample through a CPU-known unnormalized S# was accepted");
+    refused(0xf09c0f08u, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u), "S# with unnormalized coordinates samples an image that needs a format conversion or packed access", "unnormalized samplers: a T# with a format conversion through a CPU-known unnormalized S# was accepted");
+    refused(0xf15c0108u, userData(unnormalized), "S# with unnormalized coordinates is used by a gather", "unnormalized samplers: image_gather4_lz_o through a CPU-known unnormalized S# was accepted");
+    refused(0xf0fc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "S# with unnormalized coordinates is used with depth comparison", "unnormalized samplers: image_sample_c_lz_o through a CPU-known unnormalized S# was accepted");
+    refused(0xf0dc0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "S# with unnormalized coordinates samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array image_sample_lz_o through a CPU-known unnormalized S# was accepted");
     for (const std::uint32_t mimg : {0xf0c00f08u, 0xf11c0108u, 0xf09c0f18u}) {
         static_cast<void>(recompile(program(mimg), imageData(normalized, mimg == 0xf09c0f18u ? TypeCube : Type2D, Format8888UNorm, mimg == 0xf09c0f18u ? 5u : 0u)));
     }

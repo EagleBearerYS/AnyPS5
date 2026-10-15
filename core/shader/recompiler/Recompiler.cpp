@@ -1108,8 +1108,17 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             DescriptorValue descriptor;
             descriptor.dwordCount = DeviceImageTableAbi::DescriptorWords;
             std::copy_n(expectation.key.begin(), DeviceImageTableAbi::DescriptorWords, descriptor.dwords.begin());
-            auto match = ResourceMaterializer::TryRuntimeImageMode(images.at(expectation.image), descriptor, variant.info.info.runtimeImageModes.at(expectation.image));
-            if (match.mode.has_value()) continue;
+            const auto& modes = variant.info.info.runtimeImageModes.at(expectation.image);
+            auto match = ResourceMaterializer::TryRuntimeImageMode(images.at(expectation.image), descriptor, modes);
+            if (match.mode.has_value()) {
+                if (!runtimeSampler || (expectation.key[DeviceImageTableAbi::SamplerWord] & DeviceImageTableAbi::SamplerUnnormalized) == 0u) continue;
+                if (const auto* mismatch = ResourceMaterializer::UnnormalizedSampleMismatch(modes.at(*match.mode))) throw std::runtime_error(std::string("an S# with unnormalized coordinates ") + mismatch + ", which is not implemented");
+                for (const auto& use : variant.info.info.deviceImageUses) {
+                    if (use.image != expectation.image || use.firstUsePc != expectation.pc || use.sampler == NoSampler) continue;
+                    if (const auto unsupported = UnnormalizedUnsupportedUses(variant.info.info.samplers.at(use.sampler))) throw std::runtime_error(std::string("an S# with unnormalized coordinates ") + UnnormalizedUseReason(unsupported) + ", which is not implemented");
+                }
+                continue;
+            }
             if (!refusal.has_value() || (match.reason == ImageTableAbi::PoisonReason::SrgbUnsupported && refusal->reason != ImageTableAbi::PoisonReason::SrgbUnsupported)) refusal = std::move(match);
         }
         if (refusal.has_value()) throw std::runtime_error(refusal->detail);
