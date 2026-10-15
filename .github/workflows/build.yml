@@ -38,7 +38,7 @@ env:
 
 jobs:
   eligibility:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/windows-ca-bundle-fork'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
