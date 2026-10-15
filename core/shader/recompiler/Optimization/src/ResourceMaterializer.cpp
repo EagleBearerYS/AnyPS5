@@ -336,6 +336,8 @@ struct TableReuseTotals {
     std::atomic<std::uint64_t> unwritten{0};
     std::atomic<std::uint64_t> compared{0};
     std::atomic<std::uint64_t> wordsRead{0};
+    std::atomic<std::uint64_t> shared{0};
+    std::atomic<std::uint64_t> columns{0};
 };
 
 TableReuseTotals& tableReuseTotals() {
@@ -375,6 +377,15 @@ void reportTables() {
 
 enum class RecordState : std::uint8_t { OutsideDomain, Read, Unmapped, Carried };
 
+struct ColumnContents {
+    SharedValues<std::uint32_t> codes;
+    SharedValues<DescriptorValue> words;
+    SharedValues<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    std::uint32_t poisoned = 0;
+    std::uint32_t unmapped = 0;
+    std::uint32_t carried = 0;
+};
+
 struct ColumnRecords {
     std::uint64_t base = 0;
     std::uint64_t size = 0;
@@ -383,9 +394,12 @@ struct ColumnRecords {
     std::uint32_t fault = 0;
     bool narrowed = false;
     bool outside = false;
+    bool sealed = false;
     std::vector<RecordState> states;
     std::vector<std::uint32_t> words;
+    std::vector<DescriptorValue> distinct;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    ColumnContents contents;
 };
 
 struct TableTrace {
@@ -437,15 +451,12 @@ struct ColumnMemo {
     SrtWriteStamp stamp;
     std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
     std::vector<std::uint32_t> words;
-    std::vector<RecordState> states;
-    std::vector<std::uint32_t> values;
-    std::vector<DescriptorValue> distinct;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    ColumnContents contents;
     std::uint64_t low = 0;
     std::uint64_t high = 0;
 
     std::size_t Footprint() const {
-        return words.size() + values.size() + states.size() / 4u + distinct.size() * 9u + runs.size() * 3u + readRanges.size() * 4u;
+        return words.size() + runs.size() * 3u + contents.codes.size() + contents.words.size() * 9u + contents.readRanges.size() * 4u;
     }
 };
 
@@ -645,18 +656,43 @@ private:
             low = std::min(low, address);
             high = std::max(high, address + sizeof(std::uint32_t));
         }
-        records.words.front() = WordsIndex(value);
+        records.words.front() = WordsIndex(records, value);
         if (low < high) tables.ranges.emplace_back(low, high - low);
     }
 
-    std::uint32_t WordsIndex(const DescriptorValue& value) {
-        for (; indexed < tables.words.size(); indexed++) wordsIndex.try_emplace({tables.words[indexed].dwords, tables.words[indexed].dwordCount}, static_cast<std::uint32_t>(indexed));
-        const auto [found, inserted] = wordsIndex.try_emplace({value.dwords, value.dwordCount}, static_cast<std::uint32_t>(tables.words.size()));
-        if (inserted) {
-            tables.words.push_back(value);
-            indexed = tables.words.size();
-        }
+    std::uint32_t WordsIndex(ColumnRecords& records, const DescriptorValue& value) {
+        const auto [found, inserted] = wordsIndex.try_emplace({value.dwords, value.dwordCount}, static_cast<std::uint32_t>(records.distinct.size()));
+        if (inserted) records.distinct.push_back(value);
         return found->second;
+    }
+
+    void Seal(ColumnRecords& records) {
+        auto& contents = records.contents;
+        std::vector<std::uint32_t> codes(records.keys, 0u);
+        for (std::uint32_t key = 0; key < records.keys; key++) {
+            switch (records.states[key]) {
+                case RecordState::Read:
+                    codes[key] = records.words[key];
+                    continue;
+                case RecordState::OutsideDomain:
+                    codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::OutsideDomain));
+                    break;
+                case RecordState::Unmapped:
+                    codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Unmapped));
+                    contents.unmapped++;
+                    break;
+                case RecordState::Carried:
+                    codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::OffsetCarry));
+                    contents.carried++;
+                    break;
+            }
+            contents.poisoned++;
+        }
+        contents.codes = SharedValues<std::uint32_t>(std::move(codes));
+        contents.words = SharedValues<DescriptorValue>(std::move(records.distinct));
+        contents.readRanges = SharedValues<std::pair<std::uint64_t, std::uint64_t>>(std::move(records.readRanges));
+        records.sealed = true;
+        tableReuseTotals().columns.fetch_add(1, std::memory_order_relaxed);
     }
 
     ColumnRecords& Column(std::uint32_t source) {
@@ -664,14 +700,20 @@ private:
             return found->second;
         }
         auto& records = columns[source];
-        const auto& column = *plan.descriptorSources.at(source).tableColumn;
+        ReadColumn(*plan.descriptorSources.at(source).tableColumn, source, records);
+        if (!records.sealed) Seal(records);
+        return records;
+    }
+
+    void ReadColumn(const TableColumn& column, std::uint32_t source, ColumnRecords& records) {
         stamp = {};
         comparedRuns.clear();
         comparedWords.clear();
+        wordsIndex.clear();
         const bool active = source >= activeSources.size() || activeSources[source] != 0u;
         if (!active) {
             records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Inactive));
-            return records;
+            return;
         }
         if (column.address) {
             DescriptorValue pointer;
@@ -682,13 +724,13 @@ private:
             const auto heap = EvaluateBuffer(column.heapSource);
             if (heap.Type() != 0u) {
                 records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::NotBuffer));
-                return records;
+                return;
             }
             records.base = heap.Base48();
             records.size = heap.GetSize();
             if (column.selected) {
                 Select(column, records);
-                return records;
+                return;
             }
             records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset + (column.indirect ? 4u : 0u), records.size);
             if (records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
@@ -696,13 +738,16 @@ private:
         records.records = std::min(records.records, ImageTableAbi::KeyRecords(column.maxKey, column.stride));
         records.keys = std::min(records.records, ImageTableAbi::MaxKeys);
         records.outside = records.keys < records.records;
-        records.states.assign(records.keys, RecordState::Read);
         if (!column.keyDomains.empty() && records.keys != 0u) {
             Narrow(column, records);
         }
-        records.words.assign(records.keys, 0u);
+        const auto unread = [&] {
+            if (!records.narrowed) records.states.assign(records.keys, RecordState::Read);
+            records.words.assign(records.keys, 0u);
+        };
         const auto end = records.base + records.size;
         if (column.indirect) {
+            unread();
             for (std::uint32_t record = 0; record < records.keys; record++) {
                 if (records.states[record] != RecordState::Read) continue;
                 const auto offset = column.addend + record * column.stride;
@@ -729,10 +774,10 @@ private:
                     past = std::max(past, *address + sizeof(std::uint32_t));
                 }
                 if (records.states[record] != RecordState::Read) continue;
-                records.words[record] = WordsIndex(value);
+                records.words[record] = WordsIndex(records, value);
                 tables.ranges.emplace_back(first, past - first);
             }
-            return records;
+            return;
         }
         const bool memoized = TableSnapshotReuse() && !records.narrowed && records.keys != 0u;
         if (memoized && !column.address && records.size != 0u && runtime.stampWrites != nullptr) {
@@ -740,7 +785,8 @@ private:
             stamp = runtime.stampWrites(runtime.userContext, records.base, span);
         }
         const ColumnKey key{records.base, records.size, records.records, records.keys, column.stride, column.addend, column.offset, column.dwordCount, column.maxKey, column.foldedAddend, column.foldedCarry, column.address, column.sampler};
-        if (memoized && Reuse(key, column, records)) return records;
+        if (memoized && Reuse(key, column, records)) return;
+        unread();
         constexpr auto Unread = std::numeric_limits<std::uint32_t>::max();
         std::vector<std::uint32_t> whole(records.keys, Unread);
         std::vector<std::pair<std::uint32_t, std::array<std::uint32_t, 8>>> split;
@@ -816,7 +862,6 @@ private:
             read.resize(total);
             ReadRuns(runs, read);
         }
-        const auto firstWord = tables.words.size();
         auto next = split.begin();
         for (std::uint32_t record = 0; record < records.keys; record++) {
             if (records.states[record] != RecordState::Read) continue;
@@ -830,7 +875,7 @@ private:
                 }
                 ++next;
             }
-            records.words[record] = WordsIndex(value);
+            records.words[record] = WordsIndex(records, value);
         }
         if (column.address && low < high) tables.ranges.emplace_back(low, high - low);
         std::sort(records.readRanges.begin(), records.readRanges.end());
@@ -844,8 +889,8 @@ private:
             }
         }
         records.readRanges.resize(ranges);
-        if (memoized) Remember(key, records, std::move(runs), std::move(read), column.address && low < high ? low : 0u, column.address && low < high ? high : 0u, firstWord == 0u);
-        return records;
+        Seal(records);
+        if (memoized) Remember(key, records, std::move(runs), std::move(read), column.address && low < high ? low : 0u, column.address && low < high ? high : 0u);
     }
 
     void ReadRuns(const std::vector<std::pair<std::uint64_t, std::uint32_t>>& runs, std::vector<std::uint32_t>& read) const {
@@ -901,19 +946,8 @@ private:
     }
 
     void Apply(const TableColumn& column, ColumnRecords& records, const ColumnMemo& memo) {
-        records.states = memo.states;
-        records.readRanges = memo.readRanges;
-        if (tables.words.empty()) {
-            tables.words = memo.distinct;
-            records.words = memo.values;
-        } else {
-            std::vector<std::uint32_t> global(memo.distinct.size());
-            for (std::size_t value = 0; value < memo.distinct.size(); value++) global[value] = WordsIndex(memo.distinct[value]);
-            records.words.assign(records.keys, 0u);
-            for (std::uint32_t record = 0; record < records.keys; record++) {
-                if (memo.states[record] == RecordState::Read) records.words[record] = global[memo.values[record]];
-            }
-        }
+        records.contents = memo.contents;
+        records.sealed = true;
         if (column.address && memo.low < memo.high) tables.ranges.emplace_back(memo.low, memo.high - memo.low);
     }
 
@@ -933,12 +967,13 @@ private:
             return false;
         }
         Apply(column, records, *found);
+        totals.shared.fetch_add(1, std::memory_order_relaxed);
         std::rotate(memos.begin(), found, found + 1);
         return true;
     }
 
-    void Remember(const ColumnKey& key, const ColumnRecords& records, std::vector<std::pair<std::uint64_t, std::uint32_t>>&& runs, std::vector<std::uint32_t>&& words, std::uint64_t low, std::uint64_t high, bool first) {
-        if (std::any_of(records.states.begin(), records.states.end(), [](RecordState state) { return state != RecordState::Read && state != RecordState::Carried; })) return;
+    void Remember(const ColumnKey& key, const ColumnRecords& records, std::vector<std::pair<std::uint64_t, std::uint32_t>>&& runs, std::vector<std::uint32_t>&& words, std::uint64_t low, std::uint64_t high) {
+        if (records.contents.poisoned != records.contents.carried) return;
         auto& memos = ColumnMemos();
         auto found = std::find_if(memos.begin(), memos.end(), [&](const ColumnMemo& entry) { return entry.key == key; });
         if (found == memos.end()) found = memos.emplace(memos.end());
@@ -947,27 +982,9 @@ private:
         memo.stamp = stamp;
         memo.runs = std::move(runs);
         memo.words = std::move(words);
-        memo.states.assign(records.states.begin(), records.states.end());
-        memo.readRanges.assign(records.readRanges.begin(), records.readRanges.end());
+        memo.contents = records.contents;
         memo.low = low;
         memo.high = high;
-        if (first) {
-            memo.values.assign(records.words.begin(), records.words.end());
-            memo.distinct.assign(tables.words.begin(), tables.words.end());
-        } else {
-            std::vector<std::uint32_t> local(tables.words.size(), NoValue);
-            memo.values.assign(records.keys, 0u);
-            memo.distinct.clear();
-            for (std::uint32_t record = 0; record < records.keys; record++) {
-                if (records.states[record] != RecordState::Read) continue;
-                auto& slot = local[records.words[record]];
-                if (slot == NoValue) {
-                    slot = static_cast<std::uint32_t>(memo.distinct.size());
-                    memo.distinct.push_back(tables.words[records.words[record]]);
-                }
-                memo.values[record] = slot;
-            }
-        }
         if (memo.Footprint() > ColumnMemoWords) {
             memos.erase(found);
             return;
@@ -989,32 +1006,15 @@ private:
         out.keys = records.keys;
         out.fault = records.fault;
         out.outside = records.outside;
-        out.codes.assign(records.keys, 0u);
-        out.readRanges = records.readRanges;
-        TableTrace trace{records.base, records.size, records.records, records.keys, 0u, records.narrowed};
+        out.codes = records.contents.codes;
+        out.words = records.contents.words;
+        out.readRanges = records.contents.readRanges;
         auto& counters = tableCounters();
         if (records.fault != 0u) counters.poison[records.fault & ~ImageTableAbi::PoisonFlag].fetch_add(1, std::memory_order_relaxed);
-        for (std::uint32_t key = 0; key < records.keys; key++) {
-            switch (records.states[key]) {
-                case RecordState::Read:
-                    out.codes[key] = records.words[key];
-                    continue;
-                case RecordState::OutsideDomain:
-                    out.codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::OutsideDomain));
-                    break;
-                case RecordState::Unmapped:
-                    out.codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Unmapped));
-                    counters.poison[static_cast<std::size_t>(PoisonReason::Unmapped)].fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case RecordState::Carried:
-                    out.codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::OffsetCarry));
-                    counters.poison[static_cast<std::size_t>(PoisonReason::OffsetCarry)].fetch_add(1, std::memory_order_relaxed);
-                    break;
-            }
-            trace.poison++;
-        }
+        if (records.contents.unmapped != 0u) counters.poison[static_cast<std::size_t>(PoisonReason::Unmapped)].fetch_add(records.contents.unmapped, std::memory_order_relaxed);
+        if (records.contents.carried != 0u) counters.poison[static_cast<std::size_t>(PoisonReason::OffsetCarry)].fetch_add(records.contents.carried, std::memory_order_relaxed);
         counters.keys.fetch_add(records.keys, std::memory_order_relaxed);
-        if (TableTraced()) traceTable(plan, table, column, trace);
+        if (TableTraced()) traceTable(plan, table, column, {records.base, records.size, records.records, records.keys, records.contents.poisoned, records.narrowed});
     }
 
     const IrResourcePlan& plan;
@@ -1033,11 +1033,9 @@ private:
     std::unordered_map<std::pair<std::array<std::uint32_t, 8>, std::uint32_t>, std::uint32_t, WordsHash> wordsIndex;
     std::unordered_map<std::uint64_t, bool> pages;
     std::unordered_map<std::uint64_t, bool> wholePages;
-    std::size_t indexed = 0;
     SrtWriteStamp stamp;
     std::vector<std::pair<std::uint64_t, std::uint32_t>> comparedRuns;
     std::vector<std::uint32_t> comparedWords;
-    static constexpr std::uint32_t NoValue = std::numeric_limits<std::uint32_t>::max();
 };
 
 void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, SrtWalker& walker, ResourceSnapshot& snapshot, std::vector<std::uint8_t>& activeSources) {
@@ -1435,7 +1433,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 const auto reason = static_cast<PoisonReason>(code & ~Abi::PoisonFlag);
                 mapped = reason == PoisonReason::OutsideDomain ? Abi::PoisonCode(Abi::OutsideDomainPoison) : poison(resource, reason, nullptr);
             } else if (out.map[header + Abi::TableFault] == 0u) {
-                const auto& words = tables.words.at(code);
+                const auto& words = column.words.at(code);
                 if (sampler || !nullImageDescriptor(words)) {
                     const auto [found, inserted] = records.try_emplace(code, 0u);
                     if (inserted) found->second = sampler ? samplerRecord(resource, words) : imageRecord(resource, words);
@@ -1923,7 +1921,7 @@ std::uint64_t ResourceMaterializer::SpecializationNanoseconds() {
 
 ImageTableReuseCounts ResourceMaterializer::TableReuse() {
     auto& totals = tableReuseTotals();
-    return {totals.unwritten.load(std::memory_order_relaxed), totals.compared.load(std::memory_order_relaxed), totals.wordsRead.load(std::memory_order_relaxed)};
+    return {totals.unwritten.load(std::memory_order_relaxed), totals.compared.load(std::memory_order_relaxed), totals.wordsRead.load(std::memory_order_relaxed), totals.shared.load(std::memory_order_relaxed), totals.columns.load(std::memory_order_relaxed)};
 }
 
 }
