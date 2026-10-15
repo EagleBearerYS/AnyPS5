@@ -512,6 +512,7 @@ struct CompiledShaderArtifact {
     bool registrationModule = false;
     std::uint32_t bdaAbiVersion = 0;
     bool bdaWrites = false;
+    bool usesShaderBase = false;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
     std::vector<VertexInput> vertexInputs;
     std::int32_t vertexOffsetSgpr = -1;

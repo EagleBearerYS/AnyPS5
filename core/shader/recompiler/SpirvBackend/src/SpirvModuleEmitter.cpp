@@ -1440,7 +1440,13 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
 }
 
 std::uint32_t EmitGetShaderBase(SpirvValueEmitContext& ctx) {
-    return ConstantU64(ctx.state, 0u);
+    auto& state = ctx.state;
+    const auto u64 = TypeU64(state);
+    const auto low = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ShaderBaseLow, 0u);
+    const auto high = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ShaderBaseHigh, 0u);
+    const auto base = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, u64, base, low, high);
+    return base;
 }
 
 namespace {

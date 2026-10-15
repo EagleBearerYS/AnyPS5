@@ -498,6 +498,16 @@ std::array<std::uint32_t, 3> partialThreads(const RecompileRequest& request) {
     return request.context.compute ? request.context.compute->partialThreads : std::array<std::uint32_t, 3>{};
 }
 
+bool DeclaresSpecializationId(std::span<const std::uint32_t> words, std::uint32_t id) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        if (count == 0u) return false;
+        if ((words[cursor] & 0xffffu) == spv::OpDecorate && count == 4u && cursor + 3u < words.size() && words[cursor + 2u] == spv::DecorationSpecId && words[cursor + 3u] == id) return true;
+        cursor += count;
+    }
+    return false;
+}
+
 std::uint64_t nextVariantId() {
     static std::atomic<std::uint64_t> variants{0};
     return variants.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -573,6 +583,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.bdaWrites = program.Info().usesDma && program.Info().bdaWrites;
+    result.usesShaderBase = DeclaresSpecializationId(result.spirv.Words(), PipelineSpecialization::ShaderBaseLow);
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.bufferAddressDword = bindings.layout.BufferAddressDword();
     result.samplerSlotDword = bindings.layout.SamplerSlotDword();
@@ -876,6 +887,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .registrationModule = artifact.registrationModule,
         .bdaAbiVersion = artifact.bdaAbiVersion,
         .bdaWrites = artifact.bdaWrites,
+        .usesShaderBase = artifact.usesShaderBase,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
         .vertexOffsetSgpr = artifact.vertexOffsetSgpr,
@@ -930,7 +942,11 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             if (artifact.registrationModule) runtimeSelectors.at(input.location / RuntimeAbi::VertexSelectorsPerDword) |= (selectors & 0xfffu) << (input.location % RuntimeAbi::VertexSelectorsPerDword * 16u);
         }
     }
-    if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel) {
+    if (artifact.usesShaderBase) {
+        moduleKey.push_back(static_cast<std::uint32_t>(request.shader.codeAddress));
+        moduleKey.push_back(static_cast<std::uint32_t>(request.shader.codeAddress >> 32u));
+    }
+    if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel || artifact.usesShaderBase) {
         {
             std::shared_lock lock(plan->mutex);
             if (const auto found = plan->modules.find(moduleKey); found != plan->modules.end()) entry = found->second;
@@ -959,6 +975,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                     constants.push_back({first + 4u, kind == 0u ? 0x3f800000u : 1u});
                     constants.push_back({first + 5u, kind});
                 }
+            }
+            if (artifact.usesShaderBase) {
+                constants.push_back({PipelineSpecialization::ShaderBaseLow, moduleKey[index++]});
+                constants.push_back({PipelineSpecialization::ShaderBaseHigh, moduleKey[index++]});
             }
             const auto vertexClasses = vertexClassesOf(constants);
             const auto module = artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
