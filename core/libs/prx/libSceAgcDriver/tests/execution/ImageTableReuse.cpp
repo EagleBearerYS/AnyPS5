@@ -20,6 +20,7 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -271,6 +272,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
         return;
     }
     Expect(before, 2, 1, "three dispatches of one table in one epoch");
+    if (std::getenv("APS5_NO_TABLE_REPLAY") == nullptr) Require(AgcDriver::Graphics::ImageTableReuses().replayed - before.replayed == 2u, "image table reuse: three dispatches of one table in one epoch did not replay the bound table twice");
 
     before = AgcDriver::Graphics::ImageTableReuses();
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
