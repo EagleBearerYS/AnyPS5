@@ -70,9 +70,12 @@ public:
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
     static std::shared_ptr<const ResolvedImageTables> ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
+    static void CompactPlan(IrResourcePlan& plan);
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();
     static ImageTableReuseCounts TableReuse();
+    static std::uint64_t EvaluateNanoseconds();
+    static std::uint64_t MaterializeNanoseconds();
 };
 
 }
