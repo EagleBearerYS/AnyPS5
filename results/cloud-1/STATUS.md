@@ -1,21 +1,24 @@
-BUSY PRM-007 (claimed 2026-10-15T00:51:16Z)
+READY
 RESULT:
-- Last task: GAC-007, done: results/cloud-1/GAC-007.md.
+- Last task: PRM-007, done: results/cloud-1/PRM-007.md.
+  - A: #6012 head af3bd503cb compiles. Its 4 named tests pass. The full suite fails 5 of 1176, all the IPv6 baseline. Conventions pass.
+  - B: #6146 head e252c03bc6 compiles. Its 3 named tests pass; `^agc` has 558 tests, 0 failed, 40 skipped. Conventions pass.
+- Task before it: GAC-007, done: results/cloud-1/GAC-007.md.
   - Part A: merge a5c72131df (upstream 6239ceffc8 + fork 7ae42fd181) builds with CI's flags. `^agc` has 571 tests, 0 failed, 41 skipped (all expected). The three expand tests passed 10 of 10 each. The full suite fails 6 of 1220, the same 6 that fail on plain 6239ceffc8.
   - Part B: red at 7ae42fd181, fixed on fork branch fix/agc-db-depth-expand-partial-import, head 4eb20800d8.
     - The red is a plane across the edge of two registered ranges imported apart (or one imported, one mirrored or copied): copies hold 0 or 3072 of 15360 texels. Window imports of one range over 64 MiB are green in every variant, apart from GAC-006's unwatch-mode aborts.
     - The fix (681fcee86e) stores a plane when any import overlaps it. The new cases hold 15360 of 15360.
     - `^agc` at the head: 558 tests, 1 known flake, 40 skipped. Conventions pass.
   - Part C: #5851's section alias does not hide the import from `StoreDepthExpandWrites`. Imports are matched by guest address, so the store and the build use the same import. The ranking puts the Part B range edge first.
-- Before it: GAC-006, GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
+- Earlier: GAC-006, GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
   - /home/user/AnyPS5/build at upstream a453108cf7
   - /home/user/trees/prm-003/build at upstream 6239ceffc8, detached (the prm-003 branch de032afb91 is kept)
   - /home/user/trees/{B,C,D}/build-{B,C,D}
   - /home/user/trees/fsr/build at feat/agc-fsr1-presentation-upscaling fea68147a (the old submodule head stays as local branch pm004-submodule-245f786b0)
-  - /home/user/trees/overlay/build at feat/videoout-overlay-more-stats ce8e338cf
+  - /home/user/trees/overlay/build at af3bd503cb, detached (#6012's head; feat/videoout-overlay-more-stats ce8e338cf is kept as a branch)
   - /home/user/trees/depth-alias/build at test/depth-alias-red b3c988d36 (upstream bebff8b0e plus the test)
-  - /home/user/trees/expand/build at fix/agc-db-depth-expand-partial-import 4eb20800d8 (7ae42fd181 plus three commits; fix/agc-db-depth-expand-noimport 984604118 and fix/agc-db-depth-expand-pr fdf07837b4 are local branches there too)
+  - /home/user/trees/expand/build at e252c03bc6, detached (#6146's head; the branch fix/agc-db-depth-expand-partial-import 4eb20800d8 is 7ae42fd181 plus three commits; fix/agc-db-depth-expand-noimport 984604118 and fix/agc-db-depth-expand-pr fdf07837b4 are local branches there too)
   - /home/user/trees/trophy/build at feat/np-trophy-stats 954118b81 (PM-016's d04a01659 on upstream f785b88a6, plus five commits)
   - /home/user/trees/perdraw/build at gac007-merge a5c72131df (local only: upstream 6239ceffc8 merged with fork 7ae42fd181; test/agc-image-mirror-epoch-compare ce6959aba is a local branch there too)
   - one shared ccache
