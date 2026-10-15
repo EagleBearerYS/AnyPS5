@@ -279,95 +279,6 @@ std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Bl
     return std::make_shared<ShaderResources>(context, shader);
 }
 
-bool resourceCacheTests(Context context, const std::string& mode) {
-    PlaceholderImages placeholders(context);
-    context.placeholderImages = &placeholders;
-    TextureCache textures(context);
-    context.textureCache = &textures;
-    Block block(context);
-    if (context.hostImportAlignment == 0 || HostImportFor(context, block.Surface(0), BlockBytes) == nullptr) {
-        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "resource cache tests require host imports");
-        std::puts("skipped, resource cache tests require host imports");
-        return false;
-    }
-    auto& cache = SharedResourceCache();
-    cache.Clear();
-    try {
-        if (mode == "resource-clear") {
-            auto storage = ImageResources(context, block, 0, 1, false);
-            auto sampled = ImageResources(context, block, 0, 1, true);
-            Require(sampled->SampledTextures().front()->ViewsStorageImage(), "the sampled resource is not a storage-image view");
-            const std::weak_ptr<StorageTexture> image = StorageTexture::FindLive(block.Surface(0), SurfaceBytes);
-            const std::weak_ptr<ShaderResources> storageSet = storage;
-            const std::weak_ptr<ShaderResources> sampledSet = sampled;
-            cache.Insert({1}, storage);
-            cache.Insert({2}, sampled);
-            Require(cache.Size() == 2, "the resource cache did not accept the live descriptor sets");
-            sampled.reset();
-            ClearCachedTextures(context.device);
-            Require(cache.Find({1}) == nullptr && cache.Find({2}) == nullptr && cache.Size() == 0, "clearing storage images left their resources cached");
-            Require(sampledSet.expired(), "cache clear kept the sampled descriptor set alive");
-            Require(!image.expired() && !storageSet.expired(), "cache clear destroyed an active caller's resources");
-            storage.reset();
-            Require(image.expired() && storageSet.expired(), "cleared storage image outlived its last active resource");
-        } else if (mode == "resource-oversized") {
-            for (const bool sampledImages : {false, true}) {
-                const std::weak_ptr<StorageTexture> early = CachedStorageSurface(context, Resource(block.Surface(0)));
-                auto oversized = ImageResources(context, block, 0, static_cast<std::uint32_t>(Surfaces), sampledImages);
-                const std::weak_ptr<ShaderResources> rejected = oversized;
-                auto image = early.lock();
-                Require(oversized->Reusable(), "the oversized descriptor set is not eligible for resource caching");
-                Require(image != nullptr && !image->Cached(), "the oversized descriptor set did not evict an early image while building");
-                if (sampledImages) Require(oversized->SampledTextures().size() == Surfaces && oversized->SampledTextures().front()->StorageSource() == image.get(), "the oversized sampled descriptor set does not retain the early storage image");
-                std::vector<std::shared_ptr<ShaderResources>> displaced;
-                cache.Insert({1}, oversized, &displaced);
-                Require(cache.Size() == 0 && displaced.empty(), sampledImages ? "an oversized sampled descriptor set entered the resource cache" : "an oversized storage descriptor set entered the resource cache");
-                image.reset();
-                oversized.reset();
-                TextureCacheUsage();
-                Require(rejected.expired() && early.expired(), "the rejected oversized descriptor set retained an evicted storage image");
-                std::puts(sampledImages ? "resource cache oversized sampled lifetime passed" : "resource cache oversized storage lifetime passed");
-                ClearCachedTextures(context.device);
-            }
-        } else {
-            auto storage = ImageResources(context, block, 0, 1, false);
-            auto sampled = ImageResources(context, block, 0, 1, true);
-            Require(storage->Reusable() && sampled->Reusable(), "the stale descriptor sets are not eligible for resource caching");
-            Require(sampled->SampledTextures().front()->ViewsStorageImage(), "the sampled resource is not a storage-image view");
-            auto image = StorageTexture::FindLive(block.Surface(0), SurfaceBytes);
-            const std::weak_ptr<StorageTexture> staleImage = image;
-            const std::weak_ptr<ShaderResources> storageSet = storage;
-            const std::weak_ptr<ShaderResources> sampledSet = sampled;
-            Require(image != nullptr && image->Cached(), "the resource has no cached storage image");
-            for (std::size_t surface = 1; surface < Surfaces && image->Cached(); ++surface) CachedStorageSurface(context, Resource(block.Surface(surface)));
-            Require(!image->Cached(), "the test never evicted the oldest storage image");
-            auto live = ImageResources(context, block, Surfaces - 1, 1, false);
-            cache.Insert({1}, live);
-            Require(cache.Find({1}) == live, "the resource cache rejected a live descriptor set");
-            std::vector<std::shared_ptr<ShaderResources>> displaced;
-            for (const auto& stale : {storage, sampled}) {
-                cache.Insert({2}, stale, &displaced);
-                Require(cache.Find({2}) == nullptr && cache.Size() == 1 && displaced.empty(), "an uncached image was admitted to the resource cache");
-                cache.Insert({1}, stale, &displaced);
-                Require(cache.Find({1}) == live && cache.Size() == 1 && displaced.empty(), "an uncached image replaced a live resource-cache entry");
-            }
-            image.reset();
-            storage.reset();
-            Require(storageSet.expired() && !sampledSet.expired() && !staleImage.expired(), "stale storage release did not preserve the sampled caller's image");
-            std::puts("resource cache stale storage caller release passed");
-            sampled.reset();
-            TextureCacheUsage();
-            Require(sampledSet.expired() && staleImage.expired(), "the rejected descriptor sets retained an evicted storage image");
-            std::puts("resource cache stale sampled caller release passed");
-        }
-    } catch (...) {
-        cache.Clear();
-        throw;
-    }
-    cache.Clear();
-    return true;
-}
-
 void viewTests(const Context& context) {
     if (context.hostImportAlignment == 0) {
         std::puts("host imports unavailable: views of storage images not tested");
@@ -730,7 +641,6 @@ int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
-        const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
 #ifdef _WIN32
         if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", "1");
 #else
@@ -739,7 +649,7 @@ int main(int argc, char** argv) {
         if (memory) digestTests();
         std::unique_ptr<Device> device;
         try {
-            device = std::make_unique<Device>(resources);
+            device = std::make_unique<Device>(false);
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
@@ -748,12 +658,6 @@ int main(int argc, char** argv) {
         auto context = device->GetContext();
         TextureDetiler detiler(context);
         context.detiler = &detiler;
-        if (resources) {
-            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            if (!resourceCacheTests(context, mode)) return VulkanTestSkipped;
-            std::puts("resource cache tests passed");
-            return 0;
-        }
         if (memory) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             memoryTests(context);

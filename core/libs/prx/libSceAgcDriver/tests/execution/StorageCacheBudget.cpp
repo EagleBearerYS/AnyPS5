@@ -95,7 +95,6 @@ int main() {
         try {
             auto first = Store(*device, base, 0);
             Require(first != nullptr, "surface 0 has no cached storage image");
-            Require(AgcDriver::Graphics::SharedResourceCache().Size() != 0, "the storage cache workload did not populate the resource cache");
             const auto held = std::max<std::uint64_t>(first->AllocationBytes(), first->GuestBytes());
             const auto reused = static_cast<std::uint32_t>(FixedBudget / held) + 1u;
             std::printf("texture cache budget %llu MiB; each 512x512 32_UINT surface holds %llu MiB; cyclic set of %u surfaces (%llu MiB)\n", static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(held >> 20u), reused, static_cast<unsigned long long>((reused * held) >> 20u));

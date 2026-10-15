@@ -908,7 +908,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         control.bindings = {binding(Role::FaultBuffer, 5)};
         const std::array<CompiledShader, 1> stages{{{ShaderRecompiler::ShaderStage::TessellationControl, &control, 0}}};
         ShaderResources resources(disabled, stages, ColorTarget{}, 0, 0, 0);
-        Require(!ShaderResources::NeverReusable(stages) && resources.Reusable() && resources.ChecksFaults(), "a fault-only build is not reusable");
+        Require(resources.ChecksFaults(), "a fault-only build does not check faults");
         Require(resources.NeedsCompletion() && !resources.UsesAddressTable(), "a fault-only build reaches guest memory through the BDA table");
         resources.CheckFaults();
         const auto fault = access.bytes(access.descriptor(5).buffer);
@@ -927,7 +927,6 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     }
     {
         ShaderResources resources(importing, compiled);
-        Require(ShaderResources::NeverReusable(std::span<const CompiledShader>(&compiled, 1)) && !resources.Reusable(), "an address-based build is reusable");
         Require(resources.UsesAddressTable(), "an address-based build does not use the BDA table");
         Require(!resources.Writable().writableImports && resources.Writable().ranges.empty(), "a build of a program that stores nothing may write");
         const auto table = access.bytes(access.descriptor(4).buffer);

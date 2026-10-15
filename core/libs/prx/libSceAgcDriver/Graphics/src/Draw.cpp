@@ -1232,8 +1232,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
     // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
     if (completion) {
-        if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); });
-        else recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
+        recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
     }
     for (const auto& resident : residents) {
         if (resident != nullptr) resident->MarkDirty();

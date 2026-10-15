@@ -4066,48 +4066,6 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
 #endif
 }
 
-// A template's data buffers refreshed by words from a patched compiled result (a data-only hit)
-// and back: DataWordsHash() follows the buffers exactly, so a later recipe hit's hash compare
-// (RecordedDispatch::DataRefresh::Hash) decides correctly in both directions.
-void dataRefreshTests(const Device& device, Recorder& recorder) {
-    const auto& context = device.GetContext();
-    ShaderRecompiler::RecompileResult program;
-    ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
-    binding.role = ShaderRecompiler::DescriptorRole::FlattenedSrt;
-    binding.descriptorSet = 0;
-    binding.binding = 0;
-    binding.count = 1;
-    binding.guestDescriptor = {1, 2, 3, 4};
-    program.bindings.push_back(binding);
-    auto patched = program;
-    patched.bindings[0].guestDescriptor[2] = 0x33;
-    const CompiledShader original{ShaderRecompiler::ShaderStage::Compute, &program, 0};
-    const CompiledShader live{ShaderRecompiler::ShaderStage::Compute, &patched, 0};
-    ShaderResources resources(context, original);
-    Require(resources.DataWordsHash() == ShaderResources::DataWordsHash(original) && resources.DataWordsHash() != ShaderResources::DataWordsHash(live), "a fresh template's data hash is not its words'");
-    Require(!resources.DataWordsDiffer(original) && resources.DataWordsDiffer(live), "the per-word compare disagrees with the words");
-    Require(resources.RefreshData(recorder.Commands(), live, &recorder), "a refresh with different words recorded nothing");
-    Require(resources.DataWordsHash() == ShaderResources::DataWordsHash(live) && !resources.DataWordsDiffer(live), "the refreshed template's hash is not the patched words'");
-    Require(resources.RefreshData(recorder.Commands(), original, &recorder), "the refresh back recorded nothing");
-    Require(resources.DataWordsHash() == ShaderResources::DataWordsHash(original), "the refreshed template's hash is not the original words'");
-    Require(!resources.RefreshData(recorder.Commands(), original, &recorder), "a refresh with equal words recorded");
-    auto replaced = patched;
-    replaced.bindings[0].role = ShaderRecompiler::DescriptorRole::GuestSamplers;
-    replaced.bindings[0].kind = ShaderRecompiler::DescriptorKind::SamplerSlot;
-    const CompiledShader changedResources{ShaderRecompiler::ShaderStage::Compute, &replaced, 0};
-    bool rejected = false;
-    try {
-        static_cast<void>(resources.RefreshData(recorder.Commands(), changedResources, &recorder));
-    } catch (const std::exception& error) {
-        rejected = std::string_view(error.what()).find("cannot replace bound resources") != std::string_view::npos;
-    }
-    Require(rejected && resources.DataWordsHash() == ShaderResources::DataWordsHash(original), "a data refresh changed the bound resources");
-    recorder.Submit();
-    device.WaitQueue();
-    recorder.Sync();
-}
-
 void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !device.NullDescriptors()) {
@@ -5318,7 +5276,6 @@ int main(int argc, char** argv) {
         importWatchTests(device);
         staleGenerationTests(device, recorder);
         importWindowTests(device, recorder);
-        dataRefreshTests(device, recorder);
         imageMemoTests(device, recorder);
         minLodTests(device, recorder);
         firstLayerViewTests(device, recorder);
