@@ -1,14 +1,11 @@
-BUSY GAC-026 (claimed 2026-10-15T12:48:38Z)
+READY
 RESULT:
-- Working on: GAC-026 (GAC-024's host-import fix on main: requester tag, aligned block joins, no per-rebuild retries of budget refusals, a device budget; fork perf/agc-host-import-blocks).
-- Last task: PM-039, done: results/cloud-1/PM-039.md.
-  - Branch: fork followup/6146-completeness a6005bab0, 9 commits on 2697ae5d9, Addendum 2's base. Gap 2 builds on its drain, and its three queued cases stay green. My own duplicate queued case was dropped.
-  - Fixed: gap 2 (f2f52d08a), gap 5 (a2339f04c), gap 4 D16/slices/stencil (7c485c08e, 915a71718, c32ed2ac9), gap 7 (67a68a167), gap 10 (dc4557ffa), gap 8 tests (704020d28) and gap 11 docs (a6005bab0).
-  - Red/green: each behaviour fix is red on the pushed commit with the fix reverted, and green per commit. Gap 7 has no red that can be reproduced on lavapipe, and the result says why; its regression case is green.
-  - Scope, with reasons: gaps 3 (DB_RENDER_OVERRIDE copies; #1395 overlap), 6 (in-place expand), 9, 12, 13 and 14.
-  - CI mirror per commit: configure, registration, build and libs exit 0, and 25/25 or 26/26 named tests at each commit.
-  - Head, fresh build: 1245 tests; 5 failed, the socket baseline. check_skips flags agc_import_watch_other_family and guest_sce_net, both known.
-  - ^agc: 592 tests. The only failure is agc_driver_preparation_scope_settle, the base's load-sensitive flake: head failed in 4 of 6 runs and passed 10/10 alone; base 2697ae5d9 failed in 3 of 7.
-  - Expand tests: 5/5 runs at the pipeline default and 5/5 with APS5_PIPELINED_DRAWS=0. Conventions pass against upstream/main, 8856f180ca and 2697ae5d9.
-  - Merge-tree: clean with main 8856f180ca and with current main 34454bd835. Against #6188 and #5925, the only conflict beyond 2697ae5d9's is DrawPrecheck.cpp, and that is intended.
-- Task before it: BF-011, done: results/cloud-1/BF-011.md. Verdict GREEN: only the baseline fails.
+- Last task: GAC-026, done: results/cloud-1/GAC-026.md.
+  - Branch: fork perf/agc-host-import-blocks f5bf721bc, 6 commits on upstream/main 598dd1595 (has 8856f180ca): step 0 requester tag d1c3a1a0f, shutdown counts 07779db2e, overhang test fix 9c1e05733, F1 aligned blocks d568e0f90, F6 refusal memory 0f85236fe, F3 device budget f5bf721bc.
+  - Red/green: each new test red on the code before its fix and green after. F1: 64 → 1 import (map-time and build), holes 64 → 7, 48 unaligned pieces 48 → 5, 64 segment imports → 1 for a 4 MiB image. F6: "rebuild 1 tried 4800 refused ranges again" → 0. F3: 5 failures → 3 failures then 2 refusals; near the budget 3 → 1 then 2 refusals.
+  - Step 2: F1 alone makes T3 green (1 import; 2 at +64 KiB), so no F2. T4 as written drops its store on both trees (memory not registered); a GPU-flag variant is kept as a guard.
+  - Costs (30k 64 KiB ranges, lavapipe): importRun +111 ns per call; AcquireRegistered per rebuild 57.8 → 43.2 ms at a 60 % budget, 50.0 → 19.7 ms at 100 %; imports 18,000 → 5,318.
+  - ^agc: 598/598 at F1, F6 and F3; 596/597 at step 0 and the test fix (scope_settle flake only). New tests 10/10 at every commit. Registration: none new.
+  - Not built, with reasons: F7a (unsafe with in-flight old spaces; proposed), the maxMemoryAllocationCount cap (NVIDIA reports 4096; Village held 27,167 imports), F2/F4/F5 (PM's call). F3 recommended as its own PR after the first.
+  - Conflicts: #6097, #5870 and #6174 clean. #6197, #2434 and #5905 have adjacent-line conflicts; #5372 and #6264 doc-only. Current main 92e50418f: debt-doc conflict only.
+- Task before it: PM-039, done: results/cloud-1/PM-039.md.
