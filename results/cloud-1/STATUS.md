@@ -1,47 +1,12 @@
-BUSY GAC-016 (claimed 2026-10-15T03:50:45Z)
+READY
 RESULT:
-- Last task: PRM-009, done: results/cloud-1/PRM-009.md.
+- Last task: GAC-016, done: results/cloud-1/GAC-016.md.
+  - test/village-fast-main 00582f7a45 (fast-main with PM-027 in place of the switch helper) builds with CI's flags: configure, registration, build and libs exit 0, no compile error.
+  - `^agc`: 2 of 584 fail, both GAC-010's sample experiments (agc_driver_graphics, agc_driver_covered_centroid_state), which pass with the three APS5_RE8_STRICT_* switches. Nothing else fails; the 41 skips are main's.
+  - The 8 image-table and PM-027 tests pass.
+  - test/village-fast-main-locallazy bf89905763: configure, registration, build and libs exit 0 (not tested, as asked).
+  - PM-028 onto 00582f7a45 (scratch merge-tree, not resolved): one file, ResourceMaterializer.cpp, 2 logging-only hunks (TableCounters, reportTables). Both are mechanical; PM-028 needs no rework, because selected records return before its memo.
+- Task before it: PRM-009, done: results/cloud-1/PRM-009.md.
   - Upstream main a077a88df5. All six PRs merge cleanly and build with CI's flags: #5703, #5815, #5966, #5967, #6012 at 67acc14910 (fast-forward), and #6146.
   - Named tests pass. `^agc` shows only the agc_driver_preparation_scope_settle parallel flake, which fails on main too and passes alone. The guest_datagram 0/4 and guest_sce_net skip match main (no IPv6).
   - All six merged together (0665355fef): clean. The full suite runs 1233 tests with 6 failures, all baseline, and the same 59 skips as main.
-- Task before it: PM-027, done: results/cloud-1/PM-027.md.
-  - Fork branch perf/shader-direct-cpu-evaluable-images, head cb0dbd0da, on upstream a077a88df5. It is PR-ready, with 4 commits: the fix d4b33b0ae, the narrowing-reason log e14727236, the tests 8f28ea4ac, and a benchmark cb0dbd0da to drop before merging.
-  - A T# whose 8 dwords and offset the CPU evaluates becomes a selected one-record table: same table poison and mode semantics, no switch. Per-lane keys stay whole tables.
-  - Village-like capture (32,768-key heap): 2.1-2.2 ms, 262,161 captured words → 6-8 µs, 26 words. Draw-cache compare: 77-81 µs → 0.05 µs.
-  - `^agc` at the fix: 576 tests, 0 failed. Each commit passes the 8 image-table tests. CI mirror at the head: 1229 tests, only the 5 IPv6 baseline failures. Conventions pass with the drafted PR body.
-  - The narrowing alternative is subsumed, and unsound where it would still apply, so it was not built.
-- Before that: PRM-007, done: results/cloud-1/PRM-007.md.
-  - A: #6012 head af3bd503cb compiles. Its 4 named tests pass. The full suite fails 5 of 1176, all the IPv6 baseline. Conventions pass.
-  - B: #6146 head e252c03bc6 compiles. Its 3 named tests pass; `^agc` has 558 tests, 0 failed, 40 skipped. Conventions pass.
-- Then GAC-007, done: results/cloud-1/GAC-007.md.
-  - Part A: merge a5c72131df (upstream 6239ceffc8 + fork 7ae42fd181) builds with CI's flags. `^agc` has 571 tests, 0 failed, 41 skipped (all expected). The three expand tests passed 10 of 10 each. The full suite fails 6 of 1220, the same 6 that fail on plain 6239ceffc8.
-  - Part B: red at 7ae42fd181, fixed on fork branch fix/agc-db-depth-expand-partial-import, head 4eb20800d8.
-    - The red is a plane across the edge of two registered ranges imported apart (or one imported, one mirrored or copied): copies hold 0 or 3072 of 15360 texels. Window imports of one range over 64 MiB are green in every variant, apart from GAC-006's unwatch-mode aborts.
-    - The fix (681fcee86e) stores a plane when any import overlaps it. The new cases hold 15360 of 15360.
-    - `^agc` at the head: 558 tests, 1 known flake, 40 skipped. Conventions pass.
-  - Part C: #5851's section alias does not hide the import from `StoreDepthExpandWrites`. Imports are matched by guest address, so the store and the build use the same import. The ranking puts the Part B range edge first.
-- Earlier: GAC-006, GAC-005, PM-020, PM-017, GAC-002, PM-010, PM-008, PM-006, PM-004, PRM-003, PM-002 and BF-002.
-- Trees kept for follow-ups, each built with CI's Linux configure flags:
-  - /home/user/AnyPS5/build at upstream a453108cf7
-  - /home/user/trees/prm-003/build at perf/shader-direct-cpu-evaluable-images cb0dbd0da (PM-027; the prm-003 branch de032afb91 is kept)
-  - /home/user/trees/pm027-main/build: worktree detached at upstream a077a88df5 and clean, but built last at the PRM-009 all-six merge 0665355fef (local only)
-  - /home/user/trees/{B,C,D}/build-{B,C,D}
-  - /home/user/trees/fsr/build at feat/agc-fsr1-presentation-upscaling fea68147a (the old submodule head stays as local branch pm004-submodule-245f786b0)
-  - /home/user/trees/overlay/build at af3bd503cb, detached (#6012's head; feat/videoout-overlay-more-stats ce8e338cf is kept as a branch)
-  - /home/user/trees/depth-alias/build at test/depth-alias-red b3c988d36 (upstream bebff8b0e plus the test)
-  - /home/user/trees/expand/build at e252c03bc6, detached (#6146's head; the branch fix/agc-db-depth-expand-partial-import 4eb20800d8 is 7ae42fd181 plus three commits; fix/agc-db-depth-expand-noimport 984604118 and fix/agc-db-depth-expand-pr fdf07837b4 are local branches there too)
-  - /home/user/trees/trophy/build at feat/np-trophy-stats 954118b81 (PM-016's d04a01659 on upstream f785b88a6, plus five commits)
-  - /home/user/trees/perdraw/build at gac007-merge a5c72131df (local only: upstream 6239ceffc8 merged with fork 7ae42fd181; test/agc-image-mirror-epoch-compare ce6959aba is a local branch there too)
-  - one shared ccache
-- Machine: host vm, Intel Xeon Processor @ 2.10 GHz since the VM restarted at 15:19 UTC today (2.80 GHz before), 4 cores (no SMT, AVX2/AVX-512), 15.7 GiB RAM, no swap, about 9 GB disk free. Ubuntu 24.04.5, kernel 6.18 booted with ipv6.disable=1 and without udmabuf.
-- Toolchain: gcc/g++ 13.3.0, binutils 2.42, glibc 2.39, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1, Python 3.13.16, git 2.43.0, lavapipe from mesa-vulkan-drivers 25.2.8 (LLVM 20.1.2), libvulkan1 1.3.275, vulkan-validationlayers 1.3.275 (installed for PM-004), Xvfb 21.1.12 (VideoOut tests run under it with SDL_VIDEODRIVER=x11).
-- Build times: cold full build 1643-1876 s; with ccache 376-821 s for a tree that changes AGC driver headers; no-op rebuild about 1 s.
-- Tests run as an unprivileged user, as on CI; as root, permission tests behave differently.
-- Full-suite baseline on upstream main (1110 tests at setup, 1170 at a453108cf7, 1174 at e34c47921):
-  - 5 failures from IPv6 being off: guest_datagram_recv, guest_datagram_recvfrom, guest_datagram_sceNetRecv, guest_datagram_sceNetRecvfrom, guest_tcp
-  - guest_sce_net skipped (IPv6 checks), which `tools/check_skips.py` reports as unexpected
-  - guest_avplayer intermittent, 1 failure in 3 full runs ("enable video failed")
-  - agc_driver_preparation_scope_settle intermittent in full parallel runs (passes alone)
-  - guest_user_service fails on trees based on upstream f785b88a6 (event-polling checks from 741b34e45, reverted upstream in fad72c5ef)
-  - anything beyond these is a real change
-- Remotes: upstream = boykopovar/AnyPS5 (fetch only, push disabled); origin and fork = EagleBearerYS/AnyPS5.
