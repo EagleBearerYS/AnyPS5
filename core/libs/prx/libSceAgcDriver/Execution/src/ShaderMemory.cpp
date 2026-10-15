@@ -98,13 +98,13 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
     const auto found = pages.find(base);
     if (found != pages.end()) return found->second;
     auto& page = pages[base];
-    ++CaptureTotals().pages;
+    if (CaptureProfiled()) ++CaptureTotals().pages;
     // A page is either mapped whole or read word by word where the guest mapped less than a page,
     // or where recorded GPU work writes into it (a whole-page read would wait for that work).
     if (GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) {
         if (WordwisePages() && pendingWrite != nullptr && pendingWrite(base, PageBytes, {}) != PendingWrite::None) {
             page.wordwise = true;
-            ++CaptureTotals().pagesWordwise;
+            if (CaptureProfiled()) ++CaptureTotals().pagesWordwise;
             return page;
         }
         const auto started = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -120,7 +120,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     if (address % sizeof(*value) != 0 || address > std::numeric_limits<std::uint64_t>::max() - sizeof(*value)) {
         throw std::runtime_error("AGC driver: invalid shader memory read address");
     }
-    ++CaptureTotals().reads;
+    if (CaptureProfiled()) ++CaptureTotals().reads;
     if (!self.initial.empty()) {
         const auto next = self.initial.upper_bound(address);
         if (next != self.initial.begin()) {
@@ -225,7 +225,7 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
             mask <<= index;
             page->read |= mask;
             page->recent |= mask;
-            CaptureTotals().reads += words;
+            if (CaptureProfiled()) CaptureTotals().reads += words;
         } else {
             for (std::size_t word = 0; word < words; ++word) {
                 if (!read(context, address + word * sizeof(std::uint32_t), values + word)) return false;
