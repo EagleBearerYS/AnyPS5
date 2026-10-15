@@ -156,12 +156,12 @@ void Driver::recordQueuedLabelsBeforeRead(std::uint32_t queue) {
     recordDeferredLabels(localDevice.get(), queue);
 }
 
-bool Driver::recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> regions) {
+bool Driver::recordQueuedLabelsAfterPrePass(std::uint32_t queue) {
     const auto& labels = deferredLabels().labels;
     if (labels.empty()) return false;
     for (const auto& label : labels) {
-        for (const auto& region : regions) {
-            if (label.address < region.guestAddress + region.bytes.size() && region.guestAddress < label.address + label.size) {
+        for (const auto address : prePassReads()) {
+            if (label.address < address + sizeof(std::uint32_t) && address < label.address + label.size) {
                 recordQueuedLabelsBeforeRead(queue);
                 ++captureRetries;
                 return true;

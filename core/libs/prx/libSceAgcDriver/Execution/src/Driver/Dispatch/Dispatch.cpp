@@ -15,87 +15,73 @@
 
 namespace AgcDriver::DriverDetail {
 
+namespace {
+
+struct PendingWrites {
+    std::shared_ptr<const Graphics::Recorder::WriteRanges> snapshot;
+    std::uint64_t generation = 0;
+    bool loaded = false;
+
+    bool Overlap(std::uint64_t address, std::size_t bytes) {
+        const auto current = Graphics::Recorder::PublishGeneration();
+        if (!loaded || current != generation) {
+            snapshot = Graphics::Recorder::PendingWriteSnapshot();
+            generation = current;
+            loaded = true;
+        }
+        return Graphics::Recorder::SnapshotOverlaps(snapshot.get(), address, bytes);
+    }
+};
+
+}
+
+bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled) {
+    return compiled.poisonedSrtReads == 0u && std::none_of(compiled.imageTablePoison.begin(), compiled.imageTablePoison.end(), [](const ShaderRecompiler::ImageTableEntryPoison& poison) {
+        return poison.reason == static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::Unmapped) || poison.reason == static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::Inactive);
+    });
+}
+
+std::vector<std::uint64_t>& Driver::prePassReads() {
+    static thread_local std::vector<std::uint64_t> reads;
+    return reads;
+}
+
 std::uint64_t Driver::DataIndependentDispatchHits() {
     std::lock_guard cacheLock(dispatchCacheMutex);
     return dataIndependentHits;
 }
 
 bool Driver::readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value) {
+    static thread_local PendingWrites pending;
+    prePassReads().push_back(at);
     const bool waitForWrites = waits != nullptr && *static_cast<const bool*>(waits);
-    std::uint32_t word = 0;
-    switch (queryPendingWrite(at, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
-        case ShaderMemory::PendingWrite::Sync:
-            return waitForWrites && ShaderMemory::ReadAfterPendingWrites(at, value);
-        case ShaderMemory::PendingWrite::KnownValue:
-        case ShaderMemory::PendingWrite::VerifyKnownValue:
-            break;
-        case ShaderMemory::PendingWrite::Raw:
-        case ShaderMemory::PendingWrite::VerifyRaw:
-            if (waitForWrites) return ShaderMemory::ReadAfterPendingWrites(at, value);
-            [[fallthrough]];
-        case ShaderMemory::PendingWrite::None:
-            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(word))) return false;
-            std::memcpy(&word, reinterpret_cast<const void*>(at), sizeof(word));
-            break;
-    }
-    *value = word;
+    if (pending.Overlap(at, sizeof(std::uint32_t))) return waitForWrites && GuestMemory::ReadAfterPendingWrites(at, value);
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(std::uint32_t))) return false;
+    std::memcpy(value, reinterpret_cast<const void*>(at), sizeof(std::uint32_t));
     return true;
 }
 
 std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey) {
     bool preparedAtUse = false;
-    const auto invocation = InvocationFor(snapshot, codeOffset, request, nullptr, &preparedAtUse);
+    const auto invocation = InvocationFor(snapshot, codeOffset, request, &preparedAtUse);
     const auto& prepared = invocation.Request();
     if (preparedAtUse) RecordPreparedProgram(device, snapshot, codeOffset, prepared);
-    if (prepared.shader.code.size() != request.shader.code.size() || !prepared.shader.linkedLiterals.empty() || !prepared.context.linkedWords.empty()) return nullptr;
+    static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
+    if (dumpShaders) static_cast<void>(dumpRequest(request.shader.codeAddress, request));
+    require(prepared.shader.code.size() == request.shader.code.size() && prepared.shader.linkedLiterals.empty() && prepared.context.linkedWords.empty(), "a compute program that calls code through its user data or a call table is not implemented");
     auto compiled = invocation.MaterializeAtRunTime();
-    if (compiled == nullptr || !CacheableResult(*compiled)) return nullptr;
-    if (std::ranges::any_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; })) return nullptr;
-    if (!std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); })) return nullptr;
+    require(compiled != nullptr, "a compute program that reads SRT words, uniform fills, image tables or bound descriptors at compile time is not implemented");
+    require(CacheableResult(*compiled), "a compute program whose compile poisoned an SRT read or an image table entry is not implemented");
+    require(std::ranges::none_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; }), "a compute program that binds a flattened SRT is not implemented");
+    require(std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); }), "a compute program that reads image tables on the CPU is not implemented");
     auto entry = std::make_shared<const RunTimeProgram>(RunTimeProgram{invocation.Plan(), std::move(compiled)});
     std::lock_guard cacheLock(dispatchCacheMutex);
     ++dataIndependentHits;
+    ++runTimeCompiles;
     return runTimeDispatches.try_emplace(programKey, std::move(entry)).first->second;
 }
 
 std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::runTimeResult(const RunTimeProgram& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
-    const auto& plan = *entry.plan;
-    auto result = std::make_shared<ShaderRecompiler::RecompileResult>(*entry.compiled);
-    auto shaderData = std::ranges::find_if(result->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
-    for (std::size_t slot = 0; slot < result->userDataSlots.size(); ++slot) {
-        const auto index = result->userDataSlots[slot];
-        require(index < userData.size(), "a data-independent compute program reads a user data register the dispatch does not set");
-        if (!result->pushConstants.empty()) {
-            require((slot + 1u) * sizeof(std::uint32_t) <= result->pushConstants.size(), "a data-independent compute program's user data lies outside its push data");
-            std::memcpy(result->pushConstants.data() + slot * sizeof(std::uint32_t), &userData[index], sizeof(std::uint32_t));
-        } else if (shaderData != result->bindings.end()) {
-            require(slot < shaderData->guestDescriptor.size(), "a data-independent compute program's user data lies outside its shader data");
-            shaderData->guestDescriptor[slot] = userData[index];
-        }
-    }
-    ShaderRecompiler::SrtRuntime runtime;
-    runtime.userData = userData;
-    runtime.shaderBase = shaderBase;
-    runtime.readMemory = &readPrePassWord;
-    std::vector<ShaderRecompiler::DescriptorValue> stores;
-    std::vector<ShaderRecompiler::DescriptorValue> loads;
-    ShaderRecompiler::ResourceMaterializer::EvaluateBufferSites(plan, runtime, stores, loads);
-    ShaderRecompiler::ApplyBufferRanges(plan.info, stores, loads, false, *result);
-    ShaderRecompiler::ApplyBufferRanges(plan.info, stores, loads, true, *result);
-    bool waitForWrites = true;
-    auto settled = runtime;
-    settled.userContext = &waitForWrites;
-    bool complete = true;
-    result->deviceImages = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, settled, &complete);
-    ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(result->deviceImages, result->deviceImageInterfaces);
-    result->deviceImagesComplete = complete;
-    return result;
-}
-
-std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
-    const auto memoryBuffer = [](const ShaderRecompiler::BufferStoreSite& site) { return site.fromMemory; };
-    const bool memoryBuffers = std::ranges::any_of(plan.info.bufferStores, memoryBuffer) || std::ranges::any_of(plan.info.bufferLoads, memoryBuffer);
-    if (!memoryBuffers && plan.info.deviceImageUses.empty()) return nullptr;
     ShaderRecompiler::SrtRuntime runtime;
     runtime.userData = userData;
     runtime.shaderBase = shaderBase;
@@ -103,26 +89,8 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult
     bool waitForWrites = true;
     auto settled = runtime;
     settled.userContext = &waitForWrites;
-    bool complete = true;
-    auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, settled, &complete);
-    ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(expected, compiled.deviceImageInterfaces);
-    ShaderRecompiler::ShaderInvocation ranges;
-    const bool rebounded = memoryBuffers && ShaderRecompiler::RefreshMemoryBuffers(plan, runtime, compiled, ranges);
-    if (!rebounded && expected == compiled.deviceImages && complete == compiled.deviceImagesComplete) return nullptr;
-    auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(compiled);
-    patched->deviceImages = std::move(expected);
-    patched->deviceImagesComplete = complete;
-    if (rebounded) {
-        patched->writeRanges = std::move(ranges.writeRanges);
-        patched->readRanges = std::move(ranges.readRanges);
-        patched->unboundedWrites = ranges.unboundedWrites;
-        patched->unboundedReads = ranges.unboundedReads;
-        patched->memoryWriteRanges = ranges.memoryWriteRanges;
-        patched->memoryReadRanges = ranges.memoryReadRanges;
-    }
-    return patched;
+    return ShaderRecompiler::RunTimeResult(entry, runtime, settled);
 }
-
 
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
     PerformanceTimer timing("Driver.Dispatch");
@@ -140,8 +108,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     std::vector<ShaderRecompiler::MemoryRegion> memory{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}};
     if (!snapshot.header.empty()) memory.push_back({snapshot.headerAddress, snapshot.header});
 
-    static const bool unlockedDevice = std::getenv("APS5_NO_UNLOCKED_DEVICE") == nullptr;
-    std::shared_ptr<VulkanDevice> localDevice = unlockedDevice ? device.Load() : nullptr;
+    std::shared_ptr<VulkanDevice> localDevice = device.Load();
     if (localDevice == nullptr) {
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Dispatch);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
@@ -151,7 +118,6 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
     std::array<std::uint32_t, 5> resolved{};
     if (indirectArguments != 0 && matchesFillKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute)) {
-
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
         resolved = Pm4::ReadDispatchArguments(indirectArguments, packet[4]);
@@ -192,218 +158,64 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         {0, 0, 0, 128}
     };
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    static double captureMs = 0, keyMs = 0, recompileMs = 0, deviceMs = 0;
-    static std::uint64_t cacheHits = 0;
+    static double recompileMs = 0, deviceMs = 0;
     static std::uint64_t dispatches = 0;
     auto lap = std::chrono::steady_clock::now();
-
     std::array<double, DriverPhaseCount> phaseMs{};
     auto phaseLap = lap;
     DispatchPhaseTiming phaseTiming{profile, lap, phaseMs, phaseLap};
     if (profile && packetStartedAt() != std::chrono::steady_clock::time_point{}) phaseMs[PhasePrologue] = std::chrono::duration<double, std::milli>(lap - packetStartedAt()).count();
 
-    static const bool noDispatchCacheEnv = std::getenv("APS5_NO_DISPATCH_CACHE") != nullptr;
-
-    static const std::pair<std::uint64_t, std::uint64_t> probeDispatch = [] {
-        const char* text = std::getenv("APS5_PROBE_DISPATCH");
-        if (text == nullptr) return std::pair<std::uint64_t, std::uint64_t>{0, 0};
-        char* end = nullptr;
-        const auto probeAddress = std::strtoull(text, &end, 16);
-        const auto index = end != nullptr && *end == ':' ? std::strtoull(end + 1, nullptr, 10) : 0ull;
-        return std::pair<std::uint64_t, std::uint64_t>{probeAddress, index};
-    }();
-    bool probeThis = false;
-
-    if (probeDispatch.first != 0 && (address & 0xfffffffffull) == (probeDispatch.first & 0xfffffffffull)) {
-        static std::atomic<std::uint64_t> dispatchesSeen{0};
-        probeThis = dispatchesSeen.fetch_add(1) == probeDispatch.second;
-        if (probeThis) std::fprintf(stderr, "[gpu] probing dispatch %llu of 0x%llx\n", static_cast<unsigned long long>(probeDispatch.second), static_cast<unsigned long long>(address));
-    }
-
-    struct ProbeScope {
-        bool active;
-        explicit ProbeScope(bool active) : active(active) { if (active) ShaderRecompiler::SetDebugProbeActive(true); }
-        ~ProbeScope() { if (active) ShaderRecompiler::SetDebugProbeActive(false); }
-    } probeScope{probeThis};
-    const bool noDispatchCache = noDispatchCacheEnv || probeThis;
-    std::uint64_t key = 0xcbf29ce484222325ull;
-    std::uint64_t programKey = key;
+    std::uint64_t programKey = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
-        key ^= value;
-        key *= 0x100000001b3ull;
-    };
-    const auto mixBoth = [&](std::uint64_t value) {
-        mix(value);
         programKey ^= value;
         programKey *= 0x100000001b3ull;
     };
-    mixBoth(address);
-    mixBoth(packet[4] & 0x8000u);
-    for (const auto threads : compute.partialThreads) mixBoth(threads);
-    for (const auto word : userData) mix(word);
-
-    static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;
-    if (keyHygiene) {
-        for (const auto offset : {0x207u, 0x208u, 0x209u, 0x212u, 0x213u}) {
-            const auto found = queue.shader.find(offset);
-
-            mixBoth(found == queue.shader.end() ? (1ull << 32u) : found->second);
-        }
-    } else {
-        for (const auto& [offset, value] : queue.shader) {
-            mixBoth(offset);
-            mixBoth(value);
-        }
+    mix(address);
+    mix(packet[4] & 0x8000u);
+    for (const auto threads : compute.partialThreads) mix(threads);
+    for (const auto offset : {0x207u, 0x208u, 0x209u, 0x212u, 0x213u}) {
+        const auto found = queue.shader.find(offset);
+        mix(found == queue.shader.end() ? (1ull << 32u) : found->second);
     }
-    std::shared_ptr<const ShaderRecompiler::RecompileResult> compiledResult;
-
-    std::shared_ptr<DispatchVariant> keepVariant;
-
-    std::shared_ptr<DispatchVariant> attachVariant;
-
-    std::shared_ptr<ShaderMemory> shaderMemory;
-    std::vector<ShaderRecompiler::MemoryRegion> captured;
-
-    std::vector<std::uint32_t> liveWords;
-    bool dataHit = false;
-    bool cached = false;
-    bool validated = false;
-
-    std::shared_ptr<DispatchEntry> missedEntry;
-    bool missedDiffering = false;
-    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
-
-    static const bool traceCache = std::getenv("APS5_TRACE_DISPATCH_CACHE") != nullptr;
-    if (traceCache) {
-        std::lock_guard traceLock(dispatchCacheMutex);
-        struct Last { std::vector<std::uint32_t> userData; std::map<std::uint32_t, std::uint32_t> shader; std::uint64_t key; };
-        static std::map<std::uint64_t, Last> last;
-        static int reports = 0;
-        auto& previous = last[address];
-        if (previous.key != 0 && previous.key != key && reports < 200) {
-            std::string what;
-            for (std::size_t i = 0; i < userData.size(); ++i) {
-                if (i >= previous.userData.size() || previous.userData[i] != userData[i]) {
-                    char text[48];
-                    std::snprintf(text, sizeof(text), " user[%zu] %08x->%08x", i, i < previous.userData.size() ? previous.userData[i] : 0u, userData[i]);
-                    what += text;
-                }
-            }
-            for (const auto& [offset, value] : queue.shader) {
-                const auto old = previous.shader.find(offset);
-                if (old == previous.shader.end() || old->second != value) {
-                    char text[48];
-                    std::snprintf(text, sizeof(text), " sh[%x] %08x->%08x", offset, old == previous.shader.end() ? 0u : old->second, value);
-                    what += text;
-                }
-            }
-            ++reports;
-            std::fprintf(stderr, "[dispatch-cache] 0x%llx key changed:%s\n", static_cast<unsigned long long>(address), what.c_str());
-        }
-        previous.userData = userData;
-        previous.shader = std::map<std::uint32_t, std::uint32_t>(queue.shader.begin(), queue.shader.end());
-        previous.key = key;
-    }
-
-    mixBoth(reinterpret_cast<std::uintptr_t>(registeredShader.get()));
+    mix(reinterpret_cast<std::uintptr_t>(registeredShader.get()));
+    mix(localDevice->Serial());
     phaseTiming.Phase(PhaseKey);
     timing.Mark("decode_key_device_setup");
-    std::shared_ptr<const RunTimeProgram> independent;
-    if (!noDispatchCache) {
+    std::shared_ptr<const RunTimeProgram> program;
+    {
         std::lock_guard cacheLock(dispatchCacheMutex);
         if (const auto found = runTimeDispatches.find(programKey); found != runTimeDispatches.end()) {
-            independent = found->second;
+            program = found->second;
             ++dataIndependentHits;
         }
     }
-    if (independent == nullptr && !noDispatchCache) {
+    const auto rethrow = [&](const std::exception& error) {
+        std::string reason = error.what();
+        if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
+        char where[64];
+        std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
+        throw std::runtime_error(where + reason);
+    };
+    if (program == nullptr) {
         try {
-            independent = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey);
+            program = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey);
         } catch (const std::exception& error) {
-            std::string reason = error.what();
-            if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
-            char where[64];
-            std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
-            throw std::runtime_error(where + reason);
-        }
-    }
-    if (independent != nullptr) {
-        compiledResult = runTimeResult(*independent, userData, request.shader.codeAddress);
-        cached = true;
-        phaseTiming.Phase(PhaseLookup);
-    } else {
-    lookupDispatch(address, submission, key, noDispatchCache, traceCache, profile, memory, phaseTiming, phaseMs, compiledResult, keepVariant, captured, liveWords, dataHit, cached, validated, missedEntry, missedDiffering);
-    timing.Mark("lookup_cache");
-    if (cached) {
-        require(keepVariant != nullptr && keepVariant->shader == registeredShader, "dispatch cache belongs to another registered shader");
-        captureMs += phaseTiming.Elapsed();
-    } else {
-        shaderMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter());
-        std::uint64_t forgetAtCapture = 0;
-
-        static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
-        try {
-            bool preparedAtUse = false;
-            const auto invocation = InvocationFor(snapshot, codeOffset, request, shaderMemory.get(), &preparedAtUse);
-            if (preparedAtUse) RecordPreparedProgram(localDevice, snapshot, codeOffset, invocation.Request());
-            timing.Mark("prepared_invocation");
-
-            const auto waitedBefore = traceCapSync() ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
-            forgetAtCapture = GuestMemory::ForgetSerial();
-            capture = [&] {
-                const SampledReadScope sampling(evidenceReads);
-                return shaderMemory->Capture(invocation);
-            }();
-            captured = shaderMemory->Regions();
-            request.context.memory = captured;
-            if (traceCapSync()) traceCapture("dispatch-capture", address, submission.queue, captured, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
-            captureMs += phaseTiming.Elapsed();
-            phaseTiming.Phase(PhaseCapture);
-            if (dumpShaders) static_cast<void>(dumpRequest(address, request));
-            const auto started = std::chrono::steady_clock::now();
-
-
-            timing.Mark("capture_resources");
-            compiledResult = invocation.Materialize(*capture);
-            timing.Mark("materialize");
-            if (compiledResult->cacheHit) ++cacheHits;
-            const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-            static double totalMs = 0;
-            totalMs += elapsed;
-            if (profile && elapsed > 200) std::fprintf(stderr, "[gpu] compute shader 0x%llx recompile took %.0f ms (%zu SPIR-V words, %zu captured regions, total %.1f s)\n", static_cast<unsigned long long>(address), elapsed, compiledResult->spirv.size(), captured.size(), totalMs / 1000);
-        } catch (const std::exception& error) {
-            const auto dump = dumpShaders ? dumpRequest(address, request) : std::string{};
-
-            std::string reason = error.what();
-            if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
-            char where[96];
-            if (dump.empty()) std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
-            else std::snprintf(where, sizeof(where), "compute shader 0x%llx (%s): ", static_cast<unsigned long long>(address), dump.c_str());
-            throw std::runtime_error(where + reason);
+            rethrow(error);
         }
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
-        insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
     }
+    prePassReads().clear();
+    auto compiledResult = runTimeResult(*program, userData, request.shader.codeAddress);
+    if (recordQueuedLabelsAfterPrePass(submission.queue)) {
+        prePassReads().clear();
+        compiledResult = runTimeResult(*program, userData, request.shader.codeAddress);
     }
-    if (verifyDataHits() && dataHit) verifyDataHit(snapshot, codeOffset, request, memory, address, *keepVariant, liveWords, *compiledResult);
-
-    if (recordQueuedLabelsAfterCapture(submission.queue, captured)) {
-        dispatch(queue, packet, submission, indirectArguments);
-        return;
-    }
-    phaseTiming.Phase(PhaseQueuedLabels);
-    bool refreshed = independent != nullptr;
-    if (cached && independent == nullptr) {
-        if (auto patched = refreshedResult(*keepVariant->plan, *compiledResult, userData, request.shader.codeAddress)) {
-            compiledResult = std::move(patched);
-            refreshed = true;
-        }
-    }
+    phaseTiming.Phase(PhaseLookup);
     const auto& compiled = *compiledResult;
     std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
     if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {
-
         for (std::uint32_t axis = 0; axis < 3; ++axis) {
             const auto threads = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
             groups[axis] = (groups[axis] + threads - 1) / threads;
@@ -412,7 +224,6 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     if (traceIo) {
-
         std::string words;
         if (std::getenv("APS5_TRACE_DISPATCH_IO")[0] == '2') {
             for (const auto word : userData) {
@@ -423,106 +234,72 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         std::fprintf(stderr, "[dispatch-io] shader 0x%llx%s\n", static_cast<unsigned long long>(address), words.c_str());
     }
-
-    const auto rethrow = [&](const std::exception& error) {
-        char where[64];
-        std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
-        throw std::runtime_error(where + std::string(error.what()));
-    };
     phaseTiming.Phase(PhaseSnapshots);
-
-    std::shared_ptr<RecipeHit> recipeHit;
-    if (cached && keepVariant != nullptr && !stampValidate() && !refreshed) {
-        recipeHit = localDevice->PrepareRecipe(keepVariant->recipe.load(std::memory_order_acquire), indirectArguments != 0);
-        phaseTiming.Phase(PhaseRecipePrecheck);
-    }
-
-    std::shared_ptr<const Recipe> builtRecipe;
-    auto* const attachTo = stampValidate() || refreshed ? nullptr : keepVariant != nullptr ? keepVariant.get() : attachVariant.get();
     try {
         if (localDevice->PrepareComputePipeline(compiled, address)) localDevice->RecordComputePipeline(compiled);
     } catch (const std::exception& error) {
         rethrow(error);
     }
-
-    for (;;) {
-
-        std::shared_ptr<PreparedDispatch> prepared;
-        if (recipeHit == nullptr || VulkanDevice::VerifyRecipes()) {
-            try {
-                prepared = localDevice->PrepareDispatch(compiled, dispatchThreads);
-            } catch (const std::exception& error) {
-                rethrow(error);
-            }
-            if (profile) {
-                const auto now = std::chrono::steady_clock::now();
-                const auto prepareMs = std::chrono::duration<double, std::milli>(now - phaseLap).count();
-                phaseLap = now;
-                double parts = 0;
-                if (prepared != nullptr) {
-                    const auto phases = VulkanDevice::PreparePhaseMs(*prepared);
-                    phaseMs[PhasePrepareKey] += phases[0];
-                    phaseMs[PhasePrepareFind] += phases[1];
-                    phaseMs[PhasePreparePrecollect] += phases[2];
-                    phaseMs[PhasePreparePresync] += phases[3];
-                    phaseMs[PhasePrepareStageA] += phases[4];
-                    for (const auto part : phases) parts += part;
-                }
-                phaseMs[PhasePrepareOther] += std::max(0.0, prepareMs - parts);
-            }
+    std::shared_ptr<PreparedDispatch> prepared;
+    try {
+        prepared = localDevice->PrepareDispatch(compiled, dispatchThreads);
+    } catch (const std::exception& error) {
+        rethrow(error);
+    }
+    if (profile) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto prepareMs = std::chrono::duration<double, std::milli>(now - phaseLap).count();
+        phaseLap = now;
+        double parts = 0;
+        if (prepared != nullptr) {
+            const auto phases = VulkanDevice::PreparePhaseMs(*prepared);
+            phaseMs[PhasePrepareKey] += phases[0];
+            phaseMs[PhasePrepareFind] += phases[1];
+            phaseMs[PhasePreparePrecollect] += phases[2];
+            phaseMs[PhasePreparePresync] += phases[3];
+            phaseMs[PhasePrepareStageA] += phases[4];
+            for (const auto part : phases) parts += part;
         }
+        phaseMs[PhasePrepareOther] += std::max(0.0, prepareMs - parts);
+    }
+    {
         GuestMemory::TagGpuLockSite(indirectArguments != 0 ? GuestMemory::GpuLockSite::Indirect : GuestMemory::GpuLockSite::Dispatch);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         phaseTiming.Phase(PhaseLockWait);
-
         recordLabelsForPacket(localDevice.get(), submission.queue);
         phaseTiming.Phase(PhaseLabels);
-        phaseTiming.Phase(PhaseNoteWriters);
         try {
-            if (recipeHit != nullptr) {
-                VulkanDevice::IndirectOutcome outcome{0, 0};
-                const auto result = localDevice->DispatchRecipe(compiled, groups[0], groups[1], groups[2], indirectArguments, address, recipeHit, outcome, VulkanDevice::VerifyRecipes() ? prepared : nullptr, dataHit);
-                if (result == RecipeOutcome::Rebuild) {
-
-                    recipeHit = nullptr;
-                    VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, indirectArguments != 0);
-                    continue;
-                }
-                if (indirectArguments != 0) countIndirect(outcome.cpuReason, outcome.argumentReadMs);
-            } else if (indirectArguments != 0) {
-                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr);
+            if (indirectArguments != 0) {
+                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, address, std::move(prepared));
                 countIndirect(outcome.cpuReason, outcome.argumentReadMs);
             } else {
-                localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr);
+                localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], address, std::move(prepared));
             }
         } catch (const std::exception& error) {
             rethrow(error);
         }
-        if (builtRecipe != nullptr) {
-            if (dataHit) {
-
-                auto own = std::make_shared<Recipe>(*builtRecipe);
-                own->dataWordsHash = Graphics::ShaderResources::DataWordsHash({ShaderRecompiler::ShaderStage::Compute, keepVariant->compiled.get(), 0});
-                builtRecipe = std::move(own);
-            }
-            attachTo->recipe.store(std::move(builtRecipe), std::memory_order_release);
-            VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Attach, indirectArguments != 0);
-        }
-        break;
+        phaseTiming.Phase(PhaseDevice);
+        deviceMs += phaseTiming.Elapsed();
     }
-    phaseTiming.Phase(PhaseDevice);
-    deviceMs += phaseTiming.Elapsed();
     phaseTiming.Phase(PhaseTail);
     if (profile) {
         auto& pending = pendingDispatchPhases();
         pending.outcome = DispatchOutcome::Real;
         pending.phases = true;
-        pending.hit = cached;
-        pending.validated = validated;
+        pending.hit = true;
+        pending.validated = false;
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
     }
-    if (profile && ++dispatches % 100 == 0) AgcDriver::ProfilePrint_nid_no_patch( "[gpu] %llu dispatches (%llu dispatch cache hits, %llu data-independent, %llu evictions, %llu recompile cache hits): capture %.1f s, cache key %.1f s, recompile %.1f s, device %.1f s\n", static_cast<unsigned long long>(dispatches), static_cast<unsigned long long>(dispatchCacheHits), static_cast<unsigned long long>(dataIndependentHits), static_cast<unsigned long long>(dispatchCacheEvictions), static_cast<unsigned long long>(cacheHits), captureMs / 1000, keyMs / 1000, recompileMs / 1000, deviceMs / 1000);
+    if (profile && ++dispatches % 100 == 0) {
+        std::uint64_t hits = 0, compiles = 0;
+        {
+            std::lock_guard cacheLock(dispatchCacheMutex);
+            hits = dataIndependentHits;
+            compiles = runTimeCompiles;
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("[gpu] %llu dispatches (%llu through run-time programs, %llu programs compiled): compile %.1f s, device %.1f s\n", static_cast<unsigned long long>(dispatches), static_cast<unsigned long long>(hits), static_cast<unsigned long long>(compiles), recompileMs / 1000.0, deviceMs / 1000.0);
+    }
 }
 
 }

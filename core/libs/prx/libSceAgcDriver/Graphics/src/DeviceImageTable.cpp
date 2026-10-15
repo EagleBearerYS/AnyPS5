@@ -7,7 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "DeviceImageTableAbi.hpp"
@@ -511,7 +511,7 @@ void DeviceImageTable::report() {
         lastReport = now;
         reported = totals;
         reportedPresents = Recorder::Presents();
-        const auto waits = ShaderMemory::PendingReadWaitCounts();
+        const auto waits = GuestMemory::PendingReadWaitCounts();
         reportedWaitReads = waits.reads;
         reportedWaitNanoseconds = waits.nanoseconds;
         return;
@@ -519,7 +519,7 @@ void DeviceImageTable::report() {
     if (now - lastReport < 10'000'000'000ll) return;
     const auto presents = Recorder::Presents() - reportedPresents;
     const auto misses = totals.misses - reported.misses;
-    const auto waits = ShaderMemory::PendingReadWaitCounts();
+    const auto waits = GuestMemory::PendingReadWaitCounts();
     std::fprintf(stderr, "[device-images] (10 s): %llu misses (%llu distinct, %llu dropped), %.2f per present over %llu presents, %llu expected, %llu inserted, %llu rejected, %llu refreshed (%llu replaced), %u entries in %u buckets, %llu clears, %llu pre-pass reads waited for pending GPU writes (%.1f ms), %llu waits for the misses of a dispatch with unnamed uses (%.1f ms)\n",
         static_cast<unsigned long long>(misses), static_cast<unsigned long long>(totals.distinct - reported.distinct), static_cast<unsigned long long>(totals.dropped - reported.dropped),
         presents != 0u ? static_cast<double>(misses) / static_cast<double>(presents) : 0.0, static_cast<unsigned long long>(presents), static_cast<unsigned long long>(totals.expected - reported.expected),

@@ -248,7 +248,6 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         }
         phase(FillClearPhase);
         fillClearCount(coverage, bytes, pattern, discarded, cleared, refusal);
-        noteForeignWriter(base, base + bytes, queueId);
 
         if (!cleared) {
             ++flushes;

@@ -51,6 +51,12 @@ struct SourceHandle {
     std::shared_ptr<const CompiledVariant> artifact;
     std::vector<std::uint64_t> staticKey;
 };
+struct RunTimeProgram {
+    std::shared_ptr<const IrResourcePlan> plan;
+    std::shared_ptr<const RecompileResult> compiled;
+};
+[[nodiscard]] std::optional<RunTimeProgram> CompileAtRunTime(const RecompileRequest& request);
+[[nodiscard]] std::shared_ptr<RecompileResult> RunTimeResult(const RunTimeProgram& program, const SrtRuntime& runtime, const SrtRuntime& settled);
 class PreparedShaderInvocation {
 public:
     static std::optional<PreparedShaderInvocation> TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);

@@ -59,22 +59,16 @@ void Embed(TestGuest::Array<std::uint32_t, CodeWords>& code, const void* texels)
 }
 
 Compiled CompileAt(AgcDriver::VulkanDevice& device, const TestGuest::Array<std::uint32_t, CodeWords>& code, std::span<const std::uint32_t> userData) {
-    Compiled compiled;
-    compiled.address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code.data()));
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code.data()));
     const std::span<const std::uint32_t> words(code.data(), EmbeddedProgram().words.size());
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
-    ShaderRecompiler::RecompileRequest request{
-        {ShaderStage::Compute, compiled.address, words, 0, {}},
+    const ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, address, words, 0, {}},
         {64, 0, userData, compute, std::nullopt, std::nullopt, {}},
         device.Target(),
         {0, 0, 0, 128}
     };
-    compiled.memory = std::make_unique<AgcDriver::ShaderMemory>(std::span<const ShaderRecompiler::MemoryRegion>{});
-    compiled.capture = compiled.memory->Capture(request);
-    compiled.regions = compiled.memory->Regions();
-    request.context.memory = compiled.regions;
-    compiled.result = ShaderRecompiler::Recompile(request, *compiled.capture);
-    return compiled;
+    return CompileRequest(request);
 }
 
 Expected Sampled(std::uint32_t (*texel)(std::uint32_t, std::uint32_t)) {
@@ -83,7 +77,7 @@ Expected Sampled(std::uint32_t (*texel)(std::uint32_t, std::uint32_t)) {
 
 void ExpectAtRunTime(const Compiled& compiled, const std::string& what) {
     ExpectRouted(compiled, what);
-    Expect(compiled.capture->plan->srtReads.empty(), what + ": the plan reads " + std::to_string(compiled.capture->plan->srtReads.size()) + " SRT words in the capture");
+    Expect(compiled.plan->srtReads.empty(), what + ": the plan reads " + std::to_string(compiled.plan->srtReads.size()) + " SRT words in the capture");
 }
 
 void SampleTwice(AgcDriver::VulkanDevice& device, const TestGuest::Array<std::uint32_t, CodeWords>& code, std::span<const std::uint32_t> userData, const Expected& expected, const std::string& what) {

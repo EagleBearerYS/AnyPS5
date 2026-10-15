@@ -2086,6 +2086,26 @@ void RunWithStack(std::size_t bytes, const std::function<void()>& work) {
     if (failure) std::rethrow_exception(failure);
 }
 
+namespace {
+
+std::atomic<std::uint64_t> pendingReadWaits{0};
+std::atomic<std::uint64_t> pendingReadWaitNanoseconds{0};
+
+}
+
+bool ReadAfterPendingWrites(std::uint64_t address, std::uint32_t* value) {
+    if (!Accessible(reinterpret_cast<const void*>(address), sizeof(*value))) return false;
+    const auto started = std::chrono::steady_clock::now();
+    Read(address, std::as_writable_bytes(std::span(value, 1)), alignof(std::uint32_t));
+    pendingReadWaits.fetch_add(1, std::memory_order_relaxed);
+    pendingReadWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+    return true;
+}
+
+PendingReadWaits PendingReadWaitCounts() {
+    return {pendingReadWaits.load(std::memory_order_relaxed), pendingReadWaitNanoseconds.load(std::memory_order_relaxed)};
+}
+
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment) {
     if (destination.empty()) return;
     if (const auto guard = readGuard.load(std::memory_order_acquire)) guard(address, destination.size());

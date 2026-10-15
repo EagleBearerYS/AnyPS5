@@ -1652,6 +1652,42 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeAtRu
     return result;
 }
 
+std::optional<RunTimeProgram> CompileAtRunTime(const RecompileRequest& request) {
+    const auto handle = PrepareShader(request);
+    const auto invocation = PreparedShaderInvocation::TryCreate(request, handle);
+    if (!invocation.has_value()) throw std::runtime_error("ShaderRecompiler: a prepared artifact does not match its request");
+    auto compiled = invocation->MaterializeAtRunTime();
+    if (compiled == nullptr) return std::nullopt;
+    return RunTimeProgram{invocation->Plan(), std::move(compiled)};
+}
+
+std::shared_ptr<RecompileResult> RunTimeResult(const RunTimeProgram& program, const SrtRuntime& runtime, const SrtRuntime& settled) {
+    const auto& plan = *program.plan;
+    auto result = std::make_shared<RecompileResult>(*program.compiled);
+    auto shaderData = std::ranges::find_if(result->bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::ShaderData; });
+    for (std::size_t slot = 0; slot < result->userDataSlots.size(); ++slot) {
+        const auto index = result->userDataSlots[slot];
+        if (index >= runtime.userData.size()) throw std::runtime_error("ShaderRecompiler: a program reads a user data register its dispatch or draw does not set");
+        if (!result->pushConstants.empty()) {
+            if ((slot + 1u) * sizeof(std::uint32_t) > result->pushConstants.size()) throw std::runtime_error("ShaderRecompiler: a program's user data lies outside its push data");
+            std::memcpy(result->pushConstants.data() + slot * sizeof(std::uint32_t), &runtime.userData[index], sizeof(std::uint32_t));
+        } else if (shaderData != result->bindings.end()) {
+            if (slot >= shaderData->guestDescriptor.size()) throw std::runtime_error("ShaderRecompiler: a program's user data lies outside its shader data");
+            shaderData->guestDescriptor[slot] = runtime.userData[index];
+        }
+    }
+    std::vector<DescriptorValue> stores;
+    std::vector<DescriptorValue> loads;
+    ResourceMaterializer::EvaluateBufferSites(plan, runtime, stores, loads);
+    ApplyBufferRanges(plan.info, stores, loads, false, *result);
+    ApplyBufferRanges(plan.info, stores, loads, true, *result);
+    bool complete = true;
+    result->deviceImages = ResourceMaterializer::ExpectedDeviceImages(plan, settled, &complete);
+    DeviceImageTableAbi::NameInterfaces(result->deviceImages, result->deviceImageInterfaces);
+    result->deviceImagesComplete = complete;
+    return result;
+}
+
 const CompiledShaderArtifact& GetPreparedArtifact(const SourceHandle& handle) {
     if (handle.artifact == nullptr) throw std::runtime_error("ShaderRecompiler: prepared artifact is missing");
     return handle.artifact->artifact;

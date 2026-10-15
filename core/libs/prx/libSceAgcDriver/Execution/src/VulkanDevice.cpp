@@ -2284,7 +2284,7 @@ VulkanDevice::CopyAliasing VulkanDevice::CopyAliasCounts() {
     return {copiesAliased.load(std::memory_order_relaxed), copyAliasCreated.load(std::memory_order_relaxed), copyAliasNoSource.load(std::memory_order_relaxed), copyAliasShape.load(std::memory_order_relaxed), copyAliasRefused.load(std::memory_order_relaxed)};
 }
 
-VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, std::uint64_t source, std::size_t bytes, std::size_t cpuMax, std::size_t gpuMax, std::size_t knownMax, std::uint64_t programAddress, std::uint32_t queue, const CopyWriterNote& noteWriter) {
+VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, std::uint64_t source, std::size_t bytes, std::size_t cpuMax, std::size_t gpuMax, std::uint64_t programAddress, std::uint32_t queue) {
     CopyOutcome outcome{2, false, 0, CopyOutcome::None, false, false, 0, 0, 0, 0, false};
     if (!state->recorder || bytes == 0) return outcome;
     auto& recorder = *state->recorder;
@@ -2395,7 +2395,6 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     // the destination's memory through the image's deferred write-back (nothing crosses to host
     // memory for the copy itself).
     if (AliasCopy(context, destination, source, bytes)) {
-        noteWriter({}, 0);
         recorder.NotePendingWrite(destination, bytes);
         outcome.path = 3;
         return outcome;
@@ -2451,14 +2450,7 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     recorder.EndGpuTiming(classTiming, bytes);
     recorder.MarkCovered(copiedAccess);
     recorder.NotePendingRead(source, bytes, Graphics::Recorder::ReadKind::CopySource);
-    // The destination's bytes after the transfer are the source's now when nothing recorded,
-    // pending or still to land can change the source before the transfer reads it (a CPU store
-    // to it in between is a hardware race too): the caller's ring entry carries them, stamped
-    // with the generation this store gets, and goes in ahead of the note.
-    const auto generation = GuestMemory::MarkWritten(destination, bytes);
-    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> sourceRange{{{source, source + bytes}}};
-    const bool sourceCurrent = bytes <= knownMax && generation != 0 && !recorder.PendingWriteOverlaps(source, bytes) && !recorder.PendingLabelIn(source, bytes) && !completionStoreOverlaps(source) && !Graphics::StorageTexture::AnyPendingOverlaps(sourceRange) && !Graphics::AnyShadowedOverlaps(sourceRange);
-    noteWriter(sourceCurrent ? std::span(reinterpret_cast<const std::byte*>(source), bytes) : std::span<const std::byte>{}, sourceCurrent ? generation : 0);
+    GuestMemory::MarkWritten(destination, bytes);
     recorder.NotePendingWrite(destination, bytes);
     Graphics::NoteImportWritten(destination, bytes);
     outcome.path = 1;

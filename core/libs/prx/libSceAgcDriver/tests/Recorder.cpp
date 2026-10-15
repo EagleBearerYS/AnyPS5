@@ -21,7 +21,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -3962,32 +3961,6 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
 
 // The data word positions of a dispatch-cache variant (Driver.cpp's data-only hits): leaves
 // located among the runs' words, aliased, unaligned, out-of-run and mismatched ones skipped.
-void dataWordPositionsTests() {
-    using AgcDriver::DataWordPositions;
-    const std::vector<std::pair<std::uint64_t, std::uint64_t>> runs{{0x1000, 0x1010}, {0x2000, 0x2008}};
-    const std::vector<std::uint32_t> words{1, 2, 3, 4, 5, 6};
-    const std::vector<std::uint32_t> flattened{2, 6, 3};
-    std::vector<std::uint32_t> positions, slots;
-    {
-        const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{1, 0x2004}, {0, 0x1004}, {2, 0x1008}};
-        const std::vector<std::uint64_t> otherReads{0x1008};
-        const auto counts = DataWordPositions(runs, leaves, otherReads, words, flattened, positions, slots);
-        Require(positions == std::vector<std::uint32_t>{1, 5} && slots == std::vector<std::uint32_t>{0, 1}, "data word positions are wrong");
-        Require(counts.aliased == 1 && counts.unmapped == 0 && counts.mismatched == 0, "an aliased leaf was not counted");
-    }
-    {
-        const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{0, 0x1006}, {1, 0x3000}, {1, 0x2008}, {2, 0x1000}};
-        const auto counts = DataWordPositions(runs, leaves, {}, words, flattened, positions, slots);
-        Require(positions.empty() && slots.empty(), "a skipped leaf produced a position");
-        Require(counts.unmapped == 3 && counts.mismatched == 1 && counts.aliased == 0, "skipped leaves were counted wrongly");
-    }
-    {
-        // Two pure slots over one dword: both positions kept, in position order.
-        const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{2, 0x1008}, {1, 0x2004}, {0, 0x1004}};
-        static_cast<void>(DataWordPositions(runs, leaves, {}, words, flattened, positions, slots));
-        Require(positions == std::vector<std::uint32_t>{1, 2, 5} && slots == std::vector<std::uint32_t>{0, 2, 1}, "positions are not sorted");
-    }
-}
 
 std::array<std::uint32_t, 8> linearTextureWords(std::uint64_t address, std::uint32_t width, std::uint32_t height, std::uint32_t format) {
     const auto base40 = address >> 8u;
@@ -5606,7 +5579,6 @@ int main(int argc, char** argv) {
         importWatchTests(device);
         staleGenerationTests(device, recorder);
         importWindowTests(device, recorder);
-        dataWordPositionsTests();
         dataRefreshTests(device, recorder);
         imageMemoTests(device, recorder);
         minLodTests(device, recorder);

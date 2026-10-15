@@ -76,7 +76,7 @@ std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDrawStage(const Dra
         if (const auto found = drawStages.find(key); found != drawStages.end()) return found->second;
     }
     bool preparedAtUse = false;
-    const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request, nullptr, &preparedAtUse);
+    const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request, &preparedAtUse);
     const auto& prepared = invocation.Request();
     if (preparedAtUse) RecordPreparedProgram(device, *program.snapshot, program.codeOffset, prepared);
     require(prepared.shader.code.size() == request.shader.code.size() && prepared.shader.linkedLiterals.empty() && prepared.context.linkedWords.empty(), "a graphics program that calls code through its user data is not implemented");
@@ -231,6 +231,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     const auto fold = [&](const ShaderRecompiler::RecompileResult& main, Pm4::DrawParameters& parameters) { FoldDrawOffsets(main, programs.front(), parameters); };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
+    prePassReads().clear();
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::GeometryBack) continue;
         const auto& program = programs[i];
@@ -260,6 +261,17 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
     }
     timing.Mark("shader_compile_and_link");
+    if (recordQueuedLabelsAfterPrePass(submission.queue)) {
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            if (stagePrograms[i] == nullptr) continue;
+            const auto previous = programResults[i];
+            stageResults[i] = runTimeResult(*stagePrograms[i], programs[i].userData, programs[i].binary.codeAddress);
+            programResults[i] = stageResults[i].get();
+            for (auto& stage : stages) {
+                if (stage.program == previous) stage.program = programResults[i];
+            }
+        }
+    }
 
     bool rectListBuilt = false;
     std::size_t rectIndex = 0;

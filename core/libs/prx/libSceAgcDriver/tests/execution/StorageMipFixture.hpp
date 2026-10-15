@@ -198,7 +198,7 @@ inline void ExpectTexture(const Texture& texture, const Model& model, const std:
 inline Compiled CompileFor(AgcDriver::VulkanDevice& device, const Dispatch& dispatch, const std::string& what) {
     const auto userData = dispatch.UserData();
     auto compiled = Compile(device, StoreMipProgram(), userData);
-    const auto& plan = *compiled.capture->plan;
+    const auto& plan = *compiled.plan;
     const bool dynamic = plan.info.images.size() == 1u && plan.info.images[0].deviceTable && plan.info.images[0].mipMode == ShaderRecompiler::ImageMipMode::DynamicStorage;
     Expect(plan.srtReads.empty() && dynamic, what + ": the plan reads " + std::to_string(plan.srtReads.size()) + " SRT words in the capture, or the storage image does not go through the device image table with dynamic mips");
     return compiled;

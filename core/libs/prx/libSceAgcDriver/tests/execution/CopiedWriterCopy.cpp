@@ -119,7 +119,7 @@ int main() {
         AgcDriver::VulkanDevice::CopyOutcome outcome{};
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            outcome = device->CopyBuffer(destination.Address(), output.Address(), OutputBytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0, 0, [](std::span<const std::byte>, std::uint64_t) {});
+            outcome = device->CopyBuffer(destination.Address(), output.Address(), OutputBytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0);
         }
         if (outcome.path == 2) {
             device->WaitIdle();

@@ -248,6 +248,8 @@ function(add_shader_recompiler target runtimeTarget)
             PreparedShaderInvocation::TryCreate
             PreparedShaderInvocation::Plan
             PreparedShaderInvocation::MaterializeAtRunTime
+            CompileAtRunTime
+            RunTimeResult
             MatchesPreparedShader
             GetPreparedArtifact
             MaterializeShader

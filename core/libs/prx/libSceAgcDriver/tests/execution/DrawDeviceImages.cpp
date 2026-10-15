@@ -90,21 +90,10 @@ const Program& FlatPixel() {
     return program;
 }
 
-struct Stage {
-    std::unique_ptr<AgcDriver::ShaderMemory> memory;
-    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
-    std::vector<ShaderRecompiler::MemoryRegion> regions;
-    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
-};
+using Stage = Compiled;
 
-Stage Captured(ShaderRecompiler::RecompileRequest request) {
-    Stage stage;
-    stage.memory = std::make_unique<AgcDriver::ShaderMemory>(std::span<const ShaderRecompiler::MemoryRegion>{});
-    stage.capture = stage.memory->Capture(request);
-    stage.regions = stage.memory->Regions();
-    request.context.memory = stage.regions;
-    stage.result = ShaderRecompiler::Recompile(request, *stage.capture);
-    return stage;
+Stage Captured(const ShaderRecompiler::RecompileRequest& request) {
+    return CompileRequest(request);
 }
 
 struct Shaders {

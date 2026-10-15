@@ -155,9 +155,9 @@ inline std::string Reads(const ShaderRecompiler::RecompileResult& result) {
     return "read ranges " + RangeText(result.readRanges, result.unboundedReads);
 }
 
-inline AgcDriver::ShaderMemory::PendingWrite RecordedWrites(std::uint64_t address, std::size_t bytes, std::span<std::byte>) {
+inline bool RecordedWrites(std::uint64_t address, std::size_t bytes) {
     const auto* recorder = AgcDriver::Graphics::Recorder::Active();
-    return recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes) ? AgcDriver::ShaderMemory::PendingWrite::Sync : AgcDriver::ShaderMemory::PendingWrite::None;
+    return recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes);
 }
 
 inline bool PendingWrite(const void* data, std::size_t bytes) {

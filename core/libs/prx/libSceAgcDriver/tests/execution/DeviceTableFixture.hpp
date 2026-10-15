@@ -3,9 +3,9 @@
 
 #include "NewPathFixture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
@@ -146,45 +146,60 @@ inline std::array<std::uint32_t, 2> SrtUserData() {
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
 }
 
+using PendingQuery = bool (*)(std::uint64_t address, std::size_t bytes);
+
 struct Compiled {
-    std::unique_ptr<AgcDriver::ShaderMemory> memory;
-    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
-    std::vector<ShaderRecompiler::MemoryRegion> regions;
+    std::shared_ptr<const ShaderRecompiler::IrResourcePlan> plan;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
     std::uint64_t address = 0;
 };
 
-inline Compiled Compile(AgcDriver::VulkanDevice& device, const Program& program, std::span<const std::uint32_t> userData, AgcDriver::ShaderMemory::PendingWriteQuery pendingWrite = nullptr) {
+struct GuestReads {
+    PendingQuery pending = nullptr;
+    bool settle = false;
+};
+
+inline bool ReadGuestWord(void* context, std::uint64_t address, std::uint32_t* value) {
+    const auto& reads = *static_cast<const GuestReads*>(context);
+    if (reads.pending != nullptr && reads.pending(address, sizeof(*value))) return reads.settle && AgcDriver::GuestMemory::ReadAfterPendingWrites(address, value);
+    if (!AgcDriver::GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(*value))) return false;
+    std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+    return true;
+}
+
+inline Compiled CompileRequest(const ShaderRecompiler::RecompileRequest& request, PendingQuery pending = nullptr) {
+    const auto runTime = ShaderRecompiler::CompileAtRunTime(request);
+    if (!runTime.has_value()) throw std::runtime_error("the program reads guest memory at compile time");
+    GuestReads now{pending, false};
+    GuestReads settled{pending, true};
+    ShaderRecompiler::SrtRuntime runtime;
+    runtime.userData = request.context.userData;
+    runtime.shaderBase = request.shader.codeAddress;
+    runtime.readMemory = &ReadGuestWord;
+    runtime.userContext = &now;
+    auto settledRuntime = runtime;
+    settledRuntime.userContext = &settled;
     Compiled compiled;
-    compiled.address = program.Address();
+    compiled.address = request.shader.codeAddress;
+    compiled.plan = runTime->plan;
+    compiled.result = ShaderRecompiler::RunTimeResult(*runTime, runtime, settledRuntime);
+    return compiled;
+}
+
+inline Compiled Compile(AgcDriver::VulkanDevice& device, const Program& program, std::span<const std::uint32_t> userData, PendingQuery pending = nullptr) {
     const auto code = program.Code();
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
-    ShaderRecompiler::RecompileRequest request{
-        {ShaderStage::Compute, compiled.address, code, 0, {}},
+    const ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, program.Address(), code, 0, {}},
         {64, 0, userData, compute, std::nullopt, std::nullopt, {}},
         device.Target(),
         {0, 0, 0, 128}
     };
-    compiled.memory = std::make_unique<AgcDriver::ShaderMemory>(std::span<const ShaderRecompiler::MemoryRegion>{}, pendingWrite);
-    compiled.capture = compiled.memory->Capture(request);
-    compiled.regions = compiled.memory->Regions();
-    request.context.memory = compiled.regions;
-    compiled.result = ShaderRecompiler::Recompile(request, *compiled.capture);
-    return compiled;
-}
-
-inline std::string CapturedReads(const Compiled& compiled) {
-    std::string text;
-    for (const auto& region : compiled.regions) {
-        char item[64];
-        std::snprintf(item, sizeof(item), "%s0x%llx+%zu", text.empty() ? "" : ", ", static_cast<unsigned long long>(region.guestAddress), region.bytes.size());
-        text += item;
-    }
-    return text.empty() ? "none" : text;
+    return CompileRequest(request, pending);
 }
 
 inline void ExpectRouted(const Compiled& compiled, const std::string& what) {
-    const auto& plan = *compiled.capture->plan;
+    const auto& plan = *compiled.plan;
     const auto evaluated = [&](std::uint32_t source) { return std::ranges::find(plan.materializationSources, source) != plan.materializationSources.end(); };
     std::size_t deviceImages = 0;
     std::size_t deviceSamplers = 0;
@@ -204,8 +219,8 @@ inline void ExpectRouted(const Compiled& compiled, const std::string& what) {
 }
 
 inline void ExpectNothingCaptured(const Compiled& compiled, const std::string& what) {
-    const auto& plan = *compiled.capture->plan;
-    Expect(compiled.regions.empty() && plan.srtReads.empty(), what + ": the capture read guest memory (" + CapturedReads(compiled) + ") and planned " + std::to_string(plan.srtReads.size()) + " SRT reads");
+    const auto& plan = *compiled.plan;
+    Expect(ShaderRecompiler::ResourceMaterializer::ReadsResourcesAtRunTime(plan) && plan.srtReads.empty(), what + ": the plan reads guest memory at compile time (" + std::to_string(plan.srtReads.size()) + " SRT reads)");
 }
 
 struct Outcome {

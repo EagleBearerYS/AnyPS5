@@ -1,7 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_SHADERREGISTRY_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_SHADERREGISTRY_HPP
 
-#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include <array>
 #include <optional>
@@ -23,6 +23,11 @@ struct Shader;
 
 namespace ShaderRecompiler {
 class ShaderPreparationContext;
+}
+
+namespace ShaderRecompiler {
+struct SourceHandle;
+class PreparedShaderInvocation;
 }
 
 namespace AgcDriver {
@@ -120,7 +125,7 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 std::vector<ShaderRecompiler::RecompileRequest> RegistrationRequests(const ShaderRecompiler::RecompileRequest& request);
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory = nullptr, bool* preparedAtUse = nullptr);
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse = nullptr);
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 void ReplayPreparedPrograms(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderSnapshot>& snapshot);
 

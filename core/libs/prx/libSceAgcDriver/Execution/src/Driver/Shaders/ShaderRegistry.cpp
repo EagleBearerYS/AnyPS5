@@ -467,7 +467,6 @@ namespace {
 
 struct CalleeReads {
     const ShaderRecompiler::RecompileRequest& request;
-    ShaderMemory* memory = nullptr;
 };
 
 bool ReadCalleeCode(void*, std::uint64_t address, std::span<std::uint32_t> words) {
@@ -477,16 +476,14 @@ bool ReadCalleeCode(void*, std::uint64_t address, std::span<std::uint32_t> words
     return true;
 }
 
-bool ReadCalleeData(void* context, std::uint64_t address, std::span<std::uint32_t> words) {
-    auto* memory = static_cast<CalleeReads*>(context)->memory;
+bool ReadCalleeData(void*, std::uint64_t address, std::span<std::uint32_t> words) {
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), words.size() * sizeof(std::uint32_t))) return false;
-    if (memory != nullptr) return memory->ReadWords(address, words);
     GuestMemory::Read(address, std::as_writable_bytes(words));
     return true;
 }
 
-ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory) {
-    CalleeReads reads{request, memory};
+ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
+    CalleeReads reads{request};
     const ShaderRecompiler::CalleeMemory callees{&reads, &ReadCalleeCode, &ReadCalleeData, nullptr};
     try {
         return ShaderRecompiler::LinkCallees(request, callees);
@@ -497,11 +494,11 @@ ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::Recompi
 
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory, bool* preparedAtUse) {
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
-    const auto linked = LinkUserDataCallees(request, memory);
+    const auto linked = LinkUserDataCallees(request);
     auto source = request;
     if (!linked.code.empty()) {
         source.shader.code = linked.code;
