@@ -146,11 +146,15 @@ public:
         }
         std::vector<const IrValue*> referenced;
         for (const auto& plan : m_tableColumns) {
-            for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
-                plan.handle->ReplaceArgument(argument, plan.offset);
-            }
             const auto& column = *m_sources[plan.source].tableColumn;
+            IrValue* offset = column.selected ? &m_builder.Constant(column.addend) : plan.offset;
+            for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
+                plan.handle->ReplaceArgument(argument, offset);
+            }
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
+            if (column.selected) {
+                KeepSourceAlive(*plan.handle, m_sources[column.selection], referenced);
+            }
             if (plan.keyDomain.has_value()) {
                 KeepSourceAlive(*plan.handle, m_sources[plan.keyDomain->source], referenced);
             }
@@ -650,6 +654,18 @@ private:
         column.address = address;
         column.foldedAddend = folded ? baseAddend : 0u;
         column.foldedCarry = folded ? carry : 0u;
+        if (!address && !sampler) {
+            DescriptorSource direct;
+            MakeSource(handle, width, false, false, direct);
+            DescriptorSource selection;
+            selection.dwordCount = 1u;
+            selection.dwords[0] = offset;
+            std::uint32_t badDword = 0;
+            if (ValidateSource(direct, badDword) && ValidateSource(selection, badDword)) {
+                column.selected = true;
+                column.selection = InternSource(selection);
+            }
+        }
         const auto domain = masked ? std::optional<KeyDomain>{} : MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
@@ -1336,8 +1352,58 @@ private:
         return source < m_sources.size() && m_sources[source].tableColumn.has_value();
     }
 
+    bool SameBufferSource(const IrValue& handle, std::uint32_t source) const {
+        const auto& current = m_sources[source];
+        if (current.tableColumn.has_value() || current.dwordCount != 4u || handle.ArgumentCount() != 4u) {
+            return false;
+        }
+        for (std::uint32_t dword = 0; dword < 4u; dword++) {
+            if (!EquivalentValue(m_program.Resources(), current.dwords[dword], handle.Argument(dword))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool SelectionWritten(const TableColumn& column) const {
+        const auto written = [&](const auto& matches) {
+            return std::any_of(m_info.buffers.begin(), m_info.buffers.end(), [&](const auto& buffer) { return (buffer.written || buffer.atomic) && matches(buffer.source); });
+        };
+        std::vector<const IrValue*> pending{m_sources[column.selection].dwords[0]};
+        std::vector<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (std::ranges::find(seen, current) != seen.end()) {
+                continue;
+            }
+            seen.push_back(current);
+            const bool pointer = current->Opcode() == IrOpcode::LoadAddressU32;
+            const bool buffer = current->Opcode() == IrOpcode::ReadConstBuffer && current->ArgumentCount() != 0u;
+            if ((pointer || buffer) && m_info.bdaWrites) {
+                return true;
+            }
+            if (pointer && written([](std::uint32_t) { return true; })) {
+                return true;
+            }
+            if (buffer) {
+                const IrValue* handle = current->Argument(0)->Resolve();
+                if (written([&](std::uint32_t source) { return SameBufferSource(*handle, source); })) {
+                    return true;
+                }
+            }
+            for (std::size_t index = 0; index < current->ArgumentCount(); index++) {
+                pending.push_back(current->Argument(index));
+            }
+        }
+        return false;
+    }
+
     void CheckTableStores() {
         for (auto& source : m_sources) {
+            if (source.tableColumn.has_value() && source.tableColumn->selected && SelectionWritten(*source.tableColumn)) {
+                source.tableColumn->selected = false;
+            }
             if (!source.tableColumn.has_value() || source.tableColumn->keyDomains.empty()) {
                 continue;
             }

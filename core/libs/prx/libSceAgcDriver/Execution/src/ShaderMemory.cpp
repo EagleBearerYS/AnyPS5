@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -267,6 +268,64 @@ bool ShaderMemory::pending(void* context, std::uint64_t address, std::uint64_t b
     return policy == PendingWrite::Sync || policy == PendingWrite::VerifyRaw || policy == PendingWrite::VerifyKnownValue;
 }
 
+ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::uint64_t address, std::uint64_t bytes) {
+    const auto& self = *static_cast<const ShaderMemory*>(context);
+    if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || self.overlapsInitial(address, address + bytes)) return {};
+    const auto fetched = self.pages.lower_bound(address & ~static_cast<std::uint64_t>(PageBytes - 1));
+    if (fetched != self.pages.end() && fetched->first < address + bytes) return {};
+    if (self.pendingWrite != nullptr && self.pendingWrite(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
+    GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
+    const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
+    if (generation == 0) return {};
+    return {generation, layout};
+}
+
+bool ShaderMemory::unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
+    const auto& self = *static_cast<const ShaderMemory*>(context);
+    if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
+    if (self.pendingWrite != nullptr && self.pendingWrite(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return false;
+    GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
+    if (GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)) == 0) return false;
+    return GuestMemory::UnchangedSince(address, static_cast<std::size_t>(bytes), stamp.generation);
+}
+
+bool ShaderMemory::supplyWords(void* context, std::uint64_t address, const std::uint32_t* values, std::uint64_t count) {
+    auto& self = *static_cast<ShaderMemory*>(context);
+    const auto bytes = count * sizeof(std::uint32_t);
+    if (count == 0 || address % sizeof(std::uint32_t) != 0 || count > std::numeric_limits<std::uint64_t>::max() / sizeof(std::uint32_t) || address > std::numeric_limits<std::uint64_t>::max() - bytes || self.overlapsInitial(address, address + bytes)) return false;
+    while (count != 0) {
+        const auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1);
+        const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(std::uint32_t));
+        const auto words = static_cast<std::size_t>(std::min<std::uint64_t>(count, PageWords - index));
+        auto found = self.pages.find(base);
+        if (found == self.pages.end()) {
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
+            found = self.pages.try_emplace(base).first;
+        }
+        auto& page = found->second;
+        if (page.wordwise) return false;
+        if (page.valid.none()) {
+            std::memcpy(page.words.data() + index, values, words * sizeof(std::uint32_t));
+        } else {
+            for (std::size_t word = 0; word < words; ++word) {
+                if (!page.valid.test(index + word)) page.words[index + word] = values[word];
+            }
+        }
+        std::bitset<PageWords> mask;
+        mask.set();
+        mask >>= PageWords - words;
+        mask <<= index;
+        page.valid |= mask;
+        page.read |= mask;
+        page.recent |= mask;
+        address += static_cast<std::uint64_t>(words) * sizeof(std::uint32_t);
+        values += words;
+        count -= words;
+    }
+    return true;
+}
+
 ShaderMemory::KnownValueCounts ShaderMemory::KnownValues() {
     auto& totals = CaptureTotals();
     return {totals.wordsKnown.load(std::memory_order_relaxed), totals.wordsKnownVerified.load(std::memory_order_relaxed), totals.wordsKnownMismatches.load(std::memory_order_relaxed)};
@@ -302,6 +361,9 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.accessible = &accessible;
     runtime.pendingWrite = &pending;
     runtime.readWords = &readWords;
+    runtime.stampWrites = &stampWrites;
+    runtime.unchangedSince = &unchangedSince;
+    runtime.supplyWords = &supplyWords;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);

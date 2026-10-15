@@ -6,6 +6,7 @@
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "ImageTableAbi.hpp"
+#include "ThreadOwned.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -307,6 +308,9 @@ bool TableTraced() {
 
 constexpr std::size_t PoisonReasonCount = static_cast<std::size_t>(PoisonReason::Count);
 
+enum class NarrowSkip : std::size_t { Value, NotBuffer, KeyScan, Pending, Unmapped, Count };
+constexpr std::array<const char*, static_cast<std::size_t>(NarrowSkip::Count)> NarrowSkipNames{"value", "not-buffer", "key-scan", "pending-write", "unmapped"};
+
 struct TableCounters {
     std::atomic<std::uint64_t> snapshots{0};
     std::atomic<std::uint64_t> tables{0};
@@ -314,6 +318,11 @@ struct TableCounters {
     std::array<std::atomic<std::uint64_t>, PoisonReasonCount> poison{};
     std::atomic<std::uint64_t> narrowed{0};
     std::atomic<std::uint64_t> narrowSkipped{0};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(NarrowSkip::Count)> narrowSkips{};
+    std::atomic<std::uint64_t> narrowPositions{0};
+    std::atomic<std::uint64_t> selected{0};
+    std::atomic<std::uint64_t> reusedUnwritten{0};
+    std::atomic<std::uint64_t> reusedCompared{0};
     std::atomic<std::uint64_t> nanoseconds{0};
     std::atomic<long long> lastReport{0};
 };
@@ -321,6 +330,17 @@ struct TableCounters {
 TableCounters& tableCounters() {
     static TableCounters counters;
     return counters;
+}
+
+struct TableReuseTotals {
+    std::atomic<std::uint64_t> unwritten{0};
+    std::atomic<std::uint64_t> compared{0};
+    std::atomic<std::uint64_t> wordsRead{0};
+};
+
+TableReuseTotals& tableReuseTotals() {
+    static TableReuseTotals totals;
+    return totals;
 }
 
 void reportTables() {
@@ -341,9 +361,16 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms\n",
-        static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
-        static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
+    std::string skips;
+    for (std::size_t reason = 0; reason < counters.narrowSkips.size(); reason++) {
+        const auto count = counters.narrowSkips[reason].exchange(0, std::memory_order_relaxed);
+        if (count == 0) continue;
+        skips += " " + std::string(NarrowSkipNames[reason]) + "=" + std::to_string(count);
+        if (reason == static_cast<std::size_t>(NarrowSkip::KeyScan)) skips += " (up to " + std::to_string(counters.narrowPositions.exchange(0, std::memory_order_relaxed)) + " positions, APS5_IMAGE_TABLE_KEY_SCAN " + std::to_string(TableKeyScanLimit()) + ")";
+    }
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, %llu selected records, structural poison:%s, narrowing %llu applied / %llu skipped%s%s, reused %llu unwritten / %llu compared, %.1f ms\n",
+        static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.selected.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
+        static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), skips.empty() ? "" : ":", skips.c_str(), static_cast<unsigned long long>(counters.reusedUnwritten.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.reusedCompared.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
 }
 
 enum class RecordState : std::uint8_t { OutsideDomain, Read, Unmapped, Carried };
@@ -380,6 +407,54 @@ void traceTable(const IrResourcePlan& plan, std::uint32_t table, const TableColu
     if (last == trace) return;
     last = trace;
     std::fprintf(stderr, "[image-table] shader 0x%llx table %u (%s): base 0x%llx size 0x%llx stride 0x%x addend 0x%x offset 0x%x dwords %u, %u records, %u keys%s, %u structural poison\n", static_cast<unsigned long long>(plan.shaderHash), table, column.sampler ? "sampler" : "image", static_cast<unsigned long long>(trace.base), static_cast<unsigned long long>(trace.size), column.stride, column.addend, column.offset, column.dwordCount, trace.records, trace.keys, trace.narrowed ? " (narrowed)" : "", trace.poison);
+}
+
+bool TableSnapshotReuse() {
+    static const bool enabled = std::getenv("APS5_NO_TABLE_SNAPSHOT_REUSE") == nullptr;
+    return enabled;
+}
+
+struct ColumnKey {
+    std::uint64_t base = 0;
+    std::uint64_t size = 0;
+    std::uint32_t records = 0;
+    std::uint32_t keys = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t addend = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t dwordCount = 0;
+    std::uint32_t maxKey = 0;
+    std::uint32_t foldedAddend = 0;
+    std::uint32_t foldedCarry = 0;
+    bool address = false;
+    bool sampler = false;
+
+    bool operator==(const ColumnKey& other) const = default;
+};
+
+struct ColumnMemo {
+    ColumnKey key;
+    SrtWriteStamp stamp;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
+    std::vector<std::uint32_t> words;
+    std::vector<RecordState> states;
+    std::vector<std::uint32_t> values;
+    std::vector<DescriptorValue> distinct;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
+
+    std::size_t Footprint() const {
+        return words.size() + values.size() + states.size() / 4u + distinct.size() * 9u + runs.size() * 3u + readRanges.size() * 4u;
+    }
+};
+
+constexpr std::size_t ColumnMemoEntries = 16;
+constexpr std::size_t ColumnMemoWords = std::size_t{1} << 22u;
+
+std::vector<ColumnMemo>& ColumnMemos() {
+    thread_local std::vector<ColumnMemo>* slot = nullptr;
+    return ThreadOwned(slot);
 }
 
 class TableSnapshotter {
@@ -465,8 +540,10 @@ private:
     }
 
     void Narrow(const TableColumn& column, ColumnRecords& records) {
-        const auto skip = [&] {
-            tableCounters().narrowSkipped.fetch_add(1, std::memory_order_relaxed);
+        const auto skip = [&](NarrowSkip reason) {
+            auto& counters = tableCounters();
+            counters.narrowSkipped.fetch_add(1, std::memory_order_relaxed);
+            counters.narrowSkips[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
         };
         std::vector<std::uint32_t> values{0u};
         std::vector<std::pair<std::uint64_t, std::uint64_t>> scanned;
@@ -476,7 +553,7 @@ private:
                 try {
                     walker.EvaluateDescriptorSource(plan, domain.source, runtime, key);
                 } catch (const std::exception&) {
-                    skip();
+                    skip(NarrowSkip::Value);
                     return;
                 }
                 values.push_back(key.dwords[0]);
@@ -484,7 +561,7 @@ private:
             }
             const auto keyBuffer = EvaluateBuffer(domain.source);
             if (keyBuffer.Type() != 0u) {
-                skip();
+                skip(NarrowSkip::NotBuffer);
                 return;
             }
             const auto base = keyBuffer.Base48();
@@ -492,17 +569,20 @@ private:
             const std::uint64_t first = domain.offset & ~3u;
             const std::uint64_t positions = size >= first + 4u ? (size - first - 4u) / domain.stride + 1u : 0u;
             if (positions > TableKeyScanLimit() || first > 0xffffffffull) {
-                skip();
+                auto& widest = tableCounters().narrowPositions;
+                auto seen = widest.load(std::memory_order_relaxed);
+                while (seen < positions && !widest.compare_exchange_weak(seen, positions, std::memory_order_relaxed)) {}
+                skip(NarrowSkip::KeyScan);
                 return;
             }
             if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) {
-                skip();
+                skip(NarrowSkip::Pending);
                 return;
             }
             for (std::uint64_t index = 0; index < positions; index++) {
                 const auto address = base + first + index * domain.stride;
                 if (!PageAccessible(address, base, base + size)) {
-                    skip();
+                    skip(NarrowSkip::Unmapped);
                     return;
                 }
                 values.push_back(Read(address));
@@ -526,9 +606,56 @@ private:
         tableCounters().narrowed.fetch_add(1, std::memory_order_relaxed);
     }
 
+    void Select(const TableColumn& column, ColumnRecords& records) {
+        const auto base = records.base;
+        const auto size = records.size;
+        DescriptorValue selection;
+        try {
+            walker.EvaluateDescriptorSource(plan, column.selection, runtime, selection);
+        } catch (const std::exception&) {
+            records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Unmapped));
+            return;
+        }
+        tableCounters().selected.fetch_add(1, std::memory_order_relaxed);
+        const auto offset = selection.dwords[0];
+        const auto entry = (column.addend + column.offset) & ~3u;
+        records.base = base + ((offset + column.offset) & ~3u) - entry;
+        records.size = entry + static_cast<std::uint64_t>(column.dwordCount) * sizeof(std::uint32_t);
+        records.records = 1u;
+        records.keys = 1u;
+        records.states.assign(1u, RecordState::Read);
+        records.words.assign(1u, 0u);
+        if (offset >= column.foldedAddend && offset > 0xffffffffu - column.foldedCarry) {
+            records.states.front() = RecordState::Carried;
+            return;
+        }
+        DescriptorValue value;
+        value.dwordCount = 8u;
+        std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t high = 0;
+        for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+            const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, size);
+            if (!position.has_value()) continue;
+            const auto address = base + *position;
+            if (!PageAccessible(address, base, base + size)) {
+                records.states.front() = RecordState::Unmapped;
+                return;
+            }
+            value.dwords[dword] = Read(address);
+            low = std::min(low, address);
+            high = std::max(high, address + sizeof(std::uint32_t));
+        }
+        records.words.front() = WordsIndex(value);
+        if (low < high) tables.ranges.emplace_back(low, high - low);
+    }
+
     std::uint32_t WordsIndex(const DescriptorValue& value) {
+        for (; indexed < tables.words.size(); indexed++) wordsIndex.try_emplace({tables.words[indexed].dwords, tables.words[indexed].dwordCount}, static_cast<std::uint32_t>(indexed));
         const auto [found, inserted] = wordsIndex.try_emplace({value.dwords, value.dwordCount}, static_cast<std::uint32_t>(tables.words.size()));
-        if (inserted) tables.words.push_back(value);
+        if (inserted) {
+            tables.words.push_back(value);
+            indexed = tables.words.size();
+        }
         return found->second;
     }
 
@@ -538,6 +665,9 @@ private:
         }
         auto& records = columns[source];
         const auto& column = *plan.descriptorSources.at(source).tableColumn;
+        stamp = {};
+        comparedRuns.clear();
+        comparedWords.clear();
         const bool active = source >= activeSources.size() || activeSources[source] != 0u;
         if (!active) {
             records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Inactive));
@@ -556,6 +686,10 @@ private:
             }
             records.base = heap.Base48();
             records.size = heap.GetSize();
+            if (column.selected) {
+                Select(column, records);
+                return records;
+            }
             records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset + (column.indirect ? 4u : 0u), records.size);
             if (records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
         }
@@ -600,6 +734,13 @@ private:
             }
             return records;
         }
+        const bool memoized = TableSnapshotReuse() && !records.narrowed && records.keys != 0u;
+        if (memoized && !column.address && records.size != 0u && runtime.stampWrites != nullptr) {
+            const auto span = std::min<std::uint64_t>(records.size, static_cast<std::uint64_t>(column.addend) + column.offset + static_cast<std::uint64_t>(records.keys) * column.stride + column.dwordCount * 4u);
+            stamp = runtime.stampWrites(runtime.userContext, records.base, span);
+        }
+        const ColumnKey key{records.base, records.size, records.records, records.keys, column.stride, column.addend, column.offset, column.dwordCount, column.maxKey, column.foldedAddend, column.foldedCarry, column.address, column.sampler};
+        if (memoized && Reuse(key, column, records)) return records;
         constexpr auto Unread = std::numeric_limits<std::uint32_t>::max();
         std::vector<std::uint32_t> whole(records.keys, Unread);
         std::vector<std::pair<std::uint32_t, std::array<std::uint32_t, 8>>> split;
@@ -668,16 +809,14 @@ private:
             }
             if (records.states[record] == RecordState::Read) split.emplace_back(record, slots);
         }
-        std::vector<std::uint32_t> read(total);
-        std::uint32_t at = 0;
-        for (const auto& [address, count] : runs) {
-            if (runtime.readWords != nullptr) {
-                if (!runtime.readWords(runtime.userContext, address, read.data() + at, count)) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
-            } else {
-                for (std::uint32_t word = 0; word < count; word++) read[at + word] = Read(address + word * 4u);
-            }
-            at += count;
+        std::vector<std::uint32_t> read;
+        if (!comparedWords.empty() && runs == comparedRuns) {
+            read = std::move(comparedWords);
+        } else {
+            read.resize(total);
+            ReadRuns(runs, read);
         }
+        const auto firstWord = tables.words.size();
         auto next = split.begin();
         for (std::uint32_t record = 0; record < records.keys; record++) {
             if (records.states[record] != RecordState::Read) continue;
@@ -705,7 +844,139 @@ private:
             }
         }
         records.readRanges.resize(ranges);
+        if (memoized) Remember(key, records, std::move(runs), std::move(read), column.address && low < high ? low : 0u, column.address && low < high ? high : 0u, firstWord == 0u);
         return records;
+    }
+
+    void ReadRuns(const std::vector<std::pair<std::uint64_t, std::uint32_t>>& runs, std::vector<std::uint32_t>& read) const {
+        std::size_t at = 0;
+        for (const auto& [address, count] : runs) {
+            if (runtime.readWords != nullptr) {
+                if (!runtime.readWords(runtime.userContext, address, read.data() + at, count)) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
+            } else {
+                for (std::uint32_t word = 0; word < count; word++) read[at + word] = Read(address + word * 4u);
+            }
+            at += count;
+        }
+        tableReuseTotals().wordsRead.fetch_add(read.size(), std::memory_order_relaxed);
+    }
+
+    bool WholePageAccessible(std::uint64_t address) {
+        const auto [found, inserted] = wholePages.try_emplace(address & ~(PageBytes - 1u), false);
+        if (inserted) found->second = Accessible(address & ~(PageBytes - 1u), PageBytes);
+        return found->second;
+    }
+
+    bool Unwritten(const ColumnMemo& memo) const {
+        if (memo.stamp.generation == 0u || runtime.unchangedSince == nullptr || runtime.supplyWords == nullptr) return false;
+        for (const auto& [address, count] : memo.runs) {
+            if (!runtime.unchangedSince(runtime.userContext, address, static_cast<std::uint64_t>(count) * sizeof(std::uint32_t), memo.stamp)) return false;
+        }
+        std::size_t at = 0;
+        for (const auto& [address, count] : memo.runs) {
+            if (!runtime.supplyWords(runtime.userContext, address, memo.words.data() + at, count)) return false;
+            at += count;
+        }
+        return true;
+    }
+
+    bool Compared(const TableColumn& column, const ColumnRecords& records, ColumnMemo& memo) {
+        const auto end = records.base + records.size;
+        for (const auto& [address, count] : memo.runs) {
+            const auto past = address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t);
+            for (auto page = address & ~(PageBytes - 1u); page < past; page += PageBytes) {
+                const auto first = std::max(page, address);
+                if (column.address ? !WholePageAccessible(first) : !PageAccessible(first, records.base, end)) return false;
+            }
+        }
+        std::vector<std::uint32_t> read(memo.words.size());
+        ReadRuns(memo.runs, read);
+        if (read != memo.words) {
+            comparedRuns = memo.runs;
+            comparedWords = std::move(read);
+            return false;
+        }
+        if (stamp.generation != 0u) memo.stamp = stamp;
+        return true;
+    }
+
+    void Apply(const TableColumn& column, ColumnRecords& records, const ColumnMemo& memo) {
+        records.states = memo.states;
+        records.readRanges = memo.readRanges;
+        if (tables.words.empty()) {
+            tables.words = memo.distinct;
+            records.words = memo.values;
+        } else {
+            std::vector<std::uint32_t> global(memo.distinct.size());
+            for (std::size_t value = 0; value < memo.distinct.size(); value++) global[value] = WordsIndex(memo.distinct[value]);
+            records.words.assign(records.keys, 0u);
+            for (std::uint32_t record = 0; record < records.keys; record++) {
+                if (memo.states[record] == RecordState::Read) records.words[record] = global[memo.values[record]];
+            }
+        }
+        if (column.address && memo.low < memo.high) tables.ranges.emplace_back(memo.low, memo.high - memo.low);
+    }
+
+    bool Reuse(const ColumnKey& key, const TableColumn& column, ColumnRecords& records) {
+        auto& memos = ColumnMemos();
+        const auto found = std::find_if(memos.begin(), memos.end(), [&](const ColumnMemo& entry) { return entry.key == key; });
+        if (found == memos.end()) return false;
+        auto& counters = tableCounters();
+        auto& totals = tableReuseTotals();
+        if (Unwritten(*found)) {
+            counters.reusedUnwritten.fetch_add(1, std::memory_order_relaxed);
+            totals.unwritten.fetch_add(1, std::memory_order_relaxed);
+        } else if (Compared(column, records, *found)) {
+            counters.reusedCompared.fetch_add(1, std::memory_order_relaxed);
+            totals.compared.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            return false;
+        }
+        Apply(column, records, *found);
+        std::rotate(memos.begin(), found, found + 1);
+        return true;
+    }
+
+    void Remember(const ColumnKey& key, const ColumnRecords& records, std::vector<std::pair<std::uint64_t, std::uint32_t>>&& runs, std::vector<std::uint32_t>&& words, std::uint64_t low, std::uint64_t high, bool first) {
+        if (std::any_of(records.states.begin(), records.states.end(), [](RecordState state) { return state != RecordState::Read && state != RecordState::Carried; })) return;
+        auto& memos = ColumnMemos();
+        auto found = std::find_if(memos.begin(), memos.end(), [&](const ColumnMemo& entry) { return entry.key == key; });
+        if (found == memos.end()) found = memos.emplace(memos.end());
+        auto& memo = *found;
+        memo.key = key;
+        memo.stamp = stamp;
+        memo.runs = std::move(runs);
+        memo.words = std::move(words);
+        memo.states.assign(records.states.begin(), records.states.end());
+        memo.readRanges.assign(records.readRanges.begin(), records.readRanges.end());
+        memo.low = low;
+        memo.high = high;
+        if (first) {
+            memo.values.assign(records.words.begin(), records.words.end());
+            memo.distinct.assign(tables.words.begin(), tables.words.end());
+        } else {
+            std::vector<std::uint32_t> local(tables.words.size(), NoValue);
+            memo.values.assign(records.keys, 0u);
+            memo.distinct.clear();
+            for (std::uint32_t record = 0; record < records.keys; record++) {
+                if (records.states[record] != RecordState::Read) continue;
+                auto& slot = local[records.words[record]];
+                if (slot == NoValue) {
+                    slot = static_cast<std::uint32_t>(memo.distinct.size());
+                    memo.distinct.push_back(tables.words[records.words[record]]);
+                }
+                memo.values[record] = slot;
+            }
+        }
+        if (memo.Footprint() > ColumnMemoWords) {
+            memos.erase(found);
+            return;
+        }
+        std::rotate(memos.begin(), found, found + 1);
+        std::size_t kept = 0;
+        std::size_t footprint = 0;
+        while (kept < memos.size() && kept < ColumnMemoEntries && footprint + memos[kept].Footprint() <= ColumnMemoWords) footprint += memos[kept++].Footprint();
+        memos.resize(kept);
     }
 
     void Snapshot(std::uint32_t source, std::uint32_t table) {
@@ -762,6 +1033,11 @@ private:
     std::unordered_map<std::pair<std::array<std::uint32_t, 8>, std::uint32_t>, std::uint32_t, WordsHash> wordsIndex;
     std::unordered_map<std::uint64_t, bool> pages;
     std::unordered_map<std::uint64_t, bool> wholePages;
+    std::size_t indexed = 0;
+    SrtWriteStamp stamp;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> comparedRuns;
+    std::vector<std::uint32_t> comparedWords;
+    static constexpr std::uint32_t NoValue = std::numeric_limits<std::uint32_t>::max();
 };
 
 void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, SrtWalker& walker, ResourceSnapshot& snapshot, std::vector<std::uint8_t>& activeSources) {
@@ -1643,6 +1919,11 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
 
 std::uint64_t ResourceMaterializer::SpecializationNanoseconds() {
     return specializationNanoseconds.load(std::memory_order_relaxed);
+}
+
+ImageTableReuseCounts ResourceMaterializer::TableReuse() {
+    auto& totals = tableReuseTotals();
+    return {totals.unwritten.load(std::memory_order_relaxed), totals.compared.load(std::memory_order_relaxed), totals.wordsRead.load(std::memory_order_relaxed)};
 }
 
 }
