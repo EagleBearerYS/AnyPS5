@@ -151,7 +151,11 @@ ResidencyToken ResidencyDriver::record(std::span<const ResidencyCopy> copies, bo
         chunks.insert(copy.mirror.chunk);
     }
     if (located.empty()) return recorder.CallerToken();
-    for (const auto& copy : located) recorder.FlushStoresOverlapping((copy.page << ResidencyPageShift) + copy.offset, copy.bytes);
+    for (const auto& copy : located) {
+        const auto address = (copy.page << ResidencyPageShift) + copy.offset;
+        recorder.FlushStoresOverlapping(address, copy.bytes);
+        recorder.FlushKeyStoresOverlapping(address, copy.bytes);
+    }
     if (intoMirror) {
         std::vector<Recorder::SectionObject> objects;
         for (const auto chunk : chunks) objects.push_back({mirrors.Chunk(chunk).get(), true});
