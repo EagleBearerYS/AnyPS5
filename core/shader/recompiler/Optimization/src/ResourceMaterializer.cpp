@@ -1588,6 +1588,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         : decoded.dimension == RdnaImageDimension::Dim2DMsaa || decoded.dimension == RdnaImageDimension::Dim2DMsaaArray ? PoisonReason::Multisampled
         : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return mode.dimension == decoded.dimension && mode.cube == decoded.cube; }) ? PoisonReason::Dimension
         : PoisonReason::NumericClass;
+    if (reason == PoisonReason::SrgbUnsupported) return reject(reason, "samples or gathers an sRGB image the device cannot sample, which is not implemented: " + message + words);
     return reject(reason, message + words);
 }
 

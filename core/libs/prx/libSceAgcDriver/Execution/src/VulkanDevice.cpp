@@ -4089,6 +4089,9 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         for (const auto& texture : resources.SampledTextures()) {
             if (texture != nullptr && texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
         }
+        if (resources.UsesDeviceImages()) {
+            for (const auto& image : context.deviceImages->DispatchStorage()) objects.push_back({image->Image(), true});
+        }
         recorder.DeclareSection(objects);
     }
     VkAccessFlags covered = 0;
@@ -4206,6 +4209,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     recorder.MarkCovered(dispatchedAccess);
     recordStep(PhaseRecordBind);
     resources.MarkGpuWrites(recorder);
+    if (resources.UsesDeviceImages()) context.deviceImages->AfterDispatch(context, recorder);
     recordStep(PhaseRecordMarks);
     // Only copied written buffers (and BDA fault checks) need work once the GPU is done; without them
     // the batch can signal its labels from the GPU.

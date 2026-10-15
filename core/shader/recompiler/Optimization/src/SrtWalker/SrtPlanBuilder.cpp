@@ -100,20 +100,12 @@ bool PlanBuilder::ReadsAtRunTime() const {
     };
     const auto& memoryInfo = _program.Resources().memoryInfo;
     const auto deviceRead = [&](const IrValue& user, const IrValue& handle, bool sampler) {
-        switch (user.Opcode()) {
-            case IrOpcode::ImageSampleRaw:
-            case IrOpcode::ImageGatherRaw:
-            case IrOpcode::ImageQueryLod:
-                break;
-            case IrOpcode::ImageRead:
-            case IrOpcode::ImageQueryDimensions:
-                if (sampler) return false;
-                break;
-            default:
-                return false;
-        }
+        const auto info = ImageOpcodeInfoOf(user.Opcode());
+        if (info.access == ImageAccess::None || (sampler && !info.needsSampler)) return false;
         const auto index = user.Flags<MemoryFlags>().index;
         if (index >= memoryInfo.size() || memoryInfo[index].imagePacked || memoryInfo[index].imageByElements != 0u) return false;
+        if (info.resourceClass == ImageResourceClass::Storage && memoryInfo[index].imageHasMip) return false;
+        if (memoryInfo[index].imageDimension == RdnaImageDimension::Dim2DMsaa || memoryInfo[index].imageDimension == RdnaImageDimension::Dim2DMsaaArray) return false;
         const std::size_t operand = sampler ? 1u : 0u;
         if (user.ArgumentCount() <= operand || user.Argument(operand)->Resolve() != &handle) return false;
         for (std::size_t index = 0; index < user.ArgumentCount(); index++) {

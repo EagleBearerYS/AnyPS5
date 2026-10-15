@@ -1099,6 +1099,16 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         }
         result.deviceImages = snapshot.deviceImages;
         DeviceImageTableAbi::NameInterfaces(result.deviceImages, result.deviceImageInterfaces);
+        std::optional<RuntimeImageModeMatch> refusal;
+        for (const auto& expectation : result.deviceImages) {
+            DescriptorValue descriptor;
+            descriptor.dwordCount = DeviceImageTableAbi::DescriptorWords;
+            std::copy_n(expectation.key.begin(), DeviceImageTableAbi::DescriptorWords, descriptor.dwords.begin());
+            auto match = ResourceMaterializer::TryRuntimeImageMode(images.at(expectation.image), descriptor, variant.info.info.runtimeImageModes.at(expectation.image));
+            if (match.mode.has_value()) continue;
+            if (!refusal.has_value() || (match.reason == ImageTableAbi::PoisonReason::SrgbUnsupported && refusal->reason != ImageTableAbi::PoisonReason::SrgbUnsupported)) refusal = std::move(match);
+        }
+        if (refusal.has_value()) throw std::runtime_error(refusal->detail);
     }
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);

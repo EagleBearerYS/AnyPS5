@@ -3833,6 +3833,28 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
     return result;
 }
 
+DeviceTableStorage LookupDeviceTableStorage(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view) {
+    std::array<std::uint32_t, 8> words{};
+    std::copy(descriptor.begin(), descriptor.end(), words.begin());
+    const auto resource = DecodeTextureResource(words);
+    const bool firstLayer = view.shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray;
+    if (!firstLayer && !MatchesGuestDimension(view.shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest storage texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(view.shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
+    const auto mip = std::min(resource.baseLevel, resource.mipCount - 1u);
+    Require(resource.minLod <= mip * 256u, "guest storage texture descriptor clamps its minimum LOD above the level it addresses, which is not implemented");
+    const auto guestBytes = DescribeSurface(resource).guestBytes;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's storage surface at 0x" + HexText(resource.baseAddress) + " is not mapped");
+    CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
+    auto image = cachedStorageTexture(context, words, resource, mip, guestBytes);
+    const auto layers = StorageTexture::LayersOf(resource, firstLayer);
+    DeviceTableStorage result;
+    result.slot = image->StorageSlot(view.atomic64 ? image->Atomic64View(mip, layers) : view.atomic ? image->AtomicView(mip, layers) : image->StorageView(mip, layers));
+    result.address = resource.baseAddress;
+    result.guestBytes = guestBytes;
+    result.image = std::move(image);
+    return result;
+}
+
 std::uint32_t DeviceTableSamplerClass(const Sampler* sampler, std::span<const std::uint32_t, 4> words, bool unnormalized, bool integerBorder) {
     namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
     if (sampler == nullptr) return 0u;

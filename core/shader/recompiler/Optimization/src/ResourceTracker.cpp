@@ -1309,20 +1309,12 @@ private:
     }
 
     bool DeviceAccessKind(const IrValue& inst) const {
-        switch (inst.Opcode()) {
-            case IrOpcode::ImageSampleRaw:
-            case IrOpcode::ImageGatherRaw:
-            case IrOpcode::ImageRead:
-            case IrOpcode::ImageQueryDimensions:
-            case IrOpcode::ImageQueryLod:
-                break;
-            default:
-                return false;
-        }
+        const auto info = ImageOpcodeInfoOf(inst.Opcode());
+        if (info.access == ImageAccess::None) return false;
         const auto flags = inst.Flags<MemoryFlags>();
         if (flags.index >= m_program.Resources().memoryInfo.size()) return false;
         const auto& memory = m_program.Resources().memoryInfo[flags.index];
-        return !memory.imagePacked && memory.imageByElements == 0u;
+        return !memory.imagePacked && memory.imageByElements == 0u && memory.imageDimension != RdnaImageDimension::Dim2DMsaa && memory.imageDimension != RdnaImageDimension::Dim2DMsaaArray && !(info.resourceClass == ImageResourceClass::Storage && memory.imageHasMip);
     }
 
     void PlanDeviceColumns() {
@@ -1442,7 +1434,7 @@ private:
             image.table = next++;
             image.deviceTable = DeviceSource(image.source);
             const bool storage = image.resourceClass == ImageResourceClass::Storage || image.written || image.atomic;
-            if (storage || image.packed || image.byElements != 0u) {
+            if ((storage && !(image.deviceTable && RuntimeSource(image.source))) || image.packed || image.byElements != 0u) {
                 image.tableOperation = TableOperation::Unsupported;
             }
         }

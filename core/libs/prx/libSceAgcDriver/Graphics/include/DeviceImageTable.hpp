@@ -20,6 +20,7 @@ namespace AgcDriver::Graphics {
 class Buffer;
 class Recorder;
 class Sampler;
+class StorageTexture;
 class Texture;
 
 class DeviceImageTable {
@@ -34,6 +35,8 @@ public:
     std::uint64_t HeaderAddress() const;
     void Expect(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
     void BeforeDispatch(const Context& context, Recorder& recorder);
+    void AfterDispatch(const Context& context, Recorder& recorder);
+    std::vector<std::shared_ptr<StorageTexture>> DispatchStorage() const;
 
     struct Rejection {
         std::array<std::uint32_t, 8> words{};
@@ -68,6 +71,8 @@ private:
         bool snapshot = false;
         bool perUse = false;
         bool parked = false;
+        std::shared_ptr<StorageTexture> storage;
+        bool written = false;
     };
     struct ValidationState {
         std::uint64_t epoch = 0;
@@ -103,6 +108,12 @@ private:
     std::vector<DeviceImageMiss> expected;
     std::vector<DeviceImageKeys::Key> current;
     std::vector<DeviceImageKeys::Key> perUseKeys;
+    struct DispatchStorageUse {
+        DeviceImageKeys::Key key{};
+        std::shared_ptr<StorageTexture> image;
+        bool written = false;
+    };
+    std::vector<DispatchStorageUse> dispatchStorage;
     std::vector<Rejection> rejections;
     std::map<std::tuple<DeviceImageKeys::Key, std::uint32_t, std::string>, std::uint32_t> rejectionIndex;
     std::optional<ValidationState> validated;

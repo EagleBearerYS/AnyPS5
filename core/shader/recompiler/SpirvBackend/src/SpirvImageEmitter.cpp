@@ -1813,7 +1813,7 @@ std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, co
     state.runtimeImage = nullptr;
     if (tables) {
         EmitLabel(state, invalid);
-        if (returnsValue) incoming.insert(incoming.end(), {ConstantU32CompositeZero(state, 4u), invalid});
+        if (returnsValue) incoming.insert(incoming.end(), {ZeroResult(ctx, inst), invalid});
         state.module.AddFunction(spv::OpBranch, merge);
     } else if (exits) {
         EmitLabel(state, invalid);

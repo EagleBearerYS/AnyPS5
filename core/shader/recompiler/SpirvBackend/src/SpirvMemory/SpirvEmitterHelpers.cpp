@@ -446,12 +446,14 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     if (!TableModeEmitted(mode)) continue;
                     const auto kind = DescriptorBindingForImage(mode);
                     if (std::any_of(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
+                    const bool storage = mode.resourceClass == ImageResourceClass::Storage;
+                    if (storage) state.module.EmitCapability(spv::CapabilityStorageImageArrayDynamicIndexing);
                     const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode))), spv::StorageClassUniformConstant);
-                    state.module.AddName(variable, ("table_images_" + std::to_string(static_cast<std::uint32_t>(kind))).c_str());
+                    state.module.AddName(variable, ((storage ? "table_storage_images_" : "table_images_") + std::to_string(static_cast<std::uint32_t>(kind))).c_str());
                     state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::HeapDescriptorSet);
-                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, RuntimeAbi::HeapSampledImageBinding);
+                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, storage ? RuntimeAbi::HeapStorageImageBinding : RuntimeAbi::HeapSampledImageBinding);
                     state.tableImageVariables.push_back({kind, variable});
-                    if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(spv::CapabilitySampled1D);
+                    if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(storage ? spv::CapabilityImage1D : spv::CapabilitySampled1D);
                 }
             }
             break;

@@ -1761,6 +1761,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
     timer.phase(PhaseRecord);
+    if (resources.UsesDeviceImages()) context.deviceImages->AfterDispatch(context, *recorder);
     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(scratch), std::move(checkRecords), record.completion, outcome);
     timer.phase(PhaseKeep);
     if (record.waited) {
@@ -2308,6 +2309,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     APS5_LOG_CHARS_OUT_DEBUG("SubmitAndWait");
     timer.phase(PhaseRecord);
     if (recorded) {
+        if (resources->UsesDeviceImages()) context.deviceImages->AfterDispatch(context, *recorder);
         keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, std::move(scratch), std::move(checkRecords), completion, outcome);
         timer.phase(PhaseKeep);
         if (outcome.waited) {
@@ -2346,6 +2348,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         }
     }
     APS5_LOG_CHARS_OUT_DEBUG("Shader resources WriteBack");
+    if (resources->UsesDeviceImages()) context.deviceImages->AfterDispatch(context, *recorder);
     resources->WriteBack();
     APS5_LOG_CHARS_OUT_DEBUG("Shader resources WriteBack OK");
     static const bool skipTargetWrite = std::getenv("APS5_NO_TARGET_WRITEBACK") != nullptr;

@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <span>
 #include <utility>
 
@@ -118,7 +119,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
             const auto value = lookup(build, miss.key, miss.pc, entry, named);
             insert(miss.key, value, recorder);
             if (named && value.fault != 0u) throw std::runtime_error(rejectionText(miss.key, value.fault));
-            if (entry.texture == nullptr) continue;
+            if (entry.texture == nullptr && entry.storage == nullptr) continue;
             if (entry.perUse) {
                 perUseKeys.push_back(miss.key);
                 resolved.push_back(miss.key);
@@ -130,7 +131,38 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     add(pending, totals.distinct, false);
     add(expected, totals.expected, true);
     refreshPerUse(build, recorder, resolved);
+    for (const auto& key : current) {
+        const auto held = entries.find(key);
+        if (held == entries.end() || held->second.storage == nullptr) continue;
+        if (std::ranges::none_of(dispatchStorage, [&](const DispatchStorageUse& used) { return used.key == key; })) dispatchStorage.push_back({key, held->second.storage, held->second.written});
+    }
     current.clear();
+}
+
+void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder) {
+    std::lock_guard lock(mutex);
+    const auto uses = std::exchange(dispatchStorage, {});
+    std::exception_ptr failure;
+    for (const auto& use : uses) {
+        recorder.Keep(use.image);
+        if (const auto held = entries.find(use.key); held != entries.end() && held->second.storage == use.image) held->second.storage.reset();
+        if (!use.written) continue;
+        use.image->MarkDirty();
+        try {
+            static_cast<void>(DepthSurfaceStoreBack(build, *use.image));
+        } catch (...) {
+            if (!failure) failure = std::current_exception();
+        }
+    }
+    if (failure) std::rethrow_exception(failure);
+}
+
+std::vector<std::shared_ptr<StorageTexture>> DeviceImageTable::DispatchStorage() const {
+    std::lock_guard lock(mutex);
+    std::vector<std::shared_ptr<StorageTexture>> images;
+    images.reserve(dispatchStorage.size());
+    for (const auto& use : dispatchStorage) images.push_back(use.image);
+    return images;
 }
 
 void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>& resolved) {
@@ -160,7 +192,7 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
         const auto value = lookup(build, key, 0u, fresh, true);
         Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a per-use device image entry was not in the table");
         if (value.fault != 0u) throw std::runtime_error(rejectionText(key, value.fault));
-        if (fresh.texture != entry.texture || fresh.sampler != entry.sampler) {
+        if (fresh.texture != entry.texture || fresh.sampler != entry.sampler || fresh.storage != entry.storage) {
             retire(entry, recorder);
             ++totals.replaced;
         }
@@ -191,6 +223,25 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
     if (!match.mode.has_value()) return rejected(match.reason, match.detail);
     const auto& mode = interface->modes.at(*match.mode);
     if (mode.constantSwizzle) return {0u, *match.mode, 0u, 0u};
+    if (interface->image.resourceClass == ShaderRecompiler::ImageResourceClass::Storage) {
+        if (!perUse) return rejected(Reason::DriverRejected, "a storage image is read or written through the device image table by a dispatch whose CPU pre-pass did not name it, which is not implemented");
+        try {
+            DeviceTableView view;
+            view.shape = ShaderRecompiler::ImageShapeForResource(mode);
+            view.atomic = mode.atomic;
+            view.atomic64 = mode.atomic64;
+            auto storage = LookupDeviceTableStorage(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view);
+            entry = {};
+            entry.address = storage.address;
+            entry.guestBytes = storage.guestBytes;
+            entry.perUse = true;
+            entry.storage = std::move(storage.image);
+            entry.written = interface->image.written || interface->image.atomic;
+            return {storage.slot, *match.mode, 0u, 0u};
+        } catch (const std::runtime_error& error) {
+            return rejected(Reason::DriverRejected, error.what());
+        }
+    }
     if (Multisampled(mode)) return rejected(Reason::Multisampled, "an image table entry is multisampled");
     const auto reduction = "a min or max reduction sampler that filters between texels or mip levels samples an image that needs point filtering (sint, converted or depth-bits format), which is not implemented";
     const bool runtimeSampler = (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u;
@@ -253,6 +304,7 @@ void DeviceImageTable::insert(const DeviceImageKeys::Key& key, const DeviceImage
 void DeviceImageTable::retire(const Entry& entry, Recorder& recorder) {
     if (entry.texture != nullptr) recorder.Keep(entry.texture);
     if (entry.sampler != nullptr) recorder.Keep(entry.sampler);
+    if (entry.storage != nullptr) recorder.Keep(entry.storage);
 }
 
 void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {

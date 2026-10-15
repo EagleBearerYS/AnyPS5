@@ -122,7 +122,18 @@ struct DeviceTableView {
     bool integerView = false;
     bool unnormalized = false;
     bool exactAtBase = false;
+    bool atomic = false;
+    bool atomic64 = false;
 };
+
+struct DeviceTableStorage {
+    std::shared_ptr<StorageTexture> image;
+    std::uint32_t slot = 0;
+    std::uint64_t address = 0;
+    std::uint64_t guestBytes = 0;
+};
+
+DeviceTableStorage LookupDeviceTableStorage(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view);
 
 struct DeviceTableTexture {
     std::shared_ptr<Texture> texture;

@@ -234,6 +234,18 @@ std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint3
         FailEmit("storage image descriptor requested for a non-storage image");
     }
     const auto kind = DescriptorBindingForImage(image);
+    if (image.table != NoTable) {
+        const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
+        if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "storage image table array was not emitted");
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image)), pointer, found->variable, state.tableAccess.element);
+        if (state.tableIndexNonUniform) {
+            state.module.EmitCapability(spv::CapabilityShaderNonUniform);
+            state.module.EmitCapability(spv::CapabilityStorageImageArrayNonUniformIndexing);
+            state.module.AddAnnotation(spv::OpDecorate, pointer, spv::DecorationNonUniform);
+        }
+        return pointer;
+    }
     const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image));
     const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
@@ -249,8 +261,16 @@ void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std
         state.module.EmitCapability(spv::CapabilityStorageImageWriteWithoutFormat);
     }
     const auto kind = DescriptorBindingForImage(image);
-    const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
     const auto imageType = ImageType(state, image);
+    if (image.table != NoTable) {
+        if (image.mipMode == ImageMipMode::DynamicStorage) ExitDescriptorBindingFailure(state, kind, resource, "a storage image with dynamic mips is written through the device image table");
+        const auto descriptor = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource));
+        if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel, spv::ImageOperandsSampleMask, sample);
+        else state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel);
+        return;
+    }
+    const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageType);
     const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
     const auto loadAt = [&](std::uint32_t index) {
