@@ -2017,7 +2017,7 @@ void verifySelectedRecordDirectOperations() {
         require(TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2])), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
         const auto wholeCode = WithImageOperation(TableWholeCode, word0, false);
         const auto whole = GetResourcePlan(TableRequest(wholeCode, userData));
-        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == TableOperation::Unsupported, (what + " through a T# keyed per lane left the image table or lost its unsupported mark").c_str());
+        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == (word0 == 0xf0200f08u ? TableOperation::Supported : TableOperation::Unsupported), (what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
     }
     const auto mixedCode = WithImageOperation(TableSrtKeyCode, 0xf0200f08u, true);
     const auto mixed = GetResourcePlan(TableRequest(mixedCode, userData));
