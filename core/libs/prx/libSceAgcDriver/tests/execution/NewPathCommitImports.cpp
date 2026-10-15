@@ -2,7 +2,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
 #include "VulkanTestDevice.hpp"
 #include <exception>
-#include <map>
 
 #ifdef _WIN32
 
@@ -139,43 +138,39 @@ void DriverStoreToUnguardedResidentPage(MirrorReader& reader) {
     Settle();
 }
 
-void GpuRecordedDriverWrites(MirrorReader& reader) {
+enum class Recording { Idle, Busy };
+
+constexpr std::uint32_t WrittenSubpage = 3;
+
+void DriverWrite(MirrorReader& reader, MirrorReader& other, Recording recording, const std::string& what, std::uint32_t value, const std::function<void(Commands&, const SharedPages&)>& store) {
     SharedPages pages(2);
+    PrivatePages scratch(1);
     FillPattern(pages.Words(), 2, 6);
-    std::map<std::uint32_t, std::uint32_t> written;
-    const auto expected = [&](std::uint64_t page, std::uint32_t subpage) {
-        const auto found = page == 0 ? written.find(subpage) : written.end();
-        return found != written.end() ? found->second : Pattern(6, page, subpage * WordsPerSubpage);
-    };
+    bool stored = false;
+    const auto expected = [&](std::uint64_t page, std::uint32_t subpage) { return stored && page == 0 && subpage == WrittenSubpage ? value : Pattern(6, page, subpage * WordsPerSubpage); };
     Locked([&] { Residency().Manager().Use(pages.Address(), PageBytes, ResidencyAccess::Read); });
     Expect(Resident(pages.Address()), "driver writes: page 0 was not admitted");
     ExpectRead(reader.Read(pages.Address(), 2), 2, expected, "driver writes: the read after admission");
-    {
-        Commands commands;
-        commands.WriteData(pages.Address(0, 3), {LabelValue});
-        reader.Record(commands, pages.Address(), 2);
-        commands.Submit(0);
-        written[3] = LabelValue;
-        ExpectRead(reader.Collect(), 2, expected, "driver writes: a dispatch after a WRITE_DATA into a resident page in the same submission read a stale mirror");
-    }
-    {
-        Commands commands;
-        commands.DmaCopy(pages.Address(0, 5), pages.Address(1, 0), static_cast<std::uint32_t>(SubpageBytes));
-        reader.Record(commands, pages.Address(), 2);
-        commands.Submit(0);
-        written[5] = Pattern(6, 1, 0);
-        ExpectRead(reader.Collect(), 2, expected, "driver writes: a dispatch after a DMA copy into a resident page in the same submission read a stale mirror");
-    }
-    {
-        Commands commands;
-        commands.DmaCopy(pages.Address(0, 6), pages.Address(1, 2), 6u);
-        reader.Record(commands, pages.Address(), 2);
-        commands.Submit(0);
-        written[6] = Pattern(6, 1, 2 * WordsPerSubpage);
-        ExpectRead(reader.Collect(), 2, expected, "driver writes: a dispatch after a 6-byte DMA copy (the CPU path) into a resident page in the same submission read a stale mirror");
-    }
-    Expect(Resident(pages.Address()), "driver writes: writes into the import made the page leave residency");
     Settle();
+    Commands commands;
+    if (recording == Recording::Busy) other.Record(commands, scratch.Address(), 1);
+    store(commands, pages);
+    reader.Record(commands, pages.Address(), 2);
+    commands.Submit(0);
+    stored = true;
+    const std::string where = recording == Recording::Idle ? "with the recorder idle" : "behind a recorded dispatch";
+    ExpectRead(reader.Collect(), 2, expected, "driver writes: a dispatch after " + what + " into a resident page in the same submission, " + where + ", read a stale mirror");
+    Expect(Resident(pages.Address()), "driver writes: " + what + " into the import " + where + " made the page leave residency");
+    Settle();
+}
+
+void DriverWritesBeforeDispatch(MirrorReader& reader) {
+    MirrorReader other;
+    for (const auto recording : {Recording::Idle, Recording::Busy}) {
+        DriverWrite(reader, other, recording, "a WRITE_DATA", LabelValue, [](Commands& commands, const SharedPages& pages) { commands.WriteData(pages.Address(0, WrittenSubpage), {LabelValue}); });
+        DriverWrite(reader, other, recording, "a 4 KiB DMA copy", Pattern(6, 1, 0), [](Commands& commands, const SharedPages& pages) { commands.DmaCopy(pages.Address(0, WrittenSubpage), pages.Address(1, 0), static_cast<std::uint32_t>(SubpageBytes)); });
+        DriverWrite(reader, other, recording, "a 6-byte DMA copy", Pattern(6, 1, 2 * WordsPerSubpage), [](Commands& commands, const SharedPages& pages) { commands.DmaCopy(pages.Address(0, WrittenSubpage), pages.Address(1, 2), 6u); });
+    }
 }
 
 }
@@ -205,7 +200,7 @@ int main() {
         SharedAliases(reader);
         Residency();
         DriverStoreToUnguardedResidentPage(reader);
-        GpuRecordedDriverWrites(reader);
+        DriverWritesBeforeDispatch(reader);
         AgcDriverShutdown_nid_postfix();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: exception: %s\n", error.what());
