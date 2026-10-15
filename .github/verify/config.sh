@@ -1,0 +1,4 @@
+BASE=a077a88df5bc4ec26a3049aa721ac37ec8f02305
+REPEAT=3
+EXTRA_TESTS='agc_shader_table_snapshot_reuse'
+NO_BEFORE=1
