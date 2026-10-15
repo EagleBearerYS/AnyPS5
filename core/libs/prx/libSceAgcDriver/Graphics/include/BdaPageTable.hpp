@@ -26,6 +26,7 @@ public:
         std::uint64_t sharedWindows = 0;
     };
     static std::shared_ptr<const BdaPageTable> Build(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
+    static std::shared_ptr<const BdaPageTable> Build(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::span<const std::shared_ptr<const BdaPageTable>> shares);
     static Counts Totals();
     VkDeviceAddress Address() const;
     VkDeviceAddress LeafAddress(std::uint32_t window) const;

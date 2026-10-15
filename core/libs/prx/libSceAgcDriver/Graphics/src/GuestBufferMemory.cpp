@@ -70,6 +70,8 @@ struct GuestBufferMemory::AddressSpace {
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     mutable std::mutex tableMutex;
     mutable std::shared_ptr<const BdaPageTable> pageTable;
+    mutable std::vector<ShaderRecompiler::BdaAbi::Range> resident;
+    mutable std::shared_ptr<const BdaPageTable> lastOverride;
     mutable std::uint64_t residencySerial = 0;
     struct OverrideTable {
         std::shared_ptr<const BdaPageTable> base;
@@ -2141,7 +2143,9 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& 
         if (space->ranges.empty()) return nullptr;
         std::lock_guard lock(space->tableMutex);
         if (space->pageTable == nullptr || space->residencySerial != serial) {
-            space->pageTable = BdaPageTable::Build(context, WithResidentPages(space->ranges));
+            space->resident = WithResidentPages(space->ranges);
+            const std::array<std::shared_ptr<const BdaPageTable>, 1> shares{space->pageTable};
+            space->pageTable = BdaPageTable::Build(context, space->resident, shares);
             space->residencySerial = serial;
         }
         return space->pageTable;
@@ -2202,19 +2206,26 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTableWith(const Conte
 }
 
 std::shared_ptr<const BdaPageTable> GuestBufferMemory::buildWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const {
-    std::vector<ShaderRecompiler::BdaAbi::Range> mapped;
+    std::vector<ShaderRecompiler::BdaAbi::Range> resident;
+    std::array<std::shared_ptr<const BdaPageTable>, 2> shares{};
     if (space != nullptr) {
-        mapped.assign(space->ranges.begin(), space->ranges.end());
+        std::lock_guard lock(space->tableMutex);
+        resident = space->resident;
+        shares = {space->lastOverride, space->pageTable};
     } else {
+        std::vector<ShaderRecompiler::BdaAbi::Range> mapped;
         for (const auto& region : regions) mapped.push_back(addressRange(region));
+        resident = WithResidentPages(mapped);
     }
-    const auto resident = WithResidentPages(mapped);
     std::vector<ShaderRecompiler::BdaAbi::Range> spliced;
     spliced.reserve(resident.size() + 2u * overrides.size());
+    std::size_t firstCut = 0;
     for (const auto& range : resident) {
+        while (firstCut < overrides.size() && overrides[firstCut].end <= range.begin) ++firstCut;
         auto cursor = range.begin;
-        for (const auto& cut : overrides) {
-            if (cut.end <= cursor || cut.begin >= range.end) continue;
+        for (auto index = firstCut; index < overrides.size() && overrides[index].begin < range.end; ++index) {
+            const auto& cut = overrides[index];
+            if (cut.end <= cursor) continue;
             if (cut.begin > cursor) {
                 auto part = range;
                 part.begin = cursor;
@@ -2233,7 +2244,12 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::buildWith(const Context& 
     }
     spliced.insert(spliced.end(), overrides.begin(), overrides.end());
     std::sort(spliced.begin(), spliced.end(), [](const auto& left, const auto& right) { return left.begin < right.begin; });
-    return spliced.empty() ? nullptr : BdaPageTable::Build(context, spliced);
+    if (spliced.empty()) return nullptr;
+    if (space == nullptr) return BdaPageTable::Build(context, spliced);
+    auto table = BdaPageTable::Build(context, spliced, shares);
+    std::lock_guard lock(space->tableMutex);
+    space->lastOverride = table;
+    return table;
 }
 
 void GuestBufferMemory::MarkDirectWrites() const {

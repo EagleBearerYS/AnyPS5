@@ -102,13 +102,19 @@ std::vector<Abi::PageEntry> EncodeBdaWindow(std::uint32_t window, std::span<cons
 }
 
 std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, std::span<const Abi::Range> ranges) {
-    ValidateBdaPageRanges(ranges);
-    auto& newest = NewestTable();
     std::shared_ptr<const BdaPageTable> previous;
     {
+        auto& newest = NewestTable();
         std::lock_guard lock(newest.mutex);
         if (newest.device == context.device) previous = newest.table.lock();
     }
+    return Build(context, ranges, std::span(&previous, 1));
+}
+
+std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, std::span<const Abi::Range> ranges, std::span<const std::shared_ptr<const BdaPageTable>> shares) {
+    ValidateBdaPageRanges(ranges);
+    auto& newest = NewestTable();
+    const std::shared_ptr<const BdaPageTable> previous = shares.empty() ? nullptr : shares.front();
     std::map<std::uint32_t, std::vector<Abi::Range>> windows;
     for (const auto& range : ranges) {
         const auto last = static_cast<std::uint32_t>((range.end - 1u) >> Abi::WindowShift);
@@ -118,8 +124,15 @@ std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, 
     std::vector<std::uint64_t> addresses(Abi::WindowCount, 0u);
     std::uint64_t shared = 0;
     for (auto& [window, held] : windows) {
-        auto old = previous != nullptr ? previous->find(window) : nullptr;
-        if (old != nullptr && old->ranges.size() == held.size() && std::memcmp(old->ranges.data(), held.data(), held.size() * sizeof(Abi::Range)) == 0) {
+        std::shared_ptr<const Leaf> old;
+        for (const auto& candidate : shares) {
+            auto leaf = candidate != nullptr ? candidate->find(window) : nullptr;
+            if (leaf != nullptr && leaf->ranges.size() == held.size() && std::memcmp(leaf->ranges.data(), held.data(), held.size() * sizeof(Abi::Range)) == 0) {
+                old = std::move(leaf);
+                break;
+            }
+        }
+        if (old != nullptr) {
             table->leaves.push_back(std::move(old));
             ++shared;
         } else {
