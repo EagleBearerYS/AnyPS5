@@ -536,6 +536,7 @@ struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> moduleConstants;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
+    std::vector<std::uint32_t> userDataSlots;
     std::vector<VertexAttribute> vertexAttributes;
     std::uint32_t poisonedSrtReads = 0;
     std::vector<ImageTableEntryPoison> imageTablePoison;

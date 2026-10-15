@@ -259,6 +259,8 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::ExpectedDeviceImages
             DeviceImageTableAbi::NameInterfaces
             RefreshMemoryBuffers
+            ApplyBufferRanges
+            ResourceMaterializer::EvaluateBufferSites
             ResourceMaterializer::FindDeviceImageInterface
             ResourceMaterializer::SpecializationNanoseconds
             ResourceMaterializer::TryRuntimeImageMode

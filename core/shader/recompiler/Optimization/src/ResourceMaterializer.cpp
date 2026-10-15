@@ -1289,11 +1289,19 @@ std::shared_ptr<const DeviceImageInterface> ResourceMaterializer::FindDeviceImag
 }
 
 void ResourceMaterializer::EvaluateMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime, std::vector<DescriptorValue>& stores, std::vector<DescriptorValue>& loads) {
+    evaluateBufferSites(plan, runtime, stores, loads, true);
+}
+
+void ResourceMaterializer::EvaluateBufferSites(const IrResourcePlan& plan, const SrtRuntime& runtime, std::vector<DescriptorValue>& stores, std::vector<DescriptorValue>& loads) {
+    evaluateBufferSites(plan, runtime, stores, loads, false);
+}
+
+void ResourceMaterializer::evaluateBufferSites(const IrResourcePlan& plan, const SrtRuntime& runtime, std::vector<DescriptorValue>& stores, std::vector<DescriptorValue>& loads, bool memoryOnly) {
     Detail::Evaluator evaluator(plan, runtime);
     const auto evaluate = [&](const std::vector<BufferStoreSite>& sites, std::vector<DescriptorValue>& values) {
         values.resize(sites.size());
         for (std::size_t index = 0; index < sites.size(); ++index) {
-            if (!sites[index].fromMemory) continue;
+            if (memoryOnly && !sites[index].fromMemory) continue;
             const auto& descriptor = plan.descriptorSources.at(sites[index].source);
             DescriptorValue value;
             value.dwordCount = descriptor.dwordCount;

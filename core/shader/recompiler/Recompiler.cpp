@@ -1135,6 +1135,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     result.bindings = std::move(bindings.bindings);
     result.pushConstants = std::move(bindings.pushConstants);
     const auto& layout = variant.bindings.layout;
+    result.userDataSlots.clear();
+    for (const auto reg : layout.userDataRegisters) result.userDataSlots.push_back(reg - variant.info.userDataBase);
     if (artifact.registrationModule && request.shader.stage != ShaderStage::Fragment && layout.runtimeStateDwords != 0u) {
         const auto first = layout.RuntimeStateDword() + RuntimeAbi::StateVertexSelectors;
         if (layout.runtimeStateDwords > runtimeSelectors.size()) throw std::runtime_error("vertex selector state exceeds its capacity");

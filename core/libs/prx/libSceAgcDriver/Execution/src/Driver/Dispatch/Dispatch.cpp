@@ -15,6 +15,86 @@
 
 namespace AgcDriver::DriverDetail {
 
+std::uint64_t Driver::DataIndependentDispatchHits() {
+    std::lock_guard cacheLock(dispatchCacheMutex);
+    return dataIndependentHits;
+}
+
+bool Driver::readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value) {
+    const bool waitForWrites = waits != nullptr && *static_cast<const bool*>(waits);
+    std::uint32_t word = 0;
+    switch (queryPendingWrite(at, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
+        case ShaderMemory::PendingWrite::Sync:
+            return waitForWrites && ShaderMemory::ReadAfterPendingWrites(at, value);
+        case ShaderMemory::PendingWrite::KnownValue:
+        case ShaderMemory::PendingWrite::VerifyKnownValue:
+            break;
+        case ShaderMemory::PendingWrite::Raw:
+        case ShaderMemory::PendingWrite::VerifyRaw:
+            if (waitForWrites) return ShaderMemory::ReadAfterPendingWrites(at, value);
+            [[fallthrough]];
+        case ShaderMemory::PendingWrite::None:
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(word))) return false;
+            std::memcpy(&word, reinterpret_cast<const void*>(at), sizeof(word));
+            break;
+    }
+    *value = word;
+    return true;
+}
+
+bool Driver::dataIndependent(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::size_t capturedRegions, std::size_t requestRegions) {
+    if (!plan.srtReads.empty() || capturedRegions != requestRegions) return false;
+    const auto constant = [&](std::uint32_t source) {
+        const auto& descriptor = plan.descriptorSources.at(source);
+        for (std::uint32_t word = 0; word < descriptor.dwordCount; ++word) {
+            if (descriptor.dwords[word] == nullptr || !descriptor.dwords[word]->Resolve()->HasImmediate()) return false;
+        }
+        return true;
+    };
+    for (const auto& image : plan.info.images) {
+        if (!image.deviceTable && !constant(image.source)) return false;
+    }
+    for (const auto& sampler : plan.info.samplers) {
+        if (!sampler.deviceTable && !constant(sampler.source)) return false;
+    }
+    if (std::ranges::any_of(compiled.bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; })) return false;
+    return std::ranges::all_of(compiled.imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); });
+}
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::dataIndependentResult(const DataIndependentDispatch& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
+    const auto& plan = *entry.plan;
+    auto result = std::make_shared<ShaderRecompiler::RecompileResult>(*entry.compiled);
+    auto shaderData = std::ranges::find_if(result->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
+    for (std::size_t slot = 0; slot < result->userDataSlots.size(); ++slot) {
+        const auto index = result->userDataSlots[slot];
+        require(index < userData.size(), "a data-independent compute program reads a user data register the dispatch does not set");
+        if (!result->pushConstants.empty()) {
+            require((slot + 1u) * sizeof(std::uint32_t) <= result->pushConstants.size(), "a data-independent compute program's user data lies outside its push data");
+            std::memcpy(result->pushConstants.data() + slot * sizeof(std::uint32_t), &userData[index], sizeof(std::uint32_t));
+        } else if (shaderData != result->bindings.end()) {
+            require(slot < shaderData->guestDescriptor.size(), "a data-independent compute program's user data lies outside its shader data");
+            shaderData->guestDescriptor[slot] = userData[index];
+        }
+    }
+    ShaderRecompiler::SrtRuntime runtime;
+    runtime.userData = userData;
+    runtime.shaderBase = shaderBase;
+    runtime.readMemory = &readPrePassWord;
+    std::vector<ShaderRecompiler::DescriptorValue> stores;
+    std::vector<ShaderRecompiler::DescriptorValue> loads;
+    ShaderRecompiler::ResourceMaterializer::EvaluateBufferSites(plan, runtime, stores, loads);
+    ShaderRecompiler::ApplyBufferRanges(plan.info, stores, loads, false, *result);
+    ShaderRecompiler::ApplyBufferRanges(plan.info, stores, loads, true, *result);
+    bool waitForWrites = true;
+    auto settled = runtime;
+    settled.userContext = &waitForWrites;
+    bool complete = true;
+    result->deviceImages = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, settled, &complete);
+    ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(result->deviceImages, result->deviceImageInterfaces);
+    result->deviceImagesComplete = complete;
+    return result;
+}
+
 std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
     const auto memoryBuffer = [](const ShaderRecompiler::BufferStoreSite& site) { return site.fromMemory; };
     const bool memoryBuffers = std::ranges::any_of(plan.info.bufferStores, memoryBuffer) || std::ranges::any_of(plan.info.bufferLoads, memoryBuffer);
@@ -22,27 +102,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult
     ShaderRecompiler::SrtRuntime runtime;
     runtime.userData = userData;
     runtime.shaderBase = shaderBase;
-    runtime.readMemory = [](void* waits, std::uint64_t at, std::uint32_t* value) {
-        const bool waitForWrites = waits != nullptr && *static_cast<const bool*>(waits);
-        std::uint32_t word = 0;
-        switch (queryPendingWrite(at, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
-            case ShaderMemory::PendingWrite::Sync:
-                return waitForWrites && ShaderMemory::ReadAfterPendingWrites(at, value);
-            case ShaderMemory::PendingWrite::KnownValue:
-            case ShaderMemory::PendingWrite::VerifyKnownValue:
-                break;
-            case ShaderMemory::PendingWrite::Raw:
-            case ShaderMemory::PendingWrite::VerifyRaw:
-                if (waitForWrites) return ShaderMemory::ReadAfterPendingWrites(at, value);
-                [[fallthrough]];
-            case ShaderMemory::PendingWrite::None:
-                if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(word))) return false;
-                std::memcpy(&word, reinterpret_cast<const void*>(at), sizeof(word));
-                break;
-        }
-        *value = word;
-        return true;
-    };
+    runtime.readMemory = &readPrePassWord;
     bool waitForWrites = true;
     auto settled = runtime;
     settled.userContext = &waitForWrites;
@@ -170,13 +230,19 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     } probeScope{probeThis};
     const bool noDispatchCache = noDispatchCacheEnv || probeThis;
     std::uint64_t key = 0xcbf29ce484222325ull;
+    std::uint64_t programKey = key;
     const auto mix = [&](std::uint64_t value) {
         key ^= value;
         key *= 0x100000001b3ull;
     };
-    mix(address);
-    mix(packet[4] & 0x8000u);
-    for (const auto threads : compute.partialThreads) mix(threads);
+    const auto mixBoth = [&](std::uint64_t value) {
+        mix(value);
+        programKey ^= value;
+        programKey *= 0x100000001b3ull;
+    };
+    mixBoth(address);
+    mixBoth(packet[4] & 0x8000u);
+    for (const auto threads : compute.partialThreads) mixBoth(threads);
     for (const auto word : userData) mix(word);
 
     static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;
@@ -184,12 +250,12 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         for (const auto offset : {0x207u, 0x208u, 0x209u, 0x212u, 0x213u}) {
             const auto found = queue.shader.find(offset);
 
-            mix(found == queue.shader.end() ? (1ull << 32u) : found->second);
+            mixBoth(found == queue.shader.end() ? (1ull << 32u) : found->second);
         }
     } else {
         for (const auto& [offset, value] : queue.shader) {
-            mix(offset);
-            mix(value);
+            mixBoth(offset);
+            mixBoth(value);
         }
     }
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiledResult;
@@ -242,9 +308,22 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         previous.key = key;
     }
 
-    mix(reinterpret_cast<std::uintptr_t>(registeredShader.get()));
+    mixBoth(reinterpret_cast<std::uintptr_t>(registeredShader.get()));
     phaseTiming.Phase(PhaseKey);
     timing.Mark("decode_key_device_setup");
+    std::shared_ptr<const DataIndependentDispatch> independent;
+    if (!noDispatchCache) {
+        std::lock_guard cacheLock(dispatchCacheMutex);
+        if (const auto found = dataIndependentDispatches.find(programKey); found != dataIndependentDispatches.end()) {
+            independent = found->second;
+            ++dataIndependentHits;
+        }
+    }
+    if (independent != nullptr) {
+        compiledResult = dataIndependentResult(*independent, userData, request.shader.codeAddress);
+        cached = true;
+        phaseTiming.Phase(PhaseLookup);
+    } else {
     lookupDispatch(address, submission, key, noDispatchCache, traceCache, profile, memory, phaseTiming, phaseMs, compiledResult, keepVariant, captured, liveWords, dataHit, cached, validated, missedEntry, missedDiffering);
     timing.Mark("lookup_cache");
     if (cached) {
@@ -255,9 +334,12 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::uint64_t forgetAtCapture = 0;
 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
+        bool calleesLinked = false;
         try {
             bool preparedAtUse = false;
             const auto invocation = InvocationFor(snapshot, codeOffset, request, shaderMemory.get(), &preparedAtUse);
+            const auto& prepared = invocation.Request();
+            calleesLinked = prepared.shader.code.size() != request.shader.code.size() || !prepared.shader.linkedLiterals.empty() || !prepared.context.linkedWords.empty();
             if (preparedAtUse) RecordPreparedProgram(localDevice, snapshot, codeOffset, invocation.Request());
             timing.Mark("prepared_invocation");
 
@@ -297,6 +379,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
         insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
+        if (!noDispatchCache && !calleesLinked && capture != nullptr && CacheableResult(*compiledResult) && dataIndependent(*capture->plan, *compiledResult, captured.size(), memory.size())) {
+            std::lock_guard cacheLock(dispatchCacheMutex);
+            dataIndependentDispatches[programKey] = std::make_shared<const DataIndependentDispatch>(DataIndependentDispatch{capture->plan, compiledResult});
+        }
+    }
     }
     if (verifyDataHits() && dataHit) verifyDataHit(snapshot, codeOffset, request, memory, address, *keepVariant, liveWords, *compiledResult);
 
@@ -305,8 +392,8 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         return;
     }
     phaseTiming.Phase(PhaseQueuedLabels);
-    bool refreshed = false;
-    if (cached) {
+    bool refreshed = independent != nullptr;
+    if (cached && independent == nullptr) {
         if (auto patched = refreshedResult(*keepVariant->plan, *compiledResult, userData, request.shader.codeAddress)) {
             compiledResult = std::move(patched);
             refreshed = true;
@@ -434,7 +521,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
     }
-    if (profile && ++dispatches % 100 == 0) AgcDriver::ProfilePrint_nid_no_patch( "[gpu] %llu dispatches (%llu dispatch cache hits, %llu evictions, %llu recompile cache hits): capture %.1f s, cache key %.1f s, recompile %.1f s, device %.1f s\n", static_cast<unsigned long long>(dispatches), static_cast<unsigned long long>(dispatchCacheHits), static_cast<unsigned long long>(dispatchCacheEvictions), static_cast<unsigned long long>(cacheHits), captureMs / 1000, keyMs / 1000, recompileMs / 1000, deviceMs / 1000);
+    if (profile && ++dispatches % 100 == 0) AgcDriver::ProfilePrint_nid_no_patch( "[gpu] %llu dispatches (%llu dispatch cache hits, %llu data-independent, %llu evictions, %llu recompile cache hits): capture %.1f s, cache key %.1f s, recompile %.1f s, device %.1f s\n", static_cast<unsigned long long>(dispatches), static_cast<unsigned long long>(dispatchCacheHits), static_cast<unsigned long long>(dataIndependentHits), static_cast<unsigned long long>(dispatchCacheEvictions), static_cast<unsigned long long>(cacheHits), captureMs / 1000, keyMs / 1000, recompileMs / 1000, deviceMs / 1000);
 }
 
 }

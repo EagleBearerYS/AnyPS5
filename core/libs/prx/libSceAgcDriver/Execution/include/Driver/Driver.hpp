@@ -65,6 +65,7 @@ public:
     static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
     static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request);
     DrawEntryCounters DrawCacheCounters();
+    std::uint64_t DataIndependentDispatchHits();
 
 private:
     friend class SampledReadScope;
@@ -181,6 +182,13 @@ private:
     static bool knownValueCurrent(const WrittenBuffer& writer);
     ShaderMemory::PendingWrite classifyPendingWrite(std::uint64_t address, std::size_t bytes, std::uint64_t ValidateCounters::*& reason, const PendingView& pending, std::span<std::byte> known = {});
     static ShaderMemory::PendingWrite queryPendingWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
+    struct DataIndependentDispatch {
+        std::shared_ptr<const ShaderRecompiler::IrResourcePlan> plan;
+        std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
+    };
+    static bool readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value);
+    static bool dataIndependent(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::size_t capturedRegions, std::size_t requestRegions);
+    static std::shared_ptr<const ShaderRecompiler::RecompileResult> dataIndependentResult(const DataIndependentDispatch& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     static std::shared_ptr<const ShaderRecompiler::RecompileResult> refreshedResult(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     void noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue);
     std::optional<WrittenBuffer> newestWriterLocked(std::uint64_t begin, std::uint64_t end) const;
@@ -255,6 +263,8 @@ private:
 
     DispatchEntries dispatchCache{dispatchCacheEntries(), dispatchCacheBudget()};
     std::mutex dispatchCacheMutex;
+    std::unordered_map<std::uint64_t, std::shared_ptr<const DataIndependentDispatch>> dataIndependentDispatches;
+    std::uint64_t dataIndependentHits = 0;
     std::uint64_t dispatchCacheHits = 0;
     std::uint64_t dispatchCacheEvictions = 0;
 
