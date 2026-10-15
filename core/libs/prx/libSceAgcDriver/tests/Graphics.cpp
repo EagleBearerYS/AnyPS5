@@ -851,19 +851,6 @@ void ComputeScratchTests() {
     Require(back.request.context.compute->scratchDwords == 24u, "the compute scratch size did not survive serialization");
 }
 
-void shaderUserDataTailPaddingTests() {
-    constexpr std::size_t userDataOffset = 288;
-    constexpr auto userDataBytes = offsetof(ShaderUserData, sharp_resource_count) + sizeof(ShaderUserData{}.sharp_resource_count);
-    static_assert(userDataBytes == 54);
-    std::vector<std::byte> header(userDataOffset + userDataBytes);
-    Shader shader{};
-    shader.user_data = reinterpret_cast<ShaderUserData*>(header.data() + userDataOffset);
-    std::memcpy(header.data(), &shader, sizeof(shader));
-    const auto headerAddress = reinterpret_cast<std::uintptr_t>(header.data());
-    const auto info = AgcDriver::Graphics::DecodeVertexStageInfo(header, headerAddress, {}, nullptr, true);
-    Require(!info.fetchEmbedded, "a ShaderUserData block without trailing struct padding was rejected");
-}
-
 void ColorPipeBankXorTests() {
     constexpr std::uint32_t side = 128;
     constexpr std::size_t blockBytes = 65536;
@@ -912,51 +899,6 @@ void ColorPipeBankXorTests() {
     queue.context[0x31b] = (2u << 26u) | 1u | (1u << 13u);
     const auto mipColor = AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0);
     Require(mipColor.mip == 2 && mipColor.mipCount == 5 && mipColor.extent.width == 64 && mipColor.extent.height == 32 && mipColor.surfaceAddress == mipBase + sliceBytes && mipColor.address == mipBase + sliceBytes + mips[2].tiledOffset && mipColor.mipTail == mips[2].tail && mipColor.pipeBankXor == 0x0200u, "a display XOR color view lost its array slice, mip placement or XOR");
-}
-
-void HiddenUserWordVertexTablesTests() {
-    constexpr std::size_t userDataOffset = 288;
-    constexpr std::size_t directOffset = 352;
-    constexpr std::size_t semanticOffset = 384;
-    static std::vector<std::byte> header(semanticOffset + sizeof(ShaderSemantic));
-    static std::array<std::uint32_t, 4> bufferTable{0x1000u, 0x20000u, 64u, 0x3000u};
-    static std::array<std::uint32_t, 1> attribTable{(0x2cu << 5u)};
-    std::array<std::uint16_t, ShaderRegs::AGC_DIRECT_RESOURCE_TYPE_COUNT> direct{};
-    direct.fill(ShaderRegs::AGC_ILLEGAL_DIRECT_OFFSET);
-    direct[static_cast<std::size_t>(ShaderRegs::AgcDirectResourceType::PtrVertexBufferTable)] = 4;
-    direct[static_cast<std::size_t>(ShaderRegs::AgcDirectResourceType::PtrVertexAttribDescTable)] = 6;
-    std::memcpy(header.data() + directOffset, direct.data(), sizeof(direct));
-    ShaderSemantic semantic{};
-    semantic.size_in_elements = 1;
-    std::memcpy(header.data() + semanticOffset, &semantic, sizeof(semantic));
-    ShaderUserData userData{};
-    userData.direct_resource_offset = reinterpret_cast<std::uint16_t*>(header.data() + directOffset);
-    userData.direct_resource_count = ShaderRegs::AGC_DIRECT_RESOURCE_TYPE_COUNT;
-    std::memcpy(header.data() + userDataOffset, &userData, sizeof(userData));
-    Shader shader{};
-    shader.user_data = reinterpret_cast<ShaderUserData*>(header.data() + userDataOffset);
-    shader.input_semantics = reinterpret_cast<ShaderSemantic*>(header.data() + semanticOffset);
-    shader.num_input_semantics = 1;
-    std::memcpy(header.data(), &shader, sizeof(shader));
-    const auto headerAddress = reinterpret_cast<std::uintptr_t>(header.data());
-    const auto low = [](const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
-    const auto high = [](const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer) >> 32u); };
-    const std::array<std::uint32_t, 8> registers{0x31016facu, 0x7efff390u, 0x100002u, 0x49u, low(bufferTable.data()), high(bufferTable.data()), low(attribTable.data()), high(attribTable.data())};
-    std::vector<std::uint32_t> merged(8, 0u);
-    merged.insert(merged.end(), registers.begin(), registers.end());
-    const auto info = AgcDriver::Graphics::DecodeVertexStageInfo(header, headerAddress, merged, nullptr, false, 8);
-    Require(info.fetchEmbedded && info.fetchBufferReg == 4u && info.fetchAttribReg == 6u && info.resourcesNum == 1 && info.resources[0].fields[0] == 0x1000u && info.resources[0].fields[2] == 64u, "a merged program's vertex tables were not read past its eight hidden user words");
-    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeVertexStageInfo(header, headerAddress, merged, nullptr, false, 0)); }, "null vertex attribute table");
-    const auto plain = AgcDriver::Graphics::DecodeVertexStageInfo(header, headerAddress, registers, nullptr, false, 0);
-    Require(plain.fetchEmbedded && plain.fetchBufferReg == 4u && plain.resourcesNum == 1 && plain.resources[0].fields[0] == 0x1000u, "a vertex program's tables moved");
-}
-
-void HeaderlessVertexStageTests() {
-    const std::array<std::uint32_t, 4> userData{1, 2, 3, 4};
-    const auto info = AgcDriver::Graphics::DecodeVertexStageInfo({}, 0, userData);
-    Require(!info.fetchEmbedded && info.resourcesNum == 0, "a vertex program without an AGC header received an embedded fetch table");
-    const std::array<std::byte, 8> truncated{};
-    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeVertexStageInfo(truncated, 0x1000, userData)); }, "smaller than the fixed AGC header");
 }
 
 void UnexportedPixelInputTests() {
@@ -4334,9 +4276,7 @@ void pipelineDescriptionTests() {
     base.negativeOneToOne = true;
     base.depthClamp = true;
     base.conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
-    VertexInputLayout input;
-    input.bindings = {{0, 16, VK_VERTEX_INPUT_RATE_VERTEX}, {1, 8, VK_VERTEX_INPUT_RATE_INSTANCE}};
-    input.attributes = {{0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0}, {3, 1, VK_FORMAT_R16G16_UNORM, 0}};
+    const VertexInputLayout input{};
     auto tessellated = base;
     tessellated.stages.path = ShaderPath::Tessellation;
     tessellated.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 4, 1, 2, 2, 64};
@@ -4387,8 +4327,6 @@ void pipelineDescriptionTests() {
         {"rect lists", [](PipelineDescription& d) { d.state.rectList = true; }},
         {"tessellation", [](PipelineDescription& d) { d.state.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 3, 1, 2, 2, 64}; }},
         {"mesh shading", [](PipelineDescription& d) { d.state.stages.mesh = ShaderRecompiler::MeshConfiguration{4, 1, 3, 3, 1, 64, 128, 0, 4}; }},
-        {"a vertex binding stride", [](PipelineDescription& d) { d.vertexInput.bindings[1].stride = 12; }},
-        {"a vertex attribute format", [](PipelineDescription& d) { d.vertexInput.attributes[1].format = VK_FORMAT_R16G16_SNORM; }},
         {"the attachment layout", [](PipelineDescription& d) { d.attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; }},
     };
     const auto original = described(base, input, VK_IMAGE_LAYOUT_GENERAL);
@@ -5632,117 +5570,6 @@ void validationTests() {
         const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
         Require(state.colors.empty() && AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "an export past the attachments was not dropped");
     }
-    {
-        ShaderRecompiler::RecompileResult vertex;
-        vertex.spirv = makeModule({.vertexInput = true});
-        ShaderRecompiler::VertexAttribute attribute{0, 4, {{0x1000, 32u << 16u, 3, 77u << 12u}}, 0};
-        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
-        const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
-        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "missing attribute metadata");
-        vertex.vertexAttributes.push_back(attribute);
-        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false);
-        vertex.vertexAttributes[0].components = 2;
-        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "metadata disagrees");
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 2, 1) == 80, "incorrect strided vertex range");
-        Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 2, 7) == 64, "vertex range includes records before the first vertex");
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "an index past the records still spans its fetch");
-        {
-            auto wider = attribute;
-            wider.resource.fields[2] = 9;
-            auto instanced = attribute;
-            instanced.fetchIndex = 1;
-            instanced.resource.fields[2] = 1000;
-            auto constant = attribute;
-            constant.resource.fields[1] = 0;
-            const std::array attributes{attribute, wider, instanced, constant};
-            Require(AgcDriver::Graphics::ZeroFetchVertex(attributes) == 9u, "the first vertex reading zeros is not past the largest per-vertex record count");
-            auto clamped = attribute;
-            clamped.resource.fields[3] |= 2u << 28u;
-            const std::array selective{attribute, clamped};
-            Require(!AgcDriver::Graphics::ZeroFetchVertex(selective).has_value(), "an attribute with out-of-bounds select 2 was taken to read zeros past its records");
-            std::array<std::uint32_t, 4> indices{0xffffffffu, 2u, 0x12345u, 0xffffffffu};
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, true, 9u) == 9u && indices == std::array<std::uint32_t, 4>{0xffffffffu, 2u, 9u, 0xffffffffu}, "clamping kept an index past the limit or moved a restart index");
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, false, 9u) == 9u && indices == std::array<std::uint32_t, 4>{9u, 2u, 9u, 9u}, "clamping without restart kept a 0xffffffff index");
-            std::array<std::uint16_t, 2> narrow{0xffffu, 1u};
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(narrow)), 2, false, 4u) == 4u && narrow[0] == 4u && narrow[1] == 1u, "clamping 16-bit indices failed");
-        }
-        attribute.fetchIndex = 1;
-        Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 2, 7) == 224, "instance range includes records before the first instance");
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100, 2) == 48, "instance attributes used the vertex index");
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100, 2, 1) == 80, "first instance was ignored");
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 2, 2) == 112, "a first instance past the records still spans its fetch");
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 2, 0xffffffffu); }, "instance range overflow");
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 4) == 112, "an instance range past the records still spans its fetch");
-        attribute.fetchIndex = 0;
-        attribute.resource.fields[3] = 0x1004dfacu;
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "oob_select 1 past the records still spans its fetch");
-        attribute.resource.fields[3] = 0x2004dfacu;
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
-        attribute.resource.fields[3] = 0x3004dfacu;
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
-        attribute.resource.fields[3] = 77u << 12u;
-        attribute.fetchIndex = 1;
-        attribute.resource.fields[1] = 0;
-        attribute.resource.fields[2] = 16;
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100, 2) == 16, "zero stride must repeat one value");
-        Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 100, 7) == 0, "zero-stride input skipped its repeated value");
-        attribute.resource.fields[2] = 8;
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "byte range");
-        Require(!AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "a structured zero-stride fetch was treated as out of range");
-        attribute.resource.fields[3] = (77u << 12u) | (2u << 28u);
-        attribute.resource.fields[2] = 1;
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100, 2) == 16, "OOB_SELECT 2 must read a zero-stride fetch whole while NUM_RECORDS is nonzero");
-        Require(AgcDriver::Graphics::VertexBufferExtent(attribute) == 16, "OOB_SELECT 2 extent must cover the whole fetch");
-        Require(!AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 2 with records was treated as out of range");
-        attribute.resource.fields[2] = 0;
-        Require(AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 2 without records must read zero");
-        attribute.resource.fields[3] = (77u << 12u) | (3u << 28u);
-        Require(AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 3 without records must read zero");
-        attribute.resource.fields[2] = 8;
-        Require(!AgcDriver::Graphics::VertexFetchOutOfRange(attribute), "OOB_SELECT 3 with records was treated as out of range");
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "byte range");
-        attribute.resource.fields[2] = 16;
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "OOB_SELECT 3 must read a fetch inside the range");
-        attribute.resource.fields[3] = 113u << 12u;
-        expectFailure([&] { AgcDriver::Graphics::DecodeVertexFormat(attribute); }, "unsupported vertex format");
-        attribute.resource.fields[3] = 50u << 12u;
-        Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 && AgcDriver::Graphics::DecodeVertexFormat(attribute).bytes == 4, "2_10_10_10 vertex format was not decoded");
-        attribute.resource.fields[3] = 55u << 12u;
-        Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_A2B10G10R10_SINT_PACK32 && std::string_view(AgcDriver::Graphics::DecodeVertexFormat(attribute).scalar) == "i32", "2_10_10_10 sint vertex format was not decoded");
-        attribute.resource.fields[3] = 36u << 12u;
-        Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_B10G11R11_UFLOAT_PACK32, "10_11_11 float vertex format was not decoded");
-        for (std::uint32_t format = 1; format < 128u; ++format) {
-            attribute.resource.fields[3] = format << 12u;
-            std::string_view scalar;
-            try {
-                scalar = AgcDriver::Graphics::DecodeVertexFormat(attribute).scalar;
-            } catch (const std::exception&) {
-                continue;
-            }
-            const auto numeric = ShaderRecompiler::VertexInputNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(format));
-            Require((scalar == "u32") == (numeric == ShaderRecompiler::IrTextureNumericClass::Uint) && (scalar == "i32") == (numeric == ShaderRecompiler::IrTextureNumericClass::Sint), "vertex format " + std::to_string(format) + " declares a shader input of another numeric type than its attribute");
-        }
-        attribute.resource.fields[3] = 43u << 12u;
-        expectFailure([&] { AgcDriver::Graphics::DecodeVertexFormat(attribute); }, "unsupported vertex format");
-        attribute.resource.fields = {0x1000, 32u << 16u, 3, 77u << 12u};
-        attribute.components = 2;
-        AgcDriver::Graphics::Context context{};
-        context.limits.maxVertexInputBindings = 16;
-        context.limits.maxVertexInputAttributes = 16;
-        context.limits.maxVertexInputBindingStride = 2048;
-        context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
-            *properties = {};
-            if (format == VK_FORMAT_R32G32_SFLOAT) properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
-        };
-        const auto layout = AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1));
-        Require(layout.bindings.size() == 1 && layout.bindings[0].stride == 32 && layout.bindings[0].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE, "incorrect instance input binding");
-        Require(layout.attributes[0].format == VK_FORMAT_R32G32_SFLOAT && layout.attributes[0].offset == 0 && layout.attributes[0].location == 0, "incorrect vertex attribute format or offset");
-        attribute.components = 4;
-        expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "device does not support vertex format");
-        attribute.components = 2;
-        attribute.resource.fields[1] |= 0x80000000u;
-        expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "descriptor flags");
-    }
     for (const auto capability : {spv::CapabilityInt64Atomics, spv::CapabilityInt64ImageEXT}) {
         ShaderRecompiler::RecompileResult vertex;
         vertex.spirv = makeModule({});
@@ -5987,92 +5814,6 @@ void storeAtFlipTests() {
     for (const char* value : {"0", "", "true", "11"}) expectFailure([&] { StorageTexture::StoreAtFlipRequested(value); }, "expected 1");
 }
 
-void nullVertexDescriptorTests() {
-    using AgcDriver::Graphics::DecodeVertexFormat;
-    constexpr std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT};
-    ShaderRecompiler::VertexAttribute attribute{};
-    attribute.formatComponents = 1;
-    for (std::uint32_t components = 1; components <= 4; ++components) {
-        attribute.components = components;
-        const auto format = DecodeVertexFormat(attribute);
-        Require(format.format == formats[components - 1] && format.bytes == components * 4u && std::string_view(format.scalar) == "f32", "a null V# did not read as zero floats of the attribute's width");
-        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100000, 3, 2) == format.bytes && AgcDriver::Graphics::VertexBufferExtent(attribute) == format.bytes, "a null V# was sized as a guest range");
-    }
-    attribute.resource.fields = {0x1000, 0, 0, 0};
-    expectFailure([&] { DecodeVertexFormat(attribute); }, "unsupported vertex format");
-}
-
-void vertexCopyTests() {
-    using AgcDriver::Graphics::PlanVertexCopies;
-    using AgcDriver::Graphics::VertexFetch;
-    {
-        const std::array<VertexFetch, 3> fetches{{{0x1018, 0x1018 + 32 * 9 + 8, 32, 0, 4}, {0x1000, 0x1000 + 32 * 9 + 12, 32, 0, 4}, {0x100c, 0x100c + 32 * 9 + 12, 32, 0, 4}}};
-        const auto plan = PlanVertexCopies(fetches);
-        Require(plan.copies.size() == 1 && plan.copies[0].first == 0x1000 && plan.copies[0].second == 0x1018 + 32 * 9 + 8, "interleaved attributes were not copied as one union");
-        Require(plan.copyOf == std::vector<std::size_t>{0, 0, 0} && plan.offsets == std::vector<std::uint64_t>{0x18, 0, 0xc}, "interleaved attribute offsets are wrong");
-        Require(plan.alignments == std::vector<std::uint32_t>{4}, "the union's alignment is not its attributes'");
-    }
-    {
-        const std::array<VertexFetch, 2> fetches{{{0x4000, 0x4100, 16, 0, 2}, {0x4004, 0x4104, 16, 0, 4}}};
-        const auto plan = PlanVertexCopies(fetches);
-        Require(plan.copies.size() == 1 && plan.alignments == std::vector<std::uint32_t>{4}, "a union did not take its strictest attribute alignment");
-    }
-    {
-        const std::array<VertexFetch, 6> fetches{{
-            {0x2000, 0x2100, 32, 0, 4},
-            {0x2004, 0x2100, 16, 0, 4},
-            {0x2020, 0x2120, 32, 0, 4},
-            {0x2002, 0x2102, 32, 0, 4},
-            {0x2008, 0x2108, 32, 1, 4},
-            {0x2000, 0x2010, 0, 0, 4},
-        }};
-        const auto plan = PlanVertexCopies(fetches);
-        Require(plan.copies.size() == 6, "fetches of other records, strides, rates or alignments shared a copy");
-        for (std::size_t i = 0; i < fetches.size(); ++i) {
-            const auto& copy = plan.copies[plan.copyOf[i]];
-            Require(plan.offsets[i] == 0 && copy.first == fetches[i].begin && copy.second == fetches[i].end, "a lone fetch was not copied exactly");
-        }
-    }
-    {
-        const std::array<VertexFetch, 2> fetches{{{0x3000, 0x3100, 24, 0, 2}, {0x3002, 0x3102, 24, 0, 2}}};
-        const auto plan = PlanVertexCopies(fetches);
-        Require(plan.copies.size() == 1 && plan.copies[0].second == 0x3102 && plan.offsets[1] == 2, "aligned 16-bit attributes of one record were not merged");
-    }
-    {
-        const std::array<VertexFetch, 1> empty{{{0x4000, 0x4000, 16, 0, 4}}};
-        expectFailure([&] { PlanVertexCopies(empty); }, "empty vertex fetch");
-    }
-}
-
-void vertexZeroFillTests() {
-    using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
-    using AgcDriver::Graphics::VertexBufferReadSize;
-    constexpr std::uint32_t stride = 24;
-    constexpr std::uint32_t records = 3;
-    const ShaderRecompiler::VertexAttribute attribute{0, 4, {{0x1000u, stride << 16u, records, 77u << 12u}}, 0};
-    const auto extent = VertexBufferReadSize(attribute, records, 1);
-    const auto valid = static_cast<std::size_t>(stride) * records;
-    std::vector<std::byte> guest(extent);
-    std::fill(guest.begin(), guest.begin() + static_cast<std::ptrdiff_t>(valid), std::byte{0x7a});
-    std::fill(guest.begin() + static_cast<std::ptrdiff_t>(valid), guest.end(), std::byte{0x55});
-    const auto copy = CopyZeroPaddedDrawInput(mockContext(), reinterpret_cast<std::uint64_t>(guest.data()), extent, valid);
-    const auto bytes = copy.buffer->Bytes();
-    Require(bytes.size() == extent, "a zero-padded vertex fetch changed its size");
-    Require(std::all_of(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(valid), [](std::byte value) { return value == std::byte{0x7a}; }), "a vertex fetch did not copy the bytes within the record count");
-    Require(std::all_of(bytes.begin() + static_cast<std::ptrdiff_t>(valid), bytes.end(), [](std::byte value) { return value == std::byte{0}; }), "a vertex fetch past the record count did not read as zeros");
-}
-
-void vertexZeroFillMergeTests() {
-    using AgcDriver::Graphics::PlanVertexCopies;
-    using AgcDriver::Graphics::SoloZeroPaddedFetchIndices;
-    using AgcDriver::Graphics::VertexFetch;
-    const std::vector<VertexFetch> fetches{{0x1000u, 0x1000u + 88u, 24u, 0u, 4u}, {0x1010u, 0x1010u + 80u, 24u, 0u, 4u}};
-    Require(PlanVertexCopies(fetches).copies.size() == 1, "interleaved attributes share one vertex copy");
-    Require(SoloZeroPaddedFetchIndices(fetches, {88u, 80u}).empty(), "fully valid fetches share the straight copy");
-    const auto solo = SoloZeroPaddedFetchIndices(fetches, {88u, 72u});
-    Require(solo.size() == 1 && solo[0] == 1, "a fetch past the records is copied alone");
-}
-
 void parallelCompareTests() {
     using AgcDriver::Graphics::CompareSpan;
     using AgcDriver::Graphics::CompareSpansFrom;
@@ -6226,10 +5967,7 @@ int main(int argc, char** argv) {
         PixelInputLayoutTests();
         UnexportedPixelInputTests();
         ColorPipeBankXorTests();
-        HeaderlessVertexStageTests();
-        HiddenUserWordVertexTablesTests();
         ComputeScratchTests();
-        shaderUserDataTailPaddingTests();
         InitialContextTests();
         AlphaToCoverageTests();
         descriptorPoolTests();
@@ -6251,12 +5989,8 @@ int main(int argc, char** argv) {
         meshIndexBufferTests();
         stagingPoolBudgetTests();
         validationTests();
-        vertexCopyTests();
         highestDrawIndexTests();
         storeAtFlipTests();
-        nullVertexDescriptorTests();
-        vertexZeroFillTests();
-        vertexZeroFillMergeTests();
         parallelCompareTests();
         pixelParameterSlotTests();
         rectListTests();
