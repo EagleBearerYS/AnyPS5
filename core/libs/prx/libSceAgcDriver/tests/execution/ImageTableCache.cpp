@@ -50,7 +50,7 @@ alignas(256) std::array<std::uint32_t, 16> Srt{};
 alignas(256) std::array<std::uint32_t, 4> Output{};
 
 const std::vector<std::uint32_t> TableCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x9310b010u,
-    0xf4280502u, 0x20000010u, 0xf09c8f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    0xf4280502u, 0x20000010u, 0xf09c8f08u, 0x00450000u, 0xd8340000u, 0x00000100u, 0xbf810000u};
 
 std::uint64_t Address(const void* pointer) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
@@ -103,8 +103,8 @@ struct Captured {
 
 Captured Capture(std::byte* table) {
     using namespace ShaderRecompiler;
-    static const std::array<std::uint32_t, 6> capabilities{29u, 5302u, 1u, 11u, 5347u, 4448u};
-    static const std::array<std::string_view, 3> extensions{"SPV_EXT_descriptor_indexing", "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    static const std::array<std::uint32_t, 3> capabilities{29u, 5302u, 1u};
+    static const std::array<std::string_view, 1> extensions{"SPV_EXT_descriptor_indexing"};
     const auto srtAddress = Address(Srt.data());
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     RecompileRequest request{};
@@ -112,7 +112,7 @@ Captured Capture(std::byte* table) {
     request.context.waveSize = 64;
     request.context.userDataBaseRegister = 0;
     request.context.userData = userData;
-    request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 64u, {false, false, false}, false, 1u};
     request.target.vulkanVersion = 0x00401000u;
     request.target.spirvVersion = 0x00010300u;
     request.target.subgroupSize = 32;
