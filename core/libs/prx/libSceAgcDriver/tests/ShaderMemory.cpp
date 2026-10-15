@@ -5643,15 +5643,59 @@ void runImageTableBench() {
     const auto request = TableRequest(TableWholeCode, userData);
     const auto draw = setting("BENCH_DRAW", 0) != 0u;
     const auto miss = setting("BENCH_MISS", 0) != 0u;
+    const auto insert = setting("BENCH_INSERT", 0) != 0u;
+    const auto noReserve = setting("BENCH_NO_RESERVE", 0) != 0u;
     const auto recompile = draw || miss || setting("BENCH_RECOMPILE", 0) != 0u;
     std::vector<std::array<std::uint32_t, 4>> outputs(miss ? captures : 0u);
     std::size_t capturedWords = 0;
     std::size_t recentWords = 0;
+    struct BenchVariant {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+        std::vector<std::uint32_t> words;
+        std::vector<AgcDriver::SharedWords> shared;
+    };
+    BenchVariant keptVariant;
+    std::vector<double> buildMicros, identityMicros, wordMicros;
+    std::size_t identityWords = 0, sharedEntries = 0, sameCount = 0, disagreements = 0;
+    const auto insertVariant = [&](AgcDriver::ShaderMemory& memory) {
+        const auto supplied = memory.SuppliedBlocks();
+        const auto recent = memory.TakeRecentRegions();
+        const auto started = std::chrono::steady_clock::now();
+        BenchVariant variant;
+        if (!noReserve) {
+            std::size_t total = 0;
+            for (const auto& region : recent) total += region.bytes.size() / sizeof(std::uint32_t);
+            variant.runs.reserve(recent.size());
+            variant.words.reserve(total);
+        }
+        for (const auto& region : recent) {
+            variant.runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
+            const auto offset = variant.words.size();
+            variant.words.resize(offset + region.bytes.size() / sizeof(std::uint32_t));
+            std::memcpy(variant.words.data() + offset, region.bytes.data(), region.bytes.size());
+            AgcDriver::AppendSharedWords(variant.shared, offset, region.bytes, supplied);
+        }
+        const auto built = std::chrono::steady_clock::now();
+        std::size_t compared = 0;
+        const bool identity = keptVariant.runs == variant.runs && AgcDriver::SameCapturedWords(keptVariant.words, keptVariant.shared, variant.words, variant.shared, &compared);
+        const auto identityDone = std::chrono::steady_clock::now();
+        const bool plain = keptVariant.runs == variant.runs && keptVariant.words == variant.words;
+        const auto plainDone = std::chrono::steady_clock::now();
+        buildMicros.push_back(std::chrono::duration<double, std::micro>(built - started).count());
+        identityMicros.push_back(std::chrono::duration<double, std::micro>(identityDone - built).count());
+        wordMicros.push_back(std::chrono::duration<double, std::micro>(plainDone - identityDone).count());
+        identityWords = compared;
+        sharedEntries = variant.shared.size();
+        sameCount += identity ? 1u : 0u;
+        disagreements += identity != plain ? 1u : 0u;
+        keptVariant = std::move(variant);
+    };
     const auto capture = [&] {
         AgcDriver::ShaderMemory memory({});
         const auto captured = memory.Capture(request);
         recentWords = 0;
-        if (draw) {
+        if (insert) insertVariant(memory);
+        else if (draw) {
             for (const auto& region : memory.TakeRecentRegions()) recentWords += region.bytes.size() / sizeof(std::uint32_t);
         }
         const auto regions = memory.Regions();
@@ -5665,6 +5709,11 @@ void runImageTableBench() {
         return captured->snapshot.tables.tables.at(0).keys;
     };
     const auto keys = capture();
+    buildMicros.clear();
+    identityMicros.clear();
+    wordMicros.clear();
+    sameCount = 0;
+    disagreements = 0;
     const auto reuseBefore = ResourceMaterializer::TableReuse();
     std::vector<double> micros;
     for (std::size_t index = 0; index < captures; index++) {
@@ -5685,6 +5734,13 @@ void runImageTableBench() {
     double total = 0;
     for (const auto value : micros) total += value;
     std::printf("IMAGETABLEBENCH %u records (%u distinct, %s%s%s), %u keys, %zu captures, write every %zu: median %.1f us, mean %.1f, min %.1f, max %.1f per capture; %zu words captured (%zu recent), %.0f read per capture; reused %llu unwritten, %llu compared\n", records, distinct, unwatched ? "unwatched" : "watched", draw ? ", draw: recent regions, regions, recompile" : recompile ? ", recompile" : "", miss ? ", another output buffer per capture" : "", keys, captures, writeEvery, micros[micros.size() / 2], total / static_cast<double>(micros.size()), micros.front(), micros.back(), capturedWords, recentWords, static_cast<double>(reuseAfter.wordsRead - reuseBefore.wordsRead) / static_cast<double>(captures), static_cast<unsigned long long>(reuseAfter.unwritten - reuseBefore.unwritten), static_cast<unsigned long long>(reuseAfter.compared - reuseBefore.compared));
+    if (insert) {
+        const auto median = [](std::vector<double> values) {
+            std::sort(values.begin(), values.end());
+            return values[values.size() / 2];
+        };
+        std::printf("IMAGETABLEINSERT per capture: variant build median %.2f us%s; compare with the previous capture: identity median %.3f us over %zu words (%zu shared entries), word by word median %.2f us over %zu words; %zu of %zu matched, %zu disagreements\n", median(buildMicros), noReserve ? " (growing per region)" : " (reserved)", median(identityMicros), identityWords, sharedEntries, median(wordMicros), keptVariant.words.size(), sameCount, identityMicros.size(), disagreements);
+    }
 }
 
 int main(int argc, char** argv) {
