@@ -5,15 +5,18 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 
 extern "C" void CallTraceEnter_nid_no_patch();
@@ -89,6 +92,21 @@ void* WriteThunk(const ImportRecord& record) {
     return g_executable + offset;
 }
 
+void ReportCountsEveryMinute() {
+    std::thread([] {
+        for (;;) {
+            Sleep(60000);
+            CallTraceCount counts[32];
+            std::uint64_t total = 0;
+            const std::size_t counted = CopyCallCounts_nid_no_patch(counts, std::size(counts), &total);
+            if (counted == 0) continue;
+            std::fprintf(stderr, "[calls] most called traced imports (%llu calls in total):\n", static_cast<unsigned long long>(total));
+            for (std::size_t index = 0; index < counted; ++index) std::fprintf(stderr, "[calls]   %12llu %s %s\n", static_cast<unsigned long long>(counts[index].calls), counts[index].library, counts[index].name);
+            std::fflush(stderr);
+        }
+    }).detach();
+}
+
 }
 
 static_assert(offsetof(ImportRecord, target) == 0);
@@ -112,6 +130,7 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
     if (g_ring == nullptr) {
         MapThunkArea();
         g_ring = std::make_unique<RingSlot[]>(RingCapacity);
+        ReportCountsEveryMinute();
     }
     if (const auto existing = g_thunkByTarget.find(target); existing != g_thunkByTarget.end()) return existing->second;
     g_records.emplace_back(target, name, library);
