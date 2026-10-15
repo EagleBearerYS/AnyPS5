@@ -115,7 +115,7 @@ void Draw(Commands& commands, std::span<const std::uint32_t> userData) {
 }
 
 void Label(Commands& commands, std::uint64_t address, std::uint32_t value) {
-    commands.Append(0x49u, {0x514u, (1u << 29u) | (2u << 24u), Low(address), High(address), value, 0u, 0u});
+    commands.Append(0x49u, {0x514u, (1u << 29u), Low(address), High(address), value, 0u, 0u});
 }
 
 void Submit(Commands& commands) {
