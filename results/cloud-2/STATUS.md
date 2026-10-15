@@ -1,4 +1,3 @@
-BUSY BF-012
-since: 2026-10-15T12:27:04Z (BF-012)
-claimed: tasks/claimed/BF-012.md
-previous: GAC-025 done 2026-10-15T12:26:16Z, results/cloud-2/GAC-025.md
+READY
+since: 2026-10-15T13:08:11Z
+previous: BF-012 done 2026-10-15T13:08:11Z, results/cloud-2/BF-012.md (measured; O(1) proof not built, a design decision for the Project Manager)
