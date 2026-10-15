@@ -48,6 +48,8 @@
 namespace AgcDriver::Graphics {
 namespace {
 
+std::atomic<std::uint64_t> stagedWriteBuilds{0};
+
 bool overlap(std::uint64_t first, std::size_t firstSize, std::uint64_t second, std::size_t secondSize) {
     return first < second + secondSize && second < first + firstSize;
 }
@@ -1142,6 +1144,7 @@ bool UsesAddressTables(const CompiledShader& compute) {
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, bool deferred, std::uint64_t dispatchThreads) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), deferredCompute(compute) {
     Require(compute.stage == ShaderRecompiler::ShaderStage::Compute, "compute resources require a compute shader");
+    computeBuild = true;
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (!deferred) {
         prepareAddressBindings(shaders);
@@ -1772,7 +1775,8 @@ void ShaderResources::buildComplete() {
                     residency->BeforeWritingDispatch(grants, pageTableStores);
                 }
             }
-            bda = std::make_unique<BdaResources>(context, guestMemory);
+            const auto staged = computeBuild && pageTableStores && !storesUnbounded && !storeRanges.empty() ? planWriteStaging() : std::vector<ShaderRecompiler::BdaAbi::Range>{};
+            bda = std::make_unique<BdaResources>(context, guestMemory, staged);
         } else if (usesFaultBuffer) {
             bda = std::make_unique<BdaResources>(context);
         }
@@ -4167,6 +4171,64 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         for (const auto& [begin, end] : storeRanges) recorder.NotePendingWrite(begin, static_cast<std::size_t>(end - begin));
     }
     guestMemory.MarkDirectWrites();
+}
+
+std::vector<ShaderRecompiler::BdaAbi::Range> ShaderResources::planWriteStaging() {
+    constexpr VkDeviceSize minimum = 256u * 1024u;
+    constexpr VkDeviceSize maximum = 64u * 1024u * 1024u;
+    auto merged = storeRanges;
+    std::sort(merged.begin(), merged.end());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unions;
+    for (const auto& range : merged) {
+        if (!unions.empty() && range.first <= unions.back().second) unions.back().second = std::max(unions.back().second, range.second);
+        else unions.push_back(range);
+    }
+    std::vector<GuestBufferMemory::ImportSegment> segments;
+    VkDeviceSize total = 0;
+    for (const auto& [begin, end] : unions) {
+        for (const auto& segment : guestMemory.WritableImportSegments(begin, end)) {
+            total += segment.end - segment.begin;
+            segments.push_back(segment);
+        }
+    }
+    if (total < minimum || total > maximum) return {};
+    std::vector<VkDeviceSize> offsets;
+    VkDeviceSize cursor = 0;
+    for (const auto& segment : segments) {
+        cursor = (cursor + 255u) / 256u * 256u + (segment.begin & 255u);
+        offsets.push_back(cursor);
+        cursor += segment.end - segment.begin;
+    }
+    staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(cursor), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    std::vector<ShaderRecompiler::BdaAbi::Range> overrides;
+    overrides.reserve(segments.size());
+    for (std::size_t index = 0; index < segments.size(); ++index) overrides.push_back({segments[index].begin, segments[index].end, staging->DeviceAddress() + offsets[index], ShaderRecompiler::BdaAbi::Read | ShaderRecompiler::BdaAbi::Write, 0u});
+    stagedSegments = std::move(segments);
+    stagedOffsets = std::move(offsets);
+    stagedWriteBuilds.fetch_add(1, std::memory_order_relaxed);
+    return overrides;
+}
+
+void ShaderResources::RecordStagingIn(VkCommandBuffer commands) const {
+    const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
+    for (std::size_t index = 0; index < stagedSegments.size(); ++index) {
+        const auto& segment = stagedSegments[index];
+        const VkBufferCopy region{segment.offset, stagedOffsets[index], segment.end - segment.begin};
+        copy(commands, segment.buffer, staging->Handle(), 1, &region);
+    }
+}
+
+void ShaderResources::RecordStagingOut(VkCommandBuffer commands) const {
+    const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
+    for (std::size_t index = 0; index < stagedSegments.size(); ++index) {
+        const auto& segment = stagedSegments[index];
+        const VkBufferCopy region{stagedOffsets[index], segment.offset, segment.end - segment.begin};
+        copy(commands, staging->Handle(), segment.buffer, 1, &region);
+    }
+}
+
+std::uint64_t StagedWriteBuilds() {
+    return stagedWriteBuilds.load(std::memory_order_relaxed);
 }
 
 void ShaderResources::CheckFaults() const {

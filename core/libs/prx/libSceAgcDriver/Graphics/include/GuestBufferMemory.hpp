@@ -177,6 +177,14 @@ public:
     std::vector<ShaderRecompiler::BdaAbi::Grant> WriteGrants() const;
     std::vector<ShaderRecompiler::BdaAbi::Range> OwnRanges() const;
     std::shared_ptr<const BdaPageTable> PageTable(const Context& context) const;
+    struct ImportSegment {
+        std::uint64_t begin;
+        std::uint64_t end;
+        VkBuffer buffer;
+        VkDeviceSize offset;
+    };
+    std::vector<ImportSegment> WritableImportSegments(std::uint64_t begin, std::uint64_t end) const;
+    std::shared_ptr<const BdaPageTable> PageTableWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const;
     struct AddressSpace;
     void Release();
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const;

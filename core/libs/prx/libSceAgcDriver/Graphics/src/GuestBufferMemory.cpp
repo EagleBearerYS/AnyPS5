@@ -2067,6 +2067,64 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& 
     return mapped.empty() ? nullptr : BdaPageTable::Build(context, WithResidentPages(mapped));
 }
 
+std::vector<GuestBufferMemory::ImportSegment> GuestBufferMemory::WritableImportSegments(std::uint64_t begin, std::uint64_t end) const {
+    Require(uploaded && !committed, "guest GPU address ranges are not available");
+    std::vector<ImportSegment> found;
+    const auto add = [&](const Region& region) {
+        if (region.direct == nullptr || !region.writable || region.end <= begin || end <= region.begin) return;
+        const auto low = std::max(begin, region.begin);
+        const auto high = std::min(end, region.end);
+        found.push_back({low, high, region.direct->buffer, low - region.direct->base});
+    };
+    if (space != nullptr) {
+        for (const auto& region : space->base) add(region);
+    }
+    for (const auto& region : regions) add(region);
+    std::sort(found.begin(), found.end(), [](const ImportSegment& left, const ImportSegment& right) { return left.begin < right.begin; });
+    std::vector<ImportSegment> segments;
+    for (const auto& segment : found) {
+        if (!segments.empty() && segment.begin < segments.back().end) continue;
+        segments.push_back(segment);
+    }
+    return segments;
+}
+
+std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTableWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const {
+    Require(uploaded && !committed, "guest GPU address ranges are not available");
+    std::vector<ShaderRecompiler::BdaAbi::Range> mapped;
+    if (space != nullptr) {
+        mapped.assign(space->ranges.begin(), space->ranges.end());
+    } else {
+        for (const auto& region : regions) mapped.push_back(addressRange(region));
+    }
+    const auto resident = WithResidentPages(mapped);
+    std::vector<ShaderRecompiler::BdaAbi::Range> spliced;
+    spliced.reserve(resident.size() + 2u * overrides.size());
+    for (const auto& range : resident) {
+        auto cursor = range.begin;
+        for (const auto& cut : overrides) {
+            if (cut.end <= cursor || cut.begin >= range.end) continue;
+            if (cut.begin > cursor) {
+                auto part = range;
+                part.begin = cursor;
+                part.end = cut.begin;
+                part.deviceAddress = range.deviceAddress + (cursor - range.begin);
+                spliced.push_back(part);
+            }
+            cursor = std::max(cursor, std::min(cut.end, range.end));
+        }
+        if (cursor < range.end) {
+            auto part = range;
+            part.begin = cursor;
+            part.deviceAddress = range.deviceAddress + (cursor - range.begin);
+            spliced.push_back(part);
+        }
+    }
+    spliced.insert(spliced.end(), overrides.begin(), overrides.end());
+    std::sort(spliced.begin(), spliced.end(), [](const auto& left, const auto& right) { return left.begin < right.begin; });
+    return spliced.empty() ? nullptr : BdaPageTable::Build(context, spliced);
+}
+
 void GuestBufferMemory::MarkDirectWrites() const {
     for (const auto& [begin, end] : writes) GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
 }

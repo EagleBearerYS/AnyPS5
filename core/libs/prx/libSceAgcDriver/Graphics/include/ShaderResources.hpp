@@ -112,6 +112,7 @@ struct ImageTableReuseCounts {
     std::uint64_t resolved = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
+std::uint64_t StagedWriteBuilds();
 
 struct DeviceTableView {
     ShaderRecompiler::DescriptorImageShape shape = ShaderRecompiler::DescriptorImageShape::Image2D;
@@ -238,6 +239,9 @@ public:
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }
     bool ChecksFaults() const { return bda != nullptr; }
     void CheckFaults() const;
+    bool StagesWrites() const { return staging != nullptr; }
+    void RecordStagingIn(VkCommandBuffer commands) const;
+    void RecordStagingOut(VkCommandBuffer commands) const;
     // `shaders` are the stages the object was built from, in build order (a recorded draw's vertex
     // and fragment stages, or one compute stage): their bindings are walked like the build did.
     // How a Revalidate proved (or refused) the object, for the [recipe] line: the proof path taken
@@ -500,7 +504,12 @@ private:
     bool usesBda = false;
     bool pageTableStores = false;
     bool storesUnbounded = false;
+    bool computeBuild = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> storeRanges;
+    std::vector<GuestBufferMemory::ImportSegment> stagedSegments;
+    std::vector<VkDeviceSize> stagedOffsets;
+    std::shared_ptr<Buffer> staging;
+    std::vector<ShaderRecompiler::BdaAbi::Range> planWriteStaging();
     bool usesFaultBuffer = false;
     bool faultChecks = false;
     bool deviceImages = false;

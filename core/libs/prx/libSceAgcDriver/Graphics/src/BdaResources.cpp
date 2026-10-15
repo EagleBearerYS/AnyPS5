@@ -24,9 +24,9 @@ BdaResources::BdaResources(const Context& context) : deviceImages(context.device
     std::memset(fault->Bytes().data(), 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
 }
 
-BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory) : BdaResources(context) {
+BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) : BdaResources(context) {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    pages = memory.PageTable(context);
+    pages = overrides.empty() ? memory.PageTable(context) : memory.PageTableWith(context, overrides);
     ownRanges = memory.OwnRanges();
     writeGrants = memory.WriteGrants();
     Require(ownRanges.size() <= std::numeric_limits<std::uint32_t>::max() && writeGrants.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
