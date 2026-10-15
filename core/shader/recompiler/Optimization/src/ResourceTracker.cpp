@@ -1500,7 +1500,11 @@ private:
                 const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
                 const IrValue* soffset = !scalar && inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
                 const bool immediate = scalar || (soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32);
-                const BufferStoreSite site{InternSource(descriptor), soffset != nullptr && immediate ? soffset->ImmediateU32() : 0u, !immediate, scalar};
+                const IrValue* voffset = !scalar && inst.ArgumentCount() > 2u ? inst.Argument(2u)->Resolve() : nullptr;
+                const bool fixedOffset = voffset != nullptr && voffset->HasImmediate() && voffset->Type() == IrType::U32;
+                BufferStoreSite site{InternSource(descriptor), soffset != nullptr && immediate ? soffset->ImmediateU32() : 0u, !immediate, scalar};
+                site.offset = fixedOffset ? voffset->ImmediateU32() + memory.offset : 0u;
+                site.dynamicOffset = !fixedOffset;
                 if (std::ranges::find(sites, site) == sites.end()) sites.push_back(site);
             } else {
                 (store ? m_info.unboundedStores : m_info.unboundedLoads) = true;

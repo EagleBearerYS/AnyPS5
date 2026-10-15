@@ -511,9 +511,11 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const D
     if (stride != 0u && (word1 >> 31u) != 0u) return std::nullopt;
     const auto mode = (word3 >> 28u) & 3u;
     if (mode == 3u) return std::pair<std::uint64_t, std::uint64_t>{base, base + records};
-    if (mode != 0u || site.dynamicSoffset) return std::nullopt;
-    if (stride == 0u) return none;
-    return std::pair<std::uint64_t, std::uint64_t>{base, base + static_cast<std::uint64_t>(records) * stride + site.soffset + 16u};
+    if (site.dynamicSoffset || (mode != 0u && (mode != 1u || site.dynamicOffset))) return std::nullopt;
+    if (mode == 0u && stride == 0u) return none;
+    constexpr std::uint64_t wrap = std::uint64_t{1} << 32u;
+    const auto reach = mode == 0u ? static_cast<std::uint64_t>(records) * stride : static_cast<std::uint64_t>(records - 1u) * stride + site.offset;
+    return std::pair<std::uint64_t, std::uint64_t>{base, base + std::min(reach + site.soffset + 16u, wrap)};
 }
 
 bool DeclaresSpecializationId(std::span<const std::uint32_t> words, std::uint32_t id) {
