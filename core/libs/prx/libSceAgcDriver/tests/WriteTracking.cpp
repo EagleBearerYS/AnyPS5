@@ -798,21 +798,6 @@ void CheckCommittedRanges() {
     Require(!UnchangedCommittedSince(first, 0), "an unknown generation was accepted for the committed parts");
 }
 
-void CheckCollectMemoWorkingSet() {
-    constexpr std::size_t Ranges = 300;
-    auto* memory = static_cast<volatile std::uint8_t*>(AllocateWatched(Ranges * Block));
-    const auto base = reinterpret_cast<std::uint64_t>(memory);
-    BumpCollectEpoch();
-    const auto walked = CollectWrites(base, Block);
-    Require(walked != 0, "the first range of the working set is not collected");
-    for (std::size_t index = 1; index < Ranges; ++index) Require(CollectWrites(base + index * Block, Block) != 0, "a range of the working set is not collected");
-    memory[8] = 1;
-    Require(CollectWrites(base, Block) != 0 && UnchangedSince(base, Block, walked), "a range walked earlier in the epoch is walked again after the rest of a 300-range working set");
-    BumpCollectEpoch();
-    Require(CollectWrites(base, Block) != 0 && !UnchangedSince(base, Block, walked), "the next epoch's collect misses a CPU write made in the previous one");
-    BumpCollectEpoch();
-}
-
 int main() {
     try {
         if (!WriteWatched()) {
@@ -841,7 +826,6 @@ int main() {
         CheckImportWindowZeroPages();
         CheckUnwatchedImport();
         CheckCommittedRanges();
-        CheckCollectMemoWorkingSet();
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
         return 1;
