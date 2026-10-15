@@ -179,7 +179,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, bool watched) {
     LoadArray(device, texels);
     RequireOutput(0x22222222u, "the second load through the one-slice array");
     if (watched && AgcDriver::GuestMemory::Watched(surface, SurfaceBytes)) {
-        Require(StorageTexture::FindPending(surface, SurfaceBytes) == written, "the array image's refresh wrote the 2D image's results back instead of taking them on the device");
+        Require(StorageTexture::FindPending(surface, SurfaceBytes) == nullptr, "a load through the page table ran before the 2D image's pending results were written back");
     } else {
         std::puts("the imported block is compared, not watched: taking the results on the device is not checked");
     }

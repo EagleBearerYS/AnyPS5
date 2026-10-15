@@ -181,7 +181,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     StoreSlice(device, texels, 3);
     Require(StorageTexture::FindPending(surface, SurfaceBytes) == image, "a store through slice 3 used another image than the store through slice 2");
     for (std::uint32_t slice = 0; slice < Slices; ++slice) RequireSlice(device, texels, slice, Values[slice], "the array view after a store through each slice");
-    Require(StorageTexture::FindPending(surface, SurfaceBytes) == image, "the load through the array wrote the slices' results back instead of reading them in place");
+    Require(StorageTexture::FindPending(surface, SurfaceBytes) == nullptr, "a load through the page table ran before the slices' pending results were written back");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
     for (std::uint32_t slice = 0; slice < Slices; ++slice) {

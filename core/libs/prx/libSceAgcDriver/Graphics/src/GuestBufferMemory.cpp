@@ -1773,6 +1773,7 @@ void GuestBufferMemory::AcquireRegistered() {
         {
             auto& state = Imports();
             std::lock_guard lock(state.mutex);
+            if (state.epoch != importsEpoch && std::all_of(regions.begin(), regions.end(), [&](const Region& region) { return region.direct == nullptr || findImport(state, region.begin, region.end) == region.direct; })) importsEpoch = state.epoch;
             if (state.epoch != importsEpoch) {
                 publish = false;
                 spaces.unpublished.fetch_add(1, std::memory_order_relaxed);
