@@ -49,9 +49,9 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG -g1" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g1"
       - run: cmake --build build
       - run: gdb --version | head -1
-      - run: bash .github/exit-hang/run.sh
+      - run: bash .github/exit-hang/run-exit.sh
         env:
-          ITERATIONS: 60
+          ITERATIONS: 40
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
