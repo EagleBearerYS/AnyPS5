@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -28,7 +29,7 @@ alignas(256) constexpr std::array<std::uint32_t, 69> Code{
     0xbf880003u, 0x7e000204u, 0xe0102000u, 0x80000002u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 4> Pattern{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
 constexpr std::uint32_t Untouched = 0xcafebabeu;
-alignas(256) std::array<std::uint32_t, 1028> Output{};
+TestGuest::Array<std::uint32_t, 1028> Output;
 
 std::vector<std::uint32_t> UserData(void* output, std::uint32_t records, std::uint32_t count, std::uint32_t period, std::uint32_t format = 0x00014004u) {
     const auto address = reinterpret_cast<std::uintptr_t>(output);

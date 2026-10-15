@@ -17,10 +17,10 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Extent = 64u;
 TestGuest::Array<std::byte, Extent * Extent * 4u> pixels;
 TestGuest::Array<std::uint32_t, 16> output;
-alignas(256) constexpr std::array<std::array<float, 4>, 6> positions{{
+const TestGuest::Array<std::array<float, 4>, 6> positions{
     {0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f},
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 
 constexpr std::array<std::uint32_t, 11> relativeVertexCode{
     0xbefc0385u, 0x7e028700u, 0xbefc0388u, 0x7e008700u, 0x4a000300u,

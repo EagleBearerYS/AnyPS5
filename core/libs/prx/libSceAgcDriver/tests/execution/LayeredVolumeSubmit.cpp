@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -70,7 +71,7 @@ struct Vertex {
     std::uint32_t layer;
 };
 
-alignas(256) std::array<Vertex, 6 * Layers> Vertices{};
+TestGuest::Array<Vertex, 6 * Layers> Vertices;
 
 struct RegisteredShader {
     Shader shader;

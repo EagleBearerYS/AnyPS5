@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -18,7 +19,7 @@ using AgcDriver::DriverDetail::MatchZeroDwordFill;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> Code{0xd7460000u, 0x04010c04u, 0x7e020280u, 0xe0102000u, 0x80000100u, 0xbf810000u};
 constexpr std::uint32_t Untouched = 0xcafebabeu;
-alignas(256) std::array<std::uint32_t, 1028> Output{};
+TestGuest::Array<std::uint32_t, 1028> Output;
 
 std::vector<std::uint32_t> UserData(void* output, std::uint32_t records, std::uint32_t stride = 4, std::uint32_t format = 0x00014204u) {
     const auto address = reinterpret_cast<std::uintptr_t>(output);

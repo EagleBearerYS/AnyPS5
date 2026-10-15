@@ -19,7 +19,7 @@ using AgcDriver::Graphics::Require;
 constexpr std::uint32_t Extent = 16;
 TestGuest::Array<std::uint32_t, Extent * Extent * 4> pixels;
 TestGuest::Array<std::uint32_t, Extent * Extent * 4> otherPixels;
-constexpr std::array<std::array<float, 4>, 3> positions{{{-1, -1, 0, 1}, {3, -1, 0, 1}, {-1, 3, 0, 1}}};
+const TestGuest::Array<std::array<float, 4>, 3> positions{{-1, -1, 0, 1}, {3, -1, 0, 1}, {-1, 3, 0, 1}};
 constexpr std::array<std::uint32_t, 6> vertexCode{0xe0382000u, 0x80000005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 
 void Run(AgcDriver::VulkanDevice& device, bool integer) {

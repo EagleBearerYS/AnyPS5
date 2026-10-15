@@ -29,7 +29,7 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t DemoteToHelperInvocation = 5379;
 TestGuest::Array<std::byte, Width * Height * 4> Pixels;
 TestGuest::Array<std::byte, 256u * 1024u> Texels;
-alignas(256) std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
+const TestGuest::Array<std::array<float, 4>, 3> Triangle{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,

@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -13,8 +14,8 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 4> texels{};
-alignas(256) std::array<std::array<std::uint32_t, 64>, 4> outputs{};
+TestGuest::Array<std::array<std::uint32_t, 64>, 4> texels;
+TestGuest::Array<std::array<std::uint32_t, 64>, 4> outputs;
 constexpr std::array<std::uint32_t, 8> code{0x7e3c0300u, 0x7e3e0280u, 0xf0001108u, 0x00010a1eu, 0x34060082u, 0xe0701000u, 0x80000a03u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 10> storeCode{0x7e3c0300u, 0x7e3e0280u, 0x7e1402ffu, 123u, 0xf0201108u, 0x00010a1eu, 0x34060082u, 0xe0701000u, 0x80000a03u, 0xbf810000u};
 

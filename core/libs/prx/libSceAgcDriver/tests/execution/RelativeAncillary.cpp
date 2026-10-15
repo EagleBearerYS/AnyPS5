@@ -16,10 +16,10 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Extent = 64u;
 TestGuest::Array<std::byte, Extent * Extent * 4u> pixels;
-alignas(256) constexpr std::array<std::array<float, 4>, 6> positions{{
+const TestGuest::Array<std::array<float, 4>, 6> positions{
     {0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f},
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 constexpr std::array<std::uint32_t, 6> vertexCode{
     0xe0382000u, 0x80000005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u
 };

@@ -83,8 +83,8 @@ std::uint32_t Pack(std::uint32_t low, std::uint32_t high) {
     return low | (high << 16u);
 }
 
-std::vector<Vertex> Triangles() {
-    std::vector<Vertex> vertices;
+TestGuest::Vector<Vertex> Triangles() {
+    TestGuest::Vector<Vertex> vertices;
     constexpr std::uint32_t columns = 6;
     constexpr std::uint32_t rows = 4;
     for (std::uint32_t cell = 0; cell < columns * rows; ++cell) {

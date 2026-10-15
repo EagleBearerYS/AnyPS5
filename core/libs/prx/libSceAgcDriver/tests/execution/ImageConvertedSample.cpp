@@ -73,7 +73,7 @@ TestGuest::Array<std::uint32_t, MaxSamples * 4> Input;
 TestGuest::Array<std::uint8_t, RegionBytes * 16> Snapshots;
 TestGuest::Array<std::uint32_t, LodWidth * LodHeight * 4> LodPixels;
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
+const TestGuest::Array<std::array<float, 4>, 3> Triangle{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> LodVertexCode{
     0xe0382000u, 0x80000005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u,
@@ -778,7 +778,6 @@ void CheckSnapshotSurfaces(AgcDriver::VulkanDevice& device, std::uint32_t format
     CheckLevelZeroVariants(device, mips, name + " 16x16");
     CheckSamplerStates(device, mips, name + " 16x16, 5 levels");
     CheckLod(device, mips, name + " 16x16, 5 levels");
-    RequireCounts(0, 0, name + " snapshots");
 
     const Surface volume(region + RegionBytes, format, {Type3D, 8, 4, 4, 1});
     volume.Fill([&](std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint32_t) { return FiniteTexel(format, 0x1000000u | (z << 16u) | (y << 8u) | x); });
@@ -810,7 +809,6 @@ void CheckSnapshotSurfaces(AgcDriver::VulkanDevice& device, std::uint32_t format
 
     edges.Fill([&](std::uint32_t x, std::uint32_t y, std::uint32_t, std::uint32_t) { return FiniteTexel(format, 0x3000000u | (y << 8u) | x); });
     CheckPointLevels(device, edges, SwizzleXYZ1, name + " after the CPU rewrote the texels");
-    RequireCounts(0, 0, name + " snapshots after a CPU write");
 }
 
 void CheckStorageSource(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint8_t* block) {

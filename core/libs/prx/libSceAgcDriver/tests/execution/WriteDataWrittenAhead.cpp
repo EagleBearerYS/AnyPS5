@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -17,11 +18,11 @@ void Require(bool condition, const std::string& message) {
 
 alignas(256) std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000281u, 0xe0c80000u, 0x80020000u, 0xbf810000u};
 
-alignas(256) std::array<std::uint32_t, 4> First{};
-alignas(256) std::array<std::uint32_t, 4> Stale{};
-alignas(256) std::array<std::uint32_t, 4> Fresh{};
-alignas(256) std::array<std::uint32_t, 4> FirstDescriptor{};
-alignas(256) std::array<std::uint32_t, 4> SecondDescriptor{};
+TestGuest::Array<std::uint32_t, 4> First;
+TestGuest::Array<std::uint32_t, 4> Stale;
+TestGuest::Array<std::uint32_t, 4> Fresh;
+TestGuest::Array<std::uint32_t, 4> FirstDescriptor;
+TestGuest::Array<std::uint32_t, 4> SecondDescriptor;
 alignas(256) volatile std::uint32_t Gate = 1;
 alignas(256) volatile std::uint32_t Done = 0;
 

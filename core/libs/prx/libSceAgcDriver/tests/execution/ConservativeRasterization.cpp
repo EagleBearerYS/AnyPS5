@@ -47,7 +47,7 @@ const std::set<Pixel> AreasTouched{
     {5, 5}, {8, 8}, {9, 8},
 };
 
-alignas(256) std::array<std::array<float, 4>, Corners.size()> Vertices{};
+TestGuest::Array<std::array<float, 4>, Corners.size()> Vertices;
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);

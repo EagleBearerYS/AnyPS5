@@ -1,3 +1,4 @@
+#include "execution/GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
 #include "execution/VulkanTestDevice.hpp"
@@ -21,7 +22,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Width = 192;
 constexpr std::uint32_t Height = 128;
 constexpr std::array<std::uint8_t, 4> Background{16, 24, 40, 255};
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
 
 alignas(256) constexpr std::array<std::uint32_t, 104> GeometryCode{
     0x8f6a9003, 0x94fe6ac1, 0xbf88000b, 0xd7650006, 0x000100c1, 0xd7660006, 0x00020cc1, 0x93ebff03,
@@ -85,20 +86,20 @@ std::size_t CellPixel(std::uint32_t triangle) {
     return (static_cast<std::size_t>(y) * Width + x) * 4u;
 }
 
-alignas(256) std::array<Vertex, 3 * Triangles> Scrambled{};
-alignas(256) std::array<std::uint16_t, 3 * Triangles> Indices{};
-alignas(256) std::array<Vertex, 3 * Triangles> Ordered{};
-alignas(256) std::array<Vertex, 2 * Columns + 2> Strip{};
+TestGuest::Array<Vertex, 3 * Triangles> Scrambled;
+TestGuest::Array<std::uint16_t, 3 * Triangles> Indices;
+TestGuest::Array<Vertex, 3 * Triangles> Ordered;
+TestGuest::Array<Vertex, 2 * Columns + 2> Strip;
 
 constexpr std::uint32_t FanRim = 8;
 constexpr float FanStep = 6.28318530718f / FanRim;
-alignas(256) std::array<Vertex, FanRim + 1> Fan{};
-alignas(256) std::array<Vertex, FanRim + 1> FanScrambled{};
-alignas(256) std::array<std::uint16_t, FanRim + 1> FanIndices{};
-alignas(256) std::array<std::uint16_t, FanRim + 1> FanRestart{};
-alignas(256) std::array<Vertex, 4 * Columns> Quads{};
-alignas(256) std::array<std::uint16_t, 5 * Columns> QuadStrips{};
-alignas(256) std::array<std::uint32_t, 5 * Columns> QuadStrips32{};
+TestGuest::Array<Vertex, FanRim + 1> Fan;
+TestGuest::Array<Vertex, FanRim + 1> FanScrambled;
+TestGuest::Array<std::uint16_t, FanRim + 1> FanIndices;
+TestGuest::Array<std::uint16_t, FanRim + 1> FanRestart;
+TestGuest::Array<Vertex, 4 * Columns> Quads;
+TestGuest::Array<std::uint16_t, 5 * Columns> QuadStrips;
+TestGuest::Array<std::uint32_t, 5 * Columns> QuadStrips32;
 
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const void* vertices, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(vertices);
