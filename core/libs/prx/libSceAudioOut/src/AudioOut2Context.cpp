@@ -323,7 +323,7 @@ int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint3
     auto* context = FromHandle(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     std::lock_guard lock(context->lock);
-    const auto level = QueueLevel(*context, Clock::now());
+    const auto level = std::min(context->queueDepth, QueueLevel(*context, Clock::now()) + static_cast<std::uint32_t>(context->advancedGrains.size()));
     if (queue_level) *queue_level = level;
     if (available_queue) *available_queue = context->queueDepth - level;
     context->queueLevelPolls++;
