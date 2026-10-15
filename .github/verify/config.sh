@@ -1,0 +1,4 @@
+BASE=92e50418f33b8950ceea950cb37331a941f5be0e
+REPEAT=5
+EXTRA_TESTS='guest_kernel_stack_protect'
+NO_BEFORE=1
