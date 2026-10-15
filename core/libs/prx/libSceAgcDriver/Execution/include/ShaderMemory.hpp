@@ -15,6 +15,7 @@
 namespace ShaderRecompiler {
 struct SourceHandle;
 class PreparedShaderInvocation;
+struct SrtWriteStamp;
 }
 
 namespace AgcDriver {
@@ -88,6 +89,9 @@ private:
     static bool readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
     static bool accessible(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool pending(void* context, std::uint64_t address, std::uint64_t bytes);
+    static ShaderRecompiler::SrtWriteStamp stampWrites(void* context, std::uint64_t address, std::uint64_t bytes);
+    static bool unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
+    static bool supplyWords(void* context, std::uint64_t address, const std::uint32_t* values, std::uint64_t count);
     Page& page(std::uint64_t base);
     [[nodiscard]] bool overlapsInitial(std::uint64_t begin, std::uint64_t end) const;
 
