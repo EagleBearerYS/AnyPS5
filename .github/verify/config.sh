@@ -1,0 +1,4 @@
+BASE=fae2221c47c3547160720e4df92a048c0190da1d
+REPEAT=3
+EXTRA_TESTS='agc_draw_descriptors_verify'
+NO_BEFORE=1
