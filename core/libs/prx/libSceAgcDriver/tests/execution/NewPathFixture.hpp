@@ -217,6 +217,19 @@ public:
         words.insert(words.end(), {0xc0053c00u, 0x10u | function, Low(address), High(address), reference, mask, 0x19u});
     }
 
+    void Append(std::uint32_t opcode, std::span<const std::uint32_t> payload) {
+        Require(!payload.empty(), "new path fixture: a packet has no payload");
+        words.push_back(0xc0000000u | ((static_cast<std::uint32_t>(payload.size()) - 1u) << 16u) | (opcode << 8u));
+        words.insert(words.end(), payload.begin(), payload.end());
+    }
+
+    void Append(std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) { Append(opcode, std::span<const std::uint32_t>(payload.begin(), payload.size())); }
+
+    void Barrier() {
+        Append(0x46u, {0x407u});
+        Append(0x58u, {0u, 0xffffffffu, 0xffu, 0u, 0u, 10u, 0x4380u});
+    }
+
     void Submit(std::uint32_t queue) {
         Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
         AgcDriver::Submit(&packet, queue);
