@@ -1,4 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/RequestMemoryView.hpp"
@@ -28,11 +32,13 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <iostream>
 #include <map>
 #include <future>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <span>
 #include <string>
@@ -1190,6 +1196,183 @@ void verifyImageTableBulkReads() {
     const auto& cut = cutByRun->snapshot.tables.tables.at(0);
     require(cut.keys == 4u && (cut.codes[0] & Abi::PoisonFlag) == 0u && cut.codes[1] == unmapped && cut.codes[2] == unmapped && cut.codes[3] == unmapped, "image table bulk reads: a record crossing into an unmapped page was not Unmapped poison");
     require(cutByRun->snapshot.tables == cutByWord->snapshot.tables && cutWordReads.wordReads == 12u && cutRunReads.wordReads == 0u && cutRunReads.bulkWords == 12u, "image table bulk reads: a record cut by an unmapped page read other words in runs than word by word");
+}
+
+std::uint64_t pendingTableWord = 0;
+std::uint32_t pendingTableValue = 0;
+bool pendingTableKnown = false;
+
+AgcDriver::ShaderMemory::PendingWrite PendingTableWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte> known) {
+    using Pending = AgcDriver::ShaderMemory::PendingWrite;
+    if (pendingTableWord < address || pendingTableWord - address >= bytes) return Pending::None;
+    if (!pendingTableKnown) return Pending::Sync;
+    if (known.size() == sizeof(pendingTableValue)) std::memcpy(known.data(), &pendingTableValue, sizeof(pendingTableValue));
+    return Pending::KnownValue;
+}
+
+std::uint32_t* AllocateWatchedTable(std::size_t bytes) {
+    auto* heap = static_cast<std::uint32_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+    require(heap != nullptr, "table snapshot reuse: cannot allocate the table in the guest arena");
+    GuestArena::GuestArenaCommit_nid_postfix(heap, bytes, 0x04u, bytes);
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(heap, bytes);
+#endif
+    return heap;
+}
+
+void verifyTableSnapshotReuse() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    constexpr std::uint32_t Records = 4096;
+    constexpr std::size_t Bytes = Records * 32u;
+    const auto texture = [](std::uint32_t index) { return TableT(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x100000000ull + index * 256ull)), TableFormat8888UNorm, TableType2D, 1u + index % 5u); };
+    const auto fill = [&](std::uint32_t* table, std::uint32_t records) {
+        for (std::uint32_t record = 0; record < records; record++) {
+            const auto words = texture(record % 1024u);
+            std::copy(words.begin(), words.end(), table + static_cast<std::size_t>(record) * 8u);
+        }
+    };
+    struct Outcome {
+        ImageTableSnapshot tables;
+        bool covered = false;
+        ImageTableReuseCounts reuse;
+    };
+    const auto capture = [&](const RecompileRequest& request, const std::uint32_t* table, std::size_t bytes, AgcDriver::ShaderMemory::PendingWriteQuery pending) {
+        const auto before = ResourceMaterializer::TableReuse();
+        Outcome outcome;
+        AgcDriver::ShaderMemory memory({}, pending);
+        outcome.tables = memory.Capture(request)->snapshot.tables;
+        const auto regions = memory.Regions();
+        outcome.covered = TableCovered(regions, table, bytes) && std::all_of(regions.begin(), regions.end(), [&](const MemoryRegion& region) {
+            return region.guestAddress < reinterpret_cast<std::uintptr_t>(table) || region.guestAddress >= reinterpret_cast<std::uintptr_t>(table) + bytes || std::memcmp(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(region.guestAddress)), region.bytes.data(), region.bytes.size()) == 0;
+        });
+        const auto after = ResourceMaterializer::TableReuse();
+        outcome.reuse = {after.unwritten - before.unwritten, after.compared - before.compared, after.wordsRead - before.wordsRead};
+        return outcome;
+    };
+    const auto recordWords = [](const Outcome& outcome, std::uint32_t record) { return outcome.tables.words.at(outcome.tables.tables.at(0).codes.at(record)).dwords; };
+    const auto heldRecords = [&](const Outcome& outcome, const std::uint32_t* table, std::uint32_t records) {
+        for (std::uint32_t record = 0; record < records; record++) {
+            std::array<std::uint32_t, 8> words{};
+            std::copy_n(table + static_cast<std::size_t>(record) * 8u, 8u, words.begin());
+            if (recordWords(outcome, record) != words) return false;
+        }
+        return true;
+    };
+
+    auto* heap = AllocateWatchedTable(Bytes);
+    fill(heap, Records);
+    const auto address = reinterpret_cast<std::uintptr_t>(heap);
+    const bool watched = AgcDriver::GuestMemory::CollectWrites(address, Bytes) != 0;
+    alignas(4096) static TableGuest guest;
+    FillTableSrt(guest, heap, 32u, Records);
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableWholeCode, userData);
+    const auto expectUnwritten = [&](const Outcome& outcome, const std::string& what) {
+        require(heldRecords(outcome, heap, Records) && outcome.covered, ("table snapshot reuse: " + what + ": the snapshot or the captured words do not hold the table").c_str());
+        if (watched) require(outcome.reuse.unwritten == 1u && outcome.reuse.compared == 0u && outcome.reuse.wordsRead == 0u, ("table snapshot reuse: " + what + ": an unwritten table was read again").c_str());
+        else require(outcome.reuse.compared == 1u && outcome.reuse.wordsRead == Records * 8u, ("table snapshot reuse: " + what + ": an unchanged unwatched table was not compared and reused").c_str());
+    };
+    const auto expectReread = [&](const Outcome& outcome, const std::string& what) {
+        require(outcome.reuse.unwritten == 0u && outcome.reuse.wordsRead >= Records * 8u, ("table snapshot reuse: " + what + ": the table was not read again").c_str());
+    };
+
+    const auto fresh = capture(request, heap, Bytes, nullptr);
+    require(fresh.reuse.unwritten == 0u && fresh.reuse.compared == 0u && fresh.reuse.wordsRead == Records * 8u && heldRecords(fresh, heap, Records) && fresh.covered, "table snapshot reuse: the first snapshot is wrong");
+    const auto unchanged = capture(request, heap, Bytes, nullptr);
+    expectUnwritten(unchanged, "an unchanged table");
+    require(unchanged.tables == fresh.tables, "table snapshot reuse: a reused snapshot differs from the snapshot it reuses");
+
+    const auto changeRecord = [&](std::uint32_t record, std::uint32_t replacement, const std::function<void(std::uint64_t, const std::array<std::uint32_t, 8>&)>& store) {
+        const auto words = texture(replacement);
+        store(address + static_cast<std::uint64_t>(record) * 32u, words);
+    };
+    changeRecord(77u, 2000u, [](std::uint64_t at, const std::array<std::uint32_t, 8>& words) { std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(at)), words.data(), sizeof(words)); });
+    const auto cpuStore = capture(request, heap, Bytes, nullptr);
+    expectReread(cpuStore, "a CPU store");
+    require(heldRecords(cpuStore, heap, Records) && cpuStore.covered && recordWords(cpuStore, 77u) == texture(2000u), "table snapshot reuse: the snapshot after a CPU store misses the stored T#");
+    expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after a CPU store");
+
+    changeRecord(1234u, 2001u, [](std::uint64_t at, const std::array<std::uint32_t, 8>& words) { AgcDriver::GuestMemory::Write(at, std::as_bytes(std::span(words)), 4); });
+    const auto driverStore = capture(request, heap, Bytes, nullptr);
+    expectReread(driverStore, "a driver store (CP write, DMA copy or fill)");
+    require(heldRecords(driverStore, heap, Records) && recordWords(driverStore, 1234u) == texture(2001u), "table snapshot reuse: the snapshot after a driver store misses the stored T#");
+    expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after a driver store");
+
+    changeRecord(2048u, 2002u, [](std::uint64_t at, const std::array<std::uint32_t, 8>& words) { AgcDriver::GuestMemory::StoreOwnBytes(at, std::as_bytes(std::span(words))); });
+    const auto gpuStore = capture(request, heap, Bytes, nullptr);
+    expectReread(gpuStore, "a GPU result stored by the driver");
+    require(heldRecords(gpuStore, heap, Records) && recordWords(gpuStore, 2048u) == texture(2002u), "table snapshot reuse: the snapshot after a stored GPU result misses the stored T#");
+    expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after a stored GPU result");
+
+    AgcDriver::GuestMemory::MarkWritten(address + 3000u * 32u, 32u);
+    const auto marked = capture(request, heap, Bytes, nullptr);
+    require(marked.reuse.unwritten == 0u && marked.reuse.compared == 1u && heldRecords(marked, heap, Records) && marked.tables == gpuStore.tables, "table snapshot reuse: a GPU write into an import (MarkWritten) did not make the table compared again");
+
+    pendingTableWord = address + 500u * 32u;
+    pendingTableValue = 0x0badf00du;
+    pendingTableKnown = true;
+    const auto known = capture(request, heap, Bytes, &PendingTableWrite);
+    expectReread(known, "a pending GPU write with a known value");
+    require(recordWords(known, 500u)[0] == pendingTableValue && recordWords(known, 499u) == recordWords(gpuStore, 499u), "table snapshot reuse: the snapshot under a pending GPU write misses its known value");
+    pendingTableKnown = false;
+    const auto synced = capture(request, heap, Bytes, &PendingTableWrite);
+    require(synced.reuse.unwritten == 0u && heldRecords(synced, heap, Records), "table snapshot reuse: a table under a pending GPU write was reused without a read");
+    pendingTableWord = 0;
+    const auto settled = capture(request, heap, Bytes, nullptr);
+    require(settled.reuse.unwritten == 0u && heldRecords(settled, heap, Records), "table snapshot reuse: a snapshot taken under a pending GPU write was reused without a read");
+    expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after the pending GPU write");
+
+    constexpr std::size_t UnrelatedBytes = 65536;
+    void* unrelated = ::operator new(UnrelatedBytes, std::align_val_t{UnrelatedBytes});
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(unrelated, UnrelatedBytes, true, true, false);
+    }
+    const auto remapped = capture(request, heap, Bytes, nullptr);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(unrelated);
+    }
+    ::operator delete(unrelated, std::align_val_t{UnrelatedBytes});
+    require(remapped.reuse.unwritten == 0u && remapped.reuse.compared == 1u && heldRecords(remapped, heap, Records), "table snapshot reuse: a table was reused without a read after a guest mapping changed");
+
+    const auto compiled = CompileTable(request);
+    const auto& map = TableMap(*compiled.result);
+    const auto codes = TableCodes(map, 0);
+    const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
+    require(images != nullptr && codes.size() == Records, "table snapshot reuse: the reused table has no image table binding");
+    for (const auto key : {0u, 77u, 1234u, 2048u, 3071u, 4095u}) {
+        const auto element = map.at(codes.at(key) + Abi::ImageRecordElement);
+        require((codes[key] & Abi::PoisonFlag) == 0u && std::equal(heap + static_cast<std::size_t>(key) * 8u, heap + static_cast<std::size_t>(key) * 8u + 8u, images->guestDescriptor.begin() + static_cast<std::ptrdiff_t>(element) * 8), ("table snapshot reuse: key " + std::to_string(key) + " selects the wrong record of a reused table").c_str());
+    }
+
+    constexpr std::uint32_t SmallRecords = 64;
+    std::vector<std::vector<std::uint32_t>> small(17, std::vector<std::uint32_t>(SmallRecords * 8u + 1024u));
+    std::vector<TableGuest> smallGuests(small.size());
+    std::vector<std::array<std::uint32_t, 2>> smallUserData(small.size());
+    std::vector<RecompileRequest> smallRequests;
+    std::vector<std::uint32_t*> smallTables;
+    for (std::size_t index = 0; index < small.size(); index++) {
+        auto* table = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(small[index].data()) + 4095u) & ~std::uintptr_t{4095});
+        fill(table, SmallRecords);
+        FillTableSrt(smallGuests[index], table, 32u, SmallRecords);
+        smallTables.push_back(table);
+        smallUserData[index] = TableUserData(smallGuests[index]);
+        smallRequests.push_back(TableRequest(TableWholeCode, smallUserData[index]));
+    }
+    const auto smallBytes = static_cast<std::size_t>(SmallRecords) * 32u;
+    const auto first = capture(smallRequests[0], smallTables[0], smallBytes, nullptr);
+    const auto again = capture(smallRequests[0], smallTables[0], smallBytes, nullptr);
+    require(first.reuse.compared == 0u && again.reuse.unwritten == 0u && again.reuse.compared == 1u && heldRecords(again, smallTables[0], SmallRecords), "table snapshot reuse: an unchanged table outside the write watch was not compared and reused");
+    smallTables[0][5u * 8u] ^= 0x10u;
+    const auto unwatchedStore = capture(smallRequests[0], smallTables[0], smallBytes, nullptr);
+    require(unwatchedStore.reuse.compared == 0u && heldRecords(unwatchedStore, smallTables[0], SmallRecords), "table snapshot reuse: a store into a table outside the write watch was not seen");
+    for (std::size_t index = 1; index < small.size(); index++) static_cast<void>(capture(smallRequests[index], smallTables[index], smallBytes, nullptr));
+    const auto evicted = capture(smallRequests[0], smallTables[0], smallBytes, nullptr);
+    const auto kept = capture(smallRequests.back(), smallTables.back(), smallBytes, nullptr);
+    require(evicted.reuse.unwritten == 0u && evicted.reuse.compared == 0u && kept.reuse.compared == 1u, "table snapshot reuse: the memo kept more than 16 columns");
+    std::cout << "table snapshot reuse " << (watched ? "with" : "without") << " write watching passed\n";
 }
 
 void verifyImageTables() {
@@ -5199,6 +5382,10 @@ int main(int argc, char** argv) {
             verifySelectedRecordFallbacks();
             verifySelectedRecordOffsetCarry();
             std::cout << "Image table keys, maps, records and registration passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
+            verifyTableSnapshotReuse();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
