@@ -14,6 +14,15 @@ using SrtMemoryReader = bool (*)(void* userData, std::uint64_t address, std::uin
 using SrtMemoryProbe = bool (*)(void* userData, std::uint64_t address, std::uint64_t bytes);
 using SrtMemoryBulkReader = bool (*)(void* userData, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
 
+struct SrtWriteStamp {
+    std::uint64_t generation = 0;
+    std::uint64_t layout = 0;
+};
+
+using SrtMemoryStamper = SrtWriteStamp (*)(void* userData, std::uint64_t address, std::uint64_t bytes);
+using SrtMemoryUnchanged = bool (*)(void* userData, std::uint64_t address, std::uint64_t bytes, const SrtWriteStamp& stamp);
+using SrtMemorySupplier = bool (*)(void* userData, std::uint64_t address, const std::uint32_t* values, std::uint64_t count);
+
 // The guest addresses a walk dereferenced (Detail::Evaluator::EvaluateRawRead): the leaf read of
 // each pure flat slot (IrResourcePlan::pureFlatSlots) as (flat offset, address), set by the
 // flattened loop through `leaf`/`leafSlot` around that slot's evaluation, and every other raw read
@@ -35,6 +44,9 @@ struct SrtRuntime {
     SrtMemoryProbe accessible = nullptr;
     SrtMemoryProbe pendingWrite = nullptr;
     SrtMemoryBulkReader readWords = nullptr;
+    SrtMemoryStamper stampWrites = nullptr;
+    SrtMemoryUnchanged unchangedSince = nullptr;
+    SrtMemorySupplier supplyWords = nullptr;
 };
 
 enum class RuntimeValueType {

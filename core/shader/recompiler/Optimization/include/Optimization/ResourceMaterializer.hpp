@@ -41,6 +41,12 @@ struct ResolvedImageTables {
     std::uint32_t faults = 0;
 };
 
+struct ImageTableReuseCounts {
+    std::uint64_t unwritten = 0;
+    std::uint64_t compared = 0;
+    std::uint64_t wordsRead = 0;
+};
+
 struct RuntimeImageModeMatch {
     std::optional<std::uint32_t> mode;
     ImageTableAbi::PoisonReason reason = ImageTableAbi::PoisonReason::InvalidFormat;
@@ -60,6 +66,7 @@ public:
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();
+    static ImageTableReuseCounts TableReuse();
 };
 
 }
