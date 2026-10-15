@@ -1,4 +1,4 @@
-READY
+BUSY PM-027 (claimed 2026-10-15T01:43:38Z)
 RESULT:
 - Last task: PRM-007, done: results/cloud-1/PRM-007.md.
   - A: #6012 head af3bd503cb compiles. Its 4 named tests pass. The full suite fails 5 of 1176, all the IPv6 baseline. Conventions pass.
