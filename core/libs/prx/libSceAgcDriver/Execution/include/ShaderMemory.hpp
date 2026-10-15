@@ -16,6 +16,7 @@ namespace ShaderRecompiler {
 struct SourceHandle;
 class PreparedShaderInvocation;
 struct SrtWriteStamp;
+struct SrtGuestWords;
 }
 
 namespace AgcDriver {
@@ -71,6 +72,10 @@ public:
     [[nodiscard]] std::vector<ShaderRecompiler::MemoryRegion> TakeRecentRegions();
     // The driver's source handle memo outcomes, for the [capture] line (APS5_PROFILE_DRAW).
     static void CountHandleMemo(bool hit);
+    struct SupplyCounts {
+        std::uint64_t shared, copied, spilled;
+    };
+    static SupplyCounts Supplies();
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
@@ -85,20 +90,33 @@ private:
         bool wordwise = false;
     };
 
+    struct Supplied {
+        std::shared_ptr<const ShaderRecompiler::SrtGuestWords> words;
+        std::uint64_t begin = 0;
+        std::uint64_t end = 0;
+        bool recent = true;
+    };
+
     static bool read(void* context, std::uint64_t address, std::uint32_t* value);
     static bool readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
     static bool accessible(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool pending(void* context, std::uint64_t address, std::uint64_t bytes);
     static ShaderRecompiler::SrtWriteStamp stampWrites(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
-    static bool supplyWords(void* context, std::uint64_t address, const std::uint32_t* values, std::uint64_t count);
+    static bool supplyWords(void* context, const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>& words);
     Page& page(std::uint64_t base);
     [[nodiscard]] bool overlapsInitial(std::uint64_t begin, std::uint64_t end) const;
+    bool place(std::uint64_t address, const std::uint32_t* values, std::uint64_t count, bool overwrite, bool recent);
+    void spill(std::size_t index);
+    void spillTouching(std::uint64_t begin, std::uint64_t end);
+    [[nodiscard]] std::vector<ShaderRecompiler::MemoryRegion> collect(bool recentOnly) const;
 
     // Regions given at construction (the registered shader's code and header), referenced as given:
     // the caller keeps them alive for as long as the capture is used.
     std::map<std::uint64_t, std::span<const std::byte>> initial;
     std::map<std::uint64_t, Page> pages;
+    std::vector<Supplied> supplied;
+    std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> spilled;
     PendingWriteQuery pendingWrite = nullptr;
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;

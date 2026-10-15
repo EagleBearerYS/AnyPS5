@@ -18,6 +18,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -449,14 +450,13 @@ struct ColumnKey {
 struct ColumnMemo {
     ColumnKey key;
     SrtWriteStamp stamp;
-    std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
-    std::vector<std::uint32_t> words;
+    std::shared_ptr<const SrtGuestWords> read;
     ColumnContents contents;
     std::uint64_t low = 0;
     std::uint64_t high = 0;
 
     std::size_t Footprint() const {
-        return words.size() + runs.size() * 3u + contents.codes.size() + contents.words.size() * 9u + contents.readRanges.size() * 4u;
+        return read->words.size() + read->runs.size() * 3u + contents.codes.size() + contents.words.size() * 9u + contents.readRanges.size() * 4u;
     }
 };
 
@@ -914,30 +914,25 @@ private:
 
     bool Unwritten(const ColumnMemo& memo) const {
         if (memo.stamp.generation == 0u || runtime.unchangedSince == nullptr || runtime.supplyWords == nullptr) return false;
-        for (const auto& [address, count] : memo.runs) {
+        for (const auto& [address, count] : memo.read->runs) {
             if (!runtime.unchangedSince(runtime.userContext, address, static_cast<std::uint64_t>(count) * sizeof(std::uint32_t), memo.stamp)) return false;
         }
-        std::size_t at = 0;
-        for (const auto& [address, count] : memo.runs) {
-            if (!runtime.supplyWords(runtime.userContext, address, memo.words.data() + at, count)) return false;
-            at += count;
-        }
-        return true;
+        return runtime.supplyWords(runtime.userContext, memo.read);
     }
 
     bool Compared(const TableColumn& column, const ColumnRecords& records, ColumnMemo& memo) {
         const auto end = records.base + records.size;
-        for (const auto& [address, count] : memo.runs) {
+        for (const auto& [address, count] : memo.read->runs) {
             const auto past = address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t);
             for (auto page = address & ~(PageBytes - 1u); page < past; page += PageBytes) {
                 const auto first = std::max(page, address);
                 if (column.address ? !WholePageAccessible(first) : !PageAccessible(first, records.base, end)) return false;
             }
         }
-        std::vector<std::uint32_t> read(memo.words.size());
-        ReadRuns(memo.runs, read);
-        if (read != memo.words) {
-            comparedRuns = memo.runs;
+        std::vector<std::uint32_t> read(memo.read->words.size());
+        ReadRuns(memo.read->runs, read);
+        if (read != memo.read->words) {
+            comparedRuns = memo.read->runs;
             comparedWords = std::move(read);
             return false;
         }
@@ -980,8 +975,7 @@ private:
         auto& memo = *found;
         memo.key = key;
         memo.stamp = stamp;
-        memo.runs = std::move(runs);
-        memo.words = std::move(words);
+        memo.read = std::make_shared<const SrtGuestWords>(SrtGuestWords{std::move(runs), std::move(words)});
         memo.contents = records.contents;
         memo.low = low;
         memo.high = high;

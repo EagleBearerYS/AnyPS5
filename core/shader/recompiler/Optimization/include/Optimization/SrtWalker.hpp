@@ -4,6 +4,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -19,9 +20,14 @@ struct SrtWriteStamp {
     std::uint64_t layout = 0;
 };
 
+struct SrtGuestWords {
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
+    std::vector<std::uint32_t> words;
+};
+
 using SrtMemoryStamper = SrtWriteStamp (*)(void* userData, std::uint64_t address, std::uint64_t bytes);
 using SrtMemoryUnchanged = bool (*)(void* userData, std::uint64_t address, std::uint64_t bytes, const SrtWriteStamp& stamp);
-using SrtMemorySupplier = bool (*)(void* userData, std::uint64_t address, const std::uint32_t* values, std::uint64_t count);
+using SrtMemorySupplier = bool (*)(void* userData, const std::shared_ptr<const SrtGuestWords>& words);
 
 // The guest addresses a walk dereferenced (Detail::Evaluator::EvaluateRawRead): the leaf read of
 // each pure flat slot (IrResourcePlan::pureFlatSlots) as (flat offset, address), set by the

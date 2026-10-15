@@ -52,6 +52,9 @@ struct CaptureProfile {
     // The driver's per-shader source handle memo: captures served from it, and resolves it made.
     std::atomic<std::uint64_t> handleHits{0};
     std::atomic<std::uint64_t> handleMisses{0};
+    std::atomic<std::uint64_t> suppliedShared{0};
+    std::atomic<std::uint64_t> suppliedCopied{0};
+    std::atomic<std::uint64_t> suppliedSpilled{0};
 };
 
 constexpr std::uint64_t WordWaitNanoseconds = 50000;
@@ -80,6 +83,29 @@ std::atomic<ShaderMemory::WaitedMsProvider> waitedMsProvider{nullptr};
 double WaitedMs() {
     const auto provider = waitedMsProvider.load(std::memory_order_acquire);
     return provider != nullptr ? provider() : 0.0;
+}
+
+using GuestRuns = std::vector<std::pair<std::uint64_t, std::uint32_t>>;
+
+std::uint64_t RunEnd(const std::pair<std::uint64_t, std::uint32_t>& run) {
+    return run.first + static_cast<std::uint64_t>(run.second) * sizeof(std::uint32_t);
+}
+
+bool RunsTouch(const GuestRuns& runs, std::uint64_t begin, std::uint64_t end) {
+    const auto after = std::upper_bound(runs.begin(), runs.end(), begin, [](std::uint64_t address, const std::pair<std::uint64_t, std::uint32_t>& run) { return address < run.first; });
+    if (after != runs.begin() && RunEnd(*std::prev(after)) > begin) return true;
+    return after != runs.end() && after->first < end;
+}
+
+bool RunsOverlap(const GuestRuns& left, const GuestRuns& right) {
+    std::size_t a = 0;
+    std::size_t b = 0;
+    while (a < left.size() && b < right.size()) {
+        if (left[a].first < RunEnd(right[b]) && right[b].first < RunEnd(left[a])) return true;
+        if (RunEnd(left[a]) <= RunEnd(right[b])) ++a;
+        else ++b;
+    }
+    return false;
 }
 
 }
@@ -135,6 +161,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
         }
         if (next != self.initial.end() && next->first - address < sizeof(*value)) throw std::runtime_error("AGC driver: shader memory read overlaps a snapshot boundary");
     }
+    if (!self.supplied.empty()) self.spillTouching(address, address + sizeof(*value));
     auto& page = self.page(address & ~static_cast<std::uint64_t>(PageBytes - 1));
     const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(*value));
     if (!page.valid.test(index)) {
@@ -211,6 +238,7 @@ bool ShaderMemory::overlapsInitial(std::uint64_t begin, std::uint64_t end) const
 
 bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count) {
     auto& self = *static_cast<ShaderMemory*>(context);
+    if (!self.supplied.empty() && count != 0) self.spillTouching(address, count > (std::numeric_limits<std::uint64_t>::max() - address) / sizeof(std::uint32_t) ? std::numeric_limits<std::uint64_t>::max() : address + count * sizeof(std::uint32_t));
     while (count != 0) {
         const auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1);
         const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(std::uint32_t));
@@ -290,22 +318,19 @@ bool ShaderMemory::unchangedSince(void* context, std::uint64_t address, std::uin
     return GuestMemory::UnchangedSince(address, static_cast<std::size_t>(bytes), stamp.generation);
 }
 
-bool ShaderMemory::supplyWords(void* context, std::uint64_t address, const std::uint32_t* values, std::uint64_t count) {
-    auto& self = *static_cast<ShaderMemory*>(context);
-    const auto bytes = count * sizeof(std::uint32_t);
-    if (count == 0 || address % sizeof(std::uint32_t) != 0 || count > std::numeric_limits<std::uint64_t>::max() / sizeof(std::uint32_t) || address > std::numeric_limits<std::uint64_t>::max() - bytes || self.overlapsInitial(address, address + bytes)) return false;
+bool ShaderMemory::place(std::uint64_t address, const std::uint32_t* values, std::uint64_t count, bool overwrite, bool recent) {
     while (count != 0) {
         const auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1);
         const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(std::uint32_t));
         const auto words = static_cast<std::size_t>(std::min<std::uint64_t>(count, PageWords - index));
-        auto found = self.pages.find(base);
-        if (found == self.pages.end()) {
-            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
-            found = self.pages.try_emplace(base).first;
+        auto found = pages.find(base);
+        if (found == pages.end()) {
+            if (!overwrite && !GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
+            found = pages.try_emplace(base).first;
         }
         auto& page = found->second;
-        if (page.wordwise) return false;
-        if (page.valid.none()) {
+        if (page.wordwise && !overwrite) return false;
+        if (overwrite || page.valid.none()) {
             std::memcpy(page.words.data() + index, values, words * sizeof(std::uint32_t));
         } else {
             for (std::size_t word = 0; word < words; ++word) {
@@ -318,11 +343,83 @@ bool ShaderMemory::supplyWords(void* context, std::uint64_t address, const std::
         mask <<= index;
         page.valid |= mask;
         page.read |= mask;
-        page.recent |= mask;
+        if (recent) page.recent |= mask;
         address += static_cast<std::uint64_t>(words) * sizeof(std::uint32_t);
         values += words;
         count -= words;
     }
+    return true;
+}
+
+void ShaderMemory::spill(std::size_t index) {
+    auto entry = std::move(supplied[index]);
+    supplied.erase(supplied.begin() + static_cast<std::ptrdiff_t>(index));
+    std::size_t at = 0;
+    for (const auto& [address, count] : entry.words->runs) {
+        static_cast<void>(place(address, entry.words->words.data() + at, count, true, entry.recent));
+        at += count;
+    }
+    CaptureTotals().suppliedSpilled += entry.words->words.size();
+    spilled.push_back(std::move(entry.words));
+}
+
+void ShaderMemory::spillTouching(std::uint64_t begin, std::uint64_t end) {
+    for (std::size_t index = supplied.size(); index-- > 0;) {
+        const auto& entry = supplied[index];
+        if (entry.begin < end && begin < entry.end && RunsTouch(entry.words->runs, begin, end)) spill(index);
+    }
+}
+
+bool ShaderMemory::supplyWords(void* context, const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>& words) {
+    auto& self = *static_cast<ShaderMemory*>(context);
+    if (words == nullptr || words->runs.empty()) return false;
+    std::uint64_t total = 0;
+    std::uint64_t end = 0;
+    for (const auto& [address, count] : words->runs) {
+        const auto bytes = static_cast<std::uint64_t>(count) * sizeof(std::uint32_t);
+        if (count == 0 || address % sizeof(std::uint32_t) != 0 || address < end || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;
+        end = address + bytes;
+        total += count;
+    }
+    const auto begin = words->runs.front().first;
+    if (total != words->words.size() || self.overlapsInitial(begin, end)) return false;
+    auto& totals = CaptureTotals();
+    for (auto& entry : self.supplied) {
+        if (entry.words != words) continue;
+        entry.recent = true;
+        totals.suppliedShared += total;
+        return true;
+    }
+    const auto fetched = self.pages.lower_bound(begin & ~static_cast<std::uint64_t>(PageBytes - 1));
+    const bool paged = fetched != self.pages.end() && fetched->first < end;
+    const bool overlapping = std::any_of(self.supplied.begin(), self.supplied.end(), [&](const Supplied& entry) { return entry.begin < end && begin < entry.end && RunsOverlap(entry.words->runs, words->runs); });
+    if (paged || overlapping) {
+        for (std::size_t index = self.supplied.size(); index-- > 0;) {
+            const auto& entry = self.supplied[index];
+            if (entry.begin < end && begin < entry.end && RunsOverlap(entry.words->runs, words->runs)) self.spill(index);
+        }
+        std::size_t at = 0;
+        for (const auto& [address, count] : words->runs) {
+            if (!self.place(address, words->words.data() + at, count, false, true)) return false;
+            at += count;
+        }
+        totals.suppliedCopied += total;
+        return true;
+    }
+    std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t past = 0;
+    for (const auto& [address, count] : words->runs) {
+        const auto from = address & ~static_cast<std::uint64_t>(PageBytes - 1);
+        const auto to = (address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t) + PageBytes - 1) & ~static_cast<std::uint64_t>(PageBytes - 1);
+        if (from > past || first == std::numeric_limits<std::uint64_t>::max()) {
+            if (first != std::numeric_limits<std::uint64_t>::max() && !GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) return false;
+            first = from;
+        }
+        past = std::max(past, to);
+    }
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) return false;
+    self.supplied.push_back({words, begin, end, true});
+    totals.suppliedShared += total;
     return true;
 }
 
@@ -334,6 +431,11 @@ ShaderMemory::KnownValueCounts ShaderMemory::KnownValues() {
 void ShaderMemory::CountHandleMemo(bool hit) {
     if (!CaptureProfiled()) return;
     (hit ? CaptureTotals().handleHits : CaptureTotals().handleMisses).fetch_add(1, std::memory_order_relaxed);
+}
+
+ShaderMemory::SupplyCounts ShaderMemory::Supplies() {
+    auto& totals = CaptureTotals();
+    return {totals.suppliedShared.load(std::memory_order_relaxed), totals.suppliedCopied.load(std::memory_order_relaxed), totals.suppliedSpilled.load(std::memory_order_relaxed)};
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle) {
@@ -386,45 +488,75 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     return capture;
 }
 
-std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
+std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::collect(bool recentOnly) const {
+    struct Cursor {
+        const ShaderRecompiler::SrtGuestWords* words;
+        std::size_t run;
+        std::size_t at;
+    };
+    std::vector<Cursor> cursors;
+    std::size_t runs = 0;
+    for (const auto& entry : supplied) {
+        if (recentOnly && !entry.recent) continue;
+        cursors.push_back({entry.words.get(), 0u, 0u});
+        runs += entry.words->runs.size() + entry.words->words.size() / PageWords;
+    }
     std::vector<ShaderRecompiler::MemoryRegion> result;
-    result.reserve(initial.size() + pages.size());
-    auto next = initial.begin();
-    // Both maps are ordered by address and never overlap, so a merge keeps the result sorted.
-    for (const auto& [base, page] : pages) {
-        while (next != initial.end() && next->first < base) {
-            result.push_back({next->first, next->second});
-            ++next;
+    result.reserve((recentOnly ? 0u : initial.size()) + pages.size() + runs);
+    auto next = recentOnly ? initial.end() : initial.begin();
+    const auto emitBefore = [&](std::uint64_t address) {
+        while (true) {
+            Cursor* lowest = nullptr;
+            for (auto& cursor : cursors) {
+                if (cursor.run < cursor.words->runs.size() && (lowest == nullptr || cursor.words->runs[cursor.run].first < lowest->words->runs[lowest->run].first)) lowest = &cursor;
+            }
+            const auto run = lowest != nullptr ? lowest->words->runs[lowest->run].first : std::numeric_limits<std::uint64_t>::max();
+            if (next != initial.end() && next->first < address && next->first < run) {
+                result.push_back({next->first, next->second});
+                ++next;
+            } else if (lowest != nullptr && run < address) {
+                const auto count = lowest->words->runs[lowest->run].second;
+                const auto words = std::span(lowest->words->words).subspan(lowest->at, count);
+                for (std::size_t done = 0; done < count;) {
+                    const auto at = run + done * sizeof(std::uint32_t);
+                    const auto piece = std::min<std::size_t>(count - done, (PageBytes - static_cast<std::size_t>(at % PageBytes)) / sizeof(std::uint32_t));
+                    result.push_back({at, std::as_bytes(words.subspan(done, piece))});
+                    done += piece;
+                }
+                lowest->at += count;
+                ++lowest->run;
+            } else {
+                return;
+            }
         }
+    };
+    for (const auto& [base, page] : pages) {
+        const auto& marks = recentOnly ? page.recent : page.read;
+        if (marks.none()) continue;
         for (std::size_t index = 0; index < PageWords;) {
-            if (!page.read.test(index)) {
+            if (!marks.test(index)) {
                 ++index;
                 continue;
             }
             const auto first = index;
-            while (index < PageWords && page.read.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, index - first))});
+            while (index < PageWords && marks.test(index)) ++index;
+            const auto address = base + first * sizeof(std::uint32_t);
+            emitBefore(address);
+            result.push_back({address, std::as_bytes(std::span(page.words).subspan(first, index - first))});
         }
     }
-    for (; next != initial.end(); ++next) result.push_back({next->first, next->second});
+    emitBefore(std::numeric_limits<std::uint64_t>::max());
     return result;
 }
 
+std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
+    return collect(false);
+}
+
 std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::TakeRecentRegions() {
-    std::vector<ShaderRecompiler::MemoryRegion> result;
-    for (auto& [base, page] : pages) {
-        if (page.recent.none()) continue;
-        for (std::size_t index = 0; index < PageWords;) {
-            if (!page.recent.test(index)) {
-                ++index;
-                continue;
-            }
-            const auto first = index;
-            while (index < PageWords && page.recent.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, index - first))});
-        }
-        page.recent.reset();
-    }
+    auto result = collect(true);
+    for (auto& [base, page] : pages) page.recent.reset();
+    for (auto& entry : supplied) entry.recent = false;
     return result;
 }
 
