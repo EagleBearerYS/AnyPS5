@@ -228,7 +228,6 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
     };
 
-    const auto fold = [&](const ShaderRecompiler::RecompileResult& main, Pm4::DrawParameters& parameters) { FoldDrawOffsets(main, programs.front(), parameters); };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     prePassReads().clear();
@@ -250,11 +249,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         phaseTiming.Phase(DrawRowKeyLookupValidate);
         programResults[i] = stageResults[i].get();
         const auto& result = *programResults[i];
-        if (i == 0 && drawParameters.indirect) {
-            indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
-        } else if (i == 0) {
-            fold(result, drawParameters);
-        }
+        if (i == 0 && drawParameters.indirect) indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
         const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
         require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
         stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes});
@@ -369,7 +364,6 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 result = *runTimeResult(*stagePrograms[programIndex], programs[programIndex].userData, programs[programIndex].binary.codeAddress);
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
             }
-            fold(*programResults[0], direct);
             if (graphics.rectList && patched.contains(0)) buildRectList();
             if (auto known = localDevice->KnownDrawRejection(graphics, stages)) {
                 rejected = std::move(*known);

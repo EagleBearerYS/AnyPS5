@@ -613,15 +613,6 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
             add(shader.pushConstantOffset);
             add(program.pushConstants.size());
             add(program.bdaAbiVersion);
-            add(program.vertexAttributes.size());
-            for (const auto& attribute : program.vertexAttributes) {
-                add(attribute.location);
-                add(attribute.components);
-                add(attribute.fetchIndex);
-                add(attribute.formatComponents);
-                // The data format bits of the V# decide the attribute's signature.
-                add((attribute.resource.fields[3] >> 12u) & 0x7fu);
-            }
         }
     }
     if (keyed) {
@@ -879,21 +870,12 @@ struct DrawInputs {
     VkDeviceSize indexOffset = 0;
     std::uint32_t maxIndex = 0;
     VertexInputLayout vertexInput;
-    std::vector<std::shared_ptr<Buffer>> vertexBuffers;
-    std::vector<VkBuffer> vertexHandles;
-    std::vector<VkDeviceSize> vertexOffsets;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
     std::set<std::uint32_t> fragmentOutputs;
     VkPipelineStageFlags shaderStages = 0;
     std::uint32_t meshGroups = 0;
     std::vector<std::uint32_t> restartTable;
 };
-
-std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, const ShaderRecompiler::VertexAttribute& attribute) {
-    auto zero = std::make_shared<Buffer>(context, DecodeVertexFormat(attribute).bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    std::fill(zero->Bytes().begin(), zero->Bytes().end(), std::byte{0});
-    return zero;
-}
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawOutcome& outcome, DrawTimer& timer) {
     DrawInputs inputs;
@@ -977,24 +959,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             inputs.nothing = true;
             return inputs;
         }
-        constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
-        if (const auto zeroFrom = state.stages.mesh ? std::nullopt : ZeroFetchVertex(shaders.front().program->vertexAttributes)) {
-            const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
-            if (*highest >= limit && *highest - limit >= ZeroFetchSlack) {
-                GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
-                auto clamped = std::make_shared<Buffer>(context, static_cast<std::size_t>(indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-                const auto bytes = clamped->Bytes().first(static_cast<std::size_t>(indexBytes));
-                GuestMemory::Read(draw.indexAddress, bytes, draw.indexSize);
-                highest = ClampDrawIndices(bytes, draw.indexSize, skipRestart, limit);
-                import = nullptr;
-                copy = DrawInputCopy{};
-                copy.buffer = std::move(clamped);
-                if (!highest) {
-                    inputs.nothing = true;
-                    return inputs;
-                }
-            }
-        }
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         Require(!fanGeometry || !state.primitiveRestart || *highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
         inputs.maxIndex = *highest;
@@ -1012,96 +976,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         }
     }
     APS5_LOG_CHARS_OUT_DEBUG("Index validation OK");
-    const auto& attributes = shaders.front().program->vertexAttributes;
-    // Validates the vertex descriptors; the layout also keys and builds the pipeline.
-    inputs.vertexInput = BuildVertexInputLayout(context, attributes);
-    inputs.vertexOffsets.assign(attributes.size(), 0);
-    // An indexed draw's vertex offset moves every fetch: the copy must reach the last one.
-    if (draw.indexed) {
-        Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - inputs.maxIndex, "indexed draw vertex range overflow");
-        inputs.maxIndex += draw.firstVertex;
-    }
-    std::vector<VertexFetch> fetches;
-    std::vector<std::size_t> fetchValid;
-    fetches.reserve(attributes.size());
-    fetchValid.reserve(attributes.size());
-    std::vector<std::size_t> fetchOf(attributes.size(), 0);
-    std::vector<std::shared_ptr<Buffer>> zeroed(attributes.size());
-    for (std::size_t i = 0; i < attributes.size(); ++i) {
-        const auto& attribute = attributes[i];
-        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) {
-            zeroed[i] = zeroVertexBuffer(context, attribute);
-            continue;
-        }
-        // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
-        const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
-        const auto& fields = attribute.resource.fields;
-        const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
-        const auto firstByte = args == nullptr ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
-        Require(!state.hasColorTarget || address + bytes <= state.color.address || state.color.address + state.color.bytes <= address + firstByte, "vertex buffer aliases the render target");
-        const auto stride = (fields[1] >> 16u) & 0x3fffu;
-        fetchOf[i] = fetches.size();
-        fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
-        const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
-        fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
-    }
-    const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
-    std::vector<bool> isSolo(fetches.size(), false);
-    for (const auto f : soloFetches) isSolo[f] = true;
-    std::vector<VertexFetch> plannedFetches;
-    plannedFetches.reserve(fetches.size());
-    std::vector<std::size_t> plannedOf(fetches.size(), 0);
-    for (std::size_t f = 0; f < fetches.size(); ++f) {
-        if (isSolo[f]) continue;
-        plannedOf[f] = plannedFetches.size();
-        plannedFetches.push_back(fetches[f]);
-    }
-    const auto plan = PlanVertexCopies(plannedFetches);
-    std::vector<VkBuffer> rangeHandles;
-    std::vector<VkDeviceSize> rangeOffsets;
-    rangeHandles.reserve(plan.copies.size());
-    rangeOffsets.reserve(plan.copies.size());
-    for (std::size_t range = 0; range < plan.copies.size(); ++range) {
-        const auto [begin, end] = plan.copies[range];
-        const auto bytes = static_cast<std::size_t>(end - begin);
-        GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
-        if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range])) {
-            rangeHandles.push_back(import->buffer);
-            rangeOffsets.push_back(begin - import->base);
-            inputs.inPlaceReads.emplace_back(begin, end);
-            continue;
-        }
-        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex);
-        KeepDrawInput(context.recorder, begin, copy, Recorder::SnapshotUse::Vertex, 0);
-        rangeHandles.push_back(copy.buffer->Handle());
-        rangeOffsets.push_back(0);
-        inputs.vertexBuffers.push_back(std::move(copy.buffer));
-    }
-    std::vector<VkBuffer> soloHandles(fetches.size(), VK_NULL_HANDLE);
-    for (const auto f : soloFetches) {
-        const auto begin = fetches[f].begin;
-        const auto bytes = static_cast<std::size_t>(fetches[f].end - begin);
-        auto copy = CopyZeroPaddedDrawInput(context, begin, bytes, fetchValid[f]);
-        soloHandles[f] = copy.buffer->Handle();
-        inputs.vertexBuffers.push_back(std::move(copy.buffer));
-    }
-    for (std::size_t i = 0; i < attributes.size(); ++i) {
-        if (zeroed[i] != nullptr) {
-            inputs.vertexHandles.push_back(zeroed[i]->Handle());
-            inputs.vertexOffsets[i] = 0;
-            inputs.vertexBuffers.push_back(std::move(zeroed[i]));
-            continue;
-        }
-        const auto f = fetchOf[i];
-        if (isSolo[f]) {
-            inputs.vertexHandles.push_back(soloHandles[f]);
-            inputs.vertexOffsets[i] = 0;
-            continue;
-        }
-        const auto j = plannedOf[f];
-        inputs.vertexHandles.push_back(rangeHandles[plan.copyOf[j]]);
-        inputs.vertexOffsets[i] = rangeOffsets[plan.copyOf[j]] + plan.offsets[j];
-    }
     timer.phase(PhaseVertex);
     return inputs;
 }
@@ -1181,7 +1055,6 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
         context.Function<PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT")(commands, inputs.meshGroups, draw.instanceCount, 1);
         return;
     }
-    if (!inputs.vertexHandles.empty()) context.Resolved(&DeviceFunctions::cmdBindVertexBuffers, "vkCmdBindVertexBuffers")(commands, 0, static_cast<std::uint32_t>(inputs.vertexHandles.size()), inputs.vertexHandles.data(), inputs.vertexOffsets.data());
     if (draw.indexed) context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, draw.indexSize == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
     if (args == nullptr) {
         if (draw.indexed) context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, draw.indexCount, draw.instanceCount, 0, static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
@@ -1329,7 +1202,6 @@ struct Kept {
     std::shared_ptr<Pipeline> pipeline;
     std::shared_ptr<Framebuffer> framebuffer;
     std::shared_ptr<Buffer> indices;
-    std::vector<std::shared_ptr<Buffer>> vertexBuffers;
     std::vector<std::shared_ptr<StorageTexture>> targets;
     std::unique_ptr<DeviceBuffer> scratch;
 };
@@ -1343,7 +1215,6 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     kept->pipeline = std::move(pipeline);
     kept->framebuffer = std::move(framebuffer);
     kept->indices = std::move(inputs.indices);
-    kept->vertexBuffers = std::move(inputs.vertexBuffers);
     kept->scratch = std::move(scratch);
     kept->targets = std::move(targets);
     const auto& residents = kept->targets;

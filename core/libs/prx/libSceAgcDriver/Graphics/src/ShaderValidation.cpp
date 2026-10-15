@@ -563,17 +563,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(member != module.offsets.end() && member->second == 0, "descriptor block member must have offset zero");
         }
     }
-    if (vertex) {
-        std::set<std::uint32_t> locations;
-        for (const auto& attribute : shader.vertexAttributes) {
-            Require(locations.insert(attribute.location).second, "duplicate vertex attribute metadata");
-            const auto input = module.inputs.find(attribute.location);
-            Require(input != module.inputs.end() && input->second == "vertex:" + VertexAttributeSignature(attribute), "vertex attribute metadata disagrees with shader input");
-        }
-        Require(locations.size() == module.inputs.size(), "vertex input is missing attribute metadata");
-    } else {
-        Require(shader.vertexAttributes.empty(), "vertex attribute metadata is invalid for this stage");
-    }
+    Require(shader.vertexAttributes.empty(), "a program has vertex attribute metadata, which no draw binds");
+    if (vertex) Require(module.inputs.empty(), "a vertex program declares vertex inputs, which no draw binds");
     for (const auto& binding : shader.bindings) {
         if (binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) Require(binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable, "only samplers take slots in the descriptor heap");
         Require(binding.kind != ShaderRecompiler::DescriptorKind::DeviceAddress, "no descriptor binding is read through a device address");
