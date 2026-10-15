@@ -82,6 +82,8 @@ struct HostImportCounts {
 
 const char* ImportRequesterName(ImportRequester requester);
 HostImportCounts HostImportCounters();
+std::string FormatHostImportCounts(const HostImportCounts& counts);
+void ReportHostImports();
 
 // The host import of the registered allocation containing [address, address + bytes), made on demand
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in

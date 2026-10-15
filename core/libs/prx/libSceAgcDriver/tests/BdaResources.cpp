@@ -808,6 +808,17 @@ void importRequesterTests(const Context& context, const BdaTestAccess& access) {
     ::operator delete(block, std::align_val_t{piece});
 }
 
+void hostImportReportTests() {
+    HostImportCounts counts;
+    counts.live = 3;
+    counts.liveBytes = 3u << 20u;
+    counts.requesters[static_cast<std::size_t>(ImportRequester::Map)] = {2, 1u << 20u, 0, 0, 0};
+    counts.requesters[static_cast<std::size_t>(ImportRequester::Build)] = {5, 4u << 20u, 7, 7u << 19u, 1};
+    counts.requesters[static_cast<std::size_t>(ImportRequester::Segment)] = {1, 1u << 16u, 0, 0, 2};
+    const auto text = FormatHostImportCounts(counts);
+    Require(text == "3 live (3.0 MiB); made 8 (5.1 MiB), refused 7 (3.5 MiB), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, expand 0/0/0", "the host import report is wrong: " + text);
+}
+
 void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& access) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t window = 2 * piece;
@@ -1900,6 +1911,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
     importRequesterTests(context, access);
+    hostImportReportTests();
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();

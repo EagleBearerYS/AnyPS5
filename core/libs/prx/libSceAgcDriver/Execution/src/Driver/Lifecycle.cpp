@@ -115,6 +115,7 @@ void Driver::stop() {
     StopWorkerSampler();
     CloseRegistrationPreparation();
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    Graphics::ReportHostImports();
     device.Reset();
     replacedDevices.clear();
     Graphics::ShutdownGuestBufferWorkers();
