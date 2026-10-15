@@ -1349,33 +1349,73 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         }
         return false;
     };
+    using Words = std::array<IrValue*, Abi::DescriptorWords>;
+    const auto incoming = [](const Words& words) {
+        std::vector<Words> sets{words};
+        for (std::uint32_t round = 0; round < 4u && sets.size() <= 16u; ++round) {
+            std::vector<Words> next;
+            bool expanded = false;
+            for (const auto& set : sets) {
+                const auto found = std::ranges::find_if(set, [](const IrValue* word) { return word->Resolve()->IsPhi(); });
+                if (found == set.end()) {
+                    next.push_back(set);
+                    continue;
+                }
+                expanded = true;
+                const IrValue* phi = (*found)->Resolve();
+                for (std::size_t edge = 0; edge < phi->ArgumentCount(); ++edge) {
+                    auto candidate = set;
+                    for (auto*& word : candidate) {
+                        const IrValue* value = word->Resolve();
+                        if (!value->IsPhi() || value->ArgumentCount() != phi->ArgumentCount()) continue;
+                        bool joined = true;
+                        for (std::size_t index = 0; joined && index < phi->ArgumentCount(); ++index) joined = value->PhiBlock(index) == phi->PhiBlock(index);
+                        if (joined) word = value->Argument(edge);
+                    }
+                    next.push_back(candidate);
+                }
+            }
+            sets = std::move(next);
+            if (!expanded) break;
+        }
+        return sets;
+    };
     expected.reserve(plan.info.deviceImageUses.size());
     for (const auto& use : plan.info.deviceImageUses) {
         if (active.at(use.image) == 0u) continue;
         const auto& image = plan.info.images.at(use.image);
-        Abi::Expectation expectation;
-        expectation.pc = use.firstUsePc;
-        expectation.image = use.image;
-        auto& key = expectation.key;
-        if (!evaluate(image.source, Abi::DescriptorWords, key.data()) || Abi::NullDescriptor(key[0], key[1])) continue;
-        DescriptorValue descriptor;
-        descriptor.dwordCount = Abi::DescriptorWords;
-        std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
-        if (!validImageDescriptor(descriptor, image.r128)) {
-            if (executed(use.image)) throw std::runtime_error("runtime image descriptor is invalid");
-            continue;
-        }
-        if (use.sampler != NoSampler) {
-            const auto& sampler = plan.info.samplers.at(use.sampler);
-            if (!sampler.deviceTable) {
-                expectation.mapSampler = use.sampler;
-            } else {
-                if (!evaluate(sampler.source, Abi::SamplerWords, key.data() + Abi::SamplerWord)) continue;
-                const bool exactAtBase = use.levelZero && (key[Abi::SamplerWord] & Abi::SamplerUnnormalized) != 0u;
-                key[Abi::SamplerClassWord] = Abi::RuntimeSampler | (exactAtBase ? Abi::SamplerExactAtBase : 0u);
+        const auto& source = plan.descriptorSources.at(image.source);
+        if (source.dwordCount != Abi::DescriptorWords || std::ranges::any_of(source.dwords.begin(), source.dwords.begin() + Abi::DescriptorWords, [](const IrValue* word) { return word == nullptr; })) continue;
+        Words words{};
+        std::copy_n(source.dwords.begin(), Abi::DescriptorWords, words.begin());
+        const bool joined = std::ranges::any_of(words, [](const IrValue* word) { return word->Resolve()->IsPhi(); });
+        for (const auto& candidate : joined ? incoming(words) : std::vector<Words>{words}) {
+            Abi::Expectation expectation;
+            expectation.pc = use.firstUsePc;
+            expectation.image = use.image;
+            auto& key = expectation.key;
+            bool evaluated = true;
+            for (std::uint32_t word = 0; evaluated && word < Abi::DescriptorWords; ++word) evaluated = evaluator.Evaluate(candidate[word], key[word]);
+            if (!evaluated || Abi::NullDescriptor(key[0], key[1])) continue;
+            DescriptorValue descriptor;
+            descriptor.dwordCount = Abi::DescriptorWords;
+            std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
+            if (!validImageDescriptor(descriptor, image.r128)) {
+                if (!joined && executed(use.image)) throw std::runtime_error("runtime image descriptor is invalid");
+                continue;
             }
+            if (use.sampler != NoSampler) {
+                const auto& sampler = plan.info.samplers.at(use.sampler);
+                if (!sampler.deviceTable) {
+                    expectation.mapSampler = use.sampler;
+                } else {
+                    if (!evaluate(sampler.source, Abi::SamplerWords, key.data() + Abi::SamplerWord)) continue;
+                    const bool exactAtBase = use.levelZero && (key[Abi::SamplerWord] & Abi::SamplerUnnormalized) != 0u;
+                    key[Abi::SamplerClassWord] = Abi::RuntimeSampler | (exactAtBase ? Abi::SamplerExactAtBase : 0u);
+                }
+            }
+            if (std::ranges::find(expected, expectation) == expected.end()) expected.push_back(expectation);
         }
-        expected.push_back(expectation);
     }
     return expected;
 }
@@ -1895,10 +1935,18 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.memoryInfo = source.memoryInfo;
     plan.descriptorSources = source.descriptorSources;
     constexpr SrtWalker walker;
+    const std::function<bool(IrValue*, std::uint32_t)> walkableWord = [&](IrValue* dword, std::uint32_t joins) {
+        if (dword == nullptr || dword->Resolve()->Type() != IrType::U32) return false;
+        if (walker.ValidateRuntimeValue(source, dword)) return true;
+        const IrValue* value = dword->Resolve();
+        if (!value->IsPhi() || joins == 0u) return false;
+        for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+            if (!walkableWord(value->Argument(index), joins - 1u)) return false;
+        }
+        return true;
+    };
     const auto walkable = [&](const DescriptorSource& descriptor) {
-        return std::all_of(descriptor.dwords.begin(), descriptor.dwords.begin() + descriptor.dwordCount, [&](IrValue* dword) {
-            return dword != nullptr && dword->Resolve()->Type() == IrType::U32 && walker.ValidateRuntimeValue(source, dword);
-        });
+        return std::all_of(descriptor.dwords.begin(), descriptor.dwords.begin() + descriptor.dwordCount, [&](IrValue* dword) { return walkableWord(dword, 4u); });
     };
     for (auto& descriptor : plan.descriptorSources) {
         if (descriptor.runtime && !walkable(descriptor)) descriptor.dwords.fill(nullptr);

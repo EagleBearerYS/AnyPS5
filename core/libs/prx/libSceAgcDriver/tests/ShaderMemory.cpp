@@ -600,7 +600,7 @@ void verifyOutOfRangeConstantReads() {
     request.target.fragmentShaderBarycentricEnabled = false;
     request.layout.pushConstantSizeBytes = 128;
     const auto plan = GetResourcePlan(request);
-    require(plan->info.images.size() == 2u && plan->info.samplers.size() == 1u, "out-of-range s_buffer_load: the two T#s were not planned as one image each");
+    require(plan->info.images.size() == 1u && plan->info.samplers.size() == 1u && plan->srtReads.empty(), "out-of-range s_buffer_load: the T# that joins the two loads was not planned as one run-time image");
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
     request.context.memory = memory.Regions();
@@ -787,6 +787,34 @@ void verifyGuardedDescriptorSources() {
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(laneRequest);
         require(capture->snapshot.deviceImages.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.deviceImages[0].key.begin()), "guarded sources: a T# behind a branch on lane values was not expected");
+    }
+
+    auto phiRequest = request;
+    const std::vector<std::uint32_t> phiCode{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    phiRequest.shader = {ShaderStage::Compute, 0x25000u, phiCode, 0, {}};
+    fill(valid, 1u);
+    std::copy(valid.begin(), valid.end(), srt.begin() + 24);
+    const auto phiPlan = GetResourcePlan(phiRequest);
+    require(phiPlan->info.images.size() == 1u && phiPlan->srtReads.empty(), "guarded sources: a program whose T# words come from a phi planned its SRT reads for a capture");
+    static Texture otherTexture;
+    const auto otherBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(otherTexture.bytes.data()));
+    auto other = valid;
+    other[0] = static_cast<std::uint32_t>(otherBase >> 8u);
+    other[1] = (valid[1] & ~0xffu) | static_cast<std::uint32_t>((otherBase >> 40u) & 0xffu);
+    std::copy(other.begin(), other.end(), srt.begin() + 24);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(phiRequest);
+        const auto expected = [&](const std::array<std::uint32_t, 8>& words) { return std::ranges::any_of(capture->snapshot.deviceImages, [&](const DeviceImageTableAbi::Expectation& image) { return std::equal(words.begin(), words.end(), image.key.begin()); }); };
+        require(capture->snapshot.deviceImages.size() == 2u && expected(valid) && expected(other), "guarded sources: the pre-pass did not expect each T# that reaches a phi");
+        phiRequest.context.memory = memory.Regions();
+        static_cast<void>(Recompile(phiRequest, *capture));
+    }
+    std::copy(invalid.begin(), invalid.end(), srt.begin() + 24);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(phiRequest);
+        require(capture->snapshot.deviceImages.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.deviceImages[0].key.begin()), "guarded sources: an invalid T# reaching a phi refused the dispatch or was expected");
     }
 
     const std::vector<std::uint32_t> storeCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850006u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f08u, 0x00010004u, 0xbf820005u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f10u, 0x00010004u, 0xbf810000u};
