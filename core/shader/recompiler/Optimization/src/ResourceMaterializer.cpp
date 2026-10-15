@@ -1342,29 +1342,46 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         return false;
     };
     using Words = std::vector<IrValue*>;
-    const auto joins = [](const Words& words) { return std::ranges::any_of(words, [](const IrValue* word) { return word->Resolve()->IsPhi(); }); };
+    using Values = std::vector<std::uint32_t>;
+    const auto unwrapped = [](IrValue* word) {
+        IrValue* value = word->Resolve();
+        while (value->Opcode() == IrOpcode::ReadFirstLane) value = value->Argument(0)->Resolve();
+        return value;
+    };
+    const auto joining = [](const IrValue* value) { return value->IsPhi() || (value->Opcode() == IrOpcode::SelectU32 && !value->Argument(0)->Resolve()->HasImmediate()); };
     const auto incoming = [&](const Words& words) {
-        std::vector<Words> sets{words};
-        if (!joins(words)) return sets;
+        Words start;
+        for (auto* word : words) start.push_back(unwrapped(word));
+        std::vector<Words> sets{start};
         for (std::uint32_t round = 0; round < 4u && sets.size() <= 16u; ++round) {
             std::vector<Words> next;
             bool expanded = false;
             for (const auto& set : sets) {
-                const auto found = std::ranges::find_if(set, [](const IrValue* word) { return word->Resolve()->IsPhi(); });
+                const auto found = std::ranges::find_if(set, joining);
                 if (found == set.end()) {
                     next.push_back(set);
                     continue;
                 }
                 expanded = true;
-                const IrValue* phi = (*found)->Resolve();
-                for (std::size_t edge = 0; edge < phi->ArgumentCount(); ++edge) {
+                const IrValue* join = *found;
+                if (!join->IsPhi()) {
+                    const IrValue* condition = join->Argument(0)->Resolve();
+                    for (const std::size_t operand : {1u, 2u}) {
+                        auto candidate = set;
+                        for (auto*& word : candidate) {
+                            if (word->Opcode() == IrOpcode::SelectU32 && word->Argument(0)->Resolve() == condition) word = unwrapped(word->Argument(operand));
+                        }
+                        next.push_back(candidate);
+                    }
+                    continue;
+                }
+                for (std::size_t edge = 0; edge < join->ArgumentCount(); ++edge) {
                     auto candidate = set;
                     for (auto*& word : candidate) {
-                        const IrValue* value = word->Resolve();
-                        if (!value->IsPhi() || value->ArgumentCount() != phi->ArgumentCount()) continue;
+                        if (!word->IsPhi() || word->ArgumentCount() != join->ArgumentCount()) continue;
                         bool joined = true;
-                        for (std::size_t index = 0; joined && index < phi->ArgumentCount(); ++index) joined = value->PhiBlock(index) == phi->PhiBlock(index);
-                        if (joined) word = value->Argument(edge);
+                        for (std::size_t index = 0; joined && index < join->ArgumentCount(); ++index) joined = word->PhiBlock(index) == join->PhiBlock(index);
+                        if (joined) word = unwrapped(word->Argument(edge));
                     }
                     next.push_back(candidate);
                 }
@@ -1380,11 +1397,24 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         words.assign(descriptor.dwords.begin(), descriptor.dwords.begin() + count);
         return std::ranges::none_of(words, [](const IrValue* word) { return word == nullptr; });
     };
-    const auto evaluated = [&](const Words& words, std::uint32_t* values) {
+    const auto evaluated = [&](const Words& words, Values& values) {
+        values.assign(words.size(), 0u);
         for (std::size_t word = 0; word < words.size(); ++word) {
             if (!evaluator.Evaluate(words[word], values[word])) return false;
         }
         return true;
+    };
+    const auto valuesOf = [&](const Words& words, bool& joined) {
+        std::vector<Values> values(1);
+        joined = false;
+        if (evaluated(words, values.front())) return values;
+        values.clear();
+        joined = true;
+        for (const auto& candidate : incoming(words)) {
+            Values value;
+            if (evaluated(candidate, value) && std::ranges::find(values, value) == values.end()) values.push_back(std::move(value));
+        }
+        return values;
     };
     const auto add = [&](const Abi::Expectation& expectation) {
         if (std::ranges::find(expected, expectation) == expected.end()) expected.push_back(expectation);
@@ -1398,14 +1428,16 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         const bool deviceSampler = use.sampler != NoSampler && plan.info.samplers.at(use.sampler).deviceTable;
         Words samplerWords;
         if (deviceSampler && !wordsOf(plan.info.samplers.at(use.sampler).source, Abi::SamplerWords, samplerWords)) continue;
-        const bool joinedImage = joins(imageWords);
-        const auto samplers = incoming(samplerWords);
-        for (const auto& candidate : incoming(imageWords)) {
+        bool joinedImage = false;
+        bool joinedSampler = false;
+        const auto samplers = deviceSampler ? valuesOf(samplerWords, joinedSampler) : std::vector<Values>{};
+        for (const auto& value : valuesOf(imageWords, joinedImage)) {
             Abi::Expectation expectation;
             expectation.pc = use.firstUsePc;
             expectation.image = use.image;
             auto& key = expectation.key;
-            if (!evaluated(candidate, key.data()) || Abi::NullDescriptor(key[0], key[1])) continue;
+            std::copy_n(value.begin(), Abi::DescriptorWords, key.begin());
+            if (Abi::NullDescriptor(key[0], key[1])) continue;
             DescriptorValue descriptor;
             descriptor.dwordCount = Abi::DescriptorWords;
             std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
@@ -1420,7 +1452,7 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
             }
             for (const auto& sampler : samplers) {
                 auto sampled = expectation;
-                if (!evaluated(sampler, sampled.key.data() + Abi::SamplerWord)) continue;
+                std::copy_n(sampler.begin(), Abi::SamplerWords, sampled.key.begin() + Abi::SamplerWord);
                 const bool exactAtBase = use.levelZero && (sampled.key[Abi::SamplerWord] & Abi::SamplerUnnormalized) != 0u;
                 sampled.key[Abi::SamplerClassWord] = Abi::RuntimeSampler | (exactAtBase ? Abi::SamplerExactAtBase : 0u);
                 add(sampled);
@@ -1949,7 +1981,10 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         if (dword == nullptr || dword->Resolve()->Type() != IrType::U32) return false;
         if (walker.ValidateRuntimeValue(source, dword)) return true;
         const IrValue* value = dword->Resolve();
-        if (!value->IsPhi() || joins == 0u) return false;
+        if (joins == 0u) return false;
+        if (value->Opcode() == IrOpcode::ReadFirstLane) return walkableWord(value->Argument(0), joins - 1u);
+        if (value->Opcode() == IrOpcode::SelectU32) return walkableWord(value->Argument(1), joins - 1u) && walkableWord(value->Argument(2), joins - 1u);
+        if (!value->IsPhi()) return false;
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
             if (!walkableWord(value->Argument(index), joins - 1u)) return false;
         }
