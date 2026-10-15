@@ -1,4 +1,4 @@
-READY
+BUSY PRM-009 (claimed 2026-10-15T03:04:09Z)
 RESULT:
 - Last task: PM-027, done: results/cloud-1/PM-027.md.
   - Fork branch perf/shader-direct-cpu-evaluable-images, head cb0dbd0da, on upstream a077a88df5. It is PR-ready, with 4 commits: the fix d4b33b0ae, the narrowing-reason log e14727236, the tests 8f28ea4ac, and a benchmark cb0dbd0da to drop before merging.
