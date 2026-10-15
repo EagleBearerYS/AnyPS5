@@ -288,6 +288,16 @@ void PresentationPass::draw(VkCommandBuffer commands, const Slot& slot, const Ta
 void PresentationPass::RecordPresent(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout) {
     Graphics::Require(index < slots.size() && slots[index].source != VK_NULL_HANDLE, "presentation pass slot has no source");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation pass destination is unavailable");
+    recordInto(commands, index, destination, format, colorSpace, extent, finalLayout, ComputeContainRect_nid_postfix(slots[index].width, slots[index].height, extent.width, extent.height));
+}
+
+void PresentationPass::RecordStage(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout) {
+    Graphics::Require(index < slots.size() && slots[index].source != VK_NULL_HANDLE, "presentation pass slot has no source");
+    Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation pass destination is unavailable");
+    recordInto(commands, index, destination, format, colorSpace, extent, finalLayout, AspectFitRect{0, 0, extent.width, extent.height});
+}
+
+void PresentationPass::recordInto(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout, const AspectFitRect& rect) {
     auto& slot = slots[index];
     const auto& entry = target(format, finalLayout);
     const auto view = createView(destination, format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u));
@@ -299,7 +309,6 @@ void PresentationPass::RecordPresent(VkCommandBuffer commands, std::size_t index
         throw;
     }
     slot.transient.emplace_back(view, framebuffer);
-    const auto rect = ComputeContainRect_nid_postfix(slot.width, slot.height, extent.width, extent.height);
     const bool hdr10 = colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
     Graphics::Require(colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR || (hdr10 && (slot.mode & ModePq) != 0 && TenBitFormat(format)), "presentation pass presents only PQ display buffers to a 10-bit HDR10 destination");
     const std::uint32_t mode = (hdr10 ? slot.mode & ~ModePq : slot.mode) | (TenBitFormat(format) ? ModeKeepTenBit : 0u);
