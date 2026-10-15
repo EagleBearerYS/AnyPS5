@@ -73,7 +73,9 @@ std::array<std::uint32_t, VertexUserWords> UserData() {
 
 bool Rejected(const std::string& message) {
     const auto where = "graphics program " + NewPath::Hex(CallingVertex().Address()) + ": ";
-    return message.find(where) != std::string::npos && message.find("calls code through its user data is not implemented") != std::string::npos;
+    const bool driver = message.find("calls code through its user data is not implemented") != std::string::npos;
+    const bool recompiler = message.find("s_swappc_b64 fetch-shader call at program counter 0 has no parsed fetch-shader plan to inline") != std::string::npos;
+    return message.find(where) != std::string::npos && (driver || recompiler);
 }
 
 void Run() {
