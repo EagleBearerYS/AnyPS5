@@ -3867,6 +3867,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
+    resources.UseBatchFaultRecord(recorder);
     recordStep(PhaseRecordCommands);
     recorder.Keep(record.objects);
     recorder.Keep(record.resources);
@@ -3978,10 +3979,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     recordStep(PhaseRecordMarks);
     // Only copied written buffers (and BDA fault checks) need work once the GPU is done; without them
     // the batch can signal its labels from the GPU.
-    if (resources.NeedsCompletion()) {
-        auto kept = record.resources;
-        recorder.OnComplete([kept] { kept->WriteBackBuffers(); });
-    }
+    if (resources.NeedsCompletion()) Graphics::ShaderResources::RecordBatchFaults(recorder, record.resources);
     recordStep(PhaseRecordCompletion);
 }
 

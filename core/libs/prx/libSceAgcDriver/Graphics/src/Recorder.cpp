@@ -4,6 +4,7 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
@@ -2943,6 +2944,34 @@ void Recorder::KeepHighestIndex(std::uint64_t address, std::size_t bytes, Snapsh
         indexRangeRecency.pop_back();
         throw;
     }
+}
+
+std::shared_ptr<BatchFaultRecord> Recorder::CallerFaultRecord(std::uint32_t chunks) {
+    const auto stream = streamOfCaller();
+    const auto batch = opens[stream] != nullptr ? opens[stream]->value : streams[stream].opened + 1u;
+    auto& current = streams[stream].faultRecord;
+    if (current == nullptr || current->Batch() != batch || !current->Admit(chunks)) {
+        current = std::make_shared<BatchFaultRecord>(context, stream, batch);
+        Require(current->Admit(chunks), "a build may store to more chunks than a fault record holds");
+    }
+    return current;
+}
+
+bool Recorder::CallerFaultRecordCurrent(const BatchFaultRecord& record) const {
+    const auto stream = streamOfCaller();
+    return opens[stream] != nullptr && record.Stream() == stream && record.Batch() == opens[stream]->value;
+}
+
+BatchFaults& Recorder::CallerBatchFaults() {
+    auto& open = callerOpen();
+    ensureOpen();
+    if (open->faults == nullptr) {
+        open->faults = std::make_shared<BatchFaults>();
+        open->completions.push_back([faults = open->faults] { faults->Complete(); });
+        ++open->writeBackCompletionCount;
+        writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
+    }
+    return *open->faults;
 }
 
 void Recorder::OnComplete(std::function<void()> action) {

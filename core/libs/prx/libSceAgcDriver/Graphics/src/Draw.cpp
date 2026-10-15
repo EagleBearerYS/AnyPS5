@@ -1213,9 +1213,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     resources->MarkGpuWrites(recorder);
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
     // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
-    if (completion) {
-        recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
-    }
+    if (completion) ShaderResources::RecordBatchFaults(recorder, resources);
     for (const auto& resident : residents) {
         if (resident != nullptr) resident->MarkDirty();
     }
@@ -1851,6 +1849,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         // The color-target detiles below take their descriptor sets from a fresh batch.
         if (context.detiler != nullptr) context.detiler->BeginBatch();
         batch.emplace(context);
+        resources->UseOwnFaultRecord();
     }
     using CommandClass = Recorder::CommandClass;
     const auto countBarrier = [&](std::uint32_t count = 1) { if (recorded) Recorder::CountBarriers(CommandClass::Draw, count); };
@@ -1874,6 +1873,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (!recorded) recorder->Sync();
     }
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
+    if (recorded) resources->UseBatchFaultRecord(*recorder);
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
     // The draw's [gputime] class range: from its first barrier to the download barrier.

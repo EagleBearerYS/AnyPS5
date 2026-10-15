@@ -25,6 +25,8 @@
 namespace AgcDriver::Graphics {
 
 class Buffer;
+class BatchFaultRecord;
+class BatchFaults;
 
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
@@ -195,6 +197,9 @@ public:
     void OrderAfterValue(std::uint64_t address, std::size_t bytes);
     void OrderAfterQueue(std::uint32_t queue);
     void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
+    std::shared_ptr<BatchFaultRecord> CallerFaultRecord(std::uint32_t chunks);
+    bool CallerFaultRecordCurrent(const BatchFaultRecord& record) const;
+    BatchFaults& CallerBatchFaults();
     using Token = std::array<std::uint64_t, MaxRecorderStreams>;
     Token CallerToken();
     Token AllToken() const;
@@ -529,6 +534,7 @@ private:
         std::size_t keptBytes = 0;
         std::unordered_set<const void*> keptOwners;
         std::vector<std::function<void()>> completions;
+        std::shared_ptr<BatchFaults> faults;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
         std::vector<std::int16_t> writeValues;
@@ -771,6 +777,7 @@ private:
         std::uint64_t finished = 0;
         std::uint64_t barrier = 0;
         Batch* newest = nullptr;
+        std::shared_ptr<BatchFaultRecord> faultRecord;
     };
     struct ObjectUse {
         std::array<std::uint64_t, MaxRecorderStreams> read{};

@@ -238,6 +238,9 @@ public:
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }
     bool ChecksFaults() const { return bda != nullptr; }
     void CheckFaults() const;
+    void UseBatchFaultRecord(Recorder& recorder);
+    void UseOwnFaultRecord();
+    static void RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources);
     void NameProgram(std::uint64_t address) { program = address; }
     bool StagesWrites() const { return staging != nullptr; }
     void RecordStagingIn(VkCommandBuffer commands) const;
@@ -456,6 +459,16 @@ private:
     std::vector<Allocation> allocations;
     std::vector<VkDescriptorBufferInfo> descriptorBuffers;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
+    friend class BatchFaults;
+    std::shared_ptr<BatchFaultRecord> batchFaultRecord();
+    void rebindFaultRecord(std::shared_ptr<BatchFaultRecord> record);
+    struct FaultDescriptor {
+        VkDescriptorSet set;
+        std::uint32_t binding;
+        std::uint32_t element;
+    };
+    std::vector<FaultDescriptor> faultDescriptors;
+    std::uint32_t writtenChunks = 0;
     bool drawBuild = false;
     std::uint64_t dispatchThreads = 0;
     std::vector<std::shared_ptr<Texture>> textures;
@@ -515,6 +528,15 @@ private:
     bool unlockedPrepare = false;
     bool completed = false;
     std::chrono::steady_clock::time_point phaseStart;
+};
+
+class BatchFaults {
+public:
+    void Add(std::shared_ptr<ShaderResources> user);
+    void Complete();
+
+private:
+    std::vector<std::shared_ptr<ShaderResources>> users;
 };
 
 }

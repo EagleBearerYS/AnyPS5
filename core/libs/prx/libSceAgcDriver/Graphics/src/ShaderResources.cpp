@@ -1767,7 +1767,7 @@ void ShaderResources::buildComplete() {
                 }
             }
             const auto staged = computeBuild && pageTableStores && !storesUnbounded && !storeRanges.empty() ? planWriteStaging() : std::vector<ShaderRecompiler::BdaAbi::Range>{};
-            bda = std::make_unique<BdaResources>(context, guestMemory, staged);
+            bda = std::make_unique<BdaResources>(context, guestMemory, staged, batchFaultRecord());
         } else if (usesFaultBuffer) {
             bda = std::make_unique<BdaResources>(context);
         }
@@ -1792,7 +1792,9 @@ void ShaderResources::buildComplete() {
                 switch (binding.layout.descriptorType) {
                     case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
                         write.pBufferInfo = buffers.data() + buffers.size();
-                        for (const auto index : binding.allocations) {
+                        for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
+                            const auto index = binding.allocations[element];
+                            if (allocations[index].role == ShaderRecompiler::DescriptorRole::FaultBuffer) faultDescriptors.push_back({write.dstSet, write.dstBinding, static_cast<std::uint32_t>(element)});
                             buffers.push_back(descriptor(allocations[index]));
                         }
                         break;
@@ -3125,6 +3127,93 @@ void ShaderResources::CheckFaults() const {
 void ShaderResources::WriteBackBuffers() {
     if (bda) checkBdaFault();
     guestMemory.Release();
+}
+
+std::shared_ptr<BatchFaultRecord> ShaderResources::batchFaultRecord() {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || !faultChecks || !tableStages.empty() || MemoryWritesUnknown()) return nullptr;
+    auto writes = MemoryWrites();
+    std::sort(writes.begin(), writes.end());
+    std::uint64_t chunks = 0;
+    std::uint64_t counted = 0;
+    for (const auto& [begin, end] : writes) {
+        if (end <= begin) continue;
+        const auto first = std::max(begin >> Abi::WrittenChunkShift, counted);
+        const auto last = ((end - 1u) >> Abi::WrittenChunkShift) + 1u;
+        if (last > first) chunks += last - first;
+        counted = std::max(counted, last);
+        if (chunks > Abi::WrittenPageSlots) return nullptr;
+    }
+    writtenChunks = static_cast<std::uint32_t>(chunks);
+    return recorder->CallerFaultRecord(writtenChunks);
+}
+
+void ShaderResources::rebindFaultRecord(std::shared_ptr<BatchFaultRecord> record) {
+    Require(!faultDescriptors.empty(), "a build's fault record has no descriptor to rebind");
+    bda->UseRecord(context, std::move(record));
+    const auto info = bda->Fault();
+    std::vector<VkWriteDescriptorSet> writes;
+    writes.reserve(faultDescriptors.size());
+    for (const auto& slot : faultDescriptors) {
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = slot.set;
+        write.dstBinding = slot.binding;
+        write.dstArrayElement = slot.element;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &info;
+        writes.push_back(write);
+    }
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+}
+
+void ShaderResources::UseBatchFaultRecord(Recorder& recorder) {
+    if (bda == nullptr || bda->SharedRecord() == nullptr || recorder.CallerFaultRecordCurrent(*bda->SharedRecord())) return;
+    rebindFaultRecord(recorder.CallerFaultRecord(writtenChunks));
+}
+
+void ShaderResources::UseOwnFaultRecord() {
+    if (bda != nullptr && bda->SharedRecord() != nullptr) rebindFaultRecord(nullptr);
+}
+
+void ShaderResources::RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources) {
+    if (resources->bda != nullptr && resources->bda->SharedRecord() != nullptr) Require(recorder.CallerFaultRecordCurrent(*resources->bda->SharedRecord()), "a build was recorded into a batch other than its fault record's");
+    recorder.CallerBatchFaults().Add(resources);
+}
+
+void BatchFaults::Add(std::shared_ptr<ShaderResources> user) {
+    users.push_back(std::move(user));
+}
+
+void BatchFaults::Complete() {
+    const auto failed = [](const std::exception& error) { std::fprintf(stderr, "[gpu] deferred write-back failed: %s\n", error.what()); };
+    std::vector<const BatchFaultRecord*> records;
+    for (const auto& user : users) {
+        const auto* record = user->bda != nullptr ? user->bda->SharedRecord().get() : nullptr;
+        if (record != nullptr && std::find(records.begin(), records.end(), record) == records.end()) records.push_back(record);
+    }
+    for (const auto* record : records) {
+        std::vector<const BdaResources*> sharing;
+        std::vector<std::uint64_t> programs;
+        for (const auto& user : users) {
+            if (user->bda == nullptr || user->bda->SharedRecord().get() != record) continue;
+            sharing.push_back(user->bda.get());
+            programs.push_back(user->program);
+        }
+        try {
+            record->Check(sharing, programs);
+        } catch (const std::exception& error) {
+            failed(error);
+        }
+    }
+    for (const auto& user : users) {
+        try {
+            user->WriteBackBuffers();
+        } catch (const std::exception& error) {
+            failed(error);
+        }
+    }
 }
 
 void ShaderResources::PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push) {

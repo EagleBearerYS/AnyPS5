@@ -4,7 +4,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "Recompiler.hpp"
 #include <cstddef>
+#include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,13 +33,33 @@ private:
     std::size_t used = 0;
 };
 
+class BdaResources;
+
+class BatchFaultRecord {
+public:
+    BatchFaultRecord(const Context& context, std::uint32_t stream, std::uint64_t batch);
+    VkDescriptorBufferInfo Descriptor() const;
+    std::uint32_t Stream() const { return stream; }
+    std::uint64_t Batch() const { return batch; }
+    bool Admit(std::uint32_t chunks);
+    void Check(std::span<const BdaResources* const> users, std::span<const std::uint64_t> programs) const;
+
+private:
+    BdaArena::Slice slice;
+    std::uint32_t stream = 0;
+    std::uint64_t batch = 0;
+    std::uint32_t chunks = 0;
+};
+
 class BdaResources {
 public:
-    explicit BdaResources(const Context& context);
-    BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides = {});
+    explicit BdaResources(const Context& context, std::shared_ptr<BatchFaultRecord> shared = nullptr);
+    BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides = {}, std::shared_ptr<BatchFaultRecord> shared = nullptr);
     VkDescriptorBufferInfo Table() const;
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    const std::shared_ptr<BatchFaultRecord>& SharedRecord() const { return shared; }
+    void UseRecord(const Context& context, std::shared_ptr<BatchFaultRecord> record);
     struct ImageTableFaults {
         std::uint32_t stage = 0;
         std::uint64_t shader = 0;
@@ -47,7 +69,11 @@ public:
     void SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
 
 private:
-    void markWrittenPages() const;
+    friend class BatchFaultRecord;
+    static void markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users);
+    static bool published(const ShaderRecompiler::BdaAbi::Fault& report);
+    bool owns(const ShaderRecompiler::BdaAbi::Fault& report) const;
+    [[noreturn]] void throwFault(const ShaderRecompiler::BdaAbi::Fault& report) const;
     std::shared_ptr<const BdaPageTable> pages;
     std::vector<ShaderRecompiler::BdaAbi::Range> shadowRanges;
     std::vector<std::shared_ptr<ShadowSlab>> shadowSlabs;
@@ -55,6 +81,7 @@ private:
     std::vector<ShaderRecompiler::BdaAbi::Grant> writeGrants;
     BdaArena::Slice table;
     BdaArena::Slice fault;
+    std::shared_ptr<BatchFaultRecord> shared;
     const DeviceImageTable* deviceImages = nullptr;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;

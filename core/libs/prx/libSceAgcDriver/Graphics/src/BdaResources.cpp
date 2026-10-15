@@ -54,14 +54,40 @@ BdaArena::Slice BdaArena::Take(const Context& context, std::size_t bytes) {
     return {arena->current, offset, bytes, arena->current->Bytes().data() + offset};
 }
 
-BdaResources::BdaResources(const Context& context) : deviceImages(context.deviceImages) {
+BatchFaultRecord::BatchFaultRecord(const Context& context, std::uint32_t stream, std::uint64_t batch) : slice(BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes)), stream(stream), batch(batch) {
+    std::memset(slice.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+}
+
+VkDescriptorBufferInfo BatchFaultRecord::Descriptor() const {
+    return {slice.slab->Handle(), slice.offset, ShaderRecompiler::BdaAbi::FaultBufferBytes};
+}
+
+bool BatchFaultRecord::Admit(std::uint32_t written) {
+    if (written > ShaderRecompiler::BdaAbi::WrittenPageSlots - chunks) return false;
+    chunks += written;
+    return true;
+}
+
+BdaResources::BdaResources(const Context& context, std::shared_ptr<BatchFaultRecord> shared) : shared(std::move(shared)), deviceImages(context.deviceImages) {
     static_assert(std::endian::native == std::endian::little);
     Require(ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
+    if (this->shared != nullptr) return;
     fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes);
     std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
 }
 
-BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) : BdaResources(context) {
+void BdaResources::UseRecord(const Context& context, std::shared_ptr<BatchFaultRecord> record) {
+    shared = std::move(record);
+    if (shared != nullptr) {
+        fault = {};
+        return;
+    }
+    if (fault.slab != nullptr) return;
+    fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes);
+    std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+}
+
+BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides, std::shared_ptr<BatchFaultRecord> shared) : BdaResources(context, std::move(shared)) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     std::vector<Abi::Range> mapped(overrides.begin(), overrides.end());
     mapped.insert(mapped.end(), memory.ShadowOverrides().begin(), memory.ShadowOverrides().end());
@@ -92,34 +118,58 @@ VkDescriptorBufferInfo BdaResources::Table() const {
 }
 
 VkDescriptorBufferInfo BdaResources::Fault() const {
+    if (shared != nullptr) return shared->Descriptor();
     return {fault.slab->Handle(), fault.offset, ShaderRecompiler::BdaAbi::FaultBufferBytes};
 }
 
 namespace {
 std::atomic<bool> loopGuardTripped{false};
+
+bool loopGuardReported(const ShaderRecompiler::BdaAbi::Fault& report) {
+    if (report.reason != ShaderRecompiler::BdaAbi::FaultReason::LoopLimit) return false;
+    loopGuardTripped.store(true, std::memory_order_relaxed);
+    std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
+    return true;
+}
 }
 
 bool LoopGuardTripped() {
     return loopGuardTripped.load(std::memory_order_relaxed);
 }
 
-void BdaResources::CheckFault() const {
-    markWrittenPages();
-    ShaderRecompiler::BdaAbi::Fault report{};
-    std::memcpy(&report, fault.data, sizeof(report));
+bool BdaResources::published(const ShaderRecompiler::BdaAbi::Fault& report) {
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
         Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.reserved == 0, "BDA fault record has data without publication");
-        return;
+        return false;
     }
     Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && report.reserved == 0, "incomplete or invalid BDA fault record");
-    Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
-    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::LoopLimit) {
-        // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
-        loopGuardTripped.store(true, std::memory_order_relaxed);
-        std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
+    return true;
+}
+
+void BdaResources::CheckFault() const {
+    if (shared != nullptr) return;
+    const BdaResources* self = this;
+    markWrittenPages(reinterpret_cast<std::uint32_t*>(fault.data), std::span(&self, 1));
+    ShaderRecompiler::BdaAbi::Fault report{};
+    std::memcpy(&report, fault.data, sizeof(report));
+    if (!published(report)) return;
+    if (loopGuardReported(report)) {
         std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::FaultBufferBytes);
         return;
     }
+    throwFault(report);
+}
+
+bool BdaResources::owns(const ShaderRecompiler::BdaAbi::Fault& report) const {
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) return (report.bytes & ShaderRecompiler::DeviceImageTableAbi::FaultFlag) != 0u ? deviceImages != nullptr : !imageTables.empty();
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::UnlinkedCall || report.reason == ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle) return false;
+    if (pages != nullptr && pages->Find(report.address).has_value()) return true;
+    const auto found = std::upper_bound(ownRanges.begin(), ownRanges.end(), report.address, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& candidate) { return value < candidate.begin; });
+    return found != ownRanges.begin() && report.address < std::prev(found)->end;
+}
+
+void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) const {
+    Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
         const auto table = std::find_if(imageTables.begin(), imageTables.end(), [&](const ImageTableFaults& candidate) { return candidate.stage == report.stage; });
         const auto* tables = table != imageTables.end() ? &*table : imageTables.size() == 1 ? &imageTables.front() : nullptr;
@@ -186,35 +236,61 @@ void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vec
     }
 }
 
-void BdaResources::markWrittenPages() const {
+void BatchFaultRecord::Check(std::span<const BdaResources* const> users, std::span<const std::uint64_t> programs) const {
+    if (users.empty()) return;
+    BdaResources::markWrittenPages(reinterpret_cast<std::uint32_t*>(slice.data), users);
+    ShaderRecompiler::BdaAbi::Fault report{};
+    std::memcpy(&report, slice.data, sizeof(report));
+    if (!BdaResources::published(report) || loopGuardReported(report)) return;
+    std::size_t owner = 0;
+    for (std::size_t index = 0; index < users.size(); ++index) {
+        if (!users[index]->owns(report)) continue;
+        owner = index;
+        break;
+    }
+    try {
+        users[owner]->throwFault(report);
+    } catch (const std::runtime_error& error) {
+        std::ostringstream message;
+        message << error.what();
+        if (owner < programs.size() && programs[owner] != 0) message << " (program 0x" << std::hex << programs[owner] << std::dec << ")";
+        if (users.size() > 1) message << " (one of " << users.size() << " builds sharing the batch's fault record)";
+        throw std::runtime_error(message.str());
+    }
+}
+
+void BdaResources::markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users) {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    auto* words = reinterpret_cast<std::uint32_t*>(fault.data);
-    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
+    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one fault record are not implemented");
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
     std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
-    if (!shadowRanges.empty()) gpu.lock();
+    if (std::any_of(users.begin(), users.end(), [](const BdaResources* user) { return !user->shadowRanges.empty(); })) gpu.lock();
     Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) {
         const auto end = begin + bytes;
-        for (std::size_t index = 0; index < imageTableRanges.size(); ++index) {
-            const auto [base, size] = imageTableRanges[index];
-            const auto low = std::max(begin, base);
-            const auto high = std::min(end, base + size);
-            if (low >= high) continue;
-            const auto* current = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(low));
-            if (std::memcmp(current, imageTableBytes[index].data() + (low - base), static_cast<std::size_t>(high - low)) != 0) {
-                std::ostringstream message;
-                message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
-                Require(false, message.str());
+        for (const auto* user : users) {
+            for (std::size_t index = 0; index < user->imageTableRanges.size(); ++index) {
+                const auto [base, size] = user->imageTableRanges[index];
+                const auto low = std::max(begin, base);
+                const auto high = std::min(end, base + size);
+                if (low >= high) continue;
+                const auto* current = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(low));
+                if (std::memcmp(current, user->imageTableBytes[index].data() + (low - base), static_cast<std::size_t>(high - low)) != 0) {
+                    std::ostringstream message;
+                    message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
+                    Require(false, message.str());
+                }
             }
         }
         const auto generation = GuestMemory::MarkWritten(begin, bytes);
         if (generation == 0) return;
-        for (std::size_t index = 0; index < shadowRanges.size(); ++index) {
-            const auto& range = shadowRanges[index];
-            const auto low = std::max(begin, range.begin);
-            const auto high = std::min(end, range.end);
-            if (low < high && (range.permissions & Abi::Write) != 0u) KeepShadowed(low, high, *shadowSlabs[index], generation);
+        for (const auto* user : users) {
+            for (std::size_t index = 0; index < user->shadowRanges.size(); ++index) {
+                const auto& range = user->shadowRanges[index];
+                const auto low = std::max(begin, range.begin);
+                const auto high = std::min(end, range.end);
+                if (low < high && (range.permissions & Abi::Write) != 0u) KeepShadowed(low, high, *user->shadowSlabs[index], generation);
+            }
         }
     }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
