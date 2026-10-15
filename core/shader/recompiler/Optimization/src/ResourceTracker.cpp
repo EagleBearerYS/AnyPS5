@@ -1642,14 +1642,14 @@ private:
         m_info.sampledPairs.push_back({image, sampler, pc});
     }
 
-    void AddDeviceImageUse(std::uint32_t image, std::uint32_t sampler, std::uint32_t pc) {
+    void AddDeviceImageUse(std::uint32_t image, std::uint32_t sampler, std::uint32_t pc, bool levelZero) {
         for (auto& use : m_info.deviceImageUses) {
-            if (use.image == image && use.sampler == sampler) {
+            if (use.image == image && use.sampler == sampler && use.levelZero == levelZero) {
                 use.firstUsePc = std::min(use.firstUsePc, pc);
                 return;
             }
         }
-        m_info.deviceImageUses.push_back({image, sampler, pc});
+        m_info.deviceImageUses.push_back({image, sampler, pc, levelZero});
     }
 
     void AddHandlePatch(IrValue* handle, std::uint32_t resource) {
@@ -1785,7 +1785,7 @@ private:
             AddHandlePatch(samplerHandle, sampler);
             AddSampledPair(resource, sampler, flags.pc);
         }
-        if (RuntimeSource(source)) AddDeviceImageUse(resource, imageInfo.needsSampler ? sampler : NoSampler, flags.pc);
+        if (RuntimeSource(source)) AddDeviceImageUse(resource, imageInfo.needsSampler ? sampler : NoSampler, flags.pc, imageInfo.needsSampler && (memory.imageSampleFlags & RdnaImageSampleFlagLevelZero) != 0u);
         AddMemoryPatch(flags.index, resource, sampler, imageInfo.needsSampler);
     }
 

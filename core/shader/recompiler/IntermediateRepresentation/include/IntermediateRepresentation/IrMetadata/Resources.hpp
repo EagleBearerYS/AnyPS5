@@ -129,6 +129,7 @@ struct DeviceImageUse {
     std::uint32_t image = 0;
     std::uint32_t sampler = NoSampler;
     std::uint32_t firstUsePc = 0;
+    bool levelZero = false;
 
     bool operator==(const DeviceImageUse& other) const = default;
 };

@@ -120,6 +120,8 @@ struct DeviceTableView {
     bool identitySwizzle = false;
     bool decodedCopy = false;
     bool integerView = false;
+    bool unnormalized = false;
+    bool exactAtBase = false;
 };
 
 struct DeviceTableTexture {

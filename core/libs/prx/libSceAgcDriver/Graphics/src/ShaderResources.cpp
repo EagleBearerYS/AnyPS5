@@ -3814,8 +3814,16 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
     const bool integerImage = view.integerView;
     if (((samplerClass & Abi::SamplerFloatBorder) != 0u && integerImage) || ((samplerClass & Abi::SamplerIntegerBorder) != 0u && !integerImage)) throw std::runtime_error("an image table entry's sampler border color numeric class disagrees with its sampled image class, which needs dynamic pairing and is not implemented");
     if ((samplerClass & Abi::SamplerAnisoOverride) != 0u) throw std::runtime_error("an image table entry paired with anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing, which is not implemented");
+    bool baseLevel = false;
+    if (view.unnormalized) {
+        const auto range = texture->SampledViewRange(firstLayer);
+        const bool singleLevel = range.levels == 1u && resource.baseLevel == 0u;
+        const bool supported = range.layers == 1u && EffectiveMinLod(resource) == 0.0f && (singleLevel || view.exactAtBase);
+        if (!supported || (range.type != VK_IMAGE_VIEW_TYPE_1D && range.type != VK_IMAGE_VIEW_TYPE_2D)) throw std::runtime_error("AGC graphics: guest texture sampled with unnormalized coordinates is not a single-layer 1D or 2D view without a minimum LOD clamp, and is neither a single-level view nor read at its base level only");
+        baseLevel = range.levels > 1u;
+    }
     DeviceTableTexture result;
-    result.slot = texture->SampledSlot(firstLayer ? texture->FirstLayerView() : texture->View());
+    result.slot = texture->SampledSlot(baseLevel ? texture->BaseLevelView() : firstLayer ? texture->FirstLayerView() : texture->View());
     result.address = resource.baseAddress;
     result.guestBytes = guestBytes;
     result.snapshot = looked != nullptr && looked->source == nullptr && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0 && looked->generation != 0;

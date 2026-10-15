@@ -38,6 +38,7 @@ struct SampleSetup {
     IrTextureNumericClass numericClass;
     bool dref;
     std::uint32_t coord;
+    std::uint32_t texelCoord = 0;
 };
 
 std::uint32_t RuntimeImageMode(SpirvEmitterState& state, std::uint32_t resource) {
@@ -1047,7 +1048,8 @@ SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& a
         ctx.Fail(access.inst, "uses depth comparison with a packed integer image");
     }
     const auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
-    return {dimensionInfo, layout, access.image.numericClass, dref, coord};
+    const bool unnormalized = ctx.state.tableAccess.active && ctx.state.tableAccess.unnormalized != 0u;
+    return {dimensionInfo, layout, access.image.numericClass, dref, coord, unnormalized ? coord : 0u};
 }
 
 void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -1426,7 +1428,15 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     };
     std::uint32_t sample = 0;
     const bool baseLevelIfUnnormalized = !setup.dref && SamplesBaseLevelIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
-    if (baseLevelIfUnnormalized) {
+    if (setup.texelCoord != 0u && !setup.dref) {
+        const auto unnormalized = Binary(state, spv::OpINotEqual, TypeBool(state), state.tableAccess.unnormalized, ConstantU32(state, 0u));
+        const bool fold = hasOffset && setup.dimensionInfo.coordinateComponents == setup.dimensionInfo.spatialComponents;
+        sample = EmitValueIfElse(state, unnormalized, resultType, [&] {
+            return emitSample(fold ? FoldedOffsetCoord(ctx, access, setup) : setup.coord, spv::ImageOperandsLodMask, {ZeroF32(state)}, spv::OpImageSampleExplicitLod);
+        }, [&] {
+            return emitSample(setup.coord, operandMask, operands, opcode);
+        });
+    } else if (baseLevelIfUnnormalized) {
         const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::UnnormalizedBaseLevel(mem.sampler), 0u);
         const auto unnormalized = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
         sample = EmitValueIfElse(state, unnormalized, resultType, [&] {
@@ -1838,7 +1848,7 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
         operands.insert(operands.end(), {1u, static_cast<std::uint32_t>(found - values.begin())});
         if (found == values.end()) values.push_back(value);
     }
-    const std::array<std::uint32_t, 4> access{selector, state.tableAccess.element, state.tableAccess.dword3, state.tableAccess.samplerElement};
+    const std::array<std::uint32_t, 5> access{selector, state.tableAccess.element, state.tableAccess.dword3, state.tableAccess.samplerElement, state.tableAccess.unnormalized};
     auto function = std::find_if(state.tableImageFunctions.begin(), state.tableImageFunctions.end(), [&](const SpirvTableImageFunction& candidate) {
         return candidate.opcode == inst.Opcode() && candidate.memory == memory && candidate.operands == operands;
     });
@@ -1858,12 +1868,12 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
         state.module.BeginHelperFunction();
         const Restore restore{state, state.currentLabel, state.tableAccess};
         const auto start = state.module.FunctionWordCount();
-        std::array<std::uint32_t, 4> parameters{};
+        std::array<std::uint32_t, 5> parameters{};
         for (std::size_t index = 0; index < parameters.size(); ++index) {
-            if (index != 3u || tableSampler) parameters[index] = state.module.AllocateId();
+            if ((index != 3u || tableSampler) && (index != 4u || access[4] != 0u)) parameters[index] = state.module.AllocateId();
         }
         EmitLabel(state, state.module.AllocateId());
-        state.tableAccess = {parameters[1], parameters[2], parameters[3], true};
+        state.tableAccess = {parameters[1], parameters[2], parameters[3], true, parameters[4]};
         SpirvValueEmitContext body(state);
         const auto result = returnsValue ? state.module.AllocateId() : 0u;
         EmitModeSwitch(body, inst, memory, modes, true, parameters[0], result);
@@ -1991,6 +2001,7 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     const auto header = DeviceAddress(state, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceLow)), LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceHigh)));
     auto samplerClass = zero;
     std::array<std::uint32_t, Abi::SamplerWords> samplerWords{zero, zero, zero, zero};
+    std::uint32_t unnormalized = 0;
     bool deviceSampler = false;
     if (ImageOpcodeInfoOf(inst.Opcode()).needsSampler) {
         const auto& sampler = state.program.Info().samplers.at(memory.sampler);
@@ -1999,6 +2010,8 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
             if (samplerHandle == nullptr || samplerHandle->ArgumentCount() != Abi::SamplerWords) ctx.Fail(inst, "has a device-table sampler handle without its four descriptor dwords");
             for (std::uint32_t word = 0; word < samplerWords.size(); ++word) samplerWords[word] = ctx.Def(samplerHandle->Argument(word));
             samplerClass = ConstantU32(state, Abi::RuntimeSampler);
+            unnormalized = Binary(state, spv::OpBitwiseAnd, u32, samplerWords[0], ConstantU32(state, Abi::SamplerUnnormalized));
+            if (HasFlag(memory, RdnaImageSampleFlagLevelZero)) samplerClass = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, unnormalized, zero), ConstantU32(state, Abi::RuntimeSampler | Abi::SamplerExactAtBase), samplerClass);
             deviceSampler = true;
         } else {
             samplerClass = LoadTableMap(state, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerClasses)), ConstantU32(state, memory.sampler)));
@@ -2033,6 +2046,7 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     if (deviceSampler) {
         state.tableAccess.samplerElement = Select(state, u32, valid, Binary(state, spv::OpISub, u32, found, ConstantU32(state, 1u)), zero);
         DecorateTableNonUniform(state, state.tableAccess.samplerElement);
+        state.tableAccess.unnormalized = unnormalized;
     }
     state.tableAccess.active = true;
     EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, mode, ConstantU32(state, InvalidTableSelector)), deviceSampler);

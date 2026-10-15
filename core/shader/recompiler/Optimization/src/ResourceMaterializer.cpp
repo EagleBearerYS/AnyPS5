@@ -1346,7 +1346,8 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
                 expectation.mapSampler = use.sampler;
             } else {
                 if (!evaluate(sampler.source, Abi::SamplerWords, key.data() + Abi::SamplerWord)) continue;
-                key[Abi::SamplerClassWord] = Abi::RuntimeSampler;
+                const bool exactAtBase = use.levelZero && (key[Abi::SamplerWord] & Abi::SamplerUnnormalized) != 0u;
+                key[Abi::SamplerClassWord] = Abi::RuntimeSampler | (exactAtBase ? Abi::SamplerExactAtBase : 0u);
             }
         }
         expected.push_back(expectation);
@@ -1480,7 +1481,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(mode);
         }
     }
-    if (image.constantSwizzleCompatible && !storage && !image.depthCompare && !image.packed && !table) {
+    if (image.constantSwizzleCompatible && !storage && !image.depthCompare && !image.packed && (!table || image.deviceTable)) {
         for (const auto numeric : {IrTextureNumericClass::Float, IrTextureNumericClass::Uint, IrTextureNumericClass::Sint}) {
             auto mode = image;
             mode.numericClass = numeric;
