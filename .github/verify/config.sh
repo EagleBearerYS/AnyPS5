@@ -1,0 +1,3 @@
+BASE=0029e62f974c453a5f6c7333f3bdb13e770e3903
+REPEAT=3
+EXTRA_TESTS='agc_driver_keys_clear_over_pending'
