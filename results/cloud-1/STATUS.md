@@ -1,8 +1,9 @@
-BUSY GAC-033 (claimed 2026-10-15T15:38:08Z)
+READY
 RESULT:
-- Working on GAC-033: an exact path for same-set per-pixel sample locations (stop 15), on GAC-030's 668ecaeca, branch fix/agc-sample-location-grid-exact, plus diag/village-ms-consumers.
-- Last task: GAC-026, done: results/cloud-1/GAC-026.md.
-  - Branch: fork perf/agc-host-import-blocks f5bf721bc (step 0 d1c3a1a0f, shutdown counts 07779db2e, overhang test fix 9c1e05733, F1 d568e0f90, F6 0f85236fe, F3 f5bf721bc).
-  - ^agc 598/598 at F1, F6 and F3; new tests 10/10 at every commit.
-  - Addendum 08:26 PT answered in the result.
-- Next by the pick rule: GAC-034 (high), unless another worker takes it.
+- Last task: GAC-033, done: results/cloud-1/GAC-033.md.
+  - fix/agc-sample-location-grid-exact 57ceb9e37 (exact path for same-set per-pixel sample locations, on GAC-030's 668ecaeca; replaces 2d6079340).
+  - diag/village-ms-consumers 265937aea (APS5_TRACE_MS_CONSUMERS=1 counters, on explorer 4cd4260a9a).
+  - ^agc 605/605 at 2d6079340; merged with upstream main 03c4cb5e78: 609/610, and the 1 (agc_driver_mesh_index_cache, llvmpipe LLVM crash) fails on pure main too.
+  - The lavapipe smoke run found two bugs in the grid-reference harness, fixed in 57ceb9e37. --grid-reference now runs on the 3070 too.
+  - Coordinator runs: --grid-reference with ANYPS5_GPU=Radeon and =3070, and --bench 1920x2160 2 100 on the 3070.
+- Next by the pick rule: GAC-036 (high, for any), unless another worker takes it.
