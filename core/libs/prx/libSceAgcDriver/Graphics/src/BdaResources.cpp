@@ -34,7 +34,9 @@ BdaArena::Slice BdaArena::Take(const Context& context, std::size_t bytes) {
             slab = std::move(arena->free.back());
             arena->free.pop_back();
         } else {
-            slab = std::make_unique<Buffer>(context, SlabBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            auto slabContext = context;
+            slabContext.bdaArena.reset();
+            slab = std::make_unique<Buffer>(slabContext, SlabBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         }
         const std::weak_ptr<BdaArena> owner = arena;
         arena->current = std::shared_ptr<Buffer>(slab.release(), [owner](Buffer* released) {
