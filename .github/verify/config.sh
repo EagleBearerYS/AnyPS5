@@ -1,0 +1,4 @@
+BASE=92e50418f33b8950ceea950cb37331a941f5be0e
+REPEAT=5
+EXTRA_TESTS='agc_driver_image_table|agc_shader_bindless|agc_shader_type_zero_image_materialization'
+NO_BEFORE=1
