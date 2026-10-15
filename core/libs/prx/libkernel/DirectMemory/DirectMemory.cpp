@@ -132,6 +132,18 @@ static void CommitReservedPages(void* addr, size_t len) {
     }
 }
 
+static std::uintptr_t AboveStackGuard(std::uintptr_t start, std::uintptr_t end) {
+    auto cursor = start;
+    while (cursor < end) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualQuery failed");
+        if (memory.State != MEM_RESERVE && (memory.State != MEM_COMMIT || (memory.Protect & PAGE_GUARD) == 0)) break;
+        cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+    }
+    return cursor;
+}
+
 static int mprotect(void* addr, size_t len, int prot) {
     GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(addr), len, WinProtFromPosix(prot));
     if (prot != PROT_NONE && KernelArena::Get().Owns(addr, len)) CommitArenaRange(addr, len, WinProtFromPosix(prot));
@@ -1084,13 +1096,25 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     std::uintptr_t stackEnd = 0;
     if ((prot & GuestProtGpuReadWrite) == 0 && GuestThreadStack(address, &stackStart, &stackEnd) && address >= stackStart && address + len <= stackEnd) {
         constexpr std::uintptr_t hostPageMask = 0xfff;
-        const auto inside = std::max(first, (stackStart + hostPageMask) & ~hostPageMask);
+        const auto requested = std::max(first, (stackStart + hostPageMask) & ~hostPageMask);
         const auto insideEnd = std::min(end, stackEnd & ~hostPageMask);
-        if (inside >= insideEnd) return 0;
+        if (requested >= insideEnd) return 0;
+        auto* requestedPointer = reinterpret_cast<void*>(requested);
+        const auto requestedBytes = static_cast<std::size_t>(insideEnd - requested);
+#ifdef _WIN32
+        const bool hostStack = !KernelArena::Get().Owns(requestedPointer, requestedBytes);
+        const auto inside = hostStack ? AboveStackGuard(requested, insideEnd) : requested;
+        if (inside == insideEnd) {
+            RecordProtection(requestedPointer, requestedBytes, prot);
+            return 0;
+        }
+#else
+        const auto inside = requested;
+#endif
         auto* insidePointer = reinterpret_cast<void*>(inside);
         const auto insideBytes = static_cast<std::size_t>(insideEnd - inside);
 #ifdef _WIN32
-        if (nativeProtection != PROT_NONE && !KernelArena::Get().Owns(insidePointer, insideBytes)) CommitReservedPages(insidePointer, insideBytes);
+        if (nativeProtection != PROT_NONE && hostStack) CommitReservedPages(insidePointer, insideBytes);
         const bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
 #else
         bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
@@ -1101,7 +1125,7 @@ int DoMprotect(const void* addr, size_t len, int prot) {
 #endif
         if (!protectedPages) throw std::system_error(errno, std::generic_category(), "mprotect failed");
         NoteGuestStackProtection(inside, insideBytes, (prot & 3) == 3);
-        RecordProtection(insidePointer, insideBytes, prot);
+        RecordProtection(requestedPointer, requestedBytes, prot);
         return 0;
     }
     GuestAllocations::Mutation mutation;
