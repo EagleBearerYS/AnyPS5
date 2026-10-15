@@ -200,25 +200,35 @@ std::size_t ContextUnlockCount(int context) {
     return owner ? TitleStore().UnlockCount(owner->userId, owner->serviceLabel) : 0;
 }
 
-}
-
-extern "C" bool NpTrophy2RecordUnlock_nid_no_patch(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId) {
+bool RecordUnlock(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId) {
     const auto title = GetAppTitleId_nid_postfix();
     const std::string_view titleId(title.value, static_cast<std::size_t>(std::find(std::begin(title.value), std::end(title.value), '\0') - std::begin(title.value)));
-    const NpTrophy2Unlock unlock{std::string(titleId), userId, serviceLabel, trophyId, NpTrophy2::CurrentTick()};
-    if (!NpTrophy2::TitleStore().Unlock(userId, serviceLabel, trophyId, unlock.tick)) return false;
+    const NpTrophy2Unlock unlock{std::string(titleId), userId, serviceLabel, trophyId, CurrentTick()};
+    if (!TitleStore().Unlock(userId, serviceLabel, trophyId, unlock.tick)) return false;
     std::fprintf(stderr, "[trophy] %s unlocked trophy %d for user %d\n", unlock.titleId.c_str(), trophyId, userId);
-    std::vector<NpTrophy2::Listener> current;
+    std::vector<Listener> current;
     {
-        auto& registry = NpTrophy2::listeners();
+        auto& registry = listeners();
         std::lock_guard lock(registry.mutex);
         current = registry.entries;
     }
     for (const auto& entry : current) entry.callback(entry.context, unlock);
-    const auto* package = NpTrophy2::Package(serviceLabel);
+    const auto* package = Package(serviceLabel);
     if (package == nullptr) return true;
-    if (const auto platinum = NpTrophy2::PlatinumToUnlock(*package, trophyId, NpTrophy2::UnlockedBy(userId, serviceLabel))) NpTrophy2RecordUnlock_nid_no_patch(userId, serviceLabel, *platinum);
+    if (const auto platinum = PlatinumToUnlock(*package, trophyId, UnlockedBy(userId, serviceLabel))) RecordUnlock(userId, serviceLabel, *platinum);
     return true;
+}
+
+}
+
+extern "C" bool NpTrophy2RecordUnlock_nid_no_patch(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId) {
+    if (const auto* package = NpTrophy2::Package(serviceLabel)) {
+        if (const auto refusal = NpTrophy2::PostedUnlockRefusal(*package, trophyId)) {
+            std::fprintf(stderr, "[trophy] ignored the posted unlock of trophy %d for user %d: %s\n", trophyId, userId, refusal->c_str());
+            return false;
+        }
+    }
+    return NpTrophy2::RecordUnlock(userId, serviceLabel, trophyId);
 }
 
 extern "C" std::uint64_t NpTrophy2AddUnlockListener_nid_no_patch(NpTrophy2UnlockListener listener, void* context) {

@@ -1,4 +1,5 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -11,7 +12,13 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 extern "C" {
 int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t);
@@ -57,6 +64,69 @@ void write(const char* path, const std::string& text) {
     const bool written = std::fwrite(text.data(), 1, text.size(), file) == text.size();
     check(std::fclose(file) == 0 && written, "test file was not written");
 }
+
+void putBigEndian(std::string& data, std::size_t offset, std::uint64_t value, std::size_t size) {
+    for (std::size_t i = 0; i < size; ++i) data[offset + i] = static_cast<char>((value >> (8 * (size - 1 - i))) & 0xFF);
+}
+
+std::string ucp(const std::vector<std::pair<std::string, std::string>>& files) {
+    std::size_t offset = 0x60 + files.size() * 0x40;
+    std::size_t size = offset;
+    for (const auto& file : files) size += file.second.size();
+    std::string data(size, '\0');
+    putBigEndian(data, 0, 0xB228C60A, 4);
+    putBigEndian(data, 4, 1, 4);
+    putBigEndian(data, 8, size, 8);
+    putBigEndian(data, 0x10, files.size(), 4);
+    putBigEndian(data, 0x14, 0x40, 4);
+    std::size_t entry = 0x60;
+    for (const auto& [name, contents] : files) {
+        data.replace(entry, name.size(), name);
+        putBigEndian(data, entry + 0x20, offset, 8);
+        putBigEndian(data, entry + 0x28, contents.size(), 8);
+        data.replace(offset, contents.size(), contents);
+        offset += contents.size();
+        entry += 0x40;
+    }
+    return data;
+}
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        check(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        check(saved >= 0 && _dup2(_fileno(file), _fileno(stderr)) == 0, "cannot capture stderr");
+#else
+        saved = dup(fileno(stderr));
+        check(saved >= 0 && dup2(fileno(file), fileno(stderr)) == fileno(stderr), "cannot capture stderr");
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t count; (count = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, count);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
 
 void testPersistence() {
     const std::filesystem::path directory("store");
@@ -150,6 +220,44 @@ void testQueries() {
     check(sceNpTrophy2DestroyContext(context) == 0 && sceNpTrophy2DestroyContext(other) == 0, "contexts were not destroyed");
 }
 
+
+void testPostedUnlockRules() {
+    std::filesystem::create_directories("app0/sce_sys/trophy2");
+    std::filesystem::create_directories("app0/sce_sys/uds");
+    write("app0/sce_sys/trophy2/trophy04.ucp", ucp({{"tropconf.json", R"({"defaultLanguage":"en-US","trophies":[
+        {"id":"0","grade":"P"},
+        {"id":"1","grade":"G","platinumTrophyId":"0"},
+        {"id":"2","grade":"B","platinumTrophyId":"0","unlockCondition":{"udsStatId":"40","comparator":"ge","targetValue":"5","progressive":true}},
+        {"id":"3","grade":"B"}]})"},
+                                                     {"tropmeta_en-US.json", R"({"metadata":{"titleMetadata":{"name":"Rules"},"trophyMetadata":[]}})"}}));
+    write("app0/sce_sys/uds/uds04.ucp", ucp({{"stats_definition.json", R"({"statDefinitionArray":[{"statId":40,"dataType":"uint32","aggregation":"latest"}]})"},
+                                             {"stats_extraction.json", R"({"statsExtractionRuleArray":[{"condition":{"eventName":"STEPS"},"action":{"input":"$.steps","output":{"statId":40}}}]})"}}));
+    check(NpTrophy2::Package(4) != nullptr, "the trophy data of service label 4 was not loaded");
+    Seen seen;
+    const auto listener = NpTrophy2AddUnlockListener_nid_no_patch(remember, &seen);
+    StderrCapture capture;
+    const bool unknown = NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 4, 9);
+    const bool platinum = NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 4, 0);
+    const bool progressive = NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 4, 2);
+    const auto log = capture.Finish();
+    check(!unknown && !platinum && !progressive, "an unknown, platinum or progressive trophy posted through UDS was recorded");
+    check(NpTrophy2::TitleStore().UnlockCount(InitialUser, 4) == 0 && seen.unlocks.empty(), "a refused unlock reached the record or a listener");
+    for (const char* line : {"[trophy] ignored the posted unlock of trophy 9 for user 268435456: the title's trophy data has no such trophy\n",
+                             "[trophy] ignored the posted unlock of trophy 0 for user 268435456: it is the platinum, which unlocks with the last trophy that names it\n",
+                             "[trophy] ignored the posted unlock of trophy 2 for user 268435456: it is progressive and unlocks through its statistic\n"}) {
+        check(log.find(line) != std::string::npos, "a refused unlock did not log its trophy and reason");
+    }
+    check(NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 4, 1) && NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 4, 3), "an ordinary trophy posted through UDS was not recorded");
+    check(!NpTrophy2::TitleStore().UnlockTick(InitialUser, 4, 0), "the platinum unlocked before every trophy that names it");
+    NpTrophy2ApplyEvent_nid_no_patch(InitialUser, 4, NpTrophy2Event{"STEPS", {{"steps", 5, "5"}}});
+    check(NpTrophy2::TitleStore().UnlockTick(InitialUser, 4, 2).has_value(), "the progressive trophy did not unlock through its statistic");
+    check(NpTrophy2::TitleStore().UnlockTick(InitialUser, 4, 0).has_value(), "the platinum did not unlock with the last trophy that names it");
+    NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
+    std::vector<std::int32_t> seenIds;
+    for (const auto& unlock : seen.unlocks) seenIds.push_back(unlock.trophyId);
+    check(seenIds == std::vector<std::int32_t>{1, 3, 2, 0}, "the listener did not see the posted, statistic and platinum unlocks once, in order");
+}
+
 }
 
 int main() {
@@ -161,6 +269,7 @@ int main() {
     testPersistence();
     testDamagedRecords();
     testQueries();
+    testPostedUnlockRules();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     std::puts("Trophy store tests passed");

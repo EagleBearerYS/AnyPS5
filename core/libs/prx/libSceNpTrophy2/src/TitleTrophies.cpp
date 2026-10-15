@@ -179,6 +179,14 @@ std::optional<std::int32_t> PlatinumToUnlock(const TrophyPackage& package, std::
     return platinumId;
 }
 
+std::optional<std::string> PostedUnlockRefusal(const TrophyPackage& package, std::int32_t trophyId) {
+    const auto trophy = package.trophies.find(trophyId);
+    if (trophy == package.trophies.end()) return "the title's trophy data has no such trophy";
+    if (trophy->second.grade == GradePlatinum) return "it is the platinum, which unlocks with the last trophy that names it";
+    if (trophy->second.progressive) return "it is progressive and unlocks through its statistic";
+    return std::nullopt;
+}
+
 std::optional<std::uint64_t> ProgressTarget(const TrophyDefinition& trophy) {
     if (!trophy.progressive) return std::nullopt;
     return trophy.target;
@@ -227,5 +235,5 @@ extern "C" void NpTrophy2ApplyEvent_nid_no_patch(std::int32_t userId, std::uint3
     }
     if (changes.updates.empty() || !title.package) return;
     const auto stats = NpTrophy2::TitleStats().Values(userId, serviceLabel);
-    for (const auto trophyId : NpTrophy2::ReachedTrophies(*title.package, stats, NpTrophy2::UnlockedBy(userId, serviceLabel))) NpTrophy2RecordUnlock_nid_no_patch(userId, serviceLabel, trophyId);
+    for (const auto trophyId : NpTrophy2::ReachedTrophies(*title.package, stats, NpTrophy2::UnlockedBy(userId, serviceLabel))) NpTrophy2::RecordUnlock(userId, serviceLabel, trophyId);
 }
