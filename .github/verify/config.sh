@@ -1,0 +1,4 @@
+BASE=4344c1dc29a7d5734cff34a22547e3b1433509a7
+REPEAT=5
+EXTRA_TESTS='agc_shader_bindless|agc_driver_image_table'
+BEFORE_REPEAT=3
