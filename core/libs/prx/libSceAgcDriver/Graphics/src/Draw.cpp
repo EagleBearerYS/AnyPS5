@@ -379,6 +379,12 @@ struct DrawOutcome {
     double cacheRevalidateUs = 0;
     double cacheMovedUs = 0;
     double cacheAliasUs = 0;
+    std::uint64_t memoHits = 0;
+    std::uint64_t memoUnbumped = 0;
+    std::uint64_t memoNoEntry = 0;
+    std::uint64_t memoUnwatched = 0;
+    std::uint64_t memoShorter = 0;
+    std::uint64_t lookupEpochChanges = 0;
     // How the draw's resources came about (DrawKind), for the per-kind averages.
     std::size_t kind = 0;
     // The flush hook's fence waits made inside this draw (index and vertex reads, the target
@@ -408,6 +414,13 @@ struct DrawProfile {
     double cacheRevalidateUs = 0;
     double cacheMovedUs = 0;
     double cacheAliasUs = 0;
+    std::uint64_t memoHits = 0;
+    std::uint64_t memoUnbumped = 0;
+    std::uint64_t memoNoEntry = 0;
+    std::uint64_t memoUnwatched = 0;
+    std::uint64_t memoShorter = 0;
+    std::uint64_t lookupEpochChanges = 0;
+    std::uint64_t lastUnwatchSerial = 0;
     std::array<double, PhaseCount> totalsUs{};
     // The longest single draw's time per phase, and the longest draw: the [lock] line's 'draw'
     // hold max (tens of ms against an average well under a millisecond) needs a phase name.
@@ -519,6 +532,12 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.cacheRevalidateUs += outcome.cacheRevalidateUs;
     profile.cacheMovedUs += outcome.cacheMovedUs;
     profile.cacheAliasUs += outcome.cacheAliasUs;
+    profile.memoHits += outcome.memoHits;
+    profile.memoUnbumped += outcome.memoUnbumped;
+    profile.memoNoEntry += outcome.memoNoEntry;
+    profile.memoUnwatched += outcome.memoUnwatched;
+    profile.memoShorter += outcome.memoShorter;
+    profile.lookupEpochChanges += outcome.lookupEpochChanges;
     if (outcome.kind < KindCount) {
         ++profile.kindCounts[outcome.kind];
         profile.kindUs[outcome.kind] += drawUs;
@@ -541,6 +560,11 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s=%.1fms", DrawPhaseNames[i], profile.totalsUs[i] / 1000.0);
         if (i == PhaseResources && room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " (bindings %.1f, upload %.1f, descriptors %.1f, other %.1f of which %.1f in %llu address-based builds)", profile.bindingsUs / 1000.0, profile.uploadUs / 1000.0, profile.descriptorsUs / 1000.0, profile.otherUs / 1000.0, profile.addressOtherUs / 1000.0, static_cast<unsigned long long>(profile.addressBuilds));
         if (i == PhaseReadTarget && room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " (%llu resident lookups, %llu of them >= 1 ms = %.1f; target lookups: full-scissor %llu / partial %llu / pages walked %llu / %.0f us)", static_cast<unsigned long long>(profile.targetLookups), static_cast<unsigned long long>(profile.slowLookups), profile.slowLookupUs / 1000.0, static_cast<unsigned long long>(profile.fullScissorLookups), static_cast<unsigned long long>(profile.partialLookups), static_cast<unsigned long long>(profile.pagesWalked), profile.lookupUs);
+        if (i == PhaseReadTarget && room()) {
+            const auto serial = GuestMemory::UnwatchSerial();
+            n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " (target collect memo: hits %llu, misses unbumped %llu / no entry %llu / unwatched %llu / short %llu; lookup epoch changes %llu; unwatch serial +%llu)", static_cast<unsigned long long>(profile.memoHits), static_cast<unsigned long long>(profile.memoUnbumped), static_cast<unsigned long long>(profile.memoNoEntry), static_cast<unsigned long long>(profile.memoUnwatched), static_cast<unsigned long long>(profile.memoShorter), static_cast<unsigned long long>(profile.lookupEpochChanges), static_cast<unsigned long long>(serial - profile.lastUnwatchSerial));
+            profile.lastUnwatchSerial = serial;
+        }
         if (i == PhaseLookup && room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " (key %.1f, find %.1f, revalidate %.1f, moved buffers %.1f, alias checks %.1f)", profile.cacheKeyUs / 1000.0, profile.cacheFindUs / 1000.0, profile.cacheRevalidateUs / 1000.0, profile.cacheMovedUs / 1000.0, profile.cacheAliasUs / 1000.0);
     }
     if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; per kind (avg us, count):");
@@ -588,6 +612,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.fullScissorLookups = profile.partialLookups = profile.pagesWalked = 0;
     profile.lookupUs = 0;
     profile.cacheKeyUs = profile.cacheFindUs = profile.cacheRevalidateUs = profile.cacheMovedUs = profile.cacheAliasUs = 0;
+    profile.memoHits = profile.memoUnbumped = profile.memoNoEntry = profile.memoUnwatched = profile.memoShorter = profile.lookupEpochChanges = 0;
     profile.kindUs.fill(0);
     profile.kindCounts.fill(0);
     profile.cacheHits = profile.cacheMisses = profile.cacheInvalidated = profile.uncacheable = 0;
@@ -1245,6 +1270,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const std::function<std::shared_ptr<StorageTexture>()>& lookup) {
     const auto lookupStart = std::chrono::steady_clock::now();
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
+    const auto probeBefore = profile ? GuestMemory::ThreadCollectMemoProbe() : GuestMemory::CollectMemoProbe{};
+    if (profile) {
+        thread_local std::uint64_t lastLookupEpoch = 0;
+        const auto epoch = GuestMemory::ThreadCollectEpoch();
+        if (epoch != lastLookupEpoch) ++outcome.lookupEpochChanges;
+        lastLookupEpoch = epoch;
+    }
     std::shared_ptr<StorageTexture> resident;
     try {
         resident = lookup();
@@ -1265,6 +1297,12 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         }
         outcome.lookupUs += lookupUs;
         outcome.pagesWalked += (GuestMemory::ThreadCollectedBytes() - walkedBefore) / 4096;
+        const auto probeAfter = GuestMemory::ThreadCollectMemoProbe();
+        outcome.memoHits += probeAfter.hits - probeBefore.hits;
+        outcome.memoUnbumped += probeAfter.unbumped - probeBefore.unbumped;
+        outcome.memoNoEntry += probeAfter.noEntry - probeBefore.noEntry;
+        outcome.memoUnwatched += probeAfter.unwatched - probeBefore.unwatched;
+        outcome.memoShorter += probeAfter.shorter - probeBefore.shorter;
         const bool fullScissor = state.scissor.offset.x <= 0 && state.scissor.offset.y <= 0 && state.scissor.extent.width >= color.extent.width && state.scissor.extent.height >= color.extent.height;
         ++(fullScissor ? outcome.fullScissorLookups : outcome.partialLookups);
     }
