@@ -41,6 +41,8 @@
 #include <new>
 #include <stdexcept>
 #include <span>
+#include <atomic>
+#include <thread>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -1634,6 +1636,66 @@ void verifyTableSnapshotReuse() {
     const auto pagedBack = capture(pagedRequest, paged, PagedBytes, nullptr);
     require(pagedBack.reuse.unwritten == 0u && pagedBack.reuse.compared == 1u && sharesColumn(pagedBack, pagedFresh) && heldRecords(pagedBack, paged, PagedRecords), "table snapshot reuse: the column read before a page was unmapped was not compared and shared once the page came back");
     std::cout << "table snapshot reuse " << (watched ? "with" : "without") << " write watching passed\n";
+}
+
+std::atomic<int> tableRacePhase{0};
+std::uint64_t tableRaceBegin = 0;
+std::uint64_t tableRaceBytes = 0;
+
+AgcDriver::ShaderMemory::PendingWrite RacingTableWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte>) {
+    if (tableRaceBytes != 0u && address == tableRaceBegin && bytes >= tableRaceBytes) {
+        tableRaceBytes = 0;
+        tableRacePhase.store(1, std::memory_order_release);
+        while (tableRacePhase.load(std::memory_order_acquire) != 2) std::this_thread::yield();
+    }
+    return AgcDriver::ShaderMemory::PendingWrite::None;
+}
+
+void verifyTableStampRace() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Records = 4096;
+    constexpr std::uint32_t Stride = 48;
+    constexpr std::size_t Bytes = static_cast<std::size_t>(Records) * Stride;
+    constexpr std::size_t RecordWords = Stride / 4u;
+    const auto texture = [](std::uint32_t index) { return TableT(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x100000000ull + index * 256ull)), TableFormat8888UNorm, TableType2D, 1u + index % 5u); };
+    auto* heap = AllocateWatchedTable(Bytes);
+    for (std::uint32_t record = 0; record < Records; record++) {
+        const auto words = texture(record % 1024u);
+        std::copy(words.begin(), words.end(), heap + record * RecordWords);
+        std::fill_n(heap + record * RecordWords + 8u, 4u, 0x5a5a5a5au);
+    }
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(heap));
+    if (AgcDriver::GuestMemory::CollectWrites(address, Bytes) == 0) {
+        std::cout << "table stamp race without write watching skipped\n";
+        return;
+    }
+    alignas(4096) static TableGuest guest;
+    FillTableSrt(guest, heap, Stride, Records);
+    const auto userData = TableUserData(guest);
+    auto wideCode = TableWholeCode;
+    std::replace(wideCode.begin(), wideCode.end(), 0x8f108510u, 0x9310b010u);
+    const auto request = TableRequest(wideCode, userData);
+    const auto capture = [&](AgcDriver::ShaderMemory::PendingWriteQuery pending) {
+        const auto before = ResourceMaterializer::TableReuse();
+        AgcDriver::ShaderMemory memory({}, pending);
+        static_cast<void>(memory.Capture(request));
+        const auto after = ResourceMaterializer::TableReuse();
+        return ImageTableReuseCounts{after.unwritten - before.unwritten, after.compared - before.compared, after.wordsRead - before.wordsRead, after.shared - before.shared, after.columns - before.columns};
+    };
+    tableRacePhase.store(0, std::memory_order_relaxed);
+    tableRaceBegin = address;
+    tableRaceBytes = Bytes - 16u;
+    std::thread writer([&] {
+        while (tableRacePhase.load(std::memory_order_acquire) != 1) std::this_thread::yield();
+        AgcDriver::GuestMemory::MarkWritten(address + 5u * Stride, 32u);
+        tableRacePhase.store(2, std::memory_order_release);
+    });
+    const auto first = capture(&RacingTableWrite);
+    writer.join();
+    require(tableRacePhase.load(std::memory_order_relaxed) == 2 && first.columns == 1u, "table stamp race: the racing store did not run while the table was stamped");
+    const auto next = capture(nullptr);
+    require(next.unwritten == 0u && next.compared == 1u, "table stamp race: a GPU write stamped while the table was stamped, before it was noted pending, was hidden by the table's stamp");
+    std::cout << "table stamp race with write watching passed\n";
 }
 
 void verifyImageTables() {
@@ -5647,6 +5709,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
             verifyTableSnapshotReuse();
+            verifyTableStampRace();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {

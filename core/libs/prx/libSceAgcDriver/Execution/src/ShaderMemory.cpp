@@ -301,11 +301,11 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
     if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || self.overlapsInitial(address, address + bytes)) return {};
     const auto fetched = self.pages.lower_bound(address & ~static_cast<std::uint64_t>(PageBytes - 1));
     if (fetched != self.pages.end() && fetched->first < address + bytes) return {};
-    if (self.pendingWrite != nullptr && self.pendingWrite(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
     if (generation == 0) return {};
+    if (self.pendingWrite != nullptr && self.pendingWrite(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
     return {generation, layout};
 }
 
