@@ -883,13 +883,16 @@ std::uint32_t colorCompareReference(IrBufferFormat format) {
     }
 }
 
-std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
-    const auto& image = info.images[index];
-    const auto& descriptor = snapshot.images[index];
-    if (!image.depthCompare || descriptor.dwordCount != 8u || nullImageDescriptor(descriptor)) return 0u;
+bool nativeCompare(const ImageResource& image, const DescriptorValue& descriptor) {
+    if (!image.depthCompare || descriptor.dwordCount != 8u || nullImageDescriptor(descriptor)) return true;
     const auto format = rawImageFormat(descriptor);
-    if (format == IrBufferFormat::Format32Float || format == IrBufferFormat::Format16UNorm || IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) return 0u;
-    if (image.table != NoTable || (image.emulatedCompare & EmulatedCompare::Unsupported) != 0u) throw std::runtime_error("unsupported color comparison image instructions");
+    return format == IrBufferFormat::Format32Float || format == IrBufferFormat::Format16UNorm || IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3]);
+}
+
+std::uint32_t colorCompareState(const ImageResource& image, const DescriptorValue& descriptor, std::span<const std::array<std::uint32_t, 4>> samplers) {
+    if (nativeCompare(image, descriptor)) return 0u;
+    const auto format = rawImageFormat(descriptor);
+    if ((image.table != NoTable && !image.deviceTable) || (image.emulatedCompare & EmulatedCompare::Unsupported) != 0u) throw std::runtime_error("unsupported color comparison image instructions");
     if ((image.emulatedCompare & EmulatedCompare::RequiresSingleLevel) != 0u && ((descriptor.dwords[3] >> 12u) & 0xfu) != ((descriptor.dwords[3] >> 16u) & 0xfu)) throw std::runtime_error("color comparison requires a single mip level");
     const auto reference = colorCompareReference(format);
     const auto type = rawImageType(descriptor);
@@ -904,11 +907,7 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
     }
     if (compareChannel && !redChannel) throw std::runtime_error("comparison sampling of a color texture is implemented only when a view channel selects red");
     std::optional<std::uint32_t> samplerState;
-    for (const auto& pair : info.sampledPairs) {
-        if (pair.image != index) continue;
-        if (pair.sampler >= info.samplers.size() || info.samplers[pair.sampler].table != NoTable) throw std::runtime_error("comparison sampling of a color texture through a sampler table is not implemented");
-        if (pair.sampler >= snapshot.samplers.size() || snapshot.samplers[pair.sampler].dwordCount != 4u) throw std::runtime_error("comparison sampling of a color texture has no sampler descriptor");
-        const auto& words = snapshot.samplers[pair.sampler].dwords;
+    for (const auto& words : samplers) {
         const auto clampX = words[0] & 0x7u;
         const auto clampY = (words[0] >> 3u) & 0x7u;
         const auto function = (words[0] >> 12u) & 0x7u;
@@ -941,6 +940,21 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
     if (!samplerState.has_value()) throw std::runtime_error("comparison sampling of a color texture has no paired sampler");
     const bool singleLevel = ((descriptor.dwords[3] >> 12u) & 0xfu) == ((descriptor.dwords[3] >> 16u) & 0xfu);
     return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u);
+}
+
+std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
+    const auto& image = info.images[index];
+    const auto& descriptor = snapshot.images[index];
+    if (nativeCompare(image, descriptor)) return 0u;
+    std::vector<std::array<std::uint32_t, 4>> samplers;
+    for (const auto& pair : info.sampledPairs) {
+        if (pair.image != index) continue;
+        if (pair.sampler >= info.samplers.size() || info.samplers[pair.sampler].table != NoTable) throw std::runtime_error("comparison sampling of a color texture through a sampler table is not implemented");
+        if (pair.sampler >= snapshot.samplers.size() || snapshot.samplers[pair.sampler].dwordCount != 4u) throw std::runtime_error("comparison sampling of a color texture has no sampler descriptor");
+        const auto& words = snapshot.samplers[pair.sampler].dwords;
+        samplers.push_back({words[0], words[1], words[2], words[3]});
+    }
+    return colorCompareState(image, descriptor, samplers);
 }
 
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
@@ -1560,7 +1574,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
         }
     }
-    if (image.depthCompare && !table && (image.emulatedCompare & EmulatedCompare::Unsupported) == 0u && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray)) {
+    if (image.depthCompare && (!table || image.deviceTable) && (image.emulatedCompare & EmulatedCompare::Unsupported) == 0u && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray)) {
         auto mode = image;
         mode.numericClass = IrTextureNumericClass::Float;
         mode.depthCompare = false;
@@ -1707,6 +1721,11 @@ std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image,
 
 std::uint32_t ResourceMaterializer::EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
     return emulatedCompareState(info, snapshot, index);
+}
+
+std::uint32_t ResourceMaterializer::ColorCompareState(const ImageResource& image, const DescriptorValue& descriptor, std::span<const std::uint32_t, 4> sampler) {
+    const std::array<std::array<std::uint32_t, 4>, 1> samplers{{{sampler[0], sampler[1], sampler[2], sampler[3]}}};
+    return colorCompareState(image, descriptor, samplers);
 }
 
 void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets) const {

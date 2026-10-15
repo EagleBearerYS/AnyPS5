@@ -263,6 +263,7 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::SpecializationNanoseconds
             ResourceMaterializer::TryRuntimeImageMode
             ResourceMaterializer::UnnormalizedSampleMismatch
+            ResourceMaterializer::ColorCompareState
             ImageShapeForResource
             PointFilteredSamplerWord
             ReducesBetweenTexels

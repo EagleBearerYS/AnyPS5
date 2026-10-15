@@ -1111,6 +1111,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             const auto& modes = variant.info.info.runtimeImageModes.at(expectation.image);
             auto match = ResourceMaterializer::TryRuntimeImageMode(images.at(expectation.image), descriptor, modes);
             if (match.mode.has_value()) {
+                if ((modes.at(*match.mode).emulatedCompare & EmulatedCompare::Enabled) != 0u) {
+                    if (!runtimeSampler) throw std::runtime_error("comparison sampling of a color texture through a sampler the device image table does not read is not implemented");
+                    static_cast<void>(ResourceMaterializer::ColorCompareState(images.at(expectation.image), descriptor, std::span<const std::uint32_t, 4>(expectation.key.data() + DeviceImageTableAbi::SamplerWord, DeviceImageTableAbi::SamplerWords)));
+                }
                 if (!runtimeSampler || (expectation.key[DeviceImageTableAbi::SamplerWord] & DeviceImageTableAbi::SamplerUnnormalized) == 0u) continue;
                 if (const auto* mismatch = ResourceMaterializer::UnnormalizedSampleMismatch(modes.at(*match.mode))) throw std::runtime_error(std::string("an S# with unnormalized coordinates ") + mismatch + ", which is not implemented");
                 for (const auto& use : variant.info.info.deviceImageUses) {

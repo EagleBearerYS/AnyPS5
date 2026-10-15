@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
@@ -249,6 +250,7 @@ std::uint64_t Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const
     const std::span<const std::uint32_t> code = offsets ? std::span<const std::uint32_t>(OffsetCode) : array ? std::span<const std::uint32_t>(ArrayCode) : std::span<const std::uint32_t>(Code);
     const auto result = Compile(device, Format1616UNorm, sampler, code, useCache);
     if (expectedVariant != 0) Require(result.cacheHit && result.variantId == expectedVariant, std::string(name) + " did not reuse the compiled comparison artifact");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -269,6 +271,7 @@ void RunChannels(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t>
     Output.fill(-2.0f);
     const auto result = Compile(device, Format1616UNorm, sampler, code);
     Swizzle = 0xfacu;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -295,6 +298,7 @@ void RunCube(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char
     }
     Output.fill(-1.0f);
     const auto result = Compile(device, Format1616UNorm, sampler, CubeCode, false, true, true);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -329,6 +333,7 @@ void RunSrgbCubeZero(AgcDriver::VulkanDevice& device, std::uint32_t format, cons
     Output.fill(-1.0f);
     const auto result = Compile(device, format, sampler, CubeCode, false, true, true);
     Require(!ComparesNatively(result), std::string(name) + " took the native comparison path");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -341,6 +346,7 @@ void RunSrgbZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sa
     const auto result = Compile(device, format, sampler, Code, useCache);
     if (useCache) Require(result.cacheHit && result.variantId == expectedVariant, std::string(name) + " did not reuse the compiled comparison artifact");
     Require(!ComparesNatively(result), std::string(name) + " took the native comparison path");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {

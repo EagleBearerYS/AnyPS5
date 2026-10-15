@@ -303,8 +303,19 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
         const DeviceTableView view{ShaderRecompiler::ImageShapeForResource(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits, ShaderRecompiler::ResourceMaterializer::BindsDecodedCopy(mode, descriptor), IntegerMode(mode), unnormalized, (key[Abi::SamplerClassWord] & Abi::SamplerExactAtBase) != 0u && (samplerWords[1] & 0xfffu) == 0u && (samplerWords[2] & 0xfffffu) == 0u};
         auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view, samplerClass, perUse);
         const auto samplerSlot = sampler != nullptr ? sampler->Slot() : 0u;
+        auto modeWord = *match.mode;
+        if ((mode.emulatedCompare & ShaderRecompiler::EmulatedCompare::Enabled) != 0u) {
+            if (!runtimeSampler) return rejected(Reason::ColorCompare, "comparison sampling of a color texture through a sampler the device image table does not read is not implemented");
+            std::uint32_t compare = 0;
+            try {
+                compare = ShaderRecompiler::ResourceMaterializer::ColorCompareState(interface->image, descriptor, std::span<const std::uint32_t, 4>(key.data() + Abi::SamplerWord, Abi::SamplerWords));
+            } catch (const std::runtime_error& error) {
+                return rejected(Reason::ColorCompare, error.what());
+            }
+            modeWord |= compare << Abi::ModeCompareShift;
+        }
         entry = {std::move(texture.texture), std::move(sampler), texture.address, texture.guestBytes, texture.generation, texture.snapshot, texture.perUse};
-        return {texture.slot, *match.mode, 0u, samplerSlot};
+        return {texture.slot, modeWord, 0u, samplerSlot};
     } catch (const std::runtime_error& error) {
         return rejected(Reason::DriverRejected, error.what());
     }

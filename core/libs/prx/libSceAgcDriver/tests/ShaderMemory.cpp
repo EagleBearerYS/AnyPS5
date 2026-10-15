@@ -1212,7 +1212,16 @@ void verifyImageTableRegistration() {
     const auto& compareImage = compare.capture->plan->info.images.at(0);
     require(compareImage.table == 0u && compareImage.depthCompare, "image table registration: the compare T# is not a table");
     const auto compareFault = TableMap(*compare.result)[Abi::TableHeader(0) + Abi::TableFault];
-    require((compareFault & Abi::PoisonFlag) != 0u && compare.result->imageTablePoison.at(compareFault & ~Abi::PoisonFlag).reason == static_cast<std::uint32_t>(Abi::PoisonReason::UnsupportedOperation), "image table registration: a native compare with a nonconstant offset through a table does not fault on use");
+    require((compareFault & Abi::PoisonFlag) == 0u && compare.result->deviceImageInterfaces.size() == 1u, "image table registration: a compare table with a nonconstant offset was refused whole, although its color T#s compare through the emulation");
+    const auto compareInterface = ResourceMaterializer::FindDeviceImageInterface(compare.result->deviceImageInterfaces[0]);
+    require(compareInterface != nullptr, "image table registration: the compare table's image interface is not registered");
+    constexpr std::uint32_t TableFormat32Float = 22;
+    const auto nativeWords = TableT(texture.bytes.data(), TableFormat32Float, TableType2D);
+    DescriptorValue nativeTexture;
+    nativeTexture.dwordCount = 8u;
+    std::copy(nativeWords.begin(), nativeWords.end(), nativeTexture.dwords.begin());
+    const auto nativeMatch = ResourceMaterializer::TryRuntimeImageMode(compareInterface->image, nativeTexture, compareInterface->modes);
+    require(!nativeMatch.mode.has_value() && nativeMatch.reason == Abi::PoisonReason::UnsupportedOperation, "image table registration: a native compare with a nonconstant offset through a table was not refused at use");
 
     guest.heap[0] = {0x00000092u, 0x00fff000u, 0x05500000u, 0u, 0u, 0u, 0u, 0u};
     FillTableSrt(guest, guest.heap.data(), 0u, 64u);
@@ -1234,7 +1243,7 @@ void verifyImageTableRegistration() {
     colorTexture.dwordCount = 8u;
     std::copy(direct.begin(), direct.end(), colorTexture.dwords.begin());
     const auto match = ResourceMaterializer::TryRuntimeImageMode(registered->image, colorTexture, registered->modes);
-    require(!match.mode.has_value() && match.reason == Abi::PoisonReason::ColorCompare, "image table registration: a color texture compared through a run-time sampler is not refused at use as a color compare");
+    require(match.mode.has_value() && (registered->modes.at(*match.mode).emulatedCompare & EmulatedCompare::Enabled) != 0u, "image table registration: a color texture compared through a run-time sampler does not select the emulated comparison mode");
 }
 
 bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, const void* pointer, std::size_t bytes) {

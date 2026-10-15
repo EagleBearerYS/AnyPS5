@@ -1208,9 +1208,10 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto& image = access.image;
-    const auto compare = state.registrationModules ? EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), RuntimeImageDword(state, mem.resource, offsetof(RuntimeAbi::ResourceMetadata, flags) / sizeof(std::uint32_t)), ConstantU32(state, RuntimeAbi::CompareStateShift)), RuntimeAbi::CompareStateMask) : 0u;
+    const bool tableCompare = state.tableAccess.active && state.tableAccess.compare != 0u;
+    const auto compare = tableCompare ? state.tableAccess.compare : state.registrationModules ? EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), RuntimeImageDword(state, mem.resource, offsetof(RuntimeAbi::ResourceMetadata, flags) / sizeof(std::uint32_t)), ConstantU32(state, RuntimeAbi::CompareStateShift)), RuntimeAbi::CompareStateMask) : 0u;
     const auto parameter = [&](std::uint32_t word) {
-        if (!state.registrationModules) return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::CompareBase + mem.resource * PipelineSpecialization::CompareWords + word, 0u);
+        if (!tableCompare && !state.registrationModules) return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::CompareBase + mem.resource * PipelineSpecialization::CompareWords + word, 0u);
         constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 6> fields{{{EmulatedCompare::FunctionShift, 7u}, {4u, 1u}, {EmulatedCompare::ClampXShift, 3u}, {EmulatedCompare::ClampYShift, 3u}, {EmulatedCompare::ReferenceShift, 3u}, {12u, 1u}}};
         return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), compare, ConstantU32(state, fields.at(word).first)), fields.at(word).second);
     };
@@ -1849,7 +1850,7 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
         operands.insert(operands.end(), {1u, static_cast<std::uint32_t>(found - values.begin())});
         if (found == values.end()) values.push_back(value);
     }
-    const std::array<std::uint32_t, 5> access{selector, state.tableAccess.element, state.tableAccess.dword3, state.tableAccess.samplerElement, state.tableAccess.unnormalized};
+    const std::array<std::uint32_t, 6> access{selector, state.tableAccess.element, state.tableAccess.dword3, state.tableAccess.samplerElement, state.tableAccess.unnormalized, state.tableAccess.compare};
     auto function = std::find_if(state.tableImageFunctions.begin(), state.tableImageFunctions.end(), [&](const SpirvTableImageFunction& candidate) {
         return candidate.opcode == inst.Opcode() && candidate.memory == memory && candidate.operands == operands;
     });
@@ -1869,12 +1870,12 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
         state.module.BeginHelperFunction();
         const Restore restore{state, state.currentLabel, state.tableAccess};
         const auto start = state.module.FunctionWordCount();
-        std::array<std::uint32_t, 5> parameters{};
+        std::array<std::uint32_t, 6> parameters{};
         for (std::size_t index = 0; index < parameters.size(); ++index) {
-            if ((index != 3u || tableSampler) && (index != 4u || access[4] != 0u)) parameters[index] = state.module.AllocateId();
+            if ((index != 3u || tableSampler) && (index != 4u || access[4] != 0u) && (index != 5u || access[5] != 0u)) parameters[index] = state.module.AllocateId();
         }
         EmitLabel(state, state.module.AllocateId());
-        state.tableAccess = {parameters[1], parameters[2], parameters[3], true, parameters[4]};
+        state.tableAccess = {parameters[1], parameters[2], parameters[3], true, parameters[4], parameters[5]};
         SpirvValueEmitContext body(state);
         const auto result = returnsValue ? state.module.AllocateId() : 0u;
         EmitModeSwitch(body, inst, memory, modes, true, parameters[0], result);
@@ -2050,7 +2051,12 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
         state.tableAccess.unnormalized = unnormalized;
     }
     state.tableAccess.active = true;
-    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, mode, ConstantU32(state, InvalidTableSelector)), deviceSampler);
+    auto selector = mode;
+    if (std::ranges::any_of(modes, [](const ImageResource& candidate) { return (candidate.emulatedCompare & EmulatedCompare::Enabled) != 0u; })) {
+        state.tableAccess.compare = Binary(state, spv::OpShiftRightLogical, u32, mode, ConstantU32(state, Abi::ModeCompareShift));
+        selector = Binary(state, spv::OpBitwiseAnd, u32, mode, ConstantU32(state, (1u << Abi::ModeCompareShift) - 1u));
+    }
+    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, selector, ConstantU32(state, InvalidTableSelector)), deviceSampler);
     state.tableAccess = {};
 }
 

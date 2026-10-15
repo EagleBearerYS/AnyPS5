@@ -86,6 +86,7 @@ struct SpirvTableAccess {
     std::uint32_t samplerElement = 0;
     bool active = false;
     std::uint32_t unnormalized = 0;
+    std::uint32_t compare = 0;
 };
 
 struct SpirvTableImageFunction {
