@@ -1,6 +1,7 @@
 #include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -39,14 +40,8 @@ class GuestBlock {
 public:
     GuestBlock() {
         constexpr std::size_t bytes = 65536;
-#ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-#else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(bytes, bytes));
-#endif
-        Require(block != nullptr, "depth fast clear submit: cannot allocate a guest block");
+        block = reinterpret_cast<std::uint8_t*>(TestGuest::Allocate(bytes, bytes));
         std::memset(block, 0, bytes);
-        GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
     GuestBlock(const GuestBlock&) = delete;
@@ -87,34 +82,10 @@ void DmaFill(const GuestBlock& htile, std::uint32_t bytes, std::uint32_t pattern
     Submit({Pm4Packet(0x50, {0x40000000u, pattern, 0, Low(htile.Address()), High(htile.Address()), bytes})});
 }
 
-constexpr std::array<std::uint32_t, 9> FillKernel{0xd7460004u, 0x04010c08u, 0x7e000204u, 0x7e020205u, 0x7e040206u, 0x7e060207u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
-
-void DispatchFill(const GuestBlock& code, const GuestBlock& htile, std::uint32_t bytes) {
-    const auto kernel = code.Address();
-    const auto base = htile.Address();
-    Submit({
-        Pm4Packet(0x76, {0x20c, Low(kernel >> 8u)}),
-        Pm4Packet(0x76, {0x20d, High(kernel >> 8u) & 0xffu}),
-        Pm4Packet(0x76, {0x207, 64}),
-        Pm4Packet(0x76, {0x208, 1}),
-        Pm4Packet(0x76, {0x209, 1}),
-        Pm4Packet(0x76, {0x213, (8u << 1u) | 0x80u}),
-        Pm4Packet(0x76, {0x240, Low(base)}),
-        Pm4Packet(0x76, {0x241, (High(base) & 0xffffu) | (16u << 16u)}),
-        Pm4Packet(0x76, {0x242, bytes / 16u}),
-        Pm4Packet(0x76, {0x243, 0x4bfacu}),
-        Pm4Packet(0x76, {0x244, 0}),
-        Pm4Packet(0x76, {0x245, 0}),
-        Pm4Packet(0x76, {0x246, 0}),
-        Pm4Packet(0x76, {0x247, 0}),
-        Pm4Packet(0x15, {bytes / 1024u, 1, 1, 0x41}),
-    });
-}
-
-bool StoresFills(AgcDriver::VulkanDevice& device, const GuestBlock& probe) {
+bool GpuFill(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32_t bytes) {
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
     std::array<std::uint32_t, 4> pattern{};
-    const bool stored = device.FillBuffer(probe.Address(), 4096, pattern);
+    const bool stored = device.FillBuffer(block.Address(), bytes, pattern);
     device.WaitIdle();
     return stored;
 }
@@ -133,16 +104,15 @@ void DmaFillClearsDepth(AgcDriver::VulkanDevice& device, const Shaders& shaders)
     Require(Draw(device, shaders, surface, {}) == 0u, "the depth written after the DMA_DATA clear was lost");
 }
 
-void DispatchFillClearsDepth(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
+void GpuFillClearsDepth(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
     const auto& htile = NewBlock();
-    auto& code = NewBlock();
-    std::memcpy(code.Data(), FillKernel.data(), sizeof(FillKernel));
     const Surface surface{NewBlock().Address(), 0, htile.Address(), false, VK_FORMAT_D32_SFLOAT};
     Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
     Require(Draw(device, shaders, surface, {}) == 0u, "a draw at depth 0.5 passed LESS against the 0.5 written before it");
-    DispatchFill(code, htile, HtileFillBytes);
-    Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a compute fill of 0 over the HTILE did not clear the depth to DB_DEPTH_CLEAR (1.0)");
-    Require(Draw(device, shaders, surface, {}) == 0u, "the depth written after the compute fill clear was lost");
+    Require(GpuFill(device, htile, HtileFillBytes), "the device did not store the GPU fill over the HTILE");
+    AgcDriver::Graphics::NoteDepthMetadataFill(htile.Address(), HtileFillBytes, 0u);
+    Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a GPU fill of 0 over the HTILE did not clear the depth to DB_DEPTH_CLEAR (1.0)");
+    Require(Draw(device, shaders, surface, {}) == 0u, "the depth written after the GPU fill clear was lost");
 }
 
 void DepthOnlyFillKeepsStencil(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
@@ -168,11 +138,11 @@ int main() {
         const auto shaders = Compile(*device);
         DmaFillClearsDepth(*device, shaders);
         DepthOnlyFillKeepsStencil(*device, shaders);
-        const bool computeRan = StoresFills(*device, NewBlock());
-        if (computeRan) DispatchFillClearsDepth(*device, shaders);
-        else std::printf("compute fill not run: the device does not store fills into imported guest memory\n");
+        const bool fills = GpuFill(*device, NewBlock(), 4096);
+        if (fills) GpuFillClearsDepth(*device, shaders);
+        else std::printf("GPU fill not run: the device does not store fills into imported guest memory\n");
         LibcRunShutdown_nid_postfix();
-        std::puts(computeRan ? "depth fast clear submit tests passed" : "depth fast clear submit tests passed without the compute fill");
+        std::puts(fills ? "depth fast clear submit tests passed" : "depth fast clear submit tests passed without the GPU fill");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
