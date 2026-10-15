@@ -1,5 +1,5 @@
-READY
+BUSY PM-045
 RESULT:
-- Last task: GAC-042, done: results/cloud-1/GAC-042.md.
-- Fork branch fix/agc-bda-publish-unit-shadow = c4bce94c4, one commit on upstream main 7663bc63b. No PR.
-- Red on main with both address-space cache settings; green on the branch.
+- Working on PM-045 (high): after-the-fact completeness review of #6366 and its ABI-decode follow-up (661d3cba8d).
+- Branch to come: fork fix/agc-abi-decode-defer-siblings, on 661d3cba8d.
+- Claimed: 2026-10-15T23:53:47Z. The result goes to results/cloud-1/PM-045.md.
