@@ -3313,6 +3313,7 @@ FrameDumps& Dumps() {
 }
 
 bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
+    if (buffer.dccAddress != 0 && buffer.tilingMode == 0) state->recorder->SyncThrough(buffer.dccAddress, DisplayBufferKeyBytes(buffer), true);
     static const bool storeAtFlip = Graphics::StorageTexture::StoreAtFlipRequested(std::getenv("APS5_STORE_AT_FLIP"));
     if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip");
     else Graphics::StorageTexture::FlushDumpSelected("flip");
