@@ -339,6 +339,51 @@ void CheckDeferredSharedImports() {
     CloseHandle(section);
 }
 
+void CheckReusedSectionHandle() {
+    auto* first = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    auto* second = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    Require(first != nullptr && second != nullptr, "cannot allocate the blocks of the reused section handle check");
+    HANDLE firstSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, Block, nullptr);
+    Require(firstSection != nullptr, "cannot create the first section of the reused section handle check");
+    GuestArena::GuestArenaMap_nid_postfix(first, Block, firstSection, 0, PAGE_READWRITE);
+    CloseHandle(firstSection);
+    std::vector<HANDLE> others;
+    HANDLE secondSection = nullptr;
+    while (others.size() < 64) {
+        secondSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, Block, nullptr);
+        Require(secondSection != nullptr, "cannot create the second section of the reused section handle check");
+        if (secondSection == firstSection) break;
+        others.push_back(secondSection);
+        secondSection = nullptr;
+    }
+    for (const auto other : others) CloseHandle(other);
+    const auto release = [&] {
+        GuestArena::GuestArenaReset_nid_postfix(first, Block);
+        GuestArena::GuestArenaRelease_nid_postfix(first, Block);
+        GuestArena::GuestArenaRelease_nid_postfix(second, Block);
+    };
+    if (secondSection == nullptr) {
+        std::cout << "reused section handle check not run: no new section was given the closed section's handle value\n";
+        release();
+        return;
+    }
+    GuestArena::GuestArenaMap_nid_postfix(second, Block, secondSection, 0, PAGE_READWRITE);
+    CloseHandle(secondSection);
+    const auto firstBase = reinterpret_cast<std::uint64_t>(first);
+    const auto secondBase = reinterpret_cast<std::uint64_t>(second);
+    Require(CollectWritesUncached(firstBase, Block) != 0 && CollectWritesUncached(secondBase, Block) != 0, "the sections of the reused section handle check are not collected");
+    const auto generation = TrackerGeneration();
+    static_cast<volatile std::uint8_t*>(second)[4096] = 0x5a;
+    Require(CollectWritesUncached(firstBase, Block) != 0 && UnchangedSince(firstBase, Block, generation), "a store into a section mapped under a closed section's handle value marked the closed section's pages as written");
+    Require(CollectWritesUncached(secondBase, Block) != 0 && !UnchangedSince(secondBase, Block, generation), "a store into a section mapped under a closed section's handle value was missed");
+    const auto afterSecond = TrackerGeneration();
+    static_cast<volatile std::uint8_t*>(first)[8192] = 0xa5;
+    Require(CollectWritesUncached(secondBase, Block) != 0 && UnchangedSince(secondBase, Block, afterSecond), "a store into a closed section's pages marked the section mapped under its handle value as written");
+    Require(CollectWritesUncached(firstBase, Block) != 0 && !UnchangedSince(firstBase, Block, afterSecond), "a store into a closed section's pages was missed");
+    GuestArena::GuestArenaReset_nid_postfix(second, Block);
+    release();
+}
+
 
 void CheckPrivateMappingReuse() {
     void* memory = AllocateWatched(3 * Block);
@@ -937,6 +982,7 @@ int main() {
         CheckNewestStamp();
 #ifdef _WIN32
         CheckDeferredSharedImports();
+        CheckReusedSectionHandle();
         CheckPrivateMappingReuse();
         CheckUntrackedHint();
         CheckHostHoleInChild();

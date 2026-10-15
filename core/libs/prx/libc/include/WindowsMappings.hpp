@@ -85,8 +85,11 @@ public:
         HANDLE duplicate = nullptr;
         if (!DuplicateHandle(GetCurrentProcess(), section, GetCurrentProcess(), &duplicate, 0, FALSE, DUPLICATE_SAME_ACCESS)) fail("keep shared guest section");
         const auto owned = std::make_shared<Section>(duplicate);
+        const auto key = reinterpret_cast<std::uintptr_t>(section);
+        if (const auto owner = sectionOwners.find(key); owner != sectionOwners.end() && compare != nullptr && !sameSection(owner->second->handle, section)) forgetSection(key);
+        sectionOwners.try_emplace(key, owned);
         const auto slotOf = [&](std::size_t done) -> const std::shared_ptr<Physical>& {
-            auto& slot = physical[std::make_pair(reinterpret_cast<std::uintptr_t>(section), offset + done)];
+            auto& slot = physical[std::make_pair(key, offset + done)];
             if (!slot) slot = std::make_shared<Physical>();
             return slot;
         };
@@ -215,8 +218,7 @@ public:
 
     void ForgetSection(HANDLE section) {
         std::lock_guard lock(mutex);
-        const auto key = reinterpret_cast<std::uintptr_t>(section);
-        physical.erase(physical.lower_bound(std::make_pair(key, std::uint64_t{0})), physical.lower_bound(std::make_pair(key + 1, std::uint64_t{0})));
+        forgetSection(reinterpret_cast<std::uintptr_t>(section));
     }
 
     bool BeginHostWrite(std::uintptr_t address, std::size_t bytes) {
@@ -748,6 +750,11 @@ private:
         return compare != nullptr && compare(first, second);
     }
 
+    void forgetSection(std::uintptr_t key) {
+        physical.erase(physical.lower_bound(std::make_pair(key, std::uint64_t{0})), physical.lower_bound(std::make_pair(key + 1, std::uint64_t{0})));
+        sectionOwners.erase(key);
+    }
+
     static bool writable(DWORD protection) {
         return protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE;
     }
@@ -887,6 +894,7 @@ private:
         return position != views.end() && position->first == base ? position : views.end();
     }
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::shared_ptr<Physical>> physical;
+    std::map<std::uintptr_t, std::shared_ptr<Section>> sectionOwners;
     std::map<std::uintptr_t, Run> residentRuns;
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;
