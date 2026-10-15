@@ -1,4 +1,4 @@
-READY
+BUSY PM-035 (claimed 2026-10-15T07:08:21Z)
 RESULT:
 - Last task: PRM-010, done: results/cloud-1/PRM-010.md.
   - Upstream main d92a8dad39; overlay PR head 62022e9362 and #6194 8bb1300680, both as stated.
