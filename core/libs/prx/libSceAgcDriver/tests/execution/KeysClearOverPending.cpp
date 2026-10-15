@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
@@ -21,6 +22,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstdint>
@@ -32,6 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -48,6 +51,7 @@ namespace DriverDetail {
 
 struct DriverTestAccess {
     static std::shared_ptr<VulkanDevice> Device() { return Driver::Get().device.Load(); }
+    static void NoteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint32_t queue) { Driver::Get().noteLabelStore(address, bytes, 1, queue); }
 };
 
 }
@@ -402,6 +406,136 @@ bool WriteDataClearsAfterSharedKeysGo(const std::string& what) {
     return Expect(Sample(target, what + ": sampled read"), Cleared, what, "expected the 0000 clear colour; 0x3f800000 is the drawn results, so the key write was not noted");
 }
 
+struct CreateWindow {
+    std::atomic<std::uint64_t> surface{0};
+    std::atomic<int> stage{0};
+    std::atomic<int> stageAtReturn{0};
+    std::atomic<bool> reached{false};
+    AgcDriver::GuestMemory::FlushHookFunction chained = nullptr;
+};
+
+CreateWindow& Window() {
+    static CreateWindow window;
+    return window;
+}
+
+void PauseCreateForKeyWrite(std::uint64_t address, std::size_t bytes) {
+    auto& window = Window();
+    if (address == window.surface.load() && !window.reached.exchange(true)) {
+        window.stage.store(1);
+        const auto stored = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (window.stage.load() < 2 && std::chrono::steady_clock::now() < stored) std::this_thread::yield();
+        const auto noted = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+        while (window.stage.load() < 3 && std::chrono::steady_clock::now() < noted) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        window.stageAtReturn.store(window.stage.load());
+    }
+    if (window.chained != nullptr) window.chained(address, bytes);
+}
+
+bool WriteDataNotedWhileCreating(const std::string& what) {
+    const auto target = NewTarget();
+    const auto extent = target.KeyExtent();
+    Require(extent % 4 == 0 && extent / 4 < 0x3ff0, what + ": the key extent does not fit one WRITE_DATA");
+    const auto keys = Address(target.keys);
+    const auto words = static_cast<std::uint32_t>(extent / 4u);
+    std::vector<std::uint32_t> packet{0xc0000000u | ((words + 2u) << 16u) | (WriteData << 8u), 0x00100200u, static_cast<std::uint32_t>(keys), static_cast<std::uint32_t>(keys >> 32u)};
+    packet.insert(packet.end(), words, Clear0000 * 0x01010101u);
+    const auto device = AgcDriver::DriverDetail::DriverTestAccess::Device();
+    Require(device != nullptr, what + ": the driver has no device");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    auto& window = Window();
+    window.stage.store(0);
+    window.stageAtReturn.store(0);
+    window.reached.store(false);
+    window.chained = AgcDriver::GuestMemory::InstalledFlushHook();
+    std::thread otherQueue([&] {
+        while (window.stage.load() < 1) std::this_thread::yield();
+        auto queue = std::make_unique<AgcDriver::QueueState>();
+        AgcDriver::Pm4::Execute(packet, *queue);
+        window.stage.store(2);
+        if (const auto label = AgcDriver::Pm4::DecodeLabelWrite(packet)) AgcDriver::DriverDetail::DriverTestAccess::NoteLabelStore(label->address, label->Bytes(), 1);
+        window.stage.store(3);
+    });
+    struct Restore {
+        CreateWindow& window;
+        std::thread& thread;
+        ~Restore() {
+            AgcDriver::GuestMemory::SetFlushHook(window.chained);
+            window.surface.store(0);
+            if (window.stage.load() < 1) window.stage.store(1);
+            if (thread.joinable()) thread.join();
+        }
+    };
+    std::shared_ptr<StorageTexture> image;
+    {
+        const Restore restore{window, otherQueue};
+        window.surface.store(Address(target.surface));
+        AgcDriver::GuestMemory::SetFlushHook(&PauseCreateForKeyWrite);
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        image = StorageTexture::Create(context, *context.detiler, AgcDriver::Graphics::DecodeTextureResource(target.Texture()), 0);
+    }
+    DccKeys uploaded = DccKeys::Unreadable;
+    DccKeys filled = DccKeys::Unreadable;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        uploaded = image->UploadedKeys();
+        filled = image->FilledKeys();
+        image.reset();
+    }
+    Require(window.reached.load(), what + ": the image's upload never read its surface through the guest-read hook");
+    Require(window.stageAtReturn.load() >= 2, what + ": the other queue's key write did not land while the image was being created");
+    std::printf("%s: 0x%zx key bytes written by another queue's WRITE_DATA after the image's upload read its keys (%s) and before the image was listed; the image's noted key fill is %s\n", what.c_str(), extent, AgcDriver::Graphics::DccKeysName(uploaded), AgcDriver::Graphics::DccKeysName(filled));
+    Require(uploaded == DccKeys::Uncompressed, what + ": the upload read the keys after the key write, so the window was not reached");
+    if (filled == DccKeys::Clear0000) return true;
+    std::printf("%s: expected the 0000 key fill noted on the image; the key write passed the key-address gate before the image's keys were counted\n", what.c_str());
+    return false;
+}
+
+constexpr const char* FailedSurfaceRead = "the image's first surface read failed";
+
+void FailCreateAtSurfaceRead(std::uint64_t address, std::size_t bytes) {
+    auto& window = Window();
+    if (address == window.surface.load() && !window.reached.exchange(true)) throw std::runtime_error(FailedSurfaceRead);
+    if (window.chained != nullptr) window.chained(address, bytes);
+}
+
+bool FailedCreateLeavesNoCount(const std::string& what) {
+    const auto target = NewTarget();
+    const auto keys = Address(target.keys);
+    const auto device = AgcDriver::DriverDetail::DriverTestAccess::Device();
+    Require(device != nullptr, what + ": the driver has no device");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    Require(!StorageTexture::KeysLiveAt(keys), what + ": an image with the target's keys is live before the Create");
+    auto& window = Window();
+    window.reached.store(false);
+    window.chained = AgcDriver::GuestMemory::InstalledFlushHook();
+    struct Restore {
+        CreateWindow& window;
+        ~Restore() {
+            AgcDriver::GuestMemory::SetFlushHook(window.chained);
+            window.surface.store(0);
+        }
+    };
+    std::string failure;
+    {
+        const Restore restore{window};
+        window.surface.store(Address(target.surface));
+        AgcDriver::GuestMemory::SetFlushHook(&FailCreateAtSurfaceRead);
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        try {
+            static_cast<void>(StorageTexture::Create(context, *context.detiler, AgcDriver::Graphics::DecodeTextureResource(target.Texture()), 0));
+        } catch (const std::runtime_error& error) {
+            failure = error.what();
+        }
+    }
+    Require(failure == FailedSurfaceRead, what + ": the image's upload did not fail at its first surface read");
+    const bool counted = StorageTexture::KeysLiveAt(keys);
+    std::printf("%s: Create threw at the first surface read of the image's upload; its key address is %s\n", what.c_str(), counted ? "still counted" : "not counted");
+    if (!counted) return true;
+    std::printf("%s: expected the failed Create to leave no count; the key-address gate stays open for these keys\n", what.c_str());
+    return false;
+}
+
 bool CpuStoreKeepsResults() {
     const std::string what = "cpu-store";
     const auto target = NewTarget();
@@ -419,6 +553,8 @@ int main(int argc, char** argv) {
         {"dma-fill-after-read", [] { return DmaFillClears("dma-fill-after-read", true); }},
         {"write-data", [] { return WriteDataClears("write-data"); }},
         {"write-data-shared-keys", [] { return WriteDataClearsAfterSharedKeysGo("write-data-shared-keys"); }},
+        {"write-data-while-creating", [] { return WriteDataNotedWhileCreating("write-data-while-creating"); }},
+        {"create-fails-at-upload", [] { return FailedCreateLeavesNoCount("create-fails-at-upload"); }},
         {"cpu-store", CpuStoreKeepsResults},
     };
     const std::string_view only = argc > 1 ? argv[1] : "";
