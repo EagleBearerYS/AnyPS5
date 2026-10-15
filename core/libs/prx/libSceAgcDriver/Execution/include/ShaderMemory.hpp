@@ -76,6 +76,7 @@ public:
         std::uint64_t shared, copied, spilled;
     };
     static SupplyCounts Supplies();
+    [[nodiscard]] std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> SuppliedBlocks() const;
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
@@ -136,6 +137,15 @@ struct DataWordPositionCounts {
     std::uint64_t aliased = 0;
 };
 DataWordPositionCounts DataWordPositions(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint32_t, std::uint64_t>> leaves, std::span<const std::uint64_t> otherReads, std::span<const std::uint32_t> words, std::span<const std::uint32_t> flattenedSrt, std::vector<std::uint32_t>& positions, std::vector<std::uint32_t>& slots);
+
+struct SharedWords {
+    std::size_t first = 0;
+    std::size_t count = 0;
+    std::size_t offset = 0;
+    std::weak_ptr<const ShaderRecompiler::SrtGuestWords> block;
+};
+void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t first, std::span<const std::byte> bytes, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks);
+bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const SharedWords> leftShared, std::span<const std::uint32_t> right, std::span<const SharedWords> rightShared, std::size_t* compared = nullptr);
 
 }
 

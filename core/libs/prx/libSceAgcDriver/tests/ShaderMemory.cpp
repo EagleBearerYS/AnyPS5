@@ -1461,6 +1461,99 @@ void verifyTableSnapshotReuse() {
     const SharedValues<std::uint32_t> unequal(std::vector<std::uint32_t>{1u, 2u, 4u});
     require(alias.Shares(sealed) && alias == sealed && !equal.Shares(sealed) && equal == sealed && equal.Hash() == sealed.Hash() && !unequal.Shares(sealed) && !(unequal == sealed) && unequal.Hash() != sealed.Hash() && SharedValues<std::uint32_t>{}.Shares(SharedValues<std::uint32_t>(std::vector<std::uint32_t>{})), "table snapshot reuse: shared values compare by identity before their contents");
 
+    struct CapturedVariant {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+        std::vector<std::uint32_t> words;
+        std::vector<AgcDriver::SharedWords> shared;
+    };
+    const auto captureVariant = [](const RecompileRequest& request) {
+        CapturedVariant variant;
+        AgcDriver::ShaderMemory memory({});
+        static_cast<void>(memory.Capture(request));
+        const auto supplied = memory.SuppliedBlocks();
+        for (const auto& region : memory.TakeRecentRegions()) {
+            variant.runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
+            const auto offset = variant.words.size();
+            variant.words.resize(offset + region.bytes.size() / sizeof(std::uint32_t));
+            std::memcpy(variant.words.data() + offset, region.bytes.data(), region.bytes.size());
+            AgcDriver::AppendSharedWords(variant.shared, offset, region.bytes, supplied);
+        }
+        return variant;
+    };
+    const auto sameVariant = [](const CapturedVariant& left, const CapturedVariant& right, std::size_t& compared) { return left.runs == right.runs && AgcDriver::SameCapturedWords(left.words, left.shared, right.words, right.shared, &compared); };
+    const auto sameBlock = [](const CapturedVariant& left, const CapturedVariant& right) { return left.shared.size() == 1u && right.shared.size() == 1u && !left.shared[0].block.owner_before(right.shared[0].block) && !right.shared[0].block.owner_before(left.shared[0].block); };
+    const auto tableWords = static_cast<std::size_t>(Records) * 8u;
+    const auto keptVariant = captureVariant(request);
+    const auto freshVariant = captureVariant(request);
+    std::size_t comparedWords = 0;
+    require(sameVariant(keptVariant, freshVariant, comparedWords) && keptVariant.words == freshVariant.words, "draw cache identity: two captures of an unchanged table did not match");
+    if (watched) require(sameBlock(keptVariant, freshVariant) && keptVariant.shared[0].count == tableWords && comparedWords == keptVariant.words.size() - tableWords, "draw cache identity: two captures sharing a table column compared its words instead of its identity");
+    else require(keptVariant.shared.empty() && comparedWords == keptVariant.words.size(), "draw cache identity: captures of an unwatched table were not compared word by word");
+
+    alignas(16) static std::array<std::uint32_t, 4> variantBuffer{};
+    const auto variantBufferV = TableV(variantBuffer.data(), 0u, static_cast<std::uint32_t>(sizeof(variantBuffer)));
+    const std::array<std::uint32_t, 4> variantKeptV{guest.srt[12], guest.srt[13], guest.srt[14], guest.srt[15]};
+    std::copy(variantBufferV.begin(), variantBufferV.end(), guest.srt.begin() + 12);
+    const auto otherSrtVariant = captureVariant(request);
+    std::copy(variantKeptV.begin(), variantKeptV.end(), guest.srt.begin() + 12);
+    require(keptVariant.runs == otherSrtVariant.runs && !sameVariant(keptVariant, otherSrtVariant, comparedWords), "draw cache identity: a capture with other SRT words matched through the table column it shares");
+    if (watched) require(sameBlock(keptVariant, otherSrtVariant), "draw cache identity: a capture with other SRT words did not share the unchanged table column");
+
+    auto& variantWord = heap[9u * 8u + 1u];
+    const auto variantKeptWord = variantWord;
+    variantWord ^= 0x100u;
+    const auto writtenVariant = captureVariant(request);
+    variantWord = variantKeptWord;
+    require(keptVariant.runs == writtenVariant.runs && !sameVariant(keptVariant, writtenVariant, comparedWords) && comparedWords == keptVariant.words.size(), "draw cache identity: a capture after a CPU store matched the capture before it");
+    const auto rereadVariant = captureVariant(request);
+    const auto rewrittenVariant = captureVariant(request);
+    require(sameVariant(keptVariant, rereadVariant, comparedWords) && comparedWords == keptVariant.words.size() && sameVariant(keptVariant, rewrittenVariant, comparedWords) && comparedWords == keptVariant.words.size(), "draw cache identity: a table written back to its old words did not match by its words alone");
+    if (watched) require(writtenVariant.shared.empty() && rereadVariant.shared.empty() && rewrittenVariant.shared.size() == 1u && !sameBlock(keptVariant, rewrittenVariant) && keptVariant.shared[0].block.expired(), "draw cache identity: a new column with the old words was taken for the replaced column");
+
+    const auto identityBlock = std::make_shared<const SrtGuestWords>(SrtGuestWords{{{0x1000u, 4u}}, {1u, 2u, 3u, 4u}});
+    const auto twinBlock = std::make_shared<const SrtGuestWords>(SrtGuestWords{{{0x1000u, 4u}}, {1u, 2u, 3u, 4u}});
+    const std::vector<std::shared_ptr<const SrtGuestWords>> identityBlocks{identityBlock, twinBlock};
+    const auto identityBytes = std::as_bytes(std::span(identityBlock->words));
+    const std::vector<std::uint32_t> copiedWords(identityBlock->words);
+    std::vector<AgcDriver::SharedWords> whole, tail, twin, copied, misaligned, nothing;
+    AgcDriver::AppendSharedWords(whole, 1u, identityBytes, identityBlocks);
+    AgcDriver::AppendSharedWords(tail, 2u, identityBytes.subspan(4u), identityBlocks);
+    AgcDriver::AppendSharedWords(twin, 1u, std::as_bytes(std::span(twinBlock->words)), identityBlocks);
+    AgcDriver::AppendSharedWords(copied, 1u, std::as_bytes(std::span(copiedWords)), identityBlocks);
+    AgcDriver::AppendSharedWords(misaligned, 1u, identityBytes.subspan(2u, 8u), identityBlocks);
+    AgcDriver::AppendSharedWords(nothing, 1u, identityBytes.subspan(0u, 0u), identityBlocks);
+    require(whole.size() == 1u && whole[0].first == 1u && whole[0].count == 4u && whole[0].offset == 0u && tail.size() == 1u && tail[0].first == 2u && tail[0].count == 3u && tail[0].offset == 1u && twin.size() == 1u && twin[0].block.lock() == twinBlock && copied.empty() && misaligned.empty() && nothing.empty(), "draw cache identity: words were credited to a block they were not copied from");
+    std::vector<AgcDriver::SharedWords> joined, gapped, crossed;
+    AgcDriver::AppendSharedWords(joined, 1u, identityBytes.subspan(0u, 8u), identityBlocks);
+    AgcDriver::AppendSharedWords(joined, 3u, identityBytes.subspan(8u), identityBlocks);
+    AgcDriver::AppendSharedWords(gapped, 1u, identityBytes.subspan(0u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(gapped, 3u, identityBytes.subspan(4u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(gapped, 4u, identityBytes.subspan(12u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(crossed, 1u, identityBytes.subspan(0u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(crossed, 2u, std::as_bytes(std::span(twinBlock->words)).subspan(4u, 4u), identityBlocks);
+    require(joined.size() == 1u && joined[0].first == 1u && joined[0].count == 4u && joined[0].offset == 0u && gapped.size() == 3u && gapped[1].first == 3u && gapped[1].offset == 1u && gapped[2].first == 4u && gapped[2].offset == 3u && crossed.size() == 2u && crossed[1].block.lock() == twinBlock, "draw cache identity: consecutive words of one block were not joined, or words of two places were");
+    const std::vector<std::uint32_t> leftWords{9u, 1u, 2u, 3u, 4u};
+    auto rightWords = leftWords;
+    std::size_t identityCompared = 0;
+    require(AgcDriver::SameCapturedWords(leftWords, whole, rightWords, whole, &identityCompared) && identityCompared == 1u, "draw cache identity: words copied from one block were compared");
+    require(AgcDriver::SameCapturedWords(leftWords, whole, rightWords, twin, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: equal words from two blocks did not match by their words");
+    rightWords[0] = 8u;
+    require(!AgcDriver::SameCapturedWords(leftWords, whole, rightWords, whole, &identityCompared) && identityCompared == 1u, "draw cache identity: a shared block hid a difference outside it");
+    rightWords = {9u, 1u, 2u, 3u, 5u};
+    const std::vector<AgcDriver::SharedWords> unowned{{1u, 4u, 0u, {}}};
+    const std::vector<AgcDriver::SharedWords> shifted{{1u, 4u, 1u, identityBlock}};
+    const std::vector<AgcDriver::SharedWords> beyond{{3u, 4u, 0u, identityBlock}};
+    auto doomed = std::make_shared<const SrtGuestWords>(SrtGuestWords{{{0x2000u, 4u}}, {1u, 2u, 3u, 4u}});
+    std::vector<AgcDriver::SharedWords> dead;
+    AgcDriver::AppendSharedWords(dead, 1u, std::as_bytes(std::span(doomed->words)), std::span<const std::shared_ptr<const SrtGuestWords>>(&doomed, 1u));
+    doomed.reset();
+    require(!AgcDriver::SameCapturedWords(leftWords, whole, rightWords, twin, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: different words from two blocks matched");
+    require(!AgcDriver::SameCapturedWords(leftWords, unowned, rightWords, unowned, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: runs without a block vouched for words");
+    require(!AgcDriver::SameCapturedWords(leftWords, whole, rightWords, shifted, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: runs at other offsets of one block vouched for words");
+    require(!AgcDriver::SameCapturedWords(leftWords, beyond, rightWords, beyond, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: a run past the words vouched for them");
+    require(dead.size() == 1u && dead[0].block.expired() && !AgcDriver::SameCapturedWords(leftWords, dead, rightWords, dead, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: a released block vouched for words");
+    require(!AgcDriver::SameCapturedWords(leftWords, whole, std::vector<std::uint32_t>(leftWords.begin(), leftWords.end() - 1), {}, &identityCompared) && identityCompared == 0u, "draw cache identity: captures of different sizes matched");
+
     const auto compiled = CompileTable(request);
     const auto& map = TableMap(*compiled.result);
     const auto codes = TableCodes(map, 0);
