@@ -1501,14 +1501,23 @@ private:
             const bool fromMemory = ReadsGuestMemory(*handle);
             if (ValidateSource(descriptor, badDword)) {
                 const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
-                const IrValue* soffset = !scalar && inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
+                IrValue* soffset = !scalar && inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
                 const bool immediate = scalar || (soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32);
                 const IrValue* voffset = !scalar && inst.ArgumentCount() > 2u ? inst.Argument(2u)->Resolve() : nullptr;
                 const bool fixedOffset = voffset != nullptr && voffset->HasImmediate() && voffset->Type() == IrType::U32;
-                BufferStoreSite site{InternSource(descriptor), soffset != nullptr && immediate ? soffset->ImmediateU32() : 0u, !immediate, scalar};
+                auto siteSource = descriptor;
+                bool registerSoffset = false;
+                if (!immediate && soffset != nullptr && soffset->Type() == IrType::U32) {
+                    siteSource.dwords[4] = soffset;
+                    siteSource.dwordCount = 5u;
+                    std::uint32_t badOffset = 0;
+                    registerSoffset = ValidateSource(siteSource, badOffset);
+                    if (!registerSoffset) siteSource = descriptor;
+                }
+                BufferStoreSite site{InternSource(siteSource), soffset != nullptr && immediate ? soffset->ImmediateU32() : 0u, !immediate, scalar};
                 site.offset = fixedOffset ? voffset->ImmediateU32() + memory.offset : 0u;
                 site.dynamicOffset = !fixedOffset;
-                site.fromMemory = fromMemory;
+                site.fromMemory = fromMemory || (registerSoffset && ReadsGuestMemory(*soffset));
                 if (std::ranges::find(sites, site) == sites.end()) sites.push_back(site);
             } else {
                 (store ? m_info.unboundedStores : m_info.unboundedLoads) = true;

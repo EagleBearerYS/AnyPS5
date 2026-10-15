@@ -566,7 +566,9 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const D
         const auto first = base + registerOffset + static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(site.offset)));
         return std::pair<std::uint64_t, std::uint64_t>{first, first + ((site.bytes + 3u) & ~std::uint64_t{3u})};
     }
-    if (value.dwordCount != 4u) return std::nullopt;
+    const bool registerSoffset = site.dynamicSoffset && value.dwordCount == 5u;
+    if (value.dwordCount != 4u && !registerSoffset) return std::nullopt;
+    const auto soffset = registerSoffset ? static_cast<std::uint64_t>(value.dwords[4]) : static_cast<std::uint64_t>(site.soffset);
     const auto word1 = value.dwords[1];
     const auto records = value.dwords[2];
     const auto word3 = value.dwords[3];
@@ -578,11 +580,11 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const D
     if (stride != 0u && (word1 >> 31u) != 0u) return std::nullopt;
     const auto mode = (word3 >> 28u) & 3u;
     if (mode == 3u) return std::pair<std::uint64_t, std::uint64_t>{base, base + records};
-    if (site.dynamicSoffset || (mode != 0u && (mode != 1u || site.dynamicOffset))) return std::nullopt;
+    if ((site.dynamicSoffset && !registerSoffset) || (mode != 0u && (mode != 1u || site.dynamicOffset))) return std::nullopt;
     if (mode == 0u && stride == 0u) return none;
     constexpr std::uint64_t wrap = std::uint64_t{1} << 32u;
     const auto reach = mode == 0u ? static_cast<std::uint64_t>(records) * stride : static_cast<std::uint64_t>(records - 1u) * stride + site.offset;
-    return std::pair<std::uint64_t, std::uint64_t>{base, base + std::min(reach + site.soffset + 16u, wrap)};
+    return std::pair<std::uint64_t, std::uint64_t>{base, base + std::min(reach + soffset + 16u, wrap)};
 }
 
 bool DeclaresSpecializationId(std::span<const std::uint32_t> words, std::uint32_t id) {

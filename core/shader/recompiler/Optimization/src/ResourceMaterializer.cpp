@@ -1305,7 +1305,7 @@ void ResourceMaterializer::evaluateBufferSites(const IrResourcePlan& plan, const
             const auto& descriptor = plan.descriptorSources.at(sites[index].source);
             DescriptorValue value;
             value.dwordCount = descriptor.dwordCount;
-            bool evaluated = sites[index].address ? descriptor.dwordCount == 2u || descriptor.dwordCount == 3u : descriptor.dwordCount == 4u;
+            bool evaluated = sites[index].address ? descriptor.dwordCount == 2u || descriptor.dwordCount == 3u : descriptor.dwordCount == 4u || (descriptor.dwordCount == 5u && sites[index].dynamicSoffset);
             for (std::uint32_t word = 0; evaluated && word < descriptor.dwordCount; ++word) evaluated = descriptor.dwords[word] != nullptr && evaluator.Evaluate(descriptor.dwords[word], value.dwords[word]);
             values[index] = evaluated ? value : DescriptorValue{};
         }
