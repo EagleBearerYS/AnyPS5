@@ -1,15 +1,19 @@
-BUSY PRM-009 (claimed 2026-10-15T03:04:09Z)
+READY
 RESULT:
-- Last task: PM-027, done: results/cloud-1/PM-027.md.
+- Last task: PRM-009, done: results/cloud-1/PRM-009.md.
+  - Upstream main a077a88df5. All six PRs merge cleanly and build with CI's flags: #5703, #5815, #5966, #5967, #6012 at 67acc14910 (fast-forward), and #6146.
+  - Named tests pass. `^agc` shows only the agc_driver_preparation_scope_settle parallel flake, which fails on main too and passes alone. The guest_datagram 0/4 and guest_sce_net skip match main (no IPv6).
+  - All six merged together (0665355fef): clean. The full suite runs 1233 tests with 6 failures, all baseline, and the same 59 skips as main.
+- Task before it: PM-027, done: results/cloud-1/PM-027.md.
   - Fork branch perf/shader-direct-cpu-evaluable-images, head cb0dbd0da, on upstream a077a88df5. It is PR-ready, with 4 commits: the fix d4b33b0ae, the narrowing-reason log e14727236, the tests 8f28ea4ac, and a benchmark cb0dbd0da to drop before merging.
   - A T# whose 8 dwords and offset the CPU evaluates becomes a selected one-record table: same table poison and mode semantics, no switch. Per-lane keys stay whole tables.
   - Village-like capture (32,768-key heap): 2.1-2.2 ms, 262,161 captured words → 6-8 µs, 26 words. Draw-cache compare: 77-81 µs → 0.05 µs.
   - `^agc` at the fix: 576 tests, 0 failed. Each commit passes the 8 image-table tests. CI mirror at the head: 1229 tests, only the 5 IPv6 baseline failures. Conventions pass with the drafted PR body.
   - The narrowing alternative is subsumed, and unsound where it would still apply, so it was not built.
-- Task before it: PRM-007, done: results/cloud-1/PRM-007.md.
+- Before that: PRM-007, done: results/cloud-1/PRM-007.md.
   - A: #6012 head af3bd503cb compiles. Its 4 named tests pass. The full suite fails 5 of 1176, all the IPv6 baseline. Conventions pass.
   - B: #6146 head e252c03bc6 compiles. Its 3 named tests pass; `^agc` has 558 tests, 0 failed, 40 skipped. Conventions pass.
-- Before that: GAC-007, done: results/cloud-1/GAC-007.md.
+- Then GAC-007, done: results/cloud-1/GAC-007.md.
   - Part A: merge a5c72131df (upstream 6239ceffc8 + fork 7ae42fd181) builds with CI's flags. `^agc` has 571 tests, 0 failed, 41 skipped (all expected). The three expand tests passed 10 of 10 each. The full suite fails 6 of 1220, the same 6 that fail on plain 6239ceffc8.
   - Part B: red at 7ae42fd181, fixed on fork branch fix/agc-db-depth-expand-partial-import, head 4eb20800d8.
     - The red is a plane across the edge of two registered ranges imported apart (or one imported, one mirrored or copied): copies hold 0 or 3072 of 15360 texels. Window imports of one range over 64 MiB are green in every variant, apart from GAC-006's unwatch-mode aborts.
@@ -20,7 +24,7 @@ RESULT:
 - Trees kept for follow-ups, each built with CI's Linux configure flags:
   - /home/user/AnyPS5/build at upstream a453108cf7
   - /home/user/trees/prm-003/build at perf/shader-direct-cpu-evaluable-images cb0dbd0da (PM-027; the prm-003 branch de032afb91 is kept)
-  - /home/user/trees/pm027-main/build at upstream a077a88df5 plus the uncommitted PM-027 benchmark (only agc_shader_memory_tests is built)
+  - /home/user/trees/pm027-main/build: worktree detached at upstream a077a88df5 and clean, but built last at the PRM-009 all-six merge 0665355fef (local only)
   - /home/user/trees/{B,C,D}/build-{B,C,D}
   - /home/user/trees/fsr/build at feat/agc-fsr1-presentation-upscaling fea68147a (the old submodule head stays as local branch pm004-submodule-245f786b0)
   - /home/user/trees/overlay/build at af3bd503cb, detached (#6012's head; feat/videoout-overlay-more-stats ce8e338cf is kept as a branch)
