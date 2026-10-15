@@ -35,6 +35,7 @@
 #include <stdexcept>
 #include <thread>
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver::DriverDetail {
@@ -725,7 +726,6 @@ void BuildRegisteredAbiKey(const QueueState& state, const VulkanDevice& device, 
 
 struct RegisteredPreparation {
     std::size_t codeOffset = 0;
-    ShaderRecompiler::RdnaProgram decoded;
     ShaderRecompiler::SwappcInfo swappc{};
     std::vector<std::uint32_t> userData;
     std::array<ShaderRecompiler::MemoryRegion, 2> memory{};
@@ -770,8 +770,9 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     auto plan = std::make_unique<RegisteredPreparation>();
     plan->codeOffset = codeOffset;
+    ShaderRecompiler::RdnaProgram decoded;
     try {
-        plan->decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+        decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
     } catch (const ShaderRecompiler::UnsupportedInstructionError& error) {
         if (deferred == nullptr) throw;
         return defer(error.what());
@@ -797,6 +798,8 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
         const auto count = RegisterValue(state.context, 0x1b6) & 0x3fu;
         if (registration && count != 0) return nullptr;
         pixel = Graphics::DecodePixelStageInfo(state.context, {});
+        const auto& capabilities = device.Target().supportedCapabilities;
+        if (pixel->stencilRefExportEnable && std::ranges::find(capabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == capabilities.end()) return nullptr;
         wave = pixel->wave32 ? 32u : 64u;
     } else {
         const auto routing = RegisterValue(state.context, 0x2d5);
@@ -821,7 +824,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     }
     plan->swappc = {vertex.has_value(), firstUser, userCount};
     if (deferred != nullptr) {
-        if (const auto counter = ShaderRecompiler::UnresolvableSwappcTarget(plan->decoded, &plan->swappc)) {
+        if (const auto counter = ShaderRecompiler::UnresolvableSwappcTarget(decoded, &plan->swappc)) {
             char reason[96];
             std::snprintf(reason, sizeof(reason), "its s_swappc_b64 at program counter 0x%x calls a computed target", *counter);
             return defer(reason);
