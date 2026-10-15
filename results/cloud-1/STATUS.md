@@ -1,5 +1,6 @@
 BUSY PM-035 (claimed 2026-10-15T07:08:21Z)
 RESULT:
+- Working on: PM-035 (audit of #6243, #6146 + v3, #5815), then BF-009 (claimed 2026-10-15T07:40:02Z; #6243 follow-ups; PM-035 hands its #6243 findings to it).
 - Last task: PRM-010, done: results/cloud-1/PRM-010.md.
   - Upstream main d92a8dad39; overlay PR head 62022e9362 and #6194 8bb1300680, both as stated.
   - Tree A (main + 62022e9362): clean merge; CI configure, registration, build and libs exit 0. ctest: 1232 run, 6 failed (the 5 IPv6 baseline tests plus audio_out2_shutdown, a parallel-load flake that passed alone 20/20). check_skips: only guest_sce_net (IPv6 baseline). Conventions on the PR head pass.
