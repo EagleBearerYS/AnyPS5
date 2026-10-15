@@ -272,6 +272,11 @@ ShaderMemory::KnownValueCounts ShaderMemory::KnownValues() {
     return {totals.wordsKnown.load(std::memory_order_relaxed), totals.wordsKnownVerified.load(std::memory_order_relaxed), totals.wordsKnownMismatches.load(std::memory_order_relaxed)};
 }
 
+ShaderMemory::CaptureReadCounts ShaderMemory::CaptureReads() {
+    auto& totals = CaptureTotals();
+    return {totals.reads.load(std::memory_order_relaxed), totals.pages.load(std::memory_order_relaxed), totals.pagesWordwise.load(std::memory_order_relaxed)};
+}
+
 void ShaderMemory::CountHandleMemo(bool hit) {
     if (!CaptureProfiled()) return;
     (hit ? CaptureTotals().handleHits : CaptureTotals().handleMisses).fetch_add(1, std::memory_order_relaxed);

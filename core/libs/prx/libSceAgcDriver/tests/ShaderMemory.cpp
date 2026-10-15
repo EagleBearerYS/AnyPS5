@@ -1185,6 +1185,45 @@ void verifyImageTableBulkReads() {
     require(cutByRun->snapshot.tables == cutByWord->snapshot.tables && cutWordReads.wordReads == 12u && cutRunReads.wordReads == 0u && cutRunReads.bulkWords == 12u, "image table bulk reads: a record cut by an unmapped page read other words in runs than word by word");
 }
 
+void verifyCaptureReadCounts() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Records = 128;
+    static TableTexture textures[3];
+    alignas(4096) static TableGuest guest;
+    alignas(4096) static std::array<std::uint32_t, 3 * 1024> words{};
+    for (std::uint32_t record = 0; record < Records; record++) {
+        const auto image = TableT(textures[record % 3u].bytes.data(), TableFormat8888UNorm, TableType2D, 1u + record % 5u);
+        std::copy(image.begin(), image.end(), words.begin() + 512u + record * 8u);
+    }
+    FillTableSrt(guest, words.data() + 512u, 32u, Records);
+    const auto request = TableRequest(TableWholeCode, TableUserData(guest));
+    const auto countedReads = [&] {
+        CountingMemory counting{0u, ~std::uint64_t{0}};
+        SrtRuntime runtime;
+        runtime.userData = request.context.userData;
+        runtime.shaderBase = request.shader.codeAddress;
+        runtime.userContext = &counting;
+        runtime.readMemory = &CountingRead;
+        runtime.readSpecializationMemory = &CountingRead;
+        runtime.accessible = &CountingAccessible;
+        runtime.readWords = &CountingReadWords;
+        static_cast<void>(CaptureResources(request, runtime));
+        return counting.wordReads + counting.bulkWords;
+    };
+    static_cast<void>(countedReads());
+    const auto expected = countedReads();
+    require(expected >= Records * 8u, "capture read counts: the counting capture did not read the table's records");
+    AgcDriver::ShaderMemory memory({});
+    const auto before = AgcDriver::ShaderMemory::CaptureReads();
+    static_cast<void>(memory.Capture(request));
+    const auto first = AgcDriver::ShaderMemory::CaptureReads();
+    require(first.reads - before.reads == expected, "capture read counts: a profiled capture did not add each of its word reads once");
+    require(first.pages > before.pages && first.pagesWordwise == before.pagesWordwise, "capture read counts: a profiled capture's page fetches were not counted");
+    static_cast<void>(memory.Capture(request));
+    const auto second = AgcDriver::ShaderMemory::CaptureReads();
+    require(second.reads - first.reads == expected && second.pages == first.pages, "capture read counts: a capture over fetched pages did not add each word read once, or counted a page again");
+}
+
 void verifyImageTables() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -4962,6 +5001,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
             verifySrtReadPatching();
             std::cout << "SRT read patching replaces repeated and multiple uses\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--capture-read-counts") {
+            verifyCaptureReadCounts();
+            std::cout << "Profiled capture read counts go up by each capture's word reads\n";
             return 0;
         }
         require(argc == 1, "unknown shader memory test arguments");

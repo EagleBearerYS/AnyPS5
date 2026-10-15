@@ -43,6 +43,10 @@ public:
         std::uint64_t served, verified, mismatches;
     };
     static KnownValueCounts KnownValues();
+    struct CaptureReadCounts {
+        std::uint64_t reads, pages, pagesWordwise;
+    };
+    static CaptureReadCounts CaptureReads();
     // Told, for a dword read that went through the hook, whether the bytes read before the hook's
     // wait were still there after it (the driver's evidence for later raw reads).
     using PendingWriteObserver = void (*)(std::uint64_t address, bool unchanged);
