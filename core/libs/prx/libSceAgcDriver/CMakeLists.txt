@@ -1413,7 +1413,7 @@ foreach(agcDeviceTableTest IN ITEMS user_data_sample srt_sample load_query two_t
     target_include_directories(agc_driver_device_table_${agcDeviceTableTest}_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 endforeach()
 
-foreach(agcCaptureTest IN ITEMS draw_device_images memory_buffer_ranges memory_buffer_pending_images memory_buffer_refresh srt_read_ranges emulated_color_compare scalar_load_spans runtime_color_compare shader_base_image written_image_cpu_written written_image_same_submission written_image_repeated_reads written_image_group_selected_repeated data_independent_dispatch new_path_residency_rules run_time_dispatch_resources run_time_draw_resources vertex_pulling zero_stride_vertex_fetch zero_position_vertex vertex_fetch draw_offset_indices scalar_swappc_fetch dcc_key_store_mirror register_soffset_ranges address_build_passes)
+foreach(agcCaptureTest IN ITEMS draw_device_images memory_buffer_ranges memory_buffer_pending_images memory_buffer_refresh srt_read_ranges emulated_color_compare scalar_load_spans runtime_color_compare shader_base_image written_image_cpu_written written_image_same_submission written_image_repeated_reads written_image_group_selected_repeated data_independent_dispatch new_path_residency_rules run_time_dispatch_resources run_time_draw_resources vertex_pulling zero_stride_vertex_fetch zero_position_vertex vertex_fetch draw_offset_indices scalar_swappc_fetch dcc_key_store_mirror register_soffset_ranges address_build_passes device_image_scoped_refresh)
     target_include_directories(agc_driver_${agcCaptureTest}_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 endforeach()
 
@@ -1448,6 +1448,7 @@ if(BUILD_TESTING)
         endif()
     endforeach()
     set_property(TEST agc_driver_address_build_passes APPEND PROPERTY ENVIRONMENT "APS5_PROFILE_DRAW=1")
+    set_property(TEST agc_driver_device_image_scoped_refresh APPEND PROPERTY ENVIRONMENT "APS5_PROFILE_DRAW=1")
     add_test(NAME agc_driver_emulated_color_compare_srgb_decode COMMAND agc_driver_emulated_color_compare_tests)
     set_tests_properties(agc_driver_emulated_color_compare_srgb_decode PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_SRGB_SHADER_DECODE=1"
