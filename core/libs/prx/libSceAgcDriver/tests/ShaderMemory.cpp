@@ -1251,6 +1251,7 @@ void verifyTableSnapshotReuse() {
         AgcDriver::ShaderMemory::SupplyCounts supplied{};
         const std::byte* tableBytes = nullptr;
         std::size_t tableRegionBytes = 0;
+        std::vector<std::pair<std::uint64_t, std::size_t>> tableRegions;
     };
     const auto sortedDisjoint = [](const std::vector<MemoryRegion>& regions) {
         for (std::size_t index = 1; index < regions.size(); index++) {
@@ -1280,9 +1281,10 @@ void verifyTableSnapshotReuse() {
         const auto suppliedAfter = AgcDriver::ShaderMemory::Supplies();
         outcome.supplied = {suppliedAfter.shared - suppliedBefore.shared, suppliedAfter.copied - suppliedBefore.copied, suppliedAfter.spilled - suppliedBefore.spilled};
         for (const auto& region : regions) {
-            if (region.guestAddress != reinterpret_cast<std::uintptr_t>(table)) continue;
-            outcome.tableBytes = region.bytes.data();
-            outcome.tableRegionBytes = region.bytes.size();
+            if (region.guestAddress < reinterpret_cast<std::uintptr_t>(table) || region.guestAddress >= reinterpret_cast<std::uintptr_t>(table) + bytes) continue;
+            if (outcome.tableBytes == nullptr) outcome.tableBytes = region.bytes.data();
+            if (region.bytes.data() == outcome.tableBytes + outcome.tableRegionBytes) outcome.tableRegionBytes += region.bytes.size();
+            outcome.tableRegions.emplace_back(region.guestAddress, region.bytes.size());
         }
         outcome.covered = TableCovered(regions, table, bytes) && std::all_of(regions.begin(), regions.end(), [&](const MemoryRegion& region) {
             return region.guestAddress < reinterpret_cast<std::uintptr_t>(table) || region.guestAddress >= reinterpret_cast<std::uintptr_t>(table) + bytes || std::memcmp(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(region.guestAddress)), region.bytes.data(), region.bytes.size()) == 0;
@@ -1342,6 +1344,7 @@ void verifyTableSnapshotReuse() {
         const auto sharedWords = [&](const Outcome& outcome) { return outcome.supplied.shared == Records * 8u && outcome.supplied.copied == 0u && outcome.supplied.spilled == 0u && outcome.tableRegionBytes == Bytes; };
         require(sharedWords(unchanged) && sharedWords(reusedAgain) && unchanged.tableBytes != nullptr && unchanged.tableBytes == reusedAgain.tableBytes && fresh.tableBytes != unchanged.tableBytes && fresh.supplied.shared == 0u, "table snapshot reuse: the captured words of an unchanged table were copied instead of shared");
     }
+    require(fresh.tableRegions.size() == Bytes / 4096u && unchanged.tableRegions == fresh.tableRegions && reusedAgain.tableRegions == fresh.tableRegions, "table snapshot reuse: a reused table's words are not reported in the regions a read of them reports");
     {
         AgcDriver::ShaderMemory stages({});
         const auto suppliedBefore = AgcDriver::ShaderMemory::Supplies();

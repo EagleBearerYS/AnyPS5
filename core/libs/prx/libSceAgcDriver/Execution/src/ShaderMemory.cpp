@@ -499,7 +499,7 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::collect(bool recentOnl
     for (const auto& entry : supplied) {
         if (recentOnly && !entry.recent) continue;
         cursors.push_back({entry.words.get(), 0u, 0u});
-        runs += entry.words->runs.size();
+        runs += entry.words->runs.size() + entry.words->words.size() / PageWords;
     }
     std::vector<ShaderRecompiler::MemoryRegion> result;
     result.reserve((recentOnly ? 0u : initial.size()) + pages.size() + runs);
@@ -516,7 +516,13 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::collect(bool recentOnl
                 ++next;
             } else if (lowest != nullptr && run < address) {
                 const auto count = lowest->words->runs[lowest->run].second;
-                result.push_back({run, std::as_bytes(std::span(lowest->words->words).subspan(lowest->at, count))});
+                const auto words = std::span(lowest->words->words).subspan(lowest->at, count);
+                for (std::size_t done = 0; done < count;) {
+                    const auto at = run + done * sizeof(std::uint32_t);
+                    const auto piece = std::min<std::size_t>(count - done, (PageBytes - static_cast<std::size_t>(at % PageBytes)) / sizeof(std::uint32_t));
+                    result.push_back({at, std::as_bytes(words.subspan(done, piece))});
+                    done += piece;
+                }
                 lowest->at += count;
                 ++lowest->run;
             } else {
