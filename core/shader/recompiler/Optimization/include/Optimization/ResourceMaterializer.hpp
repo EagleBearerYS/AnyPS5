@@ -45,6 +45,8 @@ struct ImageTableReuseCounts {
     std::uint64_t unwritten = 0;
     std::uint64_t compared = 0;
     std::uint64_t wordsRead = 0;
+    std::uint64_t shared = 0;
+    std::uint64_t columns = 0;
 };
 
 struct RuntimeImageModeMatch {
