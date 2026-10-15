@@ -1210,6 +1210,16 @@ AgcDriver::ShaderMemory::PendingWrite PendingTableWrite(std::uint64_t address, s
     return Pending::KnownValue;
 }
 
+std::uint64_t deferredTableRecord = 0;
+std::array<std::uint32_t, 8> deferredTableWords{};
+bool deferredTableStored = false;
+
+void StoreDeferredTableRecord(std::uint64_t address, std::size_t bytes) {
+    if (deferredTableStored || deferredTableRecord < address || deferredTableRecord - address >= bytes) return;
+    deferredTableStored = true;
+    AgcDriver::GuestMemory::StoreOwnBytes(deferredTableRecord, std::as_bytes(std::span(deferredTableWords)));
+}
+
 std::uint32_t* AllocateWatchedTable(std::size_t bytes) {
     auto* heap = static_cast<std::uint32_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
     require(heap != nullptr, "table snapshot reuse: cannot allocate the table in the guest arena");
@@ -1322,6 +1332,17 @@ void verifyTableSnapshotReuse() {
     const auto settled = capture(request, heap, Bytes, nullptr);
     require(settled.reuse.unwritten == 0u && heldRecords(settled, heap, Records), "table snapshot reuse: a snapshot taken under a pending GPU write was reused without a read");
     expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after the pending GPU write");
+
+    deferredTableRecord = address + 3500u * 32u;
+    deferredTableWords = texture(2003u);
+    struct FlushHookReset {
+        ~FlushHookReset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); }
+    } flushHookReset;
+    AgcDriver::GuestMemory::SetFlushHook(&StoreDeferredTableRecord);
+    const auto deferred = capture(request, heap, Bytes, nullptr);
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    require(deferredTableStored && deferred.reuse.unwritten == 0u && heldRecords(deferred, heap, Records) && recordWords(deferred, 3500u) == texture(2003u), "table snapshot reuse: a GPU result a read would store first was not stored and read before the table was reused");
+    expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after a GPU result stored by the flush hook");
 
     constexpr std::size_t UnrelatedBytes = 65536;
     void* unrelated = ::operator new(UnrelatedBytes, std::align_val_t{UnrelatedBytes});
