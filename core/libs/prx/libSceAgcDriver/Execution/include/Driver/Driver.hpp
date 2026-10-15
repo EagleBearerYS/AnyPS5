@@ -80,6 +80,7 @@ private:
     friend class SampledReadScope;
     friend struct PendingView;
     friend struct PacketTimer;
+    friend struct DriverTestAccess;
     void stop();
     Driver();
     void rethrowFailure() const;

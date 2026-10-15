@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -32,8 +34,25 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+namespace DriverDetail {
+
+struct DriverTestAccess {
+    static std::shared_ptr<VulkanDevice> Device() { return Driver::Get().device.Load(); }
+};
+
+}
+
+}
 
 namespace {
 
@@ -350,6 +369,39 @@ bool WriteDataClears(const std::string& what) {
     return Expect(Sample(target, what + ": sampled read"), Cleared, what, "expected the 0000 clear colour; 0x3f800000 is the drawn results, 0x3e808081 the bytes stored before the draw");
 }
 
+bool WriteDataClearsAfterSharedKeysGo(const std::string& what) {
+    const auto target = NewTarget();
+    const auto image = DrawPending(target, what, false);
+    auto sharing = target;
+    sharing.surface = NewBlock(SurfaceBytes);
+    std::memset(sharing.surface, Stored, SurfaceBytes);
+    std::weak_ptr<StorageTexture> gone;
+    {
+        const auto device = AgcDriver::DriverDetail::DriverTestAccess::Device();
+        Require(device != nullptr, what + ": the driver has no device");
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        auto other = StorageTexture::Create(context, *context.detiler, AgcDriver::Graphics::DecodeTextureResource(sharing.Texture()), 0);
+        Require(other != image && other->Descriptor().dccAddress == image->Descriptor().dccAddress, what + ": the second image does not share the drawn image's keys");
+        gone = other;
+        other.reset();
+        device->WaitIdle();
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!gone.expired() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(gone.expired(), what + ": the second image outlived its last reference");
+    Require(PendingImage(target) == image, what + ": the second image's life ended the pending results");
+    const auto extent = target.KeyExtent();
+    Require(extent % 4 == 0 && extent / 4 < 0x3ff0, what + ": the key extent does not fit one WRITE_DATA");
+    WriteKeys(target, extent, Clear0000, what + ": key write");
+    Require(PendingImage(target) == image, what + ": the key write ended the pending results");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        std::printf("%s: 0x%zx key bytes written by WRITE_DATA after another image at the same keys was destroyed; the image's noted key fill is %s\n", what.c_str(), extent, AgcDriver::Graphics::DccKeysName(image->FilledKeys()));
+    }
+    return Expect(Sample(target, what + ": sampled read"), Cleared, what, "expected the 0000 clear colour; 0x3f800000 is the drawn results, so the key write was not noted");
+}
+
 bool CpuStoreKeepsResults() {
     const std::string what = "cpu-store";
     const auto target = NewTarget();
@@ -366,6 +418,7 @@ int main(int argc, char** argv) {
         {"dma-fill", [] { return DmaFillClears("dma-fill", false); }},
         {"dma-fill-after-read", [] { return DmaFillClears("dma-fill-after-read", true); }},
         {"write-data", [] { return WriteDataClears("write-data"); }},
+        {"write-data-shared-keys", [] { return WriteDataClearsAfterSharedKeysGo("write-data-shared-keys"); }},
         {"cpu-store", CpuStoreKeepsResults},
     };
     const std::string_view only = argc > 1 ? argv[1] : "";
