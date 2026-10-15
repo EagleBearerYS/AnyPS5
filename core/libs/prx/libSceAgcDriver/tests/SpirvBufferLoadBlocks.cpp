@@ -108,7 +108,7 @@ int main() {
         Expect("buffer_load_dwordx3", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, AlignedBase), RuntimeLoadBudget(3u));
         Expect("buffer_load_dwordx4", LoadAdded(LoadDwordX4, StoreDwordX4, 4u, AlignedBase), RuntimeLoadBudget(4u));
         Expect("buffer_load_dwordx3 with an unaligned base", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, UnalignedBase), RuntimeLoadBudget(3u));
-        Expect("s_buffer_load_dword", ScalarLoadAdded(), {7u, 3u});
+        Expect("s_buffer_load_dword", ScalarLoadAdded(), {12u, 5u});
     } catch (const std::exception& error) {
         std::cerr << "SpirvBufferLoadBlocks: " << error.what() << '\n';
         return 1;

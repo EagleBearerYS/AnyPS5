@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <algorithm>
 #include <cstdlib>
@@ -433,6 +434,32 @@ std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::
     return EmitBdaBytes(state, address, bits / 8u, instruction, BdaAccessMask(state, inst));
 }
 
+namespace {
+
+bool BdaSegmentsShared(SpirvEmitterState& state) {
+    const auto& capabilities = state.supportedCapabilities;
+    const bool ballot = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformBallot)) != capabilities.end();
+    if (HostSubgroupSingleLane(state) || !ballot) return false;
+    state.module.EmitCapability(spv::CapabilityGroupNonUniform);
+    state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
+    return true;
+}
+
+std::uint32_t BroadcastFirstU64(SpirvEmitterState& state, std::uint32_t value) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto first = [&](std::uint32_t word) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, u32, result, ConstantU32(state, spv::ScopeSubgroup), word);
+        return result;
+    };
+    const auto low = first(Unary(state, spv::OpUConvert, u32, value));
+    const auto high = first(Unary(state, spv::OpUConvert, u32, Binary(state, spv::OpShiftRightLogical, u64, value, BdaConstant(state, 32u))));
+    return Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, low), Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, high), BdaConstant(state, 32u)));
+}
+
+}
+
 std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, const std::function<std::uint32_t()>& uncached) {
     auto& state = ctx.state;
     if (!BdaReadCacheAvailable(state)) ctx.Fail(inst, "BDA read cache is missing");
@@ -457,18 +484,32 @@ std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst
         return value;
     };
     return EmitValueIfElse(state, both(enabled, within(load(cache[0]), load(cache[1]))), u32, fast, [&] {
-        const auto value = uncached();
-        const auto segment = state.module.AllocateId();
-        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeStruct, u64, u64, u64), segment, state.bdaSegmentFunction, address);
+        const auto segmentType = state.module.Type(spv::OpTypeStruct, u64, u64, u64);
+        const auto translate = [&] {
+            const auto segment = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunctionCall, segmentType, segment, state.bdaSegmentFunction, address);
+            return segment;
+        };
+        const bool shared = BdaSegmentsShared(state);
+        std::uint32_t segment = 0;
+        if (shared) {
+            const auto elected = state.module.AllocateId();
+            EmitSubgroupElect(state, elected);
+            const auto zero = BdaConstant(state, 0u);
+            segment = EmitValueOrDefaultIfCondition(state, elected, segmentType, state.module.Constant(spv::OpConstantComposite, segmentType, zero, zero, zero), translate);
+        } else {
+            segment = translate();
+        }
         std::array<std::uint32_t, 3> fields{};
         for (std::uint32_t field = 0; field < 3u; ++field) {
             fields[field] = state.module.AllocateId();
             state.module.AddFunction(spv::OpCompositeExtract, u64, fields[field], segment, field);
+            if (shared) fields[field] = BroadcastFirstU64(state, fields[field]);
         }
         const auto aligned = Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u64, Binary(state, spv::OpIAdd, u64, address, fields[2]), BdaConstant(state, 3u)), BdaConstant(state, 0u));
         const auto covers = both(both(enabled, both(Binary(state, spv::OpULessThan, boolean, address, end), aligned)), within(fields[0], fields[1]));
         for (std::uint32_t field = 0; field < 3u; ++field) state.module.AddFunction(spv::OpStore, cache[field], Select(state, u64, covers, fields[field], load(cache[field])));
-        return value;
+        return EmitValueIfElse(state, covers, u32, fast, uncached);
     });
 }
 

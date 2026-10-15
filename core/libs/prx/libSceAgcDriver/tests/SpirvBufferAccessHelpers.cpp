@@ -156,7 +156,7 @@ int main() {
         Expect(atomics.size() == 1u && atomics[0] == 2u, "expected one atomic address helper called by the two buffer_atomic_add, found " + Describe(atomics));
         const auto formatted = Calls(module, "load_formatted_buffer_");
         Expect(formatted.size() == 1u && formatted[0] == 1u, "expected one formatted load helper called once, found " + Describe(formatted));
-        Expect(module.mainBufferMemoryLoads == 3u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected once for each s_buffer_load_dword through its cached translation");
+        Expect(module.mainBufferMemoryLoads == 6u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected twice for each s_buffer_load_dword: through its cached translation and through a refilled one");
         for (const auto& [id, function] : module.functions) {
             if (!function.name.starts_with("load_formatted_buffer_")) continue;
             Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per format layout and the invalid format (at most 15)");
