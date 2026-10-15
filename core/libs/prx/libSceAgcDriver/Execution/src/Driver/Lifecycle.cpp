@@ -78,7 +78,7 @@ std::uint64_t Driver::GpuMapImportThreads() {
 }
 
 Driver& Driver::Get() {
-    static Driver driver;
+    static auto& driver = *new Driver;
     return driver;
 }
 
