@@ -11,6 +11,11 @@
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -43,7 +48,7 @@ alignas(256) constexpr std::array<std::uint32_t, 11> PairCode{
     0xe0741000, 0x80020302, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 3> AtomicCode{0xe0c81000, 0x80000100, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 4> AtomicCode{0x7e020281, 0xe0c81000, 0x80000100, 0xbf810000};
 
 constexpr std::array<std::uint32_t, 7> FormattedLoadCode(std::uint32_t format, std::uint32_t offset) {
     return {0x34020082, 0xe8001000u | (format << 19u) | offset, 0x80000201, 0xbf8c0000, 0xe0701000, 0x80010201, 0xbf810000};
@@ -63,6 +68,43 @@ alignas(256) constexpr auto Store16Code = FormattedStoreCode(Format16UInt, 0);
 
 constexpr const char* Names[Checked] = {
     "aligned dword", "dword", "dwordx2[0]", "dwordx2[1]", "ushort", "ubyte", "s_buffer_load_dword", "tbuffer_load_format_x 8_UINT",
+};
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -227,19 +269,26 @@ void RunFormattedStore(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset
 }
 
 void RunAtomic(AgcDriver::VulkanDevice& device) {
+    Output.fill(Fill);
     TestGuest::Vector<std::uint32_t> userData;
     const auto descriptor = BufferDescriptor(reinterpret_cast<std::uint8_t*>(Output.data()) + 2u, 64u);
     userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(AtomicCode.data()), std::as_bytes(std::span(AtomicCode))}}};
+    const auto result = ShaderRecompiler::Recompile(Request(AtomicCode, userData, device.Target(), memory));
+    StderrCapture log;
     try {
-        const auto result = ShaderRecompiler::Recompile(Request(AtomicCode, userData, device.Target(), memory));
         device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(AtomicCode.data()));
         device.WaitIdle();
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find("buffer atomic on a V# whose base is not DWORD aligned") != std::string::npos, std::string("buffer unaligned base atomic: unexpected error: ") + error.what());
-        return;
+    } catch (...) {
+        static_cast<void>(log.Finish());
+        throw;
     }
-    throw std::runtime_error("buffer unaligned base atomic: an atomic on a V# off a DWORD boundary ran");
+    const auto text = log.Finish();
+    Require(text.find("BDA access failed") != std::string::npos && text.find("reason=7") != std::string::npos, "buffer unaligned base atomic: an atomic off a DWORD boundary recorded no unaligned fault:\n" + text);
+    for (std::uint32_t word = 0; word < 16u; ++word) {
+        const auto expected = word >= 1u && word <= Lanes / 4u ? Fill + 1u : Fill;
+        Require(Output[word] == expected, "buffer unaligned base atomic: word " + std::to_string(word) + " is " + Hex(Output[word]) + ", expected " + Hex(expected));
+    }
 }
 
 }
