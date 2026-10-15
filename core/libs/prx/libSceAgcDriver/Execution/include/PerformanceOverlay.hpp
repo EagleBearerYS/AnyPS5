@@ -13,7 +13,9 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -161,6 +163,8 @@ struct OverlayMetrics {
 };
 
 const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char character);
+bool OverlayHasGlyph(char character);
+void AppendOverlayLine(std::vector<OverlayRect>& rects, std::string_view line, std::int32_t left, std::int32_t top, std::int32_t row, std::int32_t scale);
 std::string FormatOverlayValue(double value);
 std::string FormatOverlayRate(double value);
 std::string FormatOverlayCount(double value);
@@ -188,8 +192,10 @@ public:
     void NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display);
     const OverlayStatistics& Statistics() const { return statistics; }
     const OverlayDetails& Details() const { return details; }
+    OverlayLayout PanelLayout(VkExtent2D extent) const;
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner);
+    void Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, std::span<const OverlayLayout> layouts);
     void Release(std::size_t slot) noexcept;
 
 private:

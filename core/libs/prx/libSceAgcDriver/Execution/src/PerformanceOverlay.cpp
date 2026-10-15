@@ -270,8 +270,11 @@ OverlayCounters OverlayStatistics::Latest() const {
     return window.empty() ? OverlayCounters{} : window.back().counters;
 }
 
-const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char character) {
-    using Glyph = std::array<std::uint8_t, OverlayMetrics::GlyphHeight>;
+namespace {
+
+using Glyph = std::array<std::uint8_t, OverlayMetrics::GlyphHeight>;
+
+const Glyph* findGlyph(char character) {
     static constexpr Glyph space{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     static constexpr std::array<Glyph, 10> digits{{
         {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e},
@@ -285,9 +288,51 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
         {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e},
         {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c},
     }};
+    static constexpr std::array<Glyph, 26> lowercase{{
+        {0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f},
+        {0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x1e},
+        {0x00, 0x00, 0x0e, 0x10, 0x10, 0x11, 0x0e},
+        {0x01, 0x01, 0x0d, 0x13, 0x11, 0x11, 0x0f},
+        {0x00, 0x00, 0x0e, 0x11, 0x1f, 0x10, 0x0e},
+        {0x06, 0x09, 0x08, 0x1c, 0x08, 0x08, 0x08},
+        {0x00, 0x0f, 0x11, 0x11, 0x0f, 0x01, 0x0e},
+        {0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x11},
+        {0x04, 0x00, 0x0c, 0x04, 0x04, 0x04, 0x0e},
+        {0x02, 0x00, 0x06, 0x02, 0x02, 0x12, 0x0c},
+        {0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12},
+        {0x0c, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e},
+        {0x00, 0x00, 0x1a, 0x15, 0x15, 0x11, 0x11},
+        {0x00, 0x00, 0x16, 0x19, 0x11, 0x11, 0x11},
+        {0x00, 0x00, 0x0e, 0x11, 0x11, 0x11, 0x0e},
+        {0x00, 0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10},
+        {0x00, 0x0f, 0x11, 0x11, 0x0f, 0x01, 0x01},
+        {0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10},
+        {0x00, 0x00, 0x0f, 0x10, 0x0e, 0x01, 0x1e},
+        {0x08, 0x08, 0x1c, 0x08, 0x08, 0x09, 0x06},
+        {0x00, 0x00, 0x11, 0x11, 0x11, 0x13, 0x0d},
+        {0x00, 0x00, 0x11, 0x11, 0x11, 0x0a, 0x04},
+        {0x00, 0x00, 0x11, 0x11, 0x15, 0x15, 0x0a},
+        {0x00, 0x00, 0x11, 0x0a, 0x04, 0x0a, 0x11},
+        {0x00, 0x11, 0x11, 0x11, 0x0f, 0x01, 0x0e},
+        {0x00, 0x00, 0x1f, 0x02, 0x04, 0x08, 0x1f},
+    }};
     static constexpr Glyph period{0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c};
     static constexpr Glyph colon{0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00};
     static constexpr Glyph slash{0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00};
+    static constexpr Glyph minus{0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00};
+    static constexpr Glyph plus{0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00};
+    static constexpr Glyph comma{0x00, 0x00, 0x00, 0x00, 0x0c, 0x04, 0x08};
+    static constexpr Glyph semicolon{0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x04, 0x08};
+    static constexpr Glyph apostrophe{0x04, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00};
+    static constexpr Glyph quote{0x0a, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static constexpr Glyph exclamation{0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04};
+    static constexpr Glyph question{0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04};
+    static constexpr Glyph ampersand{0x0c, 0x12, 0x14, 0x08, 0x15, 0x12, 0x0d};
+    static constexpr Glyph open{0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02};
+    static constexpr Glyph close{0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08};
+    static constexpr Glyph hash{0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a};
+    static constexpr Glyph percent{0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03};
+    static constexpr Glyph underscore{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f};
     static constexpr Glyph a{0x0e, 0x11, 0x11, 0x11, 0x1f, 0x11, 0x11};
     static constexpr Glyph b{0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e};
     static constexpr Glyph c{0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e};
@@ -297,12 +342,14 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
     static constexpr Glyph g{0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f};
     static constexpr Glyph h{0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11};
     static constexpr Glyph i{0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e};
+    static constexpr Glyph j{0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c};
     static constexpr Glyph k{0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
     static constexpr Glyph l{0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f};
     static constexpr Glyph m{0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11};
     static constexpr Glyph n{0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11};
     static constexpr Glyph o{0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
     static constexpr Glyph p{0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10};
+    static constexpr Glyph q{0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d};
     static constexpr Glyph r{0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11};
     static constexpr Glyph s{0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e};
     static constexpr Glyph t{0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
@@ -310,35 +357,89 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
     static constexpr Glyph v{0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04};
     static constexpr Glyph w{0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a};
     static constexpr Glyph x{0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11};
-    if (character >= '0' && character <= '9') return digits[static_cast<std::size_t>(character - '0')];
+    static constexpr Glyph y{0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04};
+    static constexpr Glyph z{0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f};
+    if (character >= '0' && character <= '9') return &digits[static_cast<std::size_t>(character - '0')];
+    if (character >= 'a' && character <= 'z') return &lowercase[static_cast<std::size_t>(character - 'a')];
     switch (character) {
-        case ' ': return space;
-        case '.': return period;
-        case ':': return colon;
-        case '/': return slash;
-        case 'A': return a;
-        case 'B': return b;
-        case 'C': return c;
-        case 'D': return d;
-        case 'E': return e;
-        case 'F': return f;
-        case 'G': return g;
-        case 'H': return h;
-        case 'I': return i;
-        case 'K': return k;
-        case 'L': return l;
-        case 'M': return m;
-        case 'N': return n;
-        case 'O': return o;
-        case 'P': return p;
-        case 'R': return r;
-        case 'S': return s;
-        case 'T': return t;
-        case 'U': return u;
-        case 'V': return v;
-        case 'W': return w;
-        case 'X': return x;
-        default: throw std::runtime_error(std::string("the performance overlay font has no glyph for '") + character + "'");
+        case ' ': return &space;
+        case '.': return &period;
+        case ':': return &colon;
+        case '/': return &slash;
+        case '-': return &minus;
+        case '+': return &plus;
+        case ',': return &comma;
+        case ';': return &semicolon;
+        case '\'': return &apostrophe;
+        case '"': return &quote;
+        case '!': return &exclamation;
+        case '?': return &question;
+        case '&': return &ampersand;
+        case '(': return &open;
+        case ')': return &close;
+        case '#': return &hash;
+        case '%': return &percent;
+        case '_': return &underscore;
+        case 'A': return &a;
+        case 'B': return &b;
+        case 'C': return &c;
+        case 'D': return &d;
+        case 'E': return &e;
+        case 'F': return &f;
+        case 'G': return &g;
+        case 'H': return &h;
+        case 'I': return &i;
+        case 'J': return &j;
+        case 'K': return &k;
+        case 'L': return &l;
+        case 'M': return &m;
+        case 'N': return &n;
+        case 'O': return &o;
+        case 'P': return &p;
+        case 'Q': return &q;
+        case 'R': return &r;
+        case 'S': return &s;
+        case 'T': return &t;
+        case 'U': return &u;
+        case 'V': return &v;
+        case 'W': return &w;
+        case 'X': return &x;
+        case 'Y': return &y;
+        case 'Z': return &z;
+        default: return nullptr;
+    }
+}
+
+}
+
+const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char character) {
+    const auto* glyph = findGlyph(character);
+    if (glyph == nullptr) throw std::runtime_error(std::string("the performance overlay font has no glyph for '") + character + "'");
+    return *glyph;
+}
+
+bool OverlayHasGlyph(char character) {
+    return findGlyph(character) != nullptr;
+}
+
+void AppendOverlayLine(std::vector<OverlayRect>& rects, std::string_view line, std::int32_t left, std::int32_t top, std::int32_t row, std::int32_t scale) {
+    for (std::size_t column = 0; column < line.size(); ++column) {
+        const auto& glyph = OverlayGlyph(line[column]);
+        const auto glyphLeft = left + (OverlayMetrics::Padding + static_cast<std::int32_t>(column) * OverlayMetrics::Advance) * scale;
+        for (std::int32_t y = 0; y < OverlayMetrics::GlyphHeight; ++y) {
+            const auto bits = glyph[static_cast<std::size_t>(y)];
+            std::int32_t x = 0;
+            while (x < OverlayMetrics::GlyphWidth) {
+                if ((bits & (0x10u >> x)) == 0) {
+                    ++x;
+                    continue;
+                }
+                auto end = x;
+                while (end < OverlayMetrics::GlyphWidth && (bits & (0x10u >> end)) != 0) ++end;
+                rects.push_back({glyphLeft + x * scale, top + (row + y) * scale, (end - x) * scale, scale, static_cast<std::uint32_t>(OverlayColor::Text)});
+                x = end;
+            }
+        }
     }
 }
 
@@ -461,24 +562,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
     layout.rects.push_back(layout.bounds);
     const auto text = [&](const std::string& line, std::int32_t row) {
         Graphics::Require(line.size() <= static_cast<std::size_t>(OverlayMetrics::Columns), "a performance overlay line is wider than the panel");
-        for (std::size_t column = 0; column < line.size(); ++column) {
-            const auto& glyph = OverlayGlyph(line[column]);
-            const auto glyphLeft = left + (OverlayMetrics::Padding + static_cast<std::int32_t>(column) * OverlayMetrics::Advance) * scale;
-            for (std::int32_t y = 0; y < OverlayMetrics::GlyphHeight; ++y) {
-                const auto bits = glyph[static_cast<std::size_t>(y)];
-                std::int32_t x = 0;
-                while (x < OverlayMetrics::GlyphWidth) {
-                    if ((bits & (0x10u >> x)) == 0) {
-                        ++x;
-                        continue;
-                    }
-                    auto end = x;
-                    while (end < OverlayMetrics::GlyphWidth && (bits & (0x10u >> end)) != 0) ++end;
-                    layout.rects.push_back({glyphLeft + x * scale, top + (row + y) * scale, (end - x) * scale, scale, static_cast<std::uint32_t>(OverlayColor::Text)});
-                    x = end;
-                }
-            }
-        }
+        AppendOverlayLine(layout.rects, line, left, top, row, scale);
     };
     auto row = OverlayMetrics::Padding;
     for (const auto& line : content.above) {
@@ -715,26 +799,48 @@ VkPipeline PerformanceOverlay::pipeline(VkFormat format, VkRenderPass compatible
     return pipelines.emplace(format, created).first->second;
 }
 
-OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
+OverlayLayout PerformanceOverlay::PanelLayout(VkExtent2D extent) const {
     auto shown = details;
     shown.window = extent;
-    return Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, ComposeOverlay(statistics, PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled(), shown), Corner());
+    return LayOutOverlay(ComposeOverlay(statistics, PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled(), shown), extent, Corner());
 }
 
-OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner) {
+OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
+    Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "the performance overlay destination is unavailable");
+    const auto layout = PanelLayout(extent);
+    Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, std::span<const OverlayLayout>(&layout, 1));
+    return layout.bounds;
+}
+
+OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner) {
+    Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "the performance overlay destination is unavailable");
+    const auto layout = LayOutOverlay(content, extent, corner);
+    Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, std::span<const OverlayLayout>(&layout, 1));
+    return layout.bounds;
+}
+
+void PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, std::span<const OverlayLayout> layouts) {
     Graphics::Require(index < slots.size(), "performance overlay slot is out of range");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "the performance overlay destination is unavailable");
+    Graphics::Require(!layouts.empty(), "the performance overlay has nothing to draw");
     auto& slot = slots[index];
     releaseTransient(slot);
-    const auto layout = LayOutOverlay(content, extent, corner);
-    if (slot.capacity < layout.rects.size()) {
-        const auto capacity = std::max<std::size_t>(layout.rects.size(), 1024);
+    std::size_t total = 0;
+    for (const auto& layout : layouts) total += layout.rects.size();
+    if (slot.capacity < total) {
+        const auto capacity = std::max<std::size_t>(total, 1024);
         slot.rects = std::make_unique<Graphics::Buffer>(context, capacity * sizeof(OverlayRect), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         slot.capacity = capacity;
     }
-    std::memcpy(slot.rects->Bytes().data(), layout.rects.data(), layout.rects.size() * sizeof(OverlayRect));
-    const auto pass = renderPass(format, initialLayout, finalLayout);
-    const auto drawing = pipeline(format, pass);
+    auto* written = slot.rects->Bytes().data();
+    for (const auto& layout : layouts) {
+        std::memcpy(written, layout.rects.data(), layout.rects.size() * sizeof(OverlayRect));
+        written += layout.rects.size() * sizeof(OverlayRect);
+    }
+    const auto passBetween = [&](std::size_t drawn) {
+        return renderPass(format, drawn == 0 ? initialLayout : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, drawn + 1 == layouts.size() ? finalLayout : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    };
+    const auto firstPass = passBetween(0);
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = destination;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -747,7 +853,7 @@ OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t ind
     VkImageView view = VK_NULL_HANDLE;
     Graphics::Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView performance overlay");
     VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    framebufferInfo.renderPass = pass;
+    framebufferInfo.renderPass = firstPass;
     framebufferInfo.attachmentCount = 1;
     framebufferInfo.pAttachments = &view;
     framebufferInfo.width = extent.width;
@@ -757,26 +863,33 @@ OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t ind
     const auto created = context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer);
     slot.transient.emplace_back(view, framebuffer);
     Graphics::Check(created, "vkCreateFramebuffer performance overlay");
-    const auto right = std::min<std::int32_t>(layout.bounds.x + layout.bounds.width, static_cast<std::int32_t>(extent.width));
-    const auto bottom = std::min<std::int32_t>(layout.bounds.y + layout.bounds.height, static_cast<std::int32_t>(extent.height));
-    const VkRect2D area{{layout.bounds.x, layout.bounds.y}, {static_cast<std::uint32_t>(std::max(1, right - layout.bounds.x)), static_cast<std::uint32_t>(std::max(1, bottom - layout.bounds.y))}};
-    VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    begin.renderPass = pass;
-    begin.framebuffer = framebuffer;
-    begin.renderArea = area;
-    context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
-    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &area);
     const OverlayParameters parameters{OverlayPalette(format, colorSpace), {static_cast<float>(extent.width), static_cast<float>(extent.height)}};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
+    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
     const VkBuffer buffer = slot.rects->Handle();
     const VkDeviceSize offset = 0;
-    context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers")(commands, 0, 1, &buffer, &offset);
-    context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 4, static_cast<std::uint32_t>(layout.rects.size()), 0, 0);
-    context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
-    return layout.bounds;
+    std::uint32_t first = 0;
+    for (std::size_t drawn = 0; drawn < layouts.size(); ++drawn) {
+        const auto& layout = layouts[drawn];
+        const auto pass = drawn == 0 ? firstPass : passBetween(drawn);
+        const auto drawing = pipeline(format, pass);
+        const auto right = std::min<std::int32_t>(layout.bounds.x + layout.bounds.width, static_cast<std::int32_t>(extent.width));
+        const auto bottom = std::min<std::int32_t>(layout.bounds.y + layout.bounds.height, static_cast<std::int32_t>(extent.height));
+        const VkRect2D area{{layout.bounds.x, layout.bounds.y}, {static_cast<std::uint32_t>(std::max(1, right - layout.bounds.x)), static_cast<std::uint32_t>(std::max(1, bottom - layout.bounds.y))}};
+        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        begin.renderPass = pass;
+        begin.framebuffer = framebuffer;
+        begin.renderArea = area;
+        context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
+        context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
+        context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &area);
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
+        context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers")(commands, 0, 1, &buffer, &offset);
+        const auto count = static_cast<std::uint32_t>(layout.rects.size());
+        context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 4, count, 0, first);
+        context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+        first += count;
+    }
 }
 
 }
