@@ -71,7 +71,10 @@ void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::ui
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(texels), SurfaceBytes);
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::Graphics::FlushCachedTextures(device.Device());
+    }
     device.WaitIdle();
 }
 

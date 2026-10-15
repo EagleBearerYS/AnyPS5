@@ -987,11 +987,14 @@ bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<c
 void FlushCachedTextures(VkDevice device) {
     Require(device != VK_NULL_HANDLE, "cannot flush textures without a Vulkan device");
     GuestMemory::AssertGpuLockHeld("FlushCachedTextures");
-    auto& cache = StorageTextures();
-    std::lock_guard lock(cache.mutex);
-    for (const auto& entry : cache.entries) {
-        if (entry.key.device == device) entry.texture->Flush();
+    {
+        auto& cache = StorageTextures();
+        std::lock_guard lock(cache.mutex);
+        for (const auto& entry : cache.entries) {
+            if (entry.key.device == device) entry.texture->Flush();
+        }
     }
+    StorageTexture::FlushAllPending("cached texture flush");
 }
 
 void ClearCachedTextures(VkDevice device) {
