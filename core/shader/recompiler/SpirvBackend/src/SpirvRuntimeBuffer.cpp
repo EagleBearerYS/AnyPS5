@@ -704,8 +704,29 @@ std::uint32_t rawLoad(SpirvValueEmitContext& context, const IrValue& instruction
             }
             return composite(state, components, values);
         };
-        if (!wideAtomic || memory.gpuDescriptor) return readComponents();
+        const auto pair = [&](std::uint32_t value) {
+            const auto high = Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), value, BdaConstant(state, 32u));
+            return composite(state, 2u, {Unary(state, spv::OpUConvert, TypeU32(state), value), Unary(state, spv::OpUConvert, TypeU32(state), high), 0u, 0u});
+        };
+        if (!wideAtomic || (memory.gpuDescriptor && state.bdaProbeFunction == 0u)) return readComponents();
         const auto runtime = address(context, instruction, resource, 0u, 8u);
+        if (memory.gpuDescriptor) {
+            const auto u64 = TypeScalarU64(state);
+            const auto guestAligned = Binary(state, spv::OpIEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u64, runtime.guest, BdaConstant(state, 7u)), BdaConstant(state, 0u));
+            const auto physical = EmitValueOrDefaultIfCondition(state, both(state, runtime.inBounds, guestAligned), u64, BdaConstant(state, 0u), [&] {
+                const auto probed = state.module.AllocateId();
+                state.module.AddFunction(spv::OpFunctionCall, u64, probed, state.bdaProbeFunction, runtime.guest, ConstantU32(state, 8u), BdaInstructionPc(state, instruction));
+                return probed;
+            });
+            const auto mapped = both(state, Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u)), Binary(state, spv::OpIEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u64, physical, BdaConstant(state, 7u)), BdaConstant(state, 0u)));
+            return EmitValueIfElse(state, mapped, type, [&] {
+                const auto pointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU64Pointer(state), pointer, physical);
+                const auto value = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAtomicLoad, u64, value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
+                return pair(value);
+            }, readComponents);
+        }
         const auto wide = directAccess(context, instruction, resource, false, true);
         const auto byte = EmitAddU32(state, runtime.guest, wide.byteOffset);
         const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byte, ConstantU32(state, 3u));
@@ -715,8 +736,7 @@ std::uint32_t rawLoad(SpirvValueEmitContext& context, const IrValue& instruction
             const auto pointer = EmitStorageBufferElementPointer(state, wide, index, TypePhysicalU64Pointer(state));
             const auto value = state.module.AllocateId();
             state.module.AddFunction(spv::OpAtomicLoad, TypeScalarU64(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
-            const auto high = Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), value, BdaConstant(state, 32u));
-            return composite(state, 2u, {Unary(state, spv::OpUConvert, TypeU32(state), value), Unary(state, spv::OpUConvert, TypeU32(state), high), 0u, 0u});
+            return pair(value);
         }, readComponents);
     });
 }
