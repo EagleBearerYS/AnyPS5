@@ -79,7 +79,6 @@ bool PlanBuilder::ReadsAtRunTime() const {
         if (info.access == ImageAccess::None || (sampler && !info.needsSampler)) return false;
         const auto index = user.Flags<MemoryFlags>().index;
         if (index >= memoryInfo.size() || memoryInfo[index].imagePacked || memoryInfo[index].imageByElements != 0u) return false;
-        if (info.resourceClass == ImageResourceClass::Storage && memoryInfo[index].imageHasMip) return false;
         if (memoryInfo[index].imageDimension == RdnaImageDimension::Dim2DMsaa || memoryInfo[index].imageDimension == RdnaImageDimension::Dim2DMsaaArray) return false;
         const std::size_t operand = sampler ? 1u : 0u;
         if (user.ArgumentCount() <= operand || user.Argument(operand)->Resolve() != &handle) return false;

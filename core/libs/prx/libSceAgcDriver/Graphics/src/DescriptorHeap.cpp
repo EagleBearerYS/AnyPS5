@@ -164,6 +164,32 @@ std::uint32_t DescriptorHeap::AllocateImage(Array array, VkImageView view, VkIma
     return allocate(array, {VK_NULL_HANDLE, view, layout});
 }
 
+std::uint32_t DescriptorHeap::AllocateImageRun(Array array, std::span<const VkImageView> imageViews, VkImageLayout layout) {
+    Require(array != Array::Samplers && !imageViews.empty(), "an image slot run needs image views");
+    std::lock_guard lock(mutex);
+    auto& slots = arrays[static_cast<std::size_t>(array)];
+    const auto count = static_cast<std::uint32_t>(imageViews.size());
+    std::vector<std::uint32_t> free(slots.free.begin(), slots.free.end());
+    std::sort(free.begin(), free.end());
+    auto first = static_cast<std::uint32_t>(slots.entries.size());
+    bool reused = false;
+    for (std::size_t index = 0; index + count <= free.size(); ++index) {
+        if (free[index + count - 1u] - free[index] != count - 1u) continue;
+        first = free[index];
+        reused = true;
+        break;
+    }
+    if (reused) {
+        std::erase_if(slots.free, [&](std::uint32_t slot) { return slot >= first && slot < first + count; });
+    } else {
+        Require(first + count <= slots.capacity, std::string("the descriptor heap has no run of ") + std::to_string(count) + " free " + ArrayNames[static_cast<std::size_t>(array)] + " slots: " + std::to_string(slots.capacity) + " are live");
+        slots.entries.resize(first + count);
+    }
+    for (std::uint32_t index = 0; index < count; ++index) slots.entries[first + index] = {VK_NULL_HANDLE, imageViews[index], layout};
+    for (const auto& item : views) write(item, array, first, count);
+    return first;
+}
+
 void DescriptorHeap::ReleaseImage(Array array, std::uint32_t slot) noexcept {
     release(array, slot);
 }

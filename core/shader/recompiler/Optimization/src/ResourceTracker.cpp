@@ -1313,7 +1313,7 @@ private:
         const auto flags = inst.Flags<MemoryFlags>();
         if (flags.index >= m_program.Resources().memoryInfo.size()) return false;
         const auto& memory = m_program.Resources().memoryInfo[flags.index];
-        return !memory.imagePacked && memory.imageByElements == 0u && memory.imageDimension != RdnaImageDimension::Dim2DMsaa && memory.imageDimension != RdnaImageDimension::Dim2DMsaaArray && !(info.resourceClass == ImageResourceClass::Storage && memory.imageHasMip);
+        return !memory.imagePacked && memory.imageByElements == 0u && memory.imageDimension != RdnaImageDimension::Dim2DMsaa && memory.imageDimension != RdnaImageDimension::Dim2DMsaaArray;
     }
 
     void PlanDeviceColumns() {

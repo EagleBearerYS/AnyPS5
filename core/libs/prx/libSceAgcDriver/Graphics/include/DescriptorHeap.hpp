@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <span>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -33,6 +34,7 @@ public:
     std::uint32_t AllocateSampler(VkSampler sampler);
     void ReleaseSampler(std::uint32_t slot) noexcept;
     std::uint32_t AllocateImage(Array array, VkImageView view, VkImageLayout layout);
+    std::uint32_t AllocateImageRun(Array array, std::span<const VkImageView> imageViews, VkImageLayout layout);
     void ReleaseImage(Array array, std::uint32_t slot) noexcept;
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, VkDescriptorSet set) const;
 

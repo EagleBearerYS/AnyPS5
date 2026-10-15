@@ -1147,8 +1147,8 @@ struct PlanFixture {
     }
 };
 
-std::vector<std::uint32_t> imageWords(std::uint64_t base) {
-    return {static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+std::vector<std::uint32_t> imageWords(std::uint64_t base, std::uint32_t format = 56u) {
+    return {static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (format << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
 }
 
 std::vector<std::uint32_t> bufferWords(std::uint64_t base, std::uint32_t stride, std::uint32_t records, std::uint32_t format = 0xfacu) {
@@ -1236,10 +1236,14 @@ std::vector<PlanFixture> planFixtures() {
     fragment.pixel = pixel;
     fixtures.push_back(std::move(fragment));
 
-    add("bindless table written by a store with a mip", 64, {0xf4080100u, 0xfa000000u, 0xf4080300u, 0xfa000020u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xbf8cc07fu, 0xf0240f08u, 0x00050004u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, tables}, {PlanTableAddress, heap}, {PlanMaterialAddress, materials}});
+    std::vector<std::uint32_t> uintHeap(32, 0u);
+    place(uintHeap, 0, imageWords(PlanTextureAddress, 60u));
+    place(uintHeap, 8, imageWords(PlanTextureAddress + 0x100u, 60u));
+    place(uintHeap, 24, imageWords(PlanTextureAddress, 60u));
+    add("bindless table written by a packed store with a mip", 64, {0xf4080100u, 0xfa000000u, 0xf4080300u, 0xfa000020u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xbf8cc07fu, 0xf02c0f08u, 0x00050004u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, tables}, {PlanTableAddress, uintHeap}, {PlanMaterialAddress, materials}});
     auto mipRoot = root;
-    place(mipRoot, 8, imageWords(PlanTextureAddress));
-    add("guarded nested read beside a store with a mip", 64, {0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u, 0xbf8cc07fu, 0xbf068008u, 0xbf850003u, 0xf4000305u, 0xfa000000u, 0xbf8cc07fu, 0x7e02020cu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xf40c0400u, 0xfa000020u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xbf8cc07fu, 0xf0240f08u, 0x00040104u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, mipRoot}, {PlanPayloadAddress, payload}});
+    place(mipRoot, 8, imageWords(PlanTextureAddress, 60u));
+    add("guarded nested read beside a packed store with a mip", 64, {0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u, 0xbf8cc07fu, 0xbf068008u, 0xbf850003u, 0xf4000305u, 0xfa000000u, 0xbf8cc07fu, 0x7e02020cu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xf40c0400u, 0xfa000020u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xbf8cc07fu, 0xf02c0f08u, 0x00040104u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, mipRoot}, {PlanPayloadAddress, payload}});
     return fixtures;
 }
 

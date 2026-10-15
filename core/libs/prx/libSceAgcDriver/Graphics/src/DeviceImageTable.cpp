@@ -265,6 +265,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
             view.shape = ShaderRecompiler::ImageShapeForResource(mode);
             view.atomic = mode.atomic;
             view.atomic64 = mode.atomic64;
+            view.mipRun = mode.mipMode == ShaderRecompiler::ImageMipMode::DynamicStorage;
             auto storage = LookupDeviceTableStorage(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view);
             entry = {};
             entry.address = storage.address;

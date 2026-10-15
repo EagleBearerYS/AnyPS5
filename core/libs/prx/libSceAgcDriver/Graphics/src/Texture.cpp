@@ -4633,9 +4633,23 @@ std::uint32_t StorageTexture::StorageSlot(VkImageView imageView) {
     return slot;
 }
 
+std::uint32_t StorageTexture::StorageSlotRun(std::span<const VkImageView> imageViews) {
+    Require(!imageViews.empty() && context.descriptorHeap != nullptr, "a storage image slot run needs views and the descriptor heap");
+    std::lock_guard lock(slotMutex);
+    const std::pair key{imageViews.front(), static_cast<std::uint32_t>(imageViews.size())};
+    if (const auto found = storageRuns.find(key); found != storageRuns.end()) return found->second;
+    const auto slot = context.descriptorHeap->AllocateImageRun(DescriptorHeap::Array::StorageImages, imageViews, VK_IMAGE_LAYOUT_GENERAL);
+    storageRuns.emplace(key, slot);
+    return slot;
+}
+
 void StorageTexture::release() noexcept {
     for (const auto& [imageView, slot] : storageSlots) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot);
     storageSlots.clear();
+    for (const auto& [key, slot] : storageRuns) {
+        for (std::uint32_t index = 0; index < key.second; ++index) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot + index);
+    }
+    storageRuns.clear();
     for (const auto& [mip, extra] : extraViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);
     extraViews.clear();
     for (const auto& [mip, extra] : firstLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);

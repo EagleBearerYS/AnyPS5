@@ -1205,6 +1205,11 @@ void verifyImageTableRegistration() {
     require(store.result->deviceImages.empty(), "image table registration: a store through a T# only the GPU selects named a key the CPU pre-pass expects");
     require(TableBinding(*store.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*store.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: an unsupported table bound elements");
 
+    const std::vector<std::uint32_t> storeMipCode{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0240f08u, 0x00050400u, 0xbf810000u};
+    const auto storeMip = CompileTable(TableRequest(storeMipCode, userData));
+    const auto& storeMipPlan = *storeMip.capture->plan;
+    require(storeMipPlan.srtReads.empty() && storeMipPlan.info.images.size() == 1u && storeMipPlan.info.images[0].deviceTable && storeMipPlan.info.images[0].mipMode == ImageMipMode::DynamicStorage, "image table registration: a table T# feeding image_store_mip was read in the capture instead of through the device image table");
+
     const std::vector<std::uint32_t> compareCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0fc0108u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
     auto compareRequest = TableRequest(compareCode, userData);
     compareRequest.target.nonConstantImageOffsets = false;

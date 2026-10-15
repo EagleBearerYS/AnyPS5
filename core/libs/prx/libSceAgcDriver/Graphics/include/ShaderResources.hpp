@@ -124,6 +124,7 @@ struct DeviceTableView {
     bool exactAtBase = false;
     bool atomic = false;
     bool atomic64 = false;
+    bool mipRun = false;
 };
 
 struct DeviceTableStorage {

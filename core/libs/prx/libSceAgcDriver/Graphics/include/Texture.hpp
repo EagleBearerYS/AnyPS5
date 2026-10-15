@@ -193,6 +193,7 @@ public:
     VkImageView AtomicView(std::uint32_t mip, ViewLayers layers);
     VkImageView Atomic64View(std::uint32_t mip, ViewLayers layers);
     std::uint32_t StorageSlot(VkImageView view);
+    std::uint32_t StorageSlotRun(std::span<const VkImageView> views);
     // Render targets live in the same images: draws attach mip 0 through a view of the color
     // buffer's format and mark the image dirty like a storage write.
     bool Attachable() const { return attachable; }
@@ -565,6 +566,7 @@ private:
     VkImageView view = VK_NULL_HANDLE;
     std::mutex slotMutex;
     std::map<VkImageView, std::uint32_t> storageSlots;
+    std::map<std::pair<VkImageView, std::uint32_t>, std::uint32_t> storageRuns;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;
     std::map<std::uint32_t, VkImageView> firstLayerViews;

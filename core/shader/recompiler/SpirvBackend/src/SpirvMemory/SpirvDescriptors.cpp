@@ -228,7 +228,7 @@ std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource,
     return sampledImage;
 }
 
-std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint32_t resource) {
+std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t tableElement) {
     const auto& image = state.runtimeImage != nullptr ? *state.runtimeImage : state.program.Info().images.at(resource);
     if (image.resourceClass != ImageResourceClass::Storage) {
         FailEmit("storage image descriptor requested for a non-storage image");
@@ -238,7 +238,7 @@ std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint3
         const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
         if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "storage image table array was not emitted");
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image)), pointer, found->variable, state.tableAccess.element);
+        state.module.AddFunction(spv::OpAccessChain, state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image)), pointer, found->variable, tableElement != 0u ? tableElement : state.tableAccess.element);
         if (state.tableIndexNonUniform) {
             state.module.EmitCapability(spv::CapabilityShaderNonUniform);
             state.module.EmitCapability(spv::CapabilityStorageImageArrayNonUniformIndexing);
@@ -263,9 +263,23 @@ void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std
     const auto kind = DescriptorBindingForImage(image);
     const auto imageType = ImageType(state, image);
     if (image.table != NoTable) {
-        if (image.mipMode == ImageMipMode::DynamicStorage) ExitDescriptorBindingFailure(state, kind, resource, "a storage image with dynamic mips is written through the device image table");
+        if (image.mipMode == ImageMipMode::DynamicStorage) {
+            if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) FailEmit("multisampled storage image requires a sample and cannot have mip levels");
+            const auto u32 = TypeU32(state);
+            const auto field = [&](std::uint32_t shift) { return Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, state.tableAccess.dword3, ConstantU32(state, shift)), ConstantU32(state, 0xfu)); };
+            const auto base = field(12u);
+            const auto last = field(16u);
+            const auto inRange = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), last, base), Binary(state, spv::OpULessThanEqual, TypeBool(state), mipLod, Binary(state, spv::OpISub, u32, last, base)));
+            EmitIfCondition(state, inRange, [&] {
+                const auto element = Binary(state, spv::OpIAdd, u32, state.tableAccess.element, mipLod);
+                const auto descriptor = state.module.AllocateId();
+                state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource, element));
+                state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel);
+            });
+            return;
+        }
         const auto descriptor = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource));
+        state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource, 0u));
         if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel, spv::ImageOperandsSampleMask, sample);
         else state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel);
         return;
