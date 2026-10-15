@@ -266,6 +266,13 @@ configure_windows_unwind(agc_interpolant_mapping_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_interpolant_mapping_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_interpolant_mapping COMMAND agc_interpolant_mapping_tests)
+    foreach(copy 1 2 3)
+        add_test(NAME agc_interpolant_mapping_dup${copy} COMMAND agc_interpolant_mapping_tests)
+        if(WIN32)
+            set_tests_properties(agc_interpolant_mapping_dup${copy} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     if(WIN32)
         set_tests_properties(agc_interpolant_mapping PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
