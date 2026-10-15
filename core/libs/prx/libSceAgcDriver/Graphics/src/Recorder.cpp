@@ -3275,6 +3275,16 @@ bool Recorder::PendingLabelIn(std::uint64_t address, std::size_t bytes) const {
     return false;
 }
 
+bool Recorder::LabelStoredAtCompletionIn(std::uint64_t address, std::size_t bytes) const {
+    std::lock_guard tableLock(labelTableMutex);
+    if (bytes == 0) return false;
+    const auto end = address + bytes;
+    for (auto it = labels.lower_bound(address); it != labels.end() && it->first < end; ++it) {
+        if (std::any_of(it->second.begin(), it->second.end(), [](const LabelWriter& writer) { return writer.behindCompletion; })) return true;
+    }
+    return false;
+}
+
 bool Recorder::CompletionLabelIn(std::uint64_t address, std::size_t bytes) const {
     std::lock_guard tableLock(labelTableMutex);
     if (bytes == 0) return false;

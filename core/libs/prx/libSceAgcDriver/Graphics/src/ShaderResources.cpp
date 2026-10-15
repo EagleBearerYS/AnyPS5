@@ -2501,7 +2501,7 @@ void CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     if (recorder == nullptr) return;
     if (Recorder::PendingCompletionLabels() == 0) return;
     if (!recorder->PendingWriteOverlaps(address, bytes)) return;
-    if (recorder->PendingLabelIn(address, bytes)) {
+    if (recorder->LabelStoredAtCompletionIn(address, bytes)) {
         Recorder::CountSync(4);
         recorder->SyncThrough(address, bytes);
     }
