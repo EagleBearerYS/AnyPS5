@@ -22,6 +22,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
         fresh->forgetSerial = forgetAtCapture;
 
         std::vector<ShaderRecompiler::MemoryRegion> srtRegions;
+        const auto supplied = shaderMemory->SuppliedBlocks();
         for (const auto& region : captured) {
             const bool registered = std::any_of(memory.begin(), memory.end(), [&](const auto& known) { return region.guestAddress >= known.guestAddress && region.guestAddress < known.guestAddress + known.bytes.size(); });
             if (registered) continue;
@@ -31,6 +32,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
             const auto offset = fresh->words.size();
             fresh->words.resize(offset + count);
             std::memcpy(fresh->words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
+            AppendSharedWords(fresh->shared, offset, region.bytes, supplied);
         }
 
         DataWordPositionCounts dataCounts;
@@ -91,7 +93,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
                 dispatchOrder.push_front(key);
                 created->order = dispatchOrder.begin();
                 dispatchCache.emplace(key, std::move(created));
-            } else if (found->second != missedEntry && !found->second->variants.empty() && found->second->variants.front()->runs == fresh->runs && found->second->variants.front()->words == fresh->words) {
+            } else if (found->second != missedEntry && !found->second->variants.empty() && found->second->variants.front()->runs == fresh->runs && SameCapturedWords(found->second->variants.front()->words, found->second->variants.front()->shared, fresh->words, fresh->shared)) {
 
                 attachVariant = found->second->variants.front();
             } else {

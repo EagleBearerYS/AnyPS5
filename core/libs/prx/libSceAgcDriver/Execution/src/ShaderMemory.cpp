@@ -438,6 +438,14 @@ ShaderMemory::SupplyCounts ShaderMemory::Supplies() {
     return {totals.suppliedShared.load(std::memory_order_relaxed), totals.suppliedCopied.load(std::memory_order_relaxed), totals.suppliedSpilled.load(std::memory_order_relaxed)};
 }
 
+std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> ShaderMemory::SuppliedBlocks() const {
+    std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks;
+    blocks.reserve(supplied.size() + spilled.size());
+    for (const auto& entry : supplied) blocks.push_back(entry.words);
+    blocks.insert(blocks.end(), spilled.begin(), spilled.end());
+    return blocks;
+}
+
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle) {
     return capture(request, handle, nullptr);
 }
@@ -558,6 +566,56 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::TakeRecentRegions() {
     for (auto& [base, page] : pages) page.recent.reset();
     for (auto& entry : supplied) entry.recent = false;
     return result;
+}
+
+void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t first, std::span<const std::byte> bytes, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks) {
+    const auto address = reinterpret_cast<std::uintptr_t>(bytes.data());
+    const auto count = bytes.size() / sizeof(std::uint32_t);
+    if (count == 0) return;
+    for (const auto& block : blocks) {
+        if (block == nullptr || block->words.empty()) continue;
+        const auto begin = reinterpret_cast<std::uintptr_t>(block->words.data());
+        const auto end = begin + block->words.size() * sizeof(std::uint32_t);
+        if (address < begin || address >= end || end - address < count * sizeof(std::uint32_t) || (address - begin) % sizeof(std::uint32_t) != 0) continue;
+        const auto offset = static_cast<std::size_t>((address - begin) / sizeof(std::uint32_t));
+        if (!shared.empty()) {
+            auto& last = shared.back();
+            if (last.first + last.count == first && last.offset + last.count == offset && !last.block.owner_before(block) && !block.owner_before(last.block)) {
+                last.count += count;
+                return;
+            }
+        }
+        shared.push_back({first, count, offset, block});
+        return;
+    }
+}
+
+bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const SharedWords> leftShared, std::span<const std::uint32_t> right, std::span<const SharedWords> rightShared, std::size_t* compared) {
+    if (compared != nullptr) *compared = 0;
+    if (left.size() != right.size()) return false;
+    std::size_t checked = 0;
+    const auto equal = [&](std::size_t from, std::size_t to) {
+        checked += to - from;
+        return std::equal(left.begin() + static_cast<std::ptrdiff_t>(from), left.begin() + static_cast<std::ptrdiff_t>(to), right.begin() + static_cast<std::ptrdiff_t>(from));
+    };
+    std::size_t at = 0;
+    std::size_t next = 0;
+    bool same = true;
+    for (const auto& run : leftShared) {
+        while (next < rightShared.size() && rightShared[next].first < run.first) ++next;
+        if (next == rightShared.size()) break;
+        const auto& other = rightShared[next];
+        const bool placed = other.first == run.first && other.count == run.count && other.offset == run.offset && run.first >= at && run.first <= left.size() && run.count <= left.size() - run.first;
+        if (!placed || run.block.expired() || run.block.owner_before(other.block) || other.block.owner_before(run.block)) continue;
+        if (!equal(at, run.first)) {
+            same = false;
+            break;
+        }
+        at = run.first + run.count;
+    }
+    same = same && equal(at, left.size());
+    if (compared != nullptr) *compared = checked;
+    return same;
 }
 
 DataWordPositionCounts DataWordPositions(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint32_t, std::uint64_t>> leaves, std::span<const std::uint64_t> otherReads, std::span<const std::uint32_t> words, std::span<const std::uint32_t> flattenedSrt, std::vector<std::uint32_t>& positions, std::vector<std::uint32_t>& slots) {
