@@ -629,18 +629,6 @@ void testProgramSnapshots() {
     check(unregistered != entry && unregistered->codeAddress == rawAddress && unregistered->header.empty() && unregistered->code.size() == 2, "an empty registry did not read the program as raw code");
     check(AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress, {2}) == unregistered, "unchanged raw code lost its snapshot identity");
     check(!expectFailure([] { static_cast<void>(AgcDriver::DriverDetail::ProgramSnapshot({}, 0, {2})); }).empty(), "an unmapped unregistered program was accepted");
-    AgcDriver::DriverDetail::DrawDecode decode{};
-    decode.programs.resize(2);
-    decode.programs[0].snapshot = unregistered;
-    decode.programs[1].snapshot = entry;
-    decode.programs[1].codeOffset = 8;
-    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "an unchanged decode was not current");
-    registered[8] = 0xbf810000;
-    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a rewritten registered program made a decode stale");
-    raw[0] = 0xbf810000;
-    check(!AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a rewritten unregistered program left its decode current");
-    decode.programs[0].snapshot = AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress, {2});
-    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a decode with the rewritten program was not current");
 }
 
 void testProgramWorkgroupUse() {

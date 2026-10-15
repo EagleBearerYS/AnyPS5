@@ -64,7 +64,7 @@ public:
     static void FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters);
     static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
     static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request);
-    DrawEntryCounters DrawCacheCounters();
+    std::uint64_t DrawStageCompiles();
     std::uint64_t DataIndependentDispatchHits();
 
 private:
@@ -107,26 +107,7 @@ private:
     void insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming);
     void dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments = 0);
     void verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffset, ShaderRecompiler::RecompileRequest request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const DispatchVariant& variant, std::span<const std::uint32_t> liveWords, const ShaderRecompiler::RecompileResult& patched);
-    static bool drawEntries();
-    static bool verifyDrawEntries();
-    static bool registerKeyEnabled();
-    static bool verifyDrawRecipe();
-    static std::size_t drawCacheEntries();
-    void accountDrawVariant(const DispatchVariant& variant, bool added);
-    void insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode);
-    bool admitDrawKey(std::uint64_t key);
-    void eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>& expected);
-    std::shared_ptr<const DrawRecipe> findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages);
-    void attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, std::shared_ptr<const DrawRecipe> recipe);
-    void reportDrawCache(DrawEntryCounters& counters);
-    static std::uint64_t drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial);
-    static bool sameVertexInfo(const ShaderRecompiler::ShaderVertexStageInfo& a, const ShaderRecompiler::ShaderVertexStageInfo& b);
-    static bool sameDecode(const DrawDecode& a, const DrawDecode& b);
-    std::shared_ptr<DrawDecode> decodeDraw(const QueueState& queue, const Submission& submission);
-    void resolveDrawDecode(const QueueState& queue, const Submission& submission, std::shared_ptr<const DrawDecode>& decode, bool registerKey, std::uint64_t drawKey, bool profile);
-    void lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs);
-    std::shared_ptr<const ShaderRecompiler::RecompileResult> materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected);
-    void cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawParameters& drawParameters, const std::optional<Graphics::IndirectDrawPath>& indirectCpu, const std::vector<DrawProgram>& programs, const std::vector<StageCapture>& stageCaptures, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, const std::vector<std::vector<Graphics::DecodeRead>>& decodeReads, bool verifyHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::uint64_t drawKey, bool registerKey, const std::shared_ptr<const DrawDecode>& decode, DrawPhaseTiming& phaseTiming);
+    std::shared_ptr<const DrawDecode> drawDecode(const QueueState& queue, const Submission& submission, std::uint64_t deviceSerial);
     static bool drawPrecheck();
     std::optional<DrawVerdict> precheckDraw(const QueueState& queue, const Submission& submission, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect);
     static std::uint32_t drawUserWord(const DrawProgram& program, std::int32_t sgpr);
@@ -182,13 +163,14 @@ private:
     static bool knownValueCurrent(const WrittenBuffer& writer);
     ShaderMemory::PendingWrite classifyPendingWrite(std::uint64_t address, std::size_t bytes, std::uint64_t ValidateCounters::*& reason, const PendingView& pending, std::span<std::byte> known = {});
     static ShaderMemory::PendingWrite queryPendingWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
-    struct DataIndependentDispatch {
+    struct RunTimeProgram {
         std::shared_ptr<const ShaderRecompiler::IrResourcePlan> plan;
         std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
     };
     static bool readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value);
-    std::shared_ptr<const DataIndependentDispatch> runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey);
-    static std::shared_ptr<const ShaderRecompiler::RecompileResult> dataIndependentResult(const DataIndependentDispatch& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
+    std::shared_ptr<const RunTimeProgram> runTimeDrawStage(const DrawProgram& program, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t key);
+    std::shared_ptr<const RunTimeProgram> runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey);
+    static std::shared_ptr<const ShaderRecompiler::RecompileResult> runTimeResult(const RunTimeProgram& program, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     static std::shared_ptr<const ShaderRecompiler::RecompileResult> refreshedResult(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     void noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue);
     std::optional<WrittenBuffer> newestWriterLocked(std::uint64_t begin, std::uint64_t end) const;
@@ -263,7 +245,7 @@ private:
 
     DispatchEntries dispatchCache{dispatchCacheEntries(), dispatchCacheBudget()};
     std::mutex dispatchCacheMutex;
-    std::unordered_map<std::uint64_t, std::shared_ptr<const DataIndependentDispatch>> dataIndependentDispatches;
+    std::unordered_map<std::uint64_t, std::shared_ptr<const RunTimeProgram>> runTimeDispatches;
     std::uint64_t dataIndependentHits = 0;
     std::uint64_t dispatchCacheHits = 0;
     std::uint64_t dispatchCacheEvictions = 0;
@@ -274,13 +256,10 @@ private:
 
     PriorValueSets priorValueSets{dispatchCacheEntries()};
 
-    std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawCache;
-    std::list<std::uint64_t> drawOrder;
     std::mutex drawCacheMutex;
-    std::uint64_t drawCacheHits = 0, drawCacheEvictions = 0, drawCacheVariants = 0, drawCacheVariantBytes = 0;
-    std::optional<DrawKeySightings> drawKeySightings;
-
-    DrawEntryCounters drawEntryCounters;
+    std::unordered_map<std::uint64_t, std::shared_ptr<const DrawDecode>> drawDecodes;
+    std::unordered_map<std::uint64_t, std::shared_ptr<const RunTimeProgram>> drawStages;
+    std::uint64_t drawStageCompiles = 0;
 
     std::mutex driverPhasesMutex;
     std::array<DriverPhaseTotals, DispatchClassCount> driverPhaseTotals{};

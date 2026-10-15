@@ -42,7 +42,7 @@ bool Driver::readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value
     return true;
 }
 
-std::shared_ptr<const Driver::DataIndependentDispatch> Driver::runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey) {
+std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey) {
     bool preparedAtUse = false;
     const auto invocation = InvocationFor(snapshot, codeOffset, request, nullptr, &preparedAtUse);
     const auto& prepared = invocation.Request();
@@ -52,13 +52,13 @@ std::shared_ptr<const Driver::DataIndependentDispatch> Driver::runTimeDispatch(c
     if (compiled == nullptr || !CacheableResult(*compiled)) return nullptr;
     if (std::ranges::any_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; })) return nullptr;
     if (!std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); })) return nullptr;
-    auto entry = std::make_shared<const DataIndependentDispatch>(DataIndependentDispatch{invocation.Plan(), std::move(compiled)});
+    auto entry = std::make_shared<const RunTimeProgram>(RunTimeProgram{invocation.Plan(), std::move(compiled)});
     std::lock_guard cacheLock(dispatchCacheMutex);
     ++dataIndependentHits;
-    return dataIndependentDispatches.try_emplace(programKey, std::move(entry)).first->second;
+    return runTimeDispatches.try_emplace(programKey, std::move(entry)).first->second;
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::dataIndependentResult(const DataIndependentDispatch& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
+std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::runTimeResult(const RunTimeProgram& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
     const auto& plan = *entry.plan;
     auto result = std::make_shared<ShaderRecompiler::RecompileResult>(*entry.compiled);
     auto shaderData = std::ranges::find_if(result->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
@@ -308,10 +308,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     mixBoth(reinterpret_cast<std::uintptr_t>(registeredShader.get()));
     phaseTiming.Phase(PhaseKey);
     timing.Mark("decode_key_device_setup");
-    std::shared_ptr<const DataIndependentDispatch> independent;
+    std::shared_ptr<const RunTimeProgram> independent;
     if (!noDispatchCache) {
         std::lock_guard cacheLock(dispatchCacheMutex);
-        if (const auto found = dataIndependentDispatches.find(programKey); found != dataIndependentDispatches.end()) {
+        if (const auto found = runTimeDispatches.find(programKey); found != runTimeDispatches.end()) {
             independent = found->second;
             ++dataIndependentHits;
         }
@@ -328,7 +328,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
     if (independent != nullptr) {
-        compiledResult = dataIndependentResult(*independent, userData, request.shader.codeAddress);
+        compiledResult = runTimeResult(*independent, userData, request.shader.codeAddress);
         cached = true;
         phaseTiming.Phase(PhaseLookup);
     } else {
