@@ -1,11 +1,14 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
+#include "prx/libc/include/DisplayQueryTrace.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -42,6 +45,13 @@ void ensureTitleLoaded() {
     g_attribute3 = parsed.attribute3;
     std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
     g_titleLoaded = true;
+    const auto hex = [](const std::optional<std::uint64_t>& value) {
+        if (!value.has_value()) return std::string("absent");
+        char text[24];
+        std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(*value));
+        return std::string(text);
+    };
+    TraceDisplayQuery_nid_no_patch("param.json %s: attribute %s, attribute2 %s, attribute3 0x%x", g_titleId, hex(parsed.attribute).c_str(), hex(parsed.attribute2).c_str(), g_attribute3);
 }
 
 const bool g_downloadDataMounted = [] {

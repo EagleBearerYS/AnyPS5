@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/DisplayQueryTrace.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
@@ -128,7 +129,9 @@ int APS5_VABI sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, voi
 }
 
 int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+    const int result = registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+    TraceDisplayQuery_nid_no_patch("sceVideoOutAddOutputModeEvent(%d) = %d", handle, result);
+    return result;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }

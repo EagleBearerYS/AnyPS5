@@ -9,6 +9,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libc/include/DisplayQueryTrace.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
@@ -91,6 +92,7 @@ int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* pa
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
     }
     const int handle = VideoOutDriver::Get().Open(busType);
+    TraceDisplayQuery_nid_no_patch("sceVideoOutOpen(user %d, bus %d, index %d) = %d", userId, busType, index, handle < 0 ? VIDEO_OUT_ERROR_RESOURCE_BUSY : handle);
     if (handle < 0) return VIDEO_OUT_ERROR_RESOURCE_BUSY;
     return handle;
 } catch (const ProcessShutdown&) {
@@ -107,6 +109,7 @@ int APS5_VABI sceVideoOutAllowOutputResolutionWqhdDetection(int handle) try {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
+    TraceDisplayQuery_nid_no_patch("sceVideoOutAllowOutputResolutionWqhdDetection(%d) = 0", handle);
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -171,6 +174,7 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
     *status = outputStatus(*cfg);
+    TraceDisplayQuery_nid_no_patch("sceVideoOutGetOutputStatus(%d) = 0: resolution %u, dynamicRange %u, refreshRate %llu, flags 0x%llx", handle, status->resolution, status->dynamicRange, static_cast<unsigned long long>(status->refreshRate), static_cast<unsigned long long>(status->flags));
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -186,6 +190,7 @@ int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) try {
     const auto output = outputStatus(*cfg);
     std::memcpy(bytes.data(), &output, sizeof(output));
     std::memcpy(status, bytes.data(), bytes.size());
+    TraceDisplayQuery_nid_no_patch("sceVideoOutGetOutputStatusWithVrr(%d) = 0: resolution %u, dynamicRange %u, refreshRate %llu, flags 0x%llx", handle, output.resolution, output.dynamicRange, static_cast<unsigned long long>(output.refreshRate), static_cast<unsigned long long>(output.flags));
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -207,6 +212,7 @@ int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatu
     status->paneWidth = cfg->width;
     status->paneHeight = cfg->height;
     status->refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    TraceDisplayQuery_nid_no_patch("sceVideoOutGetResolutionStatus(%d) = 0: full %ux%u, pane %ux%u, refreshRate %llu", handle, status->fullWidth, status->fullHeight, status->paneWidth, status->paneHeight, static_cast<unsigned long long>(status->refreshRate));
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -248,6 +254,7 @@ int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options)
 
 int APS5_VABI sceVideoOutIsOutputSupported(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, uint64_t reserved) try {
     const int result = validateOutputConfig(handle, mode, options, reservedPtr, reserved);
+    TraceDisplayQuery_nid_no_patch("sceVideoOutIsOutputSupported(%d, mode 0x%llx) = %d", handle, static_cast<unsigned long long>(mode), result != 0 ? result : 1);
     if (result != 0) {
         return result;
     }
@@ -261,7 +268,10 @@ int APS5_VABI sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoO
     if (supported < 0) {
         return supported;
     }
-    if (mode == VIDEO_OUT_OUTPUT_MODE_119_88HZ && (GetAppAttribute3_nid_no_patch() & 0x40u) == 0) return VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE;
+    if (mode == VIDEO_OUT_OUTPUT_MODE_119_88HZ && (GetAppAttribute3_nid_no_patch() & 0x40u) == 0) {
+        TraceDisplayQuery_nid_no_patch("sceVideoOutConfigureOutput(%d, mode 0x%llx) = %d", handle, static_cast<unsigned long long>(mode), VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE);
+        return VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE;
+    }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
@@ -269,17 +279,17 @@ int APS5_VABI sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoO
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
     cfg->outputMode = mode;
+    TraceDisplayQuery_nid_no_patch("sceVideoOutConfigureOutput(%d, mode 0x%llx) = 0", handle, static_cast<unsigned long long>(mode));
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutSetWindowModeMargins(int handle, int top, int bottom) try {
-    (void)top;
-    (void)bottom;
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
+    TraceDisplayQuery_nid_no_patch("sceVideoOutSetWindowModeMargins(%d, top %d, bottom %d) = 0", handle, top, bottom);
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();

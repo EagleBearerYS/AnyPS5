@@ -1,5 +1,7 @@
 #include <atomic>
+#include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -29,6 +31,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#include "prx/libc/include/DisplayQueryTrace.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
@@ -517,4 +520,20 @@ extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle) {
 
 extern "C" void NotImplemented_nid_no_patch(const char* funcName) {
     throw std::runtime_error(std::string(funcName) + " not implemented");
+}
+
+extern "C" void TraceDisplayQuery_nid_no_patch(const char* format, ...) {
+    static const bool traced = std::getenv("APS5_TRACE_DISPLAY_QUERIES") != nullptr;
+    if (!traced || format == nullptr) return;
+    char line[512];
+    va_list arguments;
+    va_start(arguments, format);
+    std::vsnprintf(line, sizeof(line), format, arguments);
+    va_end(arguments);
+    static std::mutex mutex;
+    static std::set<std::string> seen;
+    std::lock_guard lock(mutex);
+    if (seen.size() >= 4096 || !seen.insert(line).second) return;
+    std::fprintf(stderr, "[display-query] %s\n", line);
+    std::fflush(stderr);
 }
