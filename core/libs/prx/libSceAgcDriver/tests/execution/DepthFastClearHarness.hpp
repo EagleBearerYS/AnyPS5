@@ -24,7 +24,7 @@ inline constexpr std::uint32_t Height = 32;
 inline constexpr std::uint32_t Covered = Width * Height;
 inline constexpr std::size_t HtileBytes = ((Width + 1023u) / 1024u) * ((Height + 511u) / 512u) * 32768u;
 
-alignas(256) inline std::array<std::byte, Width * Height * 4> Pixels{};
+inline TestGuest::Array<std::byte, Width * Height * 4> Pixels;
 
 alignas(256) inline constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -55,8 +55,8 @@ inline std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-inline const std::vector<std::array<float, 4>>& Triangles() {
-    static const std::vector<std::array<float, 4>> vertices{
+inline const TestGuest::Vector<std::array<float, 4>>& Triangles() {
+    static const TestGuest::Vector<std::array<float, 4>> vertices{
         {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f},
     };
     return vertices;
