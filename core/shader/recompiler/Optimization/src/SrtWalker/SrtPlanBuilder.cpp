@@ -13,6 +13,7 @@ namespace ShaderRecompiler::Detail {
 void PlanBuilder::Run() {
     _program.Resources().srtReads.clear();
     _program.Metadata().dynamicReads.clear();
+    const bool runtime = ReadsAtRunTime();
     for (auto& block : _program.Blocks()) {
         for (IrValue* inst : block->Instructions()) {
             const auto op = inst->Opcode();
@@ -26,12 +27,31 @@ void PlanBuilder::Run() {
                     }
                 }
             }
-            if (IsDescriptorHandle(inst->Opcode())) {
+            if (!runtime && IsDescriptorHandle(inst->Opcode())) {
                 for (std::size_t index = 0; index < inst->ArgumentCount(); index++) {
                     Collect(inst->Argument(index), 0);
                 }
             }
         }
+    }
+    if (runtime) {
+        IrBuilder builder(_program);
+        for (auto& block : _program.Blocks()) {
+            std::vector<std::pair<IrValue*, IrValue*>> reads;
+            const auto& instructions = block->Instructions();
+            for (auto it = instructions.begin(); it != instructions.end(); ++it) {
+                if ((*it)->Opcode() != IrOpcode::LoadAddressU32 || !IsRawRead(_program.Resources(), **it)) continue;
+                const auto next = std::next(it);
+                if (next != instructions.end()) reads.emplace_back(*it, *next);
+            }
+            for (const auto& [read, next] : reads) {
+                builder.SetInsertionPoint(*block);
+                IrValue& keep = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {read});
+                block->RemoveInstruction(&keep);
+                block->InsertInstructionBefore(next, &keep);
+            }
+        }
+        return;
     }
     for (auto& block : _program.Blocks()) {
         for (IrValue* inst : block->Instructions()) {
@@ -44,6 +64,33 @@ void PlanBuilder::Run() {
         }
     }
     PatchReads();
+}
+
+bool PlanBuilder::ReadsAtRunTime() const {
+    if (_program.Resources().stage != IrShaderStage::Compute) return false;
+    const auto readsMemory = [](const IrValue* root) {
+        std::vector<const IrValue*> pending{root};
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* value = pending.back()->Resolve();
+            pending.pop_back();
+            if (!seen.insert(value).second) continue;
+            if (value->Opcode() == IrOpcode::LoadAddressU32 || value->Opcode() == IrOpcode::GetLinkedWord) return true;
+            for (std::size_t index = 0; index < value->ArgumentCount(); index++) pending.push_back(value->Argument(index));
+        }
+        return false;
+    };
+    for (const auto& info : _program.Metadata().blockInfo) {
+        if (info.indirectTarget != nullptr) return false;
+        if (info.condition != nullptr && readsMemory(info.condition)) return false;
+    }
+    for (const auto& block : _program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            const auto op = inst->Opcode();
+            if (op == IrOpcode::GetImageResource || op == IrOpcode::GetSamplerResource || op == IrOpcode::GetLinkedWord) return false;
+        }
+    }
+    return true;
 }
 
 void PlanBuilder::Collect(IrValue* raw, std::uint32_t usePc) {

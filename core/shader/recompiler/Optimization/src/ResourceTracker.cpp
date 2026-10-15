@@ -1480,6 +1480,20 @@ private:
         source = InternSource(descriptor);
     }
 
+    static bool ReadsGuestMemory(const IrValue& handle) {
+        std::vector<const IrValue*> pending;
+        for (std::size_t index = 0; index < handle.ArgumentCount(); index++) pending.push_back(handle.Argument(index));
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* value = pending.back()->Resolve();
+            pending.pop_back();
+            if (!seen.insert(value).second) continue;
+            if (value->Opcode() == IrOpcode::LoadAddressU32) return true;
+            for (std::size_t index = 0; index < value->ArgumentCount(); index++) pending.push_back(value->Argument(index));
+        }
+        return false;
+    }
+
     bool TakeGpuDescriptor(IrValue& inst, std::uint32_t memoryIndex) {
         const IrValue* handle = inst.Argument(0)->Resolve();
         if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) {
@@ -1496,7 +1510,7 @@ private:
             MakeSource(*handle, 4u, false, false, descriptor);
             std::uint32_t badDword = 0;
             auto& sites = store ? m_info.bufferStores : m_info.bufferLoads;
-            if (ValidateSource(descriptor, badDword)) {
+            if (ValidateSource(descriptor, badDword) && !ReadsGuestMemory(*handle)) {
                 const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
                 const IrValue* soffset = !scalar && inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
                 const bool immediate = scalar || (soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32);

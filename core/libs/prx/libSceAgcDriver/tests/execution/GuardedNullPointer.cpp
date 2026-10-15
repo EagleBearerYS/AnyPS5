@@ -166,9 +166,9 @@ bool Faulted(const Outcome& outcome) {
     return outcome.log.find("BDA access failed") != std::string::npos;
 }
 
-std::string Fault(std::uint64_t address, std::uint32_t pc) {
+std::string Fault(std::uint64_t address, std::uint32_t pc, std::uint32_t bytes = 4u) {
     char text[96];
-    std::snprintf(text, sizeof(text), "address=0x%llx instruction=0x%x bytes=4", static_cast<unsigned long long>(address), pc);
+    std::snprintf(text, sizeof(text), "address=0x%llx instruction=0x%x bytes=%u", static_cast<unsigned long long>(address), pc, bytes);
     return text;
 }
 
@@ -217,7 +217,7 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     Require(!Faulted(emptyMapped), "guarded pointer: a mapped pointer read with an empty EXEC faulted:\n" + emptyMapped.log);
     RequireWords(emptyMapped, 0u, 0u, "guarded pointer: a mapped pointer read with an empty EXEC");
     const auto emptyNull = Run(device, EmptyExecCode, 0u, 0u);
-    Require(Faulted(emptyNull) && emptyNull.log.find(Fault(0u, 0x34u)) != std::string::npos, "guarded pointer: a null pointer read that runs with an empty EXEC did not fault:\n" + emptyNull.log);
+    Require(Faulted(emptyNull) && emptyNull.log.find(Fault(0u, 0x34u, 1u)) != std::string::npos, "guarded pointer: a null pointer read that runs with an empty EXEC (a compute program without images, read at run time) did not fault at its first byte:\n" + emptyNull.log);
     Require(noLanes.pipelineVariantId == someLanes.pipelineVariantId && oneLane.pipelineVariantId == someLanes.pipelineVariantId && emptyNull.pipelineVariantId == emptyMapped.pipelineVariantId, "guarded pointer: the poison changed an EXEC program's pipeline variant");
 
     const auto chainSkipped = Run(device, ChainCode, 0u, 0u);

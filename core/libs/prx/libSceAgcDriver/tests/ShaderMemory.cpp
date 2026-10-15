@@ -3560,10 +3560,34 @@ void verifyFunctionLdsBound() {
     require(unsized == FunctionLdsDwordLimit, "function LDS: an access without a known width must keep the full array");
 }
 
-void verifySrtReadPatching() {
+void verifySrtReadsAtRunTime() {
     using namespace ShaderRecompiler;
     IrProgram program;
     program.Resources().stage = IrShaderStage::Compute;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    program.Resources().memoryInfo.push_back(memory);
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    program.BlockOrder().push_back(&block);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(block);
+    auto& address = builder.Emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&builder.Constant(0u), &builder.Constant(0u)});
+    auto& active = program.CreateValue(IrOpcode::Void, IrType::U1);
+    active.SetImmediateBool(true);
+    auto& read = builder.Emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &builder.Constant(0u), &builder.Constant(0u), &active}, MemoryFlags{0u, 0u});
+    auto& user = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&read, &read});
+
+    SrtWalker{}.BuildPlan(program);
+
+    require(program.Resources().srtReads.empty(), "SRT reads at run time: a compute program without images planned its scalar read for a capture");
+    require(user.Argument(0) == &read && user.Argument(1) == &read, "SRT reads at run time: a compute program's scalar read was replaced");
+}
+
+void verifySrtReadPatching() {
+    using namespace ShaderRecompiler;
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::Pixel;
     MemoryInfo memory;
     memory.kind = ResourceKind::ScalarAddress;
     program.Resources().memoryInfo.push_back(memory);
@@ -3762,25 +3786,12 @@ void verifyGuardedNullPointers() {
     };
     alignas(256) static std::array<std::uint32_t, 4> zeroTable{};
     NestedRequest descriptor(descriptorCode, root.data());
-    point(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(zeroTable.data())));
-    AgcDriver::ShaderMemory zeroMemory({});
-    const auto zeroCapture = zeroMemory.Capture(descriptor.request);
-    require(zeroCapture->snapshot.srtPoison.empty() && GuardRecords(*zeroCapture), "guarded pointer: a zero V# read from mapped memory was poisoned or not read");
-    descriptor.request.context.memory = zeroMemory.Regions();
-    const auto zeroResult = Recompile(descriptor.request, *zeroCapture);
-    for (const auto pointer : {std::uint64_t{0}, unmapped}) {
+    for (const auto pointer : {static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(zeroTable.data())), std::uint64_t{0}, unmapped}) {
         point(pointer);
         descriptor.request.context.memory = {};
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(descriptor.request);
-        require(poisonedWords(*capture, 0xcu, pointer), "guarded pointer: a V# loaded through a null or unmapped nested pointer did not poison its four words at its pc");
-        const auto regions = memory.Regions();
-        descriptor.request.context.memory = regions;
-        const auto result = Recompile(descriptor.request, *capture);
-        require(result->poisonedSrtReads == 4u && faultBinding(*result) && result->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a capture with a poisoned V# does not report through the fault buffer");
-        require(samePipeline(*result, *zeroResult), "guarded pointer: a V# zeroed by poison and a V# read as zeros take different variants, specializations or modules");
-        const auto replay = Recompile(descriptor.request);
-        require(replay.poisonedSrtReads == 4u && samePipeline(replay, *result), "guarded pointer: a replay did not reproduce the poisoned V#");
+        require(capture->plan->srtReads.empty() && capture->snapshot.srtPoison.empty() && memory.Regions().empty(), "guarded pointer: a compute program without images read its nested V# in the capture instead of at run time");
     }
 
     alignas(256) static std::array<std::uint32_t, 8> table{};
@@ -3905,6 +3916,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
             verifySrtReadPatching();
+            verifySrtReadsAtRunTime();
             std::cout << "SRT read patching replaces repeated and multiple uses\n";
             return 0;
         }
@@ -3951,6 +3963,7 @@ int main(int argc, char** argv) {
         verifyBdaReadFallbackFunctions();
         verifyFunctionLdsBound();
         verifySrtReadPatching();
+        verifySrtReadsAtRunTime();
         verifyGuardedNullPointers();
         verifyCubeDepthCompareMode();
         verifySrgbDepthCompareModes();

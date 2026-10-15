@@ -24,6 +24,7 @@ private:
         bool keep = false;
     };
 
+    bool ReadsAtRunTime() const;
     void Collect(IrValue* raw, std::uint32_t usePc);
     void Record(IrValue* inst);
     void PatchReads();
