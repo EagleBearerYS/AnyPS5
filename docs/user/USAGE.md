@@ -186,7 +186,7 @@ A title's own CPU reads of that memory are not seen, so a title that waits for a
 
 ### Upscaling
 
-The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. When it is the same size or smaller, the image is scaled as without FSR and only RCAS sharpens it.
+The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. EASU is designed for up to twice the display buffer's size on each axis: larger factors, such as a 1280x720 buffer in a 3840x2160 window, still work but look softer. When it is the same size or smaller, the image is scaled as without FSR and only RCAS sharpens it.
 
 `ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`.
 
