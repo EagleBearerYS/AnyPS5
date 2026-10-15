@@ -162,11 +162,6 @@ void ExpectRuns(AgcDriver::VulkanDevice& device, const std::string& what, Levell
     CheckSamples(what);
 }
 
-void ExpectMixedRefusal(AgcDriver::VulkanDevice& device, const std::string& what, Levelled first, Levelled second) {
-    const auto error = Run(device, first, second, AnisoOverride);
-    Require(error.has_value() && error->find("both single-level and mipmapped") != std::string::npos, what + " was not refused as a mixed ANISO_OVERRIDE pairing" + (error.has_value() ? ": " + *error : std::string()));
-}
-
 }
 
 int main() {
@@ -179,8 +174,8 @@ int main() {
         ExpectRuns(*device, "an ANISO_OVERRIDE sampler shared by two mipmapped images", Mipmapped, Mipmapped, AnisoOverride);
         ExpectRuns(*device, "an ANISO_OVERRIDE sampler shared by a mipmapped image and one whose LAST_LEVEL is clamped to MAX_MIP 0", ClampedToOneLevel, Mipmapped, AnisoOverride);
         ExpectRuns(*device, "an anisotropic sampler without ANISO_OVERRIDE shared by a single-level and a mipmapped image", SingleLevel, Mipmapped, 0u);
-        ExpectMixedRefusal(*device, "an ANISO_OVERRIDE sampler shared by a single-level and a mipmapped image", SingleLevel, Mipmapped);
-        ExpectMixedRefusal(*device, "an ANISO_OVERRIDE sampler shared by a single-level image and one whose LAST_LEVEL is clamped to MAX_MIP 0", SingleLevel, ClampedToOneLevel);
+        ExpectRuns(*device, "an ANISO_OVERRIDE sampler shared by a single-level and a mipmapped image", SingleLevel, Mipmapped, AnisoOverride);
+        ExpectRuns(*device, "an ANISO_OVERRIDE sampler shared by a single-level image and one whose LAST_LEVEL is clamped to MAX_MIP 0", SingleLevel, ClampedToOneLevel, AnisoOverride);
         std::puts("image sample aniso override tests passed");
         return 0;
     } catch (const std::exception& error) {

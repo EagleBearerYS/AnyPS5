@@ -256,6 +256,8 @@ function(add_shader_recompiler target runtimeTarget)
             ShaderDiskCache::SourceVersion
             ResolveSource
             ResourceMaterializer::BindsDecodedCopy
+            ResourceMaterializer::ExpectedDeviceImages
+            DeviceImageTableAbi::NameInterfaces
             ResourceMaterializer::FindDeviceImageInterface
             ResourceMaterializer::SpecializationNanoseconds
             ResourceMaterializer::TryRuntimeImageMode

@@ -318,7 +318,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     }
 
     constexpr SrtWalker srtWalker;
-    srtWalker.BuildPlan(program);
+    srtWalker.BuildPlan(program, supports(spv::CapabilityInt64) && supports(spv::CapabilityPhysicalStorageBufferAddresses));
     deadCodeEliminator.Eliminate(program);
     dumpIr("srt");
 
@@ -1025,6 +1025,15 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     }
     const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
     ResourceMaterializer::RegisterDeviceImageInterfaces(variant.info.info);
+    const auto& images = variant.info.info.images;
+    if (std::ranges::any_of(images, [](const ImageResource& image) { return image.deviceTable; })) {
+        result.deviceImageInterfaces.assign(images.size(), 0u);
+        for (std::size_t image = 0; image < images.size(); ++image) {
+            if (images[image].deviceTable) result.deviceImageInterfaces[image] = ResourceMaterializer::DeviceImageInterfaceId(images[image], variant.info.info.runtimeImageModes.at(image));
+        }
+        result.deviceImages = snapshot.deviceImages;
+        DeviceImageTableAbi::NameInterfaces(result.deviceImages, result.deviceImageInterfaces);
+    }
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
@@ -1144,11 +1153,13 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
         auto program = PrepareResourceProgram(request);
         const auto plan = materializer.ExtractPlan(program);
         materializer.Materialize(plan, runtime, snapshot);
+        snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(plan, runtime);
         const auto variant = compileVariant(request, std::move(program));
         return materializeResult(variant, request, snapshot);
     }
     const auto source = getSource(request);
     materializer.Materialize(*source->plan, runtime, snapshot);
+    snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(*source->plan, runtime);
     return materializeVariant(*source, request, snapshot);
 }
 
@@ -1210,6 +1221,13 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     };
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
+    mix(snapshot.deviceImages.size());
+    for (const auto& image : snapshot.deviceImages) {
+        mix(image.image);
+        mix(image.pc);
+        mix(image.mapSampler);
+        for (const auto word : image.key) mix(word);
+    }
     mixWords(snapshot.flattenedSrt);
     mixWords(snapshot.userData);
     mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
@@ -1365,13 +1383,19 @@ namespace {
 // traced into the capture (ResourceCapture::readTrace).
 void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     const auto& plan = *capture.plan;
+    SrtRuntime now = runtime;
+    if (runtime.readNow != nullptr) now.readMemory = runtime.readNow;
+    now.readTrace = nullptr;
+    auto images = ResourceMaterializer::ExpectedDeviceImages(plan, now);
     if (std::none_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; })) {
         ResourceMaterializer{}.Materialize(plan, runtime, capture.snapshot);
+        capture.snapshot.deviceImages = std::move(images);
         return;
     }
     SrtRuntime traced = runtime;
     traced.readTrace = &capture.readTrace;
     ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
+    capture.snapshot.deviceImages = std::move(images);
     auto& other = capture.readTrace.otherReads;
     std::sort(other.begin(), other.end());
     other.erase(std::unique(other.begin(), other.end()), other.end());

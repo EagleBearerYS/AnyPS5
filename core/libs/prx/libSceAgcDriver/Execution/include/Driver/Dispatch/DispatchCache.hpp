@@ -20,6 +20,10 @@
 #include <utility>
 #include <vector>
 
+namespace ShaderRecompiler {
+struct IrResourcePlan;
+}
+
 namespace AgcDriver::DriverDetail {
 
 inline constexpr std::size_t MaxDispatchVariants = 8;
@@ -30,6 +34,7 @@ struct DispatchVariant {
     std::vector<std::uint32_t> words;
     std::uint64_t forgetSerial = 0;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
+    std::shared_ptr<const ShaderRecompiler::IrResourcePlan> plan;
 
     std::shared_ptr<const ShaderSnapshot> shader;
 

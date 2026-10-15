@@ -49,6 +49,7 @@ std::vector<std::uint8_t> ComputePureFlatSlots(const IrResourcePlan& plan) {
         }
     };
     for (const auto& source : plan.descriptorSources) {
+        if (source.runtime) continue;
         for (std::uint32_t i = 0; i < source.dwordCount && i < source.dwords.size(); ++i) mark(source.dwords[i]);
     }
     for (const auto& block : plan.controlFlow) mark(block.condition);

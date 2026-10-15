@@ -119,6 +119,7 @@ struct DeviceTableView {
     bool depthCompare = false;
     bool identitySwizzle = false;
     bool decodedCopy = false;
+    bool integerView = false;
 };
 
 struct DeviceTableTexture {
@@ -128,9 +129,10 @@ struct DeviceTableTexture {
     std::uint64_t guestBytes = 0;
     std::uint64_t generation = 0;
     bool snapshot = false;
+    bool perUse = false;
 };
 
-DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass);
+DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass, bool perUse);
 std::uint32_t DeviceTableSamplerClass(const Sampler* sampler, std::span<const std::uint32_t, 4> words, bool unnormalized, bool integerBorder);
 
 class ShaderResources {
@@ -199,6 +201,7 @@ public:
     };
     WritableSet Writable() const { return {guestMemory.WriteGrants(), pageTableStores}; }
     bool UsesDeviceImages() const { return deviceImages; }
+    std::uint32_t TableMapSamplerClass(std::uint32_t sampler) const;
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     // Whether a region the recorded work reads in place through a host import overlaps the range.
     bool ReadsOverlap(std::uint64_t address, std::size_t bytes) const;

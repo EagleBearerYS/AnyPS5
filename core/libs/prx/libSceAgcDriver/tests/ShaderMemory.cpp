@@ -610,7 +610,14 @@ void verifyOutOfRangeConstantReads() {
             return std::equal(words.begin(), words.end(), value.dwords.begin());
         });
     };
-    require(holds(first) && holds(std::array<std::uint32_t, 8>{}), "out-of-range s_buffer_load: a T# read through a null V# was not evaluated as zero");
+    const auto expects = [&](const std::array<std::uint32_t, 8>& words) {
+        return std::ranges::any_of(capture->snapshot.deviceImages, [&](const DeviceImageTableAbi::Expectation& image) {
+            return std::equal(words.begin(), words.end(), image.key.begin());
+        });
+    };
+    require(!holds(first), "out-of-range s_buffer_load: the capture evaluated a T# the device image table reads");
+    require(expects(first), "out-of-range s_buffer_load: the pre-pass did not expect the in-range T#");
+    require(!expects(std::array<std::uint32_t, 8>{}), "out-of-range s_buffer_load: the pre-pass expected the T# read through a null V#, which evaluates as zero");
 }
 
 // The pure flat slots of a hand-built plan (Detail::ComputePureFlatSlots): a slot is pure unless
@@ -743,7 +750,7 @@ void verifyGuardedDescriptorSources() {
     {
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
-        require(capture->snapshot.images.size() == 1u && std::ranges::all_of(capture->snapshot.images[0].dwords, [](std::uint32_t word) { return word == 0u; }), "guarded sources: the skipped T# was not left null");
+        require(capture->snapshot.deviceImages.empty(), "guarded sources: the skipped T# was expected by the device image pre-pass");
     }
     fill(invalid, 1u);
     {
@@ -754,13 +761,13 @@ void verifyGuardedDescriptorSources() {
     {
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
-        require(capture->snapshot.images.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.images[0].dwords.begin()), "guarded sources: the T# behind a taken branch was not read");
+        require(capture->snapshot.deviceImages.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.deviceImages[0].key.begin()), "guarded sources: the T# behind a taken branch was not expected");
     }
     fill(valid, 0u);
     {
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
-        require(capture->snapshot.images.size() == 1u && std::ranges::all_of(capture->snapshot.images[0].dwords, [](std::uint32_t word) { return word == 0u; }), "guarded sources: a valid T# behind a skipped branch was read");
+        require(capture->snapshot.deviceImages.empty(), "guarded sources: a valid T# behind a skipped branch was expected");
     }
 
     const std::vector<std::uint32_t> storeCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850006u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f08u, 0x00010004u, 0xbf820005u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f10u, 0x00010004u, 0xbf810000u};
@@ -3578,10 +3585,33 @@ void verifySrtReadsAtRunTime() {
     auto& read = builder.Emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &builder.Constant(0u), &builder.Constant(0u), &active}, MemoryFlags{0u, 0u});
     auto& user = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&read, &read});
 
-    SrtWalker{}.BuildPlan(program);
+    SrtWalker{}.BuildPlan(program, true);
 
     require(program.Resources().srtReads.empty(), "SRT reads at run time: a compute program without images planned its scalar read for a capture");
     require(user.Argument(0) == &read && user.Argument(1) == &read, "SRT reads at run time: a compute program's scalar read was replaced");
+}
+
+void verifySrtReadsCapturedWithoutDeviceTables() {
+    using namespace ShaderRecompiler;
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::Compute;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    program.Resources().memoryInfo.push_back(memory);
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    program.BlockOrder().push_back(&block);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(block);
+    auto& address = builder.Emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&builder.Constant(0u), &builder.Constant(0u)});
+    auto& active = program.CreateValue(IrOpcode::Void, IrType::U1);
+    active.SetImmediateBool(true);
+    auto& read = builder.Emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &builder.Constant(0u), &builder.Constant(0u), &active}, MemoryFlags{0u, 0u});
+    builder.Emit(IrOpcode::IAdd32, IrType::U32, {&read, &read});
+
+    SrtWalker{}.BuildPlan(program);
+
+    require(program.Resources().srtReads.size() == 1u, "SRT reads at run time: a compute program for a target without device tables did not plan its scalar read for a capture");
 }
 
 void verifySrtReadPatching() {
@@ -3917,6 +3947,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
             verifySrtReadPatching();
             verifySrtReadsAtRunTime();
+            verifySrtReadsCapturedWithoutDeviceTables();
             std::cout << "SRT read patching replaces repeated and multiple uses\n";
             return 0;
         }
@@ -3964,6 +3995,7 @@ int main(int argc, char** argv) {
         verifyFunctionLdsBound();
         verifySrtReadPatching();
         verifySrtReadsAtRunTime();
+        verifySrtReadsCapturedWithoutDeviceTables();
         verifyGuardedNullPointers();
         verifyCubeDepthCompareMode();
         verifySrgbDepthCompareModes();

@@ -4077,6 +4077,16 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     if (resources.UsesDeviceImages()) {
         Graphics::Require(context.deviceImages != nullptr, "a dispatch reading images through the device image table needs the device's table");
+        const auto& expected = record.shader->program->deviceImages;
+        if (std::ranges::any_of(expected, [](const ShaderRecompiler::DeviceImageTableAbi::Expectation& image) { return image.mapSampler != ShaderRecompiler::DeviceImageTableAbi::NoMapSampler; })) {
+            auto keys = expected;
+            for (auto& image : keys) {
+                if (image.mapSampler != ShaderRecompiler::DeviceImageTableAbi::NoMapSampler) image.key[ShaderRecompiler::DeviceImageTableAbi::SamplerClassWord] = resources.TableMapSamplerClass(image.mapSampler);
+            }
+            context.deviceImages->Expect(keys);
+        } else {
+            context.deviceImages->Expect(expected);
+        }
         context.deviceImages->BeforeDispatch(context, recorder);
     }
     const auto workgroupDwords = record.shader->program->workgroupMemoryDwords;

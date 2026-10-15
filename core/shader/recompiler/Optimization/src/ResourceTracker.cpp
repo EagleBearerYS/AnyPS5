@@ -95,6 +95,7 @@ public:
         m_info.images.clear();
         m_info.samplers.clear();
         m_info.sampledPairs.clear();
+        m_info.deviceImageUses.clear();
         m_info.usesDma = false;
         m_info.bdaWrites = false;
         m_info.bufferStores.clear();
@@ -1237,7 +1238,7 @@ private:
         }
         std::vector<const IrValue*> runtimeSamplers;
         for (const IrValue* inst : sampled) {
-            if (DeviceTables() && DeviceAccessKind(*inst) && RuntimeImage(*inst->Argument(0)->Resolve())) runtimeSamplers.push_back(inst->Argument(1)->Resolve());
+            if (DeviceTables() && DeviceAccessKind(*inst) && DeviceImage(*inst->Argument(0)->Resolve())) runtimeSamplers.push_back(inst->Argument(1)->Resolve());
         }
         for (const IrValue* inst : sampled) {
             IrValue& sampler = *inst->Argument(1)->Resolve();
@@ -1303,12 +1304,8 @@ private:
         return true;
     }
 
-    bool RuntimeImage(const IrValue& handle) {
-        if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || FindTableColumn(handle) != nullptr) return false;
-        DescriptorSource descriptor;
-        MakeSource(handle, 8u, false, false, descriptor);
-        std::uint32_t badDword = 0;
-        return !ValidateSource(descriptor, badDword) && ShaderComputable(handle);
+    bool DeviceImage(const IrValue& handle) {
+        return handle.Opcode() == IrOpcode::GetImageResource && handle.ArgumentCount() == 8u && FindTableColumn(handle) == nullptr && ShaderComputable(handle);
     }
 
     bool DeviceAccessKind(const IrValue& inst) const {
@@ -1357,7 +1354,7 @@ private:
     bool RuntimeImageSource(const IrValue& inst, const IrValue& handle, std::uint32_t& source) {
         if (!DeviceTables() || handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || !DeviceAccess(inst)) return false;
         const bool runtimeSampler = ImageOpcodeInfoOf(inst.Opcode()).needsSampler && RuntimeSampler(*inst.Argument(1)->Resolve());
-        if (!RuntimeImage(handle) && !(runtimeSampler && ShaderComputable(handle))) return false;
+        if (!DeviceImage(handle) && !(runtimeSampler && ShaderComputable(handle))) return false;
         DescriptorSource descriptor;
         MakeSource(handle, 8u, false, false, descriptor);
         descriptor.runtime = true;
@@ -1366,7 +1363,7 @@ private:
     }
 
     bool RuntimeSampler(const IrValue& handle) {
-        return handle.Opcode() == IrOpcode::GetSamplerResource && handle.ArgumentCount() == 4u && FindTableColumn(handle) == nullptr && !DirectSampler(handle) && ShaderComputable(handle);
+        return handle.Opcode() == IrOpcode::GetSamplerResource && handle.ArgumentCount() == 4u && FindTableColumn(handle) == nullptr && ShaderComputable(handle);
     }
 
     bool RuntimeSamplerSource(IrValue& inst, IrValue*& handle, bool sampleAdjust, std::uint32_t& source) {
@@ -1620,6 +1617,16 @@ private:
         m_info.sampledPairs.push_back({image, sampler, pc});
     }
 
+    void AddDeviceImageUse(std::uint32_t image, std::uint32_t sampler, std::uint32_t pc) {
+        for (auto& use : m_info.deviceImageUses) {
+            if (use.image == image && use.sampler == sampler) {
+                use.firstUsePc = std::min(use.firstUsePc, pc);
+                return;
+            }
+        }
+        m_info.deviceImageUses.push_back({image, sampler, pc});
+    }
+
     void AddHandlePatch(IrValue* handle, std::uint32_t resource) {
         for (const auto& patch : m_handlePatches) {
             if (patch.handle == handle) {
@@ -1750,6 +1757,7 @@ private:
             AddHandlePatch(samplerHandle, sampler);
             AddSampledPair(resource, sampler, flags.pc);
         }
+        if (RuntimeSource(source)) AddDeviceImageUse(resource, imageInfo.needsSampler ? sampler : NoSampler, flags.pc);
         AddMemoryPatch(flags.index, resource, sampler, imageInfo.needsSampler);
     }
 

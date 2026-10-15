@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -31,6 +32,7 @@ public:
     DeviceImageTable& operator=(const DeviceImageTable&) = delete;
 
     std::uint64_t HeaderAddress() const;
+    void Expect(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
     void BeforeDispatch(const Context& context, Recorder& recorder);
 
     struct Rejection {
@@ -44,6 +46,7 @@ public:
     struct Counts {
         std::uint64_t misses = 0;
         std::uint64_t distinct = 0;
+        std::uint64_t expected = 0;
         std::uint64_t dropped = 0;
         std::uint64_t inserted = 0;
         std::uint64_t rejected = 0;
@@ -63,6 +66,8 @@ private:
         std::uint64_t guestBytes = 0;
         std::uint64_t generation = 0;
         bool snapshot = false;
+        bool perUse = false;
+        bool parked = false;
     };
     struct ValidationState {
         std::uint64_t epoch = 0;
@@ -75,12 +80,14 @@ private:
     void resolve(const Context& build, Recorder& recorder);
     void refresh(const Context& build, Recorder& recorder);
     void record(Recorder& recorder);
-    DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry);
-    std::uint32_t reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message);
+    DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse);
+    void refreshPerUse(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>& resolved);
+    std::uint32_t reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message, bool report = true);
     void insert(const DeviceImageKeys::Key& key, const DeviceImageValue& value, Recorder& recorder);
     void retire(const Entry& entry, Recorder& recorder);
     void drain(const std::shared_ptr<Buffer>& ring);
     void report();
+    std::string rejectionText(const DeviceImageKeys::Key& key, std::uint32_t fault) const;
 
     Context context;
     mutable std::recursive_mutex mutex;
@@ -93,6 +100,9 @@ private:
     std::vector<std::shared_ptr<Buffer>> freeRings;
     std::array<std::uint64_t, MaxRecorderStreams> ringBatch{};
     std::vector<DeviceImageMiss> pending;
+    std::vector<DeviceImageMiss> expected;
+    std::vector<DeviceImageKeys::Key> current;
+    std::vector<DeviceImageKeys::Key> perUseKeys;
     std::vector<Rejection> rejections;
     std::map<std::tuple<DeviceImageKeys::Key, std::uint32_t, std::string>, std::uint32_t> rejectionIndex;
     std::optional<ValidationState> validated;

@@ -1272,6 +1272,68 @@ std::shared_ptr<const DeviceImageInterface> ResourceMaterializer::FindDeviceImag
     return found != registry.interfaces.end() ? found->second : nullptr;
 }
 
+std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime) {
+    namespace Abi = DeviceImageTableAbi;
+    std::vector<Abi::Expectation> expected;
+    if (plan.info.deviceImageUses.empty()) return expected;
+    Detail::Evaluator evaluator(plan, runtime);
+    const auto evaluate = [&](std::uint32_t source, std::uint32_t count, std::uint32_t* words) {
+        const auto& descriptor = plan.descriptorSources.at(source);
+        if (descriptor.dwordCount != count) return false;
+        for (std::uint32_t word = 0; word < count; ++word) {
+            if (descriptor.dwords[word] == nullptr || !evaluator.Evaluate(descriptor.dwords[word], words[word])) return false;
+        }
+        return true;
+    };
+    std::vector<std::uint8_t> active(plan.info.images.size(), 1u);
+    if (!plan.controlFlow.empty()) {
+        for (const auto& block : plan.controlFlow) {
+            for (const auto image : block.images) active.at(image) = 0u;
+        }
+        std::vector<std::uint8_t> visited(plan.controlFlow.size());
+        std::vector<std::uint32_t> pending{0};
+        while (!pending.empty()) {
+            const auto index = pending.back();
+            pending.pop_back();
+            if (visited.at(index) != 0u) continue;
+            visited[index] = 1u;
+            const auto& block = plan.controlFlow[index];
+            for (const auto image : block.images) active[image] = 1u;
+            std::uint32_t condition = 0;
+            if (block.condition != nullptr && block.successors.size() == 2u && evaluator.Evaluate(block.condition, condition)) {
+                pending.push_back(block.successors[condition != 0u ? 0u : 1u]);
+            } else {
+                pending.insert(pending.end(), block.successors.begin(), block.successors.end());
+            }
+        }
+    }
+    expected.reserve(plan.info.deviceImageUses.size());
+    for (const auto& use : plan.info.deviceImageUses) {
+        if (active.at(use.image) == 0u) continue;
+        const auto& image = plan.info.images.at(use.image);
+        Abi::Expectation expectation;
+        expectation.pc = use.firstUsePc;
+        expectation.image = use.image;
+        auto& key = expectation.key;
+        if (!evaluate(image.source, Abi::DescriptorWords, key.data()) || Abi::NullDescriptor(key[0], key[1])) continue;
+        DescriptorValue descriptor;
+        descriptor.dwordCount = Abi::DescriptorWords;
+        std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
+        if (!validImageDescriptor(descriptor, image.r128)) throw std::runtime_error("runtime image descriptor is invalid");
+        if (use.sampler != NoSampler) {
+            const auto& sampler = plan.info.samplers.at(use.sampler);
+            if (!sampler.deviceTable) {
+                expectation.mapSampler = use.sampler;
+            } else {
+                if (!evaluate(sampler.source, Abi::SamplerWords, key.data() + Abi::SamplerWord)) continue;
+                key[Abi::SamplerClassWord] = Abi::RuntimeSampler;
+            }
+        }
+        expected.push_back(expectation);
+    }
+    return expected;
+}
+
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
     const bool table = image.table != NoTable;
     if (table && image.tableOperation == TableOperation::Unsupported) return {};
@@ -1785,8 +1847,14 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.workgroupThreads = source.workgroupThreads;
     plan.memoryInfo = source.memoryInfo;
     plan.descriptorSources = source.descriptorSources;
+    constexpr SrtWalker walker;
+    const auto walkable = [&](const DescriptorSource& descriptor) {
+        return std::all_of(descriptor.dwords.begin(), descriptor.dwords.begin() + descriptor.dwordCount, [&](IrValue* dword) {
+            return dword != nullptr && dword->Resolve()->Type() == IrType::U32 && walker.ValidateRuntimeValue(source, dword);
+        });
+    };
     for (auto& descriptor : plan.descriptorSources) {
-        if (descriptor.runtime) descriptor.dwords.fill(nullptr);
+        if (descriptor.runtime && !walkable(descriptor)) descriptor.dwords.fill(nullptr);
     }
     plan.controlFlow = source.controlFlow;
     plan.srtReads = source.srtReads;

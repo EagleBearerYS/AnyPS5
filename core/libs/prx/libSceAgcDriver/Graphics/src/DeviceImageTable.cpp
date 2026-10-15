@@ -56,9 +56,9 @@ bool IntegerMode(const ShaderRecompiler::ImageResource& mode) {
     return mode.numericClass == ShaderRecompiler::IrTextureNumericClass::Uint || mode.numericClass == ShaderRecompiler::IrTextureNumericClass::Sint;
 }
 
-std::shared_ptr<Sampler> ModeSampler(const Context& build, std::span<const std::uint32_t, 4> words, bool compare, bool integerBorder) {
-    if (build.samplerCache != nullptr) return build.samplerCache->Get(build, words, compare, false, false, integerBorder);
-    auto resource = DecodeSamplerResource(words, false, false, integerBorder);
+std::shared_ptr<Sampler> ModeSampler(const Context& build, std::span<const std::uint32_t, 4> words, bool compare, bool integerBorder, bool degammaPaired) {
+    if (build.samplerCache != nullptr) return build.samplerCache->Get(build, words, compare, false, degammaPaired, integerBorder);
+    auto resource = DecodeSamplerResource(words, false, degammaPaired, integerBorder);
     resource.compareEnable = compare;
     return std::make_shared<Sampler>(build, resource);
 }
@@ -83,6 +83,20 @@ std::uint64_t DeviceImageTable::HeaderAddress() const {
     return header->DeviceAddress();
 }
 
+void DeviceImageTable::Expect(std::span<const Abi::Expectation> images) {
+    std::lock_guard lock(mutex);
+    for (const auto& image : images) {
+        current.push_back(image.key);
+        const auto found = keys.Find(image.key);
+        if (!found.has_value()) {
+            expected.push_back({image.key, image.pc});
+            continue;
+        }
+        const auto held = entries.find(image.key);
+        if (found->fault != 0u && (held == entries.end() || !held->second.parked)) throw std::runtime_error(rejectionText(image.key, found->fault));
+    }
+}
+
 void DeviceImageTable::BeforeDispatch(const Context& build, Recorder& recorder) {
     std::lock_guard lock(mutex);
     resolve(build, recorder);
@@ -92,22 +106,75 @@ void DeviceImageTable::BeforeDispatch(const Context& build, Recorder& recorder) 
 }
 
 void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
-    if (pending.empty()) return;
-    const auto misses = DistinctDeviceImageMisses(pending);
-    pending.clear();
-    for (const auto& miss : misses) {
-        if (keys.Find(miss.key).has_value()) continue;
-        ++totals.distinct;
-        Entry entry;
-        const auto value = lookup(build, miss.key, miss.pc, entry);
-        insert(miss.key, value, recorder);
-        if (entry.texture == nullptr) continue;
-        entries[miss.key] = std::move(entry);
-        ++totals.inserted;
+    std::vector<DeviceImageKeys::Key> resolved;
+    const auto add = [&](std::vector<DeviceImageMiss>& queued, std::uint64_t& counter, bool named) {
+        if (queued.empty()) return;
+        const auto misses = DistinctDeviceImageMisses(queued);
+        queued.clear();
+        for (const auto& miss : misses) {
+            if (keys.Find(miss.key).has_value()) continue;
+            ++counter;
+            Entry entry;
+            const auto value = lookup(build, miss.key, miss.pc, entry, named);
+            insert(miss.key, value, recorder);
+            if (named && value.fault != 0u) throw std::runtime_error(rejectionText(miss.key, value.fault));
+            if (entry.texture == nullptr) continue;
+            if (entry.perUse) {
+                perUseKeys.push_back(miss.key);
+                resolved.push_back(miss.key);
+            }
+            entries[miss.key] = std::move(entry);
+            ++totals.inserted;
+        }
+    };
+    add(pending, totals.distinct, false);
+    add(expected, totals.expected, true);
+    refreshPerUse(build, recorder, resolved);
+    current.clear();
+}
+
+void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>& resolved) {
+    for (auto it = perUseKeys.begin(); it != perUseKeys.end();) {
+        const auto& key = *it;
+        auto held = entries.find(key);
+        if (held == entries.end()) {
+            it = perUseKeys.erase(it);
+            continue;
+        }
+        auto& entry = held->second;
+        if (std::ranges::find(resolved, key) != resolved.end()) {
+            ++it;
+            continue;
+        }
+        if (std::ranges::find(current, key) == current.end()) {
+            if (!entry.parked) {
+                const auto fault = reject(key, 0u, static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected), "a depth surface or a copy remade per use is read through the device image table by a dispatch whose CPU pre-pass did not name it, which is not implemented", false);
+                Require(keys.Insert(key, DeviceImageValue{0u, 0u, fault + 1u, 0u}) == DeviceImageKeys::Insertion::Updated, "a parked device image entry was not in the table");
+                entry.parked = true;
+            }
+            ++it;
+            continue;
+        }
+        ++totals.refreshed;
+        Entry fresh;
+        const auto value = lookup(build, key, 0u, fresh, true);
+        Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a per-use device image entry was not in the table");
+        if (value.fault != 0u) throw std::runtime_error(rejectionText(key, value.fault));
+        if (fresh.texture != entry.texture || fresh.sampler != entry.sampler) {
+            retire(entry, recorder);
+            ++totals.replaced;
+        }
+        const bool perUse = fresh.perUse;
+        entry = std::move(fresh);
+        if (!perUse) {
+            it = perUseKeys.erase(it);
+            continue;
+        }
+        ++it;
     }
 }
 
-DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry) {
+DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse) {
     using Reason = ShaderRecompiler::ImageTableAbi::PoisonReason;
     const auto id = static_cast<std::uint64_t>(key[Abi::InterfaceWord]) | (static_cast<std::uint64_t>(key[Abi::InterfaceWord + 1u]) << 32u);
     const auto interface = ShaderRecompiler::ResourceMaterializer::FindDeviceImageInterface(id);
@@ -135,21 +202,25 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
         auto samplerClass = key[Abi::SamplerClassWord];
         std::shared_ptr<Sampler> sampler;
         if (runtimeSampler) {
+            const auto descriptorWords = std::span<const std::uint32_t>(key).first(Abi::DescriptorWords);
+            const bool singleLevel = DescriptorSingleLevel(descriptorWords);
+            if (const auto paired = SingleLevelSamplerWords(samplerWords, singleLevel, !singleLevel)) samplerWords = *paired;
             if (PointSampled(mode)) samplerWords[2] = ShaderRecompiler::PointFilteredSamplerWord(samplerWords[0], samplerWords[2]);
-            sampler = ModeSampler(build, samplerWords, mode.depthCompare, IntegerMode(mode));
-            samplerClass = DeviceTableSamplerClass(sampler.get(), samplerWords, false, IntegerMode(mode));
+            sampler = ModeSampler(build, samplerWords, mode.depthCompare, IntegerMode(mode), true);
+            RequireDegammaFormat(DecodeTextureResource(descriptorWords).format, std::array<std::uint32_t, 1>{0u}, std::array<std::shared_ptr<Sampler>, 1>{sampler});
+            samplerClass = DeviceTableSamplerClass(sampler.get(), samplerWords, false, IntegerMode(mode)) & ~Abi::SamplerAnisoOverride;
         }
-        const DeviceTableView view{ShaderRecompiler::ImageShapeForResource(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits, ShaderRecompiler::ResourceMaterializer::BindsDecodedCopy(mode, descriptor)};
-        auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view, samplerClass);
+        const DeviceTableView view{ShaderRecompiler::ImageShapeForResource(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits, ShaderRecompiler::ResourceMaterializer::BindsDecodedCopy(mode, descriptor), IntegerMode(mode)};
+        auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view, samplerClass, perUse);
         const auto samplerSlot = sampler != nullptr ? sampler->Slot() : 0u;
-        entry = {std::move(texture.texture), std::move(sampler), texture.address, texture.guestBytes, texture.generation, texture.snapshot};
+        entry = {std::move(texture.texture), std::move(sampler), texture.address, texture.guestBytes, texture.generation, texture.snapshot, texture.perUse};
         return {texture.slot, *match.mode, 0u, samplerSlot};
     } catch (const std::runtime_error& error) {
         return rejected(Reason::DriverRejected, error.what());
     }
 }
 
-std::uint32_t DeviceImageTable::reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message) {
+std::uint32_t DeviceImageTable::reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message, bool report) {
     const auto [found, inserted] = rejectionIndex.try_emplace({key, reason, message}, static_cast<std::uint32_t>(rejections.size()));
     if (!inserted) return found->second;
     Require(rejections.size() < Abi::FaultFlag, "the device image table holds more rejections than a fault record can name");
@@ -159,6 +230,7 @@ std::uint32_t DeviceImageTable::reject(const DeviceImageKeys::Key& key, std::uin
     rejection.pc = pc;
     rejection.message = message;
     rejections.push_back(std::move(rejection));
+    if (!report) return found->second;
     ++totals.rejected;
     const auto name = ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(reason));
     std::fprintf(stderr, "[device-images] the descriptor (words %s) first sampled at pc 0x%x is rejected: %.*s: %s\n", HexWords(std::span<const std::uint32_t>(key).first(Abi::DescriptorWords)).c_str(), pc, static_cast<int>(name.size()), name.data(), message.c_str());
@@ -171,6 +243,7 @@ void DeviceImageTable::insert(const DeviceImageKeys::Key& key, const DeviceImage
     std::fprintf(stderr, "[device-images] the table is full at %u entries in %u buckets: every entry is dropped and resolved again on its next use\n", keys.Entries(), keys.Buckets());
     for (auto& [held, entry] : entries) retire(entry, recorder);
     entries.clear();
+    perUseKeys.clear();
     keys.Clear();
     Require(keys.Insert(key, value) != DeviceImageKeys::Insertion::Full, "the device image table refused a key while empty");
 }
@@ -200,6 +273,10 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
     for (const auto& [begin, end] : spans) static_cast<void>(GuestMemory::CollectWrites(begin, static_cast<std::size_t>(end - begin)));
     for (auto it = entries.begin(); it != entries.end();) {
         auto& [key, entry] = *it;
+        if (entry.perUse) {
+            ++it;
+            continue;
+        }
         bool stale = everything || !GuestMemory::UnchangedSince(entry.address, static_cast<std::size_t>(entry.guestBytes), entry.generation);
         if (!stale && pendingChanged) {
             const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{entry.address, entry.address + entry.guestBytes}}};
@@ -211,7 +288,7 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
         }
         ++totals.refreshed;
         Entry fresh;
-        const auto value = lookup(build, key, 0u, fresh);
+        const auto value = lookup(build, key, 0u, fresh, false);
         Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a refreshed device image entry was not in the table");
         if (fresh.texture != entry.texture || fresh.sampler != entry.sampler) {
             retire(entry, recorder);
@@ -291,6 +368,12 @@ void DeviceImageTable::drain(const std::shared_ptr<Buffer>& drained) {
     freeRings.push_back(drained);
 }
 
+std::string DeviceImageTable::rejectionText(const DeviceImageKeys::Key& key, std::uint32_t fault) const {
+    const auto& rejection = rejections.at(fault - 1u);
+    const auto name = ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(rejection.reason));
+    return "the descriptor (words " + HexWords(std::span<const std::uint32_t>(key).first(Abi::DescriptorWords)) + ") sampled at pc 0x" + HexWords(std::span<const std::uint32_t>(&rejection.pc, 1u)) + " is rejected: " + std::string(name) + ": " + rejection.message;
+}
+
 std::optional<DeviceImageTable::Rejection> DeviceImageTable::FindRejection(std::uint32_t index) const {
     std::lock_guard lock(mutex);
     if (index >= rejections.size()) return std::nullopt;
@@ -317,9 +400,9 @@ void DeviceImageTable::report() {
     if (now - lastReport < 10'000'000'000ll) return;
     const auto presents = Recorder::Presents() - reportedPresents;
     const auto misses = totals.misses - reported.misses;
-    std::fprintf(stderr, "[device-images] (10 s): %llu misses (%llu distinct, %llu dropped), %.2f per present over %llu presents, %llu inserted, %llu rejected, %llu refreshed (%llu replaced), %u entries in %u buckets, %llu clears\n",
+    std::fprintf(stderr, "[device-images] (10 s): %llu misses (%llu distinct, %llu dropped), %.2f per present over %llu presents, %llu expected, %llu inserted, %llu rejected, %llu refreshed (%llu replaced), %u entries in %u buckets, %llu clears\n",
         static_cast<unsigned long long>(misses), static_cast<unsigned long long>(totals.distinct - reported.distinct), static_cast<unsigned long long>(totals.dropped - reported.dropped),
-        presents != 0u ? static_cast<double>(misses) / static_cast<double>(presents) : 0.0, static_cast<unsigned long long>(presents),
+        presents != 0u ? static_cast<double>(misses) / static_cast<double>(presents) : 0.0, static_cast<unsigned long long>(presents), static_cast<unsigned long long>(totals.expected - reported.expected),
         static_cast<unsigned long long>(totals.inserted - reported.inserted), static_cast<unsigned long long>(totals.rejected - reported.rejected), static_cast<unsigned long long>(totals.refreshed - reported.refreshed), static_cast<unsigned long long>(totals.replaced - reported.replaced),
         keys.Entries(), keys.Buckets(), static_cast<unsigned long long>(totals.clears - reported.clears));
     reported = totals;

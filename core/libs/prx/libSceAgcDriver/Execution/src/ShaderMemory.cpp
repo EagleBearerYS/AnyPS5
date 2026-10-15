@@ -208,6 +208,46 @@ bool ShaderMemory::overlapsInitial(std::uint64_t begin, std::uint64_t end) const
     return after != initial.begin() && std::prev(after)->first + std::prev(after)->second.size() > begin;
 }
 
+bool ShaderMemory::readNow(void* context, std::uint64_t address, std::uint32_t* value) {
+    auto& self = *static_cast<ShaderMemory*>(context);
+    if (address % sizeof(*value) != 0 || address > std::numeric_limits<std::uint64_t>::max() - sizeof(*value)) return false;
+    if (self.overlapsInitial(address, address + sizeof(*value))) {
+        const auto next = self.initial.upper_bound(address);
+        if (next == self.initial.begin()) return false;
+        const auto& [base, bytes] = *std::prev(next);
+        const auto offset = address - base;
+        if (offset >= bytes.size() || bytes.size() - offset < sizeof(*value)) return false;
+        std::memcpy(value, bytes.data() + offset, sizeof(*value));
+        return true;
+    }
+    if (self.pendingWrite == nullptr) {
+        auto& page = self.page(address & ~static_cast<std::uint64_t>(PageBytes - 1));
+        const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(*value));
+        if (page.valid.test(index)) {
+            *value = page.words[index];
+            return true;
+        }
+        GuestMemory::Read(address, std::as_writable_bytes(std::span(value, 1)), alignof(std::uint32_t));
+        return true;
+    }
+    std::uint32_t word = 0;
+    switch (self.pendingWrite(address, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
+        case PendingWrite::Sync:
+            return false;
+        case PendingWrite::KnownValue:
+        case PendingWrite::VerifyKnownValue:
+            break;
+        case PendingWrite::None:
+        case PendingWrite::Raw:
+        case PendingWrite::VerifyRaw:
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(word))) return false;
+            std::memcpy(&word, reinterpret_cast<const void*>(address), sizeof(word));
+            break;
+    }
+    *value = word;
+    return true;
+}
+
 bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count) {
     auto& self = *static_cast<ShaderMemory*>(context);
     while (count != 0) {
@@ -307,6 +347,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.accessible = &accessible;
     runtime.pendingWrite = &pending;
     runtime.readWords = &readWords;
+    runtime.readNow = &readNow;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);

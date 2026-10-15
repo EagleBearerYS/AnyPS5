@@ -137,10 +137,11 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 26, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 27, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 36, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 9, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
+static_assert(fieldCount<DeviceImageUse>() == 3, "DeviceImageUse changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
 static_assert(fieldCount<IrResourcePlan>() == 22, "IrResourcePlan changed: update EncodePlan and DecodePlan");
@@ -725,6 +726,11 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(pair.sampler);
         out.Value(pair.firstUsePc);
     });
+    writer.List(info.deviceImageUses, [](Writer& out, const DeviceImageUse& use) {
+        out.Value(use.image);
+        out.Value(use.sampler);
+        out.Value(use.firstUsePc);
+    });
     writer.List(info.inputs, [](Writer& out, const StageInput& input) {
         out.Value(input.kind);
         out.Value(input.location);
@@ -825,6 +831,11 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(pair.image);
         in.Value(pair.sampler);
         in.Value(pair.firstUsePc);
+    });
+    reader.List(info.deviceImageUses, 12, [](Reader& in, DeviceImageUse& use) {
+        in.Value(use.image);
+        in.Value(use.sampler);
+        in.Value(use.firstUsePc);
     });
     reader.List(info.inputs, 21, [](Reader& in, StageInput& input) {
         in.Value(input.kind);

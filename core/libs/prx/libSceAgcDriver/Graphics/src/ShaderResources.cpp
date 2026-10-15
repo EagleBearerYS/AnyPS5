@@ -3783,7 +3783,7 @@ ImageTableReuseCounts ImageTableReuses() {
     return {counters.tablesReused.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed)};
 }
 
-DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass) {
+DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass, bool perUse) {
     namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
     std::array<std::uint32_t, 8> words{};
     std::copy(descriptor.begin(), descriptor.end(), words.begin());
@@ -3799,8 +3799,10 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
     auto texture = cachedTexture(context, words, resource, SampledViewComponents(resource, view.decodedCopy), guestBytes, view.depthCompare, view.decodedCopy);
     const auto& log = lookupLog();
     const auto* looked = !log.empty() && log.back().object == texture.get() ? &log.back() : nullptr;
-    if (looked != nullptr && looked->depth) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " is a depth surface, which the device image table does not serve: a dispatch sampling it through the table would need the depth image's layout transitions");
-    if (texture->CopyKind() != Texture::PerUseCopy::None) throw std::runtime_error("AGC graphics: the table entry's texture at 0x" + HexText(resource.baseAddress) + " is a copy remade per use, which the device image table does not serve");
+    const bool depth = looked != nullptr && looked->depth;
+    const bool copied = texture->CopyKind() != Texture::PerUseCopy::None;
+    if (depth && !perUse) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " is a depth surface, which the device image table does not serve: a dispatch sampling it through the table would need the depth image's layout transitions");
+    if (copied && !perUse) throw std::runtime_error("AGC graphics: the table entry's texture at 0x" + HexText(resource.baseAddress) + " is a copy remade per use, which the device image table does not serve");
     if ((samplerClass & Abi::SamplerFilterMinmax) != 0u) {
         VkFormatProperties properties{};
         context.formatProperties(context.physical, texture->ViewFormat(), &properties);
@@ -3808,8 +3810,7 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
     }
     if ((samplerClass & Abi::SamplerOpaqueBlackBorder) != 0u && resource.bcSwizzle != 0u && resource.bcSwizzle != 4u) throw std::runtime_error("a sampled texture whose BC swizzle " + std::to_string(resource.bcSwizzle) + " moves the alpha channel is sampled through an opaque black border, which is not implemented");
     if ((samplerClass & Abi::SamplerNonSeamlessCube) != 0u && resource.dimension == TextureDimension::kCube) throw std::runtime_error("a cube texture is sampled through a sampler that disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
-    const auto numeric = ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) != 0u ? ShaderRecompiler::IrTextureNumericClass::Float : ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(resource.format));
-    const bool integerImage = numeric == ShaderRecompiler::IrTextureNumericClass::Uint || numeric == ShaderRecompiler::IrTextureNumericClass::Sint;
+    const bool integerImage = view.integerView;
     if (((samplerClass & Abi::SamplerFloatBorder) != 0u && integerImage) || ((samplerClass & Abi::SamplerIntegerBorder) != 0u && !integerImage)) throw std::runtime_error("an image table entry's sampler border color numeric class disagrees with its sampled image class, which needs dynamic pairing and is not implemented");
     if ((samplerClass & Abi::SamplerAnisoOverride) != 0u) throw std::runtime_error("an image table entry paired with anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing, which is not implemented");
     DeviceTableTexture result;
@@ -3817,6 +3818,7 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
     result.address = resource.baseAddress;
     result.guestBytes = guestBytes;
     result.snapshot = looked != nullptr && looked->source == nullptr && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0 && looked->generation != 0;
+    result.perUse = depth || copied;
     result.generation = result.snapshot ? looked->generation : GuestMemory::CollectWrites(resource.baseAddress, static_cast<std::size_t>(guestBytes));
     result.texture = std::move(texture);
     return result;
@@ -3835,6 +3837,18 @@ std::uint32_t DeviceTableSamplerClass(const Sampler* sampler, std::span<const st
     if (SingleLevelSamplerWords(words, true, false).has_value()) bits |= Abi::SamplerAnisoOverride;
     if (ShaderRecompiler::ReducesBetweenTexels(words[0], words[2])) bits |= Abi::SamplerReduction;
     return bits;
+}
+
+std::uint32_t ShaderResources::TableMapSamplerClass(std::uint32_t sampler) const {
+    namespace Abi = ShaderRecompiler::ImageTableAbi;
+    for (const auto& table : tableStages) {
+        const auto& map = table.map;
+        if (map.size() <= Abi::HeaderSamplerClasses || map[Abi::HeaderSamplerClasses] == 0u) continue;
+        const auto at = static_cast<std::size_t>(map[Abi::HeaderSamplerClasses]) + sampler;
+        Require(at < map.size(), "a device image expectation names sampler " + std::to_string(sampler) + ", which the image table map has no class for");
+        return map[at];
+    }
+    throw std::runtime_error("a device image expectation names a sampler class, but no stage of the dispatch has an image table map with sampler classes");
 }
 
 void ShaderResources::finishImageTables() {

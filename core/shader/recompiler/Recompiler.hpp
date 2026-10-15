@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 #define CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 
+#include "DeviceImageTableAbi.hpp"
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
 #include <algorithm>
@@ -546,6 +547,8 @@ struct ShaderInvocation {
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
+    std::vector<DeviceImageTableAbi::Expectation> deviceImages;
+    std::vector<std::uint64_t> deviceImageInterfaces;
 };
 
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {

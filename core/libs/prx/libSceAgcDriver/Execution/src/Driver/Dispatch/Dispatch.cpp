@@ -6,9 +6,11 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 namespace AgcDriver::DriverDetail {
@@ -251,6 +253,36 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         return;
     }
     phaseTiming.Phase(PhaseQueuedLabels);
+    if (cached && !keepVariant->plan->info.deviceImageUses.empty()) {
+        ShaderRecompiler::SrtRuntime runtime;
+        runtime.userData = userData;
+        runtime.shaderBase = request.shader.codeAddress;
+        runtime.readMemory = [](void*, std::uint64_t at, std::uint32_t* value) {
+            std::uint32_t word = 0;
+            switch (queryPendingWrite(at, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
+                case ShaderMemory::PendingWrite::Sync:
+                    return false;
+                case ShaderMemory::PendingWrite::KnownValue:
+                case ShaderMemory::PendingWrite::VerifyKnownValue:
+                    break;
+                case ShaderMemory::PendingWrite::None:
+                case ShaderMemory::PendingWrite::Raw:
+                case ShaderMemory::PendingWrite::VerifyRaw:
+                    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(word))) return false;
+                    std::memcpy(&word, reinterpret_cast<const void*>(at), sizeof(word));
+                    break;
+            }
+            *value = word;
+            return true;
+        };
+        auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*keepVariant->plan, runtime);
+        ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(expected, compiledResult->deviceImageInterfaces);
+        if (expected != compiledResult->deviceImages) {
+            auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(*compiledResult);
+            patched->deviceImages = std::move(expected);
+            compiledResult = std::move(patched);
+        }
+    }
     const auto& compiled = *compiledResult;
     std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
     if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {

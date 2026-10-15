@@ -18,6 +18,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
     if (!noDispatchCache) {
         auto fresh = std::make_shared<DispatchVariant>();
         fresh->compiled = compiledResult;
+        fresh->plan = capture->plan;
         fresh->shader = registeredShader;
         fresh->forgetSerial = forgetAtCapture;
 

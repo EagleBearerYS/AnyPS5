@@ -8,6 +8,7 @@
 #include "IntermediateRepresentation/IrMetadata/ResourceInfo.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderInfo.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -68,6 +69,7 @@ struct ResourceSnapshot {
     std::vector<SrtReadPoison> srtPoison;
     std::uint32_t nullRootReads = 0;
     ImageTableSnapshot tables;
+    std::vector<DeviceImageTableAbi::Expectation> deviceImages;
 };
 
 struct UniformFillPlan {

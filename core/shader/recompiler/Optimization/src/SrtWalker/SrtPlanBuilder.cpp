@@ -67,7 +67,7 @@ void PlanBuilder::Run() {
 }
 
 bool PlanBuilder::ReadsAtRunTime() const {
-    if (_program.Resources().stage != IrShaderStage::Compute) return false;
+    if (!_deviceTables || _program.Resources().stage != IrShaderStage::Compute) return false;
     const auto readsMemory = [](const IrValue* root) {
         std::vector<const IrValue*> pending{root};
         std::unordered_set<const IrValue*> seen;
@@ -84,10 +84,52 @@ bool PlanBuilder::ReadsAtRunTime() const {
         if (info.indirectTarget != nullptr) return false;
         if (info.condition != nullptr && readsMemory(info.condition)) return false;
     }
+    const auto dynamicWords = [](const IrValue& handle) {
+        std::vector<const IrValue*> pending;
+        for (std::size_t index = 0; index < handle.ArgumentCount(); index++) pending.push_back(handle.Argument(index));
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* value = pending.back()->Resolve();
+            pending.pop_back();
+            if (!seen.insert(value).second) continue;
+            if (value->Opcode() == IrOpcode::LoadAddressU32 && !value->Argument(1)->Resolve()->HasImmediate()) return true;
+            if (value->Opcode() == IrOpcode::Phi || value->Opcode() == IrOpcode::GetShaderBase) return true;
+            for (std::size_t index = 0; index < value->ArgumentCount(); index++) pending.push_back(value->Argument(index));
+        }
+        return false;
+    };
+    const auto& memoryInfo = _program.Resources().memoryInfo;
+    const auto deviceRead = [&](const IrValue& user, const IrValue& handle, bool sampler) {
+        switch (user.Opcode()) {
+            case IrOpcode::ImageSampleRaw:
+            case IrOpcode::ImageGatherRaw:
+            case IrOpcode::ImageQueryLod:
+                break;
+            case IrOpcode::ImageRead:
+            case IrOpcode::ImageQueryDimensions:
+                if (sampler) return false;
+                break;
+            default:
+                return false;
+        }
+        const auto index = user.Flags<MemoryFlags>().index;
+        if (index >= memoryInfo.size() || memoryInfo[index].imagePacked || memoryInfo[index].imageByElements != 0u) return false;
+        const std::size_t operand = sampler ? 1u : 0u;
+        if (user.ArgumentCount() <= operand || user.Argument(operand)->Resolve() != &handle) return false;
+        for (std::size_t index = 0; index < user.ArgumentCount(); index++) {
+            if (index != operand && user.Argument(index)->Resolve() == &handle) return false;
+        }
+        return true;
+    };
     for (const auto& block : _program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
             const auto op = inst->Opcode();
-            if (op == IrOpcode::GetImageResource || op == IrOpcode::GetSamplerResource || op == IrOpcode::GetLinkedWord) return false;
+            if (op == IrOpcode::GetLinkedWord) return false;
+            if (op != IrOpcode::GetImageResource && op != IrOpcode::GetSamplerResource) continue;
+            if (dynamicWords(*inst)) return false;
+            for (const IrValue* user : inst->Uses()) {
+                if (!deviceRead(*user, *inst, op == IrOpcode::GetSamplerResource)) return false;
+            }
         }
     }
     return true;

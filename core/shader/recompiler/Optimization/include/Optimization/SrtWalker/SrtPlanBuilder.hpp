@@ -13,7 +13,7 @@ namespace ShaderRecompiler::Detail {
 
 class PlanBuilder {
 public:
-    explicit PlanBuilder(IrProgram& program) : _program(program) {}
+    PlanBuilder(IrProgram& program, bool deviceTables) : _program(program), _deviceTables(deviceTables) {}
 
     void Run();
 
@@ -30,6 +30,7 @@ private:
     void PatchReads();
 
     IrProgram& _program;
+    bool _deviceTables = false;
     std::vector<IrValue*> _visiting;
     std::unordered_map<IrValue*, std::size_t> _visitingIndex;
     std::unordered_set<IrValue*> _visited;
