@@ -1873,8 +1873,8 @@ void verifySelectedRecordFallbacks() {
     large.back() = heap[1];
     FillTableSrt(guest, large.data(), 32u, static_cast<std::uint32_t>(large.size()));
     guest.srt[16] = static_cast<std::uint32_t>(large.size() - 1u);
-    const auto far = CompileTable(request);
-    require(TableSelected(far.capture->snapshot.tables, 0u, "selected record fallbacks: a record past the key cap does not hold one readable selected record") == heap[1] && !far.capture->snapshot.tables.tables[0].outside && far.result->imageTableFaults == 0u, "selected record fallbacks: a record past the key cap was not selected");
+    const auto pastCap = CompileTable(request);
+    require(TableSelected(pastCap.capture->snapshot.tables, 0u, "selected record fallbacks: a record past the key cap does not hold one readable selected record") == heap[1] && !pastCap.capture->snapshot.tables.tables[0].outside && pastCap.result->imageTableFaults == 0u, "selected record fallbacks: a record past the key cap was not selected");
     FillTableSrt(guest, heap.data(), 32u, 4u);
 }
 
