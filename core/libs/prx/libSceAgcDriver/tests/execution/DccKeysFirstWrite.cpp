@@ -301,7 +301,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     fillKeys(0x00, DccKeys::Clear0000);
     Dispatch(device, WriteCode, writeData, false);
     Dispatch(device, ClearKeysCode, clearTailData, false);
-    readPending(DccKeys::Uncompressed, true, "a kernel's 0000 store through the page table over half the keys after the first write's uncompressed store");
+    readPending(DccKeys::Uncompressed, false, "a kernel's 0000 store over half the keys after the first write's uncompressed store");
     Require(AgcDriver::Graphics::CurrentDccKeys(AddressOf(keys), SurfaceBytes) == DccKeys::Mixed, "the keys after a kernel's 0000 store over half of them are not mixed");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();

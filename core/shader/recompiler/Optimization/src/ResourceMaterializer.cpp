@@ -840,6 +840,15 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
         snapshot.samplers[i] = values[cursor];
         cursor++;
     }
+
+    snapshot.stores.resize(plan.info.bufferStores.size());
+    for (std::uint32_t i = 0; i < plan.info.bufferStores.size(); i++) {
+        if (cursor >= values.size()) {
+            throw std::runtime_error("materialization sources are missing stored buffer descriptors");
+        }
+        snapshot.stores[i] = values[cursor];
+        cursor++;
+    }
 }
 
 std::uint32_t colorCompareReference(IrBufferFormat format) {
@@ -1802,6 +1811,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
             addSource(sampler.source);
         }
     }
+    for (const auto& store : plan.info.bufferStores) addSource(store.source);
     dropUnevaluableConditions(plan);
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);

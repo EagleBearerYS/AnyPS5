@@ -4162,7 +4162,10 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
     }
     recorder.NotePendingWrites(guestMemory.Writes());
-    if (pageTableStores) recorder.NotePendingWrite(0, std::numeric_limits<std::size_t>::max());
+    if (pageTableStores && storesUnbounded) recorder.NotePendingWrite(0, std::numeric_limits<std::size_t>::max());
+    else if (pageTableStores) {
+        for (const auto& [begin, end] : storeRanges) recorder.NotePendingWrite(begin, static_cast<std::size_t>(end - begin));
+    }
     guestMemory.MarkDirectWrites();
 }
 

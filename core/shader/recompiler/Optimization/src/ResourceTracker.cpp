@@ -97,6 +97,8 @@ public:
         m_info.sampledPairs.clear();
         m_info.usesDma = false;
         m_info.bdaWrites = false;
+        m_info.bufferStores.clear();
+        m_info.unboundedStores = false;
     }
 
     void Run() {
@@ -1489,6 +1491,15 @@ private:
         if (access == BufferAccess::Write || access == BufferAccess::Atomic) {
             DescriptorSource descriptor;
             MakeSource(*handle, 4u, false, false, descriptor);
+            std::uint32_t badDword = 0;
+            if (ValidateSource(descriptor, badDword)) {
+                const IrValue* soffset = inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
+                const bool immediate = soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32;
+                const BufferStoreSite site{InternSource(descriptor), immediate ? soffset->ImmediateU32() : 0u, !immediate};
+                if (std::ranges::find(m_info.bufferStores, site) == m_info.bufferStores.end()) m_info.bufferStores.push_back(site);
+            } else {
+                m_info.unboundedStores = true;
+            }
             m_writtenSources.push_back(std::move(descriptor));
         }
         return true;
@@ -1674,6 +1685,7 @@ private:
             }
             m_info.usesDma = true;
             m_info.bdaWrites = m_info.bdaWrites || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
+            m_info.unboundedStores = m_info.unboundedStores || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
             return;
         }
 

@@ -24,6 +24,10 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         // Rect-list validation needs a fault buffer, but never accesses guest addresses.
         usesBda = usesBda || tables != 0;
         pageTableStores = pageTableStores || (tables != 0 && shader.program->bdaWrites);
+        if (tables != 0 && shader.program->bdaWrites) {
+            storesUnbounded = storesUnbounded || shader.program->unboundedWrites;
+            storeRanges.insert(storeRanges.end(), shader.program->writeRanges.begin(), shader.program->writeRanges.end());
+        }
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
         const bool device = UsesDeviceImageTable(*shader.program);

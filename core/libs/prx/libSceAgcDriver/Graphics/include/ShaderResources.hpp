@@ -499,6 +499,8 @@ private:
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
     bool pageTableStores = false;
+    bool storesUnbounded = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> storeRanges;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
     bool deviceImages = false;
