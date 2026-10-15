@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ToneMapLuminance.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TrophyPopup.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <SDL_loadso.h>
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,6 +27,7 @@ using AgcDriver::OverlayMetrics;
 using AgcDriver::OverlayRect;
 using AgcDriver::PerformanceOverlay;
 using AgcDriver::PresentationPass;
+using PopupClock = AgcDriver::TrophyPopupQueue::Clock;
 
 constexpr int VulkanTestSkipped = 77;
 constexpr std::uint64_t Bgra8 = 0x8000000000000000ull;
@@ -238,6 +241,27 @@ std::vector<std::uint32_t> clearAndOverlay(const Context& context, PerformanceOv
     return wordsOf(readback, extent);
 }
 
+std::vector<std::uint32_t> clearAndDraw(const Context& context, PerformanceOverlay* overlay, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, const VkClearColorValue& clear, const std::vector<AgcDriver::OverlayLayout>& layouts) {
+    Image destination(context, format, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    Buffer readback(context, static_cast<std::size_t>(extent.width) * extent.height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    {
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+        if (overlay != nullptr && !layouts.empty()) {
+            overlay->Record(commands, 0, destination.Handle(), format, colorSpace, extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layouts);
+        } else {
+            transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        }
+        readImage(context, commands, destination, readback);
+        batch.SubmitAndWait();
+    }
+    if (overlay != nullptr) overlay->Release(0);
+    return wordsOf(readback, extent);
+}
+
 void onlyInside(const std::vector<std::uint32_t>& reference, const std::vector<std::uint32_t>& drawn, VkExtent2D extent, const OverlayRect& bounds, const std::string& what, bool everyPixel = true) {
     std::size_t changed = 0;
     for (std::int32_t y = 0; y < static_cast<std::int32_t>(extent.height); ++y) {
@@ -403,6 +427,70 @@ void cornerTest(const Context& context, PerformanceOverlay& overlay) {
     std::printf("overlay corners: tl, tr, bl and br drawn where the layout puts them\n");
 }
 
+void popupTest(const Context& context, PerformanceOverlay& overlay) {
+    const VkExtent2D extent{1920, 1080};
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.75f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.25f;
+    clear.float32[3] = 1.0f;
+    const auto lines = AgcDriver::TrophyPopupLines({12, {}, 0});
+    const auto popup = AgcDriver::LayOutTrophyPopup(lines, extent, OverlayCorner::BottomRight);
+    const auto reference = clearAndDraw(context, nullptr, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, {});
+    const auto drawn = clearAndDraw(context, &overlay, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, {popup});
+    onlyInside(reference, drawn, extent, popup.bounds, "trophy pop-up at 1920x1080");
+    for (std::size_t line = 0; line < lines.size(); ++line) requireTextDrawn(drawn, extent, popup.bounds, popup.scale, reference.front(), lines[line], OverlayMetrics::Padding + static_cast<std::int32_t>(line) * OverlayMetrics::LinePitch);
+    const auto panel = AgcDriver::LayOutOverlay(sixtyFps(), extent, OverlayCorner::TopLeft);
+    const auto panelOnly = clearAndDraw(context, &overlay, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, {panel});
+    const auto both = clearAndDraw(context, &overlay, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, {panel, popup});
+    for (std::int32_t y = 0; y < static_cast<std::int32_t>(extent.height); ++y) {
+        for (std::int32_t x = 0; x < static_cast<std::int32_t>(extent.width); ++x) {
+            const auto index = static_cast<std::size_t>(y) * extent.width + static_cast<std::size_t>(x);
+            const auto expected = inside(popup.bounds, x, y) ? drawn[index] : inside(panel.bounds, x, y) ? panelOnly[index] : reference[index];
+            Require(both[index] == expected, "panel and pop-up together differ from each drawn alone at pixel " + std::to_string(x) + "," + std::to_string(y));
+        }
+    }
+    std::printf("trophy pop-up: %dx%d at %d,%d (scale %d), '%s' and '%s' drawn bit for bit, nothing changed outside it; with the panel, each is drawn as alone\n", popup.bounds.width, popup.bounds.height, popup.bounds.x, popup.bounds.y, popup.scale, lines[0].c_str(), lines[1].c_str());
+}
+
+void popupHdrTest(const Context& context, PerformanceOverlay& overlay) {
+    const auto format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT) == 0) {
+        std::printf("A2B10G10R10 cannot be blended into here; HDR10 trophy pop-up not exercised\n");
+        return;
+    }
+    const VkExtent2D extent{1920, 1080};
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.4f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.6f;
+    clear.float32[3] = 1.0f;
+    const auto lines = AgcDriver::TrophyPopupLines({12, {}, 0});
+    const auto popup = AgcDriver::LayOutTrophyPopup(lines, extent, OverlayCorner::BottomRight);
+    const auto reference = clearAndDraw(context, nullptr, format, VK_COLOR_SPACE_HDR10_ST2084_EXT, extent, clear, {});
+    const auto drawn = clearAndDraw(context, &overlay, format, VK_COLOR_SPACE_HDR10_ST2084_EXT, extent, clear, {popup});
+    onlyInside(reference, drawn, extent, popup.bounds, "HDR10 trophy pop-up");
+    const auto& tee = AgcDriver::OverlayGlyph(lines[0][0]);
+    std::size_t checked = 0;
+    for (std::int32_t gy = 0; gy < OverlayMetrics::GlyphHeight; ++gy) {
+        for (std::int32_t gx = 0; gx < OverlayMetrics::GlyphWidth; ++gx) {
+            if ((tee[static_cast<std::size_t>(gy)] & (0x10u >> gx)) == 0) continue;
+            const auto x = popup.bounds.x + (OverlayMetrics::Padding + gx) * popup.scale + popup.scale / 2;
+            const auto y = popup.bounds.y + (OverlayMetrics::Padding + gy) * popup.scale + popup.scale / 2;
+            const auto word = drawn[static_cast<std::size_t>(y) * extent.width + static_cast<std::size_t>(x)];
+            for (const unsigned shift : {0u, 10u, 20u}) {
+                const int code = static_cast<int>((word >> shift) & 0x3ffu);
+                Require(std::abs(code - 594) <= 1, "HDR10 pop-up text is not at 203 nits: PQ code " + std::to_string(code) + " for 594");
+            }
+            ++checked;
+        }
+    }
+    Require(checked != 0, "no HDR10 pop-up text pixel was checked");
+    std::printf("HDR10 trophy pop-up: text at PQ code 594 (203 nits), nothing changed outside the %dx%d pop-up\n", popup.bounds.width, popup.bounds.height);
+}
+
 void fullPanelTest(const Device& device, PerformanceOverlay& overlay) {
     const auto& context = device.GetContext();
     const VkExtent2D extent{1920, 1080};
@@ -486,16 +574,18 @@ public:
         batch.SubmitAndWait();
     }
 
-    std::vector<std::uint32_t> Drawn(OverlayRect* bounds) {
+    std::vector<std::uint32_t> Drawn(OverlayRect* bounds, PopupClock::time_point now = PopupClock::now(), OverlayRect* popupBounds = nullptr) {
         Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, Extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         Buffer readback(context, static_cast<std::size_t>(Extent.width) * Extent.height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const bool visible = PerformanceOverlay::Visible();
+        const auto popup = currentPopup(now);
+        const bool decorated = visible || popup.has_value();
         pass.Bind(0, source.Handle(), 256, 144, Bgra8, AgcDriver::SdrToneMapLuminanceNits);
         {
             CommandBatch batch(context);
             const auto commands = batch.Handle();
-            pass.RecordPresent(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, visible ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            if (visible) *bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fullPanel(fixedDetails({256, 144}, Extent)), OverlayCorner::TopLeft);
+            pass.RecordPresent(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, decorated ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            if (decorated) decorate(commands, destination.Handle(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, visible, popup, bounds, popupBounds);
             readImage(context, commands, destination, readback);
             batch.SubmitAndWait();
         }
@@ -504,10 +594,12 @@ public:
         return wordsOf(readback, Extent);
     }
 
-    std::vector<std::uint32_t> Blitted(OverlayRect* bounds) {
+    std::vector<std::uint32_t> Blitted(OverlayRect* bounds, PopupClock::time_point now = PopupClock::now(), OverlayRect* popupBounds = nullptr) {
         Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, Extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         Buffer readback(context, static_cast<std::size_t>(Extent.width) * Extent.height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const bool visible = PerformanceOverlay::Visible();
+        const auto popup = currentPopup(now);
+        const bool decorated = visible || popup.has_value();
         {
             CommandBatch batch(context);
             const auto commands = batch.Handle();
@@ -519,8 +611,8 @@ public:
             context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
             transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             AgcDriver::PresentationScaler::RecordBlitFrom(context, commands, source.Handle(), VK_IMAGE_LAYOUT_GENERAL, 256, 144, VK_FILTER_LINEAR, destination.Handle(), Extent.width, Extent.height);
-            if (visible) {
-                *bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fullPanel(fixedDetails({256, 144}, Extent)), OverlayCorner::TopLeft);
+            if (decorated) {
+                decorate(commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, visible, popup, bounds, popupBounds);
             } else {
                 transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             }
@@ -535,6 +627,24 @@ public:
     static constexpr VkExtent2D Extent{400, 300};
 
 private:
+    static std::optional<AgcDriver::TrophyPopupEntry> currentPopup(PopupClock::time_point now) {
+        auto& popups = AgcDriver::TrophyPopups();
+        return popups.Pending() ? popups.Current(now) : std::nullopt;
+    }
+
+    void decorate(VkCommandBuffer commands, VkImage destination, VkImageLayout initialLayout, bool visible, const std::optional<AgcDriver::TrophyPopupEntry>& popup, OverlayRect* bounds, OverlayRect* popupBounds) {
+        std::vector<AgcDriver::OverlayLayout> layouts;
+        if (visible) {
+            layouts.push_back(AgcDriver::LayOutOverlay(fullPanel(fixedDetails({256, 144}, Extent)), Extent, OverlayCorner::TopLeft));
+            *bounds = layouts.back().bounds;
+        }
+        if (popup) {
+            layouts.push_back(AgcDriver::LayOutTrophyPopup(AgcDriver::TrophyPopupLines(*popup), Extent, AgcDriver::TrophyPopupCorner(AgcDriver::TrophyPopupConfiguration(), PerformanceOverlay::Corner())));
+            if (popupBounds != nullptr) *popupBounds = layouts.back().bounds;
+        }
+        overlay.Record(commands, 0, destination, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, initialLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layouts);
+    }
+
     const Context& context;
     PresentationPass pass;
     PerformanceOverlay overlay;
@@ -557,6 +667,26 @@ void disabledIsUnchangedTest(const Context& context) {
     Require(presenter.Drawn(&unused) == drawnBefore, "the presentation pass output differs after the overlay was hidden");
     Require(presenter.Blitted(&unused) == blittedBefore, "the blit output differs after the overlay was hidden");
     std::printf("overlay hidden: presentation pass and blit output bit-identical before and after showing it\n");
+}
+
+void popupIdleIsUnchangedTest(const Context& context) {
+    auto& popups = AgcDriver::TrophyPopups();
+    Require(!PerformanceOverlay::Visible() && !popups.Pending(), "the overlay or a trophy pop-up is shown before the pop-up test");
+    Presenter presenter(context);
+    const auto start = PopupClock::time_point{} + std::chrono::hours(2);
+    OverlayRect unused{};
+    const auto drawnBefore = presenter.Drawn(&unused, start);
+    const auto blittedBefore = presenter.Blitted(&unused, start);
+    popups.Push({12, {}, 0});
+    OverlayRect popupBounds{};
+    onlyInside(drawnBefore, presenter.Drawn(&unused, start, &popupBounds), Presenter::Extent, popupBounds, "presentation pass with the trophy pop-up", false);
+    const auto expected = AgcDriver::LayOutTrophyPopup(AgcDriver::TrophyPopupLines({12, {}, 0}), Presenter::Extent, OverlayCorner::BottomRight).bounds;
+    Require(popupBounds.x == expected.x && popupBounds.y == expected.y && popupBounds.width == expected.width && popupBounds.height == expected.height, "the pop-up is not in the corner opposite the overlay's");
+    onlyInside(blittedBefore, presenter.Blitted(&unused, start + std::chrono::milliseconds(4999), &popupBounds), Presenter::Extent, popupBounds, "blit with the trophy pop-up", false);
+    Require(presenter.Drawn(&unused, start + std::chrono::seconds(5)) == drawnBefore, "the presentation pass output differs after the pop-up's 5 s");
+    Require(!popups.Pending(), "the pop-up is still pending after its 5 s");
+    Require(presenter.Blitted(&unused, start + std::chrono::seconds(6)) == blittedBefore, "the blit output differs after the pop-up's 5 s");
+    std::printf("trophy pop-up: %dx%d at %d,%d while shown, the only change; presentation pass and blit output bit-identical before it and after its 5 s\n", popupBounds.width, popupBounds.height, popupBounds.x, popupBounds.y);
 }
 
 void costReport(const Device& device, PerformanceOverlay& overlay) {
@@ -608,6 +738,7 @@ int main() {
     try {
         setEnvironment("ANYPS5_OVERLAY", "");
         setEnvironment("ANYPS5_OVERLAY_POS", "");
+        setEnvironment("ANYPS5_TROPHY_POPUP", "");
         std::unique_ptr<Device> device;
         try {
             device = std::make_unique<Device>();
@@ -622,11 +753,14 @@ int main() {
             sdrOverlayTest(context, overlay);
             hdrOverlayTest(context, overlay);
             cornerTest(context, overlay);
+            popupTest(context, overlay);
+            popupHdrTest(context, overlay);
             fullPanelTest(*device, overlay);
             costReport(*device, overlay);
         }
         notePresentTest(*device);
         disabledIsUnchangedTest(context);
+        popupIdleIsUnchangedTest(context);
         std::cout << "performance overlay tests passed\n";
         return 0;
     } catch (const std::exception& error) {
