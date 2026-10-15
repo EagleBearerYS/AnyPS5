@@ -72,6 +72,7 @@ struct HostImportRequesterCounts {
     std::uint64_t refused = 0;
     std::uint64_t refusedBytes = 0;
     std::uint64_t failed = 0;
+    std::uint64_t remembered = 0;
 };
 
 struct HostImportCounts {

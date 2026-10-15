@@ -814,10 +814,10 @@ void hostImportReportTests() {
     counts.live = 3;
     counts.liveBytes = 3u << 20u;
     counts.requesters[static_cast<std::size_t>(ImportRequester::Map)] = {2, 1u << 20u, 0, 0, 0};
-    counts.requesters[static_cast<std::size_t>(ImportRequester::Build)] = {5, 4u << 20u, 7, 7u << 19u, 1};
+    counts.requesters[static_cast<std::size_t>(ImportRequester::Build)] = {5, 4u << 20u, 7, 7u << 19u, 1, 4};
     counts.requesters[static_cast<std::size_t>(ImportRequester::Segment)] = {1, 1u << 16u, 0, 0, 2};
     const auto text = FormatHostImportCounts(counts);
-    Require(text == "3 live (3.0 MiB); made 8 (5.1 MiB), refused 7 (3.5 MiB), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, expand 0/0/0", "the host import report is wrong: " + text);
+    Require(text == "3 live (3.0 MiB); made 8 (5.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, expand 0/0/0", "the host import report is wrong: " + text);
 }
 
 class PieceWindow {
@@ -1017,6 +1017,82 @@ void importBlockBudgetTests(const Context& context) {
     SetHostImportBudget(HostImportLiveBytes() + 3 * MiB);
     window.Build();
     Require(window.Imports(0, half) == 2 && window.Block(0, 2 * MiB) && window.Block(2 * MiB, MiB) && !window.Covered(3 * MiB, half), "a 4 MiB block over the budget did not step down to a 2 MiB and a 1 MiB block: " + blockText(window, 0, half));
+    const auto low = window.Serial(0);
+    const auto high = window.Serial(2 * MiB);
+    window.Add(6 * MiB, PieceWindow::Piece);
+    window.Build();
+    Require(window.Serial(0) == low && window.Serial(2 * MiB) == high && window.Imports(0, PieceWindow::Window) == 2, "blocks stepped down for the budget were imported again after an unrelated range was mapped: " + blockText(window, 0, PieceWindow::Window));
+}
+
+void importRefusalMemoryTests(const Context& context) {
+    constexpr std::size_t piece = 4096;
+    constexpr std::size_t count = 12000;
+    constexpr std::size_t fitting = count * 6 / 10;
+    constexpr std::size_t refused = count - fitting;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto* other = static_cast<std::uint8_t*>(::operator new(piece, std::align_val_t{piece}));
+    const auto at = [&](std::size_t index) { return block + 2 * index * piece; };
+    SetHostImportWindow(std::size_t{8} << 20u);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(at(index), piece, true, true, true);
+    }
+    const auto budget = HostImportLiveBytes() + fitting * piece;
+    SetHostImportBudget(budget);
+    bool added = false;
+    const auto rebuild = [&] {
+        {
+            GuestAllocations::Mutation mutation;
+            if (added) mutation.Remove(other);
+            else mutation.Add(other, piece, true, true, false);
+        }
+        added = !added;
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+    };
+    const auto counted = [](ImportRequester requester) { return HostImportCounters().requesters[static_cast<std::size_t>(requester)]; };
+    const auto tries = [](const HostImportRequesterCounts& requested) { return requested.refused - requested.remembered; };
+    auto before = counted(ImportRequester::Build);
+    rebuild();
+    auto after = counted(ImportRequester::Build);
+    Require(after.made - before.made == fitting && tries(after) - tries(before) == refused, "a registry of 12000 ranges over a budget for 7200 of them was not imported and refused as expected: " + std::to_string(after.made - before.made) + " made, " + std::to_string(tries(after) - tries(before)) + " refused");
+    for (int round = 1; round <= 4; ++round) {
+        before = after;
+        rebuild();
+        after = counted(ImportRequester::Build);
+        Require(tries(after) == tries(before), "rebuild " + std::to_string(round) + " tried " + std::to_string(tries(after) - tries(before)) + " refused ranges again with the budget unchanged");
+        Require(after.refused - before.refused == refused && after.remembered - before.remembered == refused && after.made == before.made, "rebuild " + std::to_string(round) + " did not count its remembered refusals as refusals");
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(at(0));
+    }
+    before = after;
+    rebuild();
+    after = counted(ImportRequester::Build);
+    Require(after.made - before.made == 1 && HostImportCovers(importing, reinterpret_cast<std::uintptr_t>(at(fitting)), piece), "the budget a retired import freed was not used for a remembered refusal: " + std::to_string(after.made - before.made) + " made");
+    SetHostImportBudget(budget + piece);
+    before = after;
+    rebuild();
+    after = counted(ImportRequester::Build);
+    Require(after.made - before.made == 1 && HostImportCovers(importing, reinterpret_cast<std::uintptr_t>(at(fitting + 1)), piece), "a larger budget did not end the remembered refusals: " + std::to_string(after.made - before.made) + " made");
+    const auto lookups = counted(ImportRequester::Access);
+    static_cast<void>(HostImportFor(importing, reinterpret_cast<std::uintptr_t>(at(count - 1)), 16));
+    const auto looked = counted(ImportRequester::Access);
+    Require(looked.remembered == lookups.remembered && looked.made + looked.refused + looked.failed == lookups.made + lookups.refused + lookups.failed + 1, "a lookup that may evict was answered from the build's remembered refusals");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 1; index < count; ++index) mutation.Remove(at(index));
+        if (added) mutation.Remove(other);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    SetHostImportWindow(0);
+    ::operator delete(other, std::align_val_t{piece});
+    ::operator delete(block, std::align_val_t{piece});
 }
 
 void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& access) {
@@ -2123,6 +2199,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importBlockRemapTests(context);
     importBlockFailureTests(context, access);
     importBlockBudgetTests(context);
+    importRefusalMemoryTests(context);
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();
