@@ -40,9 +40,13 @@ void RunBdaContractTests() {
     program.BlockOrder().push_back(&block);
     ValidateBdaTarget(program, target);
     AgcDriver::Graphics::Require(!BdaInvocationsMayStop(program), "a BDA program with barriers must keep its invocations running");
-    program.Resources().stage = IrShaderStage::TessellationControl;
-    reject([&] { ValidateBdaTarget(program, target); }, "barrier-safe");
-    program.Resources().stage = IrShaderStage::Compute;
+    IrProgram synchronized;
+    synchronized.Info().usesDma = true;
+    for (const auto stage : {IrShaderStage::TessellationControl, IrShaderStage::Mesh}) {
+        synchronized.Resources().stage = stage;
+        ValidateBdaTarget(synchronized, target);
+        AgcDriver::Graphics::Require(!BdaInvocationsMayStop(synchronized), "a tessellation-control or mesh program without guest barriers must keep its invocations running at a BDA fault: its emission synchronizes them");
+    }
     RecompileRequest request{};
     request.target.bdaAbiVersion = BdaAbi::Version;
     request.target.supportedCapabilities = capabilities;

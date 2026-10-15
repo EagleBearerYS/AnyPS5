@@ -316,7 +316,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.waveLdsScope = WaveLdsScope(program, workgroup, state.laneCount);
     if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
     // Stopped invocations would leave the wave LDS barriers incomplete.
-    state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.waveExchange && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
+    state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.waveExchange && BdaInvocationsMayStop(program);
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.ReturnThroughResultPointers();
