@@ -1,0 +1,3 @@
+BASE=44df21632125dbe3113a19173e7ebb879da53003
+REPEAT=20
+EXTRA_TESTS='agc_driver_address_draw_reuse'
