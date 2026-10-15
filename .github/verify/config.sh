@@ -1,0 +1,4 @@
+BASE=6ea62f9b407b766c5adca63b37f63c70170f7612
+REPEAT=3
+EXTRA_TESTS='agc_driver_f64_transcendental'
+NO_BEFORE=1
