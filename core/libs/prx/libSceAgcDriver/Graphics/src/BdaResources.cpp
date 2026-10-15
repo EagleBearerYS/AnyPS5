@@ -136,6 +136,12 @@ namespace AgcDriver::Graphics {
 void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges) {
     imageTables = std::move(tables);
     imageTableRanges = std::move(ranges);
+    imageTableBytes.clear();
+    imageTableBytes.reserve(imageTableRanges.size());
+    for (const auto& [base, size] : imageTableRanges) {
+        const auto* bytes = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(base));
+        imageTableBytes.emplace_back(bytes, bytes + size);
+    }
 }
 
 void BdaResources::markWrittenPages() const {
@@ -146,8 +152,13 @@ void BdaResources::markWrittenPages() const {
     if (count == 0) return;
     Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) {
         const auto end = begin + bytes;
-        for (const auto& [base, size] : imageTableRanges) {
-            if (size != 0 && begin < base + size && base < end) {
+        for (std::size_t index = 0; index < imageTableRanges.size(); ++index) {
+            const auto [base, size] = imageTableRanges[index];
+            const auto low = std::max(begin, base);
+            const auto high = std::min(end, base + size);
+            if (low >= high) continue;
+            const auto* current = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(low));
+            if (std::memcmp(current, imageTableBytes[index].data() + (low - base), static_cast<std::size_t>(high - low)) != 0) {
                 std::ostringstream message;
                 message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
                 Require(false, message.str());
