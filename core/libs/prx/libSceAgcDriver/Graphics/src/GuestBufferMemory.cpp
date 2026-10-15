@@ -1964,12 +1964,10 @@ void GuestBufferMemory::UploadFinish() {
         region.direct = entry;
     }
     if ((space != nullptr || !lease.empty()) && accessUnbounded) {
-        if (StorageTexture::AnyPending()) StorageTexture::FlushAllPending("page-table build");
+        StorageTexture::FlushAllPending("page-table build");
     } else if (space != nullptr || !lease.empty()) {
-        if (StorageTexture::AnyPending()) {
-            for (const auto& [begin, end] : accessRanges) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "page-table access");
-            for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
-        }
+        for (const auto& [begin, end] : accessRanges) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "page-table access");
+        for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
     } else {
         for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
     }
