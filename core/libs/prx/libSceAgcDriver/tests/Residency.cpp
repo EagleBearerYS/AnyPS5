@@ -798,6 +798,23 @@ void CanonicalAliases() {
     Expect(fixture.manager->Slot(BasePage + 5) && !fixture.manager->Slot(BasePage + 0), "after the demotion the other alias can be the canonical one");
 }
 
+void EvictedAliasKeepsSharedGuard() {
+    scope = "evicted alias keeps the shared guard";
+    Fixture fixture(8, 1);
+    fixture.gpu.Alias(BasePage + 5, BasePage + 7);
+    fixture.Use(0, BasePage + 7);
+    fixture.gpu.Drain();
+    for (std::uint32_t page = 1; page < 4; ++page) {
+        fixture.Use(0, BasePage + page);
+        fixture.gpu.Drain();
+    }
+    Expect(fixture.manager->Slot(BasePage + 7) && fixture.Armed(BasePage + 7), "the alias is resident and its backing guarded");
+    fixture.Use(0, BasePage + 4, 2);
+    Expect(!fixture.manager->Slot(BasePage + 7) && fixture.manager->Slot(BasePage + 4) && fixture.manager->Slot(BasePage + 5), "one use evicts the alias and admits the other view of its backing");
+    Expect(fixture.Armed(BasePage + 5), "the evicted alias's unguard disarmed the guard the admitted view armed");
+    fixture.gpu.Drain();
+}
+
 void PublicationAndRanges() {
     scope = "publication and ranges";
     Fixture fixture(8, 2);
@@ -1172,6 +1189,7 @@ int main() {
         DemotionAndDrops();
         AdmissionRule();
         CanonicalAliases();
+        EvictedAliasKeepsSharedGuard();
         PublicationAndRanges();
         ConcurrentHooks();
         HostOverhead();

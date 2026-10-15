@@ -518,6 +518,7 @@ void ResidencyManager::admit(std::uint64_t first, std::uint64_t last) {
             exhausted = exhausted || !victim(first, last);
             continue;
         }
+        recordWriteBacks(writeBacks);
         if (import.cpuWritable && !device.Guard(page)) {
             ++counts.unguardable;
             freeSlot(*slot);
