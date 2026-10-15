@@ -1416,9 +1416,19 @@ private:
     }
 
     void CheckTableStores() {
-        if (!m_info.bdaWrites) return;
         for (auto& source : m_sources) {
-            if (source.tableColumn.has_value()) source.tableColumn->keyDomain.reset();
+            if (!source.tableColumn.has_value() || !source.tableColumn->keyDomain.has_value()) {
+                continue;
+            }
+            const auto& keys = m_sources[source.tableColumn->keyDomain->source];
+            const auto written = std::ranges::any_of(m_writtenSources, [&](const DescriptorSource& store) {
+                if (store.dwordCount != keys.dwordCount || store.runtime != keys.runtime) return false;
+                for (std::uint32_t i = 0; i < store.dwordCount; i++) {
+                    if (!EquivalentValue(m_program.Resources(), store.dwords[i], keys.dwords[i])) return false;
+                }
+                return true;
+            });
+            if (written) source.tableColumn->keyDomain.reset();
         }
     }
 
@@ -1476,6 +1486,11 @@ private:
         memory.gpuDescriptor = true;
         m_info.usesDma = true;
         m_info.bdaWrites = m_info.bdaWrites || access == BufferAccess::Write || access == BufferAccess::Atomic;
+        if (access == BufferAccess::Write || access == BufferAccess::Atomic) {
+            DescriptorSource descriptor;
+            MakeSource(*handle, 4u, false, false, descriptor);
+            m_writtenSources.push_back(std::move(descriptor));
+        }
         return true;
     }
 
@@ -1724,6 +1739,7 @@ private:
     bool m_deviceImageTables = false;
     std::vector<const IrValue*> m_tablePlanningReads;
     std::vector<std::uint32_t> m_tablePlanningMemory;
+    std::vector<DescriptorSource> m_writtenSources;
     struct EdgeSelectorEntry {
         IrBlock* block = nullptr;
         std::vector<bool> edges;
