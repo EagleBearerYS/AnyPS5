@@ -3685,6 +3685,17 @@ void Recorder::WaitToken(const Token& token) {
     Check(WaitTimeline(context.device, points, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"), 0), "vkWaitSemaphoresKHR recorder token");
 }
 
+void Recorder::FinishToken(const Token& token) {
+    WaitToken(token);
+    Reap();
+    while (!Reached(token)) {
+        Require(!inFlight.empty(), "a waited token's batches are neither in flight nor finished");
+        auto batch = std::move(inFlight.front());
+        inFlight.pop_front();
+        finish(std::move(batch), true, 4);
+    }
+}
+
 void Recorder::Sync() {
     PerformanceTimer frameTiming("Recorder.Sync");
     const auto source = std::exchange(announcedSource, 4);

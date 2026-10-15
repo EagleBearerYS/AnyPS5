@@ -200,6 +200,7 @@ public:
     Token AllToken() const;
     bool Reached(const Token& token) const;
     void WaitToken(const Token& token);
+    void FinishToken(const Token& token);
     bool TokenSignaled(const Token& token) const;
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires

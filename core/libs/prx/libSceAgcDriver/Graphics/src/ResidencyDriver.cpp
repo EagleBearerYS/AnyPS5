@@ -81,9 +81,7 @@ bool ResidencyDriver::Reached(const ResidencyToken& token) {
 
 void ResidencyDriver::Wait(const ResidencyToken& token) {
     recorder.Submit();
-    recorder.WaitToken(token);
-    recorder.Reap();
-    Require(recorder.Reached(token), "residency: a waited token's batches did not finish");
+    recorder.FinishToken(token);
 }
 
 ResidencyToken ResidencyDriver::Newest() {
