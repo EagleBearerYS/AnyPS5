@@ -144,6 +144,13 @@ static std::uintptr_t AboveStackGuard(std::uintptr_t start, std::uintptr_t end) 
     return cursor;
 }
 
+static bool AtStackReserveBottom(std::uintptr_t start, std::uintptr_t end) {
+    MEMORY_BASIC_INFORMATION memory{};
+    if (VirtualQuery(reinterpret_cast<void*>(start), &memory, sizeof(memory)) != sizeof(memory))
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualQuery failed");
+    return memory.State == MEM_RESERVE && reinterpret_cast<std::uintptr_t>(memory.AllocationBase) == start && reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize > end;
+}
+
 static int mprotect(void* addr, size_t len, int prot) {
     GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(addr), len, WinProtFromPosix(prot));
     if (prot != PROT_NONE && KernelArena::Get().Owns(addr, len)) CommitArenaRange(addr, len, WinProtFromPosix(prot));
@@ -1082,7 +1089,8 @@ int DoMprotect(const void* addr, size_t len, int prot) {
         const auto requestedBytes = static_cast<std::size_t>(insideEnd - requested);
 #ifdef _WIN32
         const bool hostStack = !KernelArena::Get().Owns(requestedPointer, requestedBytes);
-        const auto inside = hostStack ? AboveStackGuard(requested, insideEnd) : requested;
+        const bool reserveBottom = hostStack && nativeProtection != PROT_NONE && AtStackReserveBottom(requested, insideEnd);
+        const auto inside = hostStack && !reserveBottom ? AboveStackGuard(requested, insideEnd) : requested;
         if (inside == insideEnd) {
             RecordProtection(requestedPointer, requestedBytes, prot);
             return 0;
