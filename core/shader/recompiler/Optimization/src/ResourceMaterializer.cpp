@@ -1283,7 +1283,7 @@ void ResourceMaterializer::EvaluateMemoryBuffers(const IrResourcePlan& plan, con
             const auto& descriptor = plan.descriptorSources.at(sites[index].source);
             DescriptorValue value;
             value.dwordCount = descriptor.dwordCount;
-            bool evaluated = descriptor.dwordCount == 4u;
+            bool evaluated = descriptor.dwordCount == (sites[index].address ? 2u : 4u);
             for (std::uint32_t word = 0; evaluated && word < descriptor.dwordCount; ++word) evaluated = descriptor.dwords[word] != nullptr && evaluator.Evaluate(descriptor.dwords[word], value.dwords[word]);
             values[index] = evaluated ? value : DescriptorValue{};
         }
