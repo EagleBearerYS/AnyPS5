@@ -558,11 +558,12 @@ namespace {
 
 std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const DescriptorValue& value, const BufferStoreSite& site) {
     if (site.address) {
-        if (value.dwordCount != 2u) return std::nullopt;
+        if (value.dwordCount != 2u && value.dwordCount != 3u) return std::nullopt;
         constexpr std::uint64_t addressMask = (std::uint64_t{1} << 48u) - 1u;
         const auto base = (static_cast<std::uint64_t>(value.dwords[0]) | (static_cast<std::uint64_t>(value.dwords[1]) << 32u)) & addressMask & ~std::uint64_t{3u};
         if (base == 0u) return std::pair<std::uint64_t, std::uint64_t>{0u, 0u};
-        const auto first = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(site.offset)));
+        const auto registerOffset = value.dwordCount == 3u ? static_cast<std::uint64_t>(value.dwords[2] & ~3u) : std::uint64_t{0u};
+        const auto first = base + registerOffset + static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(site.offset)));
         return std::pair<std::uint64_t, std::uint64_t>{first, first + ((site.bytes + 3u) & ~std::uint64_t{3u})};
     }
     if (value.dwordCount != 4u) return std::nullopt;

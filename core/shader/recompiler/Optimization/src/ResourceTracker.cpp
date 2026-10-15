@@ -1520,16 +1520,22 @@ private:
 
     bool AddAddressSite(const IrValue& inst, const MemoryInfo& memory, const AddressOpcodeInfo& addressInfo, bool write) {
         const IrValue* handle = inst.Argument(0)->Resolve();
-        const IrValue* offset = inst.ArgumentCount() > 1u ? inst.Argument(1)->Resolve() : nullptr;
-        if (offset == nullptr || !offset->HasImmediate() || offset->Type() != IrType::U32) return false;
+        IrValue* offset = inst.ArgumentCount() > 1u ? inst.Argument(1)->Resolve() : nullptr;
+        if (offset == nullptr || offset->Type() != IrType::U32) return false;
+        const bool registerOffset = !offset->HasImmediate();
+        if (registerOffset && memory.kind != ResourceKind::ScalarAddress) return false;
         DescriptorSource descriptor;
         MakeSource(*handle, 2u, false, false, descriptor);
+        if (registerOffset) {
+            descriptor.dwords[2] = offset;
+            descriptor.dwordCount = 3u;
+        }
         std::uint32_t badDword = 0;
-        const bool fromMemory = ReadsGuestMemory(*handle);
+        const bool fromMemory = ReadsGuestMemory(*handle) || (registerOffset && ReadsGuestMemory(*offset));
         if (!ValidateSource(descriptor, badDword)) return false;
         BufferStoreSite site{InternSource(descriptor), 0u, false, memory.kind == ResourceKind::ScalarAddress};
         site.address = true;
-        site.offset = static_cast<std::uint32_t>((static_cast<std::int32_t>(memory.offset) & ~3) + (static_cast<std::int32_t>(offset->ImmediateU32()) & ~3));
+        site.offset = static_cast<std::uint32_t>((static_cast<std::int32_t>(memory.offset) & ~3) + (registerOffset ? 0 : static_cast<std::int32_t>(offset->ImmediateU32()) & ~3));
         site.bytes = std::max(addressInfo.dataBits / 8u, 1u) * addressInfo.components;
         site.dynamicOffset = false;
         site.fromMemory = fromMemory;

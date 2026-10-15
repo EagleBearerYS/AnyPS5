@@ -53,6 +53,18 @@ const Program& DynamicProgram() {
     return program;
 }
 
+const Program& UserDataOffsetProgram() {
+    static const Program program = [] {
+        using namespace Ops;
+        Program built;
+        built << SmemRegisterOffset(SLoadDwordX4, 28, 0, 2, 0u) << WaitAll;
+        LaneValues(built, 3);
+        StoreLane(built, 3, 28);
+        return built;
+    }();
+    return program;
+}
+
 std::uint64_t SrtAt(std::uint32_t slot) {
     return AddressOf(Srt.data()) + slot * 4u;
 }
@@ -122,10 +134,25 @@ void DynamicOffset(AgcDriver::VulkanDevice& device) {
     ExpectStored(outcome.words, 1, "SRT dynamic offset");
 }
 
+void UserDataOffset(AgcDriver::VulkanDevice& device) {
+    Srt.fill(0u);
+    const auto pointer = SrtUserData();
+    const std::array<std::uint32_t, 3> userData{pointer[0], pointer[1], OutputSlot * 4u};
+    const auto compiled = Compile(device, UserDataOffsetProgram(), userData);
+    const auto& result = *compiled.result;
+    Expect(!result.unboundedReads, "SRT user-data offset: a scalar read at a register offset the user data sets makes its reads unbounded (" + Reads(result) + ")");
+    ExpectRead(result, SrtAt(OutputSlot), SrtAt(OutputSlot + 4u), "SRT user-data offset: the s_load_dwordx4");
+    Expect(Inside(result.readRanges, {{AddressOf(Srt.data()), AddressOf(Srt.data()) + decltype(Srt)::ByteSize}}), "SRT user-data offset: the " + Reads(result) + " reach outside the SRT the program reads");
+    const auto outcome = Run(device, compiled, 1);
+    ExpectClean(outcome, "SRT user-data offset");
+    ExpectStored(outcome.words, 1, "SRT user-data offset");
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     WideReads(device);
     PointerChain(device);
     DynamicOffset(device);
+    UserDataOffset(device);
 }
 
 }
