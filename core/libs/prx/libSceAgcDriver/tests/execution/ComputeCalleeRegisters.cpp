@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -22,11 +23,11 @@ constexpr std::uint32_t Untouched = 0xcafebabeu;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> First{0x852b8685u, 0x4a04000au, 0xbea8030bu, 0xbefc030au, 0x7d880090u, 0xbf068080u, 0xbe80200eu, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> Second{0x852b8685u, 0x3a04000au, 0x8028810bu, 0xbefc030bu, 0x7d860090u, 0xbf078080u, 0xbe80200eu, 0xbf810000u};
-alignas(256) std::array<std::uint32_t, 64> Program32{};
-alignas(256) std::array<std::uint32_t, 64> Program64{};
-alignas(256) std::array<std::uint32_t, Records * 4u> Table{};
-alignas(256) std::array<std::uint32_t, 8> Srt{};
-alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+TestGuest::Array<std::uint32_t, 64> Program32;
+TestGuest::Array<std::uint32_t, 64> Program64;
+TestGuest::Array<std::uint32_t, Records * 4u> Table;
+TestGuest::Array<std::uint32_t, 8> Srt;
+TestGuest::Array<std::uint32_t, Threads * Results> Output;
 
 constexpr std::array<std::uint32_t, Records> Arguments{0x11110000u, 0x22220000u, 0x33330000u, 0x44440000u};
 constexpr std::array<std::uint32_t, Records> Seconds{0x00000101u, 0x00000202u, 0x00000303u, 0x00000404u};
@@ -106,7 +107,7 @@ void Check(bool wave32) {
     Packet packet{const_cast<std::uint32_t*>(commands.data()), static_cast<std::uint32_t>(commands.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
     constexpr const char* Names[Results] = {"v2, written under exec", "s40", "SCC", "VCC", "M0", "the SCC its callee saw at entry"};
     for (std::uint32_t result = 0; result < Results; ++result) {
         for (std::uint32_t lane = 0; lane < Threads; ++lane) {
@@ -127,7 +128,7 @@ int main() {
             if (!device) return VulkanTestSkipped;
         }
         const auto table = Buffer(Table.data(), Records, 16u);
-        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
         std::copy(table.begin(), table.end(), Srt.begin());
         std::copy(output.begin(), output.end(), Srt.begin() + 4);
         for (std::uint32_t record = 0; record < Records; ++record) SetRecord(record, (record & 1u) == 0u ? First.data() : Second.data());

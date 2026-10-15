@@ -101,7 +101,7 @@ void ExecuteTests() {
         Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
         AgcDriver::Submit(&packet, 0);
         AgcDriverWaitIdle_nid_postfix();
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
         const auto launched = item.partial ? item.threads : item.groups * 64u;
         const auto filled = std::min(launched, item.records);
         const auto step = item.stride / 4u;

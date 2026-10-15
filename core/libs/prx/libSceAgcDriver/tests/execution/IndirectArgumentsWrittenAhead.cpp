@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -18,10 +19,10 @@ void Require(bool condition, const std::string& message) {
 alignas(256) std::array<std::uint32_t, 9> WriterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000202u, 0x7e020203u, 0x7e040204u, 0xe07c0000u, 0x80020000u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000281u, 0xe0c80000u, 0x80020000u, 0xbf810000u};
 
-alignas(256) std::array<std::uint32_t, 4> Arguments{1, 1, 1, 0};
-alignas(256) std::array<std::uint32_t, 4> ArgumentsDescriptor{};
-alignas(256) std::array<std::uint32_t, 4> Counter{};
-alignas(256) std::array<std::uint32_t, 4> CounterDescriptor{};
+TestGuest::Array<std::uint32_t, 4> Arguments{1, 1, 1, 0};
+TestGuest::Array<std::uint32_t, 4> ArgumentsDescriptor;
+TestGuest::Array<std::uint32_t, 4> Counter;
+TestGuest::Array<std::uint32_t, 4> CounterDescriptor;
 alignas(256) volatile std::uint32_t Gate = 1;
 alignas(256) volatile std::uint32_t Done = 0;
 
@@ -59,8 +60,8 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
-        ArgumentsDescriptor = Descriptor(Arguments.data(), sizeof(Arguments));
-        CounterDescriptor = Descriptor(Counter.data(), sizeof(Counter));
+        ArgumentsDescriptor = Descriptor(Arguments.data(), decltype(Arguments)::ByteSize);
+        CounterDescriptor = Descriptor(Counter.data(), decltype(Counter)::ByteSize);
         std::vector<std::uint32_t> warmUp;
         Program(warmUp, CounterCode.data(), {Low(CounterDescriptor.data()), High(CounterDescriptor.data())});
         warmUp.insert(warmUp.end(), {0xc0031500u, 1, 1, 1, 0x8041u});

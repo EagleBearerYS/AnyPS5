@@ -65,8 +65,8 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
-        FirstDescriptor = Descriptor(First.data(), sizeof(First));
-        SecondDescriptor = Descriptor(Stale.data(), sizeof(Stale));
+        FirstDescriptor = Descriptor(First.data(), decltype(First)::ByteSize);
+        SecondDescriptor = Descriptor(Stale.data(), decltype(Stale)::ByteSize);
         std::vector<std::uint32_t> warmUp;
         Count(warmUp, FirstDescriptor.data());
         Count(warmUp, SecondDescriptor.data());
@@ -77,7 +77,7 @@ int main() {
         Require(Done == 2 && First[0] == 1 && Stale[0] == 1, "the warm-up dispatches did not run");
         First[0] = 0;
         Stale[0] = 0;
-        const auto fresh = Descriptor(Fresh.data(), sizeof(Fresh));
+        const auto fresh = Descriptor(Fresh.data(), decltype(Fresh)::ByteSize);
         std::vector<std::uint32_t> words;
         words.insert(words.end(), {0xc0053c00u, 0x13u, Low(&Gate), High(&Gate), 1u, 0xffffffffu, 0x19u});
         Count(words, FirstDescriptor.data());
