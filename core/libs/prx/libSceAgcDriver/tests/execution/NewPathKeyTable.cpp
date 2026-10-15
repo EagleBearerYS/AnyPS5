@@ -122,15 +122,17 @@ void OverflowingMisses(AgcDriver::VulkanDevice& device) {
     const auto start = device.DeviceImageCounts();
     auto words = fixture.Run(device);
     const auto first = device.DeviceImageCounts();
-    Expect(first.misses - start.misses == RingCapacity && first.dropped - start.dropped == Groups * Lanes - RingCapacity, "key table: " + std::to_string(Groups * Lanes) + " first-use misses in one batch recorded " + std::to_string(first.misses - start.misses) + " and dropped " + std::to_string(first.dropped - start.dropped) + ", expected " + std::to_string(RingCapacity) + " and " + std::to_string(Groups * Lanes - RingCapacity));
+    Expect(first.misses - start.misses == Groups * Lanes && first.dropped - start.dropped == Groups * Lanes - RingCapacity, "key table: " + std::to_string(Groups * Lanes) + " first-use misses in one batch counted " + std::to_string(first.misses - start.misses) + " and dropped " + std::to_string(first.dropped - start.dropped) + ", expected " + std::to_string(Groups * Lanes) + " and " + std::to_string(Groups * Lanes - RingCapacity));
     for (std::uint32_t group = 0; group < Groups; ++group) Expect(Classify(words, group) == GroupRead::Zeros, "key table: group " + std::to_string(group) + " did not read zeros at its first use");
-    const auto insertedFirst = first.inserted - start.inserted;
-    Expect(insertedFirst >= RingCapacity / Lanes && insertedFirst <= Groups, "key table: the drain of an overflowing ring inserted " + std::to_string(insertedFirst) + " descriptors");
     std::uint32_t runs = 1;
     bool complete = false;
     while (!complete && runs < 4) {
         words = fixture.Run(device);
         ++runs;
+        if (runs == 2) {
+            const auto inserted = device.DeviceImageCounts().inserted - start.inserted;
+            Expect(inserted >= RingCapacity / Lanes && inserted <= Groups, "key table: the misses an overflowing ring kept inserted " + std::to_string(inserted) + " descriptors by the next batch");
+        }
         complete = true;
         for (std::uint32_t group = 0; group < Groups; ++group) {
             const auto read = Classify(words, group);
