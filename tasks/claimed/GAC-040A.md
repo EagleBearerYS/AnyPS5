@@ -20,3 +20,5 @@ These are from Resident Evil Village's fast-tree boot (qfW-full.log 63498-63528)
 - Under that pressure the build refused the title's ~770 MiB heap (0x230200000+0x30100000), so the heap got a heap mirror. Something then took part of the heap's range off the write watch: an eviction, or an earlier import of part of it that isn't settled or watched, or a block import (#6457).
 - So: check budget pressure plus F3 plus #6457 first.
 - **A Linux repro idea:** a heap over the budget, with a part of its range imported and then evicted, or imported unwatched (`APS5_WRITE_WATCH_IMPORTS=unwatch` as Windows' stand-in), then an address-based build.
+
+claimed-by: cloud-2 2026-10-15T20:58:19Z
