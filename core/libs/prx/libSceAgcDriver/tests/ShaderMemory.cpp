@@ -1278,7 +1278,7 @@ void verifyTableSnapshotReuse() {
         else require(outcome.reuse.compared == 1u && outcome.reuse.wordsRead == Records * 8u, ("table snapshot reuse: " + what + ": an unchanged unwatched table was not compared and reused").c_str());
     };
     const auto expectReread = [&](const Outcome& outcome, const std::string& what) {
-        require(outcome.reuse.unwritten == 0u && outcome.reuse.wordsRead >= Records * 8u, ("table snapshot reuse: " + what + ": the table was not read again").c_str());
+        require(outcome.reuse.unwritten == 0u && outcome.reuse.wordsRead == Records * 8u, ("table snapshot reuse: " + what + ": the table was not read again exactly once").c_str());
     };
 
     const auto fresh = capture(request, heap, Bytes, nullptr);

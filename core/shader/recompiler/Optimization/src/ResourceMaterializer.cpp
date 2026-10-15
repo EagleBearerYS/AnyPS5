@@ -605,6 +605,8 @@ private:
         auto& records = columns[source];
         const auto& column = *plan.descriptorSources.at(source).tableColumn;
         stamp = {};
+        comparedRuns.clear();
+        comparedWords.clear();
         const bool active = source >= activeSources.size() || activeSources[source] != 0u;
         if (!active) {
             records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Inactive));
@@ -742,8 +744,13 @@ private:
             }
             if (records.states[record] == RecordState::Read) split.emplace_back(record, slots);
         }
-        std::vector<std::uint32_t> read(total);
-        ReadRuns(runs, read);
+        std::vector<std::uint32_t> read;
+        if (!comparedWords.empty() && runs == comparedRuns) {
+            read = std::move(comparedWords);
+        } else {
+            read.resize(total);
+            ReadRuns(runs, read);
+        }
         const auto firstWord = tables.words.size();
         auto next = split.begin();
         for (std::uint32_t record = 0; record < records.keys; record++) {
@@ -819,7 +826,11 @@ private:
         }
         std::vector<std::uint32_t> read(memo.words.size());
         ReadRuns(memo.runs, read);
-        if (read != memo.words) return false;
+        if (read != memo.words) {
+            comparedRuns = memo.runs;
+            comparedWords = std::move(read);
+            return false;
+        }
         if (stamp.generation != 0u) memo.stamp = stamp;
         return true;
     }
@@ -959,6 +970,8 @@ private:
     std::unordered_map<std::uint64_t, bool> wholePages;
     std::size_t indexed = 0;
     SrtWriteStamp stamp;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> comparedRuns;
+    std::vector<std::uint32_t> comparedWords;
     static constexpr std::uint32_t NoValue = std::numeric_limits<std::uint32_t>::max();
 };
 
