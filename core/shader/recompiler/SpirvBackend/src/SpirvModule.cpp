@@ -123,6 +123,101 @@ void SpirvModule::EndHelperFunction() {
     inHelperFunction = false;
 }
 
+void SpirvModule::ReturnThroughResultPointers() {
+    if (inHelperFunction) throw std::runtime_error("SpirvModule::ReturnThroughResultPointers called inside a helper function");
+    if (unpatchedPhiIncomings != 0) throw std::runtime_error("SpirvModule::ReturnThroughResultPointers called with unpatched OpPhi incoming pairs");
+    struct Rewrite {
+        std::uint32_t result;
+        std::uint32_t pointer;
+        std::uint32_t type;
+        std::uint32_t parameter;
+    };
+    const auto voidType = Type(spv::OpTypeVoid);
+    const std::array<std::vector<std::uint32_t>*, 2> sections{&functionInstructions, &helperFunctionInstructions};
+    const auto instructions = [](const std::vector<std::uint32_t>& section, auto&& visit) {
+        for (std::size_t offset = 0; offset < section.size(); offset += section[offset] >> spv::WordCountShift) {
+            visit(std::span<const std::uint32_t>(section.data() + offset, section[offset] >> spv::WordCountShift));
+        }
+    };
+    std::map<std::uint32_t, Rewrite> rewrites;
+    for (const auto* section : sections) {
+        std::uint32_t function = 0;
+        std::vector<std::uint32_t> types;
+        instructions(*section, [&](std::span<const std::uint32_t> words) {
+            const auto opcode = words[0] & spv::OpCodeMask;
+            if (opcode == spv::OpFunction) {
+                function = words[1] != voidType && (words[3] & spv::FunctionControlDontInlineMask) != 0u ? words[2] : 0u;
+                types = {voidType};
+                if (function != 0u) rewrites.emplace(function, Rewrite{words[1], Type(spv::OpTypePointer, static_cast<std::uint32_t>(spv::StorageClassFunction), words[1]), 0u, AllocateId()});
+            } else if (opcode == spv::OpFunctionParameter && function != 0u) {
+                types.push_back(words[1]);
+            } else if (opcode == spv::OpLabel && function != 0u) {
+                auto& rewrite = rewrites.at(function);
+                types.push_back(rewrite.pointer);
+                rewrite.type = Type(spv::OpTypeFunction, std::span<const std::uint32_t>(types));
+                function = 0u;
+            }
+        });
+    }
+    if (rewrites.empty()) return;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> variables;
+    std::map<std::uint32_t, std::vector<std::uint32_t>> callees;
+    for (const auto* section : sections) {
+        std::uint32_t caller = 0;
+        instructions(*section, [&](std::span<const std::uint32_t> words) {
+            const auto opcode = words[0] & spv::OpCodeMask;
+            if (opcode == spv::OpFunction) caller = words[2];
+            if (opcode != spv::OpFunctionCall || !rewrites.contains(words[3])) return;
+            if (variables.emplace(std::pair{caller, words[3]}, 0u).second) callees[caller].push_back(words[3]);
+        });
+    }
+    for (auto& [key, variable] : variables) variable = AllocateId();
+    for (auto* section : sections) {
+        std::vector<std::uint32_t> rewritten;
+        rewritten.reserve(section->size());
+        std::uint32_t caller = 0;
+        const Rewrite* current = nullptr;
+        bool entry = false;
+        instructions(*section, [&](std::span<const std::uint32_t> words) {
+            const auto opcode = words[0] & spv::OpCodeMask;
+            if (opcode == spv::OpFunction) {
+                caller = words[2];
+                entry = true;
+                const auto found = rewrites.find(caller);
+                current = found == rewrites.end() ? nullptr : &found->second;
+                if (current != nullptr) {
+                    appendInstruction(rewritten, spv::OpFunction, voidType, caller, words[3], current->type);
+                    return;
+                }
+            } else if (opcode == spv::OpLabel && entry) {
+                entry = false;
+                if (current != nullptr) appendInstruction(rewritten, spv::OpFunctionParameter, current->pointer, current->parameter);
+                rewritten.insert(rewritten.end(), words.begin(), words.end());
+                if (const auto found = callees.find(caller); found != callees.end()) {
+                    for (const auto callee : found->second) appendInstruction(rewritten, spv::OpVariable, rewrites.at(callee).pointer, variables.at({caller, callee}), spv::StorageClassFunction);
+                }
+                return;
+            } else if (opcode == spv::OpFunctionEnd) {
+                current = nullptr;
+            } else if (opcode == spv::OpReturnValue && current != nullptr) {
+                appendInstruction(rewritten, spv::OpStore, current->parameter, words[1]);
+                appendInstruction(rewritten, spv::OpReturn);
+                return;
+            } else if (opcode == spv::OpFunctionCall) {
+                const auto found = rewrites.find(words[3]);
+                if (found != rewrites.end()) {
+                    const auto variable = variables.at({caller, words[3]});
+                    appendInstruction(rewritten, spv::OpFunctionCall, voidType, AllocateId(), words.subspan(3), variable);
+                    appendInstruction(rewritten, spv::OpLoad, found->second.result, words[2], variable);
+                    return;
+                }
+            }
+            rewritten.insert(rewritten.end(), words.begin(), words.end());
+        });
+        *section = std::move(rewritten);
+    }
+}
+
 void SpirvModule::RequireVersion(std::uint32_t version) {
     this->version = std::max(this->version, version);
 }

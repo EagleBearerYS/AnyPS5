@@ -3369,10 +3369,15 @@ void verifyBdaReadFallbackFunctions() {
             std::size_t lookupFaults = 0;
             std::size_t lookupVariables = 0;
             std::size_t readerLookups = 0;
+            std::set<std::uint32_t> results;
+            for (std::size_t cursor = 5; cursor < five.size(); cursor += five[cursor] >> 16u) {
+                require((five[cursor] >> 16u) != 0 && (five[cursor] >> 16u) <= five.size() - cursor, "BDA read functions: truncated SPIR-V instruction");
+                if ((five[cursor] & 0xffffu) == spv::OpFunctionCall) results.insert(five.begin() + static_cast<std::ptrdiff_t>(cursor + 4), five.begin() + static_cast<std::ptrdiff_t>(cursor + (five[cursor] >> 16u)));
+            }
             for (std::size_t cursor = 5; cursor < five.size();) {
                 const auto length = five[cursor] >> 16u;
-                require(length != 0 && length <= five.size() - cursor, "BDA read functions: truncated SPIR-V instruction");
                 const auto op = five[cursor] & 0xffffu;
+                const bool resultLoad = op == spv::OpLoad && results.contains(five[cursor + 3]);
                 if (op == spv::OpName) names[five[cursor + 1]] = reinterpret_cast<const char*>(&five[cursor + 2]);
                 if (op == spv::OpFunction) {
                     function = names[five[cursor + 2]];
@@ -3388,13 +3393,13 @@ void verifyBdaReadFallbackFunctions() {
                     if (callee == "probe_bda_pointer" || callee.starts_with("read_bda_dword_bytes")) ++mainProbes;
                     if (callee == span) ++spanCalls;
                 }
-                if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && function == span) ++spanLoads;
+                if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && !resultLoad && function == span) ++spanLoads;
                 if (op == spv::OpFunctionCall && function == span && names[five[cursor + 3]] == loader) ++spanLoaderCalls;
-                if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && function == loader) ++loaderLoads;
+                if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && !resultLoad && function == loader) ++loaderLoads;
                 if (op == spv::OpFunctionCall && function == loader) ++loaderCalls;
-                if (op == spv::OpLoad && function == reader) ++readerLoads[length > 4u && (five[cursor + 4] & spv::MemoryAccessVolatileMask) != 0u];
+                if (op == spv::OpLoad && !resultLoad && function == reader) ++readerLoads[length > 4u && (five[cursor + 4] & spv::MemoryAccessVolatileMask) != 0u];
                 if (op == spv::OpFunctionCall && function == "get_bda_pointer" && names[five[cursor + 3]] == "record_bda_fault") ++lookupFaults;
-                if (op == spv::OpVariable && function == "get_bda_pointer") ++lookupVariables;
+                if (op == spv::OpVariable && function == "get_bda_pointer" && !results.contains(five[cursor + 2])) ++lookupVariables;
                 if (op == spv::OpFunctionCall && function == reader && names[five[cursor + 3]] == "get_bda_pointer") ++readerLookups;
                 cursor += length;
             }
