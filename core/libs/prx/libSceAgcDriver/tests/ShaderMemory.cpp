@@ -1674,11 +1674,13 @@ void verifyTableSnapshotReuse() {
     const auto hidden = reinterpret_cast<std::uintptr_t>(paged) + 4096u;
     GuestArena::GuestArenaSetProtection_nid_postfix(hidden, 4096u, 0x01u);
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(hidden, 4096u);
+    std::fprintf(stderr, "probe paged before capture: accessible=%d collect=%llu\n", (int)AgcDriver::GuestMemory::Accessible(reinterpret_cast<const void*>(hidden), 4096u), (unsigned long long)AgcDriver::GuestMemory::CollectWrites(reinterpret_cast<std::uintptr_t>(paged), PagedBytes));
     const auto pagedUnmapped = capture(pagedRequest, paged, PagedBytes, nullptr);
     GuestArena::GuestArenaSetProtection_nid_postfix(hidden, 4096u, 0x04u);
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(hidden, 4096u);
     const auto unmappedCode = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped));
     const auto& hiddenCodes = pagedUnmapped.tables.tables.at(0).codes;
+    std::fprintf(stderr, "probe paged: unwritten=%llu shared=%llu columns=%llu compared=%llu wordsRead=%llu suppliedShared=%llu code127=%llx code128=%llx code255=%llx code256=%llx unmapped=%llx watched=%d\n", (unsigned long long)pagedUnmapped.reuse.unwritten, (unsigned long long)pagedUnmapped.reuse.shared, (unsigned long long)pagedUnmapped.reuse.columns, (unsigned long long)pagedUnmapped.reuse.compared, (unsigned long long)pagedUnmapped.reuse.wordsRead, (unsigned long long)pagedUnmapped.supplied.shared, (unsigned long long)hiddenCodes.at(127u), (unsigned long long)hiddenCodes.at(128u), (unsigned long long)hiddenCodes.at(255u), (unsigned long long)hiddenCodes.at(256u), (unsigned long long)unmappedCode, (int)watched);
     require(pagedUnmapped.reuse.unwritten == 0u && pagedUnmapped.reuse.shared == 0u && pagedUnmapped.reuse.columns == 1u && pagedUnmapped.supplied.shared == 0u && hiddenCodes.at(127u) != unmappedCode && hiddenCodes.at(128u) == unmappedCode && hiddenCodes.at(255u) == unmappedCode && hiddenCodes.at(256u) != unmappedCode, "table snapshot reuse: the records of an unmapped page were not read again as Unmapped poison");
     require(heldRecords(pagedReused, paged, PagedRecords) && sharesColumn(pagedReused, pagedFresh), "table snapshot reuse: unmapping a page changed the column read before it");
     const auto pagedBack = capture(pagedRequest, paged, PagedBytes, nullptr);
