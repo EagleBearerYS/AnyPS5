@@ -64,6 +64,8 @@ Statistics& Stats() {
     return statistics;
 }
 
+std::atomic<std::uint64_t> shadowSerial{1};
+
 struct UnitShadow {
     Context context;
     // The import's range and buffer (taken at creation: a publish under the import table's mutex
@@ -76,6 +78,7 @@ struct UnitShadow {
     // whether a slab -> import copy was recorded at that generation.
     std::vector<std::uint64_t> generation;
     std::vector<std::uint8_t> published;
+    std::vector<std::uint8_t> guarded;
     // Slab k covers units [k * SlabUnits(), (k + 1) * SlabUnits()), made on demand; a failed
     // allocation is not retried before the noted present.
     std::vector<std::shared_ptr<ShadowSlab>> slabs;
@@ -90,6 +93,7 @@ struct UnitShadow {
     std::pair<std::uint64_t, std::uint64_t> UnitRange(std::uint64_t unit) const { return {std::max(UnitBegin(unit), importBase), std::min(UnitBegin(unit + 1), ImportEnd())}; }
     bool Live(std::uint64_t unit) const { return generation[unit] != 0 && published[unit] == 0; }
     void Recount() {
+        shadowSerial.fetch_add(1, std::memory_order_relaxed);
         std::uint32_t live = 0;
         for (std::uint64_t unit = 0; unit < Units(); ++unit) live += Live(unit) ? 1u : 0u;
         liveUnits = live;
@@ -109,6 +113,24 @@ struct Shadows {
 Shadows& Registry() {
     static Shadows shadows;
     return shadows;
+}
+
+struct WrittenQueue {
+    std::mutex mutex;
+    std::vector<std::uint64_t> pages;
+    std::atomic<bool> pending{false};
+};
+
+WrittenQueue& Written() {
+    static WrittenQueue queue;
+    return queue;
+}
+
+void shadowWritten(std::span<const std::uint64_t> pages) {
+    auto& queue = Written();
+    std::lock_guard lock(queue.mutex);
+    queue.pages.insert(queue.pages.end(), pages.begin(), pages.end());
+    queue.pending.store(true, std::memory_order_release);
 }
 
 VkDeviceSize SlabBytes(const ShadowSlab& slab) {
@@ -155,6 +177,7 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
             --registry.liveSlabs;
         }
         registry.byBase.erase(found);
+        shadowSerial.fetch_add(1, std::memory_order_relaxed);
     }
     auto shadow = std::make_shared<UnitShadow>();
     shadow->context = context;
@@ -165,6 +188,7 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
     const auto units = (import.base + import.bytes - shadow->base + UnitBytes - 1) / UnitBytes;
     shadow->generation.assign(static_cast<std::size_t>(units), 0);
     shadow->published.assign(static_cast<std::size_t>(units), 0);
+    shadow->guarded.assign(static_cast<std::size_t>(units), 0);
     const auto slabs = (units + SlabUnits() - 1) / SlabUnits();
     shadow->slabs.assign(static_cast<std::size_t>(slabs), nullptr);
     shadow->slabFailedUntil.assign(static_cast<std::size_t>(slabs), 0);
@@ -185,10 +209,37 @@ void changedUnits(const UnitShadow& shadow, std::uint64_t first, std::uint64_t l
     GuestMemory::ChangedBlocks(begin, static_cast<std::size_t>(end - begin), std::span(shadow.generation).subspan(static_cast<std::size_t>(first), count), changed, cpu);
 }
 
+void applyWritten() {
+    auto& queue = Written();
+    if (!queue.pending.load(std::memory_order_acquire)) return;
+    std::vector<std::uint64_t> pages;
+    {
+        std::lock_guard lock(queue.mutex);
+        pages.swap(queue.pages);
+        queue.pending.store(false, std::memory_order_release);
+    }
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    std::vector<std::shared_ptr<UnitShadow>> changed;
+    for (const auto page : pages) {
+        const auto address = page << 16u;
+        for (const auto& shadow : overlapping(registry, address, address + 1u)) {
+            const auto unit = shadow->UnitOf(address);
+            if (unit >= shadow->Units()) continue;
+            if (shadow->guarded[unit] == 1) shadow->guarded[unit] = 0;
+            if (shadow->generation[unit] == 0) continue;
+            shadow->generation[unit] = 0;
+            Stats().staleDroppedCpu.fetch_add(1, std::memory_order_relaxed);
+            if (std::find(changed.begin(), changed.end(), shadow) == changed.end()) changed.push_back(shadow);
+        }
+    }
+    for (const auto& shadow : changed) shadow->Recount();
+}
+
 std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t firstUnit, std::uint32_t units) {
     VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     info.size = static_cast<VkDeviceSize>(units) * UnitBytes;
-    info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (context.bufferDeviceAddress ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer buffer = VK_NULL_HANDLE;
     if (context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer) != VK_SUCCESS) return nullptr;
@@ -196,6 +247,8 @@ std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t first
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocation.allocationSize = requirements.size;
+    const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
+    if (context.bufferDeviceAddress) allocation.pNext = &flags;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     try {
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -211,7 +264,12 @@ std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t first
         context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
         return nullptr;
     }
-    return std::make_shared<ShadowSlab>(context, buffer, memory, firstUnit, units);
+    auto slab = std::make_shared<ShadowSlab>(context, buffer, memory, firstUnit, units);
+    if (context.bufferDeviceAddress) {
+        const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
+        slab->address = context.Function<PFN_vkGetBufferDeviceAddress>("vkGetBufferDeviceAddress")(context.device, &addressInfo);
+    }
+    return slab;
 }
 
 struct SlabCopies {
@@ -489,6 +547,110 @@ std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope
     return units;
 }
 
+std::vector<ShadowMapping> ShadowMappings(std::uint64_t address, std::size_t bytes) {
+    std::vector<ShadowMapping> mappings;
+    if (!UnitShadowEnabled() || bytes == 0) return mappings;
+    GuestMemory::SetShadowWriteObserver(&shadowWritten);
+    applyWritten();
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    std::vector<std::shared_ptr<UnitShadow>> shadows;
+    {
+        auto& registry = Registry();
+        std::lock_guard lock(registry.mutex);
+        shadows = overlapping(registry, address, end);
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unmappable;
+    for (const auto& shadow : shadows) {
+        const auto begin = std::max(address, shadow->importBase);
+        const auto stop = std::min(end, shadow->ImportEnd());
+        if (stop <= begin) continue;
+        const auto first = shadow->UnitOf(begin);
+        const auto last = shadow->UnitOf(stop - 1);
+        std::vector<std::uint64_t> candidates;
+        {
+            std::lock_guard lock(Registry().mutex);
+            for (auto unit = first; unit <= last; ++unit) {
+                if (shadow->generation[unit] != 0 && shadow->guarded[unit] == 0 && shadow->slabs[static_cast<std::size_t>(unit / SlabUnits())] != nullptr) candidates.push_back(unit);
+            }
+        }
+        std::vector<std::uint64_t> guardedNow;
+        std::vector<std::uint64_t> refused;
+        for (const auto unit : candidates) {
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            if (unitEnd > unitBegin && GuestMemory::GuardWrites(unitBegin, static_cast<std::size_t>(unitEnd - unitBegin))) guardedNow.push_back(unit);
+            else refused.push_back(unit);
+        }
+        if (!guardedNow.empty()) {
+            const auto walkBegin = std::max(shadow->UnitBegin(guardedNow.front()), shadow->importBase);
+            const auto walkEnd = std::min(shadow->UnitBegin(guardedNow.back() + 1), shadow->ImportEnd());
+            if (walkEnd > walkBegin) GuestMemory::CollectWritesUncached(walkBegin, static_cast<std::size_t>(walkEnd - walkBegin));
+        }
+        applyWritten();
+        std::lock_guard lock(Registry().mutex);
+        for (const auto unit : guardedNow) shadow->guarded[unit] = 1;
+        for (const auto unit : refused) shadow->guarded[unit] = 2;
+        std::vector<std::uint8_t> changed, cpu;
+        changedUnits(*shadow, first, last, changed, cpu);
+        bool dropped = false;
+        for (auto unit = first; unit <= last; ++unit) {
+            const auto k = static_cast<std::size_t>(unit - first);
+            if (shadow->generation[unit] == 0) continue;
+            const auto& slab = shadow->slabs[static_cast<std::size_t>(unit / SlabUnits())];
+            if (changed[k] == GuestMemory::BlockWritten || slab == nullptr) {
+                if (slab != nullptr) (cpu[k] != 0 ? Stats().staleDroppedCpu : Stats().staleDroppedDriver).fetch_add(1, std::memory_order_relaxed);
+                shadow->generation[unit] = 0;
+                dropped = true;
+                continue;
+            }
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            if (unitEnd <= unitBegin) continue;
+            if (shadow->guarded[unit] != 1) {
+                if (shadow->Live(unit)) unmappable.emplace_back(unitBegin, unitEnd);
+                continue;
+            }
+            Require(slab->address != 0, "a unit shadow slab mapped for a page-table read has no device address");
+            const auto device = slab->address + (unit - slab->firstUnit) * UnitBytes + (unitBegin - shadow->UnitBegin(unit));
+            if (!mappings.empty() && mappings.back().slab == slab && mappings.back().end == unitBegin && mappings.back().device + (mappings.back().end - mappings.back().begin) == device) {
+                mappings.back().end = unitEnd;
+            } else {
+                mappings.push_back({unitBegin, unitEnd, device, slab});
+            }
+            slab->lastUse = Recorder::Presents();
+        }
+        if (dropped) shadow->Recount();
+    }
+    for (const auto& [unitBegin, unitEnd] : unmappable) PublishShadow(unitBegin, static_cast<std::size_t>(unitEnd - unitBegin), PublishScope::Whole, PublishReason::Hook);
+    return mappings;
+}
+
+bool ShadowWritesQueued() {
+    return Written().pending.load(std::memory_order_acquire);
+}
+
+std::uint64_t ShadowSerial() {
+    return shadowSerial.load(std::memory_order_relaxed);
+}
+
+void KeepShadowed(std::uint64_t begin, std::uint64_t end, const ShadowSlab& slab, std::uint64_t generation) {
+    if (!UnitShadowEnabled() || end <= begin) return;
+    applyWritten();
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    for (const auto& shadow : overlapping(registry, begin, end)) {
+        const auto low = std::max(begin, shadow->importBase);
+        const auto high = std::min(end, shadow->ImportEnd());
+        if (high <= low) continue;
+        bool kept = false;
+        for (auto unit = shadow->UnitOf(low); unit <= shadow->UnitOf(high - 1); ++unit) {
+            if (shadow->generation[unit] == 0 || shadow->slabs[static_cast<std::size_t>(unit / SlabUnits())].get() != &slab) continue;
+            shadow->generation[unit] = generation;
+            shadow->published[unit] = 0;
+            kept = true;
+        }
+        if (kept) shadow->Recount();
+    }
+}
+
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
     if (!UnitShadowEnabled() || bytes == 0) return false;
     const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
@@ -698,6 +860,7 @@ std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& i
 
 void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> ranges, std::uint64_t generation) {
     if (!UnitShadowEnabled() || ranges.empty() || generation == 0) return;
+    applyWritten();
     auto& registry = Registry();
     std::uint64_t bytes = 0;
     std::uint64_t lost = 0;
@@ -785,6 +948,7 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
     ++registry.retired;
     if (TraceEnabled()) std::fprintf(stderr, "[shadow] retire import 0x%llx+0x%llx: %zu units published, %llu dropped (memory no longer registered)\n", static_cast<unsigned long long>(import.base), static_cast<unsigned long long>(import.bytes), published, static_cast<unsigned long long>(dropped));
     registry.byBase.erase(found);
+    shadowSerial.fetch_add(1, std::memory_order_relaxed);
 }
 
 void PublishAllShadows(const Context& context, PublishReason reason) {
@@ -814,6 +978,7 @@ void DestroyShadows(VkDevice device) {
             --registry.liveSlabs;
         }
         it = registry.byBase.erase(it);
+        shadowSerial.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

@@ -63,6 +63,7 @@ struct ShadowSlab {
     VkDeviceMemory memory;
     std::uint64_t firstUnit;
     std::uint32_t units;
+    VkDeviceAddress address = 0;
     std::uint64_t lastUse = 0;
     // Destinations handed out for a write-back in progress: such a slab is never evicted.
     std::atomic<std::uint32_t> pins{0};
@@ -91,6 +92,16 @@ struct ShadowedRange {
 // publish records nothing (the store's own stamp makes the unit stale; a recorded publish would land
 // over the store later).
 std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason);
+struct ShadowMapping {
+    std::uint64_t begin;
+    std::uint64_t end;
+    VkDeviceAddress device;
+    std::shared_ptr<ShadowSlab> slab;
+};
+std::vector<ShadowMapping> ShadowMappings(std::uint64_t address, std::size_t bytes);
+std::uint64_t ShadowSerial();
+bool ShadowWritesQueued();
+void KeepShadowed(std::uint64_t begin, std::uint64_t end, const ShadowSlab& slab, std::uint64_t generation);
 // No GpuMutex, no tracker: conservative (a unit with a generation and no publish counts), for
 // hook-free readers and a build's stage A.
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes);

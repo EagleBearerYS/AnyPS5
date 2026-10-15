@@ -3,6 +3,7 @@
 #include "ImageTableAbi.hpp"
 #include "DeviceImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <atomic>
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <iomanip>
 #include <sstream>
@@ -26,7 +28,12 @@ BdaResources::BdaResources(const Context& context) : deviceImages(context.device
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) : BdaResources(context) {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    pages = overrides.empty() ? memory.PageTable(context) : memory.PageTableWith(context, overrides);
+    std::vector<Abi::Range> mapped(overrides.begin(), overrides.end());
+    mapped.insert(mapped.end(), memory.ShadowOverrides().begin(), memory.ShadowOverrides().end());
+    std::sort(mapped.begin(), mapped.end(), [](const Abi::Range& left, const Abi::Range& right) { return left.begin < right.begin; });
+    pages = mapped.empty() ? memory.PageTable(context) : memory.PageTableWith(context, mapped);
+    shadowRanges.assign(memory.ShadowOverrides().begin(), memory.ShadowOverrides().end());
+    shadowSlabs = memory.ShadowSlabs();
     ownRanges = memory.OwnRanges();
     writeGrants = memory.WriteGrants();
     Require(ownRanges.size() <= std::numeric_limits<std::uint32_t>::max() && writeGrants.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
@@ -150,6 +157,8 @@ void BdaResources::markWrittenPages() const {
     Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!shadowRanges.empty()) gpu.lock();
     Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) {
         const auto end = begin + bytes;
         for (std::size_t index = 0; index < imageTableRanges.size(); ++index) {
@@ -164,7 +173,14 @@ void BdaResources::markWrittenPages() const {
                 Require(false, message.str());
             }
         }
-        GuestMemory::MarkWritten(begin, bytes);
+        const auto generation = GuestMemory::MarkWritten(begin, bytes);
+        if (generation == 0) return;
+        for (std::size_t index = 0; index < shadowRanges.size(); ++index) {
+            const auto& range = shadowRanges[index];
+            const auto low = std::max(begin, range.begin);
+            const auto high = std::min(end, range.end);
+            if (low < high && (range.permissions & Abi::Write) != 0u) KeepShadowed(low, high, *shadowSlabs[index], generation);
+        }
     }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];

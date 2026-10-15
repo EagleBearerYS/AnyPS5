@@ -4192,6 +4192,11 @@ std::vector<ShaderRecompiler::BdaAbi::Range> ShaderResources::planWriteStaging()
         }
     }
     if (total < minimum || total > maximum) return {};
+    for (const auto& segment : segments) {
+        for (const auto& shadowed : guestMemory.ShadowOverrides()) {
+            if (shadowed.begin < segment.end && segment.begin < shadowed.end) return {};
+        }
+    }
     std::vector<VkDeviceSize> offsets;
     VkDeviceSize cursor = 0;
     for (const auto& segment : segments) {

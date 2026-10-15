@@ -89,6 +89,7 @@ std::atomic<std::uint64_t> collectDirtyRuns{0};
 std::atomic<std::uint64_t> trackerWaits{0};
 std::atomic<std::uint64_t> trackerAcquisitions{0};
 std::atomic<const ResidencyHooks*> residencyHooks{nullptr};
+std::atomic<void (*)(std::span<const std::uint64_t>)> shadowWriteObserver{nullptr};
 std::atomic<void (*)(std::uint64_t, std::size_t, GuestArena::MappingChange, std::uint32_t)> mappingListener{nullptr};
 std::uintptr_t PagesBase();
 std::size_t PagesSize();
@@ -1924,22 +1925,34 @@ namespace {
 #ifdef _WIN32
 void reportGuardedWrites(const std::uintptr_t* pages, std::size_t count) {
     const auto* hooks = residencyHooks.load(std::memory_order_acquire);
-    if (hooks == nullptr || hooks->cpuWritten == nullptr || count == 0) return;
+    const auto shadows = shadowWriteObserver.load(std::memory_order_acquire);
+    if (count == 0 || ((hooks == nullptr || hooks->cpuWritten == nullptr) && shadows == nullptr)) return;
     std::vector<std::uint64_t> indices(count);
     for (std::size_t index = 0; index < count; ++index) indices[index] = pages[index] >> ResidencyPageShift;
-    hooks->cpuWritten(indices);
+    if (hooks != nullptr && hooks->cpuWritten != nullptr) hooks->cpuWritten(indices);
+    if (shadows != nullptr) shadows(indices);
 }
 #endif
+
+void observeGuards() {
+#ifdef _WIN32
+    const bool observed = residencyHooks.load(std::memory_order_acquire) != nullptr || shadowWriteObserver.load(std::memory_order_acquire) != nullptr;
+    GuestArena::GuestArenaSetWriteGuardObserver_nid_postfix(observed ? &reportGuardedWrites : nullptr);
+#endif
+}
 
 }
 
 void SetResidencyHooks(const ResidencyHooks* hooks) {
     Pages().initialize();
     if (hooks != nullptr) GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
-#ifdef _WIN32
-    GuestArena::GuestArenaSetWriteGuardObserver_nid_postfix(hooks != nullptr ? &reportGuardedWrites : nullptr);
-#endif
     residencyHooks.store(hooks, std::memory_order_release);
+    observeGuards();
+}
+
+void SetShadowWriteObserver(void (*observer)(std::span<const std::uint64_t> pages)) {
+    shadowWriteObserver.store(observer, std::memory_order_release);
+    observeGuards();
 }
 
 bool GuardWrites(std::uint64_t address, std::size_t bytes) {

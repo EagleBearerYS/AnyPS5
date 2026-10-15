@@ -135,6 +135,12 @@ std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, 
         Require(address != 0 && address % sizeof(Abi::PageEntry) == 0, "a BDA page table leaf is not aligned for its entries");
         addresses[window] = address;
     }
+    if (previous != nullptr && shared == windows.size() && previous->leaves.size() == windows.size()) {
+        std::lock_guard lock(newest.mutex);
+        ++newest.counts.tables;
+        newest.counts.sharedWindows += shared;
+        return previous;
+    }
     table->first = std::make_shared<Buffer>(context, addresses.size() * sizeof(std::uint64_t), TableUsage);
     std::memcpy(table->first->Bytes().data(), addresses.data(), addresses.size() * sizeof(std::uint64_t));
     Require(table->first->DeviceAddress() % sizeof(std::uint64_t) == 0, "the BDA page table is not aligned for its entries");

@@ -30,6 +30,8 @@ public:
 private:
     void markWrittenPages() const;
     std::shared_ptr<const BdaPageTable> pages;
+    std::vector<ShaderRecompiler::BdaAbi::Range> shadowRanges;
+    std::vector<std::shared_ptr<ShadowSlab>> shadowSlabs;
     std::vector<ShaderRecompiler::BdaAbi::Range> ownRanges;
     std::vector<ShaderRecompiler::BdaAbi::Grant> writeGrants;
     std::unique_ptr<Buffer> table;

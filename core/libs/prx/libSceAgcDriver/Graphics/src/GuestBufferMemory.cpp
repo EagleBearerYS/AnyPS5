@@ -14,6 +14,7 @@
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -70,6 +71,13 @@ struct GuestBufferMemory::AddressSpace {
     mutable std::mutex tableMutex;
     mutable std::shared_ptr<const BdaPageTable> pageTable;
     mutable std::uint64_t residencySerial = 0;
+    struct OverrideTable {
+        std::shared_ptr<const BdaPageTable> base;
+        std::vector<ShaderRecompiler::BdaAbi::Range> overrides;
+        std::shared_ptr<const BdaPageTable> table;
+    };
+    mutable std::array<OverrideTable, 4> overrideTables;
+    mutable std::size_t nextOverrideTable = 0;
 };
 
 namespace {
@@ -1963,14 +1971,79 @@ void GuestBufferMemory::UploadFinish() {
         Require(entry != nullptr, unservedView(region.begin, region.end, "no import covers it"));
         region.direct = entry;
     }
-    if ((space != nullptr || !lease.empty()) && accessUnbounded) {
-        StorageTexture::FlushAllPending("page-table build");
-    } else if (space != nullptr || !lease.empty()) {
-        for (const auto& [begin, end] : accessRanges) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "page-table access");
-        for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
-    } else {
-        for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
+    shadowOverrides.clear();
+    shadowSlabs.clear();
+    if (space != nullptr || !lease.empty()) {
+        if (accessUnbounded) StorageTexture::FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, "page-table build", PublishScope::None);
+        else for (const auto& [begin, end] : accessRanges) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "page-table access", PublishScope::None);
+        for (const auto& [begin, end] : writes) StorageTexture::PublishShadowsOnly(begin, static_cast<std::size_t>(end - begin), PublishScope::Whole, "page-table build");
     }
+    for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
+    if (space != nullptr || !lease.empty()) mapShadows();
+}
+
+namespace {
+
+struct ShadowSnapshot {
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t serial = 0;
+    std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
+    std::vector<std::weak_ptr<ShadowSlab>> slabs;
+};
+
+struct ShadowSnapshotTag {};
+
+}
+
+void GuestBufferMemory::mapShadows() {
+    constexpr auto everything = std::numeric_limits<std::size_t>::max();
+    if (!AnyShadowedOverlaps(0, everything)) return;
+    auto& snapshot = HostThreadLocal<ShadowSnapshot, ShadowSnapshotTag>();
+    std::vector<std::shared_ptr<ShadowSlab>> slabs;
+    const bool current = !ShadowWritesQueued() && snapshot.device == context.device && snapshot.serial == ShadowSerial() && std::all_of(snapshot.slabs.begin(), snapshot.slabs.end(), [&](const std::weak_ptr<ShadowSlab>& slab) {
+        slabs.push_back(slab.lock());
+        return slabs.back() != nullptr;
+    });
+    if (!current) {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        const auto mappings = ShadowMappings(0, everything);
+        snapshot.ranges.clear();
+        snapshot.slabs.clear();
+        slabs.clear();
+        for (const auto& mapping : mappings) {
+            snapshot.ranges.push_back({mapping.begin, mapping.end, mapping.device, ShaderRecompiler::BdaAbi::Read, 0u});
+            snapshot.slabs.push_back(mapping.slab);
+            slabs.push_back(mapping.slab);
+        }
+        snapshot.serial = ShadowSerial();
+        snapshot.device = context.device;
+    }
+    for (std::size_t index = 0; index < snapshot.ranges.size(); ++index) {
+        auto range = snapshot.ranges[index];
+        if (writableOver(range.begin, range.end)) range.permissions |= ShaderRecompiler::BdaAbi::Write;
+        shadowOverrides.push_back(range);
+        shadowSlabs.push_back(std::move(slabs[index]));
+    }
+}
+
+bool GuestBufferMemory::writableOver(std::uint64_t begin, std::uint64_t end) const {
+    std::vector<ShaderRecompiler::BdaAbi::Range> local;
+    std::span<const ShaderRecompiler::BdaAbi::Range> ranges;
+    if (space != nullptr) {
+        ranges = space->ranges;
+    } else {
+        for (const auto& region : regions) local.push_back(addressRange(region));
+        std::sort(local.begin(), local.end(), [](const auto& left, const auto& right) { return left.begin < right.begin; });
+        ranges = local;
+    }
+    auto found = std::upper_bound(ranges.begin(), ranges.end(), begin, [](std::uint64_t address, const ShaderRecompiler::BdaAbi::Range& range) { return address < range.begin; });
+    if (found == ranges.begin()) return false;
+    auto cursor = begin;
+    for (--found; found != ranges.end() && found->begin <= cursor && cursor < end; ++found) {
+        if (found->end <= cursor || (found->permissions & ShaderRecompiler::BdaAbi::Write) == 0u) return false;
+        cursor = found->end;
+    }
+    return cursor >= end;
 }
 
 VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {
@@ -2092,8 +2165,35 @@ std::vector<GuestBufferMemory::ImportSegment> GuestBufferMemory::WritableImportS
     return segments;
 }
 
+namespace {
+
+bool sameRanges(std::span<const ShaderRecompiler::BdaAbi::Range> left, std::span<const ShaderRecompiler::BdaAbi::Range> right) {
+    return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin(), [](const auto& a, const auto& b) { return a.begin == b.begin && a.end == b.end && a.deviceAddress == b.deviceAddress && a.permissions == b.permissions; });
+}
+
+}
+
 std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTableWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const {
     Require(uploaded && !committed, "guest GPU address ranges are not available");
+    if (space == nullptr) return buildWith(context, overrides);
+    const auto base = PageTable(context);
+    {
+        std::lock_guard lock(space->tableMutex);
+        for (const auto& cached : space->overrideTables) {
+            if (base != nullptr && cached.base == base && cached.table != nullptr && sameRanges(cached.overrides, overrides)) return cached.table;
+        }
+    }
+    auto table = buildWith(context, overrides);
+    std::lock_guard lock(space->tableMutex);
+    auto& slot = space->overrideTables[space->nextOverrideTable];
+    space->nextOverrideTable = (space->nextOverrideTable + 1u) % space->overrideTables.size();
+    slot.base = base;
+    slot.overrides.assign(overrides.begin(), overrides.end());
+    slot.table = table;
+    return table;
+}
+
+std::shared_ptr<const BdaPageTable> GuestBufferMemory::buildWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const {
     std::vector<ShaderRecompiler::BdaAbi::Range> mapped;
     if (space != nullptr) {
         mapped.assign(space->ranges.begin(), space->ranges.end());
