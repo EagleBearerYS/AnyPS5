@@ -15,6 +15,50 @@
 
 namespace AgcDriver::DriverDetail {
 
+std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
+    const auto memoryBuffer = [](const ShaderRecompiler::BufferStoreSite& site) { return site.fromMemory; };
+    const bool memoryBuffers = std::ranges::any_of(plan.info.bufferStores, memoryBuffer) || std::ranges::any_of(plan.info.bufferLoads, memoryBuffer);
+    if (!memoryBuffers && plan.info.deviceImageUses.empty()) return nullptr;
+    ShaderRecompiler::SrtRuntime runtime;
+    runtime.userData = userData;
+    runtime.shaderBase = shaderBase;
+    runtime.readMemory = [](void*, std::uint64_t at, std::uint32_t* value) {
+        std::uint32_t word = 0;
+        switch (queryPendingWrite(at, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
+            case ShaderMemory::PendingWrite::Sync:
+                return false;
+            case ShaderMemory::PendingWrite::KnownValue:
+            case ShaderMemory::PendingWrite::VerifyKnownValue:
+                break;
+            case ShaderMemory::PendingWrite::None:
+            case ShaderMemory::PendingWrite::Raw:
+            case ShaderMemory::PendingWrite::VerifyRaw:
+                if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(word))) return false;
+                std::memcpy(&word, reinterpret_cast<const void*>(at), sizeof(word));
+                break;
+        }
+        *value = word;
+        return true;
+    };
+    auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, runtime);
+    ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(expected, compiled.deviceImageInterfaces);
+    ShaderRecompiler::ShaderInvocation ranges;
+    const bool rebounded = memoryBuffers && ShaderRecompiler::RefreshMemoryBuffers(plan, runtime, compiled, ranges);
+    if (!rebounded && expected == compiled.deviceImages) return nullptr;
+    auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(compiled);
+    patched->deviceImages = std::move(expected);
+    if (rebounded) {
+        patched->writeRanges = std::move(ranges.writeRanges);
+        patched->readRanges = std::move(ranges.readRanges);
+        patched->unboundedWrites = ranges.unboundedWrites;
+        patched->unboundedReads = ranges.unboundedReads;
+        patched->memoryWriteRanges = ranges.memoryWriteRanges;
+        patched->memoryReadRanges = ranges.memoryReadRanges;
+    }
+    return patched;
+}
+
+
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
     PerformanceTimer timing("Driver.Dispatch");
     const auto address = (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u);
@@ -253,46 +297,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         return;
     }
     phaseTiming.Phase(PhaseQueuedLabels);
-    const auto memoryBuffer = [](const ShaderRecompiler::BufferStoreSite& site) { return site.fromMemory; };
-    const bool memoryBuffers = cached && (std::ranges::any_of(keepVariant->plan->info.bufferStores, memoryBuffer) || std::ranges::any_of(keepVariant->plan->info.bufferLoads, memoryBuffer));
-    if (cached && (memoryBuffers || !keepVariant->plan->info.deviceImageUses.empty())) {
-        ShaderRecompiler::SrtRuntime runtime;
-        runtime.userData = userData;
-        runtime.shaderBase = request.shader.codeAddress;
-        runtime.readMemory = [](void*, std::uint64_t at, std::uint32_t* value) {
-            std::uint32_t word = 0;
-            switch (queryPendingWrite(at, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
-                case ShaderMemory::PendingWrite::Sync:
-                    return false;
-                case ShaderMemory::PendingWrite::KnownValue:
-                case ShaderMemory::PendingWrite::VerifyKnownValue:
-                    break;
-                case ShaderMemory::PendingWrite::None:
-                case ShaderMemory::PendingWrite::Raw:
-                case ShaderMemory::PendingWrite::VerifyRaw:
-                    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(word))) return false;
-                    std::memcpy(&word, reinterpret_cast<const void*>(at), sizeof(word));
-                    break;
-            }
-            *value = word;
-            return true;
-        };
-        auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*keepVariant->plan, runtime);
-        ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(expected, compiledResult->deviceImageInterfaces);
-        ShaderRecompiler::ShaderInvocation ranges;
-        const bool rebounded = memoryBuffers && ShaderRecompiler::RefreshMemoryBuffers(*keepVariant->plan, runtime, *compiledResult, ranges);
-        if (rebounded || expected != compiledResult->deviceImages) {
-            auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(*compiledResult);
-            patched->deviceImages = std::move(expected);
-            if (rebounded) {
-                patched->writeRanges = std::move(ranges.writeRanges);
-                patched->readRanges = std::move(ranges.readRanges);
-                patched->unboundedWrites = ranges.unboundedWrites;
-                patched->unboundedReads = ranges.unboundedReads;
-                patched->memoryWriteRanges = ranges.memoryWriteRanges;
-                patched->memoryReadRanges = ranges.memoryReadRanges;
-            }
+    bool refreshed = false;
+    if (cached) {
+        if (auto patched = refreshedResult(*keepVariant->plan, *compiledResult, userData, request.shader.codeAddress)) {
             compiledResult = std::move(patched);
+            refreshed = true;
         }
     }
     const auto& compiled = *compiledResult;
@@ -327,13 +336,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     phaseTiming.Phase(PhaseSnapshots);
 
     std::shared_ptr<RecipeHit> recipeHit;
-    if (cached && keepVariant != nullptr && !stampValidate()) {
+    if (cached && keepVariant != nullptr && !stampValidate() && !refreshed) {
         recipeHit = localDevice->PrepareRecipe(keepVariant->recipe.load(std::memory_order_acquire), indirectArguments != 0);
         phaseTiming.Phase(PhaseRecipePrecheck);
     }
 
     std::shared_ptr<const Recipe> builtRecipe;
-    auto* const attachTo = stampValidate() ? nullptr : keepVariant != nullptr ? keepVariant.get() : attachVariant.get();
+    auto* const attachTo = stampValidate() || refreshed ? nullptr : keepVariant != nullptr ? keepVariant.get() : attachVariant.get();
     try {
         if (localDevice->PrepareComputePipeline(compiled, address)) localDevice->RecordComputePipeline(compiled);
     } catch (const std::exception& error) {

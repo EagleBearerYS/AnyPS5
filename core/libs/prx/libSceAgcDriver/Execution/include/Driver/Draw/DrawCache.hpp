@@ -92,6 +92,7 @@ enum class DrawVerdict { Drawn, Nothing, Rejected };
 
 struct StageCapture {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
+    std::shared_ptr<const ShaderRecompiler::IrResourcePlan> plan;
     std::vector<ShaderRecompiler::MemoryRegion> regions;
     std::uint64_t forgetSerial = 0;
     std::uint32_t pushOffset = 0;

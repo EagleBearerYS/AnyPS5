@@ -37,6 +37,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     }();
 
     stageCapture.regions = shaderMemory.TakeRecentRegions();
+    stageCapture.plan = capture->plan;
     recompiled[i] = true;
     memory = shaderMemory.Regions();
 
@@ -92,6 +93,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             if (stageCapture.compiled == nullptr || !CacheableResult(*stageCapture.compiled)) continue;
             auto variant = std::make_shared<DispatchVariant>();
             variant->compiled = stageCapture.compiled;
+            variant->plan = stageCapture.plan;
             variant->shader = programs[i].snapshot;
             variant->forgetSerial = stageCapture.forgetSerial;
             variant->pushOffset = stageCapture.pushOffset;

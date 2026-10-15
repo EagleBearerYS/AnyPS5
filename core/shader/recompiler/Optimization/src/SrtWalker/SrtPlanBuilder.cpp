@@ -68,7 +68,7 @@ void PlanBuilder::Run() {
 }
 
 bool PlanBuilder::ReadsAtRunTime() const {
-    if (!_deviceTables || _program.Resources().stage != IrShaderStage::Compute) return false;
+    if (!_deviceTables || (_program.Resources().stage != IrShaderStage::Compute && _program.Resources().stage != IrShaderStage::Pixel)) return false;
     const auto readsMemory = [](const IrValue* root) {
         std::vector<const IrValue*> pending{root};
         std::unordered_set<const IrValue*> seen;

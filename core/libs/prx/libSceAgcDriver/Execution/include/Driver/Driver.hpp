@@ -181,6 +181,7 @@ private:
     static bool knownValueCurrent(const WrittenBuffer& writer);
     ShaderMemory::PendingWrite classifyPendingWrite(std::uint64_t address, std::size_t bytes, std::uint64_t ValidateCounters::*& reason, const PendingView& pending, std::span<std::byte> known = {});
     static ShaderMemory::PendingWrite queryPendingWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
+    static std::shared_ptr<const ShaderRecompiler::RecompileResult> refreshedResult(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     void noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue);
     std::optional<WrittenBuffer> newestWriterLocked(std::uint64_t begin, std::uint64_t end) const;
     std::optional<WrittenBuffer> newestWriter(std::uint64_t begin, std::uint64_t end);

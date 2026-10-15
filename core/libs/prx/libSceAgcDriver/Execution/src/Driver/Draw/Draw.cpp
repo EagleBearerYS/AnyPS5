@@ -196,6 +196,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::vector<std::size_t> resultIndex(programs.size(), 0);
+    bool refreshedStages = false;
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::GeometryBack) continue;
         const auto& program = programs[i];
@@ -204,6 +205,13 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (drawHit) {
 
             programResults[i] = matched[i]->compiled.get();
+            if (matched[i]->plan != nullptr) {
+                if (auto patched = refreshedResult(*matched[i]->plan, *matched[i]->compiled, program.userData, program.binary.codeAddress)) {
+                    programResults[i] = patched.get();
+                    compiledStages.push_back(std::move(patched));
+                    refreshedStages = true;
+                }
+            }
             memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
         } else {
             if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
@@ -355,7 +363,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
 
     std::vector<std::shared_ptr<DispatchVariant>> recipeStages;
-    if (registerKey && !drawParameters.indirect && Graphics::DrawRecipes()) {
+    if (registerKey && !drawParameters.indirect && Graphics::DrawRecipes() && !refreshedStages) {
         recipeStages.reserve(programs.size());
         for (std::size_t i = 0; i < programs.size(); ++i) recipeStages.push_back(drawHit ? matched[i] : fresh[i]);
         if (std::all_of(recipeStages.begin(), recipeStages.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant == nullptr; })) recipeStages.clear();
