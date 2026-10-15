@@ -36,6 +36,10 @@
 #include <utility>
 
 namespace AgcDriver::Graphics {
+std::uint64_t BenchNow();
+std::uint64_t BenchWalked();
+void BenchSplitAdd(int slot, std::uint64_t startNs, std::uint64_t startWalked);
+void BenchSplitTick();
 
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews) {
     std::uint64_t key = 14695981039346656037ull;
@@ -1228,17 +1232,29 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const std::function<std::shared_ptr<StorageTexture>()>& lookup) {
     const auto lookupStart = std::chrono::steady_clock::now();
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
+    struct BenchWhole { std::uint64_t s; std::uint64_t w; ~BenchWhole() { BenchSplitAdd(0, s, w); BenchSplitTick(); } } benchWhole{BenchNow(), BenchWalked()};
     std::shared_ptr<StorageTexture> resident;
     try {
+        auto benchStep = BenchNow();
+        auto benchStepWalked = BenchWalked();
         resident = lookup();
+        BenchSplitAdd(1, benchStep, benchStepWalked);
+        benchStep = BenchNow();
+        benchStepWalked = BenchWalked();
         if (resident != nullptr) materializeRegisterClear(context, color, *resident);
+        BenchSplitAdd(2, benchStep, benchStepWalked);
     } catch (const std::exception& error) {
         static std::mutex reportMutex;
         static std::set<std::uint64_t> reported;
         std::lock_guard lock(reportMutex);
         if (reported.insert(color.address).second) std::fprintf(stderr, "[gpu] color target 0x%llx stays non-resident: %s\n", static_cast<unsigned long long>(color.address), error.what());
     }
-    if (resident != nullptr) materializeCmaskClear(context, color, resident);
+    {
+        const auto benchStep = BenchNow();
+        const auto benchStepWalked = BenchWalked();
+        if (resident != nullptr) materializeCmaskClear(context, color, resident);
+        BenchSplitAdd(3, benchStep, benchStepWalked);
+    }
     if (profile) {
         const auto lookupUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - lookupStart).count();
         ++outcome.targetLookups;
@@ -2588,7 +2604,11 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
         timer.phase(PhaseSetup);
         auto stored = recipe.targets[index].lock();
-        if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, state.colors[index].dccAddress)) return miss(DrawRecipeMiss::TargetGone);
+        const auto benchStep = BenchNow();
+        const auto benchStepWalked = BenchWalked();
+        const bool benchServed = stored != nullptr && StorageImageCached(context, stored.get()) && StorageImageServesKeys(*stored, state.colors[index].dccAddress);
+        BenchSplitAdd(18, benchStep, benchStepWalked);
+        if (!benchServed) return miss(DrawRecipeMiss::TargetGone);
         auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
             stored->Refresh();
             return stored;

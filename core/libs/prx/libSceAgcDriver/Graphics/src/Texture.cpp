@@ -1715,12 +1715,55 @@ LookupOutcomes& ThreadLookupOutcomes() {
     return outcomes;
 }
 
+bool BenchSplitOn() {
+    static const bool on = std::getenv("APS5_BENCH_SPLIT") != nullptr;
+    return on;
+}
+std::uint64_t BenchNow() { return BenchSplitOn() ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()) : 0; }
+std::uint64_t BenchWalked() { return BenchSplitOn() ? GuestMemory::ThreadCollectedBytes() : 0; }
+namespace {
+constexpr int BenchSlots = 24;
+std::array<std::atomic<std::uint64_t>, BenchSlots> benchNs{};
+std::array<std::atomic<std::uint64_t>, BenchSlots> benchCalls{};
+std::array<std::atomic<std::uint64_t>, BenchSlots> benchBytes{};
+const char* const benchNames[BenchSlots] = {"refreshResidentTarget", " lookup()", " materializeRegisterClear", " materializeCmaskClear", "Refresh", " CompletePendingCpuWrites x2", " refreshProved call", "  refreshProved true", " slow path", "  alias+FlushPending", "  CollectWrites", "  ProvedKeys", "  unchanged checks", "  unchanged tail", " proved: CollectWrites target", " proved: CollectWrites keys", " proved: UnchangedSinceAll", " proved: pending serial", "recipe: cached+serves keys", "", "", "", "", ""};
+}
+void BenchSplitAdd(int slot, std::uint64_t startNs, std::uint64_t startWalked) {
+    if (!BenchSplitOn()) return;
+    benchNs[slot].fetch_add(BenchNow() - startNs, std::memory_order_relaxed);
+    benchCalls[slot].fetch_add(1, std::memory_order_relaxed);
+    if (startWalked != 0) benchBytes[slot].fetch_add(BenchWalked() - startWalked, std::memory_order_relaxed);
+}
+void BenchSplitTick() {
+    if (!BenchSplitOn() || benchCalls[0].load() % 4096 != 0) return;
+    std::fprintf(stderr, "[bench-split] after %llu lookups\n", static_cast<unsigned long long>(benchCalls[0].load()));
+    for (int slot = 0; slot < BenchSlots; ++slot) {
+        const auto calls = benchCalls[slot].exchange(0);
+        const auto ns = benchNs[slot].exchange(0);
+        const auto bytes = benchBytes[slot].exchange(0);
+        if (calls == 0) continue;
+        std::fprintf(stderr, "[bench-split]   %-34s calls %7llu  avg %9.2f us  pages/call %8.1f\n", benchNames[slot], static_cast<unsigned long long>(calls), static_cast<double>(ns) / 1000.0 / static_cast<double>(calls), static_cast<double>(bytes) / 4096.0 / static_cast<double>(calls));
+    }
+}
+
 bool StorageTexture::Refresh() {
+    const auto benchStart = BenchNow();
+    const auto benchWalked = BenchWalked();
+    struct BenchEnd { std::uint64_t s; std::uint64_t w; ~BenchEnd() { BenchSplitAdd(4, s, w); } } benchEnd{benchStart, benchWalked};
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    auto benchStep = BenchNow();
+    auto benchStepWalked = BenchWalked();
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (descriptor.dccAddress != 0) CompletePendingCpuWrites(context, descriptor.dccAddress, DccKeyBytes(guestBytes));
-    if (refreshProved()) {
+    BenchSplitAdd(5, benchStep, benchStepWalked);
+    benchStep = BenchNow();
+    benchStepWalked = BenchWalked();
+    const bool benchProved = refreshProved();
+    BenchSplitAdd(6, benchStep, benchStepWalked);
+    if (benchProved) BenchSplitAdd(7, BenchNow(), BenchWalked());
+    struct BenchSlow { bool on; std::uint64_t s; std::uint64_t w; ~BenchSlow() { if (on) BenchSplitAdd(8, s, w); } } benchSlow{!benchProved, BenchNow(), BenchWalked()};
+    if (benchProved) {
         NoteProved();
         refreshesProved.fetch_add(1, std::memory_order_relaxed);
         if (profile) LookupOutcomes::Add(LookupOutcomes::RefreshProved, start);
@@ -1757,11 +1800,15 @@ bool StorageTexture::Refresh() {
     }
     // No publish: the upload below reads the stored units from the unit shadow itself.
     const bool flushed = FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias.get(), "storage refresh", PublishScope::None);
+    BenchSplitAdd(9, benchSlow.s, benchSlow.w);
+    benchStep = BenchNow();
+    benchStepWalked = BenchWalked();
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
     // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
     // since `generation` need no comparison.
     const auto current = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    BenchSplitAdd(10, benchStep, benchStepWalked);
     // Per tracked layer: changed since its generation (a keys change makes every layer stale).
     std::vector<bool> changed(trackedLayers, false);
     // Per 64 KiB block of the surface (blockGenerations): stamped since its layer's generation, and
@@ -1801,7 +1848,12 @@ bool StorageTexture::Refresh() {
             }
         };
         const auto keysStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        benchStep = BenchNow();
+        benchStepWalked = BenchWalked();
         keys = ProvedKeys();
+        BenchSplitAdd(11, benchStep, benchStepWalked);
+        benchStep = BenchNow();
+        benchStepWalked = BenchWalked();
         if (profile && descriptor.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, keysStart);
         if (keys != uploadedKeys) {
             changed.assign(trackedLayers, true);
@@ -1882,7 +1934,11 @@ bool StorageTexture::Refresh() {
             }
         }
     }
+    BenchSplitAdd(12, benchStep, benchStepWalked);
+    benchStep = BenchNow();
+    benchStepWalked = BenchWalked();
     if (unchanged) {
+        struct BenchTail { std::uint64_t s; std::uint64_t w; ~BenchTail() { BenchSplitAdd(13, s, w); } } benchTail{benchStep, benchStepWalked};
         ++Profile().storageReused;
         layerGeneration.assign(trackedLayers, current);
         refreshGeneration();
@@ -2015,15 +2071,30 @@ bool StorageTexture::refreshProved() {
     const auto bytes = static_cast<std::size_t>(guestBytes);
     std::array<GuestMemory::UnchangedQuery, 2> queries{};
     std::size_t used = 0;
-    if (GuestMemory::CollectWrites(descriptor.baseAddress, bytes) == 0) return false;
+    auto benchStep = BenchNow();
+    auto benchStepWalked = BenchWalked();
+    const auto benchCollected = GuestMemory::CollectWrites(descriptor.baseAddress, bytes);
+    BenchSplitAdd(14, benchStep, benchStepWalked);
+    if (benchCollected == 0) return false;
     queries[used++] = {descriptor.baseAddress, bytes, generation};
     if (descriptor.dccAddress != 0) {
         const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
         if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys) return false;
-        if (GuestMemory::CollectWrites(descriptor.dccAddress, keyCount) == 0) return false;
+        benchStep = BenchNow();
+        benchStepWalked = BenchWalked();
+        const auto benchKeysCollected = GuestMemory::CollectWrites(descriptor.dccAddress, keyCount);
+        BenchSplitAdd(15, benchStep, benchStepWalked);
+        if (benchKeysCollected == 0) return false;
         queries[used++] = {descriptor.dccAddress, keyCount, keyProof.generation};
     }
-    if (!GuestMemory::UnchangedSinceAll(std::span(queries.data(), used))) return false;
+    benchStep = BenchNow();
+    benchStepWalked = BenchWalked();
+    const bool benchUnchanged = GuestMemory::UnchangedSinceAll(std::span(queries.data(), used));
+    BenchSplitAdd(16, benchStep, benchStepWalked);
+    if (!benchUnchanged) return false;
+    benchStep = BenchNow();
+    benchStepWalked = BenchWalked();
+    struct BenchSerial { std::uint64_t s; std::uint64_t w; ~BenchSerial() { BenchSplitAdd(17, s, w); } } benchSerial{benchStep, benchStepWalked};
     const auto serial = PendingSerial();
     if (serial != refreshProof.pendingSerial) {
         if (otherPendingOverlaps()) return false;
