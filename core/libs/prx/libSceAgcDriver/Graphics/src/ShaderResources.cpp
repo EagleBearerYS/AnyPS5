@@ -1770,10 +1770,14 @@ void ShaderResources::buildComplete() {
         if (usesBda) {
             if (auto* residency = ResidencyDriver::Active()) {
                 residency->BeforeDispatch();
+                residency->UseForRead(readRanges);
                 if (pageTableStores || !guestMemory.Writes().empty()) {
                     std::vector<ResidencyRange> grants;
                     for (const auto& [begin, end] : guestMemory.Writes()) grants.push_back({begin, end - begin});
-                    residency->BeforeWritingDispatch(grants, pageTableStores);
+                    if (!storesUnbounded) {
+                        for (const auto& [begin, end] : storeRanges) grants.push_back({begin, end - begin});
+                    }
+                    residency->BeforeWritingDispatch(grants, pageTableStores && storesUnbounded);
                 }
             }
             const auto staged = computeBuild && pageTableStores && !storesUnbounded && !storeRanges.empty() ? planWriteStaging() : std::vector<ShaderRecompiler::BdaAbi::Range>{};

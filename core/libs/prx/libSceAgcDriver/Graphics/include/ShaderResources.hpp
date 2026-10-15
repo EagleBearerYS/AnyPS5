@@ -522,6 +522,7 @@ private:
     bool storesUnbounded = false;
     bool computeBuild = false;
     bool accessesUnbounded = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> accessRanges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> storeRanges;
     std::vector<GuestBufferMemory::ImportSegment> stagedSegments;

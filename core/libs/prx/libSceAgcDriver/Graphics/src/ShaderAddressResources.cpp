@@ -31,6 +31,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         if (tables != 0) {
             accessesUnbounded = accessesUnbounded || shader.program->unboundedReads || (shader.program->bdaWrites && shader.program->unboundedWrites);
             accessRanges.insert(accessRanges.end(), shader.program->readRanges.begin(), shader.program->readRanges.end());
+            readRanges.insert(readRanges.end(), shader.program->readRanges.begin(), shader.program->readRanges.end());
             if (shader.program->bdaWrites) accessRanges.insert(accessRanges.end(), shader.program->writeRanges.begin(), shader.program->writeRanges.end());
         }
         usesFaultBuffer = usesFaultBuffer || faults != 0;

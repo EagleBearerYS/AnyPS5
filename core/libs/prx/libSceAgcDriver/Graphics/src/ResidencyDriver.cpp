@@ -39,6 +39,14 @@ void ResidencyDriver::BeforeDispatch() {
     manager.Apply();
 }
 
+void ResidencyDriver::UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    constexpr std::uint64_t largest = std::uint64_t{8u} << 20u;
+    const std::lock_guard lock(GuestMemory::GpuMutex());
+    for (const auto& [begin, end] : ranges) {
+        if (end > begin && end - begin <= largest) manager.Use(begin, end - begin, ResidencyAccess::Read);
+    }
+}
+
 void ResidencyDriver::BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports) {
     for (const auto& grant : grants) manager.Demote(grant.address, grant.bytes);
     if (writableImports) manager.DemoteWritable();
