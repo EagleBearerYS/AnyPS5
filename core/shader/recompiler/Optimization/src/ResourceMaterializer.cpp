@@ -314,6 +314,7 @@ struct TableCounters {
     std::array<std::atomic<std::uint64_t>, PoisonReasonCount> poison{};
     std::atomic<std::uint64_t> narrowed{0};
     std::atomic<std::uint64_t> narrowSkipped{0};
+    std::atomic<std::uint64_t> selected{0};
     std::atomic<std::uint64_t> nanoseconds{0};
     std::atomic<long long> lastReport{0};
 };
@@ -341,8 +342,8 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms\n",
-        static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, %llu selected records, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms\n",
+        static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.selected.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
         static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
 }
 
@@ -526,6 +527,49 @@ private:
         tableCounters().narrowed.fetch_add(1, std::memory_order_relaxed);
     }
 
+    void Select(const TableColumn& column, ColumnRecords& records) {
+        const auto base = records.base;
+        const auto size = records.size;
+        DescriptorValue selection;
+        try {
+            walker.EvaluateDescriptorSource(plan, column.selection, runtime, selection);
+        } catch (const std::exception&) {
+            records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Unmapped));
+            return;
+        }
+        tableCounters().selected.fetch_add(1, std::memory_order_relaxed);
+        const auto offset = selection.dwords[0];
+        const auto entry = (column.addend + column.offset) & ~3u;
+        records.base = base + ((offset + column.offset) & ~3u) - entry;
+        records.size = entry + static_cast<std::uint64_t>(column.dwordCount) * sizeof(std::uint32_t);
+        records.records = 1u;
+        records.keys = 1u;
+        records.states.assign(1u, RecordState::Read);
+        records.words.assign(1u, 0u);
+        if (offset >= column.foldedAddend && offset > 0xffffffffu - column.foldedCarry) {
+            records.states.front() = RecordState::Carried;
+            return;
+        }
+        DescriptorValue value;
+        value.dwordCount = 8u;
+        std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t high = 0;
+        for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+            const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, size);
+            if (!position.has_value()) continue;
+            const auto address = base + *position;
+            if (!PageAccessible(address, base, base + size)) {
+                records.states.front() = RecordState::Unmapped;
+                return;
+            }
+            value.dwords[dword] = Read(address);
+            low = std::min(low, address);
+            high = std::max(high, address + sizeof(std::uint32_t));
+        }
+        records.words.front() = WordsIndex(value);
+        if (low < high) tables.ranges.emplace_back(low, high - low);
+    }
+
     std::uint32_t WordsIndex(const DescriptorValue& value) {
         const auto [found, inserted] = wordsIndex.try_emplace({value.dwords, value.dwordCount}, static_cast<std::uint32_t>(tables.words.size()));
         if (inserted) tables.words.push_back(value);
@@ -556,6 +600,10 @@ private:
             }
             records.base = heap.Base48();
             records.size = heap.GetSize();
+            if (column.selected) {
+                Select(column, records);
+                return records;
+            }
             records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset + (column.indirect ? 4u : 0u), records.size);
             if (records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
         }
