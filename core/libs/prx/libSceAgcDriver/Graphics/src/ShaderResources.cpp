@@ -1139,12 +1139,11 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
         forgetDeferredInputs();
         return;
     }
-    // Address-based shaders pin and mirror registered memory in prepareAddressBindings (reconciling
-    // imports retires buffers to the recorder, refreshing mirrors waits for recorded work): that is
-    // device-lock work, so their whole build waits for Complete(). Without tables the call only
-    // checks the bindings.
     lockedBuild = UsesAddressTables(compute);
-    if (lockedBuild) return;
+    if (lockedBuild) {
+        prepareAddressBindings(shaders);
+        return;
+    }
     unlockedPrepare = true;
     prepareAddressBindings(shaders);
     buildPrepare(shaders, nullptr, 0, 0, 0);
@@ -1153,10 +1152,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
 void ShaderResources::Complete() {
     Require(!completed, "shader resources were already completed");
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
-    if (lockedBuild) {
-        prepareAddressBindings(shaders);
-        buildPrepare(shaders, nullptr, 0, 0, 0);
-    }
+    if (lockedBuild) buildPrepare(shaders, nullptr, 0, 0, 0);
     buildComplete();
     forgetDeferredInputs();
 }

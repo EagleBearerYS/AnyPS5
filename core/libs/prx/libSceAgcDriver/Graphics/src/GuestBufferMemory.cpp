@@ -81,11 +81,33 @@ struct GuestBufferMemory::AddressSpace {
     mutable std::array<OverrideTable, 4> overrideTables;
     mutable std::size_t nextOverrideTable = 0;
     mutable std::uint64_t stamped = 0;
+    std::shared_ptr<const void> retired;
 };
 
 namespace {
 
 struct RetiredImport;
+
+struct RetiredSet {
+    std::vector<std::shared_ptr<void>> held;
+    std::shared_ptr<RetiredSet> next;
+};
+
+struct RetiredImports {
+    std::mutex mutex;
+    std::shared_ptr<RetiredSet> current = std::make_shared<RetiredSet>();
+};
+
+RetiredImports& Retired() {
+    static RetiredImports retired;
+    return retired;
+}
+
+std::shared_ptr<const void> RetiredSince() {
+    auto& retired = Retired();
+    std::lock_guard lock(retired.mutex);
+    return retired.current;
+}
 
 struct AddressSpaceCache {
     std::atomic<std::shared_ptr<const GuestBufferMemory::AddressSpace>> current;
@@ -143,6 +165,19 @@ struct HostImports {
     bool unwatchDmaBufImports = false;
     std::uint64_t useCounter = 0;
     std::uint64_t buildFloor = 0;
+    bool retireAllowed = true;
+    bool retireRefused = false;
+};
+
+struct RetireScope {
+    HostImports& state;
+    RetireScope(HostImports& state, bool allowed) : state(state) {
+        state.retireAllowed = allowed;
+        state.retireRefused = false;
+    }
+    ~RetireScope() { state.retireAllowed = true; }
+    RetireScope(const RetireScope&) = delete;
+    RetireScope& operator=(const RetireScope&) = delete;
 };
 
 HostImports& Imports() {
@@ -186,6 +221,7 @@ bool runCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::u
 bool joinedCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
 
 void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, HostImport>::iterator it, const GuestAllocations::Lease& lease, bool hold = true) {
+    Require(state.retireAllowed, "a host import was retired outside the device lock");
     // Results shadowed for the import reach its (old) buffer first where the memory is still a
     // readable registered range (the import retires because its registration vanished or changed
     // size); the holder below outlives the batch that copies them.
@@ -193,6 +229,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     ++state.epoch;
     state.liveBytes -= it->second.bytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
+    RetainRetiredImport(holder);
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) return;
     if (hold) recorder->KeepThroughHold(std::move(holder));
@@ -799,6 +836,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         }
         return nullptr;
     }
+    if (!state.retireAllowed && ((first != state.imports.end() && first->first < base + bytes) || live + bytes > budget)) {
+        state.retireRefused = true;
+        return nullptr;
+    }
     for (auto it = first; it != state.imports.end() && it->first < base + bytes;) {
         const auto next = std::next(it);
         retireImport(context.device, state, it, lease);
@@ -961,6 +1002,10 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
     if (state.freeMemory == nullptr) state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
     const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     if (generation == state.refreshedGeneration) return;
+    if (!state.retireAllowed && std::any_of(state.imports.begin(), state.imports.end(), [&](const auto& item) { return !sameRange(item.second, lease); })) {
+        state.retireRefused = true;
+        return;
+    }
     state.refreshedGeneration = generation;
     for (auto it = state.imports.begin(); it != state.imports.end();) {
         if (sameRange(it->second, lease)) {
@@ -1695,9 +1740,19 @@ std::string unservedView(std::uint64_t begin, std::uint64_t end, const char* why
 
 }
 
+void RetainRetiredImport(std::shared_ptr<void> holder) {
+    auto& retired = Retired();
+    std::lock_guard lock(retired.mutex);
+    retired.current->held.push_back(std::move(holder));
+    auto next = std::make_shared<RetiredSet>();
+    retired.current->next = next;
+    retired.current = std::move(next);
+}
+
 void GuestBufferMemory::AcquireRegistered() {
     Require(!uploaded && regions.empty() && lease.empty() && space == nullptr, "guest allocation lease must precede resource registration");
     ensurePinWaiter();
+    retiredSince = RetiredSince();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& timing = ThreadAddressTiming();
     const auto lap = [&](double& into, std::chrono::steady_clock::time_point& from) {
@@ -1742,14 +1797,27 @@ void GuestBufferMemory::AcquireRegistered() {
     }
     lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     lap(timing.leaseUs, at);
-    {
+    std::unique_lock<GuestMemory::GpuMutexType> deviceLock(GuestMemory::GpuMutex(), std::defer_lock);
+    const bool retiring = GuestMemory::GpuMutex().HeldByThisThread();
+    const auto withImports = [&](const auto& body) {
         auto& state = Imports();
-        std::lock_guard lock(state.mutex);
+        for (;;) {
+            {
+                std::lock_guard lock(state.mutex);
+                const RetireScope scope(state, retiring || deviceLock.owns_lock());
+                body(state);
+                if (!state.retireRefused) return;
+            }
+            Require(!retiring && !deviceLock.owns_lock(), "a host import refused to retire under the device lock");
+            deviceLock.lock();
+        }
+    };
+    withImports([&](HostImports& state) {
         if (importable) refreshImports(context, state, lease);
         if (importFloor == 0) importFloor = state.useCounter + 1;
         state.buildFloor = importFloor;
         importsEpoch = state.epoch;
-    }
+    });
     lap(timing.importsUs, at);
     regions.reserve(lease.size());
     bool mirrored = false;
@@ -1758,11 +1826,7 @@ void GuestBufferMemory::AcquireRegistered() {
         validate(range->address, range->bytes);
         Region region{range->address, range->address + range->bytes, range->writable};
         const HostImport* entry = nullptr;
-        if (importable) {
-            auto& state = Imports();
-            std::lock_guard lock(state.mutex);
-            entry = importAllocation(context, state, range->address, lease, 0, false);
-        }
+        if (importable) withImports([&](HostImports& state) { entry = importAllocation(context, state, range->address, lease, 0, false); });
         lap(timing.importsUs, at);
         if (entry != nullptr) {
             region.direct = entry;
@@ -1817,6 +1881,7 @@ void GuestBufferMemory::AcquireRegistered() {
             built->lease = std::move(lease);
             built->ranges = std::move(ranges);
             built->base = std::move(regions);
+            built->retired = retiredSince;
             regions.clear();
             lease.clear();
             space = std::move(built);

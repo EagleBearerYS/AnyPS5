@@ -514,6 +514,7 @@ void ReleaseRetiredCommittedImports() {
             return live != nullptr && live->chunk == memory;
         });
         auto holder = std::make_shared<RetiredView>(device, destroyBuffer, std::move(node));
+        RetainRetiredImport(holder);
         if (recorder != nullptr) recorder->KeepThroughHold(std::move(holder));
     }
 }

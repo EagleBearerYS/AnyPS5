@@ -37,6 +37,8 @@ struct HostImport {
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
 
+void RetainRetiredImport(std::shared_ptr<void> holder);
+
 struct ImportProbe {
     const char* failure = nullptr;
     VkResult result = VK_SUCCESS;
@@ -227,6 +229,7 @@ private:
     std::shared_ptr<const BdaPageTable> buildWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const;
     bool writableOver(std::uint64_t begin, std::uint64_t end) const;
     std::shared_ptr<const AddressSpace> space;
+    std::shared_ptr<const void> retiredSince;
     std::uint64_t importsEpoch = 0;
     std::uint64_t importFloor = 0;
     std::vector<Region> regions;
