@@ -1,4 +1,4 @@
-BUSY GAC-039 (claimed: port #1896 ae7542cde8 indirect-draw pipelining onto main 44df21632 for test/port-1896-indirect; reading the commit and main's DrawPipeline first)
+READY
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
