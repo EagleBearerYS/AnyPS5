@@ -473,6 +473,72 @@ std::uint32_t RouteFlatAccess(SpirvEmitterState& state, std::uint32_t address, s
     });
 }
 
+bool GroupableScalarLoad(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    if (inst.Opcode() != IrOpcode::LoadAddressU32 || inst.ArgumentCount() != 4u) return false;
+    const auto& mem = ctx.Memory(inst);
+    return mem.kind == ResourceKind::ScalarAddress && !mem.planningOnly && !RoutesApertures(ctx.state, mem);
+}
+
+bool JoinsScalarLoad(SpirvValueEmitContext& ctx, const IrValue& first, const IrValue& inst, std::uint32_t position) {
+    for (std::size_t argument = 0; argument < 4u; ++argument) {
+        const IrValue* left = first.Argument(argument)->Resolve();
+        const IrValue* right = inst.Argument(argument)->Resolve();
+        if (left == right) continue;
+        if (!left->HasImmediate() || !right->HasImmediate() || left->Type() != right->Type() || left->ImmediateU64() != right->ImmediateU64()) return false;
+    }
+    const auto& leading = ctx.Memory(first);
+    const auto& mem = ctx.Memory(inst);
+    return first.Flags<MemoryFlags>().pc == inst.Flags<MemoryFlags>().pc && leading.addressIsFull == mem.addressIsFull && (mem.offset & ~3u) == (leading.offset & ~3u) + position * 4u;
+}
+
+void ScanScalarLoadGroups(SpirvValueEmitContext& ctx, const IrBlock& block) {
+    auto& groups = ctx.state.scalarLoadGroups;
+    if (!groups.scanned.insert(&block).second) return;
+    std::vector<const IrValue*> run;
+    const auto flush = [&] {
+        if (run.size() > 1u) groups.leaders[run.front()] = run;
+        run.clear();
+    };
+    for (const IrValue* inst : block.Instructions()) {
+        if (inst->Opcode() == IrOpcode::ReferenceU32) continue;
+        if (!GroupableScalarLoad(ctx, *inst)) {
+            flush();
+            continue;
+        }
+        if (!run.empty() && (run.size() == 4u || !JoinsScalarLoad(ctx, *run.front(), *inst, static_cast<std::uint32_t>(run.size())))) flush();
+        run.push_back(inst);
+    }
+    flush();
+}
+
+bool EmitGroupedScalarLoad(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem) {
+    auto& state = ctx.state;
+    auto& groups = state.scalarLoadGroups;
+    if (const auto defined = groups.defined.find(&inst); defined != groups.defined.end()) {
+        ctx.Define(inst, defined->second);
+        groups.defined.erase(defined);
+        return true;
+    }
+    if (inst.Parent() == nullptr) return false;
+    ScanScalarLoadGroups(ctx, *inst.Parent());
+    const auto leader = groups.leaders.find(&inst);
+    if (leader == groups.leaders.end()) return false;
+    const auto members = std::move(leader->second);
+    groups.leaders.erase(leader);
+    const auto count = static_cast<std::uint32_t>(members.size());
+    const auto type = TypeU32Composite(state, count);
+    const auto values = EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), type, ConstantU32CompositeZero(state, count), [&] {
+        return ConstructU32Composite(state, count, EmitBdaDwordReads(ctx, inst, GuestAddressBase(ctx, inst, mem), mem.offset & ~3u, count, true));
+    });
+    for (std::uint32_t k = 0; k < count; ++k) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, values, k);
+        if (k == 0u) ctx.Define(inst, value);
+        else groups.defined[members[k]] = value;
+    }
+    return true;
+}
+
 void LoadAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t bits) {
     const auto& mem = ctx.Memory(inst);
     if (bits == 32u && mem.planningOnly) {
@@ -490,6 +556,9 @@ void LoadAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t 
         ctx.Define(inst, bits == 32u ? LoadWord(ctx, inst, mem) : LoadSubword(ctx, inst, mem, bits));
         return;
     case ResourceKind::ScalarAddress:
+        if (bits == 32u && EmitGroupedScalarLoad(ctx, inst, mem)) return;
+        ctx.Define(inst, LoadBda(ctx, inst, mem, bits));
+        return;
     case ResourceKind::Flat:
     case ResourceKind::Global:
         ctx.Define(inst, LoadBda(ctx, inst, mem, bits));

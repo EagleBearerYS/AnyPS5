@@ -3856,6 +3856,29 @@ void verifyGuardedNullPointers() {
         const auto capture = memory.Capture(descriptor.request);
         require(capture->plan->srtReads.empty() && capture->snapshot.srtPoison.empty() && memory.Regions().empty(), "guarded pointer: a compute program without images read its nested V# in the capture instead of at run time");
     }
+    {
+        point(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(zeroTable.data())));
+        descriptor.request.context.memory = {};
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(descriptor.request);
+        descriptor.request.context.memory = memory.Regions();
+        const auto compiled = Recompile(descriptor.request, *capture);
+        const auto words = compiled->spirv.Words();
+        std::unordered_set<std::uint32_t> spanReads;
+        std::size_t calls = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "grouped scalar reads: truncated SPIR-V instruction");
+            const auto op = words[cursor] & 0xffffu;
+            if (op == spv::OpName && count > 2u) {
+                const std::string_view name(reinterpret_cast<const char*>(words.data() + cursor + 2u));
+                if (name == "read_bda_span" || name == "read_bda_span_stop") spanReads.insert(words[cursor + 1u]);
+            }
+            if (op == spv::OpFunctionCall && count > 3u && spanReads.contains(words[cursor + 3u])) ++calls;
+            cursor += count;
+        }
+        require(calls == 2u, "grouped scalar reads: an s_load_dwordx2 and an s_load_dwordx4 read at run time did not take one span read each");
+    }
 
     alignas(256) static std::array<std::uint32_t, 8> table{};
     alignas(256) static std::array<std::uint32_t, 4> vertexRoot{};

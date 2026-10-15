@@ -97,9 +97,16 @@ struct SpirvTableImageFunction {
     std::vector<std::uint32_t> arguments;
 };
 
+struct SpirvScalarLoadGroups {
+    std::unordered_set<const IrBlock*> scanned;
+    std::unordered_map<const IrValue*, std::vector<const IrValue*>> leaders;
+    std::unordered_map<const IrValue*, std::uint32_t> defined;
+};
+
 struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
+    SpirvScalarLoadGroups scalarLoadGroups;
     SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo);
 
     SpirvModule module;
