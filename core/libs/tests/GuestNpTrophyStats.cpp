@@ -12,6 +12,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 struct NpUniversalDataSystemEvent;
 struct NpUniversalDataSystemEventPropertyObject;
@@ -57,6 +62,8 @@ static const char TropMeta[] = R"({"metadata":{"titleMetadata":{"name":"Syntheti
 static const char StatsDefinition[] = R"({"statDefinitionArray":[
     {"statId":10,"dataType":"uint64","aggregation":"latest"},{"statId":20,"dataType":"uint64","aggregation":"latest"},
     {"statId":30,"dataType":"uint32","aggregation":"latest"},{"statId":40,"dataType":"uint32","aggregation":"latest"}]})";
+
+static const char SumDefinition[] = R"({"statDefinitionArray":[{"statId":10,"dataType":"uint64","aggregation":"sum"}]})";
 
 static const char StatsExtraction[] = R"({"statsExtractionRuleArray":[
     {"condition":{"eventName":"COLLECT"},"action":{"input":"$.counter","output":{"statId":10}}},
@@ -120,6 +127,43 @@ static bool Exists(const char* path) {
     std::fclose(file);
     return true;
 }
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        Require(saved >= 0 && _dup2(_fileno(file), _fileno(stderr)) == 0, "cannot capture stderr");
+#else
+        saved = dup(fileno(stderr));
+        Require(saved >= 0 && dup2(fileno(file), fileno(stderr)) == fileno(stderr), "cannot capture stderr");
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t count; (count = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, count);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
 
 struct Uds {
     int context = 0;
@@ -275,6 +319,18 @@ static void IgnoreMissingAndMalformedFiles(Unlocks& unlocks) {
     Require(unlocks.trophies.size() == 6, "a missing or malformed file unlocked a trophy");
 }
 
+static void IgnoreOtherAggregations(Unlocks& unlocks) {
+    StderrCapture capture;
+    const auto context = TrophyContext(5);
+    Post(OpenUds(5), "COLLECT", [](NpUniversalDataSystemEventPropertyObject* properties) {
+        Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "counter", 10) == 0, "counter was not set");
+    });
+    const auto log = capture.Finish();
+    Require(log.find("[trophy] /app0/sce_sys/uds/uds05.ucp: stat 10 has aggregation \"sum\"; only \"latest\" is supported") != std::string::npos,
+            "a stat with a sum aggregation was not reported");
+    Require(!Trophy(context, 1).unlocked && !Exists("_trophy/268435456_5.stats.txt") && unlocks.trophies.size() == 6, "a stat with a sum aggregation was stored or unlocked a trophy");
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-stats-" + std::to_string(std::random_device{}()));
@@ -289,6 +345,8 @@ int main() {
     Write("app0/sce_sys/uds/uds02.ucp", rules);
     Write("app0/sce_sys/trophy2/trophy03.ucp", trophies);
     Write("app0/sce_sys/uds/uds03.ucp", rules.substr(0, rules.size() - 1));
+    Write("app0/sce_sys/trophy2/trophy05.ucp", trophies);
+    Write("app0/sce_sys/uds/uds05.ucp", Ucp({{"stats_definition.json", SumDefinition}, {"stats_extraction.json", StatsExtraction}}));
     Write("_trophy/268435456_0.stats.txt", "40 2\n");
 
     Unlocks unlocks;
@@ -297,6 +355,7 @@ int main() {
     KeepStatsAcrossRuns(context);
     UnlockThroughStats(context, unlocks);
     IgnoreMissingAndMalformedFiles(unlocks);
+    IgnoreOtherAggregations(unlocks);
     NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
 
     std::filesystem::current_path(previous);
