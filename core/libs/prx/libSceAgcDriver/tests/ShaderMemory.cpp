@@ -1781,6 +1781,131 @@ void verifyPointerTableOffsetCarry() {
 #endif
 }
 
+void verifySelectedRecordFallbacks() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.materials = {};
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableSrtKeyCode, userData);
+    const auto valid = CompileTable(request);
+
+    heap[2][3] &= 0x0fffffffu;
+    const auto invalid = CompileTable(request);
+    const auto& invalidMap = TableMap(*invalid.result);
+    const auto invalidCodes = TableCodes(invalidMap, 0);
+    require(invalidCodes.size() == 1u && invalidCodes[0] != Abi::NullCode && (invalidCodes[0] & Abi::PoisonFlag) == 0u, "selected record fallbacks: an invalid selected T# has no entry");
+    const auto invalidFlags = invalidMap.at(invalidCodes[0] + Abi::ImageRecordFlags);
+    require((invalidFlags & Abi::PoisonFlag) != 0u, "selected record fallbacks: an invalid selected T# was bound");
+    const auto& poison = invalid.result->imageTablePoison.at(invalidFlags & ~Abi::PoisonFlag);
+    require(poison.reason == static_cast<std::uint32_t>(Abi::PoisonReason::NotImage) && poison.dwordCount == 8u && poison.words[3] == heap[2][3] && invalid.result->imageTableFaults != 0u, "selected record fallbacks: an invalid selected T# was not poisoned with its words");
+    require(invalid.result->variantId == valid.result->variantId, "selected record fallbacks: an invalid selected T# changed the artifact");
+    heap[2] = heap[1];
+
+    guest.srt[16] = 200u;
+    const auto beyond = CompileTable(request);
+    const auto beyondCodes = TableCodes(TableMap(*beyond.result), 0);
+    require(beyondCodes.size() == 1u && beyondCodes[0] == Abi::NullCode && beyond.result->imageTableFaults == 0u && !TableTouched(beyond.regions, heap.data(), sizeof(heap)), "selected record fallbacks: a key past the heap did not select a null image without reading the heap");
+    guest.srt[16] = 2u;
+
+    void* reserved = nullptr;
+#ifdef _WIN32
+    reserved = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+#else
+    reserved = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reserved == MAP_FAILED) reserved = nullptr;
+#endif
+    require(reserved != nullptr, "selected record fallbacks: cannot reserve an inaccessible page");
+    FillTableSrt(guest, reserved, 32u, 4u);
+    const auto unmapped = CompileTable(request);
+    const auto& unmappedTable = unmapped.capture->snapshot.tables.tables.at(0);
+    require(unmappedTable.keys == 1u && unmappedTable.codes.at(0) == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)) && !TableTouched(unmapped.regions, reserved, 4096u), "selected record fallbacks: an unmapped selected record is not Unmapped poison or was read");
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+
+    std::vector<std::uint32_t> loadedKey(TableSrtKeyCode);
+    const auto shift = std::find(loadedKey.begin(), loadedKey.end(), 0x8f108510u);
+    require(shift != loadedKey.end(), "selected record fallbacks: the program has no s_lshl_b32");
+    loadedKey.insert(shift, {0xf4200406u, 0x20000000u});
+    guest.materials[0][1] = 3u;
+    guest.srt[16] = 4u;
+    const auto loadedRequest = TableRequest(loadedKey, userData);
+    const auto loadedPlan = GetResourcePlan(loadedRequest);
+    require(loadedPlan->info.images.size() == 1u && loadedPlan->descriptorSources.at(loadedPlan->info.images[0].source).tableColumn->selected, "selected record fallbacks: a key loaded from a constant buffer at an SRT offset does not select its record");
+    const auto loaded = CompileTable(loadedRequest);
+    require(TableSelected(loaded.capture->snapshot.tables, 0u, "selected record fallbacks: a loaded key does not hold one readable selected record") == heap[3] && TableCovered(loaded.regions, &guest.materials[0][1], sizeof(std::uint32_t)), "selected record fallbacks: the record of a loaded key was not selected or its key was not captured");
+    const auto materials = TableV(guest.materials.data(), 16u, 3u);
+    const auto unreadable = TableV(reserved, 16u, 3u);
+    std::copy(unreadable.begin(), unreadable.end(), guest.srt.begin() + 8);
+    const auto lost = CompileTable(loadedRequest);
+    const auto& lostTable = lost.capture->snapshot.tables.tables.at(0);
+    require(lostTable.keys == 0u && lostTable.fault == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)) && lost.result->imageTableFaults != 0u && lost.result->variantId == loaded.result->variantId, "selected record fallbacks: a key that cannot be read did not fault its table");
+    std::copy(materials.begin(), materials.end(), guest.srt.begin() + 8);
+#ifdef _WIN32
+    VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+    munmap(reserved, 4096);
+#endif
+
+    auto writtenKey = loadedKey;
+    const auto store = std::find(writtenKey.begin(), writtenKey.end(), 0x80070000u);
+    require(store != writtenKey.end(), "selected record fallbacks: the program has no buffer_store_dword");
+    *store = 0x80030000u;
+    const auto writtenRequest = TableRequest(writtenKey, userData);
+    const auto writtenPlan = GetResourcePlan(writtenRequest);
+    const auto& writtenColumn = writtenPlan->descriptorSources.at(writtenPlan->info.images.at(0).source).tableColumn;
+    require(writtenColumn.has_value() && !writtenColumn->selected && writtenColumn->keyDomains.empty(), "selected record fallbacks: a key loaded from a buffer the shader writes selected its record");
+    const auto written = CompileTable(writtenRequest);
+    require(written.capture->snapshot.tables.tables.at(0).keys == 4u, "selected record fallbacks: a key loaded from a buffer the shader writes did not keep the whole table");
+
+    const auto lanePlan = GetResourcePlan(TableRequest(TableWholeCode, userData));
+    require(!lanePlan->info.images.empty() && !lanePlan->descriptorSources.at(lanePlan->info.images[0].source).tableColumn->selected, "selected record fallbacks: a T# selected per lane left the table");
+
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, 70000> large{};
+    large.back() = heap[1];
+    FillTableSrt(guest, large.data(), 32u, static_cast<std::uint32_t>(large.size()));
+    guest.srt[16] = static_cast<std::uint32_t>(large.size() - 1u);
+    const auto far = CompileTable(request);
+    require(TableSelected(far.capture->snapshot.tables, 0u, "selected record fallbacks: a record past the key cap does not hold one readable selected record") == heap[1] && !far.capture->snapshot.tables.tables[0].outside && far.result->imageTableFaults == 0u, "selected record fallbacks: a record past the key cap was not selected");
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+}
+
+void verifySelectedRecordOffsetCarry() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture texture;
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    const auto image = TableT(texture.bytes.data(), TableFormat8888UNorm, TableType2D);
+    auto* words = guest.heap.front().data();
+    std::copy(image.begin(), image.end(), words + 0x50u / 4u);
+    FillTableSrt(guest, guest.heap.data(), 0u, static_cast<std::uint32_t>(sizeof(guest.heap)));
+    const auto userData = TableUserData(guest);
+    const std::vector<std::uint32_t> code{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000030u, 0xf4080800u, 0xfa000010u, 0xf4000440u, 0xfa000040u, 0x8711ff11u,
+        0x000000ffu, 0x8f128511u, 0x8113ff12u, 0xffffff10u, 0x8114ff12u, 0xffffff20u, 0xf4280902u, 0x26000040u, 0xf4280a02u, 0x28000040u, 0xf09c0f08u,
+        0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    const auto request = TableRequest(code, userData);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "selected record offset carry: a T# read by two loads of its record was not planned as a table");
+    const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.selected && !column.address && column.stride == 32u && column.addend == 0xffffff10u && column.offset == 0x40u && column.foldedAddend == 0xffffff10u && column.foldedCarry == 16u, "selected record offset carry: the column is wrong");
+    guest.srt[16] = 7u;
+    const auto carried = CompileTable(request);
+    const auto& carriedTable = carried.capture->snapshot.tables.tables.at(0);
+    require(carriedTable.keys == 1u && carriedTable.codes.at(0) == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OffsetCarry)) && !TableTouched(carried.regions, guest.heap.data(), sizeof(guest.heap)), "selected record offset carry: the record whose second load wraps past 32 bits is not OffsetCarry poison or was read");
+    guest.srt[16] = 8u;
+    const auto wrapped = CompileTable(request);
+    require(TableSelected(wrapped.capture->snapshot.tables, 0u, "selected record offset carry: the record past the wrap does not hold one readable selected record") == image && TableCovered(wrapped.regions, words + 0x50u / 4u, sizeof(image)), "selected record offset carry: the record past the wrap was not selected");
+}
+
 void verifyDescriptorPhis() {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
@@ -5071,6 +5196,8 @@ int main(int argc, char** argv) {
             verifyScalarAddressRule();
             verifyPointerImageTable();
             verifyPointerTableOffsetCarry();
+            verifySelectedRecordFallbacks();
+            verifySelectedRecordOffsetCarry();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
