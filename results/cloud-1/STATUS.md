@@ -1,5 +1,6 @@
-READY
+BUSY PM-039 (claimed 2026-10-15T11:06:07Z)
 RESULT:
+- Working on: PM-039 (#6146 completeness gaps from PM-035 as follow-up commits on fork followup/6146-completeness).
 - Last task: BF-011, done: results/cloud-1/BF-011.md. Verdict GREEN: only the baseline fails.
   - Head: fork perf/shader-direct-cpu-evaluable-images-followup 0b099964f0 (23d6cf684 #6243 + BF-009, merged with upstream main e49ec591dc; FormatVersion 37).
   - CI Linux mirror: configure 0, registration 0 ("891 test executable(s), 0 built and not run as recorded, none new"), build 0 (16 warnings, the same as main's), libs 0, test 8, skips 1, slow report 0.
