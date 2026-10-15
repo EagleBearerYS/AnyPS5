@@ -52,6 +52,7 @@ constexpr std::uint32_t SetUconfigReg = 0x79u;
 constexpr std::uint32_t DrawIndexAuto = 0x2du;
 constexpr std::uint32_t DispatchDirect = 0x15u;
 constexpr std::uint32_t DmaData = 0x50u;
+constexpr std::uint32_t WriteData = 0x37u;
 constexpr std::uint32_t Rgba8Info = 0x28028u;
 constexpr std::uint32_t DccEnable = 0x10000000u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
@@ -247,6 +248,14 @@ void FillKeys(const Target& target, std::size_t bytes, std::uint8_t code, const 
     Submit({0xc0000000u | (5u << 16u) | (DmaData << 8u), 0x40000000u, pattern, 0u, static_cast<std::uint32_t>(keys), static_cast<std::uint32_t>(keys >> 32u), static_cast<std::uint32_t>(bytes)}, what);
 }
 
+void WriteKeys(const Target& target, std::size_t bytes, std::uint8_t code, const std::string& what) {
+    const auto keys = Address(target.keys);
+    const auto words = static_cast<std::uint32_t>(bytes / 4u);
+    std::vector<std::uint32_t> packet{0xc0000000u | ((words + 2u) << 16u) | (WriteData << 8u), 0x00100200u, static_cast<std::uint32_t>(keys), static_cast<std::uint32_t>(keys >> 32u)};
+    packet.insert(packet.end(), words, code * 0x01010101u);
+    Submit(std::move(packet), what);
+}
+
 std::vector<std::uint32_t> Sample(const Target& target, const std::string& what) {
     constexpr std::size_t outputBytes = Threads * 16u;
     std::memset(target.output, 0xcd, outputBytes);
@@ -324,6 +333,23 @@ bool DmaFillClears(const std::string& what, bool frameRead) {
     return Expect(Sample(target, what + ": sampled read"), Cleared, what, "expected the 0000 clear colour; 0x3f800000 is the drawn results, 0x3e808081 the bytes stored before the draw");
 }
 
+bool WriteDataClears(const std::string& what) {
+    const auto target = NewTarget();
+    const auto image = DrawPending(target, what, false);
+    const auto extent = target.KeyExtent();
+    Require(extent % 4 == 0 && extent / 4 < 0x3ff0, what + ": the key extent does not fit one WRITE_DATA");
+    WriteKeys(target, extent, Clear0000, what + ": key write");
+    Require(PendingImage(target) == image, what + ": the key write ended the pending results");
+    std::vector<std::uint8_t> keys(extent);
+    AgcDriver::GuestMemory::Read(Address(target.keys), std::as_writable_bytes(std::span(keys)));
+    Require(std::all_of(keys.begin(), keys.end(), [](std::uint8_t key) { return key == Clear0000; }), what + ": the key write did not store the 0000 code");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        std::printf("%s: 0x%zx key bytes written by WRITE_DATA over pending results; the image's noted key fill is %s\n", what.c_str(), extent, AgcDriver::Graphics::DccKeysName(image->FilledKeys()));
+    }
+    return Expect(Sample(target, what + ": sampled read"), Cleared, what, "expected the 0000 clear colour; 0x3f800000 is the drawn results, 0x3e808081 the bytes stored before the draw");
+}
+
 bool CpuStoreKeepsResults() {
     const std::string what = "cpu-store";
     const auto target = NewTarget();
@@ -339,6 +365,7 @@ int main(int argc, char** argv) {
     const std::vector<std::pair<std::string_view, std::function<bool()>>> cases{
         {"dma-fill", [] { return DmaFillClears("dma-fill", false); }},
         {"dma-fill-after-read", [] { return DmaFillClears("dma-fill-after-read", true); }},
+        {"write-data", [] { return WriteDataClears("write-data"); }},
         {"cpu-store", CpuStoreKeepsResults},
     };
     const std::string_view only = argc > 1 ? argv[1] : "";
