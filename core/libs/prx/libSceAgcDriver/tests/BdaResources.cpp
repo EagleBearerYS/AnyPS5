@@ -617,6 +617,8 @@ void importWatchTests() {
 
 void gpuMappingTests(const Context& context) {
     constexpr std::size_t bytes = 65536;
+    auto importing = context;
+    importing.hostImportAlignment = bytes;
     auto* cpu = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
     auto* gpu = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
     {
@@ -625,7 +627,7 @@ void gpuMappingTests(const Context& context) {
         mutation.Add(gpu, bytes, true, true, true);
     }
     {
-        GuestBufferMemory leased(context);
+        GuestBufferMemory leased(importing);
         leased.AcquireRegistered();
         leased.Upload();
         const auto ranges = leased.AddressRanges();
@@ -639,6 +641,7 @@ void gpuMappingTests(const Context& context) {
         mutation.Remove(cpu);
         mutation.Remove(gpu);
     }
+    ClearHostImports(importing.device);
     ::operator delete(cpu, std::align_val_t{bytes});
     ::operator delete(gpu, std::align_val_t{bytes});
 }
@@ -754,7 +757,6 @@ static void pageTableRootTests(const Context& shared, const BdaTestAccess& acces
 }
 
 void dissolvedSpaceTableTests(const Context& context) {
-    namespace Abi = ShaderRecompiler::BdaAbi;
     constexpr std::size_t piece = 65536;
     void* block = ::operator new(4 * piece, std::align_val_t{piece});
     const auto first = reinterpret_cast<std::uintptr_t>(block);
@@ -778,28 +780,11 @@ void dissolvedSpaceTableTests(const Context& context) {
         if (AddressSpaceCounters().enabled) Require(pages != nullptr && leased.OwnRanges().empty(), "a build served by its address space alone has own ranges or no page table");
         leased.Release();
     }
-    const auto before = AddressSpaceCounters();
     {
         GuestBufferMemory leased(importing);
         leased.AcquireRegistered();
         leased.AddInPlace(first + piece - 16, 32, false);
-        leased.Upload();
-        const auto after = AddressSpaceCounters();
-        if (before.enabled) Require(after.dissolvedOverlap == before.dissolvedOverlap + 1, "a V# past the end of a registered range did not dissolve the address space");
-        const auto pages = leased.PageTable(importing);
-        const auto own = leased.OwnRanges();
-        const auto mapped = leased.AddressRanges();
-        Require(pages != nullptr, "a build without an address space has no page table for its imports");
-        const auto import = pages->Find(first + 2 * piece + 8);
-        Require(import.has_value() && import->begin <= first + 2 * piece && import->end >= first + 3 * piece && (import->permissions & Abi::Write) != 0, "the page table of a build without an address space does not map its writable import");
-        Require(std::none_of(own.begin(), own.end(), [&](const auto& range) { return range.begin < first + 3 * piece && first + 2 * piece < range.end; }), "an import the page table maps is also an own range");
-        for (const auto& range : mapped) {
-            const auto paged = pages->Find(range.begin);
-            const bool listed = std::any_of(own.begin(), own.end(), [&](const auto& candidate) { return std::memcmp(&candidate, &range, sizeof(range)) == 0; });
-            Require(listed != (paged.has_value() && std::memcmp(&*paged, &range, sizeof(range)) == 0), "a range of the build is not in exactly one of its page table and its own ranges");
-        }
-        BdaResources bda(importing, leased);
-        leased.Release();
+        reject([&] { leased.Upload(); }, "has no host import");
     }
     change(guest, false);
     change(guest + 2 * piece, false);
@@ -807,10 +792,20 @@ void dissolvedSpaceTableTests(const Context& context) {
 }
 
 static void rangeListTests(const Context& shared) {
+    constexpr std::size_t bytes = 65536;
     auto context = shared;
     context.bufferPool.reset();
-    alignas(64) static std::array<std::uint8_t, 4096> stack{};
-    const auto base = reinterpret_cast<std::uintptr_t>(stack.data());
+    context.hostImportAlignment = bytes;
+    void* block = ::operator new(bytes, std::align_val_t{bytes});
+    std::memset(block, 0, bytes);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
     std::uint64_t seed = 0x9e3779b97f4a7c15ull;
     const auto next = [&] {
         seed ^= seed << 13u;
@@ -832,6 +827,9 @@ static void rangeListTests(const Context& shared) {
         BdaResources bda(context, memory);
         memory.Release();
     }
+    registry(false);
+    ClearHostImports(context.device);
+    ::operator delete(block, std::align_val_t{bytes});
 }
 
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
