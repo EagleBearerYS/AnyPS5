@@ -9,29 +9,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 
 namespace AgcDriver::DriverDetail {
-
-namespace {
-
-bool OneByteValue(std::span<const std::byte> bytes) {
-    return !bytes.empty() && std::memcmp(bytes.data(), bytes.data() + 1, bytes.size() - 1) == 0;
-}
-
-void NoteKeysStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint32_t queue) {
-    if (!OneByteValue(bytes) || Graphics::StorageTexture::ClassifyFill(address, bytes.size()).cover != Graphics::StorageTexture::FillCover::Keys) return;
-    const auto key = std::to_integer<std::uint8_t>(bytes.front());
-    static const bool traceKeys = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
-    if (traceKeys) std::fprintf(stderr, "[dcc-keys] title stores keys 0x%llx+0x%zx with %02x in a packet store (queue 0x%x)\n", static_cast<unsigned long long>(address), bytes.size(), key, queue);
-    Graphics::StorageTexture::NoteKeysFill(address, bytes.size(), key);
-}
-
-}
 
 bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue, std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode, bool& wroteOnGpu, bool& endOfPipeInterrupt, bool& interruptDeferred, bool& drawPacket, bool& sampleDump) {
     static const bool drainAll = std::getenv("APS5_DRAIN_ALL") != nullptr;
@@ -147,10 +129,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 recordDeferredLabels(localDevice.get(), submission.queue);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(store->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 0 || reason == 1 || reason == 5) {
-                    noteLabelStore(store->address, bytes, stamp, submission.queue);
-                    NoteKeysStore(store->address, bytes, submission.queue);
-                }
+                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue);
                 if (reason == 0 || reason == 5) {
                     if (reason == 0) ++storesOnGpu;
                     else ++storesBehindCompletions;
