@@ -328,6 +328,7 @@ void ShaderPreparationTransaction::Commit() {
             destination.rectangleProgress.swap(change.prepared.rectangleProgress);
             destination.fragments.swap(change.prepared.fragments);
             std::swap(destination.rectangleRequested, change.prepared.rectangleRequested);
+            destination.deferred = destination.deferred || change.prepared.deferred;
         }
     }
     committed = true;
@@ -889,6 +890,11 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     return plan != nullptr ? PrepareRegistered(*plan) : std::vector<PreparedShaders::Entry>{};
 }
 
+void DeferPipelineStage(PreparedShaderState& prepared, const ShaderSnapshot& snapshot, const char* reason) {
+    if (!prepared.deferred) APS5_LOG_ERR("Shader 0x%llx could not be prepared when the title created its pipeline (%s); preparing it when it is used", static_cast<unsigned long long>(snapshot.codeAddress), reason);
+    prepared.deferred = true;
+}
+
 #ifdef __GLIBC__
 void trimFreedMemory() {
     static std::atomic<std::int64_t> last{0};
@@ -1094,7 +1100,7 @@ void CloseRegistrationPreparation() {
     if (auto* prebuild = RegistrationPreparePool::ExistingPrebuild()) prebuild->Close();
 }
 
-std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target) {
+std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared) {
     ShaderPreparationTransaction transaction;
     require(decoded.programs.size() == decoded.roles.size(), "graphics ABI program roles are incomplete");
     for (const auto& program : decoded.programs) require(program.snapshot != nullptr, "graphics ABI has no registered shader snapshot");
@@ -1145,7 +1151,14 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         }
         if (handle == nullptr) {
             PerformanceTimer timing("Shader.PrepareArtifact");
-            handle = PrepareShaderWithDiagnostics(request);
+            try {
+                handle = PrepareShaderWithDiagnostics(request);
+            } catch (const std::exception& error) {
+                if (!deferUnprepared) throw;
+                DeferPipelineStage(transaction.Edit(*program.snapshot), *program.snapshot, error.what());
+                prepared.push_back({program.snapshot, {program.codeOffset, nullptr}, program.binary.stage, offset, nullptr});
+                continue;
+            }
         }
         const auto bytes = handle->artifact->bindings.pushConstantSizeBytes;
         require(bytes <= room, "prepared graphics stages exceed the push constant block");
@@ -1217,8 +1230,9 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     DrawDecode decoded{};
     decoded.state.stages = Graphics::DecodeShaderStages(state, VertexWorkgroupRequired(state, *registry));
     DecodeGraphicsPrograms(decoded, state, *registry, true, false);
-    auto prepared = PrepareGraphicsStages(decoded, localDevice->Target());
+    auto prepared = PrepareGraphicsStages(decoded, localDevice->Target(), true);
     for (auto& stage : prepared) {
+        if (stage.entry.handle == nullptr) continue;
         const auto& entries = transaction.Read(*stage.snapshot).entries;
         const auto duplicate = std::ranges::any_of(entries, [&](const auto& existing) { return existing.codeOffset == stage.entry.codeOffset && existing.handle->artifact == stage.entry.handle->artifact; });
         if (!duplicate) transaction.Edit(*stage.snapshot).entries.push_back(std::move(stage.entry));
@@ -1272,11 +1286,17 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     struct RegisteredAbiKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, RegisteredAbiKeyStorage>();
     BuildRegisteredAbiKey(state, *localDevice, key);
+    std::optional<std::string> deferral;
     const auto prepare = [&] {
-        const auto plan = PlanRegistered(*snapshot, *localDevice, state, false);
-        if (plan == nullptr) return std::vector<PreparedShaders::Entry>{};
-        plan->prebuildDevice = localDevice;
-        return PrepareRegistered(*plan);
+        try {
+            const auto plan = PlanRegistered(*snapshot, *localDevice, state, false);
+            if (plan == nullptr) return std::vector<PreparedShaders::Entry>{};
+            plan->prebuildDevice = localDevice;
+            return PrepareRegistered(*plan);
+        } catch (const std::exception& error) {
+            deferral = error.what();
+            return std::vector<PreparedShaders::Entry>{};
+        }
     };
     const bool committedAbi = CommittedAbi(*snapshot, key);
     auto entries = committedAbi ? std::vector<PreparedShaders::Entry>{} : prepare();
@@ -1291,6 +1311,7 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         const auto duplicate = std::ranges::any_of(prepared.entries, [&](const auto& existing) { return existing.handle->artifact == entry.handle->artifact; });
         if (!duplicate) prepared.entries.push_back(std::move(entry));
     }
+    if (deferral) DeferPipelineStage(prepared, *snapshot, deferral->c_str());
     prepared.registeredAbis.push_back(key);
     transaction.Commit();
 }
@@ -1383,6 +1404,7 @@ void ResolvePreparedGraphics(const ShaderSnapshot& front, const std::shared_ptr<
     for (const auto& pixel : fragments) {
         const auto& current = transaction.Read(front);
         const auto& pixelPrepared = transaction.Read(*pixel);
+        if ((current.entries.empty() && current.deferred) || (pixelPrepared.entries.empty() && pixelPrepared.deferred)) continue;
         require(!current.entries.empty() && !pixelPrepared.entries.empty(), "rectangle ABI has missing stage artifacts");
         const auto progress = std::ranges::find_if(current.rectangleProgress, [&](const auto& entry) { return entry.fragment.lock() == pixel; });
         const auto vertexCount = progress == current.rectangleProgress.end() ? 0u : progress->vertexCount;
