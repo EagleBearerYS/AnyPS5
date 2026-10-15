@@ -22,11 +22,17 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
         fresh->forgetSerial = forgetAtCapture;
 
         std::vector<ShaderRecompiler::MemoryRegion> srtRegions;
-        const auto supplied = shaderMemory->SuppliedBlocks();
+        std::size_t capturedWords = 0;
         for (const auto& region : captured) {
             const bool registered = std::any_of(memory.begin(), memory.end(), [&](const auto& known) { return region.guestAddress >= known.guestAddress && region.guestAddress < known.guestAddress + known.bytes.size(); });
             if (registered) continue;
             srtRegions.push_back(region);
+            capturedWords += region.bytes.size() / sizeof(std::uint32_t);
+        }
+        const auto supplied = shaderMemory->SuppliedBlocks();
+        fresh->runs.reserve(srtRegions.size());
+        fresh->words.reserve(capturedWords);
+        for (const auto& region : srtRegions) {
             fresh->runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
             const auto count = region.bytes.size() / sizeof(std::uint32_t);
             const auto offset = fresh->words.size();
