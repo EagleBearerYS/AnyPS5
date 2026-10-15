@@ -22,11 +22,17 @@ constexpr std::uint8_t PixelShaderType = 1;
 constexpr std::uint32_t CenterAndPosition = 0x302u;
 constexpr std::uint32_t Index16 = 0u;
 constexpr std::uint32_t Index32 = 1u;
+constexpr std::uint32_t TriangleList = 4u;
+constexpr std::uint32_t TriangleStrip = 6u;
+constexpr std::uint32_t NoLocation = 0x280u;
+constexpr std::uint32_t VertexUserDataRegister = 0x08cu;
+constexpr std::uint32_t FirstVertexUserSgpr = 8u;
 
 namespace Isa {
 
 using namespace DeviceTable::Asm;
 
+constexpr std::uint32_t BufferLoadFormatX = 0x00u;
 constexpr std::uint32_t BufferLoadFormatXyzw = 0x03u;
 constexpr std::uint32_t BufferLoadDwordX4 = 0x0eu;
 constexpr std::uint32_t SLoadDwordX2 = 0x01u;
@@ -172,6 +178,35 @@ inline void DrawIndex(Commands& commands, std::uint64_t address, std::uint32_t c
 
 inline void DrawIndexOffset(Commands& commands, std::uint32_t offset, std::uint32_t count, std::uint32_t maxSize) {
     commands.Append(0x35u, {maxSize, offset, count, 0u});
+}
+
+inline void PrimitiveType(Commands& commands, std::uint32_t type) {
+    Uconfig(commands, 0x242, type);
+}
+
+inline void IndexOffset(Commands& commands, std::uint32_t offset) {
+    Uconfig(commands, 0x24a, offset);
+}
+
+inline void PrimitiveRestart(Commands& commands, bool enabled) {
+    Uconfig(commands, 0x24b, enabled ? 1u : 0u);
+    Context(commands, 0x103, 0xffffu);
+}
+
+inline std::uint32_t VertexUserDataLocation(std::uint32_t sgpr) {
+    return VertexUserDataRegister + sgpr - FirstVertexUserSgpr;
+}
+
+inline void IndirectBase(Commands& commands, std::uint64_t address) {
+    commands.Append(0x11u, {1u, Low(address), High(address)});
+}
+
+inline void DrawIndirect(Commands& commands, std::uint32_t offset, std::uint32_t baseVertexLocation, std::uint32_t startInstanceLocation) {
+    commands.Append(0x24u, {offset, baseVertexLocation, startInstanceLocation, 2u});
+}
+
+inline void DrawIndexIndirect(Commands& commands, std::uint32_t offset, std::uint32_t baseVertexLocation, std::uint32_t startInstanceLocation) {
+    commands.Append(0x25u, {offset, baseVertexLocation, startInstanceLocation, 0u});
 }
 
 template<typename T>
