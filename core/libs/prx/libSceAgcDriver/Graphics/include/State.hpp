@@ -158,11 +158,6 @@ std::string DrawRejection(const QueueState& queue, bool indexed);
 bool PixelProgramSkipped(const QueueState& queue);
 std::string NullPixelProgramRejection(const QueueState& queue);
 
-// The recording facade of the draw decoders (design_cpu_final M8, step 8a): every register read
-// of DecodeShaderStages, DecodeState, DrawRejection, DecodePixelStageInfo and Driver::draw's
-// program prepare goes through NoteRegisterRead, which appends the bank and offset to the calling
-// thread's log while one is set (null in production; Driver::draw sets one on a miss under
-// APS5_VERIFY_DRAW_RECIPE=1 and checks the log against DrawKeyRegisters).
 enum class RegisterBank : std::uint8_t { Context, Shader, UserConfig, Count };
 struct RegisterRead {
     RegisterBank bank;

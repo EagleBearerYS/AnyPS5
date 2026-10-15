@@ -434,14 +434,6 @@ struct DrawProfile {
     std::uint64_t targetLookups = 0;
     std::uint64_t slowLookups = 0;
     double slowLookupUs = 0;
-    // Resource cache outcomes: hits, misses (built and inserted when reusable), entries that failed
-    // Revalidate, and draws that could not use the cache (synchronous, no variant id, or disabled).
-    // Which key words the misses differ in is the cache's own "[rescache] miss churn" line
-    // (ResourceCache::noteMiss compares each miss with the last key of the same variants).
-    std::uint64_t cacheHits = 0;
-    std::uint64_t cacheMisses = 0;
-    std::uint64_t cacheInvalidated = 0;
-    std::uint64_t uncacheable = 0;
     // Shader validation memo (see CachedFragmentOutputs).
     std::uint64_t validateHits = 0;
     std::uint64_t validateMisses = 0;
@@ -462,7 +454,6 @@ DrawProfile& Profile() {
     return profile;
 }
 
-// Adds one draw's phases to the totals and prints the [draws] and [rescache] lines every 10 s.
 void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources::BuildTiming* built, const DrawOutcome& outcome) {
     auto& profile = Profile();
     std::lock_guard lock(profile.mutex);
@@ -549,8 +540,8 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     for (std::size_t i = 0; i < profile.skips.size() && room(); ++i) {
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu in %.1f ms", DrawSkipNames[i], static_cast<unsigned long long>(profile.skips[i]), profile.skipUs[i] / 1000.0);
     }
+    if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; validation memo %llu hits / %llu misses", static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     std::fprintf(stderr, "%s\n", line);
-    std::fprintf(stderr, "[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
     profile.maxDrawUs = profile.hookWaitUs = profile.maxHookWaitUs = profile.ownSyncUs = 0;
@@ -566,21 +557,12 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.lookupUs = 0;
     profile.kindUs.fill(0);
     profile.kindCounts.fill(0);
-    profile.cacheHits = profile.cacheMisses = profile.cacheInvalidated = profile.uncacheable = 0;
     profile.validateHits = profile.validateMisses = 0;
     profile.indirect.fill(0);
     profile.indirectRewritten = 0;
     profile.indirectReadUs = 0;
     profile.skips.fill(0);
     profile.skipUs.fill(0);
-}
-
-void countCache(std::uint64_t DrawProfile::*counter) {
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (!profile) return;
-    auto& stats = Profile();
-    std::lock_guard lock(stats.mutex);
-    ++(stats.*counter);
 }
 
 // ValidateShaders decodes every SPIR-V instruction of every stage on every draw. Its outcome depends
