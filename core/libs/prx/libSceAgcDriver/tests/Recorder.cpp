@@ -3544,6 +3544,139 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
     recorder.Sync();
 }
 
+bool addressShadowTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (!UnitShadowEnabled() || base.hostImportAlignment == 0) {
+        std::cout << "skipped, unit shadows or host imports are unavailable\n";
+        return false;
+    }
+    const auto decided = PrepareImportWatch(base);
+#ifndef _WIN32
+    SetImportWatch(base, ImportWatch::Watch);
+#endif
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() { SetImportWatch(context, decided); }
+    } restore{base, decided};
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t bytes = side * side * 4;
+    void* block = AllocateWatched(bytes, 65536);
+    if (block == nullptr) {
+        std::cout << "skipped, no write watching\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    std::memset(block, 0x55, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{base, block, address};
+    if (HostImportFor(base, address, bytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "skipped, the heap is not imported or not watched\n";
+        return false;
+    }
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == bytes, "the heap's surface has an unexpected size");
+    const auto* words = static_cast<const std::uint8_t*>(block);
+    const auto holds = [&](std::array<std::uint8_t, 4> texel) {
+        for (std::size_t i = 0; i < bytes; ++i) {
+            if (words[i] != texel[i % 4]) return false;
+        }
+        return true;
+    };
+    const auto settle = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    struct Build {
+        bool copied;
+        bool current;
+    };
+    const auto build = [&](std::array<std::uint8_t, 4> texel) {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        Build result{recorder.PendingWriteOverlaps(address, bytes), false};
+        recorder.Submit();
+        device.WaitQueue();
+        result.current = holds(texel);
+        leased.WriteBack();
+        recorder.Sync();
+        return result;
+    };
+    const auto none = build({0x55, 0x55, 0x55, 0x55});
+    Require(!none.copied && none.current, "an address-based build over a heap with no shadowed units recorded a copy");
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const auto draw = [&](VkClearColorValue value) {
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+        };
+        draw({{1.0f, 0.0f, 0.0f, 1.0f}});
+        StorageTexture::FlushPending(address, bytes, nullptr, "storage refresh", PublishScope::None);
+        settle();
+        if (!AnyShadowedOverlaps(address, bytes)) {
+            std::cout << "skipped, the image's write-back did not retile into the unit shadow\n";
+            return false;
+        }
+        Require(holds({0x55, 0x55, 0x55, 0x55}), "a write-back into the unit shadow reached the import");
+        static_cast<void>(ShadowReport());
+        const auto shadowed = build({255, 0, 0, 255});
+        const auto report = ShadowReport();
+        Require(shadowed.current, "an address-based build over a heap left the unit shadow's stored results unpublished: the import held the earlier bytes at its submission");
+        Require(shadowed.copied && !AnyShadowedOverlaps(address, bytes), "an address-based build published the heap's shadowed units without noting the copy, or left some unpublished");
+        Require(report.find(" address 1/") != std::string::npos, "the address-based build's publish was not counted under its own reason:" + report);
+        const auto again = build({255, 0, 0, 255});
+        Require(!again.copied && again.current, "a second address-based build with nothing newly retiled recorded another copy");
+        draw({{0.0f, 1.0f, 0.0f, 1.0f}});
+        const auto pending = build({255, 0, 0, 255});
+        Require(StorageTexture::FindPending(address, bytes) == image, "an address-based build stored the pending results of an image over its heap");
+        Require(!pending.copied && pending.current, "an address-based build changed the heap while an image's results were pending");
+        StorageTexture::FlushPending(address, bytes, nullptr, "memory access");
+        settle();
+    }
+    recorder.Sync();
+    std::cout << "address-based builds read the unit shadow's stored results (address space cache " << (std::getenv("APS5_NO_ADDRESS_SPACE_CACHE") != nullptr ? "off" : "on") << ")\n";
+    return true;
+}
+
 bool writtenBufferOrderTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -8138,6 +8271,9 @@ int main(int argc, char** argv) {
             }
             unitShadowTests(device, recorder);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--bda-shadowed-results-only") {
+            return addressShadowTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--split-writeback-only") {
             if (device.GetContext().hostImportAlignment == 0) {
