@@ -5,6 +5,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "prx/libSceAgcDriver/Execution/include/StepTimers.hpp"
 #include "ThreadOwned.hpp"
 #include <algorithm>
 #include <atomic>
@@ -302,6 +303,7 @@ bool ShaderMemory::pending(void* context, std::uint64_t address, std::uint64_t b
 }
 
 ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::uint64_t address, std::uint64_t bytes) {
+    APS5_STEP("capture: stamp");
     const auto& self = *static_cast<const ShaderMemory*>(context);
     if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || self.overlapsInitial(address, address + bytes)) return {};
     const auto fetched = self.pages.lower_bound(address & ~static_cast<std::uint64_t>(PageBytes - 1));
@@ -315,6 +317,7 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
 }
 
 bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
+    APS5_STEP("vouch: whole");
     CaptureTotals().vouchCalls.fetch_add(1, std::memory_order_relaxed);
     if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
     if (pending != nullptr && pending(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return false;
@@ -324,6 +327,7 @@ bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std
 }
 
 bool ShaderMemory::unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
+    APS5_STEP("capture: unchanged since (per call)");
     return Vouched(static_cast<const ShaderMemory*>(context)->pendingWrite, address, bytes, stamp);
 }
 
@@ -380,6 +384,7 @@ void ShaderMemory::spillTouching(std::uint64_t begin, std::uint64_t end) {
 }
 
 bool ShaderMemory::supplyWords(void* context, const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>& words) {
+    APS5_STEP("capture: supply");
     auto& self = *static_cast<ShaderMemory*>(context);
     if (words == nullptr || words->runs.empty()) return false;
     std::uint64_t total = 0;
@@ -643,6 +648,7 @@ bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const Shar
 }
 
 std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched) {
+    APS5_STEP("validate: vouch shared regions");
     vouched.clear();
     if (shared.empty() || regions == 0) return 0;
     thread_local std::vector<std::pair<const ShaderRecompiler::SrtGuestWords*, bool>>* blocksSlot = nullptr;

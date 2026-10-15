@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "ThreadOwned.hpp"
+#include "prx/libSceAgcDriver/Execution/include/StepTimers.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -1436,6 +1437,7 @@ bool SameTable(const ReusedTable& table, VkDevice device, const ShaderRecompiler
 }
 
 ReusedTable* FindReusedTable(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, const TableState& state) {
+    APS5_STEP("table: find reused");
     if (state.epoch == 0) return nullptr;
     auto& tables = ReusedTables();
     std::erase_if(tables, [&](const ReusedTable& table) { return table.state != state; });
@@ -1446,6 +1448,7 @@ ReusedTable* FindReusedTable(VkDevice device, const ShaderRecompiler::Descriptor
 }
 
 bool TableCurrent(ReusedTable& table) {
+    APS5_STEP("table: current");
     const auto serial = StorageTexture::PendingSerial();
     if (serial != table.pendingSerial) {
         if (StorageTexture::AnyPendingOverlaps(table.ranges) || StorageTexture::PendingSerial() != serial) return false;
@@ -1455,6 +1458,7 @@ bool TableCurrent(ReusedTable& table) {
 }
 
 bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<Texture>>& cached) {
+    APS5_STEP("table: cached textures");
     auto& cache = Textures();
     std::lock_guard lock(cache.mutex);
     std::vector<std::list<CachedTexture>::iterator> entries;
@@ -1939,6 +1943,7 @@ void ShaderResources::buildComplete() {
             };
             for (const auto& binding : bindings) {
                 if (binding.flags != 0) {
+                    APS5_STEP("descriptors: table infos");
                     const auto set = setOf(binding);
                     const bool sampled = binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
                     auto table = sampled ? std::make_shared<TableDescriptors>() : nullptr;
@@ -2020,7 +2025,10 @@ void ShaderResources::buildComplete() {
                 writes.push_back(write);
             }
             if (keptWrites.empty()) {
+                {
+                APS5_STEP("descriptors: update");
                 context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+            }
             } else {
                 std::vector<VkWriteDescriptorSet> made;
                 made.reserve(writes.size());
@@ -3466,6 +3474,7 @@ constexpr std::array<VkDescriptorPoolSize, 4> ChainPoolCreateSizes{{{VK_DESCRIPT
 }
 
 DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, bool updateAfterBind, std::optional<std::uint32_t> variableCount) {
+    APS5_STEP("descriptors: allocate set");
     bool fits = true;
     for (const auto& size : sizes) {
         const auto limit = updateAfterBind && size.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ? context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers : SetDescriptorLimit(context.limits, size.type);
@@ -3484,6 +3493,7 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     allocation.descriptorSetCount = 1;
     allocation.pSetLayouts = &layout;
     if (!fits) {
+        APS5_STEP("descriptors: dedicated pool");
         dedicated.reserve(dedicated.size() + 1);
         const auto same = std::find_if(kept.begin(), kept.end(), [&](const SetAllocation& set) {
             return set.layout == layout && set.updateAfterBind == updateAfterBind && set.variableCount == variableCount && std::equal(set.sizes.begin(), set.sizes.end(), sizes.begin(), sizes.end(), [](const VkDescriptorPoolSize& a, const VkDescriptorPoolSize& b) { return a.type == b.type && a.descriptorCount == b.descriptorCount; });
@@ -4200,6 +4210,7 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
 
 void ShaderResources::resolveImageTables() {
     if (tableBindings[0] == std::numeric_limits<std::size_t>::max() && tableBindings[1] == std::numeric_limits<std::size_t>::max()) return;
+    APS5_STEP("table: resolve all");
     auto& counters = TextureCounts();
     for (std::size_t set = 0; set < tableBindings.size(); ++set) {
         if (tableBindings[set] != std::numeric_limits<std::size_t>::max()) bindings[tableBindings[set]].imageAllocations.assign(std::min(tableElements[set], context.imageTableCapacity), std::numeric_limits<std::size_t>::max());
@@ -4250,6 +4261,7 @@ void ShaderResources::resolveImageTables() {
         const auto state = CurrentTableState();
         std::vector<std::shared_ptr<Texture>> cached;
         if (auto* reused = FindReusedTable(context.device, binding, state); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+            APS5_STEP("table: rebind hit");
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
             auto next = cached.begin();
@@ -4281,6 +4293,7 @@ void ShaderResources::resolveImageTables() {
             (replay ? counters.tablesReplayed : counters.tablesReused).fetch_add(1, std::memory_order_relaxed);
             continue;
         }
+        APS5_STEP("table: resolve miss");
         ReusedTable fresh;
         fresh.bound.assign(binding.count, {});
         bool reusable = state.epoch != 0;
