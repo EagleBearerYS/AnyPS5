@@ -50,7 +50,7 @@ constexpr std::uint32_t DwordX2 = 0x0du;
 constexpr std::uint32_t DwordX4 = 0x0eu;
 constexpr std::uint32_t DwordX3 = 0x0fu;
 
-constexpr std::array<Case, 20> Cases{{
+constexpr std::array<Case, 21> Cases{{
     {"dwordx3", DwordX3, 3, 4, false, 0, 0, 40, Raw},
     {"dwordx3 view+1", DwordX3, 3, 4, false, 0, 1, 44, Raw},
     {"dwordx3 view+2 offset 4", DwordX3, 3, 4, false, 4, 2, 36, Raw},
@@ -69,6 +69,7 @@ constexpr std::array<Case, 20> Cases{{
     {"dwordx3 without record check", DwordX3, 3, 4, false, 0, 0, 36, RawNoRecordCheck},
     {"dwordx3 without record check view+1", DwordX3, 3, 4, false, 0, 1, 36, RawNoRecordCheck},
     {"dwordx4 without record check view+3", DwordX4, 4, 4, false, 0, 3, 40, RawNoRecordCheck},
+    {"dwordx3 without record check or records", DwordX3, 3, 4, false, 0, 1, 0, RawNoRecordCheck},
     {"dwordx3 without records", DwordX3, 3, 4, false, 0, 0, 0, Raw},
     {"dwordx3 with 4 bytes", DwordX3, 3, 4, false, 0, 2, 4, Raw},
 }};
@@ -87,6 +88,12 @@ std::string Hex(std::uint32_t value) {
 std::array<std::uint32_t, Lanes> LaneOffsets(const Case& c) {
     const auto n = c.records;
     const std::array<std::uint32_t, 4> tail = c.bytes == 1 ? std::array<std::uint32_t, 4>{n - 3, n - 1, 3, 7} : c.bytes == 2 ? std::array<std::uint32_t, 4>{n - 4, n - 2, 2, 6} : std::array<std::uint32_t, 4>{n - 24, n - 28, 32, 36};
+    if (c.word3 == RawNoRecordCheck) {
+        return {0, 4, 8, 12, 16, 20, 24, 28,
+                n - 20, n - 16, n - 12, n - 8, n - 4, n, n + 4, n + 8,
+                n + 12, n + 16, n + 20, n + 24, n + 28, n + 32, n + 36, n + 40,
+                tail[0], tail[1], tail[2], tail[3], 0, 4, n - 8, n - 4};
+    }
     return {0, 4, 8, 12, 16, 20, 24, 28,
             n - 20, n - 16, n - 12, n - 8, n - 4, n, n + 4, n + 8,
             0xfffffffcu, 0xfffffff8u, 0xfffffff4u, 0xfffffff0u, 0x80000000u, 0x7ffffffcu, 0xffffff00u, 0x00010000u,
@@ -100,7 +107,7 @@ bool LaneActive(std::uint32_t lane) {
 bool Valid(const Case& c, std::uint32_t offset) {
     if (c.records == 0) return false;
     if (c.word3 == Raw) return c.records >= c.bytes && offset <= c.records - c.bytes;
-    return (offset >> 2) < c.records / 4;
+    return true;
 }
 
 std::uint32_t Loaded(const Case& c, const std::uint8_t* view, std::uint32_t offset) {

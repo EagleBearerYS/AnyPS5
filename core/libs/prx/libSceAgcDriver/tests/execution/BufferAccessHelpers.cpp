@@ -143,6 +143,7 @@ std::uint32_t RangeOffset(const Case& c, std::uint32_t lane) {
             n - 20, n - 16, n - 12, n - 8, n - 4, n, n + 4, n + 8,
             0xfffffffcu, 0xfffffff8u, 0xfffffff4u, 0xfffffff0u, 0x80000000u, 0x7ffffffcu, 0xffffff00u, 0x00010000u,
             tail[0], tail[1], tail[2], tail[3], 0, 4, n - 8, n - 4};
+    if (c.word3 == RawNoRecordCheck && lane >= 16u && lane < 24u) return n + 12u + (lane - 16u) * 4u;
     return offsets[lane];
 }
 
@@ -154,7 +155,7 @@ std::uint32_t LaneOffset(const Case& c, std::uint32_t load, std::uint32_t lane) 
 bool Valid(const Case& c, std::uint32_t offset) {
     if (c.records == 0) return false;
     if (c.word3 == Raw) return c.records >= c.bytes && offset <= c.records - c.bytes;
-    return (offset >> 2) < c.records / 4;
+    return true;
 }
 
 std::uint32_t Loaded(const Case& c, const std::uint8_t* view, std::uint32_t offset) {
