@@ -11,6 +11,7 @@
 #endif
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/DisplayQueryTrace.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
@@ -392,6 +393,7 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
 }
 
 int APS5_VABI sceKernelGetMainSocId(void) {
+    TraceDisplayQuery_nid_no_patch("sceKernelGetMainSocId() = 0");
     return 0;
 }
 
@@ -613,6 +615,7 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
 }
 
 int APS5_VABI sceKernelIsTrinityMode(void) {
+    TraceDisplayQuery_nid_no_patch("sceKernelIsTrinityMode() = 0");
     return 0;
 }
 
@@ -621,6 +624,7 @@ void APS5_VABI sceKernelGetOperationMode(int* mode, int* submode) {
         throw std::invalid_argument("sceKernelGetOperationMode: null output");
     *mode = 2;
     *submode = 0;
+    TraceDisplayQuery_nid_no_patch("sceKernelGetOperationMode() = mode %d, submode %d", *mode, *submode);
 }
 
 int APS5_VABI seteuid_nid_postfix(std::uint32_t euid) {

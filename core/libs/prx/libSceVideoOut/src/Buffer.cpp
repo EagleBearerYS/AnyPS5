@@ -5,6 +5,7 @@
 #include <string>
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/DisplayQueryTrace.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -60,6 +61,7 @@ void APS5_VABI sceVideoOutSetBufferAttribute2(VideoOutBufferAttribute2* attribut
     attribute->pixel_format = pixelFormat;
     attribute->dcc_cb_register_clear_color = dccCbRegisterClearColor;
     attribute->dcc_control = dccControl;
+    TraceDisplayQuery_nid_no_patch("sceVideoOutSetBufferAttribute2(pixelFormat 0x%llx, tiling %u, %ux%u, option 0x%llx, dcc 0x%x)", static_cast<unsigned long long>(pixelFormat), tilingMode, width, height, static_cast<unsigned long long>(option), dccControl);
 }
 
 void APS5_VABI sceVideoOutAddBufferAttributeOption(VideoOutBufferAttribute2* attribute, uint64_t option) {
@@ -122,6 +124,7 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
         auto& label = cfg->bufferLabels[bufferIndexStart + i];
         AgcDriverStoreGuestLabel_nid_postfix(&label, 0);
     }
+    TraceDisplayQuery_nid_no_patch("sceVideoOutRegisterBuffers2(%d, set %d, first %d, count %d, category %d) = 0: %ux%u, pitch %u, pixelFormat 0x%llx, tiling %u, aspect %u, option 0x%llx", handle, setIndex, bufferIndexStart, bufferNum, category, attribute->width, attribute->height, attribute->pitch_in_pixel, static_cast<unsigned long long>(attribute->pixel_format), attribute->tiling_mode, attribute->aspect_ratio, static_cast<unsigned long long>(attribute->option));
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -154,6 +157,7 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, 
         const auto display = DescribeVideoOutBuffer(cfg->buffers[i], group);
         AgcDriverCheckGuestMemory_nid_postfix(reinterpret_cast<const void*>(display.address), AgcDriverDisplayBufferSize_nid_postfix(display), 65536);
     }
+    TraceDisplayQuery_nid_no_patch("sceVideoOutSubmitChangeBufferAttribute2(%d, set %d) = 0: %ux%u, pitch %u, pixelFormat 0x%llx, tiling %u, option 0x%llx", handle, setIndex, attribute->width, attribute->height, attribute->pitch_in_pixel, static_cast<unsigned long long>(attribute->pixel_format), attribute->tiling_mode, static_cast<unsigned long long>(attribute->option));
     cfg->groups[setIndex] = group;
     return 0;
 } catch (const ProcessShutdown&) {

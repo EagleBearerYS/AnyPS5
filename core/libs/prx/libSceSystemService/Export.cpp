@@ -19,6 +19,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "SceTypes.hpp"
 #include "LoadExec.hpp"
+#include "prx/libc/include/DisplayQueryTrace.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
@@ -223,6 +224,7 @@ int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAre
  }
  *info = SystemServiceDisplaySafeAreaInfo{};
  info->ratio = 1.0f;
+ TraceDisplayQuery_nid_no_patch("sceSystemServiceGetDisplaySafeAreaInfo() = 0: ratio %.3f", static_cast<double>(info->ratio));
  return SYSTEM_SERVICE_OK;
 }
 
@@ -235,6 +237,7 @@ int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLumi
  luminance->max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
  luminance->min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
  AgcDriverNoteReportedToneMapPeak_nid_postfix(luminance->max_tone_map_luminance);
+ TraceDisplayQuery_nid_no_patch("sceSystemServiceGetHdrToneMapLuminance() = 0: max %.1f, maxFullFrame %.1f, min %.4f", static_cast<double>(luminance->max_tone_map_luminance), static_cast<double>(luminance->max_full_frame_tone_map_luminance), static_cast<double>(luminance->min_tone_map_luminance));
  return SYSTEM_SERVICE_OK;
 }
 
@@ -251,6 +254,7 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  *status = SystemServiceStatus{};
+ TraceDisplayQuery_nid_no_patch("sceSystemServiceGetStatus() = 0: events %d, overlaid %d, background %d", status->event_num, status->is_system_ui_overlaid ? 1 : 0, status->is_in_background_execution ? 1 : 0);
  return SYSTEM_SERVICE_OK;
 }
 
@@ -262,6 +266,7 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
+ bool known = true;
  switch (paramId) {
   case SYSTEM_SERVICE_PARAM_ID_LANG:
   case SYSTEM_SERVICE_PARAM_ID_400: *value = ConsoleLanguage(); break;
@@ -271,8 +276,9 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
   case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: *value = 0; break;
   case SYSTEM_SERVICE_PARAM_ID_GAME_PARENTAL_LEVEL: *value = SYSTEM_SERVICE_PARAM_GAME_PARENTAL_OFF; break;
   case SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN: *value = SYSTEM_SERVICE_PARAM_ENTER_BUTTON_CROSS; break;
-  default: *value = 0; break;
+  default: *value = 0; known = false; break;
  }
+ TraceDisplayQuery_nid_no_patch("sceSystemServiceParamGetInt(%d) = 0: %d%s", paramId, *value, known ? "" : " (not implemented, answered 0)");
  return SYSTEM_SERVICE_OK;
 }
 
