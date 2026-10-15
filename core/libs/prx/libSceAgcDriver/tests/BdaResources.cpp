@@ -1500,6 +1500,10 @@ void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access,
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
     registry(true);
+#ifdef _WIN32
+    AgcDriver::GuestMemory::Unwatch(idle, idleBytes);
+    AgcDriver::GuestMemory::Unwatch(busy, busyBytes);
+#endif
     auto importing = context;
     importing.hostImportAlignment = block;
     SetHostImportBudget(heapBytes + idleBytes + busyBytes - block);
