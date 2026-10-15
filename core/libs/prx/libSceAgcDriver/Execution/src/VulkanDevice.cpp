@@ -3679,6 +3679,10 @@ std::uint64_t VulkanDevice::presync(std::span<const std::pair<std::uint64_t, std
     return serial;
 }
 
+void VulkanDevice::PrewarmAddressSpace() {
+    Graphics::GuestBufferMemory::Prewarm(readyContext());
+}
+
 std::uint64_t VulkanDevice::PresyncDraw(const Graphics::State& graphics) {
     if (NoPresync() || !CanWaitUnlocked()) return 0;
     const auto keyed = [](const Graphics::ColorTarget& color) { return color.address != 0 && color.bytes != 0 && color.dccAddress != 0 && Graphics::Recorder::SnapshotWriteOverlaps(color.dccAddress, Graphics::DccKeyBytes(color.bytes)); };

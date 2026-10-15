@@ -298,6 +298,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     const auto lockForDraw = [&] {
         if (gpuLock.owns_lock()) return;
         static_cast<void>(localDevice->PrepareDrawPipelines(graphics, stages));
+        localDevice->PrewarmAddressSpace();
         phaseTiming.Phase(DrawRowVectors);
         const auto* presyncDevice = localDevice.get();
         const auto presynced = localDevice->PresyncDraw(graphics);

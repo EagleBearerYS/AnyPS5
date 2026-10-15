@@ -167,6 +167,7 @@ class GuestBufferMemory {
 public:
     explicit GuestBufferMemory(const Context& context);
     void AcquireRegistered();
+    static void Prewarm(const Context& context);
     static void CountAddressBuild();
     void AddInPlace(std::uint64_t address, std::size_t bytes, bool written);
     void Upload();

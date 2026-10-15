@@ -1749,6 +1749,15 @@ void RetainRetiredImport(std::shared_ptr<void> holder) {
     retired.current = std::move(next);
 }
 
+void GuestBufferMemory::Prewarm(const Context& context) {
+    if (!context.bufferDeviceAddress || !addressSpaceCacheEnabled()) return;
+    const auto current = Spaces().current.load();
+    if (current == nullptr || current->device != context.device) return;
+    if (current->generation == GuestAllocations::GuestAllocationsGeneration_nid_postfix() && current->importsEpoch == Imports().epoch.load(std::memory_order_acquire)) return;
+    GuestBufferMemory warm(context);
+    warm.AcquireRegistered();
+}
+
 void GuestBufferMemory::AcquireRegistered() {
     Require(!uploaded && regions.empty() && lease.empty() && space == nullptr, "guest allocation lease must precede resource registration");
     ensurePinWaiter();
