@@ -37,8 +37,8 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-std::vector<std::array<float, 4>> Triangles() {
-    std::vector<std::array<float, 4>> vertices;
+TestGuest::Vector<std::array<float, 4>> Triangles() {
+    TestGuest::Vector<std::array<float, 4>> vertices;
     constexpr std::uint32_t columns = 6;
     constexpr std::uint32_t rows = 4;
     for (std::uint32_t cell = 0; cell < columns * rows; ++cell) {

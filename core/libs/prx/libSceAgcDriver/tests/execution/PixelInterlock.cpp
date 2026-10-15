@@ -91,9 +91,9 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, stride == 0u ? 0x31016facu : 0x01016facu};
 }
 
-const std::vector<std::array<float, 4>>& Triangles() {
+const TestGuest::Vector<std::array<float, 4>>& Triangles() {
     static const auto triangles = [] {
-        std::vector<std::array<float, 4>> vertices;
+        TestGuest::Vector<std::array<float, 4>> vertices;
         for (std::uint32_t layer = 0; layer < Layers; ++layer) {
             vertices.push_back({-1.0f, -1.0f, 0.5f, 1.0f});
             vertices.push_back({3.0f, -1.0f, 0.5f, 1.0f});

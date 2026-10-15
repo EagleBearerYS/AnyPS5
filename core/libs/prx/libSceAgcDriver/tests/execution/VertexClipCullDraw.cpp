@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -141,7 +142,7 @@ void SetRegister(std::vector<std::uint32_t>& words, std::uint32_t opcode, std::u
     words.push_back(value);
 }
 
-std::vector<std::uint32_t> Frame(const Step& step, const std::array<Vertex, 3>& vertices) {
+std::vector<std::uint32_t> Frame(const Step& step, const TestGuest::Array<Vertex, 3>& vertices) {
     const auto colorAddress = reinterpret_cast<std::uintptr_t>(ColorMemory);
     const auto vertexAddress = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixelAddress = reinterpret_cast<std::uintptr_t>(PixelCode.data());
@@ -218,7 +219,7 @@ int main(int argc, char** argv) {
         Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(PixelShader, PixelCode.data(), sizeof(PixelCode), 1);
         for (const auto& step : Steps) {
-            std::array<Vertex, 3> vertices{};
+            TestGuest::Array<Vertex, 3> vertices;
             for (std::size_t i = 0; i < vertices.size(); ++i) {
                 vertices[i] = {{PositionX[i], PositionY[i], 0.5f, 1.0f}, {step.component0[i], step.component1[i], step.component2[i], 0.0f}};
             }

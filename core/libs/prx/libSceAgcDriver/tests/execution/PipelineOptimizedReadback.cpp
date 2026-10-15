@@ -46,15 +46,15 @@ alignas(256) constexpr std::array<std::uint32_t, 7> MaskedPixelCode{
 alignas(256) constexpr std::array<std::uint32_t, 4> FullPixelCode{
     0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
 };
-constexpr std::array<std::array<float, 4>, 3> Triangle{{
+const TestGuest::Array<std::array<float, 4>, 3> Triangle{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
-constexpr std::array<std::array<float, 4>, 12> DepthTriangles{{
+};
+const TestGuest::Array<std::array<float, 4>, 12> DepthTriangles{
     {-1.0f, -1.0f, 0.25f, 1.0f}, {0.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 1.0f, 0.25f, 1.0f},
     {-1.0f, 1.0f, 0.25f, 1.0f}, {0.0f, -1.0f, 0.25f, 1.0f}, {0.0f, 1.0f, 0.25f, 1.0f},
     {0.0f, -1.0f, 0.75f, 1.0f}, {1.0f, -1.0f, 0.75f, 1.0f}, {0.0f, 1.0f, 0.75f, 1.0f},
     {0.0f, 1.0f, 0.75f, 1.0f}, {1.0f, -1.0f, 0.75f, 1.0f}, {1.0f, 1.0f, 0.75f, 1.0f}
-}};
+};
 
 struct PipelineTrace {
     PFN_vkGetDeviceProcAddr resolve = nullptr;
@@ -152,7 +152,7 @@ void CheckDrawn(PipelineTrace& trace, bool optimized) {
 void Run(AgcDriver::VulkanDevice& device, Context context, PipelineTrace& trace, std::uint32_t waveSize, VkFormat depthFormat, bool optimize) {
     const bool masked = depthFormat == VK_FORMAT_UNDEFINED;
     const auto target = device.Target();
-    const auto vertices = masked ? std::span<const std::array<float, 4>>(Triangle) : std::span<const std::array<float, 4>>(DepthTriangles);
+    const auto vertices = masked ? std::span<const std::array<float, 4>>(Triangle.data(), Triangle.size()) : std::span<const std::array<float, 4>>(DepthTriangles.data(), DepthTriangles.size());
     const auto vertexBuffer = BufferDescriptor(vertices.data(), 16u, static_cast<std::uint32_t>(vertices.size()));
     const TestGuest::Vector<std::uint32_t> vertexUserData(vertexBuffer.begin(), vertexBuffer.end());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};

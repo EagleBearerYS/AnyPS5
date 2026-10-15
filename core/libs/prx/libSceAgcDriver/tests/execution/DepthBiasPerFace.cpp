@@ -39,7 +39,7 @@ constexpr std::array<std::array<float, 2>, 6> Corners{{
     {17.0f, 1.0f}, {31.0f, 1.0f}, {17.0f, 15.0f},
 }};
 
-alignas(256) std::array<std::array<float, 4>, Corners.size()> Vertices{};
+TestGuest::Array<std::array<float, 4>, Corners.size()> Vertices;
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);

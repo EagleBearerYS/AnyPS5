@@ -63,9 +63,9 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-constexpr std::array<std::array<float, 4>, 3> Triangles{{
+const TestGuest::Array<std::array<float, 4>, 3> Triangles{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 
 void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, bool bounded) {
     const auto& triangles = Triangles;

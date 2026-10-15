@@ -81,7 +81,7 @@ bool Expected(Visible visible, std::uint32_t pixel) {
 
 void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const Row& row) {
     Pixels.fill(std::byte{0});
-    std::array<Vertex, 3> vertices{};
+    TestGuest::Array<Vertex, 3> vertices;
     for (std::size_t i = 0; i < vertices.size(); ++i) {
         vertices[i] = {{PositionX[i], PositionY[i], 0.5f, 1.0f}, {row.component0[i], row.component1[i], row.component2[i], 0.0f}};
     }

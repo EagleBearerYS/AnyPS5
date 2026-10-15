@@ -63,7 +63,8 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::spa
     Pixels.fill(Unwritten);
     auto target = device.Target();
     target.fragmentShaderBarycentricEnabled = false;
-    static const auto positions = ClipPositions();
+    static TestGuest::Array<std::array<float, 4>, 3> positions;
+    positions = ClipPositions();
 
     TestGuest::Vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(positions.data(), 16u, static_cast<std::uint32_t>(positions.size()));
