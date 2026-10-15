@@ -753,7 +753,8 @@ std::uint32_t scalarLoad(SpirvValueEmitContext& context, const IrValue& instruct
         const auto index = directWordIndex(state, directBaseWord(state, access), byte);
         return EmitValueOrZeroIfCondition(state, both(state, inBounds, EmitMemoryElementInBounds(state, access, index)), [&] { return directWordLoad(state, access, index); });
     }
-    return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, resource, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
+    const auto base = Binary(state, spv::OpBitwiseAnd, u64, resource.base, BdaConstant(state, ~std::uint64_t{3u}));
+    return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, resource, AddBdaAddress(context, instruction, base, offset, false), 32u); });
 }
 
 std::uint32_t atomicTargetType(SpirvEmitterState& state, const MemoryInfo& memory) {
