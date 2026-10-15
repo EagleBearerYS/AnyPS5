@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -83,6 +84,10 @@ constexpr std::array<std::uint32_t, 10> LoadCode{
 
 constexpr std::array<std::uint32_t, 9> BufferCopyCode{
     0xd7460001u, 0x04011410u, 0x34020282u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u,
+};
+
+constexpr std::array<std::uint32_t, 6> StoreCode{
+    0x7e040300u, 0x7e060210u, 0x7e080204u, 0xf0201108u, 0x00020402u, 0xbf810000u,
 };
 
 constexpr std::array<std::uint32_t, 13> AddressBasedCopyCode{
@@ -296,8 +301,9 @@ std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool
 class TexelReader {
 public:
     TexelReader()
-        : kernel(NewBlock(Block)), copyKernel(NewBlock(Block)), addressBasedCopyKernel(NewBlock(Block)), htileKernel(NewBlock(Block)), pointerCopyKernel(NewBlock(Block)), coordinates(NewBlock(Block)), output(NewBlock(Block)), zero(NewBlock(Block)) {
+        : kernel(NewBlock(Block)), storeKernel(NewBlock(Block)), copyKernel(NewBlock(Block)), addressBasedCopyKernel(NewBlock(Block)), htileKernel(NewBlock(Block)), pointerCopyKernel(NewBlock(Block)), coordinates(NewBlock(Block)), output(NewBlock(Block)), zero(NewBlock(Block)) {
         std::memcpy(kernel, LoadCode.data(), sizeof(LoadCode));
+        std::memcpy(storeKernel, StoreCode.data(), sizeof(StoreCode));
         std::memcpy(copyKernel, BufferCopyCode.data(), sizeof(BufferCopyCode));
         std::memcpy(addressBasedCopyKernel, AddressBasedCopyCode.data(), sizeof(AddressBasedCopyCode));
         std::memcpy(htileKernel, HtileClearCode.data(), sizeof(HtileClearCode));
@@ -330,6 +336,14 @@ public:
         return texels;
     }
 
+    void Store(std::uint64_t surface, std::uint32_t value, const std::string& what) {
+        std::array<std::uint32_t, 16> userData{};
+        userData[4] = value;
+        const auto texture = TextureDescriptor(surface);
+        std::copy(texture.begin(), texture.end(), userData.begin() + 8);
+        Dispatch(storeKernel, userData, Width, Height, true, what);
+    }
+
     void CopyBuffer(std::uint64_t source, std::uint64_t destination, std::uint32_t bytes, bool addressBased, const std::string& what) {
         std::array<std::uint32_t, 16> userData{};
         const auto read = BufferDescriptor(source, bytes);
@@ -357,6 +371,7 @@ public:
 
 private:
     std::uint8_t* kernel;
+    std::uint8_t* storeKernel;
     std::uint8_t* copyKernel;
     std::uint8_t* addressBasedCopyKernel;
     std::uint8_t* htileKernel;
@@ -660,6 +675,34 @@ bool RunRepeatedExpand(TexelReader& reader) {
     return counted && expanded;
 }
 
+bool RunStorageImageRead(TexelReader& reader) {
+    const auto name = std::string("address-based buffer copies of an image a compute shader stored");
+    const auto image = Address(NewBlock(PlaneBytes()));
+    const auto copy = Address(NewBlock(PlaneBytes()));
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{image, image + PlaneBytes()}}};
+    std::printf("%s: image 0x%llx, copy at 0x%llx\n", name.c_str(), static_cast<unsigned long long>(image), static_cast<unsigned long long>(copy));
+    bool copied = true;
+    std::uint64_t cached = 0;
+    for (const auto value : {0x3f400000u, 0x3f200000u}) {
+        Fill(copy, PlaneBytes(), 0xffffffffu);
+        bool pending = false;
+        for (int attempt = 0; attempt < 5 && !pending; ++attempt) {
+            reader.Store(image, value, name + ": image_store of " + Hex(value) + " to every texel");
+            pending = StorageTexture::AnyPendingOverlaps(range);
+        }
+        Require(pending, name + ": the stored results were never pending when the copy came");
+        const auto hits = AddressSpaceCounters().hits;
+        reader.CopyBuffer(image, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": address-based buffer copy of the image");
+        const auto hit = AddressSpaceCounters().hits - hits;
+        cached += hit;
+        const auto texels = DetileRaw(image, GuestBytes(copy, PlaneBytes()));
+        const auto stored = static_cast<std::uint32_t>(std::count(texels.begin(), texels.end(), value));
+        std::printf("  copy after the image_store of %s (%s the cached address space): %u of %u texels hold it; texel (0, 0) %s\n", Hex(value).c_str(), hit != 0 ? "through" : "without", stored, Texels, Hex(texels.front()).c_str());
+        copied = copied && stored == Texels;
+    }
+    return copied && (cached != 0 || !AddressSpaceCounters().enabled);
+}
+
 struct Case {
     const char* name;
     std::function<bool(TexelReader&)> run;
@@ -690,6 +733,7 @@ int main(int argc, char** argv) {
             {"split-mirrored-buffer-read", [](TexelReader& reader) { return RunSplitRead(reader, SecondHalf::Mirrored, false); }, "depth expand: address-based buffer copies of a write base imported in part and heap-mirrored in part do not hold the read surface's depth"},
             {"split-copied-buffer-read", [](TexelReader& reader) { return RunSplitRead(reader, SecondHalf::Copied, false); }, "depth expand: address-based buffer copies of a write base imported in part and copied in part do not hold the read surface's depth"},
             {"repeated-expand", RunRepeatedExpand, "depth expand: a repeated DB expand wrote the plane when nothing changed, or did not write it after a change"},
+            {"address-based-storage-image-read", RunStorageImageRead, "depth expand: an address-based buffer copy of an image did not hold what a compute shader stored to it, or no copy went through the cached address space"},
         };
         const std::string_view only = argc == 2 ? std::string_view(argv[1]) : std::string_view();
         Require(argc <= 2 && (only.empty() || std::any_of(cases.begin(), cases.end(), [&](const Case& entry) { return only == entry.name; })), "usage: [case name]");
