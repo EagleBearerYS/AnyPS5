@@ -5968,9 +5968,9 @@ int main(int argc, char** argv) {
         bdaContext.limits.maxStorageBufferRange = 1u << 27;
         RunBdaResourceTests(bdaContext, {
             [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
-            [](std::uint32_t binding) {
-                for (auto it = mock.writes.rbegin(); it != mock.writes.rend(); ++it) {
-                    if (it->binding == binding) return it->buffers.at(0);
+            [](std::uint32_t binding, std::size_t since) {
+                for (auto index = mock.writes.size(); index-- > since;) {
+                    if (mock.writes[index].binding == binding) return mock.writes[index].buffers.at(0);
                 }
                 throw std::runtime_error("missing BDA test descriptor");
             },
@@ -5982,8 +5982,10 @@ int main(int argc, char** argv) {
             [](std::optional<VkDeviceSize> headroom) {
                 mock.memoryLimit = headroom.has_value() ? std::optional<VkDeviceSize>(mock.allocatedBytes + *headroom) : std::nullopt;
             },
-            [] { return mock.allocationAttempts; }
+            [] { return mock.allocationAttempts; },
+            [] { return mock.writes.size(); }
         });
+        bdaContext.bdaArena.reset();
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();
         RunUnmappedGapTests();
