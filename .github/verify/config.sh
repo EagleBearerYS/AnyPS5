@@ -1,0 +1,4 @@
+BASE=44df21632125dbe3113a19173e7ebb879da53003
+REPEAT=10
+EXTRA_TESTS='agc_driver_mesh_index_cache|agc_driver_preparation_scope_settle'
+NO_BEFORE=1
