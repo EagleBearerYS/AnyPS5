@@ -237,7 +237,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Dispatch(device, CopyKeysCode, copyData);
     RequireKeys(copied, 0xff, "a kernel reading the keys after the first write of a 0000-cleared surface");
     Require(AgcDriver::Graphics::CurrentDccKeys(AddressOf(copied), SurfaceBytes) == DccKeys::Uncompressed, "the copied keys do not read uncompressed");
-    Require(StorageTexture::FindPending(surface, SurfaceBytes) == nullptr, "a kernel reading memory through the page table ran before the pending image was written back");
+    Require(StorageTexture::FindPending(surface, SurfaceBytes) == image, "a kernel reading only the keys wrote the pending image back");
     Require(AgcDriver::Graphics::StorageImageServesKeys(*image, AddressOf(copied)), "the written image does not serve the copied keys");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();

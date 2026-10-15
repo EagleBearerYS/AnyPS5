@@ -28,6 +28,11 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
             storesUnbounded = storesUnbounded || shader.program->unboundedWrites;
             storeRanges.insert(storeRanges.end(), shader.program->writeRanges.begin(), shader.program->writeRanges.end());
         }
+        if (tables != 0) {
+            accessesUnbounded = accessesUnbounded || shader.program->unboundedReads || (shader.program->bdaWrites && shader.program->unboundedWrites);
+            accessRanges.insert(accessRanges.end(), shader.program->readRanges.begin(), shader.program->readRanges.end());
+            if (shader.program->bdaWrites) accessRanges.insert(accessRanges.end(), shader.program->writeRanges.begin(), shader.program->writeRanges.end());
+        }
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
         const bool device = UsesDeviceImageTable(*shader.program);
@@ -38,6 +43,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
         guestMemory.AcquireRegistered();
+        guestMemory.SetAccessRanges(accessRanges, accessesUnbounded);
         if (profile) GuestBufferMemory::CountAddressBuild();
     }
 }

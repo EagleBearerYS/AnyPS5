@@ -184,6 +184,10 @@ public:
         VkDeviceSize offset;
     };
     std::vector<ImportSegment> WritableImportSegments(std::uint64_t begin, std::uint64_t end) const;
+    void SetAccessRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges, bool unbounded) {
+        accessRanges = std::move(ranges);
+        accessUnbounded = unbounded;
+    }
     std::shared_ptr<const BdaPageTable> PageTableWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const;
     struct AddressSpace;
     void Release();
@@ -211,6 +215,8 @@ private:
     void validate(std::uint64_t address, std::size_t bytes) const;
     Context context;
     GuestAllocations::Lease lease;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> accessRanges;
+    bool accessUnbounded = true;
     std::shared_ptr<const AddressSpace> space;
     std::uint64_t importsEpoch = 0;
     std::uint64_t importFloor = 0;

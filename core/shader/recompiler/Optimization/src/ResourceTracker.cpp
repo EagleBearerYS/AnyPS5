@@ -99,6 +99,8 @@ public:
         m_info.bdaWrites = false;
         m_info.bufferStores.clear();
         m_info.unboundedStores = false;
+        m_info.bufferLoads.clear();
+        m_info.unboundedLoads = false;
     }
 
     void Run() {
@@ -1488,19 +1490,22 @@ private:
         memory.gpuDescriptor = true;
         m_info.usesDma = true;
         m_info.bdaWrites = m_info.bdaWrites || access == BufferAccess::Write || access == BufferAccess::Atomic;
-        if (access == BufferAccess::Write || access == BufferAccess::Atomic) {
+        const bool store = access == BufferAccess::Write || access == BufferAccess::Atomic;
+        if (access != BufferAccess::None) {
             DescriptorSource descriptor;
             MakeSource(*handle, 4u, false, false, descriptor);
             std::uint32_t badDword = 0;
+            auto& sites = store ? m_info.bufferStores : m_info.bufferLoads;
             if (ValidateSource(descriptor, badDword)) {
-                const IrValue* soffset = inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
-                const bool immediate = soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32;
-                const BufferStoreSite site{InternSource(descriptor), immediate ? soffset->ImmediateU32() : 0u, !immediate};
-                if (std::ranges::find(m_info.bufferStores, site) == m_info.bufferStores.end()) m_info.bufferStores.push_back(site);
+                const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
+                const IrValue* soffset = !scalar && inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
+                const bool immediate = scalar || (soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32);
+                const BufferStoreSite site{InternSource(descriptor), soffset != nullptr && immediate ? soffset->ImmediateU32() : 0u, !immediate, scalar};
+                if (std::ranges::find(sites, site) == sites.end()) sites.push_back(site);
             } else {
-                m_info.unboundedStores = true;
+                (store ? m_info.unboundedStores : m_info.unboundedLoads) = true;
             }
-            m_writtenSources.push_back(std::move(descriptor));
+            if (store) m_writtenSources.push_back(std::move(descriptor));
         }
         return true;
     }
@@ -1686,6 +1691,7 @@ private:
             m_info.usesDma = true;
             m_info.bdaWrites = m_info.bdaWrites || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
             m_info.unboundedStores = m_info.unboundedStores || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
+            m_info.unboundedLoads = m_info.unboundedLoads || addressInfo.access != AddressAccess::None;
             return;
         }
 
