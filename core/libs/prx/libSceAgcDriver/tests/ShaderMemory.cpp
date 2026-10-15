@@ -1277,6 +1277,15 @@ std::uint32_t* AllocateWatchedTable(std::size_t bytes) {
     return heap;
 }
 
+void ProtectTablePage(std::uintptr_t page, std::uint32_t protection) {
+    GuestArena::GuestArenaSetProtection_nid_postfix(page, 4096u, protection);
+#ifdef _WIN32
+    DWORD previous = 0;
+    require(VirtualProtect(reinterpret_cast<void*>(page), 4096u, protection, &previous) != 0, "table snapshot reuse: cannot protect a table page");
+#endif
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(page, 4096u);
+}
+
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -1672,17 +1681,21 @@ void verifyTableSnapshotReuse() {
     const auto pagedReused = capture(pagedRequest, paged, PagedBytes, nullptr);
     require(pagedFresh.reuse.columns == 1u && sharesColumn(pagedReused, pagedFresh) && heldRecords(pagedReused, paged, PagedRecords), "table snapshot reuse: an unchanged paged table did not share its column");
     const auto hidden = reinterpret_cast<std::uintptr_t>(paged) + 4096u;
-    GuestArena::GuestArenaSetProtection_nid_postfix(hidden, 4096u, 0x01u);
-    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(hidden, 4096u);
+    ProtectTablePage(hidden, 0x01u);
     const auto pagedUnmapped = capture(pagedRequest, paged, PagedBytes, nullptr);
-    GuestArena::GuestArenaSetProtection_nid_postfix(hidden, 4096u, 0x04u);
-    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(hidden, 4096u);
+    ProtectTablePage(hidden, 0x04u);
     const auto unmappedCode = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped));
     const auto& hiddenCodes = pagedUnmapped.tables.tables.at(0).codes;
     require(pagedUnmapped.reuse.unwritten == 0u && pagedUnmapped.reuse.shared == 0u && pagedUnmapped.reuse.columns == 1u && pagedUnmapped.supplied.shared == 0u && hiddenCodes.at(127u) != unmappedCode && hiddenCodes.at(128u) == unmappedCode && hiddenCodes.at(255u) == unmappedCode && hiddenCodes.at(256u) != unmappedCode, "table snapshot reuse: the records of an unmapped page were not read again as Unmapped poison");
     require(heldRecords(pagedReused, paged, PagedRecords) && sharesColumn(pagedReused, pagedFresh), "table snapshot reuse: unmapping a page changed the column read before it");
     const auto pagedBack = capture(pagedRequest, paged, PagedBytes, nullptr);
     require(pagedBack.reuse.unwritten == 0u && pagedBack.reuse.compared == 1u && sharesColumn(pagedBack, pagedFresh) && heldRecords(pagedBack, paged, PagedRecords), "table snapshot reuse: the column read before a page was unmapped was not compared and shared once the page came back");
+    static_cast<void>(capture(pagedRequest, paged, PagedBytes, nullptr));
+    GuestArena::GuestArenaReset_nid_postfix(paged, PagedBytes);
+    GuestArena::GuestArenaCommit_nid_postfix(paged, PagedBytes, 0x04u, PagedBytes);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(paged), PagedBytes);
+    const auto pagedRemapped = capture(pagedRequest, paged, PagedBytes, nullptr);
+    require(pagedRemapped.reuse.unwritten == 0u && pagedRemapped.reuse.shared == 0u && pagedRemapped.reuse.columns == 1u && !sharesColumn(pagedRemapped, pagedFresh) && heldRecords(pagedRemapped, paged, PagedRecords), "table snapshot reuse: a table mapped again with new contents was not read again");
     std::cout << "table snapshot reuse " << (watched ? "with" : "without") << " write watching passed\n";
 }
 
