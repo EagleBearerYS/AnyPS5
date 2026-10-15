@@ -17,6 +17,40 @@ constexpr std::uint32_t Copies = 4;
 constexpr std::uint32_t Equal = 3;
 constexpr std::uint32_t Later = 0x6c000001u;
 
+constexpr std::uint32_t SpinLanes = 64;
+constexpr std::uint32_t SpinRounds = 1u << 20u;
+constexpr std::uint32_t SpinOutput = 64;
+constexpr std::uint32_t VLshrRevB32 = 0x16u;
+constexpr std::uint32_t VXorB32 = 0x1du;
+constexpr std::uint32_t MoveLiteralToS9 = 0xbe8903ffu;
+constexpr std::uint32_t DecrementS9 = 0x80898109u;
+constexpr std::uint32_t CompareS9NotZero = 0xbf078009u;
+constexpr std::uint32_t BranchBackWhileNotZero = 0xbf85fff7u;
+
+Program Opener;
+Program Spinner;
+
+void BuildPrograms() {
+    using namespace Isa;
+    Opener << Vop2(VLshlRevB32, 1, InlineInteger(2), 0) << Mubuf(BufferStoreDword, 0, 1, 0) << EndProgram;
+    Spinner << Vop2(VAddNcU32, 1, InlineInteger(1), 0) << MoveLiteralToS9 << SpinRounds
+            << Vop2(VLshlRevB32, 2, InlineInteger(13), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
+            << Vop2(VLshrRevB32, 2, InlineInteger(17), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
+            << Vop2(VLshlRevB32, 2, InlineInteger(5), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
+            << DecrementS9 << CompareS9NotZero << BranchBackWhileNotZero
+            << Vop2(VLshlRevB32, 3, InlineInteger(2), 0) << Mubuf(BufferStoreDword, 1, 3, 0) << EndProgram;
+}
+
+std::uint32_t Spun(std::uint32_t lane) {
+    std::uint32_t value = lane + 1u;
+    for (std::uint32_t round = 0; round < SpinRounds; ++round) {
+        value ^= value << 13u;
+        value ^= value >> 17u;
+        value ^= value << 5u;
+    }
+    return value;
+}
+
 int failures = 0;
 
 void Expect(bool condition, const std::string& what) {
@@ -70,6 +104,13 @@ public:
     std::uint64_t LastTail() const { return destinations.Address(std::uint64_t{Copies} * CopyPages * PageBytes - 16u); }
     const std::uint8_t* SourceTail() const { return sources.Data() + std::uint64_t{Copies} * CopyPages * PageBytes - 16u; }
 
+    void SpinThenStore(Commands& commands) const {
+        const auto output = BufferResource(Slot(SpinOutput), SpinLanes * 4u);
+        commands.Dispatch(Spinner, output, SpinLanes);
+    }
+
+    std::uint64_t LastSpin() const { return Slot(SpinOutput) + (SpinLanes - 1u) * 4u; }
+
     std::uint64_t Slot(std::uint32_t index) const { return slots.Address(std::uint64_t{index} * 64u); }
     volatile std::uint32_t* SlotWords(std::uint32_t index) const { return slots.Words() + index * 16u; }
 
@@ -84,23 +125,27 @@ void GpuSideWait(Memory& memory) {
     const auto label = memory.Slot(0);
     const auto target = memory.Slot(1);
     const auto check = memory.Slot(2);
+    const auto spun = memory.Slot(3);
     Commands waiter;
     waiter.Wait(label, Equal, 1u, 0xffffffffu);
-    waiter.DmaCopy(check, memory.LastTail(), 16u);
     waiter.WriteData(target, {Later});
+    waiter.DmaCopy(check, memory.LastTail(), 16u);
+    waiter.DmaCopy(spun, memory.LastSpin(), 4u);
     waiter.Submit(WaiterQueue);
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     Expect(!Recorded(target), "GPU-side wait: the work after a wait was recorded before any writer of its label existed");
     Commands writer;
     memory.SlowWrites(writer);
+    memory.SpinThenStore(writer);
     writer.WriteData(label, {1u});
     writer.Submit(WriterQueue);
     const auto seen = WatchRecord(target, memory.SlotWords(0), 0u);
     Expect(seen.recorded, "GPU-side wait: the waiter never recorded the work after its wait");
     Expect(seen.beforeLanding, "GPU-side wait: the waiter recorded the work after a wait on another queue's recorded label only once the label was in memory (a CPU wait)");
     WaitIdle();
-    AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(0), 3 * 64u);
+    AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(0), 4 * 64u);
     Expect(memory.SlotWords(1)[0] == Later, "GPU-side wait: the store after the wait did not land");
+    Expect(memory.SlotWords(3)[0] == Spun(SpinLanes - 1u), "GPU-side wait: the copy after the wait read the writer's last dispatch result as " + Hex(memory.SlotWords(3)[0]) + ", expected " + Hex(Spun(SpinLanes - 1u)));
     const auto* copied = reinterpret_cast<const volatile std::uint8_t*>(memory.SlotWords(2));
     for (std::uint32_t byte = 0; byte < 16u; ++byte) {
         if (copied[byte] == memory.SourceTail()[byte]) continue;
@@ -139,8 +184,10 @@ int main() {
     try {
         Memory memory;
         {
+            BuildPrograms();
             Commands open;
-            open.WriteData(memory.Slot(8), {1u});
+            const auto target = BufferResource(memory.Slot(8), 256u);
+            open.Dispatch(Opener, target, 64u);
             open.Submit(0);
             WaitIdle();
         }
