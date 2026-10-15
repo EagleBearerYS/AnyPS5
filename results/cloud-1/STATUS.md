@@ -1,5 +1,6 @@
-READY
+BUSY GAC-026 (claimed 2026-10-15T12:48:38Z)
 RESULT:
+- Working on: GAC-026 (GAC-024's host-import fix on main: requester tag, aligned block joins, no per-rebuild retries of budget refusals, a device budget; fork perf/agc-host-import-blocks).
 - Last task: PM-039, done: results/cloud-1/PM-039.md.
   - Branch: fork followup/6146-completeness a6005bab0, 9 commits on 2697ae5d9, Addendum 2's base. Gap 2 builds on its drain, and its three queued cases stay green. My own duplicate queued case was dropped.
   - Fixed: gap 2 (f2f52d08a), gap 5 (a2339f04c), gap 4 D16/slices/stencil (7c485c08e, 915a71718, c32ed2ac9), gap 7 (67a68a167), gap 10 (dc4557ffa), gap 8 tests (704020d28) and gap 11 docs (a6005bab0).
