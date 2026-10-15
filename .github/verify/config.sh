@@ -1,0 +1,3 @@
+BASE=6239ceffc84e0c104904e5454f8f3c1eb22a4049
+REPEAT=20
+EXTRA_TESTS='agc_address_copy_cap|agc_heap_mirror_unwatch|agc_heap_mirror_unwatch_no_space_cache|agc_driver_graphics|agc_driver_bda_device'
