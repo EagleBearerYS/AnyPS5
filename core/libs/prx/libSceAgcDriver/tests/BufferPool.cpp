@@ -235,6 +235,23 @@ void LargerClass() {
     Expect(MemoryOf(best.Handle()) != twelve && ClassOf(best.Handle()) == 5 * MiB, "a 4 MiB + 1 request did not take the smallest retained class that fits (5 MiB)");
 }
 
+void EmptiedClass() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VkDeviceMemory twelve = VK_NULL_HANDLE;
+    {
+        DeviceBuffer seven(context, 7 * MiB, usage);
+        DeviceBuffer large(context, 12 * MiB, usage);
+        twelve = MemoryOf(large.Handle());
+    }
+    DeviceBuffer first(context, 7 * MiB, usage);
+    Expect(MemoryOf(first.Handle()) != twelve, "a 7 MiB request took the retained 12 MiB buffer over its own class");
+    const auto made = mock.allocations;
+    DeviceBuffer second(context, 7 * MiB, usage);
+    Expect(MemoryOf(second.Handle()) == twelve && mock.allocations == made, "a 7 MiB request whose own class was emptied did not take the retained 12 MiB buffer");
+}
+
 void KeptUntilFence() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -534,6 +551,7 @@ int main() {
     try {
         SizeClassesAndDirections();
         LargerClass();
+        EmptiedClass();
         KeptUntilFence();
         Budget();
         AddressAndHostUnchanged();
