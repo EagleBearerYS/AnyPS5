@@ -61,9 +61,9 @@ alignas(256) constexpr std::array<std::uint32_t, 9> StoringVertexCode{
 
 TestGuest::Array<std::uint32_t, 64> Stored;
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{
+TestGuest::Array<std::array<float, 4>, 3> Triangle{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 
 constexpr std::array<std::array<std::uint8_t, 2>, 4> Destinations{{
     {64, 128}, {255, 0}, {32, 224}, {128, 64}

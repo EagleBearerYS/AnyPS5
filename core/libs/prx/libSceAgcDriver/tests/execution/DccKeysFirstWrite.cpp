@@ -223,12 +223,8 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::copy(destination.begin(), destination.end(), copyData.begin() + 4);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     Dispatch(device, WriteCode, writeData);
-    Dispatch(device, CopyKeysCode, copyData);
-    RequireKeys(copied, 0xff, "a kernel reading the keys after the first write of a 0000-cleared surface");
-    Require(AgcDriver::Graphics::CurrentDccKeys(AddressOf(copied), SurfaceBytes) == DccKeys::Uncompressed, "the copied keys do not read uncompressed");
     const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
     Require(image != nullptr && image->Descriptor().dccAddress == AddressOf(keys), "the written surface has no pending image under its keys");
-    Require(AgcDriver::Graphics::StorageImageServesKeys(*image, AddressOf(copied)), "the written image does not serve the copied keys");
     Require(image->UploadedKeys() == DccKeys::Uncompressed && image->FilledKeys() == DccKeys::Uncompressed, "the written image still holds the clear it was uploaded under");
     const bool stillWatched = AgcDriver::GuestMemory::Watched(surface, SurfaceBytes);
     Require(image->GuestSnapshotValid() == !stillWatched, stillWatched ? "a fast-cleared upload of write-watched memory read its guest bytes" : "a fast-cleared upload of untracked memory kept no guest bytes to compare");
@@ -238,6 +234,11 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
         Require(image->Version() == pendingVersion, "an unchanged pending image changed version");
         Require(StorageTexture::FindPending(surface, SurfaceBytes) == image, "an unchanged refresh wrote the pending image back");
     }
+    Dispatch(device, CopyKeysCode, copyData);
+    RequireKeys(copied, 0xff, "a kernel reading the keys after the first write of a 0000-cleared surface");
+    Require(AgcDriver::Graphics::CurrentDccKeys(AddressOf(copied), SurfaceBytes) == DccKeys::Uncompressed, "the copied keys do not read uncompressed");
+    Require(StorageTexture::FindPending(surface, SurfaceBytes) == nullptr, "a kernel reading memory through the page table ran before the pending image was written back");
+    Require(AgcDriver::Graphics::StorageImageServesKeys(*image, AddressOf(copied)), "the written image does not serve the copied keys");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
     RequireKeys(keys, 0xff, "the keys after the write-back");
@@ -300,7 +301,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     fillKeys(0x00, DccKeys::Clear0000);
     Dispatch(device, WriteCode, writeData, false);
     Dispatch(device, ClearKeysCode, clearTailData, false);
-    readPending(DccKeys::Uncompressed, false, "a kernel's 0000 store over half the keys after the first write's uncompressed store");
+    readPending(DccKeys::Uncompressed, true, "a kernel's 0000 store through the page table over half the keys after the first write's uncompressed store");
     Require(AgcDriver::Graphics::CurrentDccKeys(AddressOf(keys), SurfaceBytes) == DccKeys::Mixed, "the keys after a kernel's 0000 store over half of them are not mixed");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();

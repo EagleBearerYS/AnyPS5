@@ -1139,11 +1139,14 @@ void ShadersWriteMemoryTests() {
     };
     ShaderRecompiler::RecompileResult reads;
     reads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageImage, ShaderRecompiler::DescriptorRole::GuestImages, {false}));
-    ShaderRecompiler::RecompileResult stores;
-    stores.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::BdaPagetable, {}));
+    ShaderRecompiler::RecompileResult tableReads;
+    tableReads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::BdaPagetable, {}));
+    ShaderRecompiler::RecompileResult stores = tableReads;
+    stores.bdaWrites = true;
     using Stage = ShaderRecompiler::ShaderStage;
     const auto writes = [](std::initializer_list<AgcDriver::Graphics::CompiledShader> shaders) { return AgcDriver::Graphics::ShadersWriteMemory(std::vector<AgcDriver::Graphics::CompiledShader>(shaders)); };
     Require(!writes({{Stage::Vertex, &reads, 0}, {Stage::Fragment, &reads, 0}}), "shaders that only read memory were reported as writing it");
+    Require(!writes({{Stage::Vertex, &tableReads, 0}, {Stage::Fragment, &tableReads, 0}}), "shaders that only read through the page table were reported as writing memory");
     Require(writes({{Stage::Vertex, &reads, 0}, {Stage::Fragment, &stores, 0}}), "a pixel shader that stores to a buffer was not reported");
     Require(writes({{Stage::Vertex, &stores, 0}, {Stage::Fragment, &reads, 0}}), "a vertex shader that stores to a buffer was not reported");
     Require(writes({{Stage::Geometry, &stores, 0}, {Stage::Fragment, &reads, 0}}), "a geometry shader that stores to a buffer was not reported");
@@ -5828,27 +5831,36 @@ void validationTests() {
         vertex.pushConstants.clear();
         expectFailure([&] { validate(vertex, 8); }, "invalid push constant interface");
     }
-    expectFailure([&] { validate(pushed({.push = true, .bufferArray = 2}), 8); }, "disagrees with recompiler binding metadata");
-    expectFailure([&] { validate(pushed({.push = true, .plainBuffer = true}), 8); }, "disagrees with recompiler binding metadata");
+    const auto buffered = [&](const ModuleShape& shape) {
+        auto vertex = pushed(shape);
+        vertex.bindings.push_back(makeBinding(Role::ShaderData, 0, 1, words));
+        return vertex;
+    };
+    validate(buffered({.push = true, .plainBuffer = true}), 8);
+    expectFailure([&] { validate(buffered({.push = true, .bufferArray = 2}), 8); }, "descriptor must be a Block struct with exactly one member");
     {
-        auto vertex = pushed({.push = true});
+        auto vertex = buffered({.push = true, .plainBuffer = true});
+        vertex.bindings.front().kind = Kind::UniformBuffer;
+        expectFailure([&] { validate(vertex, 8); }, "SPIR-V descriptor type disagrees with recompiler binding metadata");
+    }
+    {
+        auto vertex = buffered({.push = true, .plainBuffer = true});
         vertex.bindings.front().readOnly = true;
         expectFailure([&] { validate(vertex, 8); }, "read-only descriptor metadata is unsupported");
     }
     {
         auto vertex = pushed({.push = true});
+        vertex.bindings.push_back(makeBinding(Role::GuestSamplers, 0, 1, words));
+        vertex.bindings.front().kind = Kind::SamplerSlot;
         vertex.bindings.front().descriptorSet = 1;
         expectFailure([&] { validate(vertex, 8); }, "descriptor set other than its stage's");
     }
+    expectFailure([&] { validate(buffered({.push = true}), 8); }, "contains undeclared resources");
     {
-        auto vertex = pushed({.push = true});
-        vertex.bindings.front().kind = Kind::UniformBuffer;
-        expectFailure([&] { validate(vertex, 8); }, "contains undeclared resources");
-    }
-    {
-        auto vertex = pushed({.push = true});
-        vertex.bindings.front().role = Role::ShaderData;
-        expectFailure([&] { validate(vertex, 8); }, "only guest buffers are read through device addresses");
+        auto vertex = buffered({.push = true});
+        vertex.bindings.front().kind = Kind::DeviceAddress;
+        vertex.bindings.front().role = Role::BdaPagetable;
+        expectFailure([&] { validate(vertex, 8); }, "no descriptor binding is read through a device address");
     }
     {
         ShaderRecompiler::RecompileResult vertex;

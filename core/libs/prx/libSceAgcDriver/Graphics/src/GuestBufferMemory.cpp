@@ -1944,6 +1944,11 @@ void GuestBufferMemory::UploadFinish() {
             Spaces().dissolvedImports.fetch_add(1, std::memory_order_relaxed);
             dissolveSpace(true);
         }
+        for (const auto& region : regions) {
+            if (!region.pending || region.direct != nullptr) continue;
+            if (findImport(state, region.begin, region.end) != nullptr || runCovers(importRanges(), region.begin, region.end)) continue;
+            static_cast<void>(importJoined(context, state, region.begin, region.end, importRanges()));
+        }
     }
     for (auto& region : regions) {
         if (!region.pending) continue;

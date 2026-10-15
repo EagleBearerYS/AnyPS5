@@ -380,9 +380,7 @@ void importRefusedWholeRangeTests(const Context& context) {
     const auto buffer = windowed->buffer;
     for (int build = 0; build < 3; ++build) {
         GuestBufferMemory leased(range.importing);
-        leased.AcquireRegistered();
-        leased.Upload();
-        leased.Release();
+        reject([&] { leased.AcquireRegistered(); }, "has no host import");
         Require(HostImportCovers(range.importing, first + 16, 32), "an address-based build refused its whole-range import and retired the range's window (build " + std::to_string(build) + ")");
     }
     const auto* kept = HostImportFor(range.importing, first + 16, 32);
