@@ -262,6 +262,7 @@ public:
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders);
     bool PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
     bool PrepareDrawPipelines(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders);
+    std::uint64_t PresyncDraw(const Graphics::State& graphics);
     struct PipelineCreations {
         std::uint64_t ahead = 0;
         std::uint64_t inFrames = 0;

@@ -299,6 +299,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (gpuLock.owns_lock()) return;
         static_cast<void>(localDevice->PrepareDrawPipelines(graphics, stages));
         phaseTiming.Phase(DrawRowVectors);
+        const auto* presyncDevice = localDevice.get();
+        const auto presynced = localDevice->PresyncDraw(graphics);
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         gpuLock.lock();
         timing.Mark("gpu_mutex_wait");
@@ -308,6 +310,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             std::fprintf(stderr, "[draw] device replaced during unlocked preparation (%llu)\n", static_cast<unsigned long long>(++replaced));
             localDevice = std::move(current);
         }
+        if (presynced != 0 && localDevice.get() == presyncDevice) localDevice->ReapRecorded(presynced);
         recordLabelsForPacket(localDevice.get(), submission.queue);
         phaseTiming.Phase(DrawRowLabels);
     };

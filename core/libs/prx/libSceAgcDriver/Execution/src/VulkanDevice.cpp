@@ -3677,6 +3677,20 @@ std::uint64_t VulkanDevice::presync(std::span<const std::pair<std::uint64_t, std
     return serial;
 }
 
+std::uint64_t VulkanDevice::PresyncDraw(const Graphics::State& graphics) {
+    if (NoPresync() || !CanWaitUnlocked()) return 0;
+    const auto keyed = [](const Graphics::ColorTarget& color) { return color.address != 0 && color.bytes != 0 && color.dccAddress != 0 && Graphics::Recorder::SnapshotWriteOverlaps(color.dccAddress, Graphics::DccKeyBytes(color.bytes)); };
+    if (std::none_of(graphics.colors.begin(), graphics.colors.end(), keyed)) return 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> surfaces;
+    {
+        std::lock_guard lock(GuestMemory::GpuMutex());
+        for (const auto& color : graphics.colors) {
+            if (keyed(color) && Graphics::KeyWritersPending(Graphics::SurfaceForTarget(color), color.bytes)) surfaces.emplace_back(color.dccAddress, Graphics::DccKeyBytes(color.bytes));
+        }
+    }
+    return surfaces.empty() ? 0 : presync(surfaces);
+}
+
 std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads) {
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
