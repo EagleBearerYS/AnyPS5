@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <atomic>
 #include <cstdint>
@@ -118,6 +120,8 @@ void Driver::stop() {
     device.Reset();
     replacedDevices.clear();
     Graphics::ShutdownGuestBufferWorkers();
+    Graphics::StopPipelineLibraryWorker();
+    Graphics::StopCompareHelpers();
     PerformanceTrace::StopOutput();
     StopProfileOutput_nid_no_patch();
     stopped = true;
