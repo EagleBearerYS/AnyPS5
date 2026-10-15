@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
@@ -42,8 +43,8 @@ bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled) {
 }
 
 std::vector<std::uint64_t>& Driver::prePassReads() {
-    static thread_local std::vector<std::uint64_t> reads;
-    return reads;
+    struct PrePassReadsTag {};
+    return HostThreadLocal<std::vector<std::uint64_t>, PrePassReadsTag>();
 }
 
 std::uint64_t Driver::DataIndependentDispatchHits() {
@@ -52,7 +53,8 @@ std::uint64_t Driver::DataIndependentDispatchHits() {
 }
 
 bool Driver::readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value) {
-    static thread_local PendingWrites pending;
+    struct PendingWritesTag {};
+    auto& pending = HostThreadLocal<PendingWrites, PendingWritesTag>();
     prePassReads().push_back(at);
     const bool waitForWrites = waits != nullptr && *static_cast<const bool*>(waits);
     if (pending.Overlap(at, sizeof(std::uint32_t))) return waitForWrites && GuestMemory::ReadAfterPendingWrites(at, value);
