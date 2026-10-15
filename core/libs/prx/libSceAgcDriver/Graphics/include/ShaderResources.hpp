@@ -208,6 +208,11 @@ public:
     bool NeedsCompletion() const { return bda != nullptr && faultChecks; }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool UsesAddressTable() const { return usesBda; }
+    bool MemoryReadsUnknown() const { return usesBda && accessesUnbounded; }
+    bool MemoryWritesUnknown() const { return pageTableStores && storesUnbounded; }
+    bool MemoryAccessesUnknown() const { return MemoryReadsUnknown() || MemoryWritesUnknown(); }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> MemoryReads() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> MemoryWrites() const;
     struct WritableSet {
         std::vector<ShaderRecompiler::BdaAbi::Grant> ranges;
         bool writableImports = false;
@@ -215,7 +220,7 @@ public:
     WritableSet Writable() const { return {guestMemory.WriteGrants(), pageTableStores}; }
     bool UsesDeviceImages() const { return deviceImages; }
     void ExpectDeviceImages(DeviceImageTable& table, const ShaderRecompiler::RecompileResult& program) const;
-    bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
+    bool WritesOverlap(std::uint64_t address, std::size_t bytes) const;
     // Whether a region the recorded work reads in place through a host import overlaps the range.
     bool ReadsOverlap(std::uint64_t address, std::size_t bytes) const;
     // The recorder's hazard tracker inputs (Recorder::NoteAccess): the written elements' guest

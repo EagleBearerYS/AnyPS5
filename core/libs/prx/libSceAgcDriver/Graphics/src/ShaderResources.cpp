@@ -3032,7 +3032,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     // The ranges this use reads in place through their host imports (read-only and written elements
     // alike, and an address-based build's whole leased heaps), before the writes: a CPU store into
     // one of them (the copy HLE) must not land before the recorded work read it.
-    recorder.NotePendingReads(guestMemory.InPlaceReads(), guestMemory.HoldsLease() ? Recorder::ReadKind::AddressBased : Recorder::ReadKind::DispatchElement);
+    recorder.NotePendingReads(MemoryReads(), MemoryReadsUnknown() ? Recorder::ReadKind::AddressBased : Recorder::ReadKind::DispatchElement);
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index]) continue;
         storageTextures[index]->MarkDirty();
@@ -3118,9 +3118,27 @@ void ShaderResources::WriteBackBuffers() {
     guestMemory.Release();
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::MemoryReads() const {
+    if (!usesBda || MemoryReadsUnknown()) return guestMemory.InPlaceReads();
+    auto reads = guestMemory.RegionReads();
+    reads.insert(reads.end(), accessRanges.begin(), accessRanges.end());
+    return reads;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::MemoryWrites() const {
+    auto writes = guestMemory.Writes();
+    if (pageTableStores && !storesUnbounded) writes.insert(writes.end(), storeRanges.begin(), storeRanges.end());
+    return writes;
+}
+
 bool ShaderResources::ReadsOverlap(std::uint64_t address, std::size_t bytes) const {
-    const auto reads = guestMemory.InPlaceReads();
+    const auto reads = MemoryReads();
     return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });
+}
+
+bool ShaderResources::WritesOverlap(std::uint64_t address, std::size_t bytes) const {
+    if (MemoryWritesUnknown() || guestMemory.WritesOverlap(address, bytes)) return true;
+    return pageTableStores && std::any_of(storeRanges.begin(), storeRanges.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });
 }
 
 std::vector<std::pair<VkImage, bool>> ShaderResources::StorageImages() const {

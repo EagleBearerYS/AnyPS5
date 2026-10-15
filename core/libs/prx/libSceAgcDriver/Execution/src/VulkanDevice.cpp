@@ -3819,8 +3819,8 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         const auto bytes = static_cast<std::size_t>(end - begin);
         return resources.WritesOverlap(begin, bytes) || resources.ReadsOverlap(begin, bytes) || (argumentImport != nullptr && begin < arguments + 12 && arguments < end);
     };
-    if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
-    if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
+    if (recorder.HasQueuedKeyStores() && (resources.MemoryAccessesUnknown() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
+    if (recorder.HasQueuedStores() && (resources.MemoryAccessesUnknown() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     if (resources.UsesDeviceImages()) {
         Graphics::Require(context.deviceImages != nullptr, "a dispatch reading images through the device image table needs the device's table");
         resources.ExpectDeviceImages(*context.deviceImages, *record.shader->program);

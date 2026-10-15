@@ -1372,9 +1372,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (!gpuIndirect) return false;
         return (begin < args->arguments + args->RangeBytes() && args->arguments < end) || (args->countIndirect && begin < args->countAddress + 4 && args->countAddress < end);
     };
-    if (recorder->HasQueuedKeyStores() && (resources.HoldsLease() || recorder->AnyQueuedKeyStore(touches))) recorder->FlushKeyStores();
+    if (recorder->HasQueuedKeyStores() && (resources.MemoryAccessesUnknown() || recorder->AnyQueuedKeyStore(touches))) recorder->FlushKeyStores();
     // A queued label store over such memory likewise (Recorder::RecordStore).
-    if (recorder->HasQueuedStores() && (resources.HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
+    if (recorder->HasQueuedStores() && (resources.MemoryAccessesUnknown() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     if (resources.UsesDeviceImages()) {
         Require(context.deviceImages != nullptr, "a draw reading images through the device image table needs the device's table");
         for (const auto& shader : shaders) resources.ExpectDeviceImages(*context.deviceImages, *shader.program);
@@ -1384,7 +1384,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool capture = CaptureInputsEnabled();
     const bool meshIndirect = state.stages.mesh && args != nullptr;
     const bool addressBased = resources.HoldsLease();
-    auto passReads = addressBased ? std::vector<std::pair<std::uint64_t, std::uint64_t>>{} : resources.InPlaceReads();
+    auto passReads = resources.MemoryReadsUnknown() ? std::vector<std::pair<std::uint64_t, std::uint64_t>>{} : resources.MemoryReads();
     if (gpuIndirect) {
         passReads.emplace_back(args->arguments, args->arguments + args->RangeBytes());
         if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
@@ -1396,7 +1396,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (target != nullptr) passAttachments.emplace_back(target->Image(), true);
     }
     const bool unknownMemory = addressBased || resources.UsesAddressTable();
-    const PassAccess passAccess{passReads, resources.GpuWrites(), passImages, passAttachments, unknownMemory, unknownMemory};
+    const PassAccess passAccess{passReads, resources.MemoryWrites(), passImages, passAttachments, resources.MemoryReadsUnknown(), resources.MemoryWritesUnknown()};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     if (recorder->Streams() > 1 && !unknownMemory && !capture) {
         std::vector<Recorder::SectionObject> objects{{record.resources.get(), true}};
@@ -1864,9 +1864,9 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (!gpuIndirect) return false;
         return (begin < args->arguments + args->RangeBytes() && args->arguments < end) || (args->countIndirect && begin < args->countAddress + 4 && args->countAddress < end);
     };
-    if (recorded && recorder->HasQueuedKeyStores() && (resources->HoldsLease() || recorder->AnyQueuedKeyStore(touches))) recorder->FlushKeyStores();
+    if (recorded && recorder->HasQueuedKeyStores() && (resources->MemoryAccessesUnknown() || recorder->AnyQueuedKeyStore(touches))) recorder->FlushKeyStores();
     // A queued label store over such memory likewise (Recorder::RecordStore).
-    if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
+    if (recorded && recorder->HasQueuedStores() && (resources->MemoryAccessesUnknown() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     if (resources->UsesDeviceImages()) {
         Require(recorder != nullptr && context.deviceImages != nullptr, "a draw reading images through the device image table needs a recorder and the device's table");
         for (const auto& shader : shaders) resources->ExpectDeviceImages(*context.deviceImages, *shader.program);

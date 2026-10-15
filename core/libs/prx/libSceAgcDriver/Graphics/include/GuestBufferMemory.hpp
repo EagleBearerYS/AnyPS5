@@ -199,6 +199,7 @@ public:
     void MarkDirectWrites() const;
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> RegionReads() const;
 
 private:
     struct Region {
