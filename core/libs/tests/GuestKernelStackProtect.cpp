@@ -168,7 +168,7 @@ static HostStackLayout QueryHostStack(std::uintptr_t start, std::uintptr_t end) 
         MEMORY_BASIC_INFORMATION memory{};
         Require(VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) == sizeof(memory));
         if (memory.State == MEM_COMMIT && (memory.Protect & PAGE_GUARD) != 0) layout.guard = cursor;
-        else if (memory.State == MEM_COMMIT && layout.committed == end) layout.committed = cursor;
+        else if (memory.State == MEM_COMMIT && layout.guard != 0 && layout.committed == end) layout.committed = cursor;
         cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
     }
     return layout;
@@ -184,6 +184,12 @@ static void GrowStack(std::uintptr_t below) {
 
 static std::uintptr_t StackLimit() {
     return reinterpret_cast<std::uintptr_t>(reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackLimit);
+}
+
+static bool Readable(std::uintptr_t address) {
+    unsigned char byte = 0;
+    SIZE_T read = 0;
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address), &byte, 1, &read) != 0 && read == 1;
 }
 
 static void RequireGrowableStack(std::uintptr_t start, std::uintptr_t end) {
@@ -237,10 +243,28 @@ static DWORD WINAPI ProtectStackBottom(void*) {
     Require(sceKernelIsStack(&local, &start, &end) == SCE_OK);
     const auto low = reinterpret_cast<std::uintptr_t>(start);
     const auto high = reinterpret_cast<std::uintptr_t>(end);
+    const auto island = low + 3 * Page;
     Require(QueryHostStack(low, high).guard - low >= 4 * Page);
     Require(mprotect_nid_postfix(start, 3 * Page, 3) == 0);
+    Require(QueryPage(low).writable && QueryPage(island - 1).writable);
+    reinterpret_cast<volatile unsigned char*>(low)[0] = 7;
     Require(mprotect_nid_postfix(start, 3 * Page, 0) == 0);
+    Require(QueryPage(low).mapped && !QueryPage(island - 1).writable);
+    Require(!Readable(low) && !Readable(island - 1));
     RequireGrowableStack(low, high);
+    const auto layout = QueryHostStack(low, high);
+    const auto guardBytes = layout.committed - layout.guard;
+    GrowStack(island + guardBytes + 0xf00);
+    const auto aboveIsland = QueryHostStack(low, high);
+    Require(aboveIsland.guard == island);
+    Require(StackLimit() == aboveIsland.committed);
+    Require(QueryPage(island - 1).mapped && !QueryPage(island - 1).writable && !Readable(island - 1));
+    GrowStack(island + guardBytes - 0x100);
+    const auto intoIsland = QueryHostStack(low, high);
+    Require(intoIsland.guard == island - 0x1000);
+    Require(StackLimit() == intoIsland.committed);
+    Require(QueryPage(island - 1).raw == ((static_cast<std::uint64_t>(MEM_COMMIT) << 32) | (PAGE_READWRITE | PAGE_GUARD)));
+    Require(QueryPage(island - 0x1001).mapped && !QueryPage(island - 0x1001).writable && !Readable(island - 0x1001) && !Readable(low));
     return 0;
 }
 
