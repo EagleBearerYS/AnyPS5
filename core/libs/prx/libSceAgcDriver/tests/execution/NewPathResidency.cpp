@@ -211,7 +211,10 @@ void GuardFaultAndRefresh(Harness& harness, Model& model) {
     Expect(Resident(pages, 5) && Guarded(pages, 5), "write guard: page 5 was not admitted with a guard");
     ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "write guard: the read before the store");
     const auto before = Counts();
-    model.Store(5, 3 * WordsPerSubpage, StoredByCpu);
+    Locked([&] {
+        model.Store(5, 3 * WordsPerSubpage, StoredByCpu);
+        AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(5), PageBytes);
+    });
     Expect(!Guarded(pages, 5), "write guard: a CPU store to a guarded resident page did not take the guard's fault");
     const auto lanes = harness.Read(pages, 0);
     ExpectLanes(lanes, model, 0, ReadPages, {}, "write guard: the dispatch after a CPU store to a resident page read a stale mirror");
