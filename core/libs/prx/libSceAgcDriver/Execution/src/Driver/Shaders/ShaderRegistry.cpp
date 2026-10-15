@@ -1247,6 +1247,11 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     PerformanceTimer timing("Shader.ResolveAbi");
     ShaderPreparationTransaction transaction;
     CheckFailure();
+    static const bool deferAbi = std::getenv("APS5_DEFER_ABI_PREPARE") != nullptr;
+    if (deferAbi) {
+        transaction.Commit();
+        return;
+    }
     const auto fields = GuestShaderFields(shader);
     if (fields.type != 0 && fields.type != 1) {
         const std::array<const Shader*, 1> stages{shader};
@@ -1317,6 +1322,8 @@ void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::
     PerformanceContext timingContext(FrameTiming::Preparation());
     PerformanceTimer timing("Shader.ResolveGraphicsAbi");
     CheckFailure();
+    static const bool deferAbi = std::getenv("APS5_DEFER_ABI_PREPARE") != nullptr;
+    if (deferAbi) return;
     if (primitiveType != 0 && primitiveType != 7 && primitiveType != 17) return;
     ShaderPreparationTransaction transaction;
     require(vertex != nullptr && pixel != nullptr, "rectangle ABI requires vertex and fragment shaders");
