@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GhostTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
@@ -275,6 +276,7 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
         const auto* import = HostImportFor(context, color.cmaskAddress, bytes);
         const auto view = import != nullptr ? resident->ElementView() : VK_NULL_HANDLE;
         if (view != VK_NULL_HANDLE) {
+            if (GhostTraced(color.address, color.bytes)) GhostTrace("cmask 0x%llx of target 0x%llx+0x%zx: clear recorded on the GPU into image %p (dcc 0x%llx, clear words %08x %08x)", static_cast<unsigned long long>(color.cmaskAddress), static_cast<unsigned long long>(color.address), color.bytes, static_cast<const void*>(resident.get()), static_cast<unsigned long long>(color.dccAddress), color.clearWords[0], color.clearWords[1]);
             recordCmaskClear(context, *recorder, *import, color, layout, resident, view);
             return true;
         }
@@ -282,6 +284,7 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     const auto collected = GuestMemory::CollectWrites(color.cmaskAddress, bytes);
     std::vector<std::uint32_t> cleared;
     const auto state = readCmask(color, layout, cleared);
+    if (GhostTraced(color.address, color.bytes)) GhostTrace("cmask 0x%llx of target 0x%llx+0x%zx read on the CPU: %s (image %p, dcc 0x%llx, clear words %08x %08x)", static_cast<unsigned long long>(color.cmaskAddress), static_cast<unsigned long long>(color.address), color.bytes, state == CmaskState::Expanded ? "expanded" : state == CmaskState::Cleared ? "cleared" : "partly cleared", static_cast<const void*>(resident.get()), static_cast<unsigned long long>(color.dccAddress), color.clearWords[0], color.clearWords[1]);
     if (state == CmaskState::Expanded) {
         proveCmask(color.cmaskAddress, bytes, collected);
         return false;
@@ -2012,6 +2015,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             });
         }
         if (binding.resident != nullptr) {
+            if (GhostTraced(color.address, color.bytes)) GhostTrace("draw target %zu 0x%llx+0x%zx %ux%u mip %u: image %p (version %llu), cmask 0x%llx fast clear %d, dcc 0x%llx, blend %d, write mask 0x%x", index, static_cast<unsigned long long>(color.address), color.bytes, color.extent.width, color.extent.height, color.mip, static_cast<const void*>(binding.resident.get()), static_cast<unsigned long long>(binding.resident->Version()), static_cast<unsigned long long>(color.cmaskAddress), color.cmaskFastClear ? 1 : 0, static_cast<unsigned long long>(color.dccAddress), index < state.blends.size() && state.blends[index].blendEnable ? 1 : 0, index < state.blends.size() ? state.blends[index].colorWriteMask : 0u);
             timer.phase(PhaseReadTarget);
             binding.proxied = AttachmentProxyFormat(context, color.format) != VK_FORMAT_UNDEFINED;
             targetViews.push_back(binding.proxied ? binding.resident->AttachmentProxyView() : binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice));
@@ -2671,6 +2675,9 @@ std::shared_ptr<StorageTexture> metadataPassResident(const Context& context, con
 }
 
 void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass) {
+    for (const auto& color : pass.targets) {
+        if (GhostTraced(color.address, color.bytes)) GhostTrace("metadata pass %s over target 0x%llx+0x%zx mip %u (cmask 0x%llx fast clear %d, dcc 0x%llx)", pass.mode == ColorMetadataPass::Mode::EliminateFastClear ? "eliminate" : pass.mode == ColorMetadataPass::Mode::DccDecompress ? "dcc decompress" : pass.mode == ColorMetadataPass::Mode::Resolve ? "resolve" : "fmask decompress", static_cast<unsigned long long>(color.address), color.bytes, color.mip, static_cast<unsigned long long>(color.cmaskAddress), color.cmaskFastClear ? 1 : 0, static_cast<unsigned long long>(color.dccAddress));
+    }
     if (pass.mode == ColorMetadataPass::Mode::Resolve) {
         Require(pass.source.has_value() && pass.targets.size() == 1, "CB resolve without its source and destination");
         const auto& destination = pass.targets.front();

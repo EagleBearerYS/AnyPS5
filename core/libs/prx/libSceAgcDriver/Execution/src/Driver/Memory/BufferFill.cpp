@@ -8,6 +8,7 @@
 #include <algorithm>
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GhostTrace.hpp"
 #include <bit>
 #include <cstdlib>
 #include <initializer_list>
@@ -337,6 +338,11 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
     }
     phase(FillClearPhase);
     fillClearCount(coverage, bytes, pattern, discarded, cleared, refusal);
+    if (Graphics::GhostTraced(base, bytes)) {
+        static constexpr const char* ghostCovers[] = {"none", "exact", "inside", "around", "straddle", "several", "keys", "layer"};
+        const auto cover = static_cast<std::size_t>(coverage.cover);
+        Graphics::GhostTrace("fill 0x%llx+0x%zx with %08x %08x %08x %08x (queue 0x%x): cover %s, image %p layer %u, %zu other images (%zu inside), %zu images' pending results discarded, cleared on the image %d%s%s", static_cast<unsigned long long>(base), bytes, pattern[0], pattern[1], pattern[2], pattern[3], queueId, cover < std::size(ghostCovers) ? ghostCovers[cover] : "?", static_cast<const void*>(coverage.image.get()), coverage.layer, coverage.others, coverage.inside, discarded, cleared ? 1 : 0, refusal != nullptr ? ", refused: " : "", refusal != nullptr ? refusal : "");
+    }
     noteForeignWriter(base, base + bytes, queueId);
 
     const bool uniform = pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3];

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GhostTrace.hpp"
 #include "ImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
@@ -319,6 +320,7 @@ void BdaResources::markWrittenPages() const {
                 Require(false, message.str());
             }
         }
+        if (GhostTraced(begin, bytes)) GhostTrace("address-based stores to 0x%llx+0x%zx stamped at their batch's completion", static_cast<unsigned long long>(begin), bytes);
         GuestMemory::MarkWritten(begin, bytes);
     }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {

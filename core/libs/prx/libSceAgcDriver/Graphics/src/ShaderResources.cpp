@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GhostTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -608,6 +609,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // memory first.
     const bool depthCopy = depthCompare && guestBytes >= DepthCopyMinBytes() && Texture::DepthCopyFormat(ResolveTextureFormat(resource.format)) != VK_FORMAT_UNDEFINED && resource.dimension != TextureDimension::k3D;
     auto source = StorageTexture::FindPending(address, guestBytes);
+    const auto* ghostPending = source.get();
     const bool blockCopy = source != nullptr && !depthCompare && Texture::CanBlockCopyFrom(*source, resource);
     if (source != nullptr && !blockCopy && (depthCompare ? !depthCopy || !Texture::CanDepthCopyFrom(*source, resource) : !Texture::CanCopyFrom(*source, resource))) source.reset();
     if (source != nullptr && MetadataMoved(*source, resource)) source.reset();
@@ -723,6 +725,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 if (!GuestMemory::UnchangedSince(address, bytes, it->source->Generation())) it->source->Refresh();
                 if (it->texture->IsDepthCopy()) it->texture->RefreshDepthCopy();
                 it->keys = *keys;
+                if (GhostTraced(address, bytes)) GhostTrace("sample 0x%llx+0x%zx %ux%u format %u mips %u: cached view of image %p (version %llu, generation %llu), pending image found %p, keys %s", static_cast<unsigned long long>(address), bytes, resource.width, resource.height, resource.format, resource.mipCount, static_cast<const void*>(it->source.get()), static_cast<unsigned long long>(it->source->Version()), static_cast<unsigned long long>(it->source->Generation()), static_cast<const void*>(ghostPending), DccKeysName(*keys));
                 touchTexture(cache, it);
                 logLookup({it->texture.get(), resource, guestBytes, *keys, 0, it->source.get()});
                 reportTextureCounters();
@@ -752,6 +755,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 it->generation = snapshotGeneration;
                 it->committed = std::move(committed);
                 it->untracked = untracked;
+                if (GhostTraced(address, bytes)) GhostTrace("sample 0x%llx+0x%zx %ux%u format %u mips %u: cached snapshot still current (keys %s, generation %llu), pending image found %p", static_cast<unsigned long long>(address), bytes, resource.width, resource.height, resource.format, resource.mipCount, DccKeysName(*keys), static_cast<unsigned long long>(snapshotGeneration), static_cast<const void*>(ghostPending));
                 touchTexture(cache, it);
                 logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr});
                 reportTextureCounters();
@@ -796,6 +800,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
+    if (GhostTraced(address, bytes)) GhostTrace("sample 0x%llx+0x%zx %ux%u format %u mips %u: new %s %p (version %llu, generation %llu), pending image found %p, keys %s", static_cast<unsigned long long>(address), bytes, resource.width, resource.height, resource.format, resource.mipCount, source != nullptr ? "view of image" : "snapshot", source != nullptr ? static_cast<const void*>(source.get()) : static_cast<const void*>(texture.get()), static_cast<unsigned long long>(source != nullptr ? source->Version() : 0), static_cast<unsigned long long>(source != nullptr ? source->Generation() : snapshotGeneration), static_cast<const void*>(ghostPending), DccKeysName(*keys));
     if (!admitTexture(cache, key, entry.accounted, budget)) {
         logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
         reportCacheCounts(cache, budget);
@@ -964,6 +969,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             it = cache.entries.end();
         }
         if (it != cache.entries.end()) {
+            if (GhostTraced(resource.baseAddress, it->texture->GuestBytes())) GhostTrace("storage lookup 0x%llx %ux%u format %u mips %u tile %d: cached image %p", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, resource.mipCount, static_cast<int>(resource.tileMode), static_cast<const void*>(it->texture.get()));
             it->texture->Refresh();
             cache.entries.splice(cache.entries.begin(), cache.entries, it);
             texture = it->texture;
@@ -971,6 +977,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
         } else {
             if (guestBytes == 0) guestBytes = DescribeSurface(resource).guestBytes;
+            if (GhostTraced(resource.baseAddress, guestBytes)) GhostTrace("storage lookup 0x%llx+0x%llx %ux%u format %u mips %u tile %d: no cached image, making one", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(guestBytes), resource.width, resource.height, resource.format, resource.mipCount, static_cast<int>(resource.tileMode));
             if (StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "storage image creation", PublishScope::None) && profile) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
             CachedStorageTexture entry{key, mip, StorageTexture::Create(context, *context.detiler, resource, mip)};
             static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
@@ -2627,6 +2634,10 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         auto& surface = validatedTextures[i];
         if (surface.source == nullptr) surface.generation = surface.collected;
         surface.keys = scannedKeys[i];
+        if (GhostTraced(surface.resource.baseAddress, surface.bytes)) GhostTrace("reuse keeps sampled 0x%llx+0x%llx as %s %p (version %llu), pending registry unchanged %d, foreign pending accepted %d", static_cast<unsigned long long>(surface.resource.baseAddress), static_cast<unsigned long long>(surface.bytes), surface.source != nullptr ? "view of image" : "snapshot", surface.source != nullptr ? static_cast<const void*>(surface.source) : static_cast<const void*>(textures[i].get()), static_cast<unsigned long long>(surface.source != nullptr ? surface.source->Version() : 0), unchanged ? 1 : 0, accepted ? 1 : 0);
+    }
+    for (const auto& image : storageTextures) {
+        if (image != nullptr && GhostTraced(image->Descriptor().baseAddress, image->GuestBytes())) GhostTrace("reuse keeps storage image %p surface 0x%llx+0x%llx (version %llu), pending registry unchanged %d", static_cast<const void*>(image.get()), static_cast<unsigned long long>(image->Descriptor().baseAddress), static_cast<unsigned long long>(image->GuestBytes()), static_cast<unsigned long long>(image->Version()), unchanged ? 1 : 0);
     }
     return true;
 }
@@ -3938,6 +3949,7 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(const ImageRecord& record)
     if (it->source == nullptr) it->generation = record.generation;
     touchTexture(cache, it);
     logLookup({record.texture.get(), record.resource, record.guestBytes, keys, record.source != nullptr ? 0 : record.generation, record.source.get()});
+    if (GhostTraced(address, bytes)) GhostTrace("sample 0x%llx+0x%zx %ux%u format %u mips %u: fast path keeps %s %p (version %llu), keys %s", static_cast<unsigned long long>(address), bytes, record.resource.width, record.resource.height, record.resource.format, record.resource.mipCount, record.source != nullptr ? "view of image" : "snapshot", record.source != nullptr ? static_cast<const void*>(record.source.get()) : static_cast<const void*>(record.texture.get()), static_cast<unsigned long long>(record.source != nullptr ? record.source->Version() : 0), DccKeysName(keys));
     outcome.hit = true;
     return record.texture;
 }

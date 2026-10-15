@@ -3,6 +3,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GhostTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -3080,6 +3081,7 @@ void GuestBufferMemory::AddWritable(std::uint64_t address, std::size_t bytes, bo
     }
     addDescriptorRegion(address, bytes, atomic, swept, false);
     writes.emplace_back(address, address + bytes);
+    if (GhostTraced(address, bytes)) GhostTrace("build writes buffer 0x%llx+0x%zx%s", static_cast<unsigned long long>(address), bytes, atomic ? " (atomic)" : "");
 }
 
 void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
@@ -3087,6 +3089,7 @@ void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
     // direct-write mark, and UploadPrepare copies it without the device lock. A written descriptor
     // overlapping the range still covers it through its own Writes() entry.
     addDescriptorRegion(address, bytes, false, false, true);
+    if (GhostTraced(address, bytes)) GhostTrace("build reads buffer 0x%llx+0x%zx (read-only descriptor)", static_cast<unsigned long long>(address), bytes);
 }
 
 void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
@@ -3726,7 +3729,11 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             // an address-based shader maps are exempt (they hold every pending image, and such shaders
             // do not read texture memory through pointers); APS5_BDA_FLUSH=1 flushes for them too.
             static const bool bdaFlush = std::getenv("APS5_BDA_FLUSH") != nullptr;
-            if (!(addressable && region.hostBacked) || bdaFlush) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "imported buffer region");
+            if (!(addressable && region.hostBacked) || bdaFlush) {
+                StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "imported buffer region");
+            } else if (const auto traced = GhostIntersections(region.begin, region.end); !traced.empty() && StorageTexture::AnyPendingOverlaps(traced) && GhostBudget(Recorder::Presents(), 16)) {
+                GhostTrace("address-based build maps heap 0x%llx+0x%llx in place without storing the results pending over traced memory (first traced part 0x%llx+0x%llx, writable %d)", static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end - region.begin), static_cast<unsigned long long>(traced.front().first), static_cast<unsigned long long>(traced.front().second - traced.front().first), region.writable ? 1 : 0);
+            }
             continue;
         }
         if (copyOnGpu) {

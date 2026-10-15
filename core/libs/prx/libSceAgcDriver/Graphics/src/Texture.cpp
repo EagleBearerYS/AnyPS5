@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GhostTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
@@ -1097,6 +1098,7 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
     texture->upload();
     texture->defaultMip = mipLevel;
     texture->view = texture->createView(mipLevel, false, texture->storageFormat);
+    if (GhostTraced(texture->descriptor.baseAddress, texture->guestBytes)) GhostTrace("create image %p surface 0x%llx+0x%llx %ux%u mips %u layers %u format %u tile %d dcc 0x%llx units %u block %d attachable %d upload %s", static_cast<const void*>(texture.get()), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), texture->descriptor.width, texture->descriptor.height, texture->descriptor.mipCount, texture->arrayLayers, texture->descriptor.format, static_cast<int>(texture->descriptor.tileMode), static_cast<unsigned long long>(texture->descriptor.dccAddress), texture->trackedLayers, texture->blockUnits ? 1 : 0, texture->attachable ? 1 : 0, uploadReason != nullptr ? uploadReason : "?");
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -1752,6 +1754,7 @@ bool StorageTexture::Refresh() {
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (descriptor.dccAddress != 0) CompletePendingCpuWrites(context, descriptor.dccAddress, DccKeyBytes(guestBytes));
     if (refreshProved()) {
+        if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("refresh image %p surface 0x%llx+0x%llx proved current (generation %llu, version %llu, dirty %d)", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), static_cast<unsigned long long>(version), dirty ? 1 : 0);
         NoteProved();
         refreshesProved.fetch_add(1, std::memory_order_relaxed);
         if (profile) LookupOutcomes::Add(LookupOutcomes::RefreshProved, start);
@@ -1914,6 +1917,7 @@ bool StorageTexture::Refresh() {
         }
     }
     if (unchanged) {
+        if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("refresh image %p surface 0x%llx+0x%llx unchanged by %s (keys %s, flushed others %d, alias %p, generation %llu -> %llu, version %llu, dirty %d)", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), stamped ? "stamps" : "compare", DccKeysName(keys), flushed ? 1 : 0, static_cast<const void*>(alias.get()), static_cast<unsigned long long>(generation), static_cast<unsigned long long>(current), static_cast<unsigned long long>(version), dirty ? 1 : 0);
         ++Profile().storageReused;
         layerGeneration.assign(trackedLayers, current);
         refreshGeneration();
@@ -1937,6 +1941,7 @@ bool StorageTexture::Refresh() {
     bool pendingResults = false;
     bool anyStored = false;
     bool dropped = false;
+    std::size_t droppedUnits = 0;
     // A unit is one 64 KiB block, which the CPU's bytes win whole once a store stamped it:
     // nothing of its results is stored, and the unit re-uploads from memory below. A keys change
     // alone (the title marking the surface uncompressed behind a pass) leaves unstamped units
@@ -1983,6 +1988,7 @@ bool StorageTexture::Refresh() {
                 CaptureTrace::Log("drop-unit image=%llx unit=%u generation=%llu stamped=%d keys=%d", static_cast<unsigned long long>(descriptor.baseAddress), layer, static_cast<unsigned long long>(layerGeneration[layer]), layer < stampedBlocks.size() && stampedBlocks[layer] != 0, static_cast<int>(keys));
                 layerPending[layer] = false;
                 dropped = true;
+                ++droppedUnits;
                 continue;
             }
         } else if (direct) {
@@ -2011,12 +2017,14 @@ bool StorageTexture::Refresh() {
         }
         refreshGeneration();
     }
+    const auto ghostChanged = static_cast<std::size_t>(std::count(changed.begin(), changed.end(), true));
     if (std::any_of(changed.begin(), changed.end(), [](bool selected) { return selected; })) {
         uploadReason = keysChanged ? "keys" : cpuWrote ? "cpu" : generation == 0 ? "untracked" : flushed ? "flushed" : "store";
         upload(&changed);
     } else {
         uploadedKeys = keys;
     }
+    if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("refresh image %p surface 0x%llx+0x%llx re-read %zu of %u units (%s), stored %zu pending units first, dropped %zu, borrowed %zu, keys %s%s, cpu %d, flushed others %d, tracked %d compared %d, version %llu, generation %llu, dirty %d", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), ghostChanged, trackedLayers, ghostChanged != 0 && uploadReason != nullptr ? uploadReason : "none", static_cast<std::size_t>(std::count(stored.begin(), stored.end(), true)), droppedUnits, static_cast<std::size_t>(std::count(borrowed.begin(), borrowed.end(), true)), DccKeysName(keys), keyFlip ? " (flip keeps unstamped results)" : "", cpuWrote ? 1 : 0, flushed ? 1 : 0, tracked ? 1 : 0, compared ? 1 : 0, static_cast<unsigned long long>(version), static_cast<unsigned long long>(generation), dirty ? 1 : 0);
     return false;
 }
 
@@ -3141,6 +3149,7 @@ void StorageTexture::refreshGeneration() {
 
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
+    if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("write image %p surface 0x%llx+0x%llx units %u+%u of %u version %llu generation %llu dirty %d", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), first, count, trackedLayers, static_cast<unsigned long long>(version), static_cast<unsigned long long>(generation), dirty ? 1 : 0);
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     std::vector<bool> unsaved(trackedLayers, false);
     bool anyUnsaved = false;
@@ -3203,6 +3212,7 @@ void StorageTexture::reconcilePending() {
 }
 
 void StorageTexture::Flush() {
+    if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("evict image %p surface 0x%llx+0x%llx dirty %d version %llu", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), dirty ? 1 : 0, static_cast<unsigned long long>(version));
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -3248,8 +3258,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         const auto* exempt = refreshing;
         for (auto it = pending.textures.MayOverlap(address, bytes) ? pending.textures.begin() : pending.textures.end(); it != pending.textures.end();) {
             auto* texture = *it;
+            if (texture == except && texture != exempt && texture->overlaps(address, bytes) && GhostTraced(texture->descriptor.baseAddress, texture->guestBytes)) GhostTrace("flush for %s 0x%llx+0x%zx leaves image %p surface 0x%llx+0x%llx pending (excepted)", reason, static_cast<unsigned long long>(address), bytes, static_cast<const void*>(texture), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes));
             if (texture != except && texture != exempt && texture->overlaps(address, bytes)) {
                 if (!texture->pendingUnitInside(address, bytes)) {
+                    if (GhostTraced(texture->descriptor.baseAddress, texture->guestBytes)) GhostTrace("flush for %s 0x%llx+0x%zx skips image %p surface 0x%llx+0x%llx: no pending unit inside", reason, static_cast<unsigned long long>(address), bytes, static_cast<const void*>(texture), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes));
                     pretestSkipped.fetch_add(1, std::memory_order_relaxed);
                     ++it;
                     continue;
@@ -3285,6 +3297,9 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             BumpPendingSerial();
         }
     } unregister{flush};
+    for (const auto& texture : flush) {
+        if (GhostTraced(texture->descriptor.baseAddress, texture->guestBytes)) GhostTrace("flush for %s 0x%llx+0x%zx stores image %p surface 0x%llx+0x%llx version %llu", reason, static_cast<unsigned long long>(address), bytes, static_cast<const void*>(texture.get()), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), static_cast<unsigned long long>(texture->version));
+    }
     // Debug aid: APS5_TRACE_FLUSH names what forces pending results to guest memory.
     static const bool trace = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     if (trace) {
@@ -3824,6 +3839,7 @@ std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::siz
             texture->cancelStoredSaves();
             it = pending.textures.erase(it);
             ++discarded;
+            if (GhostTraced(begin, texture->guestBytes)) GhostTrace("fill 0x%llx+0x%zx discards every pending result of image %p surface 0x%llx+0x%llx version %llu", static_cast<unsigned long long>(address), bytes, static_cast<const void*>(texture), static_cast<unsigned long long>(begin), static_cast<unsigned long long>(texture->guestBytes), static_cast<unsigned long long>(texture->version));
         } else if (texture != exempt && texture->blockUnits && texture->overlaps(address, bytes)) {
             // Its units wholly inside the range are dead too (re-uploaded from the range's bytes at
             // the next use, never from a matching `original`: the dropped units hold results the
@@ -3839,6 +3855,7 @@ std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::siz
                 dropped = true;
             }
             if (dropped) ++discarded;
+            if (dropped && GhostTraced(begin, texture->guestBytes)) GhostTrace("fill 0x%llx+0x%zx discards the pending units inside it of image %p surface 0x%llx+0x%llx version %llu (still pending %d)", static_cast<unsigned long long>(address), bytes, static_cast<const void*>(texture), static_cast<unsigned long long>(begin), static_cast<unsigned long long>(texture->guestBytes), static_cast<unsigned long long>(texture->version), texture->anyLayerPending() ? 1 : 0);
             if (dropped && !texture->anyLayerPending()) {
                 texture->dirty = false;
                 it = pending.textures.erase(it);
@@ -4240,6 +4257,7 @@ bool StorageTexture::SameSurfaceShape(const StorageTexture& other) const {
 }
 
 bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
+    if (GhostTraced(descriptor.baseAddress, guestBytes) || GhostTraced(source.descriptor.baseAddress, source.guestBytes)) GhostTrace("copy into image %p surface 0x%llx+0x%llx from image %p surface 0x%llx+0x%llx (source version %llu dirty %d)", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<const void*>(&source), static_cast<unsigned long long>(source.descriptor.baseAddress), static_cast<unsigned long long>(source.guestBytes), static_cast<unsigned long long>(source.version), source.dirty ? 1 : 0);
     if (&source == this || !SameSurfaceShape(source)) {
         refusal = "shape";
         return false;
@@ -4442,6 +4460,7 @@ void StorageTexture::forgetBorrowed(std::uint32_t first, std::uint32_t count) {
 }
 
 std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vector<bool>& units) {
+    if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("image %p surface 0x%llx+0x%llx borrows %zu units from alias image %p (version %llu)", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<std::size_t>(std::count(units.begin(), units.end(), true)), static_cast<const void*>(&source), static_cast<unsigned long long>(source.version));
     const auto runs = unitRuns(units);
     const auto windows = sliceWindows(runs);
     Require(!windows.empty(), "storage image borrows no unit");
@@ -4662,6 +4681,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         const auto first = keep.empty() ? descriptor.baseAddress + guestBytes : keep.front().first;
         std::fprintf(stderr, "[flush] image 0x%llx+0x%llx keeps %zu CPU-written 64 KiB blocks (first stored byte at +0x%llx, %zu ranges stored, generation %llu)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), skipped, static_cast<unsigned long long>(first - descriptor.baseAddress), keep.size(), static_cast<unsigned long long>(generation));
     }
+    if (GhostTraced(descriptor.baseAddress, guestBytes)) {
+        std::uint64_t storedBytes = 0;
+        for (const auto& [from, to] : keep) storedBytes += to - from;
+        GhostTrace("store image %p surface 0x%llx+0x%llx for %s: %zu of %u units, %zu 64 KiB blocks left to the CPU, 0x%llx bytes in %zu ranges stored, tracked %d, version %llu, generation %llu", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), flushReason != nullptr ? flushReason : "?", static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)), trackedLayers, skipped, static_cast<unsigned long long>(storedBytes), keep.size(), tracked ? 1 : 0, static_cast<unsigned long long>(version), static_cast<unsigned long long>(generation));
+    }
     // Taken before this write-back stamps anything (see advanceAdjacent), with the 64 KiB block span
     // its stamps cover.
     const auto firstBlock = firstStored / block;
@@ -4879,6 +4903,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     if (unregisteredDrop && !overhang && !RegisteredReadableCovers(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
         static std::atomic<int> reports{0};
         if (reports.fetch_add(1) < 4) std::fprintf(stderr, "[gpu] storage image 0x%llx+0x%llx: memory no longer registered; %zu pending ranges dropped\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), keep.size());
+        if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("store image %p surface 0x%llx+0x%llx drops %zu pending ranges: memory no longer registered", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), keep.size());
         unregisteredDropped.fetch_add(1, std::memory_order_relaxed);
         forgetStored();
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
@@ -5009,8 +5034,10 @@ StorageTexture::~StorageTexture() {
             BumpPendingSerial();
             static std::atomic<int> reports{0};
             if (reports.fetch_add(1) < 4) std::fprintf(stderr, "[gpu] storage image 0x%llx destroyed with GPU results pending\n", static_cast<unsigned long long>(descriptor.baseAddress));
+            if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("destroy image %p surface 0x%llx+0x%llx drops its pending results (version %llu)", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(version));
         }
     }
+    if (GhostTraced(descriptor.baseAddress, guestBytes)) GhostTrace("destroy image %p surface 0x%llx+0x%llx version %llu", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(version));
     release();
 }
 

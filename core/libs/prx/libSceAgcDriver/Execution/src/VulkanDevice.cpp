@@ -33,6 +33,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GhostTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
@@ -2373,6 +2374,15 @@ VulkanDevice::CopyAliasing VulkanDevice::CopyAliasCounts() {
 
 VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, std::uint64_t source, std::size_t bytes, std::size_t cpuMax, std::size_t gpuMax, std::size_t knownMax, std::uint64_t programAddress, std::uint32_t queue, const CopyWriterNote& noteWriter) {
     CopyOutcome outcome{2, false, 0, CopyOutcome::None, false, false, 0, 0, 0, 0, false};
+    struct GhostCopy {
+        const CopyOutcome& outcome;
+        std::uint64_t destination;
+        std::uint64_t source;
+        std::size_t bytes;
+        ~GhostCopy() {
+            if (Graphics::GhostTraced(destination, bytes) || Graphics::GhostTraced(source, bytes)) Graphics::GhostTrace("copy 0x%llx -> 0x%llx (0x%zx bytes): path %d (0 cpu, 1 transfer, 2 refused, 3 image copy, 8 too large), refusal %d", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, outcome.path, outcome.reason);
+        }
+    } ghostCopy{outcome, destination, source, bytes};
     if (!state->recorder || bytes == 0) return outcome;
     auto& recorder = *state->recorder;
     // Finished batches were retired by the caller (Driver.cpp copyBuffer, on the graphics worker
