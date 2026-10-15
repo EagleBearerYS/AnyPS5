@@ -1297,14 +1297,6 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
     std::vector<Abi::Expectation> expected;
     if (plan.info.deviceImageUses.empty()) return expected;
     Detail::Evaluator evaluator(plan, runtime);
-    const auto evaluate = [&](std::uint32_t source, std::uint32_t count, std::uint32_t* words) {
-        const auto& descriptor = plan.descriptorSources.at(source);
-        if (descriptor.dwordCount != count) return false;
-        for (std::uint32_t word = 0; word < count; ++word) {
-            if (descriptor.dwords[word] == nullptr || !evaluator.Evaluate(descriptor.dwords[word], words[word])) return false;
-        }
-        return true;
-    };
     std::vector<std::uint8_t> active(plan.info.images.size(), 1u);
     std::vector<std::vector<std::uint32_t>> taken(plan.controlFlow.size());
     std::vector<std::uint8_t> visited(plan.controlFlow.size());
@@ -1349,9 +1341,11 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         }
         return false;
     };
-    using Words = std::array<IrValue*, Abi::DescriptorWords>;
-    const auto incoming = [](const Words& words) {
+    using Words = std::vector<IrValue*>;
+    const auto joins = [](const Words& words) { return std::ranges::any_of(words, [](const IrValue* word) { return word->Resolve()->IsPhi(); }); };
+    const auto incoming = [&](const Words& words) {
         std::vector<Words> sets{words};
+        if (!joins(words)) return sets;
         for (std::uint32_t round = 0; round < 4u && sets.size() <= 16u; ++round) {
             std::vector<Words> next;
             bool expanded = false;
@@ -1380,41 +1374,57 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         }
         return sets;
     };
+    const auto wordsOf = [&](std::uint32_t source, std::uint32_t count, Words& words) {
+        const auto& descriptor = plan.descriptorSources.at(source);
+        if (descriptor.dwordCount != count) return false;
+        words.assign(descriptor.dwords.begin(), descriptor.dwords.begin() + count);
+        return std::ranges::none_of(words, [](const IrValue* word) { return word == nullptr; });
+    };
+    const auto evaluated = [&](const Words& words, std::uint32_t* values) {
+        for (std::size_t word = 0; word < words.size(); ++word) {
+            if (!evaluator.Evaluate(words[word], values[word])) return false;
+        }
+        return true;
+    };
+    const auto add = [&](const Abi::Expectation& expectation) {
+        if (std::ranges::find(expected, expectation) == expected.end()) expected.push_back(expectation);
+    };
     expected.reserve(plan.info.deviceImageUses.size());
     for (const auto& use : plan.info.deviceImageUses) {
         if (active.at(use.image) == 0u) continue;
         const auto& image = plan.info.images.at(use.image);
-        const auto& source = plan.descriptorSources.at(image.source);
-        if (source.dwordCount != Abi::DescriptorWords || std::ranges::any_of(source.dwords.begin(), source.dwords.begin() + Abi::DescriptorWords, [](const IrValue* word) { return word == nullptr; })) continue;
-        Words words{};
-        std::copy_n(source.dwords.begin(), Abi::DescriptorWords, words.begin());
-        const bool joined = std::ranges::any_of(words, [](const IrValue* word) { return word->Resolve()->IsPhi(); });
-        for (const auto& candidate : joined ? incoming(words) : std::vector<Words>{words}) {
+        Words imageWords;
+        if (!wordsOf(image.source, Abi::DescriptorWords, imageWords)) continue;
+        const bool deviceSampler = use.sampler != NoSampler && plan.info.samplers.at(use.sampler).deviceTable;
+        Words samplerWords;
+        if (deviceSampler && !wordsOf(plan.info.samplers.at(use.sampler).source, Abi::SamplerWords, samplerWords)) continue;
+        const bool joinedImage = joins(imageWords);
+        const auto samplers = incoming(samplerWords);
+        for (const auto& candidate : incoming(imageWords)) {
             Abi::Expectation expectation;
             expectation.pc = use.firstUsePc;
             expectation.image = use.image;
             auto& key = expectation.key;
-            bool evaluated = true;
-            for (std::uint32_t word = 0; evaluated && word < Abi::DescriptorWords; ++word) evaluated = evaluator.Evaluate(candidate[word], key[word]);
-            if (!evaluated || Abi::NullDescriptor(key[0], key[1])) continue;
+            if (!evaluated(candidate, key.data()) || Abi::NullDescriptor(key[0], key[1])) continue;
             DescriptorValue descriptor;
             descriptor.dwordCount = Abi::DescriptorWords;
             std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
             if (!validImageDescriptor(descriptor, image.r128)) {
-                if (!joined && executed(use.image)) throw std::runtime_error("runtime image descriptor is invalid");
+                if (!joinedImage && executed(use.image)) throw std::runtime_error("runtime image descriptor is invalid");
                 continue;
             }
-            if (use.sampler != NoSampler) {
-                const auto& sampler = plan.info.samplers.at(use.sampler);
-                if (!sampler.deviceTable) {
-                    expectation.mapSampler = use.sampler;
-                } else {
-                    if (!evaluate(sampler.source, Abi::SamplerWords, key.data() + Abi::SamplerWord)) continue;
-                    const bool exactAtBase = use.levelZero && (key[Abi::SamplerWord] & Abi::SamplerUnnormalized) != 0u;
-                    key[Abi::SamplerClassWord] = Abi::RuntimeSampler | (exactAtBase ? Abi::SamplerExactAtBase : 0u);
-                }
+            if (!deviceSampler) {
+                if (use.sampler != NoSampler) expectation.mapSampler = use.sampler;
+                add(expectation);
+                continue;
             }
-            if (std::ranges::find(expected, expectation) == expected.end()) expected.push_back(expectation);
+            for (const auto& sampler : samplers) {
+                auto sampled = expectation;
+                if (!evaluated(sampler, sampled.key.data() + Abi::SamplerWord)) continue;
+                const bool exactAtBase = use.levelZero && (sampled.key[Abi::SamplerWord] & Abi::SamplerUnnormalized) != 0u;
+                sampled.key[Abi::SamplerClassWord] = Abi::RuntimeSampler | (exactAtBase ? Abi::SamplerExactAtBase : 0u);
+                add(sampled);
+            }
         }
     }
     return expected;

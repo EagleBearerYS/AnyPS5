@@ -1312,10 +1312,10 @@ void verifyDescriptorPhis() {
     const std::vector<std::uint32_t> imageCode{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
     const std::vector<std::uint32_t> dynamicCode{0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0x20000000u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
 
-    const auto compile = [&](std::span<const std::uint32_t> code, std::size_t images, std::size_t samplers) {
+    const auto compile = [&](std::span<const std::uint32_t> code) {
         auto request = makeRequest(code);
         const auto plan = GetResourcePlan(request);
-        require(plan->info.images.size() == images && plan->info.samplers.size() == samplers && plan->info.sampledPairs.size() == 2u, "descriptor Phi: the edges were not given one resource each");
+        require(plan->info.images.size() == 1u && plan->info.samplers.size() == 1u && plan->srtReads.empty(), "descriptor Phi: the joined T# and S# were not planned as one run-time image and sampler");
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
         request.context.memory = memory.Regions();
@@ -1326,10 +1326,10 @@ void verifyDescriptorPhis() {
 #endif
         return compiled;
     };
-    const auto samplerResult = compile(samplerCode, 1u, 2u);
+    const auto samplerResult = compile(samplerCode);
     require(expects(*samplerResult, first, pointWrap) && expects(*samplerResult, first, linearMirror), "descriptor Phi: the expected keys are not the T# with each edge's S#");
 
-    const auto imageResult = compile(imageCode, 2u, 1u);
+    const auto imageResult = compile(imageCode);
     require(expects(*imageResult, first, pointWrap) && expects(*imageResult, second, pointWrap), "descriptor Phi: the expected keys are not each edge's T# with the S#");
 
     auto twoLane = makeRequest(samplerCode, 64u);
@@ -1359,15 +1359,16 @@ void verifyDescriptorPhis() {
     require(relativePlan->info.images.size() == 1u && relativePlan->info.images[0].deviceTable, "run-time T#: a T# selected through data the shader reads relative to its program counter was not read through the device image table");
 
     const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
-    const auto loopResult = compile(loopCode, 2u, 1u);
+    const auto loopResult = compile(loopCode);
     require(expects(*loopResult, first, pointWrap) && expects(*loopResult, second, pointWrap), "descriptor Phi: the loop's chained T# Phis were not split into the two SRT T#s");
 
     const std::vector<std::uint32_t> sequentialCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0xfa000030u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
     auto sequential = makeRequest(sequentialCode);
     const auto sequentialPlan = GetResourcePlan(sequential);
-    require(sequentialPlan->info.images.size() == 2u && sequentialPlan->info.samplers.size() == 2u, "descriptor Phi: a T# and an S# chosen in separate blocks were not split into their SRT descriptors");
+    require(sequentialPlan->info.images.size() == 1u && sequentialPlan->info.samplers.size() == 1u && sequentialPlan->srtReads.empty(), "descriptor Phi: a T# and an S# chosen in separate blocks were not planned as one run-time image and sampler");
     AgcDriver::ShaderMemory sequentialMemory({});
     const auto sequentialCapture = sequentialMemory.Capture(sequential);
+    require(sequentialCapture->snapshot.deviceImages.size() == 4u, "descriptor Phi: the pre-pass did not expect each T# with each S# chosen in separate blocks");
     sequential.context.memory = sequentialMemory.Regions();
     static_cast<void>(Recompile(sequential, *sequentialCapture));
 
@@ -1396,7 +1397,8 @@ void verifyDescriptorPhis() {
     auto unwritten = loopCode;
     unwritten[4] = 0xf4080200u;
     auto unwrittenRequest = makeRequest(unwritten);
-    require(GetResourcePlan(unwrittenRequest)->info.images.size() == 3u, "descriptor Phi: a T# whose unwritten registers read as 0 was not planned as its own image");
+    const auto unwrittenPlan = GetResourcePlan(unwrittenRequest);
+    require(unwrittenPlan->info.images.size() == 1u && unwrittenPlan->srtReads.empty(), "descriptor Phi: a loop T# whose entry leaves registers unwritten was not planned as one run-time image");
 
     const std::array<std::uint32_t, 7> prologue{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu};
     const std::array<std::uint32_t, 7> epilogue{0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
