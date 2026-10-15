@@ -266,6 +266,7 @@ struct VulkanDevice::State {
     VkDeviceSize uploadSize = 0;
     VkPhysicalDeviceProperties properties{};
     std::string driverInfo;
+    bool individuallyFreeDescriptorSets = false;
     PFN_vkGetCalibratedTimestampsKHR calibratedTimestamps = nullptr;
     PFN_vkCmdSetCheckpointNV checkpointMarker = nullptr;
     bool deviceLostHook = false;
@@ -1101,6 +1102,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
         state->driverInfo = std::string(driver.driverName) + " " + driver.driverInfo;
+        state->individuallyFreeDescriptorSets = driver.driverID == VK_DRIVER_ID_MESA_LLVMPIPE;
     }
     auto byteFeatures = QueryBdaByteFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
     auto bdaFeatures = QueryBdaFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
@@ -1842,7 +1844,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     Graphics::PrepareImportWatch(graphicsContext());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties);
+    state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, window != nullptr || compileOnly);
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
@@ -3448,6 +3450,7 @@ Graphics::Context VulkanDevice::buildContext() const {
         state->hostImportAlignment
     };
     context.pipelineCacheSynchronization = state->pipelineCache ? &state->pipelineCache->Synchronization() : nullptr;
+    context.individuallyFreeDescriptorSets = state->individuallyFreeDescriptorSets;
     context.dmaBufImport = state->dmaBufImport;
     context.sparseBinding = state->sparseBinding;
     context.queueFamily = state->queueFamily;

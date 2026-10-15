@@ -3429,7 +3429,7 @@ std::size_t KeptSets() {
 
 }
 
-DescriptorCache::DescriptorCache(const Context& context) : context(context), destroyLayout(context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")), destroyPool(context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")), resetPool(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")) {
+DescriptorCache::DescriptorCache(const Context& context) : context(context), destroyLayout(context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")), destroyPool(context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")), resetPool(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")), freeDescriptorSets(context.individuallyFreeDescriptorSets ? context.Function<PFN_vkFreeDescriptorSets>("vkFreeDescriptorSets") : nullptr) {
     kept.reserve(KeptSets() + 1u);
 }
 
@@ -3541,6 +3541,7 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     }
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.flags = updateAfterBind ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT : 0;
+    if (context.individuallyFreeDescriptorSets) poolInfo.flags |= VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.maxSets = ChainPoolSets;
     poolInfo.poolSizeCount = static_cast<std::uint32_t>(ChainPoolCreateSizes.size());
     poolInfo.pPoolSizes = ChainPoolCreateSizes.data();
@@ -3606,6 +3607,7 @@ void DescriptorCache::Free(const SetAllocation& allocation, std::shared_ptr<cons
     if (allocation.poolIndex >= chain.size()) std::terminate();
     auto& pool = chain[allocation.poolIndex];
     if (pool.handle != allocation.pool || pool.liveSets == 0) std::terminate();
+    if (freeDescriptorSets != nullptr && freeDescriptorSets(context.device, allocation.pool, 1, &allocation.set) != VK_SUCCESS) std::terminate();
     if (--pool.liveSets != 0) return;
     if (resetPool(context.device, pool.handle, 0) != VK_SUCCESS) std::terminate();
     pool.exhausted = false;

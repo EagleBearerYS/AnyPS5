@@ -1895,7 +1895,23 @@ void DepthStencilTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
     Require(AgcDriver::Graphics::DrawRejection(queue, false).find("writable stencil plane") != std::string::npos, "precheck accepted clear without a stencil plane");
     queue.context[0x010] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(!state.depth && !state.depthTest && !state.depthWrite && !state.stencilTest && state.colors.size() == 2, "clear flags without depth/stencil planes changed color-only rendering");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "precheck rejected clear flags without depth/stencil planes");
+    queue = makeState();
+    queue.context[0x010] = 0x80000180;
+    queue.context[0x011] = 0x20000180;
+    queue.context[0x200] = 0x776;
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto colorOnly = AgcDriver::Graphics::DecodeState(queue);
+    for (const auto control : {1u, 2u, 3u}) {
+        queue.context[0x000] = control;
+        state = AgcDriver::Graphics::DecodeState(queue);
+        Require(!state.depth && !state.depthTest && !state.depthWrite && !state.stencilTest, "stale clear flags enabled absent depth/stencil planes");
+        Require(state.color.address == colorOnly.color.address && state.blends[0].colorWriteMask == colorOnly.blends[0].colorWriteMask && state.viewport.minDepth == colorOnly.viewport.minDepth && state.viewport.maxDepth == colorOnly.viewport.maxDepth, "stale clear flags changed color writes or viewport depth");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "precheck rejected a color-only draw with stale clear flags: " + AgcDriver::Graphics::DrawRejection(queue, false));
+    }
     queue = makeState();
     queue.context[0x31b] = 1u << 26u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "mip exceeds");
@@ -2772,7 +2788,17 @@ void multisampleTests() {
     expectFailure([&] { DecodeState(queue); }, "sample count differs");
     queue = multisampled();
     queue.context[0x292] = 2;
-    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE");
+    state = DecodeState(queue);
+    Require(state.samples == 2 && state.colors.size() == 1 && state.colors[0].samples == 2 && state.customSampleLocations, "a 2x target rasterized without MSAA_ENABLE did not rasterize the target's samples");
+    const auto aliased = AgcDriver::Graphics::SampleLocations(state);
+    for (std::uint32_t sample = 0; sample < state.samples; ++sample) Require(aliased[sample].x == 0.5f && aliased[sample].y == 0.5f, "a 2x target rasterized without MSAA_ENABLE did not place every sample at the pixel center");
+    queue.context[0x2dc] = 0x0000aa01u;
+    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE are unsupported for points, lines, a depth target or alpha-to-coverage");
+    queue = multisampled();
+    queue.context[0x292] = 2;
+    queue.context[0x302] = 0x44cc;
+    state = DecodeState(queue);
+    Require(state.customSampleLocations && !state.sampleLocationGrid, "a 2x target rasterized without MSAA_ENABLE kept the per-pixel sample location grid of its centred samples");
     queue = multisampled();
     queue.context[0x2f8] |= 0x10;
     expectFailure([&] { DecodeState(queue); }, "coverage conversion");
@@ -3384,6 +3410,7 @@ struct MockVulkan {
     std::vector<VkDescriptorPoolSize> poolSizes;
     std::uint32_t poolMaxSets = 0;
     VkDescriptorPoolCreateFlags poolFlags = 0;
+    std::uint32_t freedDescriptorSets = 0;
     struct DescriptorPool {
         VkDescriptorPoolCreateFlags flags;
         std::uint32_t maxSets;
@@ -3543,6 +3570,15 @@ VKAPI_ATTR VkResult VKAPI_CALL mockResetDescriptorPool(VkDevice, VkDescriptorPoo
     if (result != VK_SUCCESS) return result;
     pool.allocated = 0;
     ++pool.resets;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockFreeDescriptorSets(VkDevice, VkDescriptorPool handle, std::uint32_t count, const VkDescriptorSet*) {
+    auto& pool = mock.descriptorPools.at(handle);
+    Require((pool.flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) != 0, "a descriptor set was freed from a pool without free support");
+    Require(count <= pool.allocated, "more descriptor sets were freed than allocated");
+    pool.allocated -= count;
+    mock.freedDescriptorSets += count;
     return VK_SUCCESS;
 }
 
@@ -3715,6 +3751,7 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkCreateDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(mockCreateDescriptorPool)},
         {"vkDestroyDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyDescriptorPool)},
         {"vkAllocateDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(mockAllocateDescriptorSets)},
+        {"vkFreeDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(mockFreeDescriptorSets)},
         {"vkResetDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(mockResetDescriptorPool)},
         {"vkCreateSampler", reinterpret_cast<PFN_vkVoidFunction>(mockCreateSampler)},
         {"vkDestroySampler", reinterpret_cast<PFN_vkVoidFunction>(mockDestroySampler)},
@@ -4419,6 +4456,28 @@ void descriptorCacheTests() {
         expectFailure([&] { cache.Allocate(fittingLayout, fitting, false, 3u); }, "descriptor set exceeds the device's per-set descriptor limit");
     }
     Require(mock.live == 0, "the combined descriptor cache leaked a pool or layout");
+    mock = MockVulkan{};
+    auto lavapipeContext = mockContext();
+    lavapipeContext.individuallyFreeDescriptorSets = true;
+    lavapipeContext.limits.maxDescriptorSetStorageBuffers = 16;
+    {
+        AgcDriver::Graphics::DescriptorCache cache(lavapipeContext);
+        const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        const std::array<std::uint32_t, 4> key{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
+        const auto layout = cache.Layout(key, std::span(&binding, 1));
+        const std::array<VkDescriptorPoolSize, 1> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}}};
+        const auto first = cache.Allocate(layout, sizes);
+        const auto second = cache.Allocate(layout, sizes);
+        Require(first.pool == second.pool && mock.poolFlags == VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, "lavapipe chain pools do not enable individual descriptor-set frees");
+        cache.Free(first);
+        Require(mock.freedDescriptorSets == 1 && mock.descriptorPools.at(first.pool).resets == 0, "freeing one of two live sets reset its chain pool");
+        cache.Free(second);
+        Require(mock.freedDescriptorSets == 2 && mock.descriptorPools.at(second.pool).resets == 1, "freeing the last live set did not free it and reset its chain pool");
+        const auto reused = cache.Allocate(layout, sizes);
+        Require(reused.pool == first.pool && mock.descriptorPools.at(reused.pool).attempts == 3, "an emptied lavapipe chain pool was not reused");
+        cache.Free(reused);
+    }
+    Require(mock.live == 0, "the lavapipe descriptor cache leaked a pool or layout");
 }
 
 void imageTableAllocationTests() {
@@ -7251,6 +7310,10 @@ int main(int argc, char** argv) {
     setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--descriptor-cache") {
+            descriptorCacheTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--unused-stencil-reference") {
             stencilReferenceUnusedTests();
             return 0;
