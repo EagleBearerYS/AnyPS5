@@ -1390,7 +1390,8 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     const auto foldedOperands = operands;
     const bool gatherExtended = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended)) != state.supportedCapabilities.end();
     const bool offsetOperand = hasOffset && (constantOffset() != nullptr || (state.nonConstantImageOffsets && gatherExtended));
-    if (hasOffset && !offsetOperand && !foldOffset) {
+    const bool runtimeUnnormalized = setup.texelCoord != 0u && !setup.dref;
+    if (hasOffset && !offsetOperand && !foldOffset && !runtimeUnnormalized) {
         ctx.Fail(access.inst, "has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
     }
     if (offsetOperand && constantOffset() == nullptr) {
@@ -1428,13 +1429,13 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     };
     std::uint32_t sample = 0;
     const bool baseLevelIfUnnormalized = !setup.dref && SamplesBaseLevelIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
-    if (setup.texelCoord != 0u && !setup.dref) {
+    if (runtimeUnnormalized) {
         const auto unnormalized = Binary(state, spv::OpINotEqual, TypeBool(state), state.tableAccess.unnormalized, ConstantU32(state, 0u));
         const bool fold = hasOffset && setup.dimensionInfo.coordinateComponents == setup.dimensionInfo.spatialComponents;
         sample = EmitValueIfElse(state, unnormalized, resultType, [&] {
             return emitSample(fold ? FoldedOffsetCoord(ctx, access, setup) : setup.coord, spv::ImageOperandsLodMask, {ZeroF32(state)}, spv::OpImageSampleExplicitLod);
         }, [&] {
-            return emitSample(setup.coord, operandMask, operands, opcode);
+            return hasOffset && !offsetOperand ? state.module.Constant(spv::OpConstantNull, resultType) : emitSample(setup.coord, operandMask, operands, opcode);
         });
     } else if (baseLevelIfUnnormalized) {
         const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::UnnormalizedBaseLevel(mem.sampler), 0u);

@@ -1101,6 +1101,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         DeviceImageTableAbi::NameInterfaces(result.deviceImages, result.deviceImageInterfaces);
         std::optional<RuntimeImageModeMatch> refusal;
         for (const auto& expectation : result.deviceImages) {
+            const bool runtimeSampler = (expectation.key[DeviceImageTableAbi::SamplerClassWord] & DeviceImageTableAbi::RuntimeSampler) != 0u;
+            if (images.at(expectation.image).foldTexelOffsetsOnly && runtimeSampler && (expectation.key[DeviceImageTableAbi::SamplerWord] & DeviceImageTableAbi::SamplerUnnormalized) == 0u) {
+                throw std::runtime_error("a normalized S# is used with an image sample that has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
+            }
             DescriptorValue descriptor;
             descriptor.dwordCount = DeviceImageTableAbi::DescriptorWords;
             std::copy_n(expectation.key.begin(), DeviceImageTableAbi::DescriptorWords, descriptor.dwords.begin());

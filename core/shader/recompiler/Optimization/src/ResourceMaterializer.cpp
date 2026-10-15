@@ -1611,7 +1611,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
 }
 
 const char* ResourceMaterializer::UnnormalizedSampleMismatch(const ImageResource& image) {
-    if (image.table != NoTable) return "samples an image selected at run time";
+    if (image.table != NoTable && !image.deviceTable) return "samples an image selected at run time";
     if (image.constantSwizzle) return nullptr;
     if ((image.dimension != RdnaImageDimension::Dim1D && image.dimension != RdnaImageDimension::Dim2D) || image.cube) return "samples a 1D-array, 2D-array, 3D, cube or multisampled image";
     if (image.depthCompare) return "is used with depth comparison";
@@ -1679,7 +1679,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         }
     }
     if (image.dimension == RdnaImageDimension::Dim1D && decoded.dimension != RdnaImageDimension::Dim1D) return reject(PoisonReason::Dimension, "image address has too few coordinate components");
-    if (image.foldTexelOffsetsOnly) return reject(PoisonReason::UnsupportedOperation, "image sample with a texel offset that is not a constant takes only images an unnormalized S# can sample without VK_KHR_maintenance8 and shaderImageGatherExtended");
+    if (image.foldTexelOffsetsOnly) return reject(PoisonReason::UnsupportedOperation, "image sample has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended; without them it takes only images an unnormalized S# can sample");
     const auto describe = [](IrTextureNumericClass numeric, RdnaImageDimension dimension, IrBufferFormat conversion, IrBufferFormat packed, bool cube, bool depthBits, bool depthUnorm16, bool srgb) {
         return "{class " + std::to_string(static_cast<int>(numeric)) + ", dim " + std::to_string(static_cast<int>(dimension)) + ", conversion " + std::to_string(static_cast<int>(conversion)) + ", packed " + std::to_string(static_cast<int>(packed)) + ", cube " + std::to_string(cube) + ", depthBits " + std::to_string(depthBits) + ", unorm16 " + std::to_string(depthUnorm16) + ", srgb " + std::to_string(srgb) + "}";
     };
@@ -1725,7 +1725,7 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
                 if (component.bitWidth == 32u && argument < address->ArgumentCount() && address->Argument(argument)->Resolve()->HasImmediate()) continue;
                 if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
                     images.at(memory.resource).emulatedCompare |= EmulatedCompare::NativeOffsetUnsupported;
-                } else if (resources.info.samplers.at(memory.sampler).table == NoTable && !resources.info.samplers.at(memory.sampler).deviceTable) {
+                } else if (resources.info.samplers.at(memory.sampler).table == NoTable) {
                     images.at(memory.resource).foldTexelOffsetsOnly = true;
                     resources.info.samplers.at(memory.sampler).foldTexelOffsetsOnly = true;
                 }

@@ -294,6 +294,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
             if (const auto paired = SingleLevelSamplerWords(samplerWords, singleLevel, !singleLevel)) samplerWords = *paired;
             if (PointSampled(mode)) samplerWords[2] = ShaderRecompiler::PointFilteredSamplerWord(samplerWords[0], samplerWords[2]);
             if (unnormalized && mode.depthCompare) return rejected(Reason::Unnormalized, "an S# with unnormalized coordinates compares against the image it samples, which is not implemented");
+            if (!unnormalized && interface->image.foldTexelOffsetsOnly) return rejected(Reason::UnsupportedOperation, "a normalized S# is used with an image sample that has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
             sampler = ModeSampler(build, samplerWords, mode.depthCompare, IntegerMode(mode), true, unnormalized);
             RequireDegammaFormat(DecodeTextureResource(descriptorWords).format, std::array<std::uint32_t, 1>{0u}, std::array<std::shared_ptr<Sampler>, 1>{sampler});
             samplerClass = DeviceTableSamplerClass(sampler.get(), samplerWords, unnormalized, IntegerMode(mode)) & ~Abi::SamplerAnisoOverride;
