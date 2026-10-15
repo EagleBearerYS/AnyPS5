@@ -3390,7 +3390,7 @@ void imageTableAllocationTests() {
                 program.bindings.push_back(std::move(images));
                 const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
                 {
-                    AgcDriver::Graphics::ShaderResources resources(context, shader, {}, true);
+                    AgcDriver::Graphics::ShaderResources resources(context, shader, true);
                     Require(std::none_of(mock.layoutBindings.begin(), mock.layoutBindings.end(), [](const auto& item) { return item.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || item.binding == ShaderRecompiler::RuntimeAbi::ImageTableBinding; }), "the image table took a layout binding in the shader's set");
                     Require(!mock.variableDescriptorCount.has_value(), "the image table allocation reserved a variable descriptor count");
                     Require(cached || std::none_of(mock.poolSizes.begin(), mock.poolSizes.end(), [](const auto& size) { return size.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE; }), "the image table pool reserved sampled image descriptors");
@@ -3440,7 +3440,7 @@ void samplerTableNonSeamlessCubeTests() {
             program.bindings.push_back(std::move(samplers));
             const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
             {
-                AgcDriver::Graphics::ShaderResources resources(context, shader, {}, true);
+                AgcDriver::Graphics::ShaderResources resources(context, shader, true);
                 resources.Complete();
                 const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
                 std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
@@ -3661,7 +3661,7 @@ void samplerTableDeviceLimitTests(std::optional<std::uint32_t> selected = std::n
             program.bindings.push_back(std::move(samplers));
             const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
             {
-                AgcDriver::Graphics::ShaderResources resources(context, shader, {}, true);
+                AgcDriver::Graphics::ShaderResources resources(context, shader, true);
                 resources.Complete();
                 const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
                 std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
