@@ -23,6 +23,8 @@ struct SrtWriteStamp {
 struct SrtGuestWords {
     std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
     std::vector<std::uint32_t> words;
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
 };
 
 using SrtMemoryStamper = SrtWriteStamp (*)(void* userData, std::uint64_t address, std::uint64_t bytes);

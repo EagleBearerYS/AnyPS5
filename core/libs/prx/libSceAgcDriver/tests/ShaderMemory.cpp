@@ -1698,6 +1698,73 @@ void verifyTableStampRace() {
     std::cout << "table stamp race with write watching passed\n";
 }
 
+void verifyTableVouch() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Records = 4096;
+    constexpr std::uint32_t Stride = 48;
+    constexpr std::size_t Bytes = static_cast<std::size_t>(Records) * Stride;
+    constexpr std::size_t RecordWords = Stride / 4u;
+    const auto texture = [](std::uint32_t index) { return TableT(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x100000000ull + index * 256ull)), TableFormat8888UNorm, TableType2D, 1u + index % 5u); };
+    const auto fill = [&](std::uint32_t* heap) {
+        for (std::uint32_t record = 0; record < Records; record++) {
+            const auto words = texture(record % 1024u);
+            std::copy(words.begin(), words.end(), heap + record * RecordWords);
+            std::fill_n(heap + record * RecordWords + 8u, 4u, 0x5a5a5a5au);
+        }
+    };
+    struct Captured {
+        ImageTableReuseCounts reuse;
+        std::uint64_t calls = 0;
+    };
+    const auto capture = [](const RecompileRequest& request, AgcDriver::ShaderMemory::PendingWriteQuery pending) {
+        Captured captured;
+        const auto before = ResourceMaterializer::TableReuse();
+        const auto calls = AgcDriver::ShaderMemory::Vouches().calls;
+        AgcDriver::ShaderMemory memory({}, pending);
+        static_cast<void>(memory.Capture(request));
+        captured.calls = AgcDriver::ShaderMemory::Vouches().calls - calls;
+        const auto after = ResourceMaterializer::TableReuse();
+        captured.reuse = {after.unwritten - before.unwritten, after.compared - before.compared, after.wordsRead - before.wordsRead, after.shared - before.shared, after.columns - before.columns};
+        return captured;
+    };
+
+    auto* heap = AllocateWatchedTable(Bytes);
+    fill(heap);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(heap));
+    const bool watched = AgcDriver::GuestMemory::CollectWrites(address, Bytes) != 0;
+    alignas(4096) static TableGuest guest;
+    FillTableSrt(guest, heap, Stride, Records);
+    const auto userData = TableUserData(guest);
+    auto wideCode = TableWholeCode;
+    std::replace(wideCode.begin(), wideCode.end(), 0x8f108510u, 0x9310b010u);
+    const auto request = TableRequest(wideCode, userData);
+    const auto tableWords = static_cast<std::size_t>(Records) * 8u;
+
+    const auto fresh = capture(request, nullptr);
+    require(fresh.reuse.columns == 1u && fresh.reuse.wordsRead == tableWords, "table vouch: the first snapshot did not read the strided table once");
+    const auto unchanged = capture(request, nullptr);
+    if (!watched) {
+        require(unchanged.reuse.compared == 1u && unchanged.calls == 0u, "table vouch: an unchanged unwatched strided table was not compared");
+        std::cout << "table vouch without write watching passed\n";
+        return;
+    }
+    require(unchanged.reuse.unwritten == 1u && unchanged.reuse.wordsRead == 0u, "table vouch: an unwritten strided table was read again");
+    require(unchanged.calls == 1u, ("table vouch: an unwritten table of " + std::to_string(Records) + " strided records was vouched for in " + std::to_string(unchanged.calls) + " calls instead of one").c_str());
+
+    heap[300u * RecordWords + 9u] ^= 0x10u;
+    const auto between = capture(request, nullptr);
+    require(between.reuse.unwritten == 0u && between.reuse.compared == 1u && between.reuse.columns == 0u, "table vouch: a CPU store between two records did not make the table compared and kept");
+    const auto afterBetween = capture(request, nullptr);
+    require(afterBetween.reuse.unwritten == 1u && afterBetween.calls == 1u, "table vouch: the table compared after a store between two records was not reused unwritten");
+
+    const auto words = texture(3000u);
+    std::memcpy(heap + 7u * RecordWords, words.data(), sizeof(words));
+    const auto stored = capture(request, nullptr);
+    require(stored.reuse.unwritten == 0u && stored.reuse.compared == 0u && stored.reuse.columns == 1u, "table vouch: a CPU store into a record did not make the table read again");
+    require(capture(request, nullptr).reuse.unwritten == 1u, "table vouch: the table read again after a CPU store was not reused unwritten");
+    std::cout << "table vouch with write watching passed\n";
+}
+
 void verifyImageTables() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -5710,6 +5777,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
             verifyTableSnapshotReuse();
             verifyTableStampRace();
+            verifyTableVouch();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {

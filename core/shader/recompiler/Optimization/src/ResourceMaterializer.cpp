@@ -782,12 +782,13 @@ private:
             return;
         }
         const bool memoized = TableSnapshotReuse() && !records.narrowed && records.keys != 0u;
+        const ColumnKey key{records.base, records.size, records.records, records.keys, column.stride, column.addend, column.offset, column.dwordCount, column.maxKey, column.foldedAddend, column.foldedCarry, column.address, column.sampler};
+        if (memoized && Reuse(key, column, records, false)) return;
         if (memoized && !column.address && records.size != 0u && runtime.stampWrites != nullptr) {
             const auto span = std::min<std::uint64_t>(records.size, static_cast<std::uint64_t>(column.addend) + column.offset + static_cast<std::uint64_t>(records.keys) * column.stride + column.dwordCount * 4u);
             stamp = runtime.stampWrites(runtime.userContext, records.base, span);
         }
-        const ColumnKey key{records.base, records.size, records.records, records.keys, column.stride, column.addend, column.offset, column.dwordCount, column.maxKey, column.foldedAddend, column.foldedCarry, column.address, column.sampler};
-        if (memoized && Reuse(key, column, records)) return;
+        if (memoized && Reuse(key, column, records, true)) return;
         unread();
         constexpr auto Unread = std::numeric_limits<std::uint32_t>::max();
         std::vector<std::uint32_t> whole(records.keys, Unread);
@@ -915,10 +916,8 @@ private:
     }
 
     bool Unwritten(const ColumnMemo& memo) const {
-        if (memo.stamp.generation == 0u || runtime.unchangedSince == nullptr || runtime.supplyWords == nullptr) return false;
-        for (const auto& [address, count] : memo.read->runs) {
-            if (!runtime.unchangedSince(runtime.userContext, address, static_cast<std::uint64_t>(count) * sizeof(std::uint32_t), memo.stamp)) return false;
-        }
+        if (memo.stamp.generation == 0u || runtime.unchangedSince == nullptr || runtime.supplyWords == nullptr || memo.read->low >= memo.read->high) return false;
+        if (!runtime.unchangedSince(runtime.userContext, memo.read->low, memo.read->high - memo.read->low, memo.stamp)) return false;
         return runtime.supplyWords(runtime.userContext, memo.read);
     }
 
@@ -948,16 +947,16 @@ private:
         if (column.address && memo.low < memo.high) tables.ranges.emplace_back(memo.low, memo.high - memo.low);
     }
 
-    bool Reuse(const ColumnKey& key, const TableColumn& column, ColumnRecords& records) {
+    bool Reuse(const ColumnKey& key, const TableColumn& column, ColumnRecords& records, bool compare) {
         auto& memos = ColumnMemos();
         const auto found = std::find_if(memos.begin(), memos.end(), [&](const ColumnMemo& entry) { return entry.key == key; });
         if (found == memos.end()) return false;
         auto& counters = tableCounters();
         auto& totals = tableReuseTotals();
-        if (Unwritten(*found)) {
+        if (!compare && Unwritten(*found)) {
             counters.reusedUnwritten.fetch_add(1, std::memory_order_relaxed);
             totals.unwritten.fetch_add(1, std::memory_order_relaxed);
-        } else if (Compared(column, records, *found)) {
+        } else if (compare && Compared(column, records, *found)) {
             counters.reusedCompared.fetch_add(1, std::memory_order_relaxed);
             totals.compared.fetch_add(1, std::memory_order_relaxed);
         } else {
@@ -977,7 +976,13 @@ private:
         auto& memo = *found;
         memo.key = key;
         memo.stamp = stamp;
-        memo.read = std::make_shared<const SrtGuestWords>(SrtGuestWords{std::move(runs), std::move(words)});
+        std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t past = 0;
+        for (const auto& [address, count] : runs) {
+            first = std::min(first, address);
+            past = std::max(past, address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t));
+        }
+        memo.read = std::make_shared<const SrtGuestWords>(SrtGuestWords{std::move(runs), std::move(words), first < past ? first : 0u, first < past ? past : 0u});
         memo.contents = records.contents;
         memo.low = low;
         memo.high = high;
