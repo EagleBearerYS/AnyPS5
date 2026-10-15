@@ -699,6 +699,115 @@ void importAtMapOverBudgetTests(const Context& context) {
     for (auto* block : {kept, used, mapped}) ::operator delete(block, std::align_val_t{bytes});
 }
 
+void importRequesterTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t pieces = 8;
+    auto* block = static_cast<std::uint8_t*>(::operator new(pieces * piece, std::align_val_t{piece}));
+    std::memset(block, 0x2d, pieces * piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(0);
+    const auto address = [&](std::size_t index) { return reinterpret_cast<std::uintptr_t>(block + index * piece); };
+    const auto change = [&](std::size_t index, bool add) {
+        GuestAllocations::Mutation mutation;
+        if (add) mutation.Add(block + index * piece, piece, true, index % 2 == 0, true);
+        else mutation.Remove(block + index * piece);
+    };
+    const auto counted = [](ImportRequester requester) { return HostImportCounters().requesters[static_cast<std::size_t>(requester)]; };
+    const auto made = [&](ImportRequester requester) { return counted(requester).made; };
+    Require(std::string(ImportRequesterName(ImportRequester::Map)) == "map" && std::string(ImportRequesterName(ImportRequester::Build)) == "build" && std::string(ImportRequesterName(ImportRequester::Access)) == "access" && std::string(ImportRequesterName(ImportRequester::Join)) == "join" && std::string(ImportRequesterName(ImportRequester::Segment)) == "segment" && std::string(ImportRequesterName(ImportRequester::Expand)) == "expand", "an import requester has the wrong name");
+    change(0, true);
+    {
+        GuestAllocations::Mapped ranges;
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        for (const auto& range : lease) {
+            if (range->address == address(0)) ranges.push_back(range);
+        }
+        Require(ranges.size() == 1, "the requester test's mapped range is not registered");
+        const auto before = made(ImportRequester::Map);
+        static_cast<void>(ImportMappedRanges(importing, ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
+        Require(made(ImportRequester::Map) == before + 1 && HostImportCovers(importing, address(0), piece), "a range imported at map time was not counted for the map requester");
+    }
+    change(1, true);
+    {
+        const auto before = made(ImportRequester::Access);
+        Require(HostImportFor(importing, address(1), 16) != nullptr && made(ImportRequester::Access) == before + 1, "a lookup's import was not counted for the access requester");
+    }
+    change(2, true);
+    {
+        const auto before = made(ImportRequester::Segment);
+        const auto access = made(ImportRequester::Access);
+        Require(HostImportFor(importing, address(2), 16, ImportRequester::Segment) != nullptr && made(ImportRequester::Segment) == before + 1 && made(ImportRequester::Access) == access, "a write-back segment's import was not counted for the segment requester");
+    }
+    change(3, true);
+    {
+        const auto before = counted(ImportRequester::Build);
+        const auto access = made(ImportRequester::Access);
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+        Require(made(ImportRequester::Build) > before.made && HostImportCovers(importing, address(3), piece) && made(ImportRequester::Access) == access, "an address-based build's import was not counted for the build requester");
+    }
+    {
+        const auto live = HostImportLiveBytes();
+        SetHostImportBudget(live);
+        change(4, true);
+        const auto before = counted(ImportRequester::Build);
+        {
+            GuestBufferMemory leased(importing);
+            leased.AcquireRegistered();
+            leased.Upload(true);
+            leased.WriteBack();
+        }
+        const auto after = counted(ImportRequester::Build);
+        SetHostImportBudget(0);
+        Require(after.refused > before.refused && after.refusedBytes >= before.refusedBytes + piece && after.made == before.made, "an address-based build's refusal was not counted for the build requester");
+    }
+    change(5, true);
+    {
+        const auto before = counted(ImportRequester::Access);
+        access.limitMemory(0);
+        const auto* failed = HostImportFor(importing, address(5), 16);
+        access.limitMemory(std::nullopt);
+        Require(failed == nullptr && counted(ImportRequester::Access).failed == before.failed + 1, "a lookup's failed import was not counted for the access requester");
+    }
+    {
+        constexpr std::size_t window = 2 * piece;
+        constexpr std::size_t large = 3 * piece;
+        auto* joined = static_cast<std::uint8_t*>(::operator new(2 * large, std::align_val_t{window}));
+        std::memset(joined, 0x1d, 2 * large);
+        SetHostImportWindow(window);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(joined, large, true, false, true);
+            mutation.Add(joined + large, large, true, false, true);
+        }
+        const auto before = made(ImportRequester::Join);
+        const auto second = reinterpret_cast<std::uintptr_t>(joined + large);
+        {
+            GuestBufferMemory leased(importing);
+            leased.AcquireRegistered();
+            leased.AddReadable(second - 16, 32);
+            leased.Upload(true);
+            leased.WriteBack();
+        }
+        Require(made(ImportRequester::Join) == before + 1, "a join at bind was not counted for the join requester");
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(joined);
+            mutation.Remove(joined + large);
+        }
+        SetHostImportWindow(0);
+        ::operator delete(joined, std::align_val_t{window});
+    }
+    const auto counts = HostImportCounters();
+    Require(counts.live >= 4 && counts.liveBytes == HostImportLiveBytes(), "the live import counts disagree with the live bytes");
+    for (std::size_t index = 0; index < 6; ++index) change(index, false);
+    ClearHostImports(importing.device);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
 void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& access) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t window = 2 * piece;
@@ -1790,6 +1899,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importRefusedWholeRangeTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
+    importRequesterTests(context, access);
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();
