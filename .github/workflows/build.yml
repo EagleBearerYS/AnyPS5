@@ -350,7 +350,6 @@ jobs:
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
-      SSL_CERT_FILE: C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt
     defaults:
       run:
         shell: bash
@@ -360,6 +359,17 @@ jobs:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
           submodules: recursive
+      - name: Point SSL_CERT_FILE at Git for Windows' CA bundle
+        shell: bash
+        run: |
+          for bundle in ucrt64/etc/ssl/certs mingw64/etc/ssl/certs usr/ssl/certs; do
+            if [ -f "/c/Program Files/Git/$bundle/ca-bundle.crt" ]; then
+              echo "SSL_CERT_FILE=$(cygpath -w "/c/Program Files/Git/$bundle/ca-bundle.crt")" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "::error::Git for Windows has no ca-bundle.crt"
+          exit 1
       - name: Merge the pull request into main
         if: ${{ needs.eligibility.outputs.head != '' }}
         shell: bash
