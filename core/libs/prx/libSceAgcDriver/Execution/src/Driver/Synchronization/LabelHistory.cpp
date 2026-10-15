@@ -16,7 +16,7 @@ bool OneByteValue(std::span<const std::byte> bytes) {
 }
 
 void NoteKeysStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint32_t queue) {
-    if (!OneByteValue(bytes)) return;
+    if (!OneByteValue(bytes) || !Graphics::StorageTexture::KeysLiveAt(address)) return;
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     if (Graphics::StorageTexture::ClassifyFill(address, bytes.size()).cover != Graphics::StorageTexture::FillCover::Keys) return;
     const auto key = std::to_integer<std::uint8_t>(bytes.front());

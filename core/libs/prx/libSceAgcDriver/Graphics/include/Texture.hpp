@@ -291,6 +291,7 @@ public:
         std::size_t inside = 0;
     };
     static FillCoverage ClassifyFill(std::uint64_t address, std::size_t bytes);
+    static bool KeysLiveAt(std::uint64_t address);
     static std::size_t NoteKeysFill(std::uint64_t address, std::size_t bytes, std::uint8_t key);
     static std::size_t ClearByKeysFill(std::uint64_t address, std::size_t bytes, std::uint8_t key);
     // Results pending in images lying wholly inside the range are dead (a fill overwrites every
