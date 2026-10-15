@@ -65,6 +65,14 @@ public:
     Counts Totals() const;
 
 private:
+    struct ValidationState {
+        std::uint64_t epoch = 0;
+        std::uint64_t unwatch = 0;
+        std::uint64_t depthSurfaces = 0;
+        std::uint64_t pending = 0;
+        std::uint64_t ownWrites = 0;
+        bool operator==(const ValidationState&) const = default;
+    };
     struct Entry {
         std::shared_ptr<Texture> texture;
         std::shared_ptr<Sampler> sampler;
@@ -77,18 +85,12 @@ private:
         std::shared_ptr<StorageTexture> storage;
         bool written = false;
         std::uint64_t used = 0;
+        ValidationState checked;
     };
-    struct ValidationState {
-        std::uint64_t epoch = 0;
-        std::uint64_t unwatch = 0;
-        std::uint64_t depthSurfaces = 0;
-        std::uint64_t pending = 0;
-        std::uint64_t ownWrites = 0;
-        bool operator==(const ValidationState&) const = default;
-    };
+    static ValidationState currentState();
 
     void resolve(const Context& build, Recorder& recorder);
-    void refresh(const Context& build, Recorder& recorder);
+    void refresh(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>* scope);
     void record(Recorder& recorder);
     DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse, bool report);
     void refreshPerUse(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>& resolved);
@@ -126,7 +128,6 @@ private:
     std::vector<DispatchStorageUse> dispatchStorage;
     std::vector<Rejection> rejections;
     std::map<std::tuple<DeviceImageKeys::Key, std::uint32_t, std::string>, std::uint32_t> rejectionIndex;
-    std::optional<ValidationState> validated;
     Counts totals;
     Counts reported;
     std::uint64_t reportedPresents = 0;

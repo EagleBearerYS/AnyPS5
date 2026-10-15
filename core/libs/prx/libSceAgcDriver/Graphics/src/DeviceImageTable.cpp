@@ -114,8 +114,9 @@ void DeviceImageTable::BeforeDispatch(const Context& build, Recorder& recorder) 
         ++totals.missWaits;
         totals.missWaitNanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
     }
+    const auto named = current;
     resolve(build, recorder);
-    refresh(build, recorder);
+    refresh(build, recorder, unnamed ? nullptr : &named);
     evict(build, recorder);
     record(recorder);
     if (unnamed) unnamedBatch = ringBatch;
@@ -141,6 +142,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
                 resolved.push_back(miss.key);
             }
             entry.used = Recorder::Presents();
+            entry.checked = currentState();
             entries[miss.key] = std::move(entry);
             ++totals.inserted;
         }
@@ -369,16 +371,32 @@ void DeviceImageTable::retire(const Entry& entry, Recorder& recorder) {
     if (entry.storage != nullptr) recorder.Keep(entry.storage);
 }
 
-void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
+DeviceImageTable::ValidationState DeviceImageTable::currentState() {
+    return {GuestMemory::ThreadCollectEpoch(), GuestMemory::UnwatchSerial(), DepthSurfacesSerial(), StorageTexture::PendingSerial(), GuestMemory::OwnWriteSerial()};
+}
+
+void DeviceImageTable::refresh(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>* scope) {
     if (entries.empty()) return;
-    const ValidationState state{GuestMemory::ThreadCollectEpoch(), GuestMemory::UnwatchSerial(), DepthSurfacesSerial(), StorageTexture::PendingSerial(), GuestMemory::OwnWriteSerial()};
-    if (state.epoch != 0u && validated == state) return;
-    const bool everything = !validated.has_value() || validated->unwatch != state.unwatch || validated->depthSurfaces != state.depthSurfaces;
-    const bool pendingChanged = !validated.has_value() || validated->pending != state.pending;
-    validated = state;
+    const auto state = currentState();
+    const auto due = [&](const Entry& entry) { return !entry.perUse && (state.epoch == 0u || entry.checked != state); };
+    std::vector<std::map<DeviceImageKeys::Key, Entry>::iterator> checked;
+    if (scope != nullptr) {
+        for (const auto& key : *scope) {
+            const auto it = entries.find(key);
+            if (it != entries.end() && due(it->second) && std::ranges::find(checked, it) == checked.end()) checked.push_back(it);
+        }
+    } else {
+        for (auto it = entries.begin(); it != entries.end(); ++it) {
+            if (due(it->second)) checked.push_back(it);
+        }
+    }
+    if (checked.empty()) return;
+    const auto everything = [&](const Entry& entry) { return entry.checked.unwatch != state.unwatch || entry.checked.depthSurfaces != state.depthSurfaces; };
+    const auto collect = [&](const Entry& entry) { return everything(entry) || state.epoch == 0u || entry.checked.epoch != state.epoch; };
     std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
-    spans.reserve(entries.size());
-    for (const auto& [key, entry] : entries) spans.emplace_back(entry.address, entry.address + entry.guestBytes);
+    for (const auto it : checked) {
+        if (collect(it->second)) spans.emplace_back(it->second.address, it->second.address + it->second.guestBytes);
+    }
     std::ranges::sort(spans);
     std::size_t merged = 0;
     for (const auto& span : spans) {
@@ -387,19 +405,18 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
     }
     spans.resize(merged);
     for (const auto& [begin, end] : spans) static_cast<void>(GuestMemory::CollectWrites(begin, static_cast<std::size_t>(end - begin)));
-    for (auto it = entries.begin(); it != entries.end();) {
+    for (const auto it : checked) {
         auto& [key, entry] = *it;
-        if (entry.perUse) {
-            ++it;
-            continue;
-        }
-        bool stale = everything || !GuestMemory::UnchangedSince(entry.address, static_cast<std::size_t>(entry.guestBytes), entry.generation);
+        const bool all = everything(entry);
+        const bool written = collect(entry) || entry.checked.ownWrites != state.ownWrites;
+        const bool pendingChanged = all || entry.checked.pending != state.pending;
+        bool stale = all || (written && !GuestMemory::UnchangedSince(entry.address, static_cast<std::size_t>(entry.guestBytes), entry.generation));
         if (!stale && pendingChanged) {
             const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{entry.address, entry.address + entry.guestBytes}}};
             stale = !entry.snapshot || StorageTexture::AnyPendingOverlaps(range);
         }
         if (!stale) {
-            ++it;
+            entry.checked = state;
             continue;
         }
         ++totals.refreshed;
@@ -411,11 +428,11 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
             ++totals.replaced;
         }
         if (fresh.texture == nullptr) {
-            it = entries.erase(it);
+            entries.erase(it);
             continue;
         }
+        fresh.checked = state;
         entry = std::move(fresh);
-        ++it;
     }
 }
 
