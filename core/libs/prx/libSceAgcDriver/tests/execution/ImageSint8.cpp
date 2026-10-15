@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <new>
 #include <span>
 #include <string>
 #include <vector>
@@ -178,8 +179,8 @@ struct alignas(256) TableTexture {
     std::array<std::uint8_t, 4096> bytes{};
 };
 
-GuestTables Tables;
-TableTexture TableTextures[2];
+GuestTables& Tables = *::new (TestGuest::Allocate(sizeof(GuestTables), alignof(GuestTables))) GuestTables{};
+TestGuest::Array<TableTexture, 2> TableTextures;
 
 alignas(256) const std::array<std::uint32_t, 20> TableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u,

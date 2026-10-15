@@ -55,15 +55,15 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{
+const TestGuest::Array<std::array<float, 4>, 3> Triangle{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 
 constexpr std::array<Color, 4> Destinations{{
     {0.5f, 0.25f, 0.75f, 0.5f}, {1.0f, 0.0f, 0.125f, 0.25f}, {0.0625f, 0.875f, 0.5f, 1.0f}, {0.25f, 0.5f, 0.375f, 0.75f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 8> Programs{};
+TestGuest::Array<std::array<std::uint32_t, 64>, 8> Programs;
 std::size_t programCount = 0;
 
 std::uint16_t Half(float value) {

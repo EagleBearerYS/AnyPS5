@@ -22,8 +22,8 @@ constexpr std::uint32_t Iterations = 16;
 constexpr std::uint32_t Repeats = 32;
 constexpr std::uint32_t LdsDwords = 4;
 TestGuest::Array<std::uint32_t, Threads * 2> Output;
-alignas(256) std::array<std::uint32_t, Threads * 4> Input = [] {
-    std::array<std::uint32_t, Threads * 4> rows{};
+TestGuest::Array<std::uint32_t, Threads * 4> Input = [] {
+    TestGuest::Array<std::uint32_t, Threads * 4> rows;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         rows[tid * 4u] = 0xffffffffu;
         rows[tid * 4u + 2u] = 1u;

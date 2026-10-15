@@ -21,7 +21,7 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Words = 8;
-alignas(256) std::array<std::uint32_t, Threads> Input{
+TestGuest::Array<std::uint32_t, Threads> Input{
     0x00000000u, 0x80000000u, 0x00000001u, 0x80000001u, 0x007fffffu, 0x807fffffu, 0x00800000u, 0x80800000u,
     0x00800001u, 0x80800001u, 0x3f000000u, 0xbf000000u, 0x3effffffu, 0x3f000001u, 0xc0800000u, 0xc07fffffu,
     0xc0800001u, 0x3f800000u, 0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00001u, 0x7f800001u, 0x7f7fffffu,
