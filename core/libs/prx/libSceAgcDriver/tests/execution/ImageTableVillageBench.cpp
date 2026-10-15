@@ -93,13 +93,14 @@ private:
 };
 
 struct BenchLayout {
-    std::uint32_t records, stride, elements, threads, outputs, storage;
-    std::size_t storeCode = 256, srts = 4096, outputsAt = 0, heap = 0, textures = 0, storageAt = 0, total = 0;
+    std::uint32_t records, stride, elements, threads, outputs, storage, heaps;
+    std::size_t storeCode = 256, srts = 4096, outputsAt = 0, heap = 0, heapBytes = 0, textures = 0, storageAt = 0, total = 0;
 
     void Place() {
         outputsAt = srts + static_cast<std::size_t>(threads) * outputs * SrtBytes;
         heap = (outputsAt + static_cast<std::size_t>(threads) * outputs * 4096u + 65535u) & ~static_cast<std::size_t>(65535);
-        textures = (heap + static_cast<std::size_t>(records) * stride + 65535u) & ~static_cast<std::size_t>(65535);
+        heapBytes = (static_cast<std::size_t>(records) * stride + 65535u) & ~static_cast<std::size_t>(65535);
+        textures = heap + heapBytes * heaps;
         storageAt = (textures + static_cast<std::size_t>((elements + Aliases - 1u) / Aliases) * TextureBytes + 65535u) & ~static_cast<std::size_t>(65535);
         total = storageAt + static_cast<std::size_t>(threads) * storage * 1024u;
     }
@@ -138,7 +139,7 @@ void BenchSubmit(std::uint32_t queue, std::vector<std::uint32_t>& words) {
 }
 
 int VillageBench() {
-    BenchLayout layout{BenchSetting("BENCH_RECORDS", 32768), BenchSetting("BENCH_STRIDE", 48), BenchSetting("BENCH_ELEMENTS", 4096), std::max(1u, BenchSetting("BENCH_THREADS", 3)), std::max(1u, BenchSetting("BENCH_OUTPUTS", 16)), BenchSetting("BENCH_STORAGE", 8)};
+    BenchLayout layout{BenchSetting("BENCH_RECORDS", 32768), BenchSetting("BENCH_STRIDE", 48), BenchSetting("BENCH_ELEMENTS", 4096), std::max(1u, BenchSetting("BENCH_THREADS", 3)), std::max(1u, BenchSetting("BENCH_OUTPUTS", 16)), BenchSetting("BENCH_STORAGE", 8), std::max(1u, BenchSetting("BENCH_HEAPS", 1))};
     layout.Place();
     const auto batch = std::max(1u, BenchSetting("BENCH_BATCH", 8));
     const auto seconds = std::max(1u, BenchSetting("BENCH_SECONDS", 21));
@@ -152,17 +153,19 @@ int VillageBench() {
     std::memcpy(block.Bytes(0), code.data(), sizeof(code));
     std::memcpy(block.Bytes(layout.storeCode), BenchStoreCode.data(), sizeof(BenchStoreCode));
     for (std::uint32_t surface = 0; surface < (layout.elements + Aliases - 1u) / Aliases; ++surface) std::memset(block.Bytes(layout.textures + static_cast<std::size_t>(surface) * TextureBytes), static_cast<int>(surface), TextureBytes);
-    const auto setRecord = [&](std::uint32_t record, std::uint32_t element) {
+    const auto setRecord = [&](std::uint32_t heap, std::uint32_t record, std::uint32_t element) {
         const auto address = block.At(layout.textures + static_cast<std::size_t>(element / Aliases) * TextureBytes);
         const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 7u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, element % Aliases, 0u};
-        std::memcpy(block.Bytes(layout.heap + static_cast<std::size_t>(record) * layout.stride), words.data(), sizeof(words));
+        std::memcpy(block.Bytes(layout.heap + heap * layout.heapBytes + static_cast<std::size_t>(record) * layout.stride), words.data(), sizeof(words));
     };
-    for (std::uint32_t record = 0; record < layout.records; ++record) setRecord(record, record % layout.elements);
+    for (std::uint32_t heap = 0; heap < layout.heaps; ++heap) {
+        for (std::uint32_t record = 0; record < layout.records; ++record) setRecord(heap, record, record % layout.elements);
+    }
     for (std::uint32_t thread = 0; thread < layout.threads; ++thread) {
         for (std::uint32_t output = 0; output < layout.outputs; ++output) {
             auto* srt = reinterpret_cast<std::uint32_t*>(block.Bytes(layout.srts + (static_cast<std::size_t>(thread) * layout.outputs + output) * SrtBytes));
             std::fill(srt, srt + SrtBytes / 4u, 0u);
-            const auto heap = V(block.At(layout.heap), layout.stride, layout.records);
+            const auto heap = V(block.At(layout.heap + ((static_cast<std::size_t>(thread) * layout.outputs + output) % layout.heaps) * layout.heapBytes), layout.stride, layout.records);
             const auto out = V(block.At(layout.outputsAt + (static_cast<std::size_t>(thread) * layout.outputs + output) * 4096u), 0u, 4096u);
             std::copy(heap.begin(), heap.end(), srt);
             std::copy(out.begin(), out.end(), srt + 12);
@@ -176,7 +179,7 @@ int VillageBench() {
     const auto started = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() - started < std::chrono::seconds(seconds)) {
         if (writeEvery != 0 && ++round % writeEvery == 0) {
-            setRecord((round * 7919u) % layout.records, (round * 31u) % layout.elements);
+            setRecord(round % layout.heaps, (round * 7919u) % layout.records, (round * 31u) % layout.elements);
             writes.fetch_add(1, std::memory_order_relaxed);
         }
         std::vector<std::thread> workers;
@@ -205,7 +208,7 @@ int VillageBench() {
         AgcDriverWaitIdle_nid_postfix();
     }
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    std::printf("VILLAGEBENCH records %u stride %u elements %u threads %u outputs %u storage %u batch %u write-every %u: %llu table dispatches, %llu stores, %llu table writes in %.1f s (%.0f table dispatches/s)\n", layout.records, layout.stride, layout.elements, layout.threads, layout.outputs, layout.storage, batch, writeEvery, static_cast<unsigned long long>(dispatches.load()), static_cast<unsigned long long>(stores.load()), static_cast<unsigned long long>(writes.load()), elapsed, static_cast<double>(dispatches.load()) / elapsed);
+    std::printf("VILLAGEBENCH records %u stride %u elements %u threads %u outputs %u storage %u heaps %u batch %u write-every %u: %llu table dispatches, %llu stores, %llu table writes in %.1f s (%.0f table dispatches/s)\n", layout.records, layout.stride, layout.elements, layout.threads, layout.outputs, layout.storage, layout.heaps, batch, writeEvery, static_cast<unsigned long long>(dispatches.load()), static_cast<unsigned long long>(stores.load()), static_cast<unsigned long long>(writes.load()), elapsed, static_cast<double>(dispatches.load()) / elapsed);
     std::fflush(stdout);
     AgcDriverShutdown_nid_postfix();
     return 0;
