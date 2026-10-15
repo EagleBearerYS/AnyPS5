@@ -250,6 +250,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
                 word = waited;
             }
         } else if (policy == PendingWrite::Raw || policy == PendingWrite::VerifyRaw) {
+            GuestMemory::GuardRead(address, sizeof(word));
             std::memcpy(&word, reinterpret_cast<const void*>(address), sizeof(word));
             ++CaptureTotals().wordsRaw;
             if (policy == PendingWrite::VerifyRaw) {
