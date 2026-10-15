@@ -73,19 +73,6 @@ bool PlanBuilder::ReadsAtRunTime() const {
     for (const auto& info : _program.Metadata().blockInfo) {
         if (info.indirectTarget != nullptr) return false;
     }
-    const auto shaderBaseWords = [](const IrValue& handle) {
-        std::vector<const IrValue*> pending;
-        for (std::size_t index = 0; index < handle.ArgumentCount(); index++) pending.push_back(handle.Argument(index));
-        std::unordered_set<const IrValue*> seen;
-        while (!pending.empty()) {
-            const IrValue* value = pending.back()->Resolve();
-            pending.pop_back();
-            if (!seen.insert(value).second) continue;
-            if (value->Opcode() == IrOpcode::GetShaderBase) return true;
-            for (std::size_t index = 0; index < value->ArgumentCount(); index++) pending.push_back(value->Argument(index));
-        }
-        return false;
-    };
     const auto& memoryInfo = _program.Resources().memoryInfo;
     const auto deviceRead = [&](const IrValue& user, const IrValue& handle, bool sampler) {
         const auto info = ImageOpcodeInfoOf(user.Opcode());
@@ -106,7 +93,6 @@ bool PlanBuilder::ReadsAtRunTime() const {
             const auto op = inst->Opcode();
             if (op == IrOpcode::GetLinkedWord) return false;
             if (op != IrOpcode::GetImageResource && op != IrOpcode::GetSamplerResource) continue;
-            if (shaderBaseWords(*inst)) return false;
             for (const IrValue* user : inst->Uses()) {
                 if (!deviceRead(*user, *inst, op == IrOpcode::GetSamplerResource)) return false;
             }

@@ -1396,12 +1396,10 @@ void verifyDescriptorPhis() {
         request.target.supportedCapabilities = snapshotCapabilities;
         expectFailure([&] { static_cast<void>(GetResourcePlan(request)); }, "GetImageResource dword 0 is not a valid runtime value", message);
     }
-    auto programCounter = makeRequest(invalidEntries[0].first);
-    expectFailure([&] { static_cast<void>(GetResourcePlan(programCounter)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a T# holding the program counter, which the shader does not know, was read through the device image table");
-    for (std::size_t entry = 1; entry < invalidEntries.size(); ++entry) {
-        auto request = makeRequest(invalidEntries[entry].first);
+    for (const auto& [code, message] : invalidEntries) {
+        auto request = makeRequest(code);
         const auto plan = GetResourcePlan(request);
-        require(std::ranges::any_of(plan->info.images, [](const ImageResource& image) { return image.deviceTable; }), "descriptor Phi: a T# holding a mask the shader computes was not read through the device image table");
+        require(std::ranges::any_of(plan->info.images, [](const ImageResource& image) { return image.deviceTable; }) && plan->srtReads.empty(), "descriptor Phi: a T# holding the program counter (the module is specialized on its shader base), EXEC or a compare mask was not read through the device image table at run time");
     }
     auto unwritten = loopCode;
     unwritten[4] = 0xf4080200u;

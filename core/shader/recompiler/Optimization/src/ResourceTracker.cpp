@@ -1295,7 +1295,6 @@ private:
             const IrValue* value = pending.back()->Resolve();
             pending.pop_back();
             if (!seen.insert(value).second || value->HasImmediate() || value->Type() == IrType::Bool) continue;
-            if (value->Opcode() == IrOpcode::GetShaderBase) return false;
             const bool bound = AccessesMemory(value->Opcode()) && value->ArgumentCount() != 0u && CaptureResolved(*value->Argument(0)->Resolve());
             for (std::size_t index = bound ? 1u : 0u; index < value->ArgumentCount(); ++index) {
                 if (value->Argument(index) != nullptr) pending.push_back(value->Argument(index));
