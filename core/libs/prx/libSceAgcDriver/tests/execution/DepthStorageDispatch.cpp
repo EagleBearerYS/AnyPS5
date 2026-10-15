@@ -89,23 +89,8 @@ alignas(256) constexpr std::array<std::uint32_t, 11> LoadLayerCode{
 class GuestBlock {
 public:
     GuestBlock() {
-#ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-#else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(65536, BlockBytes));
-#endif
-        Require(block != nullptr, "depth storage dispatch: cannot allocate the guest block");
+        block = reinterpret_cast<std::uint8_t*>(TestGuest::Allocate(BlockBytes, 65536));
         std::memset(block, 0, BlockBytes);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
-    }
-
-    ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
-#ifdef _WIN32
-        VirtualFree(block, 0, MEM_RELEASE);
-#else
-        std::free(block);
-#endif
     }
 
     GuestBlock(const GuestBlock&) = delete;
