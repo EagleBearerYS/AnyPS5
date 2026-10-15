@@ -1,0 +1,4 @@
+BASE=39c73dd9202e5bd444f69709b56693ed8e5e8165
+REPEAT=20
+EXTRA_TESTS='agc_driver_depth_expand_review|agc_driver_depth_expand_out_of_place'
+BEFORE_REPEAT=10
