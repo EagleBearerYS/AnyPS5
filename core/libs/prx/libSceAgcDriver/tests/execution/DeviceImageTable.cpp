@@ -1,6 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
@@ -420,11 +419,6 @@ void RunChanges(AgcDriver::VulkanDevice& device) {
 }
 
 void RunRuntimeDescriptors(AgcDriver::VulkanDevice& device) {
-    struct Registration {
-        void* data;
-        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
-        ~Registration() { GuestAllocations::Mutation().Remove(data); }
-    } blocks(RuntimeBlocks.data(), RuntimeBlocks.size() * sizeof(std::uint32_t));
     Fill();
     constexpr auto texels = Width * Height;
     std::copy_n(reinterpret_cast<const std::uint32_t*>(FloatTexels.data()), texels, RuntimeTexels.begin());

@@ -144,7 +144,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    Require(result.bdaAbiVersion != 0u && !result.bdaWrites, "global load program: a program that only loads through guest pointers is marked as storing through the page table");
+    Require(result.bdaAbiVersion != 0u && result.bdaWrites, "global load program: a program that stores its results through a V# is not marked as storing through the page table");
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }

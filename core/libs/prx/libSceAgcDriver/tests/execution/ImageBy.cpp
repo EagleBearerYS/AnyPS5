@@ -2,7 +2,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
@@ -167,7 +166,6 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true, true);
         constexpr Format r8{R8UInt, 1u, 1u};
         constexpr Format r16{R16UInt, 2u, 1u};
         constexpr Format rg8{Rg8UInt, 1u, 2u};
@@ -184,7 +182,6 @@ int main() {
         Refused(*device, 0x43u, Rg8UInt, 0xfu, 0xfacu, layout);
         Refused(*device, 0x42u, R16UInt, 0x3u, 0xf2eu, layout);
         for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) Refused(*device, opcode, R8UInt, 0xfu, 0xfacu, "stores are not implemented");
-        GuestAllocations::Mutation().Remove(Texels.data());
         std::cout << "image BY2/BY4 execution tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -1,7 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
 #include <array>
@@ -119,12 +118,6 @@ int main() {
             SecondTexels[texel] = 0x2000u + texel;
             ThirdTexels[texel] = 0x3000u + texel;
         }
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(FirstTexels.data(), decltype(FirstTexels)::ByteSize, true, true, true);
-            mutation.Add(SecondTexels.data(), decltype(SecondTexels)::ByteSize, true, true, true);
-            mutation.Add(ThirdTexels.data(), decltype(ThirdTexels)::ByteSize, true, true, true);
-        }
         const auto first = Image(FirstTexels.data());
         const auto second = Image(SecondTexels.data());
         const auto third = Image(ThirdTexels.data());
@@ -161,12 +154,6 @@ int main() {
         SetRecord(2, MovedLoadThroughArgument.data(), SecondArgument.data());
         SetRecord(3, MovedLoadThroughArgument.data(), ThirdArgument.data());
         Check(SecondTexels, ThirdTexels, "two records whose callee's code moved to another address");
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(FirstTexels.data());
-            mutation.Remove(SecondTexels.data());
-            mutation.Remove(ThirdTexels.data());
-        }
         AgcDriverShutdown_nid_postfix();
         std::puts("compute table call tests passed");
         return 0;
