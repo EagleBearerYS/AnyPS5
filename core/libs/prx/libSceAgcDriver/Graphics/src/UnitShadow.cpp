@@ -267,7 +267,7 @@ std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t first
     auto slab = std::make_shared<ShadowSlab>(context, buffer, memory, firstUnit, units);
     if (context.bufferDeviceAddress) {
         const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
-        slab->address = context.Function<PFN_vkGetBufferDeviceAddress>("vkGetBufferDeviceAddress")(context.device, &addressInfo);
+        slab->address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
     }
     return slab;
 }
