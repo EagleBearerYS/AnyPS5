@@ -33,6 +33,7 @@ struct SrtGuestWords {
     std::shared_ptr<SrtStampCell> stamp;
     std::uint64_t low = 0;
     std::uint64_t high = 0;
+    bool ordered = false;
 };
 
 inline SrtWriteStamp LoadStamp(const SrtGuestWords& words) {

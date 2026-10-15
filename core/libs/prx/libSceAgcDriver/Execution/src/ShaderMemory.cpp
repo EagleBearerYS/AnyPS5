@@ -384,11 +384,16 @@ bool ShaderMemory::supplyWords(void* context, const std::shared_ptr<const Shader
     if (words == nullptr || words->runs.empty()) return false;
     std::uint64_t total = 0;
     std::uint64_t end = 0;
-    for (const auto& [address, count] : words->runs) {
-        const auto bytes = static_cast<std::uint64_t>(count) * sizeof(std::uint32_t);
-        if (count == 0 || address % sizeof(std::uint32_t) != 0 || address < end || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;
-        end = address + bytes;
-        total += count;
+    if (words->ordered && words->low == words->runs.front().first && words->low < words->high) {
+        total = words->words.size();
+        end = words->high;
+    } else {
+        for (const auto& [address, count] : words->runs) {
+            const auto bytes = static_cast<std::uint64_t>(count) * sizeof(std::uint32_t);
+            if (count == 0 || address % sizeof(std::uint32_t) != 0 || address < end || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;
+            end = address + bytes;
+            total += count;
+        }
     }
     const auto begin = words->runs.front().first;
     if (total != words->words.size() || self.overlapsInitial(begin, end)) return false;
@@ -415,18 +420,22 @@ bool ShaderMemory::supplyWords(void* context, const std::shared_ptr<const Shader
         totals.suppliedCopied += total;
         return true;
     }
-    std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
-    std::uint64_t past = 0;
-    for (const auto& [address, count] : words->runs) {
-        const auto from = address & ~static_cast<std::uint64_t>(PageBytes - 1);
-        const auto to = (address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t) + PageBytes - 1) & ~static_cast<std::uint64_t>(PageBytes - 1);
-        if (from > past || first == std::numeric_limits<std::uint64_t>::max()) {
-            if (first != std::numeric_limits<std::uint64_t>::max() && !GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) return false;
-            first = from;
+    const auto spanBegin = begin & ~static_cast<std::uint64_t>(PageBytes - 1);
+    const auto spanEnd = (end + PageBytes - 1) & ~static_cast<std::uint64_t>(PageBytes - 1);
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(spanBegin), static_cast<std::size_t>(spanEnd - spanBegin))) {
+        std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t past = 0;
+        for (const auto& [address, count] : words->runs) {
+            const auto from = address & ~static_cast<std::uint64_t>(PageBytes - 1);
+            const auto to = (address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t) + PageBytes - 1) & ~static_cast<std::uint64_t>(PageBytes - 1);
+            if (from > past || first == std::numeric_limits<std::uint64_t>::max()) {
+                if (first != std::numeric_limits<std::uint64_t>::max() && !GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) return false;
+                first = from;
+            }
+            past = std::max(past, to);
         }
-        past = std::max(past, to);
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) return false;
     }
-    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) return false;
     self.supplied.push_back({words, begin, end, true});
     totals.suppliedShared += total;
     return true;

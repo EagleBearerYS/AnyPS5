@@ -977,11 +977,17 @@ private:
         memo.key = key;
         std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
         std::uint64_t past = 0;
+        std::uint64_t total = 0;
+        bool ordered = !runs.empty();
         for (const auto& [address, count] : runs) {
+            const auto bytes = static_cast<std::uint64_t>(count) * sizeof(std::uint32_t);
+            ordered = ordered && count != 0u && address % sizeof(std::uint32_t) == 0u && address >= past && address <= std::numeric_limits<std::uint64_t>::max() - bytes;
             first = std::min(first, address);
-            past = std::max(past, address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t));
+            past = std::max(past, address + bytes);
+            total += count;
         }
-        memo.read = std::make_shared<const SrtGuestWords>(SrtGuestWords{std::move(runs), std::move(words), std::make_shared<SrtStampCell>(), first < past ? first : 0u, first < past ? past : 0u});
+        ordered = ordered && total == words.size();
+        memo.read = std::make_shared<const SrtGuestWords>(SrtGuestWords{std::move(runs), std::move(words), std::make_shared<SrtStampCell>(), first < past ? first : 0u, first < past ? past : 0u, ordered});
         StoreStamp(*memo.read, stamp);
         memo.contents = records.contents;
         memo.low = low;
