@@ -252,7 +252,23 @@ static DWORD WINAPI ProtectStackBottom(void*) {
     Require(QueryPage(low).mapped && !QueryPage(island - 1).writable);
     Require(!Readable(low) && !Readable(island - 1));
     RequireGrowableStack(low, high);
-    GrowStack(island + 0x2000);
+    const auto dump = [&](const char* when) {
+        const auto layout = QueryHostStack(low, high);
+        std::fprintf(stderr, "probe %s: low=%llx island=%llx guard=%llx committed=%llx limit=%llx
+", when, (unsigned long long)low, (unsigned long long)island, (unsigned long long)layout.guard, (unsigned long long)layout.committed, (unsigned long long)StackLimit());
+        for (auto page = island - 0x3000; page < island + 0x6000; page += 0x1000) {
+            MEMORY_BASIC_INFORMATION memory{};
+            VirtualQuery(reinterpret_cast<const void*>(page), &memory, sizeof(memory));
+            std::fprintf(stderr, "  page %llx state=%lx protect=%lx
+", (unsigned long long)page, (unsigned long)memory.State, (unsigned long)memory.Protect);
+        }
+    };
+    for (std::uintptr_t above : {0x8000u, 0x6000u, 0x4000u, 0x3000u, 0x2000u}) {
+        GrowStack(island + above);
+        char label[32];
+        std::snprintf(label, sizeof(label), "grown to +%llx", (unsigned long long)above);
+        dump(label);
+    }
     const auto grown = QueryHostStack(low, high);
     Require(grown.guard >= island && grown.guard <= island + 0x1000);
     Require(StackLimit() == grown.committed);
