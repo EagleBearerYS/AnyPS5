@@ -80,6 +80,7 @@ std::atomic<std::uint64_t> forgetBytes{0};
 std::atomic<std::uint64_t> collectMemoHits{0};
 std::atomic<std::uint64_t> collectEpochBumps{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
+thread_local bool settlingWrites = false;
 std::atomic<std::uint64_t> ownWriteSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
 // tracker mutex acquisitions that had to wait (APS5_PROFILE_DRAW; see lockTracker).
@@ -991,6 +992,7 @@ struct WriteTracker {
     std::vector<std::uint64_t> residentWrites;
 
     void noteResidentWrite(std::uint64_t block) {
+        if (settlingWrites) return;
         const auto* hooks = residencyHooks.load(std::memory_order_acquire);
         if (hooks == nullptr || hooks->anyResident == nullptr || hooks->cpuWritten == nullptr) return;
         const auto begin = blockBegin(block);
@@ -1239,6 +1241,14 @@ std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes) {
 }
 
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes) {
+    return collectWrites(address, bytes, false);
+}
+
+std::uint64_t SettleWrites(std::uint64_t address, std::size_t bytes) {
+    struct Settling {
+        Settling() { settlingWrites = true; }
+        ~Settling() { settlingWrites = false; }
+    } settling;
     return collectWrites(address, bytes, false);
 }
 

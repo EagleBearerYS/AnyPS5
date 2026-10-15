@@ -47,6 +47,7 @@ void ResidencyGuest::ChangedPages(std::uint64_t firstPage, std::span<const std::
 }
 
 bool ResidencyGuest::Guard(std::uint64_t page) {
+    static_cast<void>(GuestMemory::SettleWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes)));
     return GuestMemory::GuardWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
 }
 
