@@ -154,7 +154,7 @@ struct Compiled {
     std::uint64_t address = 0;
 };
 
-inline Compiled Compile(AgcDriver::VulkanDevice& device, const Program& program, std::span<const std::uint32_t> userData) {
+inline Compiled Compile(AgcDriver::VulkanDevice& device, const Program& program, std::span<const std::uint32_t> userData, AgcDriver::ShaderMemory::PendingWriteQuery pendingWrite = nullptr) {
     Compiled compiled;
     compiled.address = program.Address();
     const auto code = program.Code();
@@ -165,7 +165,7 @@ inline Compiled Compile(AgcDriver::VulkanDevice& device, const Program& program,
         device.Target(),
         {0, 0, 0, 128}
     };
-    compiled.memory = std::make_unique<AgcDriver::ShaderMemory>(std::span<const ShaderRecompiler::MemoryRegion>{});
+    compiled.memory = std::make_unique<AgcDriver::ShaderMemory>(std::span<const ShaderRecompiler::MemoryRegion>{}, pendingWrite);
     compiled.capture = compiled.memory->Capture(request);
     compiled.regions = compiled.memory->Regions();
     request.context.memory = compiled.regions;
