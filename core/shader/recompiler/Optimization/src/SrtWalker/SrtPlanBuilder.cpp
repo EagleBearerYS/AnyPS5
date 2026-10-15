@@ -42,6 +42,7 @@ void PlanBuilder::Run() {
             const auto& instructions = block->Instructions();
             for (auto it = instructions.begin(); it != instructions.end(); ++it) {
                 if ((*it)->Opcode() != IrOpcode::LoadAddressU32 || !IsRawRead(_program.Resources(), **it)) continue;
+                if (std::ranges::find(_program.Metadata().fetchTableReads, (*it)->Flags<MemoryFlags>().pc) != _program.Metadata().fetchTableReads.end()) continue;
                 const auto next = std::next(it);
                 if (next != instructions.end()) reads.emplace_back(*it, *next);
             }
@@ -68,7 +69,7 @@ void PlanBuilder::Run() {
 }
 
 bool PlanBuilder::ReadsAtRunTime() const {
-    if (!_deviceTables || (_program.Resources().stage != IrShaderStage::Compute && _program.Resources().stage != IrShaderStage::Pixel)) return false;
+    if (!_deviceTables || _program.Resources().stage == IrShaderStage::Unknown || _program.Resources().stage == IrShaderStage::Fetch) return false;
     for (const auto& info : _program.Metadata().blockInfo) {
         if (info.indirectTarget != nullptr) return false;
     }

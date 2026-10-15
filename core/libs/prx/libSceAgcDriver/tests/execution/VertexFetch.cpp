@@ -39,10 +39,10 @@ void Run(AgcDriver::VulkanDevice& device) {
     rejectAbi([&] { device.DispatchIndirect(incompatible, 0u); });
     const std::array<AgcDriver::Graphics::CompiledShader, 1> incompatibleShaders{{{ShaderStage::Vertex, &incompatible, 0u}}};
     rejectAbi([&] { device.Draw({}, {}, incompatibleShaders); });
-    std::array<std::uint32_t, 4> descriptor{};
+    TestGuest::Array<std::uint32_t, 4> descriptor;
     const auto tableAddress = reinterpret_cast<std::uintptr_t>(descriptor.data());
     std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u), 1u, 1u};
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{tableAddress, std::as_bytes(std::span(descriptor))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{tableAddress, std::as_bytes(std::span(descriptor.data(), descriptor.size()))}}};
     ShaderRecompiler::ShaderVertexStageInfo vertexInfo{};
     vertexInfo.fetchEmbedded = true;
     vertexInfo.resourcesNum = 1u;

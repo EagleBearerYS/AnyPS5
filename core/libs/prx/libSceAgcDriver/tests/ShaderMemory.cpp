@@ -3588,26 +3588,33 @@ void verifyFunctionLdsBound() {
 
 void verifySrtReadsAtRunTime() {
     using namespace ShaderRecompiler;
-    IrProgram program;
-    program.Resources().stage = IrShaderStage::Compute;
-    MemoryInfo memory;
-    memory.kind = ResourceKind::ScalarAddress;
-    program.Resources().memoryInfo.push_back(memory);
-    auto& block = program.CreateBlock();
-    program.SetEntryBlock(block);
-    program.BlockOrder().push_back(&block);
-    IrBuilder builder(program);
-    builder.SetInsertionPoint(block);
-    auto& address = builder.Emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&builder.Constant(0u), &builder.Constant(0u)});
-    auto& active = program.CreateValue(IrOpcode::Void, IrType::U1);
-    active.SetImmediateBool(true);
-    auto& read = builder.Emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &builder.Constant(0u), &builder.Constant(0u), &active}, MemoryFlags{0u, 0u});
-    auto& user = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&read, &read});
+    for (const auto stage : {IrShaderStage::Compute, IrShaderStage::Vertex}) {
+        IrProgram program;
+        program.Resources().stage = stage;
+        MemoryInfo memory;
+        memory.kind = ResourceKind::ScalarAddress;
+        program.Resources().memoryInfo.push_back(memory);
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        IrBuilder builder(program);
+        builder.SetInsertionPoint(block);
+        auto& address = builder.Emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&builder.Constant(0u), &builder.Constant(0u)});
+        auto& active = program.CreateValue(IrOpcode::Void, IrType::U1);
+        active.SetImmediateBool(true);
+        auto& read = builder.Emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &builder.Constant(0u), &builder.Constant(0u), &active}, MemoryFlags{0u, 0u});
+        auto& user = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&read, &read});
+        auto& table = builder.Emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &builder.Constant(4u), &builder.Constant(0u), &active}, MemoryFlags{0u, 8u});
+        builder.Emit(IrOpcode::IAdd32, IrType::U32, {&table, &table});
+        program.Metadata().fetchTableReads = {8u};
 
-    SrtWalker{}.BuildPlan(program, true);
+        SrtWalker{}.BuildPlan(program, true);
 
-    require(program.Resources().srtReads.empty(), "SRT reads at run time: a compute program without images planned its scalar read for a capture");
-    require(user.Argument(0) == &read && user.Argument(1) == &read, "SRT reads at run time: a compute program's scalar read was replaced");
+        const auto kept = [](const IrValue& value) { return std::ranges::any_of(value.OperandUses(), [](const auto& use) { return use.user->Opcode() == IrOpcode::ReferenceU32; }); };
+        require(program.Resources().srtReads.empty(), "SRT reads at run time: a compute or vertex program without images planned its scalar read for a capture");
+        require(user.Argument(0) == &read && user.Argument(1) == &read, "SRT reads at run time: a scalar read was replaced");
+        require(kept(read) && !kept(table), "SRT reads at run time: a scalar read was not kept alive, or a vertex fetch table read was");
+    }
 }
 
 void verifySrtReadsCapturedWithoutDeviceTables() {

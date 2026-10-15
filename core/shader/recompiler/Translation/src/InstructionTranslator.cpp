@@ -466,6 +466,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         program.Info().instanceOffsetShared = options.embeddedFetch->instanceOffsetShared || options.embeddedFetch->instanceIndexObserved;
         program.Info().vertexOffsetConflict = options.embeddedFetch->vertexOffsetConflict;
         program.Info().instanceOffsetConflict = options.embeddedFetch->instanceOffsetConflict;
+        for (const auto& load : options.embeddedFetch->loads) program.Metadata().fetchTableReads.insert(program.Metadata().fetchTableReads.end(), load.prologLoads.begin(), load.prologLoads.end());
     }
     program.Metadata().cfgFailureKind = cfg.failureKind;
     program.Metadata().failureReason = cfg.unsupportedReason;

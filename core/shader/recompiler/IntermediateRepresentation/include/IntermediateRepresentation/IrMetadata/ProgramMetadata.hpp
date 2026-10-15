@@ -23,6 +23,7 @@ struct IrProgramMetadata {
     bool barycentricEmulation = false;
     bool invalidatesCaches = false;
     std::vector<IrValue*> dynamicReads;
+    std::vector<std::uint32_t> fetchTableReads;
     bool srtAtRunTime = false;
     bool shaderInfoComplete = false;
     IrBindingLayout bindings;

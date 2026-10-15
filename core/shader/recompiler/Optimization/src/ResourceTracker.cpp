@@ -1500,7 +1500,7 @@ private:
             std::uint32_t badDword = 0;
             auto& sites = store ? m_info.bufferStores : m_info.bufferLoads;
             const bool fromMemory = ReadsGuestMemory(*handle);
-            if (ValidateSource(descriptor, badDword) && (!fromMemory || m_program.Resources().stage == IrShaderStage::Compute || m_program.Resources().stage == IrShaderStage::Pixel)) {
+            if (ValidateSource(descriptor, badDword)) {
                 const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
                 const IrValue* soffset = !scalar && inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
                 const bool immediate = scalar || (soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32);
@@ -1527,7 +1527,7 @@ private:
         MakeSource(*handle, 2u, false, false, descriptor);
         std::uint32_t badDword = 0;
         const bool fromMemory = ReadsGuestMemory(*handle);
-        if (!ValidateSource(descriptor, badDword) || (fromMemory && m_program.Resources().stage != IrShaderStage::Compute && m_program.Resources().stage != IrShaderStage::Pixel)) return false;
+        if (!ValidateSource(descriptor, badDword)) return false;
         BufferStoreSite site{InternSource(descriptor), 0u, false, memory.kind == ResourceKind::ScalarAddress};
         site.address = true;
         site.offset = static_cast<std::uint32_t>((static_cast<std::int32_t>(memory.offset) & ~3) + (static_cast<std::int32_t>(offset->ImmediateU32()) & ~3));

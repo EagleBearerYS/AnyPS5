@@ -36,10 +36,10 @@ Counts RunCase(AgcDriver::VulkanDevice& device, const char* name, std::uint32_t 
     vertices.fill(std::byte{0});
     constexpr std::uint32_t stride = 16u;
     for (std::size_t index = 0; index < stored; ++index) std::memcpy(vertices.data() + index * stride, positions[index].data(), 16u);
-    std::array<std::uint32_t, 4> descriptor{};
+    TestGuest::Array<std::uint32_t, 4> descriptor;
     const auto tableAddress = reinterpret_cast<std::uintptr_t>(descriptor.data());
     std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u), 0u, 0u};
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{tableAddress, std::as_bytes(std::span(descriptor))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{tableAddress, std::as_bytes(std::span(descriptor.data(), descriptor.size()))}}};
     ShaderRecompiler::ShaderVertexStageInfo vertexInfo{};
     vertexInfo.fetchEmbedded = true;
     vertexInfo.resourcesNum = 1u;
