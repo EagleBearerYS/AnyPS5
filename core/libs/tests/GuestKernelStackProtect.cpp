@@ -154,7 +154,6 @@ static void* APS5_VABI WriteLeftGuard(void*) {
     return nullptr;
 }
 
-#ifdef _WIN32
 static void ProtectWholeStack() {
     int local = 0;
     void* start = nullptr;
@@ -166,6 +165,7 @@ static void ProtectWholeStack() {
     static_cast<volatile unsigned char*>(start)[0] = 6;
 }
 
+#ifdef _WIN32
 static DWORD WINAPI ProtectReservedStack(void*) {
     ProtectWholeStack();
     return 0;
@@ -185,6 +185,8 @@ static void ProtectHostStacks() {
 int main() {
 #ifdef _WIN32
     ProtectHostStacks();
+#else
+    ProtectWholeStack();
 #endif
     std::atomic<bool> passed{false};
     Pthread thread = nullptr;
