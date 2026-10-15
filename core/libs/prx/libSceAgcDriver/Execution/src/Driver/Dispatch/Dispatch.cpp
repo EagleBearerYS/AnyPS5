@@ -42,23 +42,20 @@ bool Driver::readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value
     return true;
 }
 
-bool Driver::dataIndependent(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::size_t capturedRegions, std::size_t requestRegions) {
-    if (!plan.srtReads.empty() || capturedRegions != requestRegions) return false;
-    const auto constant = [&](std::uint32_t source) {
-        const auto& descriptor = plan.descriptorSources.at(source);
-        for (std::uint32_t word = 0; word < descriptor.dwordCount; ++word) {
-            if (descriptor.dwords[word] == nullptr || !descriptor.dwords[word]->Resolve()->HasImmediate()) return false;
-        }
-        return true;
-    };
-    for (const auto& image : plan.info.images) {
-        if (!image.deviceTable && !constant(image.source)) return false;
-    }
-    for (const auto& sampler : plan.info.samplers) {
-        if (!sampler.deviceTable && !constant(sampler.source)) return false;
-    }
-    if (std::ranges::any_of(compiled.bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; })) return false;
-    return std::ranges::all_of(compiled.imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); });
+std::shared_ptr<const Driver::DataIndependentDispatch> Driver::runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey) {
+    bool preparedAtUse = false;
+    const auto invocation = InvocationFor(snapshot, codeOffset, request, nullptr, &preparedAtUse);
+    const auto& prepared = invocation.Request();
+    if (preparedAtUse) RecordPreparedProgram(device, snapshot, codeOffset, prepared);
+    if (prepared.shader.code.size() != request.shader.code.size() || !prepared.shader.linkedLiterals.empty() || !prepared.context.linkedWords.empty()) return nullptr;
+    auto compiled = invocation.MaterializeAtRunTime();
+    if (compiled == nullptr || !CacheableResult(*compiled)) return nullptr;
+    if (std::ranges::any_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; })) return nullptr;
+    if (!std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); })) return nullptr;
+    auto entry = std::make_shared<const DataIndependentDispatch>(DataIndependentDispatch{invocation.Plan(), std::move(compiled)});
+    std::lock_guard cacheLock(dispatchCacheMutex);
+    ++dataIndependentHits;
+    return dataIndependentDispatches.try_emplace(programKey, std::move(entry)).first->second;
 }
 
 std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::dataIndependentResult(const DataIndependentDispatch& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
@@ -319,6 +316,17 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             ++dataIndependentHits;
         }
     }
+    if (independent == nullptr && !noDispatchCache) {
+        try {
+            independent = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey);
+        } catch (const std::exception& error) {
+            std::string reason = error.what();
+            if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
+            char where[64];
+            std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
+            throw std::runtime_error(where + reason);
+        }
+    }
     if (independent != nullptr) {
         compiledResult = dataIndependentResult(*independent, userData, request.shader.codeAddress);
         cached = true;
@@ -334,12 +342,9 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::uint64_t forgetAtCapture = 0;
 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
-        bool calleesLinked = false;
         try {
             bool preparedAtUse = false;
             const auto invocation = InvocationFor(snapshot, codeOffset, request, shaderMemory.get(), &preparedAtUse);
-            const auto& prepared = invocation.Request();
-            calleesLinked = prepared.shader.code.size() != request.shader.code.size() || !prepared.shader.linkedLiterals.empty() || !prepared.context.linkedWords.empty();
             if (preparedAtUse) RecordPreparedProgram(localDevice, snapshot, codeOffset, invocation.Request());
             timing.Mark("prepared_invocation");
 
@@ -379,10 +384,6 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
         insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
-        if (!noDispatchCache && !calleesLinked && capture != nullptr && CacheableResult(*compiledResult) && dataIndependent(*capture->plan, *compiledResult, captured.size(), memory.size())) {
-            std::lock_guard cacheLock(dispatchCacheMutex);
-            dataIndependentDispatches[programKey] = std::make_shared<const DataIndependentDispatch>(DataIndependentDispatch{capture->plan, compiledResult});
-        }
     }
     }
     if (verifyDataHits() && dataHit) verifyDataHit(snapshot, codeOffset, request, memory, address, *keepVariant, liveWords, *compiledResult);

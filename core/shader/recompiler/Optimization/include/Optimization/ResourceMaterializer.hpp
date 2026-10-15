@@ -77,6 +77,8 @@ public:
     static void EvaluateBufferSites(const IrResourcePlan& plan, const SrtRuntime& runtime, std::vector<DescriptorValue>& stores, std::vector<DescriptorValue>& loads);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
+    static bool ReadsResourcesAtRunTime(const IrResourcePlan& plan);
+    static void RunTimeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, ResourceSnapshot& snapshot);
     static std::uint64_t SpecializationNanoseconds();
 
 private:

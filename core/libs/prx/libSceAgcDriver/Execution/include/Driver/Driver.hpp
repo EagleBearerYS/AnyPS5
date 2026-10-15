@@ -187,7 +187,7 @@ private:
         std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
     };
     static bool readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value);
-    static bool dataIndependent(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::size_t capturedRegions, std::size_t requestRegions);
+    std::shared_ptr<const DataIndependentDispatch> runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey);
     static std::shared_ptr<const ShaderRecompiler::RecompileResult> dataIndependentResult(const DataIndependentDispatch& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     static std::shared_ptr<const ShaderRecompiler::RecompileResult> refreshedResult(const ShaderRecompiler::IrResourcePlan& plan, const ShaderRecompiler::RecompileResult& compiled, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     void noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue);

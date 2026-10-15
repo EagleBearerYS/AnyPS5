@@ -14,7 +14,7 @@ void Run() {
     NewPath::WaitIdle();
     for (std::uint32_t dispatch = 0; dispatch < MaxDispatches; ++dispatch) ExpectSampled(dispatch, [](std::uint32_t) { return 0u; }, "data-independent dispatch: reader dispatch " + std::to_string(dispatch) + " of " + std::to_string(MaxDispatches) + ", each with its own output buffer in its user data");
     const auto hits = AgcDriver::DriverDetail::Driver::Get().DataIndependentDispatchHits() - before;
-    Expect(hits == MaxDispatches - 1u, "data-independent dispatch: " + std::to_string(hits) + " of the " + std::to_string(MaxDispatches - 1u) + " dispatches after the first were served without a capture");
+    Expect(hits == MaxDispatches, "data-independent dispatch: " + std::to_string(hits) + " of the " + std::to_string(MaxDispatches) + " dispatches, the first included, were served without a capture");
 }
 
 }

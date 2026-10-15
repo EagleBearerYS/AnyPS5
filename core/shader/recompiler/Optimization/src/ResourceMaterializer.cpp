@@ -2103,6 +2103,61 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
     reportTables();
 }
 
+bool ResourceMaterializer::ReadsResourcesAtRunTime(const IrResourcePlan& plan) {
+    if (!plan.resourceTrackingComplete || !plan.srtReads.empty() || plan.uniformFill.fill.kind != UniformFillKind::None || plan.requiresSpecializationMemory) return false;
+    const auto constant = [&](std::uint32_t source) {
+        const auto& descriptor = plan.descriptorSources.at(source);
+        for (std::uint32_t word = 0; word < descriptor.dwordCount; ++word) {
+            if (descriptor.dwords[word] == nullptr || !descriptor.dwords[word]->Resolve()->HasImmediate()) return false;
+        }
+        return true;
+    };
+    for (const auto& image : plan.info.images) {
+        if (!image.deviceTable && (image.table != NoTable || !constant(image.source))) return false;
+    }
+    for (const auto& sampler : plan.info.samplers) {
+        if (!sampler.deviceTable && (sampler.table != NoTable || !constant(sampler.source))) return false;
+    }
+    return true;
+}
+
+void ResourceMaterializer::RunTimeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, ResourceSnapshot& snapshot) {
+    if (!ReadsResourcesAtRunTime(plan)) throw std::runtime_error("ResourceMaterializer::RunTimeSnapshot requires a plan that reads its resources at run time");
+    if (runtime.userData.size() < plan.userDataCount) throw std::runtime_error("runtime user data is smaller than the shader user data count");
+    ResourceSnapshot next;
+    next.userData.assign(runtime.userData.begin(), runtime.userData.begin() + plan.userDataCount);
+    Detail::Evaluator evaluator(plan, runtime);
+    const auto evaluate = [&](std::uint32_t source, std::uint32_t words, DescriptorValue& value) {
+        const auto& descriptor = plan.descriptorSources.at(source);
+        if (descriptor.dwordCount != words) throw std::runtime_error("a constant descriptor has an invalid width");
+        value.dwordCount = words;
+        for (std::uint32_t word = 0; word < words; ++word) {
+            if (!evaluator.Evaluate(descriptor.dwords[word], value.dwords[word])) throw std::runtime_error("a constant descriptor word does not evaluate");
+        }
+    };
+    next.images.resize(plan.info.images.size());
+    for (std::uint32_t i = 0; i < plan.info.images.size(); ++i) {
+        const auto& image = plan.info.images[i];
+        next.images[i].dwordCount = 8u;
+        if (image.deviceTable) continue;
+        evaluate(image.source, 8u, next.images[i]);
+        if (!validImageDescriptor(next.images[i], image.r128) && !nullImageDescriptor(next.images[i])) throw std::runtime_error("runtime image descriptor is invalid");
+    }
+    next.samplers.resize(plan.info.samplers.size());
+    for (std::uint32_t i = 0; i < plan.info.samplers.size(); ++i) {
+        next.samplers[i].dwordCount = 4u;
+        if (!plan.info.samplers[i].deviceTable) evaluate(plan.info.samplers[i].source, 4u, next.samplers[i]);
+    }
+    evaluateBufferSites(plan, runtime, next.stores, next.loads, false);
+    next.deviceImagesComplete = false;
+    SrtWalker walker;
+    const std::vector<std::uint8_t> active;
+    TableSnapshotter(plan, runtime, walker, active, next.tables).Run();
+    materializeTables(plan, next);
+    materializeSrtGuards(plan, next);
+    snapshot = std::move(next);
+}
+
 std::uint64_t ResourceMaterializer::SpecializationNanoseconds() {
     return specializationNanoseconds.load(std::memory_order_relaxed);
 }

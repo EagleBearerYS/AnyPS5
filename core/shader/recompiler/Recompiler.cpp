@@ -1633,6 +1633,25 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(con
     return result;
 }
 
+std::shared_ptr<const IrResourcePlan> PreparedShaderInvocation::Plan() const {
+    return handle->source->plan;
+}
+
+std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeAtRunTime() const {
+    const auto& plan = *handle->source->plan;
+    if (!ResourceMaterializer::ReadsResourcesAtRunTime(plan)) return nullptr;
+    SrtRuntime runtime;
+    runtime.userData = request.context.userData;
+    runtime.linkedWords = request.context.linkedWords;
+    runtime.shaderBase = request.shader.codeAddress;
+    runtime.readMemory = +[](void*, std::uint64_t, std::uint32_t*) { return false; };
+    ResourceSnapshot snapshot;
+    ResourceMaterializer::RunTimeSnapshot(plan, runtime, snapshot);
+    auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, snapshot));
+    result->cacheHit = true;
+    return result;
+}
+
 const CompiledShaderArtifact& GetPreparedArtifact(const SourceHandle& handle) {
     if (handle.artifact == nullptr) throw std::runtime_error("ShaderRecompiler: prepared artifact is missing");
     return handle.artifact->artifact;
