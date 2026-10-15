@@ -1,5 +1,3 @@
-BUSY BF-006
-since: 2026-10-15T03:16:14Z
-claimed: tasks/claimed/BF-006.md
-previous: PRM-008 done, results/cloud-2/PRM-008.md
-next: GAC-015 (for cloud-2)
+READY
+since: 2026-10-15T03:37:21Z
+previous: BF-006 done, results/cloud-2/BF-006.md (test/e34-a2e-selected at 320af7a8f)
