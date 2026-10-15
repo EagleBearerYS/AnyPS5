@@ -1534,6 +1534,95 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     HostImportFor(context, address, bytes);
 }
 
+#ifdef _WIN32
+bool deferredSettleTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t settledBytes = std::size_t{1} << 20;
+    if (context.hostImportAlignment == 0 || context.hostImportAlignment > unit || context.settleQueue == VK_NULL_HANDLE || !WriteWatched()) {
+        std::cout << "host imports within 64 KiB, a settle queue or write watching unavailable: deferred settles not tested\n";
+        return false;
+    }
+    const auto registerRange = [](void* block, std::size_t bytes) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    };
+    const auto unregisterRange = [](void* block) {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    };
+    std::unique_lock gpu(GpuMutex());
+    PrepareImportWatch(context);
+    void* large = AllocateWatched(settledBytes, unit);
+    void* small = AllocateWatched(unit, unit);
+    struct Release {
+        void* large;
+        void* small;
+        ~Release() {
+            ReleaseWatched(large, settledBytes);
+            ReleaseWatched(small, unit);
+        }
+    } release{large, small};
+    const auto largeAddress = reinterpret_cast<std::uint64_t>(large);
+    registerRange(large, settledBytes);
+    const auto* settled = HostImportFor(context, largeAddress, settledBytes);
+    Require(settled != nullptr, "(d) the 1 MiB import was refused");
+    if (settled->unwatched) {
+        std::cout << "this device compares every Windows import: deferred settles not tested\n";
+        unregisterRange(large);
+        HostImportFor(context, largeAddress, settledBytes);
+        return false;
+    }
+    const auto address = reinterpret_cast<std::uint64_t>(small);
+    std::memset(small, 0x11, unit);
+    registerRange(small, unit);
+    const auto poll = [&](const std::function<bool()>& done) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!done() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            HostImportFor(context, address, unit);
+        }
+        return done();
+    };
+    const auto* import = HostImportFor(context, address, unit);
+    Require(import != nullptr && import->unwatched && !Watched(address, unit), "(d) a 64 KiB import was not compared at first");
+    Require(poll([&] { return Watched(address, unit); }), "(d) a 64 KiB import did not return to the write watch after its settle");
+    const auto* back = HostImportFor(context, address, unit);
+    Require(back == import && !back->unwatched, "(d) the import back in the write watch is still marked compared");
+    BumpCollectEpoch();
+    const auto collected = CollectWrites(address, unit);
+    Require(collected != 0, "(d) the import back in the write watch is not collected");
+    static_cast<volatile std::uint8_t*>(small)[4096] = 0x22;
+    CollectWritesUncached(address, unit);
+    Require(!UnchangedSince(address, unit, collected), "(d) a CPU store after the import returned to the write watch was missed");
+    gpu.unlock();
+    for (int round = 0; round < 64; ++round) {
+        unregisterRange(small);
+        registerRange(small, unit);
+        const auto* again = HostImportFor(context, address, unit);
+        Require(again != nullptr && again->unwatched && !Watched(address, unit), "(d) a 64 KiB buffer mapped again off the device lock was not imported compared");
+    }
+    gpu.lock();
+    Require(poll([&] { return Watched(address, unit); }), "(d) the last buffer mapped again did not return to the write watch");
+    unregisterRange(small);
+    registerRange(small, unit);
+    Require(HostImportFor(context, address, unit) != nullptr, "(d) a buffer mapped again after it returned to the write watch was not imported");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    HostImportFor(context, address, unit);
+    unregisterRange(small);
+    registerRange(small, unit);
+    const auto* replaced = HostImportFor(context, address, unit);
+    Require(replaced != nullptr && replaced->unwatched, "(d) a buffer mapped again while its settle may be in flight was not imported");
+    Require(poll([&] { return Watched(address, unit); }), "(d) the buffer mapped again while its settle was in flight did not return to the write watch");
+    unregisterRange(small);
+    unregisterRange(large);
+    HostImportFor(context, address, unit);
+    std::cout << "deferred settle tests passed\n";
+    return true;
+}
+#endif
+
 void remappedImportTests(const Device& device) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
@@ -8009,7 +8098,7 @@ int main(int argc, char** argv) {
         }
         std::unique_ptr<Device> created;
         try {
-            created = std::make_unique<Device>(argc == 2 && std::string_view(argv[1]) == "--import-watch-other-family-only");
+            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only"));
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
@@ -8028,6 +8117,15 @@ int main(int argc, char** argv) {
             importWatchTests(device);
             return 0;
         }
+#ifdef _WIN32
+        if (argc == 2 && (std::string_view(argv[1]) == "--deferred-settle-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only")) {
+            if (std::string_view(argv[1]) == "--deferred-settle-other-family-only" && device.GetContext().settleFamily == device.GetContext().queueFamily) {
+                std::cout << "skipped, no other queue family to settle imports on\n";
+                return 77;
+            }
+            return deferredSettleTests(device) ? 0 : 77;
+        }
+#endif
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-retirement-only") {
             const auto alignment = device.GetContext().hostImportAlignment;
             if (alignment == 0 || alignment > 65536) {
