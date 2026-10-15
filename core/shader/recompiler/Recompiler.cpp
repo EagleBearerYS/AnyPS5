@@ -513,15 +513,21 @@ void ApplyBufferRanges(const ShaderInfo& info, std::span<const DescriptorValue> 
             memoryRanges = 0;
             unbounded = infoUnbounded || values.size() != sites.size();
         }
+        const auto first = ranges.size();
         for (std::size_t index = 0; index < values.size() && index < sites.size(); ++index) {
             if (sites[index].fromMemory != memory) continue;
             const auto range = BufferStoreExtent(values[index], sites[index]);
             if (!range.has_value()) unbounded = true;
-            else if (range->second > range->first) {
-                ranges.push_back(*range);
-                if (memory) ++memoryRanges;
-            }
+            else if (range->second > range->first) ranges.push_back(*range);
         }
+        std::sort(ranges.begin() + static_cast<std::ptrdiff_t>(first), ranges.end());
+        auto merged = first;
+        for (auto index = first; index < ranges.size(); ++index) {
+            if (merged != first && ranges[index].first <= ranges[merged - 1u].second) ranges[merged - 1u].second = std::max(ranges[merged - 1u].second, ranges[index].second);
+            else ranges[merged++] = ranges[index];
+        }
+        ranges.resize(merged);
+        if (memory) memoryRanges = merged - first;
         if (!memory) fixedUnbounded = unbounded;
     };
     apply(info.bufferStores, stores, info.unboundedStores, result.writeRanges, result.unboundedWrites, result.fixedUnboundedWrites, result.memoryWriteRanges);
@@ -551,6 +557,14 @@ bool RefreshMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime,
 namespace {
 
 std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const DescriptorValue& value, const BufferStoreSite& site) {
+    if (site.address) {
+        if (value.dwordCount != 2u) return std::nullopt;
+        constexpr std::uint64_t addressMask = (std::uint64_t{1} << 48u) - 1u;
+        const auto base = (static_cast<std::uint64_t>(value.dwords[0]) | (static_cast<std::uint64_t>(value.dwords[1]) << 32u)) & addressMask & ~std::uint64_t{3u};
+        if (base == 0u) return std::pair<std::uint64_t, std::uint64_t>{0u, 0u};
+        const auto first = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(site.offset)));
+        return std::pair<std::uint64_t, std::uint64_t>{first, first + ((site.bytes + 3u) & ~std::uint64_t{3u})};
+    }
     if (value.dwordCount != 4u) return std::nullopt;
     const auto word1 = value.dwords[1];
     const auto records = value.dwords[2];

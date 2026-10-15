@@ -763,6 +763,8 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(site.offset);
         out.Value(site.dynamicOffset);
         out.Value(site.fromMemory);
+        out.Value(site.address);
+        out.Value(site.bytes);
     };
     writer.List(info.bufferStores, writeSite);
     writer.Value(info.unboundedStores);
@@ -870,10 +872,12 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(site.offset);
         in.Value(site.dynamicOffset);
         in.Value(site.fromMemory);
+        in.Value(site.address);
+        in.Value(site.bytes);
     };
-    reader.List(info.bufferStores, 16, readSite);
+    reader.List(info.bufferStores, 21, readSite);
     reader.Value(info.unboundedStores);
-    reader.List(info.bufferLoads, 16, readSite);
+    reader.List(info.bufferLoads, 21, readSite);
     reader.Value(info.unboundedLoads);
     reader.Value(info.dispatchThreadLimit);
     reader.Value(info.rasterPrimitive);

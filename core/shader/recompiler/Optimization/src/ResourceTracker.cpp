@@ -1527,6 +1527,29 @@ private:
         return true;
     }
 
+    bool AddAddressSite(const IrValue& inst, const MemoryInfo& memory, const AddressOpcodeInfo& addressInfo, bool write) {
+        const IrValue* handle = inst.Argument(0)->Resolve();
+        const IrValue* offset = inst.ArgumentCount() > 1u ? inst.Argument(1)->Resolve() : nullptr;
+        if (offset == nullptr || !offset->HasImmediate() || offset->Type() != IrType::U32) return false;
+        DescriptorSource descriptor;
+        MakeSource(*handle, 2u, false, false, descriptor);
+        std::uint32_t badDword = 0;
+        const bool fromMemory = ReadsGuestMemory(*handle);
+        if (!ValidateSource(descriptor, badDword) || (fromMemory && m_program.Resources().stage != IrShaderStage::Compute)) return false;
+        BufferStoreSite site{InternSource(descriptor), 0u, false, memory.kind == ResourceKind::ScalarAddress};
+        site.address = true;
+        site.offset = static_cast<std::uint32_t>((static_cast<std::int32_t>(memory.offset) & ~3) + (static_cast<std::int32_t>(offset->ImmediateU32()) & ~3));
+        site.bytes = std::max(addressInfo.dataBits / 8u, 1u) * addressInfo.components;
+        site.dynamicOffset = false;
+        site.fromMemory = fromMemory;
+        auto& sites = write ? m_info.bufferStores : m_info.bufferLoads;
+        if (std::ranges::find(sites, site) == sites.end()) sites.push_back(site);
+        if (addressInfo.access == AddressAccess::Atomic) {
+            if (std::ranges::find(m_info.bufferLoads, site) == m_info.bufferLoads.end()) m_info.bufferLoads.push_back(site);
+        }
+        return true;
+    }
+
     void ValidateAddressHandle(IrValue* value) const {
         const IrValue* handle = value->Resolve();
         if (handle->Opcode() != IrOpcode::GetAddressResource) {
@@ -1716,9 +1739,12 @@ private:
                 std::fprintf(stderr, "[bda] %s at pc 0x%08x: %s access, offset %s%s\n", std::string(IrOpcodeName(op)).c_str(), flags.pc, kind, immediateOffset ? "immediate" : "dynamic", memory.kind == ResourceKind::ScalarAddress && !immediateOffset ? " (a register offset is not planned by the SRT walker)" : "");
             }
             m_info.usesDma = true;
-            m_info.bdaWrites = m_info.bdaWrites || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
-            m_info.unboundedStores = m_info.unboundedStores || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
-            m_info.unboundedLoads = m_info.unboundedLoads || addressInfo.access != AddressAccess::None;
+            const bool write = addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
+            m_info.bdaWrites = m_info.bdaWrites || write;
+            if (!AddAddressSite(inst, memory, addressInfo, write)) {
+                m_info.unboundedStores = m_info.unboundedStores || write;
+                m_info.unboundedLoads = true;
+            }
             return;
         }
 
