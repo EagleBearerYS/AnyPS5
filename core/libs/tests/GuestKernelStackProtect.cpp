@@ -182,14 +182,20 @@ static void GrowStack(std::uintptr_t below) {
     frame[sizeof(frame) - 1] = 2;
 }
 
+static std::uintptr_t StackLimit() {
+    return reinterpret_cast<std::uintptr_t>(reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackLimit);
+}
+
 static void RequireGrowableStack(std::uintptr_t start, std::uintptr_t end) {
     const auto before = QueryHostStack(start, end);
     Require(before.guard > start && before.guard < before.committed);
     Require(QueryPage(before.committed).writable);
+    Require(StackLimit() == before.committed);
     GrowStack(before.guard - 0x2000);
     const auto after = QueryHostStack(start, end);
     Require(after.guard != 0 && after.guard < before.guard);
     Require(QueryPage(before.guard).writable);
+    Require(StackLimit() == after.committed);
 }
 #endif
 
@@ -224,16 +230,33 @@ static DWORD WINAPI ProtectReservedStack(void* partial) {
     return 0;
 }
 
+static DWORD WINAPI ProtectStackBottom(void*) {
+    int local = 0;
+    void* start = nullptr;
+    void* end = nullptr;
+    Require(sceKernelIsStack(&local, &start, &end) == SCE_OK);
+    const auto low = reinterpret_cast<std::uintptr_t>(start);
+    const auto high = reinterpret_cast<std::uintptr_t>(end);
+    Require(QueryHostStack(low, high).guard - low >= 4 * Page);
+    Require(mprotect_nid_postfix(start, 3 * Page, 3) == 0);
+    Require(mprotect_nid_postfix(start, 3 * Page, 0) == 0);
+    RequireGrowableStack(low, high);
+    return 0;
+}
+
+static void RunOnReservedStack(LPTHREAD_START_ROUTINE routine, void* arg) {
+    HANDLE thread = CreateThread(nullptr, HostBytes * 4, routine, arg, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    Require(thread != nullptr);
+    Require(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
+    DWORD exitCode = 1;
+    Require(GetExitCodeThread(thread, &exitCode) != 0 && exitCode == 0);
+    Require(CloseHandle(thread) != 0);
+}
+
 static void ProtectHostStacks() {
     ProtectStack(0);
-    for (void* partial : {static_cast<void*>(nullptr), reinterpret_cast<void*>(1)}) {
-        HANDLE thread = CreateThread(nullptr, HostBytes * 4, ProtectReservedStack, partial, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-        Require(thread != nullptr);
-        Require(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
-        DWORD exitCode = 1;
-        Require(GetExitCodeThread(thread, &exitCode) != 0 && exitCode == 0);
-        Require(CloseHandle(thread) != 0);
-    }
+    for (void* partial : {static_cast<void*>(nullptr), reinterpret_cast<void*>(1)}) RunOnReservedStack(ProtectReservedStack, partial);
+    RunOnReservedStack(ProtectStackBottom, nullptr);
 }
 #endif
 
