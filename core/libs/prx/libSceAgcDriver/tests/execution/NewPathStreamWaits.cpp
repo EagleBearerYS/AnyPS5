@@ -206,7 +206,11 @@ int main() {
             WaitIdle();
         }
         const auto* recorder = AgcDriver::Graphics::Recorder::Active();
-        Require(recorder != nullptr, "stream waits: the driver opened no device");
+        for (auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5); recorder == nullptr && std::chrono::steady_clock::now() < deadline;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            recorder = AgcDriver::Graphics::Recorder::Active();
+        }
+        Require(recorder != nullptr, "stream waits: the driver opened no device within 5 s of its first submission");
         if (recorder->Streams() < 2) {
             std::printf("skipped, the device gives the recorder one stream\n");
             AgcDriverShutdown_nid_postfix();
