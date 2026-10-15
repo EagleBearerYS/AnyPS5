@@ -1343,15 +1343,15 @@ void verifyTableSnapshotReuse() {
     require(deferredTableStored && deferred.reuse.unwritten == 0u && heldRecords(deferred, heap, Records) && recordWords(deferred, 3500u) == texture(2003u), "table snapshot reuse: a GPU result a read would store first was not stored and read before the table was reused");
     expectUnwritten(capture(request, heap, Bytes, nullptr), "the table after a GPU result stored by the flush hook");
 
-    alignas(65536) static std::array<std::uint8_t, 65536> unrelated{};
+    static std::uint8_t* const unrelated = new (std::align_val_t{65536}) std::uint8_t[65536]();
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(unrelated.data(), unrelated.size(), true, true, false);
+        mutation.Add(unrelated, std::size_t{65536}, true, true, false);
     }
     const auto remapped = capture(request, heap, Bytes, nullptr);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Remove(unrelated.data());
+        mutation.Remove(unrelated);
     }
     require(remapped.reuse.unwritten == 0u && remapped.reuse.compared == 1u && heldRecords(remapped, heap, Records), "table snapshot reuse: a table was reused without a read after a guest mapping changed");
 
