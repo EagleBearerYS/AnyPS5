@@ -1,0 +1,60 @@
+name: Exit hang stacks
+
+on:
+  push:
+    branches: ['diag/exit-hang**']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 330
+    env:
+      WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
+      WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 50
+      - name: Use Git's CA bundle (mingw64 before Git 2.56, ucrt64 after)
+        run: |
+          for bundle in ucrt64/etc/ssl/certs mingw64/etc/ssl/certs usr/ssl/certs; do
+            if [ -f "/c/Program Files/Git/$bundle/ca-bundle.crt" ]; then
+              echo "SSL_CERT_FILE=$(cygpath -w "/c/Program Files/Git/$bundle/ca-bundle.crt")" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+      - id: toolchain
+        uses: actions/cache@v6
+        with:
+          path: C:\winlibs
+          key: ${{ env.WINLIBS_ZIP }}
+      - if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
+          7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
+      - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: exit-hang-windows
+          evict-old-files: job
+      - shell: cmd
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG -g1" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g1"
+      - run: cmake --build build
+      - run: gdb --version | head -1
+      - run: bash .github/exit-hang/run.sh
+        env:
+          REPEATS: 100
+          BUDGET_SECONDS: 10800
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: exit-hang-stacks
+          path: hang-logs/
