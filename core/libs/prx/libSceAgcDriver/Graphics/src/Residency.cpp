@@ -360,6 +360,7 @@ void ResidencyManager::applyDrops() {
         const auto span = PagesOf(range.address, range.bytes);
         if (span.empty) continue;
         std::erase_if(writingBack, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
+        std::erase_if(hot, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
     }
 }
 
