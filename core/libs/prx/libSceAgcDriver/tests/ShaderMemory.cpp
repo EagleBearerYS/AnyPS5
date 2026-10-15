@@ -1246,13 +1246,42 @@ void verifyTableSnapshotReuse() {
         ImageTableSnapshot tables;
         bool covered = false;
         ImageTableReuseCounts reuse;
+        AgcDriver::ShaderMemory::SupplyCounts supplied{};
+        const std::byte* tableBytes = nullptr;
+        std::size_t tableRegionBytes = 0;
+    };
+    const auto sortedDisjoint = [](const std::vector<MemoryRegion>& regions) {
+        for (std::size_t index = 1; index < regions.size(); index++) {
+            if (regions[index - 1].guestAddress + regions[index - 1].bytes.size() > regions[index].guestAddress) return false;
+        }
+        return true;
+    };
+    const auto holds = [](const std::vector<MemoryRegion>& regions, const std::uint32_t* table, std::size_t bytes, const std::uint32_t* expected) {
+        const auto begin = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(table));
+        std::size_t found = 0;
+        for (const auto& region : regions) {
+            const auto from = std::max(region.guestAddress, begin);
+            const auto to = std::min(region.guestAddress + region.bytes.size(), begin + bytes);
+            if (from >= to) continue;
+            if (std::memcmp(region.bytes.data() + (from - region.guestAddress), reinterpret_cast<const std::byte*>(expected) + (from - begin), static_cast<std::size_t>(to - from)) != 0) return false;
+            found += static_cast<std::size_t>(to - from);
+        }
+        return found == bytes;
     };
     const auto capture = [&](const RecompileRequest& request, const std::uint32_t* table, std::size_t bytes, AgcDriver::ShaderMemory::PendingWriteQuery pending) {
         const auto before = ResourceMaterializer::TableReuse();
+        const auto suppliedBefore = AgcDriver::ShaderMemory::Supplies();
         Outcome outcome;
         AgcDriver::ShaderMemory memory({}, pending);
         outcome.tables = memory.Capture(request)->snapshot.tables;
         const auto regions = memory.Regions();
+        const auto suppliedAfter = AgcDriver::ShaderMemory::Supplies();
+        outcome.supplied = {suppliedAfter.shared - suppliedBefore.shared, suppliedAfter.copied - suppliedBefore.copied, suppliedAfter.spilled - suppliedBefore.spilled};
+        for (const auto& region : regions) {
+            if (region.guestAddress != reinterpret_cast<std::uintptr_t>(table)) continue;
+            outcome.tableBytes = region.bytes.data();
+            outcome.tableRegionBytes = region.bytes.size();
+        }
         outcome.covered = TableCovered(regions, table, bytes) && std::all_of(regions.begin(), regions.end(), [&](const MemoryRegion& region) {
             return region.guestAddress < reinterpret_cast<std::uintptr_t>(table) || region.guestAddress >= reinterpret_cast<std::uintptr_t>(table) + bytes || std::memcmp(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(region.guestAddress)), region.bytes.data(), region.bytes.size()) == 0;
         });
@@ -1272,6 +1301,11 @@ void verifyTableSnapshotReuse() {
     const auto sharesColumn = [](const Outcome& left, const Outcome& right) {
         const auto& a = left.tables.tables.at(0);
         const auto& b = right.tables.tables.at(0);
+        return a.codes.Shares(b.codes) && a.words.Shares(b.words) && a.readRanges.Shares(b.readRanges);
+    };
+    const auto sharedColumnOf = [](const std::shared_ptr<const ResourceCapture>& capture, const Outcome& outcome) {
+        const auto& a = capture->snapshot.tables.tables.at(0);
+        const auto& b = outcome.tables.tables.at(0);
         return a.codes.Shares(b.codes) && a.words.Shares(b.words) && a.readRanges.Shares(b.readRanges);
     };
 
@@ -1302,9 +1336,34 @@ void verifyTableSnapshotReuse() {
     const auto reusedAgain = capture(request, heap, Bytes, nullptr);
     expectUnwritten(reusedAgain, "an unchanged table reused again");
     require(sharesColumn(unchanged, fresh) && sharesColumn(reusedAgain, fresh) && unchanged.reuse.shared == 1u && reusedAgain.reuse.shared == 1u && unchanged.reuse.columns == 0u && reusedAgain.reuse.columns == 0u, "table snapshot reuse: an unchanged table reused twice did not share one column without a copy");
+    if (watched) {
+        const auto sharedWords = [&](const Outcome& outcome) { return outcome.supplied.shared == Records * 8u && outcome.supplied.copied == 0u && outcome.supplied.spilled == 0u && outcome.tableRegionBytes == Bytes; };
+        require(sharedWords(unchanged) && sharedWords(reusedAgain) && unchanged.tableBytes != nullptr && unchanged.tableBytes == reusedAgain.tableBytes && fresh.tableBytes != unchanged.tableBytes && fresh.supplied.shared == 0u, "table snapshot reuse: the captured words of an unchanged table were copied instead of shared");
+    }
+    {
+        AgcDriver::ShaderMemory stages({});
+        const auto suppliedBefore = AgcDriver::ShaderMemory::Supplies();
+        const auto vertex = stages.Capture(request);
+        const auto vertexRecent = stages.TakeRecentRegions();
+        const auto pixel = stages.Capture(request);
+        const auto pixelRecent = stages.TakeRecentRegions();
+        const auto both = stages.Regions();
+        require(sharedColumnOf(vertex, fresh) && sharedColumnOf(pixel, fresh) && sortedDisjoint(vertexRecent) && sortedDisjoint(pixelRecent) && sortedDisjoint(both) && holds(vertexRecent, heap, Bytes, original.data()) && holds(pixelRecent, heap, Bytes, original.data()) && holds(both, heap, Bytes, original.data()), "table snapshot reuse: two stages of one shader memory did not each capture the shared table once");
+        alignas(4096) static TableGuest halfGuest;
+        FillTableSrt(halfGuest, heap, 32u, Records / 2u);
+        const auto halfUserData = TableUserData(halfGuest);
+        const auto half = stages.Capture(TableRequest(TableWholeCode, halfUserData));
+        const auto all = stages.Regions();
+        const auto suppliedAfter = AgcDriver::ShaderMemory::Supplies();
+        require(half->snapshot.tables.tables.at(0).keys == Records / 2u && sortedDisjoint(all) && holds(all, heap, Bytes, original.data()), "table snapshot reuse: a read over supplied words reported them twice or changed them");
+        if (watched) require(suppliedAfter.shared - suppliedBefore.shared == 2u * Records * 8u && suppliedAfter.copied == suppliedBefore.copied && suppliedAfter.spilled - suppliedBefore.spilled == Records * 8u, "table snapshot reuse: a second stage copied the shared words, or a read over them did not move them into pages once");
+    }
+    AgcDriver::ShaderMemory heldMemory({});
+    const auto heldCapture = heldMemory.Capture(request);
     const auto freshColumn = [&](const Outcome& outcome, const std::string& what) {
-        require(outcome.reuse.columns == 1u && outcome.reuse.shared == 0u && !sharesColumn(outcome, fresh) && !(outcome.tables == fresh.tables), ("table snapshot reuse: " + what + ": the snapshot shares the old column or holds its words").c_str());
+        require(outcome.reuse.columns == 1u && outcome.reuse.shared == 0u && !sharesColumn(outcome, fresh) && !(outcome.tables == fresh.tables) && outcome.supplied.shared == 0u, ("table snapshot reuse: " + what + ": the snapshot shares the old column or holds its words").c_str());
         require(heldRecords(unchanged, original.data(), Records) && heldRecords(reusedAgain, original.data(), Records) && sharesColumn(reusedAgain, fresh), ("table snapshot reuse: " + what + ": the old column changed under the snapshots sharing it").c_str());
+        require(sharedColumnOf(heldCapture, fresh) && holds(heldMemory.Regions(), heap, Bytes, original.data()), ("table snapshot reuse: " + what + ": the words a live shader memory captured before it changed").c_str());
     };
 
     const auto changeRecord = [&](std::uint32_t record, std::uint32_t replacement, const std::function<void(std::uint64_t, const std::array<std::uint32_t, 8>&)>& store) {
@@ -1452,7 +1511,7 @@ void verifyTableSnapshotReuse() {
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(hidden, 4096u);
     const auto unmappedCode = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped));
     const auto& hiddenCodes = pagedUnmapped.tables.tables.at(0).codes;
-    require(pagedUnmapped.reuse.unwritten == 0u && pagedUnmapped.reuse.shared == 0u && pagedUnmapped.reuse.columns == 1u && hiddenCodes.at(127u) != unmappedCode && hiddenCodes.at(128u) == unmappedCode && hiddenCodes.at(255u) == unmappedCode && hiddenCodes.at(256u) != unmappedCode, "table snapshot reuse: the records of an unmapped page were not read again as Unmapped poison");
+    require(pagedUnmapped.reuse.unwritten == 0u && pagedUnmapped.reuse.shared == 0u && pagedUnmapped.reuse.columns == 1u && pagedUnmapped.supplied.shared == 0u && hiddenCodes.at(127u) != unmappedCode && hiddenCodes.at(128u) == unmappedCode && hiddenCodes.at(255u) == unmappedCode && hiddenCodes.at(256u) != unmappedCode, "table snapshot reuse: the records of an unmapped page were not read again as Unmapped poison");
     require(heldRecords(pagedReused, paged, PagedRecords) && sharesColumn(pagedReused, pagedFresh), "table snapshot reuse: unmapping a page changed the column read before it");
     const auto pagedBack = capture(pagedRequest, paged, PagedBytes, nullptr);
     require(pagedBack.reuse.unwritten == 0u && pagedBack.reuse.compared == 1u && sharesColumn(pagedBack, pagedFresh) && heldRecords(pagedBack, paged, PagedRecords), "table snapshot reuse: the column read before a page was unmapped was not compared and shared once the page came back");
