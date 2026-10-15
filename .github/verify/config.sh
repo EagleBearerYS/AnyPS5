@@ -1,0 +1,4 @@
+BASE=4186f06a9a402033ab03f17633bee5eb3d5a94cd
+REPEAT=5
+EXTRA_TESTS='agc_driver_image_table|agc_driver_image_table_vouch_queued_draws|agc_driver_image_table_vouched_lookups|agc_shader_bindless|agc_shader_table_snapshot_reuse'
+NO_BEFORE=1
