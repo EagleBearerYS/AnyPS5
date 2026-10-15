@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/StepTimers.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferCopy.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -256,6 +257,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             forgetAtCapture = GuestMemory::ForgetSerial();
             capture = [&] {
                 const SampledReadScope sampling(evidenceReads);
+                APS5_STEP("dispatch: capture (miss)");
                 return shaderMemory->Capture(invocation);
             }();
             captured = shaderMemory->Regions();
