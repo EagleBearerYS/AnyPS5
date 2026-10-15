@@ -2656,12 +2656,37 @@ void multisampleTests() {
     stenciled.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
     stenciled.context[0x1b4] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
     expectFailure([&] { DecodeState(stenciled); }, "the depth target's sample count differs from the rasterizer's");
-    for (const auto input : {ShaderRecompiler::PixelInput::PerspectiveCentroid, ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
-        auto sampled = queue;
-        sampled.context[0x1b3] |= ShaderRecompiler::PixelInputBit(input);
-        sampled.context[0x1b4] |= ShaderRecompiler::PixelInputBit(input);
-        expectFailure([&] { DecodeState(sampled); }, "sample count differs from the rasterizer's");
+    const auto withInputs = [](AgcDriver::QueueState base, std::initializer_list<ShaderRecompiler::PixelInput> inputs) {
+        for (const auto input : inputs) {
+            base.context[0x1b3] |= ShaderRecompiler::PixelInputBit(input);
+            base.context[0x1b4] |= ShaderRecompiler::PixelInputBit(input);
+        }
+        return base;
+    };
+    for (const auto input : {ShaderRecompiler::PixelInput::PerspectiveCentroid, ShaderRecompiler::PixelInput::LinearCentroid, ShaderRecompiler::PixelInput::SampleCoverage}) expectFailure([&] { DecodeState(withInputs(queue, {input})); }, "sample count differs from the rasterizer's");
+    for (const auto input : {ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::LinearSample, ShaderRecompiler::PixelInput::Ancillary}) {
+        state = DecodeState(withInputs(queue, {input}));
+        Require(state.samples == 1 && !state.perSampleShading, "a sample or sample-index input into a one-sample target did not rasterize sample 0 alone");
     }
+    for (const auto position : {ShaderRecompiler::PixelInput::PositionX, ShaderRecompiler::PixelInput::PositionY}) expectFailure([&] { DecodeState(withInputs(queue, {ShaderRecompiler::PixelInput::Ancillary, position})); }, "sample count differs from the rasterizer's");
+    auto iterated = queue;
+    iterated.context[0x293] = 0x06030000u;
+    state = DecodeState(iterated);
+    Require(state.samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE into a one-sample target (PPSA27836) did not rasterize sample 0 alone");
+    state = DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::PositionX, ShaderRecompiler::PixelInput::PositionY}));
+    Require(state.samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE with sample and position inputs (PPSA27836) did not rasterize sample 0 alone");
+    state = DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::PerspectiveCentroid, ShaderRecompiler::PixelInput::LinearCentroid}));
+    Require(state.samples == 1, "PS_ITER_SAMPLE with centroid inputs did not rasterize sample 0 alone");
+    expectFailure([&] { DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::SampleCoverage})); }, "sample count differs from the rasterizer's");
+    expectFailure([&] { DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::PositionX})); }, "sample count differs from the rasterizer's");
+    auto iteratedStencil = withInputs(stenciled, {});
+    iteratedStencil.context[0x1b3] &= ~ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
+    iteratedStencil.context[0x1b4] &= ~ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
+    state = DecodeState(withInputs(iteratedStencil, {ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::Ancillary}));
+    Require(state.samples == 1 && state.depth && state.depth->samples == 1, "sample and sample-index inputs into a one-sample depth target (PPSA07411) did not rasterize sample 0 alone");
+    iteratedStencil.context[0x293] = 0x06030000u;
+    state = DecodeState(iteratedStencil);
+    Require(state.samples == 1 && state.depth && state.depth->samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE into one-sample depth and color targets did not rasterize sample 0 alone");
     auto singleScan = queue;
     singleScan.context[0x292] = 2;
     expectFailure([&] { DecodeState(singleScan); }, "without MSAA_ENABLE");
@@ -2806,7 +2831,7 @@ void multisampleTests() {
     expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples");
     queue.context[0x31d] = 0;
     queue.context[0x293] = 0x10000u;
-    expectFailure([&] { DecodeState(queue); }, "sample count differs");
+    Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
     queue = multisampled();
     queue.context[0x292] = 2;
     expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE");

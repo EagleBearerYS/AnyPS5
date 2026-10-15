@@ -415,7 +415,8 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
 }
 
 constexpr std::uint32_t CoveredCentroidIsCenter = 1u << 29u;
-constexpr std::uint32_t SampleDependentInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearSample) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+constexpr std::uint32_t SampleZeroRefusedInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+constexpr std::uint32_t PixelCenterPositionInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
 constexpr std::uint32_t CentroidInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid);
 
 bool coveredCentroidSupported(const QueueState& queue) {
@@ -491,13 +492,18 @@ void decodeSampleLocations(const Registers& cx, State& state) {
 }
 
 bool rasterizesSampleZeroOnly(const Registers& cx, const State& state) {
-    return state.samples > 1 && !state.alphaToCoverage && !state.perSampleShading && (read(cx, 0x292) & 1u) != 0 && (read(cx, 0x1b3) & read(cx, 0x1b4) & SampleDependentInputs) == 0;
+    if (state.samples <= 1 || state.alphaToCoverage || (read(cx, 0x292) & 1u) == 0) return false;
+    const auto inputs = read(cx, 0x1b3) & read(cx, 0x1b4);
+    const auto refused = state.perSampleShading ? ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage) : SampleZeroRefusedInputs;
+    const bool sampleIndexMovesPosition = (inputs & ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary)) != 0 && (inputs & PixelCenterPositionInputs) != 0;
+    return (inputs & refused) == 0 && !sampleIndexMovesPosition;
 }
 
 void rasterizeSampleZero(State& state) {
     std::array<std::uint8_t, 32> sampleZero{};
     for (std::uint32_t pixel = 0; pixel < 4; ++pixel) sampleZero[pixel * 8u] = state.sampleLocations[pixel * 8u];
     state.samples = 1;
+    state.perSampleShading = false;
     state.sampleLocations = sampleZero;
     state.customSampleLocations = std::any_of(sampleZero.begin(), sampleZero.end(), [](std::uint8_t bits) { return bits != 0; });
     state.sampleLocationGrid = sampleZero[8] != sampleZero[0] || sampleZero[16] != sampleZero[0] || sampleZero[24] != sampleZero[0];
