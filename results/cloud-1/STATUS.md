@@ -1,12 +1,10 @@
-BUSY BF-011 (claimed 2026-10-15T10:42:23Z)
+READY
 RESULT:
-- Working on: BF-011 (CI mirror of #6243's merged head 0b099964f0: full suite, ^agc, check_skips, eight image-table tests x10).
-- Last task: GAC-023, done: results/cloud-1/GAC-023.md.
-  - Fork fix/agc-defer-unpreparable-abi-stages 3401d20db, on upstream main a08de6827: 17fd92440 fix(agc): leave a stage the title's pipeline ABI cannot prepare to its first use; 3401d20db test(agc): resolve the pipeline ABI of stages that only their use can prepare.
-  - ResolveShaderAbi and PrepareGraphicsStages catch a preparation failure inside their own transaction, so libSceAgc's ShaderPreparationScope still commits. The shader is logged once, marked deferred, and its ABI key recorded. ResolvePreparedGraphics skips deferred stages without an artifact. Driver failures, ProcessShutdown and stored registration failures still propagate. ARCHITECTURE.md gets a line.
-  - agc_driver_prepared_shaders_abi_deferred_{compute,pixel,stages,rectangle}: each red with the fix reverted, green with it. Catching at the entry point instead fails with "shader preparation transaction was aborted".
-  - Premise: a draw cannot prepare Village's chain on main either (the plan depends only on code and stage interface), so for Village the stop moves to that pixel shader's first draw. The recompiler change that would render it (walk through the scalar read, poison the ballot arm) is stated as scope, as the next task. The compute user-data-callee case computes correctly at its dispatch.
-  - CI mirror at the head: configure, registration ("886 test executable(s), 0 built and not run as recorded, none new"), build and libs exit 0. ^agc 586/586 (42 skipped). New tests --repeat until-fail:10 4/4. Fix commit alone 21/21. Conventions pass; 0 added comments.
-  - Cost: medians -2.5 % to +7.7 % with overlapping ranges, largest on an unchanged path: nothing measurable.
-  - Overlaps: of 574 open PRs only #5872 and #5115 gain conflicts, both additive; neither does this. #6243 and #1184 merge as before.
-- Task before it: GAC-020, done: results/cloud-1/GAC-020.md.
+- Last task: BF-011, done: results/cloud-1/BF-011.md. Verdict GREEN: only the baseline fails.
+  - Head: fork perf/shader-direct-cpu-evaluable-images-followup 0b099964f0 (23d6cf684 #6243 + BF-009, merged with upstream main e49ec591dc; FormatVersion 37).
+  - CI Linux mirror: configure 0, registration 0 ("891 test executable(s), 0 built and not run as recorded, none new"), build 0 (16 warnings, the same as main's), libs 0, test 8, skips 1, slow report 0.
+  - Full ctest: 1242 tests, 1177 passed, 60 skipped, 5 failed: the socket baseline (four guest_datagram_*, guest_tcp).
+  - ^agc: 589 tests, 0 failed, 42 skipped (main e49ec591dc: the same counts).
+  - check_skips flags guest_sce_net (baseline) and agc_import_watch_other_family ("skipped, no other queue family to settle imports on": lavapipe has one queue family). That test came with #6060; it skipped 10/10 alone, and main e49ec591dc's own mirror flags it identically, so it is main's, not #6243's.
+  - Eight image-table and shader-memory tests --repeat until-fail:10: 8/8, 80 runs. agc_driver_preparation_scope_settle and audio_out2_shutdown passed.
+- Task before it: GAC-023, done: results/cloud-1/GAC-023.md (fork fix/agc-defer-unpreparable-abi-stages 3401d20db; ^agc 586/586, red/green per entry point, PR draft with VILLAGE/WINDOWS placeholders).
