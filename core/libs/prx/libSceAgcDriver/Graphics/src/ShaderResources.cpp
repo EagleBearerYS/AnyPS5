@@ -3109,12 +3109,21 @@ std::uint64_t StagedWriteBuilds() {
     return stagedWriteBuilds.load(std::memory_order_relaxed);
 }
 
+void ShaderResources::checkBdaFault() const {
+    try {
+        bda->CheckFault();
+    } catch (const std::runtime_error& error) {
+        if (program == 0) throw;
+        throw std::runtime_error(std::string(error.what()) + " (program 0x" + HexText(program) + ")");
+    }
+}
+
 void ShaderResources::CheckFaults() const {
-    if (bda) bda->CheckFault();
+    if (bda) checkBdaFault();
 }
 
 void ShaderResources::WriteBackBuffers() {
-    if (bda) bda->CheckFault();
+    if (bda) checkBdaFault();
     guestMemory.Release();
 }
 

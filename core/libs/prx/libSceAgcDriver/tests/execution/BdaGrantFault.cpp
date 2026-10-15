@@ -64,11 +64,9 @@ std::string ProgramTag(const Program& program) {
     return "(program " + Hex(program.Address()) + ")";
 }
 
-std::string failure;
-
 void StoreOutsideGrants() {
-    auto& output = *new PrivatePages(1);
-    auto& readOnly = *new PrivatePages(1, false);
+    PrivatePages output(1);
+    PrivatePages readOnly(1, false);
     for (std::uint32_t word = 0; word < WordsPerPage; ++word) output.Words()[word] = Untouched;
     for (std::uint32_t word = 0; word < Lanes; ++word) readOnly.Words()[word] = Untouched;
     Commands commands;
@@ -81,25 +79,33 @@ void StoreOutsideGrants() {
     const std::array<std::uint32_t, 2> faulting{Low(readOnly.Address()), High(readOnly.Address())};
     commands.Dispatch(ReadOnlyStoreProgram(), faulting, Lanes);
     for (std::uint32_t dispatch = CorrectBefore; dispatch < CorrectBefore + CorrectAfter; ++dispatch) correct(dispatch);
+    std::string failure;
     std::string log;
     {
         StderrCapture capture;
         try {
             commands.Submit(0);
             WaitIdle();
+            Settle();
         } catch (const std::exception& error) {
             failure = error.what();
         }
         log = capture.Finish();
     }
-    Expect(!failure.empty(), "store outside the write grants: a GLOBAL store to a page the guest maps without CPU write access, among " + std::to_string(CorrectBefore + CorrectAfter) + " correct dispatches of one batch, reported no failure");
-    Expect(Count(failure, "BDA access failed") == 1u && failure.find("reason=2") != std::string::npos, "store outside the write grants: the failure is not one Permission fault: " + failure);
-    Expect(failure.find(ProgramTag(ReadOnlyStoreProgram())) != std::string::npos, "store outside the write grants: the fault does not name the storing program " + ProgramTag(ReadOnlyStoreProgram()) + ": " + failure);
-    Expect(Count(failure + log, ProgramTag(SliceStoreProgram())) == 0u, "store outside the write grants: a fault was reported for the correct dispatches' program:\n" + failure + "\n" + log);
-    const auto at = failure.find("address=0x");
-    const auto faulted = at != std::string::npos ? std::strtoull(failure.c_str() + at + 10, nullptr, 16) : 0ull;
-    Expect(faulted >= readOnly.Address() && faulted < readOnly.Address() + Lanes * 4u, "store outside the write grants: the fault does not name an address the program stored to: " + failure);
-    for (std::uint32_t word = 0; word < Lanes; ++word) Expect(readOnly.Words()[word] == Untouched, "store outside the write grants: the faulting store landed at word " + std::to_string(word));
+    const auto what = std::string("store outside the write grants: a GLOBAL store to a page the guest maps without CPU write access, among ") + std::to_string(CorrectBefore + CorrectAfter) + " correct dispatches of one batch";
+    Expect(failure.empty(), what + ": the fault stopped the driver: " + failure);
+    Expect(Count(log, "BDA access failed") == 1u, what + ": the fault was not reported exactly once:\n" + log);
+    const auto at = log.find("BDA access failed");
+    const auto report = at != std::string::npos ? log.substr(at, log.find('\n', at) - at) : std::string();
+    Expect(report.find("reason=2") != std::string::npos, what + ": the report is not a Permission fault: " + report);
+    Expect(report.find("write grants: 0") != std::string::npos, what + ": the report does not show a dispatch without write grants: " + report);
+    Expect(report.find(ProgramTag(ReadOnlyStoreProgram())) != std::string::npos, what + ": the report does not name the storing program " + ProgramTag(ReadOnlyStoreProgram()) + ": " + report);
+    Expect(Count(log, ProgramTag(SliceStoreProgram())) == 0u, what + ": a fault was reported for the correct dispatches' program:\n" + log);
+    const auto address = report.find("address=0x");
+    const auto faulted = address != std::string::npos ? std::strtoull(report.c_str() + address + 10, nullptr, 16) : 0ull;
+    Expect(faulted >= readOnly.Address() && faulted < readOnly.Address() + Lanes * 4u, what + ": the report does not name an address the program stored to: " + report);
+    AgcDriver::GuestMemory::FlushGpuWrites(output.Address(), output.Bytes());
+    for (std::uint32_t word = 0; word < Lanes; ++word) Expect(readOnly.Words()[word] == Untouched, what + ": the faulting store landed at word " + std::to_string(word));
     std::size_t wrong = 0;
     std::string first;
     for (std::uint32_t word = 0; word < WordsPerPage; ++word) {
@@ -109,7 +115,7 @@ void StoreOutsideGrants() {
         if (actual == expected) continue;
         if (wrong++ == 0u) first = "word " + std::to_string(word) + " (correct dispatch " + std::to_string(dispatch) + ") is " + Hex(actual) + ", expected " + Hex(expected);
     }
-    Expect(wrong == 0u, "store outside the write grants: the correct dispatches of the batch lost results: " + std::to_string(wrong) + " words differ, first " + first);
+    Expect(wrong == 0u, what + ": the correct dispatches of the batch lost results: " + std::to_string(wrong) + " words differ, first " + first);
 }
 
 }
@@ -130,7 +136,7 @@ int main() {
     try {
         AgcDriverShutdown_nid_postfix();
     } catch (const std::exception& error) {
-        Expect(std::string(error.what()) == failure, std::string("shutdown reported another failure: ") + error.what());
+        Expect(false, std::string("shutdown: ") + error.what());
     }
     if (failures != 0) {
         std::fprintf(stderr, "%d BDA grant fault checks failed\n", failures);

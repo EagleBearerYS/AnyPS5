@@ -238,6 +238,7 @@ public:
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }
     bool ChecksFaults() const { return bda != nullptr; }
     void CheckFaults() const;
+    void NameProgram(std::uint64_t address) { program = address; }
     bool StagesWrites() const { return staging != nullptr; }
     void RecordStagingIn(VkCommandBuffer commands) const;
     void RecordStagingOut(VkCommandBuffer commands) const;
@@ -268,6 +269,8 @@ public:
 
 private:
     friend class AgcDriver::VulkanDevice;
+    void checkBdaFault() const;
+    std::uint64_t program = 0;
     struct DescribedRange {
         const char* kind;
         std::uint64_t address;
