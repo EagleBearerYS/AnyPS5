@@ -1,0 +1,3 @@
+BASE=7663bc63bbda680e5cf87602ed201bb1f300ba2f
+REPEAT=5
+EXTRA_TESTS='agc_driver_bda_reads_shadowed_results|agc_driver_bda_reads_shadowed_results_per_build'
