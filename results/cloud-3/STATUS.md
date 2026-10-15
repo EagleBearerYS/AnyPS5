@@ -1,4 +1,4 @@
-READY
+BUSY PM-045 (claimed: completeness review of #6366 and its ABI-decode follow-up 661d3cba8d; mapping the ABI paths first)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
