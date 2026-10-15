@@ -230,27 +230,16 @@ auto RecompileFormatted(AgcDriver::VulkanDevice& device, std::span<const std::ui
     return ShaderRecompiler::Recompile(Request(code, userData, device.Target(), memory));
 }
 
-void RunFormattedFault(AgcDriver::VulkanDevice& device, const std::string& name, std::span<const std::uint32_t> code, std::uint32_t viewOffset) {
-    const auto run = "buffer unaligned base " + name + ", view +" + std::to_string(viewOffset);
-    try {
-        static_cast<void>(RecompileFormatted(device, code, Input.data() + viewOffset, ViewBytes));
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find("is a formatted buffer access through a V# whose base is not aligned to its element") != std::string::npos, run + ": unexpected error: " + error.what());
-        return;
-    }
-    throw std::runtime_error(run + ": a formatted access the hardware faults on was recompiled");
-}
-
-void RunFormattedLoad(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
+void RunFormattedLoad(AgcDriver::VulkanDevice& device, const std::string& name, std::span<const std::uint32_t> code, std::uint32_t viewOffset, std::uint32_t byte, std::uint32_t mask) {
     for (std::uint32_t index = 0; index < InputBytes; ++index) Input[index] = static_cast<std::uint8_t>(index * 29u + 5u + (index >> 4u));
     Output.fill(Fill);
     const auto* view = Input.data() + viewOffset;
-    const auto result = RecompileFormatted(device, Load16Code, view, ViewBytes);
-    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Load16Code.data()));
+    const auto result = RecompileFormatted(device, code, view, ViewBytes);
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-        const auto expected = ViewField(view, lane * 4u + 2u, 0xffffu);
-        Require(Output[lane] == expected, "buffer unaligned base tbuffer_load_format_x 16_UINT, view +" + std::to_string(viewOffset) + ": lane " + std::to_string(lane) + " is " + Hex(Output[lane]) + ", expected " + Hex(expected));
+        const auto expected = ViewField(view, lane * 4u + byte, mask);
+        Require(Output[lane] == expected, "buffer unaligned base " + name + ", view +" + std::to_string(viewOffset) + ": lane " + std::to_string(lane) + " is " + Hex(Output[lane]) + ", expected " + Hex(expected));
     }
 }
 
@@ -304,15 +293,11 @@ int main() {
         RunPair(*device, 2);
         RunPair(*device, 3);
         RunAtomic(*device);
-        RunFormattedLoad(*device, 2);
-        RunFormattedStore(*device, 2);
-        for (const auto view : {1u, 3u}) {
-            RunFormattedFault(*device, "tbuffer_load_format_x 16_UINT", Load16Code, view);
-            RunFormattedFault(*device, "tbuffer_store_format_x 16_UINT", Store16Code, view);
-        }
         for (const auto view : {1u, 2u, 3u}) {
-            RunFormattedFault(*device, "tbuffer_load_format_x 32_UINT", Load32Code, view);
-            RunFormattedFault(*device, "tbuffer_load_format_x 16_16_UINT", Load16_16Code, view);
+            RunFormattedLoad(*device, "tbuffer_load_format_x 16_UINT", Load16Code, view, 2u, 0xffffu);
+            RunFormattedLoad(*device, "tbuffer_load_format_x 32_UINT", Load32Code, view, 0u, 0xffffffffu);
+            RunFormattedLoad(*device, "tbuffer_load_format_x 16_16_UINT", Load16_16Code, view, 0u, 0xffffu);
+            RunFormattedStore(*device, view);
         }
         std::puts("buffer unaligned base tests passed");
         return 0;
