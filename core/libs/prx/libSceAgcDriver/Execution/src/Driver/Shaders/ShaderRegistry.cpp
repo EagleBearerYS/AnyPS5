@@ -1166,6 +1166,11 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     PerformanceTimer timing("Shader.ResolveGraphicsStagesAbi");
     ShaderPreparationTransaction transaction;
     CheckFailure();
+    static const bool deferAbi = std::getenv("APS5_DEFER_ABI_PREPARE") != nullptr;
+    if (deferAbi) {
+        transaction.Commit();
+        return;
+    }
     require(!stages.empty(), "graphics ABI has no shader headers");
     QueueState state{};
     std::shared_ptr<const ShaderRegistry> registry;
