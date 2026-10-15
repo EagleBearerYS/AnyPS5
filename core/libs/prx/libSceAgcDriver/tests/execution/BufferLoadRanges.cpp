@@ -11,6 +11,11 @@
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -41,7 +46,10 @@ struct Case {
     std::uint32_t view;
     std::uint32_t records;
     std::uint32_t word3;
+    bool outside = false;
 };
+
+constexpr std::uint32_t Outside = 0x80000000u;
 
 constexpr std::uint32_t Ubyte = 0x08u;
 constexpr std::uint32_t Ushort = 0x0au;
@@ -50,7 +58,7 @@ constexpr std::uint32_t DwordX2 = 0x0du;
 constexpr std::uint32_t DwordX4 = 0x0eu;
 constexpr std::uint32_t DwordX3 = 0x0fu;
 
-constexpr std::array<Case, 21> Cases{{
+constexpr std::array<Case, 24> Cases{{
     {"dwordx3", DwordX3, 3, 4, false, 0, 0, 40, Raw},
     {"dwordx3 view+1", DwordX3, 3, 4, false, 0, 1, 44, Raw},
     {"dwordx3 view+2 offset 4", DwordX3, 3, 4, false, 4, 2, 36, Raw},
@@ -72,12 +80,52 @@ constexpr std::array<Case, 21> Cases{{
     {"dwordx3 without record check or records", DwordX3, 3, 4, false, 0, 1, 0, RawNoRecordCheck},
     {"dwordx3 without records", DwordX3, 3, 4, false, 0, 0, 0, Raw},
     {"dwordx3 with 4 bytes", DwordX3, 3, 4, false, 0, 2, 4, Raw},
+    {"dwordx3 without record check outside guest memory", DwordX3, 3, 4, false, 0, 0, 36, RawNoRecordCheck, true},
+    {"dwordx4 without record check outside guest memory view+3", DwordX4, 4, 4, false, 0, 3, 40, RawNoRecordCheck, true},
+    {"ushort without record check outside guest memory view+2", Ushort, 1, 2, false, 0, 2, 40, RawNoRecordCheck, true},
 }};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes, std::uint32_t word3) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, word3};
 }
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
 
 std::string Hex(std::uint32_t value) {
     char text[16];
@@ -88,6 +136,12 @@ std::string Hex(std::uint32_t value) {
 std::array<std::uint32_t, Lanes> LaneOffsets(const Case& c) {
     const auto n = c.records;
     const std::array<std::uint32_t, 4> tail = c.bytes == 1 ? std::array<std::uint32_t, 4>{n - 3, n - 1, 3, 7} : c.bytes == 2 ? std::array<std::uint32_t, 4>{n - 4, n - 2, 2, 6} : std::array<std::uint32_t, 4>{n - 24, n - 28, 32, 36};
+    if (c.word3 == RawNoRecordCheck && c.outside) {
+        return {0, 4, 8, 12, 16, 20, 24, 28,
+                n - 20, n - 16, n - 12, n - 8, n - 4, n, n + 4, n + 8,
+                Outside, Outside + 0x10000000u, Outside + 0x20000000u, Outside + 0x30000000u, Outside + 0x40000000u, Outside + 0x50000000u, Outside + 0x60000000u, Outside + 0x70000000u,
+                tail[0], tail[1], tail[2], tail[3], 0, 4, n - 8, n - 4};
+    }
     if (c.word3 == RawNoRecordCheck) {
         return {0, 4, 8, 12, 16, 20, 24, 28,
                 n - 20, n - 16, n - 12, n - 8, n - 4, n, n + 4, n + 8,
@@ -105,7 +159,7 @@ bool LaneActive(std::uint32_t lane) {
 }
 
 bool Valid(const Case& c, std::uint32_t offset) {
-    if (c.records == 0) return false;
+    if (c.records == 0 || (c.outside && offset >= Outside)) return false;
     if (c.word3 == Raw) return c.records >= c.bytes && offset <= c.records - c.bytes;
     return true;
 }
@@ -167,8 +221,17 @@ void Run(AgcDriver::VulkanDevice& device, Program& program, const Case& c) {
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
-    device.WaitIdle();
+    StderrCapture log;
+    try {
+        device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.WaitIdle();
+    } catch (...) {
+        static_cast<void>(log.Finish());
+        throw;
+    }
+    const auto text = log.Finish();
+    const bool faulted = text.find("BDA access failed") != std::string::npos;
+    Require(faulted == c.outside && (!c.outside || text.find("reason=1") != std::string::npos), std::string("buffer load ranges ") + c.name + (c.outside ? ": the loads outside guest memory recorded no unmapped fault" : ": a load inside guest memory recorded a fault"));
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         for (std::uint32_t dword = 0; dword < 4; ++dword) {
             std::uint32_t expected = Marker;

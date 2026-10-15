@@ -68,7 +68,6 @@ std::uint32_t nonzero(SpirvEmitterState& state, std::uint32_t value) {
 void faultIf(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t condition, std::uint32_t address, std::uint32_t bytes, BdaAbi::FaultReason reason) {
     auto& state = context.state;
     EmitIfCondition(state, condition, [&] { RecordBdaFault(state, address, ConstantU32(state, bytes), BdaInstructionPc(state, instruction), reason); });
-    StopBdaInvocationIf(state, condition);
 }
 
 bool runtimeWords(const SpirvEmitterState& state, const MemoryInfo& memory) {
@@ -201,7 +200,7 @@ RuntimeAddress address(SpirvValueEmitContext& context, const IrValue& instructio
     const auto range = inBounds;
     inBounds = both(state, usable(state, resource), range);
     if (!context.Memory(instruction).gpuDescriptor) return {byte, inBounds, range};
-    return {AddBdaAddress(context, instruction, resource.base, Unary(state, spv::OpUConvert, TypeScalarU64(state), byte), false), inBounds, range};
+    return {Binary(state, spv::OpIAdd, TypeScalarU64(state), resource.base, Unary(state, spv::OpUConvert, TypeScalarU64(state), byte)), inBounds, range};
 }
 
 MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, bool store, bool wide = false) {
@@ -639,9 +638,6 @@ std::uint32_t formatSwitch(SpirvValueEmitContext& context, const IrValue& instru
         std::copy(decoded.begin(), decoded.begin() + info.componentCount, values.begin());
         return {selectFormatted(state, components, info, layout, values, decoded[info.componentCount])};
     });
-    constexpr std::uint32_t count = static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float);
-    const auto unsupported = Binary(state, spv::OpLogicalOr, TypeBool(state), equal(state, format, ConstantU32(state, 0u)), Binary(state, spv::OpUGreaterThan, TypeBool(state), format, ConstantU32(state, count)));
-    if (memory.gpuDescriptor) StopBdaInvocationIf(state, unsupported);
     return store ? ConstantU32(state, 0u) : result.front();
 }
 
@@ -754,7 +750,7 @@ std::uint32_t scalarLoad(SpirvValueEmitContext& context, const IrValue& instruct
         return EmitValueOrZeroIfCondition(state, both(state, inBounds, EmitMemoryElementInBounds(state, access, index)), [&] { return directWordLoad(state, access, index); });
     }
     const auto base = Binary(state, spv::OpBitwiseAnd, u64, resource.base, BdaConstant(state, ~std::uint64_t{3u}));
-    return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, resource, AddBdaAddress(context, instruction, base, offset, false), 32u); });
+    return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, resource, Binary(state, spv::OpIAdd, u64, base, offset), 32u); });
 }
 
 std::uint32_t atomicTargetType(SpirvEmitterState& state, const MemoryInfo& memory) {
@@ -786,7 +782,6 @@ std::uint32_t atomicTarget(SpirvValueEmitContext& context, const IrValue& instru
                     const auto high = Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, u64, guest, BdaConstant(state, 32u)));
                     RecordBdaFaultWords(state, Unary(state, spv::OpUConvert, TypeU32(state), guest), high, ConstantU32(state, bits / 8u), BdaInstructionPc(state, instruction), BdaAbi::FaultReason::Unaligned);
                 });
-                StopBdaInvocationIf(state, unaligned);
                 const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byte, ConstantU32(state, bits == 64u ? 3u : 2u));
                 return EmitValueOrDefaultIfCondition(state, both(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), EmitMemoryElementInBounds(state, storage, index)), u64, none, [&] {
                     const auto pointer = EmitStorageBufferElementPointer(state, storage, index, bits == 64u ? TypePhysicalU64Pointer(state) : TypePhysicalU32Pointer(state));
@@ -822,17 +817,15 @@ std::uint32_t callAccessHelper(SpirvEmitterState& state, const std::vector<std::
         struct Restore {
             SpirvEmitterState& state;
             std::uint32_t label;
-            std::uint32_t stopValue;
             std::uint32_t pcOverride;
             ~Restore() {
                 state.module.EndHelperFunction();
                 state.currentLabel = label;
-                state.bdaStopValue = stopValue;
                 state.bdaPcOverride = pcOverride;
             }
         };
         state.module.BeginHelperFunction();
-        const Restore restore{state, state.currentLabel, state.bdaStopValue, state.bdaPcOverride};
+        const Restore restore{state, state.currentLabel, state.bdaPcOverride};
         state.module.AddName(id, name);
         state.module.AddFunction(spv::OpFunction, resultType, id, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, std::span<const std::uint32_t>(types)));
         std::vector<std::uint32_t> parameters;
@@ -841,7 +834,6 @@ std::uint32_t callAccessHelper(SpirvEmitterState& state, const std::vector<std::
             state.module.AddFunction(spv::OpFunctionParameter, argument.type, parameters.back());
         }
         EmitLabel(state, state.module.AllocateId());
-        state.bdaStopValue = 0u;
         state.bdaPcOverride = 0u;
         const std::uint32_t value = body(std::span<const std::uint32_t>(parameters));
         if (value == 0u) state.module.AddFunction(spv::OpReturn);
@@ -853,15 +845,6 @@ std::uint32_t callAccessHelper(SpirvEmitterState& state, const std::vector<std::
     for (const auto& argument : arguments) call.push_back(argument.value);
     state.module.AddFunction(call);
     return call[2];
-}
-
-std::uint32_t stopIfHelperStopped(SpirvEmitterState& state, std::uint32_t result, std::uint32_t valueType) {
-    const auto stopped = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), stopped, result, 1u);
-    StopBdaInvocationIf(state, nonzero(state, stopped));
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, valueType, value, result, 0u);
-    return value;
 }
 
 enum class AccessKind : std::uint32_t { RawLoad = 1, RawStore, ScalarLoad, FormattedLoad, FormattedStore, Atomic };
@@ -933,7 +916,6 @@ struct AccessShape {
     std::vector<std::uint32_t> key;
     std::uint32_t parameterWords = 0;
     bool laneParameter = false;
-    bool stops = false;
     bool constantDescriptor = false;
 };
 
@@ -950,8 +932,7 @@ AccessShape accessShape(const SpirvEmitterState& state, const IrValue& instructi
     }
     shape.constantDescriptor = memory.gpuDescriptor && constantWord(instruction, 0u) != nullptr && constantWord(instruction, 2u) != nullptr && shape.parameterWords == 5u;
     shape.laneParameter = laneIndexed(state, memory) && (shape.parameterWords & 8u) != 0u;
-    shape.stops = state.bdaStopsInvocations && (memory.gpuDescriptor || request.kind == AccessKind::Atomic);
-    shape.key = {static_cast<std::uint32_t>(request.kind), memory.gpuDescriptor ? 0xffffffffu : memory.resource, request.components, memory.dataBits, memory.coherent ? 1u : 0u, static_cast<std::uint32_t>(memory.kind), mask, shape.parameterWords, shape.laneParameter ? 1u : 0u, shape.stops ? 1u : 0u};
+    shape.key = {static_cast<std::uint32_t>(request.kind), memory.gpuDescriptor ? 0xffffffffu : memory.resource, request.components, memory.dataBits, memory.coherent ? 1u : 0u, static_cast<std::uint32_t>(memory.kind), mask, shape.parameterWords, shape.laneParameter ? 1u : 0u};
     shape.key.insert(shape.key.end(), constants.begin(), constants.end());
     shape.key.insert(shape.key.end(), request.extra.begin(), request.extra.end());
     return shape;
@@ -1043,6 +1024,13 @@ template<typename TBody>
 std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruction, const AccessRequest& request, std::uint32_t active, std::uint32_t valueType, std::uint32_t zero, const std::vector<HelperArgument>& extra, bool outOfLine, TBody&& body) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
+    struct Faults {
+        SpirvEmitterState& state;
+        bool stops;
+        ~Faults() { state.bdaStopsInvocations = stops; }
+    };
+    const Faults faults{state, state.bdaStopsInvocations};
+    state.bdaStopsInvocations = false;
     const auto operands = instructionValues(context, instruction, request.kind == AccessKind::ScalarLoad);
     const auto shape = accessShape(state, instruction, memory, request);
     std::vector<std::uint32_t> values;
@@ -1051,24 +1039,11 @@ std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruct
     const auto call = [&] {
         auto arguments = accessArguments(context, instruction, shape, request.kind, operands);
         arguments.insert(arguments.end(), extra.begin(), extra.end());
-        const auto u32 = TypeU32(state);
-        const auto resultType = shape.stops ? (valueType == 0u ? u32 : state.module.Type(spv::OpTypeStruct, valueType, u32)) : (valueType == 0u ? TypeVoid(state) : valueType);
-        const auto result = callAccessHelper(state, shape.key, helperName(request, memory), resultType, arguments, [&](std::span<const std::uint32_t> parameters) {
+        const auto result = callAccessHelper(state, shape.key, helperName(request, memory), valueType == 0u ? TypeVoid(state) : valueType, arguments, [&](std::span<const std::uint32_t> parameters) {
             const auto helper = helperValues(state, shape, request.kind, operands, memory.gpuDescriptor, parameters);
-            if (shape.stops) state.bdaStopValue = valueType == 0u ? ConstantU32(state, 1u) : state.module.Constant(spv::OpConstantComposite, resultType, zero, ConstantU32(state, 1u));
-            const std::uint32_t value = body(helper.values, ConstantBool(state, true), parameters.subspan(helper.next));
-            if (!shape.stops) return value;
-            if (valueType == 0u) return ConstantU32(state, 0u);
-            const auto returned = state.module.AllocateId();
-            state.module.AddFunction(spv::OpCompositeConstruct, resultType, returned, value, ConstantU32(state, 0u));
-            return returned;
+            return body(helper.values, ConstantBool(state, true), parameters.subspan(helper.next));
         });
-        if (!shape.stops) return valueType == 0u ? 0u : result;
-        if (valueType == 0u) {
-            StopBdaInvocationIf(state, nonzero(state, result));
-            return 0u;
-        }
-        return stopIfHelperStopped(state, result, valueType);
+        return valueType == 0u ? 0u : result;
     };
     if (request.kind == AccessKind::ScalarLoad) return call();
     if (valueType == 0u) {

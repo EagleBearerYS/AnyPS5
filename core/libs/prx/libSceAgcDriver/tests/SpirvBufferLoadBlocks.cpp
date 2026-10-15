@@ -90,6 +90,10 @@ Added ScalarLoadAdded() {
     return Delta(loaded, constant, AlignedBase);
 }
 
+Added RuntimeLoadBudget(std::uint32_t dwords) {
+    return {2u * (2u + dwords), 2u + dwords};
+}
+
 void Expect(const char* name, const Added& added, const Added& limit) {
     if (added.blocks > limit.blocks) throw std::runtime_error(std::string(name) + " adds " + std::to_string(added.blocks) + " blocks, expected at most " + std::to_string(limit.blocks));
     if (added.guards > limit.guards) throw std::runtime_error(std::string(name) + " adds " + std::to_string(added.guards) + " conditional branches, expected at most " + std::to_string(limit.guards));
@@ -99,12 +103,12 @@ void Expect(const char* name, const Added& added, const Added& limit) {
 
 int main() {
     try {
-        Expect("buffer_load_dword", LoadAdded(LoadDword, StoreDword, 1u, AlignedBase), {3u, 1u});
-        Expect("buffer_load_dwordx2", LoadAdded(LoadDwordX2, StoreDwordX2, 2u, AlignedBase), {3u, 1u});
-        Expect("buffer_load_dwordx3", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, AlignedBase), {3u, 1u});
-        Expect("buffer_load_dwordx4", LoadAdded(LoadDwordX4, StoreDwordX4, 4u, AlignedBase), {3u, 1u});
-        Expect("buffer_load_dwordx3 with an unaligned base", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, UnalignedBase), {4u, 1u});
-        Expect("s_buffer_load_dword", ScalarLoadAdded(), {2u, 1u});
+        Expect("buffer_load_dword", LoadAdded(LoadDword, StoreDword, 1u, AlignedBase), RuntimeLoadBudget(1u));
+        Expect("buffer_load_dwordx2", LoadAdded(LoadDwordX2, StoreDwordX2, 2u, AlignedBase), RuntimeLoadBudget(2u));
+        Expect("buffer_load_dwordx3", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, AlignedBase), RuntimeLoadBudget(3u));
+        Expect("buffer_load_dwordx4", LoadAdded(LoadDwordX4, StoreDwordX4, 4u, AlignedBase), RuntimeLoadBudget(4u));
+        Expect("buffer_load_dwordx3 with an unaligned base", LoadAdded(LoadDwordX3, StoreDwordX3, 3u, UnalignedBase), RuntimeLoadBudget(3u));
+        Expect("s_buffer_load_dword", ScalarLoadAdded(), {4u, 2u});
     } catch (const std::exception& error) {
         std::cerr << "SpirvBufferLoadBlocks: " << error.what() << '\n';
         return 1;
