@@ -3143,7 +3143,7 @@ std::shared_ptr<BatchFaultRecord> ShaderResources::batchFaultRecord() {
         const auto last = ((end - 1u) >> Abi::WrittenChunkShift) + 1u;
         if (last > first) chunks += last - first;
         counted = std::max(counted, last);
-        if (chunks > Abi::WrittenPageSlots) return nullptr;
+        if (chunks > BatchFaultRecord::Capacity) return nullptr;
     }
     writtenChunks = static_cast<std::uint32_t>(chunks);
     return recorder->CallerFaultRecord(writtenChunks);
@@ -3194,15 +3194,13 @@ void BatchFaults::Complete() {
         if (record != nullptr && std::find(records.begin(), records.end(), record) == records.end()) records.push_back(record);
     }
     for (const auto* record : records) {
-        std::vector<const BdaResources*> sharing;
-        std::vector<std::uint64_t> programs;
+        std::vector<BatchFaultUser> sharing;
         for (const auto& user : users) {
             if (user->bda == nullptr || user->bda->SharedRecord().get() != record) continue;
-            sharing.push_back(user->bda.get());
-            programs.push_back(user->program);
+            sharing.push_back({user->bda.get(), user->program, user->MemoryReads(), user->MemoryWrites()});
         }
         try {
-            record->Check(sharing, programs);
+            record->Check(sharing);
         } catch (const std::exception& error) {
             failed(error);
         }

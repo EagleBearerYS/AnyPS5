@@ -35,14 +35,22 @@ private:
 
 class BdaResources;
 
+struct BatchFaultUser {
+    const BdaResources* bda = nullptr;
+    std::uint64_t program = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+};
+
 class BatchFaultRecord {
 public:
+    static constexpr std::uint32_t Capacity = ShaderRecompiler::BdaAbi::WrittenPageSlots / 2;
     BatchFaultRecord(const Context& context, std::uint32_t stream, std::uint64_t batch);
     VkDescriptorBufferInfo Descriptor() const;
     std::uint32_t Stream() const { return stream; }
     std::uint64_t Batch() const { return batch; }
     bool Admit(std::uint32_t chunks);
-    void Check(std::span<const BdaResources* const> users, std::span<const std::uint64_t> programs) const;
+    void Check(std::span<const BatchFaultUser> users) const;
 
 private:
     BdaArena::Slice slice;
@@ -71,6 +79,9 @@ public:
 private:
     friend class BatchFaultRecord;
     static void markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users);
+    static void applyWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users);
+    static void markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users);
+    static bool shadowed(std::span<const BdaResources* const> users);
     static bool published(const ShaderRecompiler::BdaAbi::Fault& report);
     bool owns(const ShaderRecompiler::BdaAbi::Fault& report) const;
     [[noreturn]] void throwFault(const ShaderRecompiler::BdaAbi::Fault& report) const;

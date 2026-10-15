@@ -63,7 +63,7 @@ VkDescriptorBufferInfo BatchFaultRecord::Descriptor() const {
 }
 
 bool BatchFaultRecord::Admit(std::uint32_t written) {
-    if (written > ShaderRecompiler::BdaAbi::WrittenPageSlots - chunks) return false;
+    if (written > Capacity - chunks) return false;
     chunks += written;
     return true;
 }
@@ -161,11 +161,8 @@ void BdaResources::CheckFault() const {
 }
 
 bool BdaResources::owns(const ShaderRecompiler::BdaAbi::Fault& report) const {
-    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) return (report.bytes & ShaderRecompiler::DeviceImageTableAbi::FaultFlag) != 0u ? deviceImages != nullptr : !imageTables.empty();
-    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::UnlinkedCall || report.reason == ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle) return false;
-    if (pages != nullptr && pages->Find(report.address).has_value()) return true;
-    const auto found = std::upper_bound(ownRanges.begin(), ownRanges.end(), report.address, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& candidate) { return value < candidate.begin; });
-    return found != ownRanges.begin() && report.address < std::prev(found)->end;
+    if (report.reason != ShaderRecompiler::BdaAbi::FaultReason::ImageTable) return false;
+    return (report.bytes & ShaderRecompiler::DeviceImageTableAbi::FaultFlag) != 0u ? deviceImages != nullptr : !imageTables.empty();
 }
 
 void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) const {
@@ -236,69 +233,109 @@ void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vec
     }
 }
 
-void BatchFaultRecord::Check(std::span<const BdaResources* const> users, std::span<const std::uint64_t> programs) const {
+void BatchFaultRecord::Check(std::span<const BatchFaultUser> users) const {
+    namespace Abi = ShaderRecompiler::BdaAbi;
     if (users.empty()) return;
-    BdaResources::markWrittenPages(reinterpret_cast<std::uint32_t*>(slice.data), users);
-    ShaderRecompiler::BdaAbi::Fault report{};
+    auto* words = reinterpret_cast<std::uint32_t*>(slice.data);
+    std::vector<const BdaResources*> sharing;
+    sharing.reserve(users.size());
+    for (const auto& user : users) sharing.push_back(user.bda);
+    BdaResources::applyWrittenPages(words, sharing);
+    if (words[Abi::WrittenOverflowWord] != 0) {
+        std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+        if (BdaResources::shadowed(sharing)) gpu.lock();
+        for (const auto& user : users) {
+            for (const auto& [begin, end] : user.writes) {
+                if (end > begin) BdaResources::markWrittenRange(begin, static_cast<std::size_t>(end - begin), sharing);
+            }
+        }
+        words[Abi::WrittenOverflowWord] = 0;
+    }
+    Abi::Fault report{};
     std::memcpy(&report, slice.data, sizeof(report));
     if (!BdaResources::published(report) || loopGuardReported(report)) return;
-    std::size_t owner = 0;
+    const auto holds = [&](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
+        return std::any_of(ranges.begin(), ranges.end(), [&](const std::pair<std::uint64_t, std::uint64_t>& range) { return range.first <= report.address && report.address < range.second; });
+    };
+    std::vector<std::size_t> candidates;
     for (std::size_t index = 0; index < users.size(); ++index) {
-        if (!users[index]->owns(report)) continue;
-        owner = index;
-        break;
+        const bool match = report.reason == Abi::FaultReason::ImageTable ? users[index].bda->owns(report) : holds(users[index].reads) || holds(users[index].writes);
+        if (match) candidates.push_back(index);
     }
+    const auto owner = candidates.empty() ? std::size_t{0} : candidates.front();
     try {
-        users[owner]->throwFault(report);
+        users[owner].bda->throwFault(report);
     } catch (const std::runtime_error& error) {
         std::ostringstream message;
         message << error.what();
-        if (owner < programs.size() && programs[owner] != 0) message << " (program 0x" << std::hex << programs[owner] << std::dec << ")";
-        if (users.size() > 1) message << " (one of " << users.size() << " builds sharing the batch's fault record)";
+        if (candidates.size() == 1 || users.size() == 1) {
+            if (users[owner].program != 0) message << " (program 0x" << std::hex << users[owner].program << std::dec << ")";
+            if (users.size() > 1) message << " (one of " << users.size() << " builds sharing the batch's fault record)";
+        } else {
+            std::vector<std::size_t> named = candidates;
+            if (named.empty()) {
+                for (std::size_t index = 0; index < users.size(); ++index) named.push_back(index);
+            }
+            message << " (one of " << named.size() << " candidate builds of the " << users.size() << " sharing the batch's fault record; programs" << std::hex;
+            for (std::size_t index = 0; index < named.size() && index < 4u; ++index) message << " 0x" << users[named[index]].program;
+            message << std::dec << (named.size() > 4u ? " and more)" : ")");
+        }
         throw std::runtime_error(message.str());
     }
 }
 
+bool BdaResources::shadowed(std::span<const BdaResources* const> users) {
+    return std::any_of(users.begin(), users.end(), [](const BdaResources* user) { return !user->shadowRanges.empty(); });
+}
+
 void BdaResources::markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users) {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one fault record are not implemented");
+    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
+    applyWrittenPages(words, users);
+}
+
+void BdaResources::applyWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
     std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
-    if (std::any_of(users.begin(), users.end(), [](const BdaResources* user) { return !user->shadowRanges.empty(); })) gpu.lock();
-    Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) {
-        const auto end = begin + bytes;
-        for (const auto* user : users) {
-            for (std::size_t index = 0; index < user->imageTableRanges.size(); ++index) {
-                const auto [base, size] = user->imageTableRanges[index];
-                const auto low = std::max(begin, base);
-                const auto high = std::min(end, base + size);
-                if (low >= high) continue;
-                const auto* current = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(low));
-                if (std::memcmp(current, user->imageTableBytes[index].data() + (low - base), static_cast<std::size_t>(high - low)) != 0) {
-                    std::ostringstream message;
-                    message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
-                    Require(false, message.str());
-                }
-            }
-        }
-        const auto generation = GuestMemory::MarkWritten(begin, bytes);
-        if (generation == 0) return;
-        for (const auto* user : users) {
-            for (std::size_t index = 0; index < user->shadowRanges.size(); ++index) {
-                const auto& range = user->shadowRanges[index];
-                const auto low = std::max(begin, range.begin);
-                const auto high = std::min(end, range.end);
-                if (low < high && (range.permissions & Abi::Write) != 0u) KeepShadowed(low, high, *user->shadowSlabs[index], generation);
-            }
-        }
-    }), "invalid BDA written-page record");
+    if (shadowed(users)) gpu.lock();
+    Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) { markWrittenRange(begin, bytes, users); }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];
         words[Abi::WrittenSlotsWord + 2 * slot] = 0;
         words[Abi::WrittenSlotsWord + 2 * slot + 1] = 0;
     }
     words[Abi::WrittenCountWord] = 0;
+}
+
+void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    const auto end = begin + bytes;
+    for (const auto* user : users) {
+        for (std::size_t index = 0; index < user->imageTableRanges.size(); ++index) {
+            const auto [base, size] = user->imageTableRanges[index];
+            const auto low = std::max(begin, base);
+            const auto high = std::min(end, base + size);
+            if (low >= high) continue;
+            const auto* current = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(low));
+            if (std::memcmp(current, user->imageTableBytes[index].data() + (low - base), static_cast<std::size_t>(high - low)) != 0) {
+                std::ostringstream message;
+                message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
+                Require(false, message.str());
+            }
+        }
+    }
+    const auto generation = GuestMemory::MarkWritten(begin, bytes);
+    if (generation == 0) return;
+    for (const auto* user : users) {
+        for (std::size_t index = 0; index < user->shadowRanges.size(); ++index) {
+            const auto& range = user->shadowRanges[index];
+            const auto low = std::max(begin, range.begin);
+            const auto high = std::min(end, range.end);
+            if (low < high && (range.permissions & Abi::Write) != 0u) KeepShadowed(low, high, *user->shadowSlabs[index], generation);
+        }
+    }
 }
 
 }
