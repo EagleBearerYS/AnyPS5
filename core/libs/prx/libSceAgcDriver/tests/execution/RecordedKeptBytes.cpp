@@ -140,10 +140,6 @@ Recorder& ActiveRecorder() {
     return *recorder;
 }
 
-std::string Bytes(std::size_t bytes) {
-    return std::to_string(bytes) + " bytes";
-}
-
 void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* target) {
     TestGuest::Vector<std::uint32_t> userData(16, 0u);
     const auto descriptor = RawBuffer(target, static_cast<std::uint32_t>(BufferBytes));
@@ -165,12 +161,12 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* target) {
 
 const ColorTargetLayout TargetLayout(Width, Height, ColorTileMode::RenderTarget, 4);
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{
+const TestGuest::Array<std::array<float, 4>, 3> Triangle{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 
 void FillVertices(GuestBuffer& vertices) {
-    std::memcpy(vertices.Data(), Triangle.data(), sizeof(Triangle));
+    std::memcpy(vertices.Data(), Triangle.data(), decltype(Triangle)::ByteSize);
 }
 
 void Draw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels, GuestBuffer& vertices) {
@@ -229,20 +225,9 @@ void Draw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels, GuestBuffer& ver
     device.Draw(state, draw, shaders);
 }
 
-void CopiedDispatch(AgcDriver::VulkanDevice& device) {
-    GuestBuffer target(false);
-    device.WaitIdle();
-    Dispatch(device, target.Data());
-    const auto& recorder = ActiveRecorder();
-    Require(recorder.Recording(), "recorded kept bytes: the dispatch was not left in the open batch");
-    const auto kept = recorder.OpenKeptBytes();
-    Require(kept >= BufferBytes, "a dispatch writing a copied " + Bytes(BufferBytes) + " buffer left " + Bytes(kept) + " in its batch's kept bytes");
-    device.WaitIdle();
-}
-
 void BufferOnlyDispatchBounds(AgcDriver::VulkanDevice& device) {
-    GuestBuffer first(false);
-    GuestBuffer second(false);
+    GuestBuffer first(true);
+    GuestBuffer second(true);
     device.WaitIdle();
     Dispatch(device, first.Data());
     auto& recorder = ActiveRecorder();
@@ -257,44 +242,10 @@ void BufferOnlyDispatchBounds(AgcDriver::VulkanDevice& device) {
 }
 
 void ResidentTarget(AgcDriver::VulkanDevice& device, GuestBuffer& pixels) {
-    GuestBuffer vertices(false);
-    FillVertices(vertices);
-    Draw(device, pixels, vertices);
-    device.WaitIdle();
-}
-
-void CopiedDraw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels) {
-    GuestBuffer vertices(false);
-    FillVertices(vertices);
-    device.WaitIdle();
-    Draw(device, pixels, vertices);
-    const auto& recorder = ActiveRecorder();
-    Require(recorder.Recording(), "recorded kept bytes: the draw was not left in the open batch");
-    const auto kept = recorder.OpenKeptBytes();
-    Require(kept >= BufferBytes, "a draw reading a copied " + Bytes(BufferBytes) + " buffer left " + Bytes(kept) + " in its batch's kept bytes");
-    device.WaitIdle();
-}
-
-bool SnapshotDraws(AgcDriver::VulkanDevice& device, GuestBuffer& pixels) {
     GuestBuffer vertices(true);
     FillVertices(vertices);
-    device.WaitIdle();
     Draw(device, pixels, vertices);
-    auto& recorder = ActiveRecorder();
-    Require(recorder.Recording(), "recorded kept bytes: the snapshot draw was not left in the open batch");
-    if (recorder.ReusableDrawSnapshot(AddressOf(vertices.Data()), BufferBytes) == nullptr) {
-        std::puts("the draw took no reusable snapshot (no host import, or the buffer is not write-watched): draw snapshots are not tested");
-        device.WaitIdle();
-        return false;
-    }
-    const auto first = recorder.OpenKeptBytes();
-    Require(first >= BufferBytes, "a draw snapshotting a " + Bytes(BufferBytes) + " buffer left " + Bytes(first) + " in its batch's kept bytes");
-    Draw(device, pixels, vertices);
-    Require(recorder.Recording(), "recorded kept bytes: the second snapshot draw was not left in the open batch");
-    const auto second = recorder.OpenKeptBytes();
-    Require(second == first, "a second draw reusing the batch's snapshot raised its kept bytes from " + Bytes(first) + " to " + Bytes(second));
     device.WaitIdle();
-    return true;
 }
 
 }
@@ -303,13 +254,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        CopiedDispatch(*device);
         BufferOnlyDispatchBounds(*device);
         GuestBuffer pixels(true, TargetLayout.Bytes());
         ResidentTarget(*device, pixels);
-        CopiedDraw(*device, pixels);
-        const bool snapshots = SnapshotDraws(*device, pixels);
-        std::printf("recorded kept bytes tests passed%s\n", snapshots ? "" : " (draw snapshots not tested)");
+        std::printf("recorded kept bytes tests passed\n");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

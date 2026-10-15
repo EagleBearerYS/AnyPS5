@@ -1,3 +1,4 @@
+#include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferFill.hpp"
@@ -15,9 +16,9 @@ using AgcDriver::Graphics::Require;
 using namespace AgcDriver::DriverDetail;
 alignas(256) constexpr auto Code = PatternFillKernel;
 alignas(256) constexpr auto MaskFirstCode = PatternFillKernelMaskFirst;
-alignas(256) std::array<std::uint32_t, 4> Pattern{0, 0x12345678u, 0xdeadbeefu, 0x7fc12345u};
-alignas(256) std::array<std::uint32_t, 4> Control{};
-alignas(256) std::array<std::uint32_t, 260> Output{};
+TestGuest::Array<std::uint32_t, 4> Pattern{0, 0x12345678u, 0xdeadbeefu, 0x7fc12345u};
+TestGuest::Array<std::uint32_t, 4> Control;
+TestGuest::Array<std::uint32_t, 260> Output;
 
 std::array<std::uint32_t, 12> UserData(void* output, std::uint32_t records, std::uint32_t elementWord3 = 0x14004u) {
     std::array<std::uint32_t, 12> data{};
@@ -130,7 +131,7 @@ std::vector<std::uint32_t> Commands(std::span<const std::uint32_t> data, std::ui
     registers(0x240, data);
     const auto initiator = 0x41u | (wave == 32 ? 0x8000u : 0u) | (partial ? 0x20u : 0u);
     if (indirect) {
-        static std::array<std::uint32_t, 3> arguments;
+        static TestGuest::Array<std::uint32_t, 3> arguments;
         arguments = {threads / 64, 1, 1};
         const auto pointer = reinterpret_cast<std::uintptr_t>(arguments.data());
         words.insert(words.end(), {0xc0021600u, static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u), initiator});
@@ -140,7 +141,7 @@ std::vector<std::uint32_t> Commands(std::span<const std::uint32_t> data, std::ui
     return words;
 }
 
-void Submit(const std::vector<std::uint32_t>& words, void* output = Output.data(), std::size_t bytes = sizeof(Output)) {
+void Submit(const std::vector<std::uint32_t>& words, void* output = Output.data(), std::size_t bytes = decltype(Output)::ByteSize) {
     Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
