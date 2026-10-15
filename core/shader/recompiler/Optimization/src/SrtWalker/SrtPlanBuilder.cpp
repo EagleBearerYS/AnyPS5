@@ -69,21 +69,8 @@ void PlanBuilder::Run() {
 
 bool PlanBuilder::ReadsAtRunTime() const {
     if (!_deviceTables || (_program.Resources().stage != IrShaderStage::Compute && _program.Resources().stage != IrShaderStage::Pixel)) return false;
-    const auto readsMemory = [](const IrValue* root) {
-        std::vector<const IrValue*> pending{root};
-        std::unordered_set<const IrValue*> seen;
-        while (!pending.empty()) {
-            const IrValue* value = pending.back()->Resolve();
-            pending.pop_back();
-            if (!seen.insert(value).second) continue;
-            if (value->Opcode() == IrOpcode::LoadAddressU32 || value->Opcode() == IrOpcode::GetLinkedWord) return true;
-            for (std::size_t index = 0; index < value->ArgumentCount(); index++) pending.push_back(value->Argument(index));
-        }
-        return false;
-    };
     for (const auto& info : _program.Metadata().blockInfo) {
         if (info.indirectTarget != nullptr) return false;
-        if (info.condition != nullptr && readsMemory(info.condition)) return false;
     }
     const auto dynamicWords = [](const IrValue& handle) {
         std::vector<const IrValue*> pending;

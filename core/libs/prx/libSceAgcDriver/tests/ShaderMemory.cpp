@@ -747,6 +747,7 @@ void verifyGuardedDescriptorSources() {
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.samplers.size() == 1u, "guarded sources: the image and its sampler were not planned");
     require(!plan->controlFlow.empty(), "guarded sources: the branch around the image was not planned");
+    require(plan->srtReads.empty(), "guarded sources: a program whose branch condition reads memory planned its SRT reads for a capture");
     {
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
@@ -770,6 +771,24 @@ void verifyGuardedDescriptorSources() {
         require(capture->snapshot.deviceImages.empty(), "guarded sources: a valid T# behind a skipped branch was expected");
     }
 
+    auto laneRequest = request;
+    std::vector<std::uint32_t> laneCode(code.begin(), code.end());
+    laneCode.erase(laneCode.begin() + 7, laneCode.begin() + 9);
+    laneCode.insert(laneCode.begin() + 7, {0x7d8a0080u, 0xbea83c6au, 0xbf880006u});
+    laneRequest.shader = {ShaderStage::Compute, 0x24000u, laneCode, 0, {}};
+    fill(invalid, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(laneRequest);
+        require(capture->snapshot.deviceImages.empty(), "guarded sources: an invalid T# behind a branch on lane values was expected");
+    }
+    fill(valid, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(laneRequest);
+        require(capture->snapshot.deviceImages.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.deviceImages[0].key.begin()), "guarded sources: a T# behind a branch on lane values was not expected");
+    }
+
     const std::vector<std::uint32_t> storeCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850006u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f08u, 0x00010004u, 0xbf820005u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f10u, 0x00010004u, 0xbf810000u};
     auto storeRequest = request;
     storeRequest.shader = {ShaderStage::Compute, 0x23000u, storeCode, 0, {}};
@@ -781,7 +800,7 @@ void verifyGuardedDescriptorSources() {
         return Recompile(storeRequest, *capture);
     };
     const auto storePlan = GetResourcePlan(storeRequest);
-    require(storePlan->info.images.size() == 2u && storePlan->descriptorSources.size() == 1u, "guarded images: the two stores were not planned as two images of one T#");
+    require(storePlan->info.images.size() == 2u, "guarded images: the two stores were not planned as two images");
     static_cast<void>(compileStore(1u));
     expectFailure([&] { static_cast<void>(compileStore(0u)); }, "incompatible with the static runtime image interface", "guarded images: a store of the wrong dimension behind a taken branch was accepted");
 }

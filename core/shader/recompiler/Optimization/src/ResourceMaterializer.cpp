@@ -1306,11 +1306,12 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         return true;
     };
     std::vector<std::uint8_t> active(plan.info.images.size(), 1u);
+    std::vector<std::vector<std::uint32_t>> taken(plan.controlFlow.size());
+    std::vector<std::uint8_t> visited(plan.controlFlow.size());
     if (!plan.controlFlow.empty()) {
         for (const auto& block : plan.controlFlow) {
             for (const auto image : block.images) active.at(image) = 0u;
         }
-        std::vector<std::uint8_t> visited(plan.controlFlow.size());
         std::vector<std::uint32_t> pending{0};
         while (!pending.empty()) {
             const auto index = pending.back();
@@ -1321,12 +1322,33 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
             for (const auto image : block.images) active[image] = 1u;
             std::uint32_t condition = 0;
             if (block.condition != nullptr && block.successors.size() == 2u && evaluator.Evaluate(block.condition, condition)) {
-                pending.push_back(block.successors[condition != 0u ? 0u : 1u]);
+                taken[index] = {block.successors[condition != 0u ? 0u : 1u]};
             } else {
-                pending.insert(pending.end(), block.successors.begin(), block.successors.end());
+                taken[index] = block.successors;
             }
+            pending.insert(pending.end(), taken[index].begin(), taken[index].end());
         }
     }
+    const auto avoidable = [&](std::uint32_t avoided) {
+        std::vector<std::uint8_t> seen(plan.controlFlow.size());
+        std::vector<std::uint32_t> pending{0};
+        while (!pending.empty()) {
+            const auto index = pending.back();
+            pending.pop_back();
+            if (index == avoided || seen.at(index) != 0u) continue;
+            seen[index] = 1u;
+            if (taken[index].empty()) return true;
+            pending.insert(pending.end(), taken[index].begin(), taken[index].end());
+        }
+        return false;
+    };
+    const auto executed = [&](std::uint32_t image) {
+        if (plan.controlFlow.empty()) return true;
+        for (std::uint32_t index = 0; index < plan.controlFlow.size(); ++index) {
+            if (visited[index] != 0u && std::ranges::find(plan.controlFlow[index].images, image) != plan.controlFlow[index].images.end() && !avoidable(index)) return true;
+        }
+        return false;
+    };
     expected.reserve(plan.info.deviceImageUses.size());
     for (const auto& use : plan.info.deviceImageUses) {
         if (active.at(use.image) == 0u) continue;
@@ -1339,7 +1361,10 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         DescriptorValue descriptor;
         descriptor.dwordCount = Abi::DescriptorWords;
         std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
-        if (!validImageDescriptor(descriptor, image.r128)) throw std::runtime_error("runtime image descriptor is invalid");
+        if (!validImageDescriptor(descriptor, image.r128)) {
+            if (executed(use.image)) throw std::runtime_error("runtime image descriptor is invalid");
+            continue;
+        }
         if (use.sampler != NoSampler) {
             const auto& sampler = plan.info.samplers.at(use.sampler);
             if (!sampler.deviceTable) {

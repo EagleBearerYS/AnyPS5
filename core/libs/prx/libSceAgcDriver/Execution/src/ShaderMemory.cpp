@@ -227,6 +227,7 @@ bool ShaderMemory::readNow(void* context, std::uint64_t address, std::uint32_t* 
             *value = page.words[index];
             return true;
         }
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(*value))) return false;
         GuestMemory::Read(address, std::as_writable_bytes(std::span(value, 1)), alignof(std::uint32_t));
         return true;
     }
