@@ -1,0 +1,24 @@
+name: macOS write watch
+
+on:
+  push:
+    branches: ['diag/macos-write-watch**']
+
+permissions:
+  contents: read
+
+jobs:
+  write-watch:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/write-watch --parallel
+      - run: ctest --test-dir build/write-watch --output-on-failure --repeat until-fail:20 --no-tests=error
