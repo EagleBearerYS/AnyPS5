@@ -3285,6 +3285,15 @@ bool Recorder::LabelStoredAtCompletionIn(std::uint64_t address, std::size_t byte
     return false;
 }
 
+std::vector<std::pair<std::uint64_t, std::size_t>> Recorder::CompletionLabelRanges() const {
+    std::lock_guard tableLock(labelTableMutex);
+    std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    for (const auto& [address, writers] : labels) {
+        if (std::any_of(writers.begin(), writers.end(), [](const LabelWriter& writer) { return writer.behindCompletion; })) ranges.emplace_back(address, sizeof(std::uint32_t));
+    }
+    return ranges;
+}
+
 bool Recorder::CompletionLabelIn(std::uint64_t address, std::size_t bytes) const {
     std::lock_guard tableLock(labelTableMutex);
     if (bytes == 0) return false;

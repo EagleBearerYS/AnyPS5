@@ -78,6 +78,7 @@ struct GuestBufferMemory::AddressSpace {
     };
     mutable std::array<OverrideTable, 4> overrideTables;
     mutable std::size_t nextOverrideTable = 0;
+    mutable std::uint64_t stamped = 0;
 };
 
 namespace {
@@ -1719,11 +1720,13 @@ void GuestBufferMemory::AcquireRegistered() {
             else if (current->importsEpoch != state.epoch) spaces.rebuiltEpoch.fetch_add(1, std::memory_order_relaxed);
             else hit = true;
             importFloor = state.useCounter + 1;
-            if (hit) {
+            constexpr std::uint64_t stampInterval = 32;
+            if (hit && (current->stamped == 0 || state.useCounter >= current->stamped + stampInterval)) {
                 const auto stamp = ++state.useCounter;
                 for (const auto& region : current->base) {
                     if (region.direct != nullptr) region.direct->lastUse = stamp;
                 }
+                current->stamped = stamp;
             }
         }
         if (hit) {
@@ -1932,8 +1935,13 @@ void GuestBufferMemory::UploadPrepare() {
 void GuestBufferMemory::UploadFinish() {
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     for (const auto& region : regions) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
-    if (space != nullptr) {
-        for (const auto& region : space->base) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
+    if (space != nullptr && Recorder::PendingCompletionLabels() != 0) {
+        if (auto* recorder = Recorder::Active()) {
+            for (const auto& [address, bytes] : recorder->CompletionLabelRanges()) {
+                const bool read = accessUnbounded || std::ranges::any_of(accessRanges, [&](const auto& range) { return address < range.second && range.first < address + bytes; });
+                if (read) CompletePendingCpuWrites(context, address, bytes);
+            }
+        }
     }
     uploaded = true;
     GuestAllocations::Lease acquired;

@@ -318,6 +318,7 @@ public:
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
     static bool PendingLabelsMatchMemory(std::uint64_t address, std::size_t bytes);
     bool LabelStoredAtCompletionIn(std::uint64_t address, std::size_t bytes) const;
+    std::vector<std::pair<std::uint64_t, std::size_t>> CompletionLabelRanges() const;
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
     // of the same queue) takes its value, since that queue's later work follows the label in queue
