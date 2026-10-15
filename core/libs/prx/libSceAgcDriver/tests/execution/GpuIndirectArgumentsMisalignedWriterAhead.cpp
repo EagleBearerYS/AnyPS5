@@ -22,7 +22,11 @@ alignas(256) std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 
 
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t ArgumentsOffset = 4;
+#ifdef _WIN32
+alignas(8192) std::array<std::uint8_t, BlockBytes> Block{};
+#else
 alignas(BlockBytes) std::array<std::uint8_t, BlockBytes> Block{};
+#endif
 alignas(256) std::array<std::uint32_t, 4> WriterDescriptor{};
 alignas(256) std::array<std::uint32_t, 4> Counter{};
 alignas(256) std::array<std::uint32_t, 4> CounterDescriptor{};
