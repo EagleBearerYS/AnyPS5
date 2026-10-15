@@ -37,6 +37,11 @@ bool bdaTraceEnabled() {
 }
 constexpr unsigned bdaTraceLimit = 8;
 
+bool directFirstImageTables() {
+    static const bool enabled = std::getenv("APS5_IMAGE_TABLES_DIRECT_FIRST") != nullptr;
+    return enabled;
+}
+
 std::string formatHex32(std::uint32_t value) {
     static constexpr char digits[] = "0123456789abcdef";
     std::string hex(8u, '0');
@@ -612,7 +617,7 @@ private:
             plan.memory.push_back(memoryIndex);
             plan.reads.push_back(read);
         }
-        if (address) {
+        if (address || (!sampler && directFirstImageTables())) {
             DescriptorSource direct;
             MakeSource(handle, width, false, false, direct);
             std::uint32_t badDword = 0;
