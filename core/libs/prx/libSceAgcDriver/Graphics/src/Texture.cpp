@@ -175,6 +175,33 @@ LiveImages& Live() {
     return live;
 }
 
+void countKeyAddress(std::uint64_t address) {
+    auto& live = Live();
+    std::lock_guard lock(live.keysMutex);
+    ++live.keyAddresses[address];
+}
+
+void uncountKeyAddress(std::uint64_t address) {
+    auto& live = Live();
+    std::lock_guard lock(live.keysMutex);
+    const auto found = live.keyAddresses.find(address);
+    if (found != live.keyAddresses.end() && --found->second == 0) live.keyAddresses.erase(found);
+}
+
+struct KeyAddressCount {
+    explicit KeyAddressCount(std::uint64_t counted) : address(counted) {
+        if (address != 0) countKeyAddress(address);
+    }
+    KeyAddressCount(const KeyAddressCount&) = delete;
+    KeyAddressCount& operator=(const KeyAddressCount&) = delete;
+    ~KeyAddressCount() {
+        if (address != 0) uncountKeyAddress(address);
+    }
+    void Keep() { address = 0; }
+
+    std::uint64_t address;
+};
+
 // Per-layer validity of array surfaces (see StorageTexture::layerBegin): a fill of one layer clears
 // it on the image and only that layer's guest bytes go stale, so the other layers' fills, uploads
 // and write-backs stay separate. APS5_NO_LAYER_CLEAR=1 tracks every surface as one layer, and a
@@ -1065,20 +1092,17 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
     }();
     static_cast<void>(unwatchHooked);
     auto texture = std::shared_ptr<StorageTexture>(new StorageTexture(context, detiler, descriptor, mipLevel));
+    KeyAddressCount counted(texture->descriptor.dccAddress);
     uploadReason = "first";
     texture->upload();
     texture->defaultMip = mipLevel;
     texture->view = texture->createView(mipLevel, false, texture->storageFormat);
-    if (texture->descriptor.dccAddress != 0) {
-        auto& live = Live();
-        std::lock_guard lock(live.keysMutex);
-        ++live.keyAddresses[texture->descriptor.dccAddress];
-    }
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
         live.textures.push_back(texture.get());
     }
+    counted.Keep();
     if (profile) {
         auto& totals = Profile();
         totals.storageCreate += timer.lap();
@@ -4974,12 +4998,7 @@ StorageTexture::~StorageTexture() {
         std::lock_guard lock(live.mutex);
         listed = std::erase(live.textures, this) != 0;
     }
-    if (listed && descriptor.dccAddress != 0) {
-        auto& live = Live();
-        std::lock_guard lock(live.keysMutex);
-        const auto found = live.keyAddresses.find(descriptor.dccAddress);
-        if (found != live.keyAddresses.end() && --found->second == 0) live.keyAddresses.erase(found);
-    }
+    if (listed && descriptor.dccAddress != 0) uncountKeyAddress(descriptor.dccAddress);
     // Cache eviction flushes first; anything still pending here is being torn down with the device.
     {
         auto& pending = Pending();
