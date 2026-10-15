@@ -137,7 +137,7 @@ void ShaderMemory::SetWaitedMsProvider(WaitedMsProvider provider) {
     waitedMsProvider.store(provider, std::memory_order_release);
 }
 
-ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regions, PendingWriteQuery pendingWrite, PendingWriteObserver observe, HookWaitCounter hookWaits) : pendingWrite(pendingWrite), observe(observe), hookWaits(hookWaits) {
+ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regions, PendingWriteQuery pendingWrite, PendingWriteObserver observe, HookWaitCounter hookWaits, PendingWriteQuery pendingSpan) : pendingWrite(pendingWrite), observe(observe), hookWaits(hookWaits), pendingSpan(pendingSpan != nullptr ? pendingSpan : pendingWrite) {
     const ShaderRecompiler::RequestMemoryView validated(regions);
     for (const auto& region : regions) {
         initial.emplace(region.guestAddress, region.bytes);
@@ -403,7 +403,7 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
     const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
     if (generation == 0) return {};
-    if (self.pendingWrite != nullptr && self.pendingWrite(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
+    if (self.pendingSpan != nullptr && self.pendingSpan(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return {};
     return {generation, layout};
 }
 
@@ -419,7 +419,7 @@ bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std
 
 bool ShaderMemory::unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
     APS5_STEP("capture: unchanged since (per call)");
-    return Vouched(static_cast<const ShaderMemory*>(context)->pendingWrite, address, bytes, stamp);
+    return Vouched(static_cast<const ShaderMemory*>(context)->pendingSpan, address, bytes, stamp);
 }
 
 bool ShaderMemory::place(std::uint64_t address, const std::uint32_t* values, std::uint64_t count, bool overwrite, bool recent) {

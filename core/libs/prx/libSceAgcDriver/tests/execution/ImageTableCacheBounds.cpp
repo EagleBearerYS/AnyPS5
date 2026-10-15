@@ -1,8 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
+#include "Optimization/SrtWalker.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -19,6 +21,8 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -28,6 +32,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -247,6 +252,85 @@ void VouchedLookups(const GuestBlock& block) {
     std::puts("image table vouched lookups passed");
 }
 
+struct QueuedDraw {
+    std::atomic<bool> release{false};
+
+    void Enqueue(std::uint64_t begin, std::uint64_t end) {
+        AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([this] {
+            while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }, {{begin, end}});
+    }
+};
+
+void VouchUnderQueuedDraws(const GuestBlock& block) {
+    using AgcDriver::DriverDetail::DrawPipeline;
+    using AgcDriver::DriverDetail::Driver;
+    Require(DrawPipeline::Depth() >= 3u, "image table vouch under queued draws: the draw pipeline is off");
+    for (std::uint32_t record = 0; record < WideRecords; ++record) SetWideRecord(block, record, (1u + record % 15u) * Aliases);
+    const auto low = WideRecord(block, 0u);
+    const auto bytes = static_cast<std::size_t>(WideRecord(block, WideRecords - 1u) + 32u - low);
+    const ShaderRecompiler::SrtWriteStamp stamp{AgcDriver::GuestMemory::CollectWrites(low, bytes), GuestAllocations::GuestAllocationsGeneration_nid_postfix()};
+    Require(stamp.generation != 0u, "image table vouch under queued draws: the table is not write-watched");
+    auto& pipeline = DrawPipeline::Queue0();
+    QueuedDraw elsewhere;
+    QueuedDraw between;
+    QueuedDraw into;
+    const auto releaseAll = [&] {
+        elsewhere.release = true;
+        between.release = true;
+        into.release = true;
+    };
+    DrawPipeline::Active() = true;
+    const auto vouch = [&](const std::string& what, bool expected) {
+        const auto outstanding = pipeline.Outstanding();
+        std::atomic<bool> finished{false};
+        std::atomic<bool> waited{false};
+        std::thread watchdog([&] {
+            const auto start = std::chrono::steady_clock::now();
+            while (!finished.load()) {
+                if (std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
+                    waited = true;
+                    releaseAll();
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+        const bool vouched = AgcDriver::ShaderMemory::Vouched(&Driver::QueryPendingSpan, low, bytes, stamp);
+        finished = true;
+        watchdog.join();
+        const bool queued = !waited.load() && pipeline.Outstanding() == outstanding;
+        if (!queued || vouched != expected) releaseAll();
+        Require(queued, "image table vouch under queued draws: " + what + ": the vouch waited for the queued draws");
+        Require(vouched == expected, "image table vouch under queued draws: " + what + (expected ? ": the table was not vouched for" : ": the table was still vouched for"));
+    };
+    const auto settle = [&](std::size_t outstanding) {
+        const auto start = std::chrono::steady_clock::now();
+        while (pipeline.Outstanding() != outstanding) {
+            if (std::chrono::steady_clock::now() - start > std::chrono::seconds(20)) {
+                releaseAll();
+                Require(false, "image table vouch under queued draws: the released draws were never committed");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    vouch("an idle pipeline", true);
+    elsewhere.Enqueue(block.At(OutputOffset), block.At(OutputOffset) + 4096u);
+    vouch("a queued draw writing outside the table", true);
+    between.Enqueue(low + 32u, low + WideStride);
+    vouch("a queued draw writing between two records", false);
+    into.Enqueue(WideRecord(block, 7u), WideRecord(block, 7u) + 32u);
+    elsewhere.release = true;
+    between.release = true;
+    settle(1u);
+    vouch("a queued draw writing into a record", false);
+    into.release = true;
+    pipeline.Drain(DrawPipeline::DrainReason::Capture);
+    vouch("committed draws that wrote nothing", true);
+    DrawPipeline::Active() = false;
+    std::puts("image table vouch under queued draws passed");
+}
+
 void SetBudgets() {
 #ifdef _WIN32
     _putenv_s("APS5_RESOURCE_CACHE_TABLE_ELEMENTS", "8192");
@@ -270,6 +354,11 @@ int main(int argc, char** argv) {
         Prepare(block);
         if (argc == 2 && std::string(argv[1]) == "--vouched-lookups") {
             VouchedLookups(block);
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--queued-draws") {
+            VouchUnderQueuedDraws(block);
             AgcDriverShutdown_nid_postfix();
             return 0;
         }
