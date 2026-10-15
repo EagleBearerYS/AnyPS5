@@ -157,6 +157,10 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());
             for (const auto& read : decodeReads[i]) regions.push_back({read.address, std::as_bytes(std::span(read.bytes))});
             std::stable_sort(regions.begin(), regions.end(), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress < b.guestAddress; });
+            std::size_t capturedWords = 0;
+            for (const auto& region : regions) capturedWords += region.bytes.size() / sizeof(std::uint32_t);
+            variant->runs.reserve(regions.size());
+            variant->words.reserve(capturedWords);
             for (const auto& region : regions) {
                 variant->runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
                 const auto count = region.bytes.size() / sizeof(std::uint32_t);
