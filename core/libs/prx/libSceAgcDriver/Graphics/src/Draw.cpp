@@ -374,6 +374,11 @@ struct DrawOutcome {
     std::uint64_t partialLookups = 0;
     std::uint64_t pagesWalked = 0;
     double lookupUs = 0;
+    double cacheKeyUs = 0;
+    double cacheFindUs = 0;
+    double cacheRevalidateUs = 0;
+    double cacheMovedUs = 0;
+    double cacheAliasUs = 0;
     // How the draw's resources came about (DrawKind), for the per-kind averages.
     std::size_t kind = 0;
     // The flush hook's fence waits made inside this draw (index and vertex reads, the target
@@ -398,6 +403,11 @@ struct DrawProfile {
     std::uint64_t partialLookups = 0;
     std::uint64_t pagesWalked = 0;
     double lookupUs = 0;
+    double cacheKeyUs = 0;
+    double cacheFindUs = 0;
+    double cacheRevalidateUs = 0;
+    double cacheMovedUs = 0;
+    double cacheAliasUs = 0;
     std::array<double, PhaseCount> totalsUs{};
     // The longest single draw's time per phase, and the longest draw: the [lock] line's 'draw'
     // hold max (tens of ms against an average well under a millisecond) needs a phase name.
@@ -504,6 +514,11 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.partialLookups += outcome.partialLookups;
     profile.pagesWalked += outcome.pagesWalked;
     profile.lookupUs += outcome.lookupUs;
+    profile.cacheKeyUs += outcome.cacheKeyUs;
+    profile.cacheFindUs += outcome.cacheFindUs;
+    profile.cacheRevalidateUs += outcome.cacheRevalidateUs;
+    profile.cacheMovedUs += outcome.cacheMovedUs;
+    profile.cacheAliasUs += outcome.cacheAliasUs;
     if (outcome.kind < KindCount) {
         ++profile.kindCounts[outcome.kind];
         profile.kindUs[outcome.kind] += drawUs;
@@ -526,6 +541,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s=%.1fms", DrawPhaseNames[i], profile.totalsUs[i] / 1000.0);
         if (i == PhaseResources && room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " (bindings %.1f, upload %.1f, descriptors %.1f, other %.1f of which %.1f in %llu address-based builds)", profile.bindingsUs / 1000.0, profile.uploadUs / 1000.0, profile.descriptorsUs / 1000.0, profile.otherUs / 1000.0, profile.addressOtherUs / 1000.0, static_cast<unsigned long long>(profile.addressBuilds));
         if (i == PhaseReadTarget && room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " (%llu resident lookups, %llu of them >= 1 ms = %.1f; target lookups: full-scissor %llu / partial %llu / pages walked %llu / %.0f us)", static_cast<unsigned long long>(profile.targetLookups), static_cast<unsigned long long>(profile.slowLookups), profile.slowLookupUs / 1000.0, static_cast<unsigned long long>(profile.fullScissorLookups), static_cast<unsigned long long>(profile.partialLookups), static_cast<unsigned long long>(profile.pagesWalked), profile.lookupUs);
+        if (i == PhaseLookup && room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " (key %.1f, find %.1f, revalidate %.1f, moved buffers %.1f, alias checks %.1f)", profile.cacheKeyUs / 1000.0, profile.cacheFindUs / 1000.0, profile.cacheRevalidateUs / 1000.0, profile.cacheMovedUs / 1000.0, profile.cacheAliasUs / 1000.0);
     }
     if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; per kind (avg us, count):");
     for (std::size_t kind = 0; kind < KindCount && room(); ++kind) {
@@ -571,6 +587,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.slowLookupUs = 0;
     profile.fullScissorLookups = profile.partialLookups = profile.pagesWalked = 0;
     profile.lookupUs = 0;
+    profile.cacheKeyUs = profile.cacheFindUs = profile.cacheRevalidateUs = profile.cacheMovedUs = profile.cacheAliasUs = 0;
     profile.kindUs.fill(0);
     profile.kindCounts.fill(0);
     profile.cacheHits = profile.cacheMisses = profile.cacheInvalidated = profile.uncacheable = 0;
@@ -1279,15 +1296,29 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+    static const bool profileLookup = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    auto lookupLap = profileLookup ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto lapInto = [&](double DrawOutcome::*bucket) {
+        if (!profileLookup) return;
+        const auto now = std::chrono::steady_clock::now();
+        outcome.*bucket += std::chrono::duration<double, std::micro>(now - lookupLap).count();
+        lookupLap = now;
+    };
     if (resolved.cacheable) {
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
+        lapInto(&DrawOutcome::cacheKeyUs);
+        auto cached = SharedResourceCache().Find(resolved.contentKey);
+        lapInto(&DrawOutcome::cacheFindUs);
+        if (cached) {
             const bool valid = cached->Revalidate(shaders);
+            lapInto(&DrawOutcome::cacheRevalidateUs);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
+            lapInto(&DrawOutcome::cacheMovedUs);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
+                lapInto(&DrawOutcome::cacheAliasUs);
                 resolved.resources = std::move(cached);
                 resolved.moved = std::move(*moved);
                 outcome.kind = KindTemplateHit;
