@@ -5,7 +5,6 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
-#include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <memory>
 #include <vector>
@@ -14,10 +13,7 @@ namespace AgcDriver::Graphics {
 
 struct HostImport;
 
-// `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
-// built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
-// APS5_NO_DRAW_RECIPE=1).
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
@@ -59,31 +55,6 @@ struct MeshArgumentRules {
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
-
-// Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not
-// recordable (no recorder, APS5_SYNC_DRAWS, APS5_DUMP_TARGETS), a resident target is gone from the
-// storage cache, the template is gone, the pipeline is gone from the pipeline store, or the
-// template's proof failed (ShaderResources::ProveCurrent; the template is removed from the
-// resource cache and kept by the batch).
-enum class DrawRecipeMiss : std::uint8_t { None, NotRecordable, TargetGone, TemplateGone, ObjectsGone, Proof, Count };
-const char* DrawRecipeMissName(DrawRecipeMiss miss);
-struct DrawRecipeOutcome {
-    bool recorded = false;
-    DrawRecipeMiss miss = DrawRecipeMiss::None;
-    ShaderResources::ProofReport proof;
-    // APS5_PROFILE_DRAW: the proof's and the record's time.
-    double proofUs = 0;
-    double recordUs = 0;
-};
-// A draw-cache hit recorded from its recipe, under GuestMemory::GpuMutex after the packet's labels
-// (design_cpu_final M8, step 8b): the validation with the recipe's stored outputs, the index and
-// vertex work as Draw's, the resident-target proof on the stored images (Refresh while Cached()),
-// the template's proof (ProveCurrent) with the alias checks repeated, the pipeline and framebuffer
-// from the recipe, then the record as Draw's (pass continued or begun, Kept, MarkGpuWrites). A
-// miss records nothing.
-DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe& recipe);
-// Whether recorded draws build recipes and draw-cache hits use them (APS5_NO_DRAW_RECIPE unset).
-bool DrawRecipes();
 
 // How an indirect draw's records were read, for the [draws] line (APS5_PROFILE_DRAW): Gpu is
 // vkCmdDrawIndirect from the host import; every other value names why the CPU read them instead,

@@ -387,10 +387,8 @@ struct DrawOutcome {
     double ownSyncUs = 0;
 };
 
-// The resources of a draw: a recipe hit (reserved for the draw recipe step), a resource-cache
-// template hit, a build, or an address-based (BDA) build.
-enum DrawKind : std::size_t { KindRecipeHit, KindTemplateHit, KindBuild, KindBda, KindCount };
-constexpr std::array<const char*, KindCount> DrawKindNames{"recipe hit", "template hit", "build", "BDA"};
+enum DrawKind : std::size_t { KindBuild, KindBda, KindCount };
+constexpr std::array<const char*, KindCount> DrawKindNames{"build", "BDA"};
 
 struct DrawProfile {
     std::mutex mutex;
@@ -447,9 +445,6 @@ struct DrawProfile {
     // Shader validation memo (see CachedFragmentOutputs).
     std::uint64_t validateHits = 0;
     std::uint64_t validateMisses = 0;
-    // Draw recipe outcomes (DrawWithRecipe): hits, and misses by DrawRecipeMiss.
-    std::uint64_t recipeHits = 0;
-    std::array<std::uint64_t, static_cast<std::size_t>(DrawRecipeMiss::Count)> recipeMisses{};
     // Indirect draws by path (IndirectDrawPath), the GPU-side ones whose records were rewritten
     // with a constant, and the time of the CPU record reads (their syncs).
     std::array<std::uint64_t, IndirectPathCount> indirect{};
@@ -554,10 +549,6 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     for (std::size_t i = 0; i < profile.skips.size() && room(); ++i) {
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu in %.1f ms", DrawSkipNames[i], static_cast<unsigned long long>(profile.skips[i]), profile.skipUs[i] / 1000.0);
     }
-    if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; recipe hits %llu, misses by reason:", static_cast<unsigned long long>(profile.recipeHits));
-    for (std::size_t i = 1; i < profile.recipeMisses.size() && room(); ++i) {
-        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", DrawRecipeMissName(static_cast<DrawRecipeMiss>(i)), static_cast<unsigned long long>(profile.recipeMisses[i]));
-    }
     std::fprintf(stderr, "%s\n", line);
     std::fprintf(stderr, "[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     profile.totalsUs.fill(0);
@@ -577,8 +568,6 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.kindCounts.fill(0);
     profile.cacheHits = profile.cacheMisses = profile.cacheInvalidated = profile.uncacheable = 0;
     profile.validateHits = profile.validateMisses = 0;
-    profile.recipeHits = 0;
-    profile.recipeMisses.fill(0);
     profile.indirect.fill(0);
     profile.indirectRewritten = 0;
     profile.indirectReadUs = 0;
@@ -720,46 +709,6 @@ std::set<std::uint32_t> CachedFragmentOutputs(const Context& context, std::span<
     return outputs;
 }
 
-// The resource cache key of a recorded draw: a marker no compute key starts with (those begin with
-// the stage), the device handle (the cache is process-wide and the driver replaces the headless
-// device with the windowed one while workers may still use the old one: an entry's descriptor set
-// and pooled buffers belong to the device that built it) and every stage's content key
-// (ResourceCache::noteMiss walks this layout to attribute misses, so it changes together with it).
-// With `ranges`, also the render target and the index buffer the build's alias checks compared the
-// guest buffers against; without it the checks are repeated for a hit (CheckBufferAliases), since
-// neither range is part of the descriptor set (the target is attached, the index buffer copied per
-// draw), so a target or index ring that moves per frame does not miss on every draw. That guards a
-// workload with such rings; in the profiled menu stage every draw was DRAW_INDEX_AUTO (index range
-// 0) onto one fixed target, so its misses come from the stages' descriptor words themselves.
-bool MovableBuffers() {
-    static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFER_TEMPLATES") == nullptr;
-    return enabled;
-}
-
-ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
-    ResourceCache::Key key{0xffffffffu};
-    const auto append64 = [&](std::uint64_t value) {
-        key.push_back(static_cast<std::uint32_t>(value));
-        key.push_back(static_cast<std::uint32_t>(value >> 32u));
-    };
-    append64(reinterpret_cast<std::uint64_t>(context.device));
-    key.push_back(static_cast<std::uint32_t>(shaders.size()));
-    for (const auto& shader : shaders) {
-        const auto part = ShaderResources::ContentKey(shader, true, MovableBuffers());
-        key.push_back(static_cast<std::uint32_t>(part.size()));
-        key.insert(key.end(), part.begin(), part.end());
-    }
-    key.push_back(colorAttachments);
-    if (ranges) {
-        append64(target.address | target.pipeBankXor);
-        append64(target.bytes);
-        append64(indexAddress);
-        append64(indexBytes);
-    }
-    return key;
-}
-
-
 }
 
 std::array<std::uint32_t, 4> MeshIndexBufferDescriptor(const Pm4::DrawParameters& draw) {
@@ -812,16 +761,6 @@ void CountDrawSkip(DrawSkip kind, double us) {
     stats.skipUs[static_cast<std::size_t>(kind)] += us;
 }
 
-
-bool DrawRecipes() {
-    static const bool noDrawRecipe = std::getenv("APS5_NO_DRAW_RECIPE") != nullptr;
-    return !noDrawRecipe;
-}
-
-const char* DrawRecipeMissName(DrawRecipeMiss miss) {
-    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof"};
-    return names[static_cast<std::size_t>(miss)];
-}
 
 namespace {
 
@@ -956,10 +895,7 @@ std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, const ShaderRec
     return zero;
 }
 
-// Draw's validation, index and vertex phases. With `recipe` the fragment outputs, the pipeline
-// stages and the vertex input layout are the recipe's (derived from the same compiled stages)
-// instead of computed.
-DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawOutcome& outcome, DrawTimer& timer, const DrawRecipe* recipe) {
+DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawOutcome& outcome, DrawTimer& timer) {
     DrawInputs inputs;
     APS5_LOG_OUT_DEBUG("Draw indices=%u instances=%u indexSize=%u flags=%u indexAddress=0x%llx", draw.indexCount, draw.instanceCount, draw.indexSize, draw.flags, static_cast<unsigned long long>(draw.indexAddress));
     APS5_LOG_OUT_DEBUG("State colorTarget=%u render=%ux%u colorAddress=0x%llx colorBytes=%llu colorExtent=%ux%u", state.hasColorTarget ? 1u : 0u, state.renderExtent.width, state.renderExtent.height, static_cast<unsigned long long>(state.color.address), static_cast<unsigned long long>(state.color.bytes), state.color.extent.width, state.color.extent.height);
@@ -993,13 +929,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     APS5_LOG_CHARS_OUT_DEBUG("Index buffer range OK");
     Require(!draw.indexed || !state.hasColorTarget || draw.indexAddress + indexBytes <= state.color.address || state.color.address + state.color.bytes <= draw.indexAddress, "index buffer aliases the render target");
     APS5_LOG_CHARS_OUT_DEBUG("ValidateShaders");
-    if (recipe != nullptr) {
-        inputs.fragmentOutputs = recipe->fragmentOutputs;
-        inputs.shaderStages = recipe->shaderStages;
-    } else {
-        inputs.fragmentOutputs = CachedFragmentOutputs(context, shaders, state, outcome.validateMemoized, outcome.validateHit);
-        inputs.shaderStages = PipelineStages(shaders);
-    }
+    inputs.fragmentOutputs = CachedFragmentOutputs(context, shaders, state, outcome.validateMemoized, outcome.validateHit);
+    inputs.shaderStages = PipelineStages(shaders);
     APS5_LOG_CHARS_OUT_DEBUG("ValidateShaders OK");
     APS5_LOG_OUT_DEBUG("PipelineStages=0x%x", static_cast<unsigned>(inputs.shaderStages));
     if (state.stages.mesh) {
@@ -1083,8 +1014,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     APS5_LOG_CHARS_OUT_DEBUG("Index validation OK");
     const auto& attributes = shaders.front().program->vertexAttributes;
     // Validates the vertex descriptors; the layout also keys and builds the pipeline.
-    if (recipe != nullptr) inputs.vertexInput = recipe->vertexInput;
-    else inputs.vertexInput = BuildVertexInputLayout(context, attributes);
+    inputs.vertexInput = BuildVertexInputLayout(context, attributes);
     inputs.vertexOffsets.assign(attributes.size(), 0);
     // An indexed draw's vertex offset moves every fetch: the copy must reach the last one.
     if (draw.indexed) {
@@ -1209,69 +1139,25 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
     return resident;
 }
 
-// A draw's resources (resolveDrawResources): the resource-cache template a recordable draw's
-// stages repeat, or a fresh build.
 struct ResolvedResources {
     std::shared_ptr<ShaderResources> resources;
     std::vector<ShaderResources::MovedBuffer> moved;
-    ResourceCache::Key contentKey;
-    bool cacheable = false;
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::uint64_t indexBytes, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
-    // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
-    // descriptor set when it is still valid (see ResourceCache; the dispatch path does the same).
-    // Only recordable draws take part: a synchronous draw writes its resources back, which a shared
-    // object must never do. Revalidate proves a hit by texture identity, which needs the texture
-    // caches. Push constants still come from this draw's stages. APS5_NO_DRAW_RESOURCE_CACHE=1
-    // builds every draw's resources as before.
-    static const bool noDrawResourceCache = std::getenv("APS5_NO_DRAW_RESOURCE_CACHE") != nullptr;
-    static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
-    // The render target and index ranges stay out of the key (see DrawResourceKey); a hit repeats
-    // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
-    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
-    resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
-    if (resolved.cacheable) {
-        resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
-            const bool valid = cached->Revalidate(shaders);
-            auto* recorder = Recorder::Active();
-            std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
-            if (moved.has_value()) {
-                resolved.resources = std::move(cached);
-                resolved.moved = std::move(*moved);
-                outcome.kind = KindTemplateHit;
-                countCache(&DrawProfile::cacheHits);
-            } else if (valid) {
-                countCache(&DrawProfile::cacheMisses);
-            } else {
-                SharedResourceCache().Remove(resolved.contentKey);
-                countCache(&DrawProfile::cacheInvalidated);
-            }
-        }
-    } else {
-        countCache(&DrawProfile::uncacheable);
-    }
     timer.phase(PhaseLookup);
-    if (resolved.resources == nullptr) {
-        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes));
-        resolved.built = &resolved.resources->Timing();
-        outcome.addressBased = resolved.resources->HoldsLease();
-        outcome.kind = outcome.addressBased ? KindBda : KindBuild;
-        if (resolved.cacheable) countCache(&DrawProfile::cacheMisses);
-    }
+    resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes));
+    resolved.built = &resolved.resources->Timing();
+    outcome.addressBased = resolved.resources->HoldsLease();
+    outcome.kind = outcome.addressBased ? KindBda : KindBuild;
     timer.phase(PhaseResources);
     APS5_LOG_CHARS_OUT_DEBUG("ShaderResources created");
     return resolved;
 }
 
-// A GPU-side indirect draw's records (Draw's recorded path; a recipe draw has none) as recordDraw
-// takes them: the arguments, how they are read, their host imports and, on the CPU path, the
-// records read.
 struct IndirectRecord {
     const Pm4::DrawParameters::IndirectDraw* args = nullptr;
     IndirectDrawPath path = IndirectDrawPath::Gpu;
@@ -1817,7 +1703,7 @@ std::optional<std::string> KnownValidationFailure(const Context& context, std::s
     return std::nullopt;
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::shared_ptr<const DrawRecipe>* recipeOut) {
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
     if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
     PerformanceTimer timing("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
@@ -1836,7 +1722,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     const auto waitedBefore = profile ? Recorder::ThreadWaitedMs() : 0.0;
     double ownWaitedMs = 0;
     const auto report = [&](const char* suffix) { reportDrawEnd(state, timer, built, outcome, waitedBefore, ownWaitedMs, suffix); };
-    auto inputs = prepareDrawInputs(context, state, draw, shaders, outcome, timer, nullptr);
+    auto inputs = prepareDrawInputs(context, state, draw, shaders, outcome, timer);
     if (inputs.nothing) return;
     const auto* args = draw.indirect ? &*draw.indirect : nullptr;
     const auto indexBytes = inputs.indexBytes;
@@ -1956,10 +1842,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     const bool recordDraws = RecordDraws();
     auto* recorder = Recorder::Active();
     const bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
-    auto resolved = resolveDrawResources(context, state, draw, shaders, indexBytes, recordable, outcome, timer);
+    auto resolved = resolveDrawResources(context, state, draw, shaders, indexBytes, outcome, timer);
     auto& resources = resolved.resources;
-    const auto& contentKey = resolved.contentKey;
-    const bool cacheable = resolved.cacheable;
     built = resolved.built;
     // The memory-state decision of an indirect draw, made here after the resource build (which may
     // retire imports and wait for recorded work) and before anything is recorded, exactly as
@@ -2052,7 +1936,6 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     // A build this recorded draw can share with later identical ones goes into the cache (a cache
     // hit is reusable by construction, so `recorded` holds for it; one with completion work is
     // never reusable).
-    if (cacheable && built != nullptr && recorded && resources->Reusable()) SharedResourceCache().Insert(contentKey, resources);
     // A recorded draw renders into its resident targets in the general layout (recordDraw). Debug
     // aid: APS5_DRAW_TRANSITIONS=1 keeps the per-draw upload and download barriers, the layout
     // transitions of every target and one pass per draw, as before.
@@ -2060,14 +1943,9 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     const bool lean = recorded && !drawTransitions;
     const bool multisampled = std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.multisampled; });
     Require(lean || !multisampled, "multisampled draws are only rendered as recorded draws");
-    if (!lean && !resolved.moved.empty()) {
-        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes));
-        resolved.moved.clear();
-    }
     APS5_LOG_CHARS_OUT_DEBUG("Creating Pipeline");
     // The state is copied only when a mask must change.
     auto masked = maskedState(state, inputs.fragmentOutputs);
-    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         if (!targets[index].proxied) continue;
         if (!masked.has_value()) masked = state;
@@ -2111,31 +1989,6 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         record.completion = completion;
         record.waited = outcome.waited;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs);
-        // The recipe for the caller's draw-cache entry (design_cpu_final M8, rule R3 for draws):
-        // only a template the resource cache serves under this content key (reusable: no lease,
-        // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
-        // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !state.depth && resolved.moved.empty() && !multisampled) {
-            auto recipe = std::make_shared<DrawRecipe>();
-            recipe->device = context.device;
-            recipe->templateRef = resources;
-            recipe->key = contentKey;
-            recipe->pipeline = pipeline;
-            recipe->framebuffer = framebuffer;
-            for (const auto& owner : owners) recipe->targets.emplace_back(owner);
-            recipe->targetViews = targetViews;
-            recipe->passKey = DrawRenderPassKey(context, state, targetViews);
-            recipe->vertexInput = inputs.vertexInput;
-            recipe->pushStages = PushConstantStages(shaders);
-            if (recipe->pushStages != 0) {
-                recipe->pushBytes = AssemblePushConstants(shaders);
-                resources->PatchPushConstants(recipe->pushBytes);
-            }
-            recipe->masked = masked;
-            recipe->fragmentOutputs = inputs.fragmentOutputs;
-            recipe->shaderStages = inputs.shaderStages;
-            *recipeOut = std::move(recipe);
-        }
         timing.Mark("draw_and_resource_release");
         report(outcome.waited ? (outcome.reason == SyncLease ? " recorded then waited (lease)" : " recorded then waited (copied writes)") : completion ? " recorded with completion" : " recorded");
         return;
@@ -2395,109 +2248,6 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         report(" synchronous");
     }
     APS5_LOG_CHARS_OUT_DEBUG("Draw finished");
-}
-
-DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe& recipe) {
-    if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
-    PerformanceTimer timing("Graphics.DrawWithRecipe");
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    DrawTimer timer(profile);
-    DrawRecipeOutcome result;
-    DrawOutcome outcome;
-    outcome.kind = KindRecipeHit;
-    const auto waitedBefore = profile ? Recorder::ThreadWaitedMs() : 0.0;
-    double ownWaitedMs = 0;
-    const auto miss = [&](DrawRecipeMiss reason) {
-        result.miss = reason;
-        if (profile) {
-            auto& stats = Profile();
-            std::lock_guard lock(stats.mutex);
-            ++stats.recipeMisses[static_cast<std::size_t>(reason)];
-        }
-        return result;
-    };
-    Require(!draw.indirect, "a draw recipe covers direct draws only");
-    auto* recorder = Recorder::Active();
-    if (!RecordDraws() || recorder == nullptr || DumpTargetLimit() != 0) return miss(DrawRecipeMiss::NotRecordable);
-    Require(recipe.targets.size() == state.colors.size() && recipe.targetViews.size() == state.colors.size(), "draw recipe targets do not match the state");
-    auto inputs = prepareDrawInputs(context, state, draw, shaders, outcome, timer, &recipe);
-    if (inputs.nothing) {
-        result.recorded = true;
-        return result;
-    }
-    // The resident-target proof on the stored images (design_cpu_final 3.7): while an image is
-    // still the storage cache's for its surface (StorageImageCached: the cache entry, removed under
-    // the cache mutex before an eviction's flush, and the LRU touch a lookup would make), it is
-    // what the lookup would return, and Refresh brings it up to date exactly as the lookup's does
-    // (FlushPending, the whole-surface collect and UnchangedSince, the key scan). An image gone
-    // from the cache is a miss: the ordinary path looks up anew.
-    std::vector<std::shared_ptr<StorageTexture>> targets;
-    targets.reserve(recipe.targets.size());
-    for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
-        timer.phase(PhaseSetup);
-        auto stored = recipe.targets[index].lock();
-        if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, state.colors[index].dccAddress)) return miss(DrawRecipeMiss::TargetGone);
-        auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {
-            stored->Refresh();
-            return stored;
-        });
-        timer.phase(PhaseReadTarget);
-        if (resident == nullptr) return miss(DrawRecipeMiss::TargetGone);
-        targets.push_back(std::move(resident));
-    }
-    timer.phase(PhasePrepare);
-    // The template's proof (rules R6/R7): ProveCurrent, T1 included, the alias checks the trimmed
-    // key leaves to a hit repeated; a failure removes the template from the cache (the batch keeps
-    // it) and the caller rebuilds.
-    auto resources = recipe.templateRef.lock();
-    if (resources == nullptr) return miss(DrawRecipeMiss::TemplateGone);
-    Require(resources->Reusable(), "draw recipe over a non-reusable template");
-    const auto proofStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const bool proved = resources->ProveCurrent(shaders, &result.proof);
-    if (profile) result.proofUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - proofStart).count();
-    if (!proved) {
-        SharedResourceCache().Remove(recipe.key, resources.get());
-        countCache(&DrawProfile::cacheInvalidated);
-        recorder->Keep(std::move(resources));
-        timer.phase(PhaseLookup);
-        return miss(DrawRecipeMiss::Proof);
-    }
-    SharedResourceCache().Touch(recipe.key);
-    countCache(&DrawProfile::cacheHits);
-    timer.phase(PhaseLookup);
-    outcome.completion = resources->ChecksFaults();
-    outcome.recorded = true;
-    // The pipeline is the recipe's while the pipeline store still holds it (its device's teardown
-    // or its eviction bound drops it: a miss). The framebuffer is the recipe's while the pipeline's
-    // list holds it: the views are the stored targets' (stable while they live, and they are the
-    // same objects), so AcquireFramebuffer only runs when the list evicted it.
-    auto pipeline = recipe.pipeline.lock();
-    if (pipeline == nullptr) return miss(DrawRecipeMiss::ObjectsGone);
-    auto framebuffer = recipe.framebuffer.lock();
-    if (framebuffer == nullptr) framebuffer = pipeline->AcquireFramebuffer(recipe.targetViews, targets, state.renderExtent, state.renderLayers);
-    timer.phase(PhasePipeline);
-    const auto recordStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    RecordedDraw record;
-    record.recorder = recorder;
-    record.completion = outcome.completion;
-    record.resources = std::move(resources);
-    record.pipeline = std::move(pipeline);
-    record.framebuffer = std::move(framebuffer);
-    record.targetViews = recipe.targetViews;
-    record.targets = std::move(targets);
-    record.pushBytes = &recipe.pushBytes;
-    record.pushStages = recipe.pushStages;
-    recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs);
-    if (profile) {
-        result.recordUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - recordStart).count();
-        auto& stats = Profile();
-        std::lock_guard lock(stats.mutex);
-        ++stats.recipeHits;
-    }
-    timing.Mark("draw_and_resource_release");
-    reportDrawEnd(state, timer, nullptr, outcome, waitedBefore, ownWaitedMs, " recorded from recipe");
-    result.recorded = true;
-    return result;
 }
 
 namespace {

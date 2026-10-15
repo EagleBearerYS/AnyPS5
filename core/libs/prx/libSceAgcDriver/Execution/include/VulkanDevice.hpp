@@ -6,7 +6,6 @@
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
-#include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ComputePipelineCapture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
@@ -33,9 +32,6 @@ class StorageTexture;
 
 // Stage A of a dispatch's resource build (see VulkanDevice::PrepareDispatch); opaque to callers.
 struct PreparedDispatch;
-// The unlocked pre-checks of a recipe hit (see VulkanDevice::PrepareRecipe); opaque to callers.
-struct RecipeHit;
-// The record tail shared by an ordinary dispatch and a recipe hit (VulkanDevice::recordDispatch).
 struct RecordedDispatch;
 struct ComputePipelineObjects;
 
@@ -59,7 +55,6 @@ public:
     // Distinguishes this device from every earlier one in the process (a memo keyed by the device
     // cannot rely on the pointer, which a replacement may reuse).
     std::uint64_t Serial() const { return serial; }
-    // The Vulkan device handle (a Recipe names the device it was built on).
     VkDevice Device() const;
     // Drains everything under the caller's GpuMutex: recorder Sync plus vkDeviceWaitIdle. For suspend,
     // resize, device replacement, CPU fill fallback and APS5_DRAIN_ALL; the packet-loop drains use the
@@ -243,73 +238,19 @@ public:
     };
     static PresentStatistics PresentCounts();
     Graphics::DeviceImageTable::Counts DeviceImageCounts() const;
-    // Stage A of a dispatch's resource build, run WITHOUT GuestMemory::GpuMutex before Dispatch or
-    // DispatchIndirect: the binding plan, data buffers, imports already serving the guest buffers,
-    // read-only copies and the descriptor set (see ShaderResources). The dispatch completes it
-    // under the mutex (stage B: texture lookups, the rest of the upload, descriptor writes) and
-    // records. Null when nothing is prepared: the resource cache may serve the dispatch (its
-    // Revalidate stays under the mutex), or APS5_LOCKED_BUILD=1 keeps the whole build under it as
-    // before. `shader` and `snapshots` must outlive the dispatch.
     std::shared_ptr<PreparedDispatch> PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads = 0);
     // APS5_PROFILE_DRAW: the parts of a PrepareDispatch in milliseconds, in the order key, find,
     // precollect, presync, stage A (the driver's 'prepare:' rows).
     static std::span<const double, 5> PreparePhaseMs(const PreparedDispatch& prepared);
-    // `recipe`, when given, receives the Recipe a successful call built for its dispatch-cache
-    // variant (design_cpu_final M4): only when the resource cache served or took the object
-    // (reusable, cacheable) and recipes are on (APS5_NO_DISPATCH_RECIPE=1 builds none); else null.
-    void Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr, std::shared_ptr<const Recipe>* recipe = nullptr);
+    void Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr);
     struct IndirectOutcome {
         int cpuReason;
         double argumentReadMs;
     };
-    IndirectOutcome DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr, std::shared_ptr<const Recipe>* recipe = nullptr);
-    // A value-equal dispatch-cache hit with a recipe (design_cpu_final M4), in two steps.
-    // PrepareRecipe, WITHOUT GuestMemory::GpuMutex: the pre-checks (recipes on, the recipe's
-    // device is this one, its template and pipeline objects still alive), the template's
-    // precollect and the pre-sync from the recipe's surface list (recomputed from the template when
-    // the host-import identity it was made under moved). Null when a pre-check fails (counted on
-    // the [recipe] line by reason): the caller takes the ordinary path. `indirect` files the
-    // counters under the indirect rows.
-    std::shared_ptr<RecipeHit> PrepareRecipe(const std::shared_ptr<const Recipe>& recipe, bool indirect);
-    // DispatchRecipe, under the mutex after the packet's labels: reaps the pre-synced batches,
-    // proves the template current (ShaderResources::ProveCurrent, the authoritative check),
-    // touches the resource cache's LRU, decides an indirect dispatch's argument path as
-    // DispatchIndirect does, and records from the recipe's objects (the template refreshed by
-    // vkCmdUpdateBuffer only when its data-word hash differs from the recipe's). Rebuild when the
-    // proof failed (the template is removed from the cache and kept by the batch) or the device
-    // changed: nothing was recorded, the caller releases the mutex and restarts at
-    // PrepareDispatch. `arguments` non-zero is a DISPATCH_INDIRECT (`outcome` as DispatchIndirect
-    // reports it). `verify` (APS5_VERIFY_RECIPE=1): the PrepareDispatch made beside the hit, whose
-    // found object, the pipeline map's objects and the per-word RefreshData decision must agree
-    // with the recipe's, else the process aborts. `refreshByWords`: the driver's data-only hit
-    // (`shader` carries live flat-SRT words the recipe's hash does not name), so the template's
-    // data refresh is decided by the per-word compare instead of the hash.
-    RecipeOutcome DispatchRecipe(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, const std::shared_ptr<RecipeHit>& hit, IndirectOutcome& outcome, const std::shared_ptr<PreparedDispatch>& verify = nullptr, bool refreshByWords = false);
-    // Whether dispatch-cache hits use recipes (APS5_NO_DISPATCH_RECIPE unset) and whether every
-    // hit is verified (APS5_VERIFY_RECIPE=1).
-    static bool DispatchRecipes();
-    static bool VerifyRecipes();
-    // Whether compute templates refresh their data buffers with a hit's words instead of keying
-    // them (APS5_NO_TEMPLATE_DATA_REFRESH unset); the driver's data-only hits require it.
-    static bool TemplateDataRefresh();
-    // The driver's recipe events for the [recipe] line: a restart after Rebuild, an attach; the
-    // rows are the dispatch, indirect and draw kinds. NoteDrawRecipeMiss files a draw hit's
-    // pre-check miss made in the driver (no recipe for the matched variants, or a device mismatch).
-    enum class RecipeEvent { Restart, Attach };
-    enum class RecipeKind : std::size_t { Dispatch, Indirect, Draw };
-    static void NoteRecipe(RecipeEvent event, bool indirect);
-    static void NoteRecipe(RecipeEvent event, RecipeKind kind);
-    enum class DrawRecipePrecheck : std::size_t { NoRecipe, Device };
-    static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
-    // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
-    // built for its draw-cache entry (design_cpu_final M8); null otherwise.
-    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+    IndirectOutcome DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr);
+    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders);
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
-    // A draw-cache hit recorded from its recipe (Graphics::DrawWithRecipe), under the mutex after
-    // the packet's labels; Rebuild when the recipe's device is not this one or DrawWithRecipe
-    // missed (nothing recorded: the caller runs Draw with the hit's stages and re-attaches).
-    RecipeOutcome DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, const std::shared_ptr<const DrawRecipe>& recipe);
     // The indirect draw features the device enabled, for the driver's decision whether an indirect
     // draw's records can be read by the GPU (Graphics::Draw) or must be resolved on the CPU.
     struct IndirectDrawSupport {
@@ -345,7 +286,7 @@ private:
     ShaderRecompiler::SpirvTarget buildTarget() const;
     Graphics::Context buildContext() const;
     // Body of Dispatch and DispatchIndirect: `arguments` 0 dispatches x, y, z groups.
-    IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe);
+    IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared);
     std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created = nullptr, std::shared_ptr<RecordUse> use = nullptr);
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
     std::uint64_t presync(std::span<const std::pair<std::uint64_t, std::uint64_t>> surfaces);
