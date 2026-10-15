@@ -39,9 +39,11 @@ struct TableColumn {
     bool address = false;
     std::vector<KeyDomain> keyDomains;
     bool unkeyed = false;
+    bool selected = false;
+    std::uint32_t selection = 0;
 
     bool operator==(const TableColumn& other) const {
-        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address;
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && selected == other.selected && selection == other.selection;
     }
 };
 
