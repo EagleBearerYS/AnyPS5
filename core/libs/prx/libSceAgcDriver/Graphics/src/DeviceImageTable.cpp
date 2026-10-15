@@ -344,7 +344,7 @@ void DeviceImageTable::retire(const Entry& entry, Recorder& recorder) {
 
 void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
     if (entries.empty()) return;
-    const ValidationState state{GuestMemory::ThreadCollectEpoch(), GuestMemory::UnwatchSerial(), DepthSurfacesSerial(), StorageTexture::PendingSerial()};
+    const ValidationState state{GuestMemory::ThreadCollectEpoch(), GuestMemory::UnwatchSerial(), DepthSurfacesSerial(), StorageTexture::PendingSerial(), GuestMemory::OwnWriteSerial()};
     if (state.epoch != 0u && validated == state) return;
     const bool everything = !validated.has_value() || validated->unwatch != state.unwatch || validated->depthSurfaces != state.depthSurfaces;
     const bool pendingChanged = !validated.has_value() || validated->pending != state.pending;

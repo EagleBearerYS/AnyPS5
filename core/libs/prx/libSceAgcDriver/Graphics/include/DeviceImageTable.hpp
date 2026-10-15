@@ -81,6 +81,7 @@ private:
         std::uint64_t unwatch = 0;
         std::uint64_t depthSurfaces = 0;
         std::uint64_t pending = 0;
+        std::uint64_t ownWrites = 0;
         bool operator==(const ValidationState&) const = default;
     };
 
