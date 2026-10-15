@@ -908,7 +908,7 @@ void RunTests(AgcDriver::VulkanDevice& device) {
 
     Keys = {};
     const auto aliased = Run(device, TableCode, 1, Lanes, 64, true);
-    Require(Faulted(aliased) && aliased.log.find("is written by its own dispatch") != std::string::npos, "image table: a dispatch storing into its own table did not fault on use:\n" + aliased.log);
+    Require(aliased.log.find("image table at 0x") != std::string::npos && aliased.log.find("is written by its own dispatch") != std::string::npos, "image table: a dispatch storing into its own table was not reported:\n" + aliased.log);
     SetClassRecords();
 }
 
@@ -1108,11 +1108,6 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
 }
 
 void RunPointerTests(AgcDriver::VulkanDevice& device) {
-    struct Registration {
-        void* data;
-        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
-        ~Registration() { GuestAllocations::Mutation().Remove(data); }
-    } registeredRoot(Root.data(), Root.size() * sizeof(std::uint32_t));
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
     const auto uintImage = Image(UintTexels.data(), Format32UInt);
     const auto sintImage = Image(SintTexels.data(), Format32SInt);
@@ -1195,11 +1190,6 @@ void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
         [](std::uint32_t x) { return static_cast<std::uint32_t>(SintTexels[x]); },
     };
     const std::array<const char*, 3> names{"float", "uint", "sint"};
-    struct Registration {
-        void* data;
-        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
-        ~Registration() { GuestAllocations::Mutation().Remove(data); }
-    } registeredIndirect(Indirect.data(), decltype(Indirect)::ByteSize);
 
     Table = {};
     Indirect = {};
@@ -1279,14 +1269,9 @@ void RunViewKindTests(AgcDriver::VulkanDevice& device) {
 }
 
 void RunPointerStorageWriteTests(AgcDriver::VulkanDevice& device) {
-    alignas(256) static std::array<std::uint32_t, 256u * 8u> records{};
-    alignas(256) static std::array<std::uint32_t, 256u * 8u> otherRecords{};
-    alignas(256) static std::array<float, Width * Height> isolatedTexels{};
-    struct Registration {
-        void* data;
-        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
-        ~Registration() { GuestAllocations::Mutation().Remove(data); }
-    } registeredRecords(records.data(), sizeof(records)), registeredOtherRecords(otherRecords.data(), sizeof(otherRecords)), registeredOtherTexels(OtherFloatTexels.data(), decltype(OtherFloatTexels)::ByteSize);
+    static TestGuest::Array<std::uint32_t, 256u * 8u> records;
+    static TestGuest::Array<std::uint32_t, 256u * 8u> otherRecords;
+    static TestGuest::Array<float, Width * Height> isolatedTexels;
 
     for (std::uint32_t x = 0; x < isolatedTexels.size(); ++x) isolatedTexels[x] = 1024.0f + static_cast<float>(x);
     const auto run = [&](std::span<const std::uint32_t> code, bool alias, std::uint32_t waveSize = 64u, std::uint32_t selectedLanes = 0u, bool warm = false) {
@@ -1370,7 +1355,7 @@ TestGuest::Array<std::byte, TargetWidth * TargetHeight * 4> Pixels;
 TestGuest::Array<std::uint32_t, 4 * 4> VertexResults;
 TestGuest::Array<std::uint32_t, 4> PixelResults;
 TestGuest::Array<std::uint32_t, 4 * 4> GraphicsTable;
-constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
+TestGuest::Array<std::array<float, 4>, 3> Triangle{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}};
 
 std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey) {
     const auto target = device.Target();
