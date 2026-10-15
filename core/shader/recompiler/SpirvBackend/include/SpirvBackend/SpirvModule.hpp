@@ -59,6 +59,7 @@ public:
     [[nodiscard]] std::vector<std::uint32_t> TakeFunctionWords(std::size_t offset);
     void AppendFunctionWords(std::span<const std::uint32_t> words);
     void BeginHelperFunction();
+    [[nodiscard]] bool InHelperFunction() const { return inHelperFunction; }
     void EndHelperFunction();
     void ReturnThroughResultPointers();
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);

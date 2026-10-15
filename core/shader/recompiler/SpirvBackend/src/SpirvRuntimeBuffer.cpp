@@ -754,7 +754,14 @@ void rawStore(SpirvValueEmitContext& context, const IrValue& instruction, std::u
     });
 }
 
-std::uint32_t scalarLoad(SpirvValueEmitContext& context, const IrValue& instruction, const BufferValues& operands) {
+struct ScalarAccess {
+    RuntimeDescriptor resource;
+    std::uint32_t byte;
+    std::uint32_t offset;
+    std::uint32_t inBounds;
+};
+
+ScalarAccess scalarAccess(SpirvValueEmitContext& context, const IrValue& instruction, const BufferValues& operands) {
     auto& state = context.state;
     const auto resource = descriptor(context, instruction, operands);
     const auto u64 = TypeScalarU64(state);
@@ -764,13 +771,25 @@ std::uint32_t scalarLoad(SpirvValueEmitContext& context, const IrValue& instruct
     const auto byte = EmitAndConstant(state, address, ~3u);
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
     const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
+    return {resource, byte, offset, inBounds};
+}
+
+std::uint32_t scalarGuestAddress(SpirvEmitterState& state, const ScalarAccess& access) {
+    const auto u64 = TypeScalarU64(state);
+    return Binary(state, spv::OpIAdd, u64, Binary(state, spv::OpBitwiseAnd, u64, access.resource.base, BdaConstant(state, ~std::uint64_t{3u})), access.offset);
+}
+
+std::uint32_t scalarLoad(SpirvValueEmitContext& context, const IrValue& instruction, const BufferValues& operands) {
+    auto& state = context.state;
+    const auto [resource, byte, offset, inBounds] = scalarAccess(context, instruction, operands);
     if (!context.Memory(instruction).gpuDescriptor) {
         const auto access = directAccess(context, instruction, resource, false);
         const auto index = directWordIndex(state, directBaseWord(state, access), byte);
         return EmitValueOrZeroIfCondition(state, both(state, inBounds, EmitMemoryElementInBounds(state, access, index)), [&] { return directWordLoad(state, access, index); });
     }
-    const auto base = Binary(state, spv::OpBitwiseAnd, u64, resource.base, BdaConstant(state, ~std::uint64_t{3u}));
-    return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, resource, Binary(state, spv::OpIAdd, u64, base, offset), 32u); });
+    const auto guest = scalarGuestAddress(state, {resource, byte, offset, inBounds});
+    const auto uncached = [&] { return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, resource, guest, 32u); }); };
+    return BdaReadCacheAvailable(state) ? EmitBdaCachedDword(context, instruction, guest, inBounds, uncached) : uncached();
 }
 
 std::uint32_t atomicTargetType(SpirvEmitterState& state, const MemoryInfo& memory) {
@@ -1065,7 +1084,11 @@ std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruct
         });
         return valueType == 0u ? 0u : result;
     };
-    if (request.kind == AccessKind::ScalarLoad) return call();
+    if (request.kind == AccessKind::ScalarLoad) {
+        if (!memory.gpuDescriptor || !BdaReadCacheAvailable(state)) return call();
+        const auto access = scalarAccess(context, instruction, operands);
+        return EmitBdaCachedDword(context, instruction, scalarGuestAddress(state, access), access.inBounds, call);
+    }
     if (valueType == 0u) {
         EmitIfCondition(state, active, [&] { static_cast<void>(call()); });
         return 0u;

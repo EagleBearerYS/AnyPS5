@@ -2819,7 +2819,7 @@ void verifyCoherentBufferAccesses() {
         std::set<std::uint32_t> reachable;
         std::set<std::uint32_t> metadata;
         std::uint32_t function = 0;
-        const std::set<std::string_view> metadataFunctions{"bda_translate", "probe_bda_pointer", "probe_bda_write_pointer", "get_bda_pointer", "get_bda_write_pointer", "get_bda_atomic_pointer", "bda_write_granted", "note_bda_write", "record_bda_fault"};
+        const std::set<std::string_view> metadataFunctions{"bda_translate", "bda_segment", "probe_bda_pointer", "probe_bda_write_pointer", "get_bda_pointer", "get_bda_write_pointer", "get_bda_atomic_pointer", "bda_write_granted", "note_bda_write", "record_bda_fault"};
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             const auto opcode = words[cursor] & 0xffffu;

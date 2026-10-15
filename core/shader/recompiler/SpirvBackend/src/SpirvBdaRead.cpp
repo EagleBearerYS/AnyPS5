@@ -433,6 +433,45 @@ std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::
     return EmitBdaBytes(state, address, bits / 8u, instruction, BdaAccessMask(state, inst));
 }
 
+std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, const std::function<std::uint32_t()>& uncached) {
+    auto& state = ctx.state;
+    if (!BdaReadCacheAvailable(state)) ctx.Fail(inst, "BDA read cache is missing");
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto& cache = state.bdaReadCache;
+    const auto both = [&](std::uint32_t left, std::uint32_t right) { return Binary(state, spv::OpLogicalAnd, boolean, left, right); };
+    const auto load = [&](std::uint32_t variable) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, u64, value, variable);
+        return value;
+    };
+    const auto end = Binary(state, spv::OpIAdd, u64, address, BdaConstant(state, 4u));
+    const auto within = [&](std::uint32_t begin, std::uint32_t limit) { return both(Binary(state, spv::OpULessThanEqual, boolean, begin, address), Binary(state, spv::OpULessThanEqual, boolean, end, limit)); };
+    const auto fast = [&] {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, Binary(state, spv::OpIAdd, u64, address, load(cache[2])));
+        const auto value = state.module.AllocateId();
+        if (BdaCoherent(state, inst)) state.module.AddFunction(spv::OpAtomicLoad, u32, value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+        else state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(false), 4u);
+        return value;
+    };
+    return EmitValueIfElse(state, both(enabled, within(load(cache[0]), load(cache[1]))), u32, fast, [&] {
+        const auto value = uncached();
+        const auto segment = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeStruct, u64, u64, u64), segment, state.bdaSegmentFunction, address);
+        std::array<std::uint32_t, 3> fields{};
+        for (std::uint32_t field = 0; field < 3u; ++field) {
+            fields[field] = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, u64, fields[field], segment, field);
+        }
+        const auto aligned = Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u64, Binary(state, spv::OpIAdd, u64, address, fields[2]), BdaConstant(state, 3u)), BdaConstant(state, 0u));
+        const auto covers = both(both(enabled, both(Binary(state, spv::OpULessThan, boolean, address, end), aligned)), within(fields[0], fields[1]));
+        for (std::uint32_t field = 0; field < 3u; ++field) state.module.AddFunction(spv::OpStore, cache[field], Select(state, u64, covers, fields[field], load(cache[field])));
+        return value;
+    });
+}
+
 void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
     auto& state = ctx.state;
     if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");

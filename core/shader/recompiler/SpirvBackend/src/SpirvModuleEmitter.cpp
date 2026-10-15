@@ -1069,6 +1069,7 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.pixelValidMaskVariable != 0u) {
         state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), state.pixelValidMaskVariable, spv::StorageClassFunction);
     }
+    DeclareBdaReadCache(state);
     for (std::uint32_t half = 0; half < state.laneCount; half++) {
         auto& lane = half == 0u ? ctx : high;
         if (lane.scratchU32Variable != 0u) {

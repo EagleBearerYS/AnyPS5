@@ -14,6 +14,8 @@ std::uint32_t BdaWord(SpirvEmitterState& state, std::uint32_t variable, std::uin
 std::uint32_t BdaLoadWord(SpirvEmitterState& state, std::uint32_t index);
 std::uint32_t BdaLoadAddress(SpirvEmitterState& state, std::uint32_t index);
 void DefineBdaFaultFunction(SpirvEmitterState& state);
+void DeclareBdaReadCache(SpirvEmitterState& state);
+bool BdaReadCacheAvailable(const SpirvEmitterState& state);
 void DefineBdaDwordReadFunctions(SpirvEmitterState& state);
 void DefineBdaSpanReadFunctions(SpirvEmitterState& state);
 void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason);
@@ -25,6 +27,7 @@ bool BdaInvocationsMayStop(const IrProgram& program);
 void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition);
 std::uint32_t BdaInstructionPc(SpirvEmitterState& state, const IrValue& inst);
 std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bits);
+std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, const std::function<std::uint32_t()>& uncached);
 void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits = 32u);
 void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits);
 void DefineBdaByteWriteFunctions(SpirvEmitterState& state);

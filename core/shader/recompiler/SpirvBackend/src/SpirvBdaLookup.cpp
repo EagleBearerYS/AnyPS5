@@ -250,6 +250,143 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes) {
     return function;
 }
 
+std::uint32_t SegmentType(SpirvEmitterState& state) {
+    const auto u64 = TypeScalarU64(state);
+    return state.module.Type(spv::OpTypeStruct, u64, u64, u64);
+}
+
+std::uint32_t DefineBdaSegment(SpirvEmitterState& state) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto entryType = TypeU32Vector(state, 4);
+    const auto result = SegmentType(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto binary = [&](std::uint32_t op, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, op, type, left, right); };
+    const auto widen = [&](std::uint32_t value) { return Unary(state, spv::OpUConvert, u64, value); };
+    const auto either = [&](std::uint32_t left, std::uint32_t right) { return binary(spv::OpLogicalOr, boolean, left, right); };
+    const auto both = [&](std::uint32_t left, std::uint32_t right) { return binary(spv::OpLogicalAnd, boolean, left, right); };
+    const auto differs = [&](std::uint32_t value, std::uint32_t expected) { return binary(spv::OpINotEqual, boolean, value, expected); };
+    const auto load = [&](std::uint32_t type, std::uint32_t pointer) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, type, value, pointer);
+        return value;
+    };
+    const auto loadDevice = [&](std::uint32_t type, std::uint32_t address, std::uint32_t alignment) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, type), pointer, address);
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, type, value, pointer, spv::MemoryAccessAlignedMask, alignment);
+        return value;
+    };
+    const auto component = [&](std::uint32_t vector, std::uint32_t index) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, value, vector, index);
+        return value;
+    };
+    const auto pair = [&](std::uint32_t low, std::uint32_t high) { return binary(spv::OpBitwiseOr, u64, widen(low), binary(spv::OpShiftLeftLogical, u64, widen(high), BdaConstant(state, 32u))); };
+    const auto segment = [&](std::uint32_t begin, std::uint32_t end, std::uint32_t delta) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, result, value, begin, end, delta);
+        return value;
+    };
+    const auto zero = BdaConstant(state, 0u);
+    const auto empty = state.module.Constant(spv::OpConstantComposite, result, zero, zero, zero);
+    const auto none = [&](std::uint32_t condition) { ReturnValueIf(state, condition, empty); };
+    const auto readable = [&](std::uint32_t permissions) { return binary(spv::OpINotEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(BdaAbi::Read)), constant(0u)); };
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, "bda_segment");
+    state.module.AddFunction(spv::OpFunction, result, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, u64));
+    const auto address = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+    EmitLabel(state, state.module.AllocateId());
+    const auto variable = [&](std::uint32_t type) {
+        const auto id = state.module.AllocateId();
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, type), id, spv::StorageClassFunction);
+        return id;
+    };
+    const auto low = variable(u32);
+    const auto high = variable(u32);
+    const auto entry = variable(entryType);
+    const auto shift = variable(u32);
+    const auto length = state.module.AllocateId();
+    state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
+    none(binary(spv::OpULessThan, boolean, length, constant(BdaAbi::HeaderWords)));
+    std::array<std::uint32_t, BdaAbi::HeaderWords> fields{};
+    for (std::uint32_t word = 0; word < BdaAbi::HeaderWords; ++word) fields[word] = BdaLoadWord(state, constant(word));
+    const auto count = fields[BdaAbi::CountWord];
+    const auto grants = fields[BdaAbi::GrantsWord];
+    const auto available = binary(spv::OpISub, u32, length, constant(BdaAbi::HeaderWords));
+    const auto reserved = binary(spv::OpBitwiseOr, u32, fields[3], binary(spv::OpBitwiseOr, u32, fields[BdaAbi::HeaderWords - 2u], fields[BdaAbi::HeaderWords - 1u]));
+    const auto layout = either(differs(fields[0], constant(BdaAbi::TableVersion)), differs(reserved, constant(0)));
+    const auto rangeWords = binary(spv::OpIMul, u32, count, constant(BdaAbi::RangeWords));
+    const auto exceeds = either(binary(spv::OpUGreaterThan, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), binary(spv::OpUGreaterThan, boolean, grants, binary(spv::OpShiftRightLogical, u32, available, constant(2))));
+    const auto sized = either(exceeds, differs(binary(spv::OpIAdd, u32, rangeWords, binary(spv::OpIMul, u32, grants, constant(BdaAbi::GrantWords))), available));
+    none(either(layout, sized));
+    const auto pages = pair(fields[BdaAbi::PageTableWord], fields[BdaAbi::PageTableWord + 1u]);
+    const auto walk = both(binary(spv::OpINotEqual, boolean, pages, zero), binary(spv::OpULessThan, boolean, address, BdaConstant(state, BdaAbi::PageTableEnd)));
+    EmitIfCondition(state, walk, [&] {
+        const auto window = binary(spv::OpShiftLeftLogical, u64, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::WindowShift)), BdaConstant(state, 3u));
+        const auto leaf = loadDevice(u64, binary(spv::OpIAdd, u64, pages, window), sizeof(std::uint64_t));
+        EmitIfCondition(state, binary(spv::OpINotEqual, boolean, leaf, zero), [&] {
+            const auto page = binary(spv::OpShiftLeftLogical, u64, binary(spv::OpBitwiseAnd, u64, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::PageShift)), BdaConstant(state, BdaAbi::WindowPages - 1u)), BdaConstant(state, 4u));
+            state.module.AddFunction(spv::OpStore, entry, loadDevice(entryType, binary(spv::OpIAdd, u64, leaf, page), sizeof(BdaAbi::PageEntry)));
+            state.module.AddFunction(spv::OpStore, shift, constant(BdaAbi::PageShift));
+            const auto header = state.module.AllocateId();
+            const auto body = state.module.AllocateId();
+            const auto continuation = state.module.AllocateId();
+            const auto merge = state.module.AllocateId();
+            state.module.AddFunction(spv::OpBranch, header);
+            EmitLabel(state, header);
+            const auto current = load(entryType, entry);
+            const auto level = load(u32, shift);
+            const auto split = binary(spv::OpIEqual, boolean, binary(spv::OpShiftRightLogical, u32, component(current, 2u), constant(BdaAbi::KindShift)), constant(static_cast<std::uint32_t>(BdaAbi::PageKind::Split)));
+            const auto descend = both(split, binary(spv::OpINotEqual, boolean, level, constant(0)));
+            state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+            state.module.AddFunction(spv::OpBranchConditional, descend, body, merge);
+            EmitLabel(state, body);
+            const auto next = binary(spv::OpISub, u32, level, constant(BdaAbi::SplitShift));
+            const auto child = binary(spv::OpBitwiseAnd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, widen(next))), constant(BdaAbi::SplitChildren - 1u));
+            const auto children = binary(spv::OpIAdd, u64, leaf, pair(component(current, 0u), component(current, 1u)));
+            state.module.AddFunction(spv::OpStore, entry, loadDevice(entryType, binary(spv::OpIAdd, u64, children, widen(binary(spv::OpShiftLeftLogical, u32, child, constant(4u)))), sizeof(BdaAbi::PageEntry)));
+            state.module.AddFunction(spv::OpStore, shift, next);
+            state.module.AddFunction(spv::OpBranch, continuation);
+            EmitLabel(state, continuation);
+            state.module.AddFunction(spv::OpBranch, header);
+            EmitLabel(state, merge);
+            const auto found = load(entryType, entry);
+            const auto bounds = component(found, 2u);
+            const auto kind = binary(spv::OpShiftRightLogical, u32, bounds, constant(BdaAbi::KindShift));
+            none(binary(spv::OpUGreaterThan, boolean, kind, constant(static_cast<std::uint32_t>(BdaAbi::PageKind::Segment))));
+            const auto mask = binary(spv::OpISub, u32, binary(spv::OpShiftLeftLogical, u32, constant(1u), load(u32, shift)), constant(1u));
+            const auto offset = widen(binary(spv::OpBitwiseAnd, u32, Unary(state, spv::OpUConvert, u32, address), mask));
+            const auto first = widen(binary(spv::OpBitwiseAnd, u32, bounds, constant(BdaAbi::FirstMask)));
+            const auto limit = pair(component(found, 3u), binary(spv::OpBitwiseAnd, u32, binary(spv::OpShiftRightLogical, u32, bounds, constant(BdaAbi::LimitHighShift)), constant(1u)));
+            const auto inside = both(binary(spv::OpUGreaterThanEqual, boolean, offset, first), binary(spv::OpULessThan, boolean, offset, limit));
+            const auto held = both(binary(spv::OpIEqual, boolean, kind, constant(static_cast<std::uint32_t>(BdaAbi::PageKind::Segment))), inside);
+            const auto permissions = binary(spv::OpBitwiseAnd, u32, binary(spv::OpShiftRightLogical, u32, bounds, constant(BdaAbi::PermissionShift)), constant(BdaAbi::Read | BdaAbi::Write));
+            none(both(held, Unary(state, spv::OpLogicalNot, boolean, readable(permissions))));
+            const auto start = binary(spv::OpISub, u64, address, offset);
+            ReturnValueIf(state, held, segment(binary(spv::OpIAdd, u64, start, first), binary(spv::OpIAdd, u64, start, limit), pair(component(found, 0u), component(found, 1u))));
+        });
+    });
+    const auto index = EmitBdaBisection(state, low, high, address, constant(BdaAbi::HeaderWords), count, BdaAbi::RangeWords);
+    none(binary(spv::OpIEqual, boolean, index, constant(0)));
+    const auto selected = binary(spv::OpIAdd, u32, constant(BdaAbi::HeaderWords), binary(spv::OpIMul, u32, binary(spv::OpISub, u32, index, constant(1)), constant(BdaAbi::RangeWords)));
+    const auto at = [&](std::uint32_t offset) { return binary(spv::OpIAdd, u32, selected, constant(offset)); };
+    const auto begin = BdaLoadAddress(state, selected);
+    const auto finish = BdaLoadAddress(state, at(2));
+    const auto base = BdaLoadAddress(state, at(4));
+    none(differs(BdaLoadWord(state, at(7)), constant(0)));
+    none(binary(spv::OpUGreaterThanEqual, boolean, begin, finish));
+    none(binary(spv::OpUGreaterThanEqual, boolean, address, finish));
+    none(Unary(state, spv::OpLogicalNot, boolean, readable(BdaLoadWord(state, at(6)))));
+    none(binary(spv::OpIEqual, boolean, base, zero));
+    state.module.AddFunction(spv::OpReturnValue, segment(begin, finish, binary(spv::OpISub, u64, base, begin)));
+    state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
 std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool recordFaults, std::uint32_t permission = BdaAbi::Read) {
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
@@ -363,10 +500,26 @@ static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
     return function;
 }
 
+void DeclareBdaReadCache(SpirvEmitterState& state) {
+    state.bdaReadCache = {};
+    if (state.bdaSegmentFunction == 0u) return;
+    const auto pointer = TypePointer(state, spv::StorageClassFunction, TypeScalarU64(state));
+    const auto zero = BdaConstant(state, 0u);
+    for (auto& variable : state.bdaReadCache) {
+        variable = state.module.AllocateId();
+        state.module.AddFunction(spv::OpVariable, pointer, variable, spv::StorageClassFunction, zero);
+    }
+}
+
+bool BdaReadCacheAvailable(const SpirvEmitterState& state) {
+    return state.bdaReadCache[0] != 0u && !state.module.InHelperFunction();
+}
+
 void DefineGetBdaPointer(SpirvEmitterState& state) {
     if (state.faultBufferVariable != 0) DefineBdaFaultFunction(state);
     if (!state.program.Info().usesDma) return;
     state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites);
+    if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
     if (!BdaByteReadsForced()) state.bdaProbeFunction = DefineBdaLookup(state, "probe_bda_pointer", false);
     DefineBdaDwordReadFunctions(state);

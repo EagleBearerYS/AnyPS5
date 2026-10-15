@@ -846,7 +846,7 @@ struct CalleeStateScope {
         : state(state), currentLabel(state.currentLabel), currentBlock(state.currentBlock), continueTarget(state.continueTarget), bdaStopsInvocations(state.bdaStopsInvocations),
           bdaStopValue(state.bdaStopValue), bdaPcOverride(state.bdaPcOverride), calleeStopValue(state.calleeStopValue), memoryByteOffsets(state.memoryByteOffsets),
           bufferAddresses(state.bufferAddresses), bufferDwords(state.bufferDwords), ldsBufferBase(state.ldsBufferBase), gdsLength(state.gdsLength),
-          scratchVariable(state.scratchVariable), vectorWindowVariable(state.vectorWindowVariable), ldsVariable(state.ldsVariable), laneHalf(state.laneHalf) {
+          scratchVariable(state.scratchVariable), vectorWindowVariable(state.vectorWindowVariable), ldsVariable(state.ldsVariable), laneHalf(state.laneHalf), bdaReadCache(state.bdaReadCache) {
     }
     CalleeStateScope(const CalleeStateScope&) = delete;
     CalleeStateScope& operator=(const CalleeStateScope&) = delete;
@@ -867,6 +867,7 @@ struct CalleeStateScope {
         state.vectorWindowVariable = vectorWindowVariable;
         state.ldsVariable = ldsVariable;
         state.laneHalf = laneHalf;
+        state.bdaReadCache = bdaReadCache;
     }
 
     SpirvEmitterState& state;
@@ -886,6 +887,7 @@ struct CalleeStateScope {
     std::array<std::uint32_t, 2> vectorWindowVariable;
     std::uint32_t ldsVariable;
     std::uint32_t laneHalf;
+    std::array<std::uint32_t, 3> bdaReadCache;
 };
 
 FunctionLayout PlanFunctions(SpirvValueEmitContext& ctx, const IrProgram& program) {
@@ -1054,6 +1056,7 @@ CalleeSignature EmitCalleeFunction(SpirvValueEmitContext& caller, const IrProgra
             state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), lane->scratchU32Variable, spv::StorageClassFunction);
         }
     }
+    DeclareBdaReadCache(state);
     EmitMemoryOffsets(state);
     EmitLdsBufferBase(state);
     if (state.gdsVariable != 0u) {
