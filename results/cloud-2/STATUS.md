@@ -1,4 +1,3 @@
-BUSY GAC-035
-since: 2026-10-15T20:00:18Z (GAC-035)
-claimed: tasks/claimed/GAC-035.md
-previous: PM-043 done 2026-10-15T19:59:01Z, results/cloud-2/PM-043.md
+READY
+since: 2026-10-15T20:01:07Z
+previous: GAC-035 done 2026-10-15T20:01:07Z, results/cloud-2/GAC-035.md (test/gac031-5907-merge 0b7abbd2e4; #5907 unmoved at 7ad8cb8de)
