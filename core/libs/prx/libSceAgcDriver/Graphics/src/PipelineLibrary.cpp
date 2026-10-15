@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include <array>
@@ -111,6 +112,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     Require(info.renderPass == VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need dynamic rendering and the library dynamic states");
     const bool split = (layout.flags & VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT) != 0;
     Require(!split || (layout.setLayoutCount == 3u && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~7u) == 0u), "split pipeline library layout requires three descriptor set slots and a valid mask");
+    const bool underLock = GuestMemory::GpuMutex().HeldByThisThread();
     auto& store = Libraries();
     std::unique_lock lock(store.mutex);
     auto& device = store.devices[context.device];
@@ -249,6 +251,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             }
         }
         ++device.counters.built[part];
+        if (underLock) ++device.counters.builtUnderLock[part];
         libraries.push_back(handle);
     }
     if (partsOnly) return VK_NULL_HANDLE;
@@ -314,6 +317,18 @@ void ClearPipelineLibraries(VkDevice device) {
     for (const auto& [key, handle] : libraries.layouts) libraries.destroyLayout(device, handle, nullptr);
     for (const auto module : libraries.modules) libraries.destroyModule(device, module, nullptr);
     store.devices.erase(found);
+}
+
+bool PipelineLibraryShadersBuilt(const Context& context, const PipelineLibraryKeys& keys, VkFormat depthFormat, VkFormat stencilFormat) {
+    const std::array<std::uint32_t, 3> attachments{0u, static_cast<std::uint32_t>(depthFormat), static_cast<std::uint32_t>(stencilFormat)};
+    const auto attachmentBytes = std::as_bytes(std::span(attachments));
+    const Key attachmentKey(attachmentBytes.begin(), attachmentBytes.end());
+    auto& store = Libraries();
+    std::lock_guard lock(store.mutex);
+    const auto found = store.devices.find(context.device);
+    if (found == store.devices.end()) return false;
+    const auto& parts = found->second.parts;
+    return parts[1].contains(Combined(keys.preRasterization, Combined(keys.preRasterizationLayout, attachmentKey))) && parts[2].contains(Combined(keys.fragmentShader, Combined(keys.fragmentLayout, attachmentKey)));
 }
 
 PipelineLibraryCounters PipelineLibraryCountersOf(VkDevice device) {

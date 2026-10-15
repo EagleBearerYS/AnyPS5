@@ -276,6 +276,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     timing.Mark("post_compile_prepare");
     const auto lockForDraw = [&] {
         if (gpuLock.owns_lock()) return;
+        if (!drawHit) static_cast<void>(localDevice->PrepareDrawPipelines(graphics, stages));
         phaseTiming.Phase(DrawRowVectors);
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         gpuLock.lock();

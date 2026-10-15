@@ -3326,6 +3326,14 @@ void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
     Graphics::RunColorMetadataPass(graphicsContext(), pass);
 }
 
+bool VulkanDevice::PrepareDrawPipelines(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) {
+    PerformanceTimer timing("Vulkan.DrawPipelinePreparation");
+    const auto context = graphicsContext();
+    if (!context.graphicsPipelineLibrary || context.descriptorCache == nullptr) return false;
+    const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
+    return Graphics::Pipeline::Prebuild(context, graphics, Graphics::VertexInputLayout{}, layouts.View(), shaders);
+}
+
 bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
     PerformanceTimer timing("Vulkan.GraphicsPipelinePrebuild");
     const auto context = graphicsContext();

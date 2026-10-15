@@ -538,6 +538,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
 }
 
 bool Pipeline::Prebuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
+    PipelineLibraryKeys keys;
+    if (!libraryKeys(keys, context, state, vertexInput, resources, shaders)) return false;
+    const auto depthFormat = state.depth ? HostDepthFormat(context, state.depth->format) : VK_FORMAT_UNDEFINED;
+    if (PipelineLibraryShadersBuilt(context, keys, depthFormat, state.depth && HasStencil(state.depth->format) ? depthFormat : VK_FORMAT_UNDEFINED)) return true;
     struct Scope {
         Scope() { prebuilding = true; prebuilt = false; }
         ~Scope() { prebuilding = false; }
