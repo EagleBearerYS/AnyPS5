@@ -1069,6 +1069,7 @@ struct ThreadCollectMemo {
     std::size_t next = 0;
 };
 thread_local ThreadCollectMemo threadCollectMemo;
+thread_local CollectMemoProbe collectMemoProbe;
 
 struct EpochCollectMap {
     std::uint64_t epoch = 0;
@@ -1175,11 +1176,16 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     if (useMemo && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
+        auto* missReason = threadCollectEpoch == 0 ? &collectMemoProbe.unbumped : &collectMemoProbe.noEntry;
         if (epochCollectMapEnabled()) {
             const auto& map = epochCollectMap(epoch);
-            if (const auto found = map.ranges.find(first); found != map.ranges.end() && found->second.unwatched == unwatched && stop <= found->second.end) {
-                collectMemoHits.fetch_add(1, std::memory_order_relaxed);
-                return tracker.generation.load(std::memory_order_relaxed);
+            if (const auto found = map.ranges.find(first); found != map.ranges.end()) {
+                if (found->second.unwatched == unwatched && stop <= found->second.end) {
+                    ++collectMemoProbe.hits;
+                    collectMemoHits.fetch_add(1, std::memory_order_relaxed);
+                    return tracker.generation.load(std::memory_order_relaxed);
+                }
+                if (threadCollectEpoch != 0) missReason = found->second.unwatched != unwatched ? &collectMemoProbe.unwatched : &collectMemoProbe.shorter;
             }
         }
         for (const auto& entry : threadCollectMemo.entries) {
@@ -1187,10 +1193,12 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
                 // The current generation, not the memoized one: blocks stamped since (MarkWritten, an
                 // overlapping collect) were written before this caller reads, and an older value would
                 // make every later UnchangedSince fail until the epoch ends.
+                ++collectMemoProbe.hits;
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
                 return tracker.generation.load(std::memory_order_relaxed);
             }
         }
+        ++*missReason;
     }
     const auto lock = lockTracker(tracker);
     tracker.initialize();
@@ -2009,6 +2017,10 @@ void NoteLockedGpuWait(double ms) {
 std::uint64_t ThreadCollectedBytes() {
     if (!MemoryProfiled()) return 0;
     return CounterFor(CounterCollect).bytes.load(std::memory_order_relaxed);
+}
+
+CollectMemoProbe ThreadCollectMemoProbe() {
+    return collectMemoProbe;
 }
 
 std::uint32_t GpuLockThreadTag() {
