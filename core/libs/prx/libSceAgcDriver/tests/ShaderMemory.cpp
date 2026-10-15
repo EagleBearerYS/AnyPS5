@@ -25,9 +25,13 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <initializer_list>
 #include <iostream>
 #include <map>
@@ -4969,9 +4973,71 @@ void verifySrgbDepthCompareModes() {
     }
 }
 
+namespace AgcDriver {
+
+struct CaptureReadBench {
+    static bool Read(ShaderMemory& memory, std::uint64_t address, std::uint32_t* value) {
+        return ShaderMemory::read(&memory, address, value);
+    }
+};
+
+}
+
+void runCaptureReadBench() {
+    const auto setting = [](const char* name, unsigned long long fallback) {
+        const char* value = std::getenv(name);
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : fallback;
+    };
+    const auto words = static_cast<std::size_t>(setting("BENCH_WORDS", 100000));
+    const auto captures = static_cast<std::size_t>(setting("BENCH_CAPTURES", 50));
+    const auto threads = static_cast<std::size_t>(setting("BENCH_THREADS", 1));
+    constexpr std::size_t PageWords = 1024;
+    std::vector<std::uint32_t> code(64, 0xbf810000u);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> initial{{{static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code.data())), std::as_bytes(std::span(code))}}};
+    std::vector<std::vector<std::uint32_t>> guests(threads, std::vector<std::uint32_t>(words + PageWords));
+    std::vector<std::vector<double>> nanoseconds(threads);
+    std::atomic<std::size_t> ready{0};
+    std::atomic<std::uint64_t> sink{0};
+    std::vector<std::thread> workers;
+    for (std::size_t thread = 0; thread < threads; ++thread) {
+        workers.emplace_back([&, thread] {
+            auto& guest = guests[thread];
+            for (std::size_t index = 0; index < guest.size(); ++index) guest[index] = static_cast<std::uint32_t>(index * 2654435761u);
+            const auto base = (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.data())) + 4095u) & ~std::uint64_t{4095};
+            std::uint64_t sum = 0;
+            ready.fetch_add(1);
+            while (ready.load() < threads) {}
+            for (std::size_t capture = 0; capture < captures; ++capture) {
+                const auto started = std::chrono::steady_clock::now();
+                {
+                    AgcDriver::ShaderMemory memory(initial);
+                    for (std::size_t word = 0; word < words; ++word) {
+                        std::uint32_t value = 0;
+                        require(AgcDriver::CaptureReadBench::Read(memory, base + word * sizeof(std::uint32_t), &value), "capture read bench: a word read failed");
+                        sum += value;
+                    }
+                }
+                nanoseconds[thread].push_back(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - started).count() / static_cast<double>(words));
+            }
+            sink.fetch_add(sum);
+        });
+    }
+    for (auto& worker : workers) worker.join();
+    std::vector<double> all;
+    for (const auto& perThread : nanoseconds) all.insert(all.end(), perThread.begin(), perThread.end());
+    std::sort(all.begin(), all.end());
+    double total = 0;
+    for (const auto value : all) total += value;
+    std::printf("CAPTUREREADBENCH threads %zu, %zu words per capture, %zu captures per thread, profile %s: median %.2f ns/word, mean %.2f, min %.2f, max %.2f (sink %llu)\n", threads, words, captures, std::getenv("APS5_PROFILE_DRAW") != nullptr ? "on" : "off", all[all.size() / 2], total / static_cast<double>(all.size()), all.front(), all.back(), static_cast<unsigned long long>(sink.load() & 1u));
+}
+
 int main(int argc, char** argv) {
     try {
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--capture-read-bench") {
+            runCaptureReadBench();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
