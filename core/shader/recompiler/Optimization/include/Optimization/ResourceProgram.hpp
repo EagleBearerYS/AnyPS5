@@ -81,6 +81,9 @@ void BuildPreparedShaderKey(const RecompileRequest& request, std::vector<std::ui
 [[nodiscard]] std::shared_ptr<const SourceHandle> ResolveSource(const RecompileRequest& request);
 [[nodiscard]] std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime, const SourceHandle& handle);
 
+void ApplyBufferRanges(const ShaderInfo& info, std::span<const DescriptorValue> stores, std::span<const DescriptorValue> loads, bool memory, ShaderInvocation& result);
+[[nodiscard]] bool RefreshMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime, const ShaderInvocation& current, ShaderInvocation& refreshed);
+
 }
 
 #endif

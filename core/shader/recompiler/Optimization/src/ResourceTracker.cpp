@@ -1507,7 +1507,8 @@ private:
             MakeSource(*handle, 4u, false, false, descriptor);
             std::uint32_t badDword = 0;
             auto& sites = store ? m_info.bufferStores : m_info.bufferLoads;
-            if (ValidateSource(descriptor, badDword) && !ReadsGuestMemory(*handle)) {
+            const bool fromMemory = ReadsGuestMemory(*handle);
+            if (ValidateSource(descriptor, badDword) && (!fromMemory || m_program.Resources().stage == IrShaderStage::Compute)) {
                 const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
                 const IrValue* soffset = !scalar && inst.ArgumentCount() > 3u ? inst.Argument(3u)->Resolve() : nullptr;
                 const bool immediate = scalar || (soffset != nullptr && soffset->HasImmediate() && soffset->Type() == IrType::U32);
@@ -1516,6 +1517,7 @@ private:
                 BufferStoreSite site{InternSource(descriptor), soffset != nullptr && immediate ? soffset->ImmediateU32() : 0u, !immediate, scalar};
                 site.offset = fixedOffset ? voffset->ImmediateU32() + memory.offset : 0u;
                 site.dynamicOffset = !fixedOffset;
+                site.fromMemory = fromMemory;
                 if (std::ranges::find(sites, site) == sites.end()) sites.push_back(site);
             } else {
                 (store ? m_info.unboundedStores : m_info.unboundedLoads) = true;

@@ -72,6 +72,7 @@ public:
     static void RegisterDeviceImageInterfaces(const ShaderInfo& info);
     static std::shared_ptr<const DeviceImageInterface> FindDeviceImageInterface(std::uint64_t id);
     static std::vector<DeviceImageTableAbi::Expectation> ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime);
+    static void EvaluateMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime, std::vector<DescriptorValue>& stores, std::vector<DescriptorValue>& loads);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();

@@ -253,7 +253,9 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         return;
     }
     phaseTiming.Phase(PhaseQueuedLabels);
-    if (cached && !keepVariant->plan->info.deviceImageUses.empty()) {
+    const auto memoryBuffer = [](const ShaderRecompiler::BufferStoreSite& site) { return site.fromMemory; };
+    const bool memoryBuffers = cached && (std::ranges::any_of(keepVariant->plan->info.bufferStores, memoryBuffer) || std::ranges::any_of(keepVariant->plan->info.bufferLoads, memoryBuffer));
+    if (cached && (memoryBuffers || !keepVariant->plan->info.deviceImageUses.empty())) {
         ShaderRecompiler::SrtRuntime runtime;
         runtime.userData = userData;
         runtime.shaderBase = request.shader.codeAddress;
@@ -277,9 +279,19 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         };
         auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*keepVariant->plan, runtime);
         ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(expected, compiledResult->deviceImageInterfaces);
-        if (expected != compiledResult->deviceImages) {
+        ShaderRecompiler::ShaderInvocation ranges;
+        const bool rebounded = memoryBuffers && ShaderRecompiler::RefreshMemoryBuffers(*keepVariant->plan, runtime, *compiledResult, ranges);
+        if (rebounded || expected != compiledResult->deviceImages) {
             auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(*compiledResult);
             patched->deviceImages = std::move(expected);
+            if (rebounded) {
+                patched->writeRanges = std::move(ranges.writeRanges);
+                patched->readRanges = std::move(ranges.readRanges);
+                patched->unboundedWrites = ranges.unboundedWrites;
+                patched->unboundedReads = ranges.unboundedReads;
+                patched->memoryWriteRanges = ranges.memoryWriteRanges;
+                patched->memoryReadRanges = ranges.memoryReadRanges;
+            }
             compiledResult = std::move(patched);
         }
     }

@@ -16,6 +16,7 @@ struct BufferStoreSite {
     bool scalar = false;
     std::uint32_t offset = 0;
     bool dynamicOffset = true;
+    bool fromMemory = false;
 
     bool operator==(const BufferStoreSite& other) const = default;
 };

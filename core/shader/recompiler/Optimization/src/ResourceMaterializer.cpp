@@ -843,6 +843,7 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
 
     snapshot.stores.resize(plan.info.bufferStores.size());
     for (std::uint32_t i = 0; i < plan.info.bufferStores.size(); i++) {
+        if (plan.info.bufferStores[i].fromMemory) continue;
         if (cursor >= values.size()) {
             throw std::runtime_error("materialization sources are missing stored buffer descriptors");
         }
@@ -852,6 +853,7 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
 
     snapshot.loads.resize(plan.info.bufferLoads.size());
     for (std::uint32_t i = 0; i < plan.info.bufferLoads.size(); i++) {
+        if (plan.info.bufferLoads[i].fromMemory) continue;
         if (cursor >= values.size()) {
             throw std::runtime_error("materialization sources are missing loaded buffer descriptors");
         }
@@ -1270,6 +1272,24 @@ std::shared_ptr<const DeviceImageInterface> ResourceMaterializer::FindDeviceImag
     std::lock_guard lock(registry.mutex);
     const auto found = registry.interfaces.find(id);
     return found != registry.interfaces.end() ? found->second : nullptr;
+}
+
+void ResourceMaterializer::EvaluateMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime, std::vector<DescriptorValue>& stores, std::vector<DescriptorValue>& loads) {
+    Detail::Evaluator evaluator(plan, runtime);
+    const auto evaluate = [&](const std::vector<BufferStoreSite>& sites, std::vector<DescriptorValue>& values) {
+        values.resize(sites.size());
+        for (std::size_t index = 0; index < sites.size(); ++index) {
+            if (!sites[index].fromMemory) continue;
+            const auto& descriptor = plan.descriptorSources.at(sites[index].source);
+            DescriptorValue value;
+            value.dwordCount = descriptor.dwordCount;
+            bool evaluated = descriptor.dwordCount == 4u;
+            for (std::uint32_t word = 0; evaluated && word < descriptor.dwordCount; ++word) evaluated = descriptor.dwords[word] != nullptr && evaluator.Evaluate(descriptor.dwords[word], value.dwords[word]);
+            values[index] = evaluated ? value : DescriptorValue{};
+        }
+    };
+    evaluate(plan.info.bufferStores, stores);
+    evaluate(plan.info.bufferLoads, loads);
 }
 
 std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime) {
@@ -1888,8 +1908,12 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
             addSource(sampler.source);
         }
     }
-    for (const auto& store : plan.info.bufferStores) addSource(store.source);
-    for (const auto& load : plan.info.bufferLoads) addSource(load.source);
+    for (const auto& store : plan.info.bufferStores) {
+        if (!store.fromMemory) addSource(store.source);
+    }
+    for (const auto& load : plan.info.bufferLoads) {
+        if (!load.fromMemory) addSource(load.source);
+    }
     dropUnevaluableConditions(plan);
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);

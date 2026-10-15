@@ -544,6 +544,10 @@ struct ShaderInvocation {
     bool unboundedWrites = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
     bool unboundedReads = false;
+    std::size_t memoryWriteRanges = 0;
+    std::size_t memoryReadRanges = 0;
+    bool fixedUnboundedWrites = false;
+    bool fixedUnboundedReads = false;
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;

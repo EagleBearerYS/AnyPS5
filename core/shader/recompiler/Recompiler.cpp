@@ -498,6 +498,58 @@ std::array<std::uint32_t, 3> partialThreads(const RecompileRequest& request) {
     return request.context.compute ? request.context.compute->partialThreads : std::array<std::uint32_t, 3>{};
 }
 
+std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const DescriptorValue& value, const BufferStoreSite& site);
+
+}
+
+void ApplyBufferRanges(const ShaderInfo& info, std::span<const DescriptorValue> stores, std::span<const DescriptorValue> loads, bool memory, ShaderInvocation& result) {
+    const auto apply = [&](const std::vector<BufferStoreSite>& sites, std::span<const DescriptorValue> values, bool infoUnbounded, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, bool& unbounded, bool& fixedUnbounded, std::size_t& memoryRanges) {
+        if (memory) {
+            ranges.resize(ranges.size() - memoryRanges);
+            memoryRanges = 0;
+            unbounded = fixedUnbounded;
+        } else {
+            ranges.clear();
+            memoryRanges = 0;
+            unbounded = infoUnbounded || values.size() != sites.size();
+        }
+        for (std::size_t index = 0; index < values.size() && index < sites.size(); ++index) {
+            if (sites[index].fromMemory != memory) continue;
+            const auto range = BufferStoreExtent(values[index], sites[index]);
+            if (!range.has_value()) unbounded = true;
+            else if (range->second > range->first) {
+                ranges.push_back(*range);
+                if (memory) ++memoryRanges;
+            }
+        }
+        if (!memory) fixedUnbounded = unbounded;
+    };
+    apply(info.bufferStores, stores, info.unboundedStores, result.writeRanges, result.unboundedWrites, result.fixedUnboundedWrites, result.memoryWriteRanges);
+    apply(info.bufferLoads, loads, info.unboundedLoads, result.readRanges, result.unboundedReads, result.fixedUnboundedReads, result.memoryReadRanges);
+}
+
+bool RefreshMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime, const ShaderInvocation& current, ShaderInvocation& refreshed) {
+    std::vector<DescriptorValue> stores;
+    std::vector<DescriptorValue> loads;
+    ResourceMaterializer::EvaluateMemoryBuffers(plan, runtime, stores, loads);
+    ShaderInvocation ranges;
+    ranges.writeRanges.assign(current.writeRanges.begin(), current.writeRanges.end() - static_cast<std::ptrdiff_t>(current.memoryWriteRanges));
+    ranges.readRanges.assign(current.readRanges.begin(), current.readRanges.end() - static_cast<std::ptrdiff_t>(current.memoryReadRanges));
+    ranges.fixedUnboundedWrites = current.fixedUnboundedWrites;
+    ranges.fixedUnboundedReads = current.fixedUnboundedReads;
+    ApplyBufferRanges(plan.info, stores, loads, true, ranges);
+    if (ranges.writeRanges == current.writeRanges && ranges.readRanges == current.readRanges && ranges.unboundedWrites == current.unboundedWrites && ranges.unboundedReads == current.unboundedReads) return false;
+    refreshed.writeRanges = std::move(ranges.writeRanges);
+    refreshed.readRanges = std::move(ranges.readRanges);
+    refreshed.unboundedWrites = ranges.unboundedWrites;
+    refreshed.unboundedReads = ranges.unboundedReads;
+    refreshed.memoryWriteRanges = ranges.memoryWriteRanges;
+    refreshed.memoryReadRanges = ranges.memoryReadRanges;
+    return true;
+}
+
+namespace {
+
 std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const DescriptorValue& value, const BufferStoreSite& site) {
     if (value.dwordCount != 4u) return std::nullopt;
     const auto word1 = value.dwords[1];
@@ -1053,20 +1105,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         }
     }
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
-    result.unboundedWrites = variant.info.info.unboundedStores || snapshot.stores.size() != variant.info.info.bufferStores.size();
-    result.writeRanges.clear();
-    for (std::size_t store = 0; store < snapshot.stores.size() && store < variant.info.info.bufferStores.size(); ++store) {
-        const auto range = BufferStoreExtent(snapshot.stores[store], variant.info.info.bufferStores[store]);
-        if (!range.has_value()) result.unboundedWrites = true;
-        else if (range->second > range->first) result.writeRanges.push_back(*range);
-    }
-    result.unboundedReads = variant.info.info.unboundedLoads || snapshot.loads.size() != variant.info.info.bufferLoads.size();
-    result.readRanges.clear();
-    for (std::size_t load = 0; load < snapshot.loads.size() && load < variant.info.info.bufferLoads.size(); ++load) {
-        const auto range = BufferStoreExtent(snapshot.loads[load], variant.info.info.bufferLoads[load]);
-        if (!range.has_value()) result.unboundedReads = true;
-        else if (range->second > range->first) result.readRanges.push_back(*range);
-    }
+    ApplyBufferRanges(variant.info.info, snapshot.stores, snapshot.loads, false, result);
+    ApplyBufferRanges(variant.info.info, snapshot.stores, snapshot.loads, true, result);
     if (!tables.map.empty()) {
         result.imageTablePoison.reserve(tables.poison.size());
         for (const auto& poison : tables.poison) result.imageTablePoison.push_back({poison.words, poison.dwordCount, poison.resource, static_cast<std::uint32_t>(poison.reason)});
@@ -1142,6 +1182,18 @@ RecompileResult materializeVariant(SourceEntry& source, const RecompileRequest& 
     return result;
 }
 
+void keepMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime, ResourceSnapshot& snapshot) {
+    std::vector<DescriptorValue> stores;
+    std::vector<DescriptorValue> loads;
+    ResourceMaterializer::EvaluateMemoryBuffers(plan, runtime, stores, loads);
+    for (std::size_t index = 0; index < plan.info.bufferStores.size(); ++index) {
+        if (plan.info.bufferStores[index].fromMemory) snapshot.stores.at(index) = stores[index];
+    }
+    for (std::size_t index = 0; index < plan.info.bufferLoads.size(); ++index) {
+        if (plan.info.bufferLoads[index].fromMemory) snapshot.loads.at(index) = loads[index];
+    }
+}
+
 RecompileResult RecompileImpl(const RecompileRequest& request) {
     static_cast<void>(RequestInputInfo(request));
     RequestMemoryView memory(request.context.memory);
@@ -1154,12 +1206,14 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
         const auto plan = materializer.ExtractPlan(program);
         materializer.Materialize(plan, runtime, snapshot);
         snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(plan, runtime);
+        keepMemoryBuffers(plan, runtime, snapshot);
         const auto variant = compileVariant(request, std::move(program));
         return materializeResult(variant, request, snapshot);
     }
     const auto source = getSource(request);
     materializer.Materialize(*source->plan, runtime, snapshot);
     snapshot.deviceImages = ResourceMaterializer::ExpectedDeviceImages(*source->plan, runtime);
+    keepMemoryBuffers(*source->plan, runtime, snapshot);
     return materializeVariant(*source, request, snapshot);
 }
 
@@ -1221,6 +1275,8 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     };
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
+    mixDescriptors(snapshot.stores);
+    mixDescriptors(snapshot.loads);
     mix(snapshot.deviceImages.size());
     for (const auto& image : snapshot.deviceImages) {
         mix(image.image);
@@ -1387,15 +1443,27 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     if (runtime.readNow != nullptr && plan.srtReads.empty()) now.readMemory = runtime.readNow;
     now.readTrace = nullptr;
     auto images = ResourceMaterializer::ExpectedDeviceImages(plan, now);
+    std::vector<DescriptorValue> stores;
+    std::vector<DescriptorValue> loads;
+    ResourceMaterializer::EvaluateMemoryBuffers(plan, now, stores, loads);
+    const auto keep = [&] {
+        capture.snapshot.deviceImages = std::move(images);
+        for (std::size_t index = 0; index < plan.info.bufferStores.size(); ++index) {
+            if (plan.info.bufferStores[index].fromMemory) capture.snapshot.stores.at(index) = stores[index];
+        }
+        for (std::size_t index = 0; index < plan.info.bufferLoads.size(); ++index) {
+            if (plan.info.bufferLoads[index].fromMemory) capture.snapshot.loads.at(index) = loads[index];
+        }
+    };
     if (std::none_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; })) {
         ResourceMaterializer{}.Materialize(plan, runtime, capture.snapshot);
-        capture.snapshot.deviceImages = std::move(images);
+        keep();
         return;
     }
     SrtRuntime traced = runtime;
     traced.readTrace = &capture.readTrace;
     ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
-    capture.snapshot.deviceImages = std::move(images);
+    keep();
     auto& other = capture.readTrace.otherReads;
     std::sort(other.begin(), other.end());
     other.erase(std::unique(other.begin(), other.end()), other.end());
