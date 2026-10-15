@@ -1,4 +1,4 @@
-READY
+BUSY GAC-016 (claimed 2026-10-15T03:50:45Z)
 RESULT:
 - Last task: PRM-009, done: results/cloud-1/PRM-009.md.
   - Upstream main a077a88df5. All six PRs merge cleanly and build with CI's flags: #5703, #5815, #5966, #5967, #6012 at 67acc14910 (fast-forward), and #6146.
