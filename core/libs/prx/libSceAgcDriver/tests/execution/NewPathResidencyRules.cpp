@@ -9,6 +9,7 @@ namespace BdaAbi = ShaderRecompiler::BdaAbi;
 
 constexpr std::uint32_t AliasStore = 0x5b000003u;
 constexpr std::uint32_t DriverValue = 0x5b000004u;
+constexpr std::uint32_t MirrorOnly = 0x5b000006u;
 constexpr std::uint64_t PublishedDevice = 0x100000000ull;
 
 void MirrorsAreReadOnly(MirrorReader& reader) {
@@ -31,10 +32,11 @@ void MirrorsAreReadOnly(MirrorReader& reader) {
     const auto imported = find(pages.Address(1));
     Expect(mirror.has_value() && resident != published.end() && resident->end == pages.Address(1) && resident->deviceAddress == *mirror && resident->permissions == BdaAbi::Read, "rule 1: a resident page is not published at its mirror as read-only");
     Expect(imported != published.end() && imported->end == pages.Address(2) && imported->deviceAddress == PublishedDevice + PageBytes && imported->permissions == (BdaAbi::Read | BdaAbi::Write), "rule 1: the page beside a resident page lost its import address or its write permission");
+    FillMirror(pages.Address(0, 5), MirrorOnly);
     const auto before = Counts();
     Store(pages.Address(0));
     const auto after = Counts();
-    Expect(after.dirty == 0u && after.writtenBackBytes == before.writtenBackBytes, "rule 1: a dispatch storing into a resident page left " + std::to_string(after.dirty) + " dirty mirror pages and wrote back " + std::to_string(after.writtenBackBytes - before.writtenBackBytes) + " bytes");
+    Expect(!Resident(pages.Address(0)) && after.demoted == before.demoted + 1, "rule 1: a dispatch storing into a resident page did not demote it before it ran (" + std::to_string(after.demoted - before.demoted) + " demotions)");
     AgcDriver::GuestMemory::FlushGpuWrites(pages.Address(0), PageBytes);
     for (std::uint32_t subpage = 0; subpage < SubpagesPerPage; ++subpage) {
         const auto stored = pages.Words(0)[subpage * WordsPerSubpage];
@@ -42,6 +44,8 @@ void MirrorsAreReadOnly(MirrorReader& reader) {
         Expect(false, "rule 1: the store into a resident page did not reach guest memory: subpage " + std::to_string(subpage) + " holds " + Hex(stored));
         break;
     }
+    const auto kept = pages.Words(0)[5 * WordsPerSubpage + 1];
+    Expect(kept == Pattern(1, 0, 5 * WordsPerSubpage + 1), "rule 1: bytes changed only in the mirror reached guest memory when the page left residency: " + Hex(kept));
     ExpectRead(reader.Read(pages.Address(), 2), 2, [](std::uint64_t page, std::uint32_t subpage) { return page == 0 ? WrittenBase + subpage : Pattern(1, page, subpage * WordsPerSubpage); }, "rule 1: the read after the store");
     Settle();
 }

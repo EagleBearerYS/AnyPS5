@@ -81,12 +81,11 @@ public:
     std::uint64_t AllocateChunk(std::uint32_t chunk, std::uint32_t slots) override;
     void ReleaseChunk(std::uint32_t chunk) override;
     ResidencyToken CopyIn(std::span<const ResidencyCopy> copies) override;
-    ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) override;
     bool Guard(std::uint64_t page) override;
     void Unguard(std::span<const std::uint64_t> pages) override;
 
 private:
-    ResidencyToken record(std::span<const ResidencyCopy> copies, bool intoMirror);
+    ResidencyToken record(std::span<const ResidencyCopy> copies);
 
     Recorder& recorder;
     IResidencyGuestMemory& guest;

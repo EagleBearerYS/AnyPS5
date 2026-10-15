@@ -87,7 +87,7 @@ std::string Name(std::uint64_t page) {
 
 class FakeGpu final : public IResidencyDevice {
 public:
-    enum class Kind : std::uint8_t { CopyIn, WriteBack, Read, Write };
+    enum class Kind : std::uint8_t { CopyIn, Read, Write };
 
     struct Op {
         Kind kind = Kind::Read;
@@ -141,7 +141,6 @@ public:
     std::uint64_t mirrorReads = 0;
     std::uint64_t importReads = 0;
     std::vector<ResidencyCopy> copiedIn;
-    std::vector<ResidencyCopy> writtenBack;
     std::map<std::uint64_t, ResidencyToken> modelPins;
     std::array<Stream, FakeStreams> streams{};
     std::vector<Op> ops;
@@ -254,23 +253,6 @@ public:
         return CallerToken(caller);
     }
 
-    ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) override {
-        for (const auto& copy : copies) {
-            checkSlot(copy);
-            Op op;
-            op.kind = Kind::WriteBack;
-            op.barrier = true;
-            op.page = copy.page;
-            op.mirror = true;
-            op.slot = copy.mirror;
-            op.import = imports[copy.page].storage;
-            op.mask = MaskOf(copy);
-            record(op);
-            writtenBack.push_back(copy);
-        }
-        return CallerToken(caller);
-    }
-
     bool Guard(std::uint64_t page) override {
         if (guardRefused.contains(page)) return false;
         armed[imports[page].group] = true;
@@ -373,14 +355,14 @@ public:
         return token;
     }
 
-    std::size_t RecordTitle(Kind kind, std::uint64_t page, ResidencyMask mask, std::uint64_t value, bool throughImport = false) {
+    std::size_t RecordTitle(Kind kind, std::uint64_t page, ResidencyMask mask, std::uint64_t value) {
         Op op;
         op.kind = kind;
         op.title = true;
         op.page = page;
         op.mask = mask;
         op.value = value;
-        const auto slot = throughImport ? std::nullopt : manager->Slot(page);
+        const auto slot = kind == Kind::Write ? std::nullopt : manager->Slot(page);
         op.mirror = slot.has_value();
         if (slot) op.slot = *slot;
         op.import = imports[page].storage;
@@ -476,13 +458,6 @@ private:
                 }
                 break;
             }
-            case Kind::WriteBack: {
-                const auto& source = mirror(op.slot);
-                for (std::uint32_t subpage = 0; subpage < ResidencySubpages; ++subpage) {
-                    if ((op.mask >> subpage) & 1u) (*op.import)[subpage] = source[subpage];
-                }
-                break;
-            }
             case Kind::Read: {
                 const auto subpage = static_cast<std::uint32_t>(std::countr_zero(static_cast<std::uint32_t>(op.mask)));
                 const auto actual = op.mirror ? mirror(op.slot)[subpage] : (*op.import)[subpage];
@@ -491,9 +466,8 @@ private:
                 break;
             }
             case Kind::Write: {
-                auto& target = op.mirror ? mirror(op.slot) : *op.import;
                 for (std::uint32_t subpage = 0; subpage < ResidencySubpages; ++subpage) {
-                    if ((op.mask >> subpage) & 1u) target[subpage] = op.value;
+                    if ((op.mask >> subpage) & 1u) (*op.import)[subpage] = op.value;
                 }
                 break;
             }
@@ -509,15 +483,7 @@ private:
         while (!state.batches.empty() && state.batches.front().submitted && state.batches.front().done == state.batches.front().ops.size()) {
             const auto batch = state.batches.front();
             for (const auto index : batch.ops) {
-                const auto& op = ops[index];
-                if (op.kind != Kind::Write) continue;
-                if (op.mirror) {
-                    for (std::uint32_t subpage = 0; subpage < ResidencySubpages; ++subpage) {
-                        if ((op.mask >> subpage) & 1u) manager->NoteGpuWritten(Address(op.page, subpage), ResidencySubpageBytes);
-                    }
-                } else {
-                    imports[op.page].stamp = ++generation;
-                }
+                if (ops[index].kind == Kind::Write) imports[ops[index].page].stamp = ++generation;
             }
             state.completed = batch.value;
             state.batches.pop_front();
@@ -538,7 +504,6 @@ public:
     std::uint64_t AllocateChunk(std::uint32_t chunk, std::uint32_t) override { return std::uint64_t{chunk + 1} << 36; }
     void ReleaseChunk(std::uint32_t) override {}
     ResidencyToken CopyIn(std::span<const ResidencyCopy>) override { return {}; }
-    ResidencyToken WriteBack(std::span<const ResidencyCopy>) override { return {}; }
     bool Guard(std::uint64_t) override { return true; }
     void Unguard(std::span<const std::uint64_t>) override {}
 };
@@ -635,42 +600,25 @@ void TokenCompletionReleasesPins() {
     Expect(fixture.manager->Counts().chunks == 0, "the drained chunk is released");
 }
 
-void DirtyPagesWrittenBackBeforeReuse() {
-    scope = "dirty pages written back before reuse";
-    Fixture fixture(8, 1);
-    fixture.Use(0, BasePage + 0, 4, ResidencyAccess::Write);
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x000c, 777);
-    fixture.gpu.Drain();
-    Expect(fixture.manager->Dirty(BasePage + 0) == 0x000c, "the records mark subpages 2 and 3 dirty");
-    for (std::uint32_t page = 1; page < 4; ++page) fixture.Use(0, BasePage + page);
-    fixture.gpu.Drain();
-    const auto slot = fixture.manager->Slot(BasePage + 0);
-    fixture.gpu.writtenBack.clear();
-    fixture.Use(0, BasePage + 4);
-    Expect(!fixture.manager->Slot(BasePage + 0), "page 0 evicted");
-    Expect(fixture.gpu.writtenBack.size() == 1 && fixture.gpu.writtenBack[0].offset == 2 * ResidencySubpageBytes && fixture.gpu.writtenBack[0].bytes == 2 * ResidencySubpageBytes, "exactly subpages 2 and 3 written back");
-    Expect(!fixture.manager->Slot(BasePage + 4), "page 4 deferred: the evicted slot is reused only after its write-back completed");
-    Expect(fixture.Stored(BasePage + 0, 2) != 777, "the write-back has not run yet");
-    fixture.gpu.Drain();
-    Expect(fixture.Stored(BasePage + 0, 2) == 777 && fixture.Stored(BasePage + 0, 3) == 777, "the GPU's bytes reached guest memory");
-    Expect(fixture.Stored(BasePage + 0, 1) == 1, "subpages the GPU did not write are untouched");
-    fixture.Use(0, BasePage + 4);
-    Expect(fixture.manager->Slot(BasePage + 4) == slot, "page 4 reuses the slot after the write-back");
-}
-
-void FlushWaitsForWritersAndWritesBack() {
-    scope = "flush waits for writers and writes back";
+void FlushWaitsForWriters() {
+    scope = "flush waits for writers";
     Fixture fixture(4, 1);
     fixture.Use(1, BasePage + 0, 1, ResidencyAccess::Write);
     fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x8001, 4242);
     const auto waits = fixture.gpu.waits;
+    const auto copies = fixture.gpu.copiedIn.size();
     fixture.manager->FlushForCpuRead(Address(BasePage + 0), 16);
-    Expect(fixture.gpu.waits == waits + 2, "one wait for the writer, one for the write-back");
-    Expect(fixture.Stored(BasePage + 0, 0) == 4242 && fixture.Stored(BasePage + 0, 15) == 4242, "the CPU read sees the GPU's write");
-    Expect(fixture.manager->Dirty(BasePage + 0) == 0, "the page is clean after the flush");
+    Expect(fixture.gpu.waits == waits + 1, "one wait, for the writer");
+    Expect(fixture.gpu.copiedIn.size() == copies, "a flush records no copy");
+    Expect(fixture.Stored(BasePage + 0, 0) == 4242 && fixture.Stored(BasePage + 0, 15) == 4242, "the CPU read sees the GPU's write, which went to the import");
     Expect(fixture.manager->Slot(BasePage + 0).has_value(), "a flush keeps the page resident");
     fixture.manager->FlushForCpuRead(Address(BasePage + 0), ResidencyPageBytes);
-    Expect(fixture.gpu.waits == waits + 2, "a clean page needs no wait");
+    Expect(fixture.gpu.waits == waits + 1, "a settled writer needs no wait");
+    fixture.Use(0, BasePage + 0);
+    Expect(fixture.gpu.copiedIn.size() == copies + 1 && fixture.gpu.copiedIn.back().bytes == ResidencyPageBytes, "the next use refreshes the mirror the write left behind");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x8000, 4242);
+    fixture.gpu.Drain();
+    Expect(fixture.gpu.mirrorReads == 1, "the read after the refresh went through the mirror");
 }
 
 void ImportWritesRefreshMirrors() {
@@ -679,7 +627,7 @@ void ImportWritesRefreshMirrors() {
     fixture.Use(0, BasePage + 0);
     fixture.gpu.Drain();
     fixture.gpu.copiedIn.clear();
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0010, 99, true);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0010, 99);
     fixture.manager->NoteImportWritten(Address(BasePage + 0, 4), 100);
     Expect(fixture.gpu.copiedIn.size() == 1 && fixture.gpu.copiedIn[0].offset == 4 * ResidencySubpageBytes && fixture.gpu.copiedIn[0].bytes == ResidencySubpageBytes, "only the written subpage is refreshed");
     fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0010, 99);
@@ -691,18 +639,6 @@ void ImportWritesRefreshMirrors() {
     fixture.gpu.copiedIn.clear();
     fixture.Use(0, BasePage + 0);
     Expect(fixture.gpu.copiedIn.empty(), "an unchanged page is not copied again");
-    fixture.Use(0, BasePage + 0, 1, ResidencyAccess::Write);
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0006, 33);
-    fixture.gpu.Drain();
-    Expect(fixture.manager->Dirty(BasePage + 0) == 0x0006, "subpages 1 and 2 dirty");
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0004, 55, true);
-    fixture.manager->NoteImportWritten(Address(BasePage + 0, 2), ResidencySubpageBytes);
-    Expect(fixture.manager->Dirty(BasePage + 0) == 0x0002, "the later import write wins subpage 2");
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0004, 55);
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0002, 33);
-    fixture.manager->FlushForCpuRead(Address(BasePage + 0), ResidencyPageBytes);
-    fixture.gpu.Drain();
-    Expect(fixture.Stored(BasePage + 0, 2) == 55 && fixture.Stored(BasePage + 0, 1) == 33, "guest memory holds the newest bytes of each subpage");
 }
 
 void GuardedPagesRefreshAfterFaults() {
@@ -805,10 +741,12 @@ void DemotionAndDrops() {
     fixture.gpu.imports[BasePage + 3].attributes.gpuWritable = false;
     fixture.Use(0, BasePage + 0, 4, ResidencyAccess::Write);
     fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 1, 0x0001, 31);
+    const auto copies = fixture.gpu.copiedIn.size();
     fixture.manager->Demote(Address(BasePage + 1), 1);
     Expect(!fixture.manager->Slot(BasePage + 1), "a demoted page leaves residency");
+    Expect(fixture.Stored(BasePage + 1, 0) == 31, "the demotion waited for the writer, whose store went to the import");
+    Expect(fixture.gpu.copiedIn.size() == copies, "a demotion records no copy");
     fixture.gpu.Drain();
-    Expect(fixture.Stored(BasePage + 1, 0) == 31, "the demotion waited for the writer and wrote its bytes back");
     fixture.manager->DemoteWritable();
     Expect(!fixture.manager->Slot(BasePage + 0) && !fixture.manager->Slot(BasePage + 2), "GPU-writable pages demoted");
     Expect(fixture.manager->Slot(BasePage + 3).has_value(), "a page on a read-only import stays");
@@ -1030,9 +968,6 @@ struct Stress {
         const auto counts = fixture.manager->Counts();
         Expect(counts.resident + counts.retiring + counts.free == counts.chunks * ChunkSlots, "slot accounting: " + std::to_string(counts.resident) + " resident + " + std::to_string(counts.retiring) + " retiring + " + std::to_string(counts.free) + " free in " + std::to_string(counts.chunks) + " chunks");
         Expect(counts.chunks == static_cast<std::uint32_t>(std::count(fixture.gpu.live.begin(), fixture.gpu.live.end(), true)), "live chunk count matches the device");
-        std::uint32_t dirty = 0;
-        for (const auto& [page, slot] : after) dirty += fixture.manager->Dirty(page) != 0 ? 1 : 0;
-        Expect(counts.dirty == dirty, "dirty page count");
         ++operations;
     }
 
@@ -1047,13 +982,10 @@ struct Stress {
         waitAliases(first, count, stream);
         fixture.gpu.caller = stream;
         call("Prepare", false, 0, 0, false, [&] { fixture.manager->Prepare(); });
-        bool anyAliased = false;
-        for (std::uint32_t k = 0; k < count; ++k) anyAliased = anyAliased || aliased(first + k);
-        const bool demoteFirst = write && (anyAliased || pick(3) == 0);
-        if (demoteFirst) {
+        if (write) {
             call("Demote", true, first, count, false, [&] { fixture.manager->Demote(Address(first), std::uint64_t{count} * ResidencyPageBytes); });
         } else {
-            call("Use", false, first, count, true, [&] { fixture.manager->Use(Address(first), std::uint64_t{count} * ResidencyPageBytes, write ? ResidencyAccess::Write : ResidencyAccess::Read); });
+            call("Use", false, first, count, true, [&] { fixture.manager->Use(Address(first), std::uint64_t{count} * ResidencyPageBytes, ResidencyAccess::Read); });
             ++tick;
             for (std::uint32_t k = 0; k < count; ++k) {
                 if (fixture.manager->Slot(first + k)) ticks[first + k - BasePage] = tick;
@@ -1084,7 +1016,7 @@ struct Stress {
         titleWait(page, stream);
         fixture.gpu.caller = stream;
         const auto stored = ++value;
-        fixture.gpu.RecordTitle(FakeGpu::Kind::Write, page, Run(first, count), stored, true);
+        fixture.gpu.RecordTitle(FakeGpu::Kind::Write, page, Run(first, count), stored);
         for (std::uint32_t subpage = first; subpage < first + count; ++subpage) truthOf(page)[subpage] = stored;
         call("NoteImportWritten", true, page, 1, false, [&] { fixture.manager->NoteImportWritten(Address(page, first), std::uint64_t{count} * ResidencySubpageBytes); });
     }
@@ -1184,7 +1116,7 @@ struct Stress {
         }
         call("Retire", false, 0, 0, false, [&] { fixture.manager->Retire(); });
         const auto counts = fixture.manager->Counts();
-        Expect(counts.retiring == 0 && counts.dirty == 0, "an idle GPU leaves nothing retiring or dirty");
+        Expect(counts.retiring == 0, "an idle GPU leaves nothing retiring");
     }
 };
 
@@ -1211,17 +1143,16 @@ void RandomSequences() {
         total.unguardable += counts.unguardable;
         total.aliasSkipped += counts.aliasSkipped;
         total.waits += counts.waits;
-        total.writtenBackBytes += counts.writtenBackBytes;
         total.chunksReleased += counts.chunksReleased;
         mirrorReads += stress.fixture.gpu.mirrorReads;
         importReads += stress.fixture.gpu.importReads;
     }
-    std::printf("random sequences: %llu admitted, %llu evicted, %llu deferred, %llu demoted, %llu dropped, %llu refreshed, %llu faults, %llu hot, %llu cooled, %llu unguardable, %llu alias skips, %llu waits, %llu KiB written back, %llu chunks released, %llu mirror reads, %llu import reads\n",
+    std::printf("random sequences: %llu admitted, %llu evicted, %llu deferred, %llu demoted, %llu dropped, %llu refreshed, %llu faults, %llu hot, %llu cooled, %llu unguardable, %llu alias skips, %llu waits, %llu chunks released, %llu mirror reads, %llu import reads\n",
         static_cast<unsigned long long>(total.admitted), static_cast<unsigned long long>(total.evicted), static_cast<unsigned long long>(total.deferred), static_cast<unsigned long long>(total.demoted),
         static_cast<unsigned long long>(total.dropped), static_cast<unsigned long long>(total.refreshed), static_cast<unsigned long long>(total.faults), static_cast<unsigned long long>(total.hot),
         static_cast<unsigned long long>(total.cooled), static_cast<unsigned long long>(total.unguardable), static_cast<unsigned long long>(total.aliasSkipped), static_cast<unsigned long long>(total.waits),
-        static_cast<unsigned long long>(total.writtenBackBytes >> 10), static_cast<unsigned long long>(total.chunksReleased), static_cast<unsigned long long>(mirrorReads), static_cast<unsigned long long>(importReads));
-    Expect(total.evicted > 0 && total.deferred > 0 && total.writtenBackBytes > 0 && total.refreshed > 0 && total.chunksReleased > 0 && mirrorReads > 0 && importReads > 0, "the sequences exercise eviction, deferral, write-back, refresh, chunk release and both read paths");
+        static_cast<unsigned long long>(total.chunksReleased), static_cast<unsigned long long>(mirrorReads), static_cast<unsigned long long>(importReads));
+    Expect(total.evicted > 0 && total.deferred > 0 && total.demoted > 0 && total.refreshed > 0 && total.chunksReleased > 0 && mirrorReads > 0 && importReads > 0, "the sequences exercise eviction, deferral, demotion, refresh, chunk release and both read paths");
     Expect(total.faults > 0 && total.hot > 0 && total.cooled > 0 && total.unguardable > 0 && total.aliasSkipped > 0, "the sequences exercise faults, hot pages, cooling, refused guards and aliases");
 }
 
@@ -1232,8 +1163,7 @@ int main() {
         BudgetAndLeastRecentOrder();
         PinnedPagesNeverEvicted();
         TokenCompletionReleasesPins();
-        DirtyPagesWrittenBackBeforeReuse();
-        FlushWaitsForWritersAndWritesBack();
+        FlushWaitsForWriters();
         ImportWritesRefreshMirrors();
         GuardedPagesRefreshAfterFaults();
         OrderingPointsReportQueuedWork();

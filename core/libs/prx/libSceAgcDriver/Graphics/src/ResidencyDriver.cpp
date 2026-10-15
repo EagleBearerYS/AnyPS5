@@ -118,11 +118,7 @@ void ResidencyDriver::ReleaseChunk(std::uint32_t chunk) {
 }
 
 ResidencyToken ResidencyDriver::CopyIn(std::span<const ResidencyCopy> copies) {
-    return record(copies, true);
-}
-
-ResidencyToken ResidencyDriver::WriteBack(std::span<const ResidencyCopy> copies) {
-    return record(copies, false);
+    return record(copies);
 }
 
 bool ResidencyDriver::Guard(std::uint64_t page) {
@@ -133,7 +129,7 @@ void ResidencyDriver::Unguard(std::span<const std::uint64_t> pages) {
     guest.Unguard(pages);
 }
 
-ResidencyToken ResidencyDriver::record(std::span<const ResidencyCopy> copies, bool intoMirror) {
+ResidencyToken ResidencyDriver::record(std::span<const ResidencyCopy> copies) {
     std::map<std::uint64_t, ResidencyImportLocation> locations;
     std::vector<ResidencyCopy> located;
     std::set<std::uint32_t> chunks;
@@ -156,15 +152,12 @@ ResidencyToken ResidencyDriver::record(std::span<const ResidencyCopy> copies, bo
         recorder.FlushStoresOverlapping(address, copy.bytes);
         recorder.FlushKeyStoresOverlapping(address, copy.bytes);
     }
-    if (intoMirror) {
-        std::vector<Recorder::SectionObject> objects;
-        for (const auto chunk : chunks) objects.push_back({mirrors.Chunk(chunk).get(), true});
-        recorder.DeclareSection(objects);
-    }
+    std::vector<Recorder::SectionObject> objects;
+    for (const auto chunk : chunks) objects.push_back({mirrors.Chunk(chunk).get(), true});
+    recorder.DeclareSection(objects);
     const auto commands = recorder.Commands();
     const ResidencyImportLocator locator = [&](std::uint64_t page) { return locations.at(page); };
-    if (intoMirror) mirrors.RecordCopyIn(commands, located, locator);
-    else mirrors.RecordWriteBack(commands, located, locator);
+    mirrors.RecordCopyIn(commands, located, locator);
     recorder.MarkCovered(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
     for (const auto chunk : chunks) recorder.Keep(mirrors.Chunk(chunk));
     return recorder.CallerToken();

@@ -83,7 +83,6 @@ public:
     virtual std::uint64_t AllocateChunk(std::uint32_t chunk, std::uint32_t slots) = 0;
     virtual void ReleaseChunk(std::uint32_t chunk) = 0;
     virtual ResidencyToken CopyIn(std::span<const ResidencyCopy> copies) = 0;
-    virtual ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) = 0;
     virtual bool Guard(std::uint64_t page) = 0;
     virtual void Unguard(std::span<const std::uint64_t> pages) = 0;
 };
@@ -101,15 +100,12 @@ struct ResidencyCounts {
     std::uint64_t cooled = 0;
     std::uint64_t unguardable = 0;
     std::uint64_t aliasSkipped = 0;
-    std::uint64_t conflicts = 0;
     std::uint64_t waits = 0;
     std::uint64_t copiedInBytes = 0;
-    std::uint64_t writtenBackBytes = 0;
     std::uint64_t chunksAllocated = 0;
     std::uint64_t chunksReleased = 0;
     std::uint32_t chunks = 0;
     std::uint32_t resident = 0;
-    std::uint32_t dirty = 0;
     std::uint32_t retiring = 0;
     std::uint32_t free = 0;
 };
@@ -132,13 +128,11 @@ public:
     void DropRange(std::uint64_t address, std::uint64_t bytes);
     void NoteImportWritten(std::uint64_t address, std::uint64_t bytes);
     void QueueCpuWritten(std::span<const std::uint64_t> pages);
-    void NoteGpuWritten(std::uint64_t address, std::uint64_t bytes);
     void FlushForCpuRead(std::uint64_t address, std::uint64_t bytes);
     void Retire();
 
     std::optional<MirrorSlot> Slot(std::uint64_t page);
     std::optional<std::uint64_t> Translate(std::uint64_t page);
-    ResidencyMask Dirty(std::uint64_t page);
     bool AnyResident(std::uint64_t address, std::uint64_t bytes);
     std::vector<ResidencyRange> ResidentRanges();
     std::vector<std::uint64_t> TakeChanges();
@@ -161,7 +155,6 @@ private:
         std::uint32_t newer = None;
         std::uint64_t faultEpoch = 0;
         std::uint64_t faultHistory = 0;
-        ResidencyMask dirty = 0;
         bool gpuWritable = false;
         bool guarded = false;
         ResidencyToken pin{};
@@ -191,9 +184,6 @@ private:
     };
 
     struct WriteBacks {
-        std::vector<ResidencyCopy> copies;
-        std::vector<Retiring> slots;
-        std::vector<std::uint64_t> pages;
         std::vector<std::uint64_t> unguard;
     };
 
@@ -243,7 +233,6 @@ private:
     std::uint32_t newest = None;
     std::deque<Retiring> retiring;
     std::unordered_map<std::uint64_t, ResidencyToken> writers;
-    std::unordered_map<std::uint64_t, ResidencyToken> writingBack;
     std::unordered_set<std::uint64_t> changes;
     std::unordered_map<std::uint64_t, Cooling> hot;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;
@@ -253,7 +242,6 @@ private:
     std::uint64_t serial = 0;
     std::uint64_t rangesSerial = ~std::uint64_t{0};
     std::vector<ResidencyRange> ranges;
-    std::uint32_t dirtyPages = 0;
     ResidencyCounts counts;
     mutable std::mutex residentMutex;
     std::mutex queueMutex;

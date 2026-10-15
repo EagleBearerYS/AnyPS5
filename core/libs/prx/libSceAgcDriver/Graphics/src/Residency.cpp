@@ -177,7 +177,6 @@ void ResidencyManager::forget(std::uint32_t id) {
         const std::lock_guard lock(residentMutex);
         resident.erase(page);
     }
-    if (pages[id].dirty != 0) --dirtyPages;
     writers.erase(page);
     if (const auto key = aliasKeys.find(page); key != aliasKeys.end()) {
         canonical.erase(key->second);
@@ -268,30 +267,12 @@ std::optional<MirrorSlot> ResidencyManager::acquireSlot(std::uint64_t protectFir
 void ResidencyManager::leave(std::uint32_t id, WriteBacks& writeBacks) {
     const auto& page = pages[id];
     if (page.guarded) writeBacks.unguard.push_back(page.index);
-    if (page.dirty != 0) {
-        appendRuns(page.index, page.slot, page.dirty, writeBacks.copies);
-        writeBacks.slots.push_back({page.slot, page.pin});
-        writeBacks.pages.push_back(page.index);
-    } else {
-        retiring.push_back({page.slot, MergeTokens(page.pin, device.Newest())});
-    }
+    retiring.push_back({page.slot, MergeTokens(page.pin, device.Newest())});
     forget(id);
 }
 
 void ResidencyManager::recordWriteBacks(WriteBacks& writeBacks) {
     if (!writeBacks.unguard.empty()) device.Unguard(writeBacks.unguard);
-    if (writeBacks.copies.empty()) {
-        writeBacks = WriteBacks{};
-        return;
-    }
-    const auto token = device.WriteBack(writeBacks.copies);
-    for (const auto& copy : writeBacks.copies) counts.writtenBackBytes += copy.bytes;
-    const auto newestToken = device.Newest();
-    for (const auto& entry : writeBacks.slots) retiring.push_back({entry.slot, MergeTokens(MergeTokens(entry.token, token), newestToken)});
-    for (const auto page : writeBacks.pages) {
-        auto& pending = writingBack[page];
-        pending = MergeTokens(pending, token);
-    }
     writeBacks = WriteBacks{};
 }
 
@@ -315,7 +296,7 @@ void ResidencyManager::copyIn(std::span<const Fill> fills) {
     for (const auto& fill : fills) {
         auto& page = pages[fill.id];
         page.pin = MergeTokens(page.pin, copied);
-        if ((fill.mask | page.dirty) == ResidencyWholePage) page.generation = generation;
+        if (fill.mask == ResidencyWholePage) page.generation = generation;
     }
 }
 
@@ -332,11 +313,8 @@ void ResidencyManager::refresh(std::span<const Fill> fills) {
     waitWriters(fills);
     std::vector<Fill> needed;
     for (const auto& fill : fills) {
-        const auto& page = pages[fill.id];
-        if ((fill.mask & page.dirty) != 0) ++counts.conflicts;
-        const auto mask = static_cast<ResidencyMask>(fill.mask & ~page.dirty);
-        if (mask == 0) continue;
-        needed.push_back({fill.id, mask});
+        if (fill.mask == 0) continue;
+        needed.push_back(fill);
         ++counts.refreshed;
     }
     copyIn(needed);
@@ -351,15 +329,12 @@ void ResidencyManager::applyDrops() {
     }
     for (const auto& range : queue) {
         for (const auto id : residentIn(range.address, range.bytes)) {
-            const auto page = pages[id].index;
             ++counts.dropped;
             retiring.push_back({pages[id].slot, MergeTokens(pages[id].pin, device.Newest())});
-            writingBack.erase(page);
             forget(id);
         }
         const auto span = PagesOf(range.address, range.bytes);
         if (span.empty) continue;
-        std::erase_if(writingBack, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
         std::erase_if(hot, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
     }
 }
@@ -601,12 +576,6 @@ void ResidencyManager::NoteImportWritten(std::uint64_t address, std::uint64_t by
     applyQueued();
     const auto fills = withAliases(address, bytes);
     waitWriters(fills);
-    for (const auto& fill : fills) {
-        auto& page = pages[fill.id];
-        if (page.dirty == 0) continue;
-        page.dirty = static_cast<ResidencyMask>(page.dirty & ~fill.mask);
-        if (page.dirty == 0) --dirtyPages;
-    }
     refresh(fills);
 }
 
@@ -615,15 +584,6 @@ void ResidencyManager::QueueCpuWritten(std::span<const std::uint64_t> written) {
     const std::lock_guard lock(queueMutex);
     cpuQueue.insert(cpuQueue.end(), written.begin(), written.end());
     queued.store(true, std::memory_order_release);
-}
-
-void ResidencyManager::NoteGpuWritten(std::uint64_t address, std::uint64_t bytes) {
-    for (const auto id : residentIn(address, bytes)) {
-        auto& page = pages[id];
-        const auto mask = SubpageMask(page.index, address, bytes);
-        if (page.dirty == 0 && mask != 0) ++dirtyPages;
-        page.dirty = static_cast<ResidencyMask>(page.dirty | mask);
-    }
 }
 
 void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t bytes) {
@@ -637,29 +597,6 @@ void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t byte
     }
     if (!TokenEmpty(pending)) waitFor(pending);
     std::erase_if(writers, [&](const auto& entry) { return inSpan(entry.first) && settled(entry.second); });
-    std::vector<ResidencyCopy> copies;
-    std::vector<std::uint32_t> written;
-    for (const auto id : residentIn(address, bytes)) {
-        if (pages[id].dirty == 0) continue;
-        appendRuns(pages[id].index, pages[id].slot, pages[id].dirty, copies);
-        written.push_back(id);
-    }
-    ResidencyToken wait{};
-    if (!copies.empty()) {
-        wait = device.WriteBack(copies);
-        for (const auto& copy : copies) counts.writtenBackBytes += copy.bytes;
-        for (const auto id : written) {
-            auto& page = pages[id];
-            page.dirty = 0;
-            --dirtyPages;
-            page.pin = MergeTokens(page.pin, wait);
-        }
-    }
-    for (const auto& [page, token] : writingBack) {
-        if (inSpan(page)) wait = MergeTokens(wait, token);
-    }
-    if (!settled(wait)) waitFor(wait);
-    std::erase_if(writingBack, [&](const auto& entry) { return inSpan(entry.first); });
 }
 
 void ResidencyManager::Retire() {
@@ -667,7 +604,6 @@ void ResidencyManager::Retire() {
     retireReached();
     evictDraining();
     std::erase_if(writers, [&](const auto& entry) { return settled(entry.second); });
-    std::erase_if(writingBack, [&](const auto& entry) { return settled(entry.second); });
 }
 
 std::optional<MirrorSlot> ResidencyManager::Slot(std::uint64_t page) {
@@ -681,12 +617,6 @@ std::optional<std::uint64_t> ResidencyManager::Translate(std::uint64_t page) {
     const auto slot = Slot(page);
     if (!slot) return std::nullopt;
     return chunks[slot->chunk].address + (std::uint64_t{slot->slot} << ResidencyPageShift);
-}
-
-ResidencyMask ResidencyManager::Dirty(std::uint64_t page) {
-    applyDrops();
-    const auto id = find(page);
-    return id ? pages[*id].dirty : ResidencyMask{0};
 }
 
 bool ResidencyManager::AnyResident(std::uint64_t address, std::uint64_t bytes) {
@@ -744,7 +674,6 @@ ResidencyCounts ResidencyManager::Counts() const {
     auto result = counts;
     result.chunks = liveChunks;
     result.resident = static_cast<std::uint32_t>(resident.size());
-    result.dirty = dirtyPages;
     result.retiring = static_cast<std::uint32_t>(retiring.size());
     result.free = 0;
     for (const auto& record : chunks) {

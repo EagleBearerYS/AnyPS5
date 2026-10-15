@@ -21,7 +21,7 @@ constexpr std::uint32_t WrittenBase = 0x7c000000u;
 constexpr std::uint32_t MirrorMarker = 0x5a000001u;
 constexpr std::uint32_t StoredByCpu = 0x5a000002u;
 constexpr std::uint32_t HotStore = 0x5a000100u;
-constexpr std::uint32_t WrittenBack = 0x5a000003u;
+constexpr std::uint32_t MirrorOnly = 0x5a000003u;
 constexpr std::uint32_t DroppedMarker = 0x5a000004u;
 constexpr std::uint32_t EvictedMarker = 0x5a000005u;
 constexpr std::uint32_t AdmittedMarker = 0x5a000006u;
@@ -251,30 +251,25 @@ void HotRule(Harness& harness, Model& model) {
     Expect(admitted && Counts().cooled > cooled, "hot rule: a hot page the CPU stopped writing was not admitted again after six quiet submissions");
 }
 
-void WriteBackOnCpuRead(Harness& harness, Model& model) {
+void CpuReadOfMirroredPage(Harness& harness, Model& model) {
     auto& pages = model.Pages();
     Use(pages, 7, 1);
     harness.Read(pages, 0);
-    FillMirror(pages.Address(7, 3), WrittenBack);
-    Locked([&] { Residency().Manager().NoteGpuWritten(pages.Address(7, 3), SubpageBytes); });
+    Expect(Resident(pages, 7), "CPU read: the page was not admitted");
+    FillMirror(pages.Address(7, 3), MirrorOnly);
     Settle();
-    Expect(pages.Words(7)[3 * WordsPerSubpage] == model.Value(7, 3 * WordsPerSubpage), "write-back: guest memory held the mirror's bytes before a CPU read asked for them");
     const auto before = Counts();
     std::uint32_t value = 0;
     AgcDriver::GuestMemory::Read(pages.Address(7, 3, 5), std::as_writable_bytes(std::span(&value, 1)), 4);
-    Expect(value == WrittenBack, "write-back: a driver CPU read of a dirty mirror page read " + Hex(value) + ", expected the GPU's " + Hex(WrittenBack));
+    const auto wanted = model.Value(7, 3 * WordsPerSubpage + 5);
+    Expect(value == wanted, "CPU read: a driver CPU read of a resident page read " + Hex(value) + ", expected guest memory's " + Hex(wanted));
     for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) {
-        if (pages.Words(7)[3 * WordsPerSubpage + word] == WrittenBack) continue;
-        Expect(false, "write-back: word " + std::to_string(word) + " of the dirty subpage was not written back");
+        if (pages.Words(7)[3 * WordsPerSubpage + word] == model.Value(7, 3 * WordsPerSubpage + word)) continue;
+        Expect(false, "CPU read: word " + std::to_string(word) + " of the subpage changed only in the mirror reached guest memory");
         break;
     }
-    Expect(pages.Words(7)[2 * WordsPerSubpage] == model.Value(7, 2 * WordsPerSubpage) && pages.Words(7)[4 * WordsPerSubpage] == model.Value(7, 4 * WordsPerSubpage), "write-back: a clean subpage of the page was overwritten");
     const auto after = Counts();
-    Expect(after.writtenBackBytes == before.writtenBackBytes + SubpageBytes, "write-back: " + std::to_string(after.writtenBackBytes - before.writtenBackBytes) + " bytes written back, expected one subpage");
-    std::uint16_t dirty = 1;
-    Locked([&] { dirty = Residency().Manager().Dirty(PageOf(pages.Address(7))); });
-    Expect(dirty == 0, "write-back: the page stayed dirty after its write-back");
-    for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) model.Set(7, 3 * WordsPerSubpage + word, WrittenBack);
+    Expect(after.copiedInBytes == before.copiedInBytes && Resident(pages, 7), "CPU read: a driver CPU read of a resident page copied " + std::to_string(after.copiedInBytes - before.copiedInBytes) + " bytes or demoted the page");
 }
 
 void DropOnUnmap(Harness& harness) {
@@ -356,7 +351,7 @@ int main() {
         DemotionAndVersions(harness, model);
         GuardFaultAndRefresh(harness, model);
         HotRule(harness, model);
-        WriteBackOnCpuRead(harness, model);
+        CpuReadOfMirroredPage(harness, model);
         DropOnUnmap(harness);
         EvictionUnderBudget(harness);
         AgcDriverShutdown_nid_postfix();

@@ -311,21 +311,18 @@ public:
         return results;
     }
 
-    void FillMirror(std::uint32_t page, std::uint32_t subpage, std::uint32_t value) {
-        const auto slot = driver.Manager().Slot(Page(page));
-        Require(slot.has_value(), "residency driver: the page to fill is not resident");
-        const auto chunk = driver.Mirrors().Chunk(slot->chunk);
-        const std::array<Recorder::SectionObject, 1> objects{Recorder::SectionObject{chunk.get(), true}};
-        recorder.DeclareSection(objects);
+    void FillImport(std::uint32_t page, std::uint32_t subpage, std::uint32_t value) {
+        const auto import = guest.ImportOf(Page(page));
+        Require(import.has_value(), "residency driver: the page to fill is not imported");
         const auto commands = recorder.Commands();
         const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT};
-        const VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+        const VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT};
         const auto barrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
         barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
-        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, chunk->buffer, (VkDeviceSize{slot->slot} << ResidencyPageShift) + (VkDeviceSize{subpage} << ResidencySubpageShift), ResidencySubpageBytes, value);
-        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, import->offset + (VkDeviceSize{subpage} << ResidencySubpageShift), ResidencySubpageBytes, value);
+        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
         recorder.MarkCovered(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-        recorder.Keep(chunk);
+        for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) expected[{page, subpage * WordsPerSubpage + word}] = value;
     }
 
     void Store(std::uint32_t page, std::uint32_t word, std::uint32_t value) {
@@ -402,19 +399,29 @@ void PinsAcrossStreams(Harness& harness) {
     harness.CheckResults(results, 4, 2, "reads of the newly admitted pages");
 }
 
-void WriteBackAcrossStreams(Harness& harness) {
+void StoresAcrossStreams(Harness& harness) {
     const auto page = harness.Page(2);
-    harness.OnStream(OtherQueue, true, [&] {
-        harness.Use(2, 1);
-        harness.FillMirror(2, 3, 0x5a5a5a5au);
-    });
+    harness.OnStream(OtherQueue, true, [&] { harness.Use(2, 1); });
     harness.Drain();
-    harness.OnStream(OtherQueue, true, [&] { harness.driver.Manager().NoteGpuWritten(harness.region.Address(2, 3), ResidencySubpageBytes); });
-    Expect(harness.region.Words(page)[3 * WordsPerSubpage] == GuestRegion::Pattern(2, 3 * WordsPerSubpage), "guest memory does not have the GPU's bytes yet");
+    Expect(harness.driver.Manager().Slot(page).has_value(), "the page is resident before the store");
+    harness.OnStream(OtherQueue, true, [&] {
+        const std::array<ResidencyRange, 1> grants{ResidencyRange{harness.region.Address(2, 3), ResidencySubpageBytes}};
+        harness.driver.BeforeWritingDispatch(grants, false);
+        harness.FillImport(2, 3, 0x5a5a5a5au);
+    });
+    Expect(!harness.driver.Manager().Slot(page), "the write grant demoted the page before the store was recorded");
+    harness.Drain();
     harness.OnStream(0, true, [&] { harness.driver.Manager().FlushForCpuRead(harness.region.Address(2, 3), 4); });
-    Expect(harness.region.Words(page)[3 * WordsPerSubpage] == 0x5a5a5a5au && harness.region.Words(page)[4 * WordsPerSubpage - 1] == 0x5a5a5a5au, "a flush on one stream writes back what another stream wrote into the mirror");
+    Expect(harness.region.Words(page)[3 * WordsPerSubpage] == 0x5a5a5a5au && harness.region.Words(page)[4 * WordsPerSubpage - 1] == 0x5a5a5a5au, "a store another stream recorded into the import reached guest memory with no write-back");
     Expect(harness.region.Words(page)[2 * WordsPerSubpage] == GuestRegion::Pattern(2, 2 * WordsPerSubpage), "subpages the GPU did not write are unchanged");
-    for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) harness.expected[{2, 3 * WordsPerSubpage + word}] = 0x5a5a5a5au;
+    std::shared_ptr<Buffer> results;
+    harness.OnStream(0, true, [&] {
+        harness.Use(2, 1);
+        results = harness.RecordRead(2, 1);
+    });
+    Expect(harness.driver.Manager().Slot(page).has_value(), "the next use admits the page again");
+    harness.Drain();
+    harness.CheckResults(results, 2, 1, "a dispatch on one stream after a store recorded on another");
 }
 
 void FaultsAtOrderingPoints(Harness& harness) {
@@ -487,7 +494,7 @@ int main() {
             Harness harness(*device, *recorder, context, region);
             CrossStreamCopyIn(harness);
             PinsAcrossStreams(harness);
-            WriteBackAcrossStreams(harness);
+            StoresAcrossStreams(harness);
             FaultsAtOrderingPoints(harness);
             GrantsAndDrops(harness);
             const auto counts = harness.driver.Counts();
