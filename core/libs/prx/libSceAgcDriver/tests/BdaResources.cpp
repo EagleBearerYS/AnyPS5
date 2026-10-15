@@ -1971,14 +1971,16 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
 }
 
 void RunImageMirrorEpochTests(const Context& context, const BdaTestAccess& access) {
-    alignas(65536) static std::byte epochImage[2 * 65536];
+    constexpr std::size_t epochBytes = 2 * 65536;
+    static std::byte epochStorage[epochBytes + 65536];
+    auto* const epochImage = reinterpret_cast<std::byte*>((reinterpret_cast<std::uint64_t>(epochStorage) + 65535) & ~std::uint64_t{65535});
     const auto address = reinterpret_cast<std::uint64_t>(epochImage);
     const auto probe = address + 100;
-    std::memset(epochImage, 0x31, sizeof(epochImage));
+    std::memset(epochImage, 0x31, epochBytes);
     {
         GuestAllocations::Mutation mutation;
         mutation.RegisterMainImage();
-        mutation.Protect(epochImage, sizeof(epochImage), true, true, true, [] {});
+        mutation.Protect(epochImage, epochBytes, true, true, true, [] {});
     }
     const auto build = [&] {
         GuestBufferMemory leased(context);
@@ -2005,7 +2007,7 @@ void RunImageMirrorEpochTests(const Context& context, const BdaTestAccess& acces
     Require(build() == std::byte{0x55}, "a guest store into a writable image range was not seen in the next collect epoch");
     {
         GuestAllocations::Mutation mutation;
-        mutation.Protect(epochImage, sizeof(epochImage), true, true, false, [] {});
+        mutation.Protect(epochImage, epochBytes, true, true, false, [] {});
     }
     ClearImageMirrors(context.device);
 }
