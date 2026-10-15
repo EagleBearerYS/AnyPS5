@@ -339,6 +339,8 @@ struct TableReuseTotals {
     std::atomic<std::uint64_t> wordsRead{0};
     std::atomic<std::uint64_t> shared{0};
     std::atomic<std::uint64_t> columns{0};
+    std::atomic<std::uint64_t> resolutions{0};
+    std::atomic<std::uint64_t> resolutionsShared{0};
 };
 
 TableReuseTotals& tableReuseTotals() {
@@ -1303,6 +1305,59 @@ std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const Image
     return value;
 }
 
+std::vector<bool> reducingSamplers(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
+    std::vector<bool> reducing(info.images.size(), false);
+    for (const auto& pair : info.sampledPairs) {
+        if (info.samplers.at(pair.sampler).table != NoTable) continue;
+        const auto& words = snapshot.samplers.at(pair.sampler).dwords;
+        if (reducesBetweenTexels(words[0], words[2])) reducing.at(pair.image) = true;
+    }
+    return reducing;
+}
+
+bool TableResolutionReuse() {
+    static const bool enabled = std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") == nullptr;
+    return enabled;
+}
+
+struct ResolutionMemoEntry {
+    std::uint64_t memoKey = 0;
+    std::vector<ImageTableColumnSnapshot> tables;
+    std::vector<bool> reducing;
+    std::shared_ptr<const ResolvedImageTables> resolved;
+    std::size_t footprint = 0;
+};
+
+struct ResolutionMemo {
+    std::mutex mutex;
+    std::vector<ResolutionMemoEntry> entries;
+};
+
+ResolutionMemo& resolutionMemo() {
+    static ResolutionMemo memo;
+    return memo;
+}
+
+constexpr std::size_t ResolutionMemoEntries = 256;
+constexpr std::size_t ResolutionMemoVariantEntries = 4;
+constexpr std::size_t ResolutionMemoWords = std::size_t{1} << 23u;
+
+bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::vector<ImageTableColumnSnapshot>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); index++) {
+        const auto& a = left[index];
+        const auto& b = right[index];
+        if (a.base != b.base || a.size != b.size || a.records != b.records || a.keys != b.keys || a.fault != b.fault || a.outside != b.outside || !a.codes.Shares(b.codes) || !a.words.Shares(b.words)) return false;
+    }
+    return true;
+}
+
+std::size_t resolutionFootprint(const ResolvedImageTables& resolved, const std::vector<ImageTableColumnSnapshot>& tables) {
+    std::size_t footprint = resolved.map.size() + (resolved.elements.size() * sizeof(ImageTableElement) + resolved.samplers.size() * sizeof(ImageTableSamplerElement) + resolved.poison.size() * sizeof(ImageTablePoisonRecord)) / sizeof(std::uint32_t);
+    for (const auto& table : tables) footprint += 16u + table.codes.size() + table.words.size() * 9u;
+    return footprint;
+}
+
 }
 
 ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
@@ -1334,14 +1389,10 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     };
     std::map<std::tuple<std::array<std::uint32_t, 8>, RdnaImageDimension, bool, DescriptorBindingKind>, std::uint32_t> elementIndex;
     std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
-    std::vector<bool> reducingSampler(info.images.size(), false);
     for (const auto& pair : info.sampledPairs) {
-        const auto& sampler = info.samplers.at(pair.sampler);
-        if (sampler.table != NoTable) continue;
-        directSamplers.at(pair.image) |= 1u << pair.sampler;
-        const auto& words = snapshot.samplers.at(pair.sampler).dwords;
-        if (reducesBetweenTexels(words[0], words[2])) reducingSampler.at(pair.image) = true;
+        if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
     }
+    const auto reducingSampler = reducingSamplers(info, snapshot);
     const auto imageRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
         const auto& image = info.images[resource];
         const auto& modes = info.runtimeImageModes[resource];
@@ -1458,6 +1509,42 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     out.map.resize(out.map.size() + out.samplers.size() / Abi::SamplerEntryElements, 0u);
     out.faults = static_cast<std::uint32_t>(expected.size() + static_cast<std::size_t>(std::count(outside.begin(), outside.end(), true)));
     return out;
+}
+
+std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
+    if (memoKey == 0u || snapshot.tables.tables.empty() || !TableResolutionReuse()) return std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
+    auto reducing = reducingSamplers(info, snapshot);
+    auto& memo = resolutionMemo();
+    auto& totals = tableReuseTotals();
+    {
+        std::lock_guard lock(memo.mutex);
+        const auto found = std::find_if(memo.entries.begin(), memo.entries.end(), [&](const ResolutionMemoEntry& entry) { return entry.memoKey == memoKey && entry.reducing == reducing && sameColumns(entry.tables, snapshot.tables.tables); });
+        if (found != memo.entries.end()) {
+            std::rotate(memo.entries.begin(), found, found + 1);
+            totals.resolutionsShared.fetch_add(1, std::memory_order_relaxed);
+            return memo.entries.front().resolved;
+        }
+    }
+    auto resolved = std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
+    totals.resolutions.fetch_add(1, std::memory_order_relaxed);
+    const auto footprint = resolutionFootprint(*resolved, snapshot.tables.tables);
+    if (footprint > ResolutionMemoWords) return resolved;
+    std::lock_guard lock(memo.mutex);
+    memo.entries.insert(memo.entries.begin(), ResolutionMemoEntry{memoKey, snapshot.tables.tables, std::move(reducing), resolved, footprint});
+    std::size_t kept = 0;
+    std::size_t variantEntries = 0;
+    std::size_t total = 0;
+    for (std::size_t index = 0; index < memo.entries.size(); index++) {
+        auto& entry = memo.entries[index];
+        const bool sameVariant = entry.memoKey == memoKey;
+        if ((sameVariant && variantEntries == ResolutionMemoVariantEntries) || kept == ResolutionMemoEntries || total + entry.footprint > ResolutionMemoWords) continue;
+        if (sameVariant) variantEntries++;
+        total += entry.footprint;
+        if (kept != index) memo.entries[kept] = std::move(entry);
+        kept++;
+    }
+    memo.entries.resize(kept);
+    return resolved;
 }
 
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
@@ -1915,7 +2002,7 @@ std::uint64_t ResourceMaterializer::SpecializationNanoseconds() {
 
 ImageTableReuseCounts ResourceMaterializer::TableReuse() {
     auto& totals = tableReuseTotals();
-    return {totals.unwritten.load(std::memory_order_relaxed), totals.compared.load(std::memory_order_relaxed), totals.wordsRead.load(std::memory_order_relaxed), totals.shared.load(std::memory_order_relaxed), totals.columns.load(std::memory_order_relaxed)};
+    return {totals.unwritten.load(std::memory_order_relaxed), totals.compared.load(std::memory_order_relaxed), totals.wordsRead.load(std::memory_order_relaxed), totals.shared.load(std::memory_order_relaxed), totals.columns.load(std::memory_order_relaxed), totals.resolutions.load(std::memory_order_relaxed), totals.resolutionsShared.load(std::memory_order_relaxed)};
 }
 
 }

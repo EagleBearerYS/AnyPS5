@@ -6,6 +6,7 @@
 #include "ImageTableAbi.hpp"
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,6 +48,8 @@ struct ImageTableReuseCounts {
     std::uint64_t wordsRead = 0;
     std::uint64_t shared = 0;
     std::uint64_t columns = 0;
+    std::uint64_t resolutions = 0;
+    std::uint64_t resolutionsShared = 0;
 };
 
 struct RuntimeImageModeMatch {
@@ -65,6 +68,7 @@ public:
     static void PrepareImageModes(ShaderInfo& info);
     static const char* UnnormalizedSampleMismatch(const ImageResource& image);
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
+    static std::shared_ptr<const ResolvedImageTables> ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();
