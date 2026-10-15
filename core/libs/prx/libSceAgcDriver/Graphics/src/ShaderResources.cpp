@@ -1799,7 +1799,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             if (storageBuffers != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<std::uint32_t>(storageBuffers)});
             const auto tableDescriptors = tableBindings[0] != std::numeric_limits<std::size_t>::max() ? tableDescriptorCount(0) : 0u;
             if (plannedSampledImages + tableDescriptors != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, plannedSampledImages + tableDescriptors});
-            if (plannedStorageImages != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, plannedStorageImages});
+            const auto storageTableDescriptors = storageTableBindings[0] != std::numeric_limits<std::size_t>::max() ? bindings[storageTableBindings[0]].layout.descriptorCount : 0u;
+            if (plannedStorageImages + storageTableDescriptors != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, plannedStorageImages + storageTableDescriptors});
             std::uint32_t samplerDescriptors = 0;
             for (const auto& binding : bindings) {
                 if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) samplerDescriptors += binding.layout.descriptorCount;
@@ -4285,8 +4286,12 @@ void ShaderResources::resolveImageTables() {
                 CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
                 if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
                 const auto mip = std::min(resource.baseLevel, resource.mipCount - 1u);
+                if (resource.minLod > mip * 256u) {
+                    table.map[faults + element] = rejectTableElement(table, words, "the table entry's storage T# clamps its minimum LOD above the level it addresses, which is not implemented");
+                    continue;
+                }
                 try {
-                    storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes));
+                    storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes, true));
                 } catch (const std::runtime_error& error) {
                     table.map[faults + element] = rejectTableElement(table, words, error.what());
                     continue;
