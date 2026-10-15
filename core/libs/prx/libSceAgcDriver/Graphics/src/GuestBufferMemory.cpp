@@ -2651,7 +2651,6 @@ const char* ImportRequesterName(ImportRequester requester) {
         case ImportRequester::Access: return "access";
         case ImportRequester::Join: return "join";
         case ImportRequester::Segment: return "segment";
-        case ImportRequester::Expand: return "expand";
     }
     return "unknown";
 }
