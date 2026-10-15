@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
 #include "VulkanTestDevice.hpp"
 #include <exception>
+#include <memory>
 
 #ifdef _WIN32
 
@@ -127,6 +128,7 @@ bool Resident(std::uint64_t address) {
 void DriverStoreToUnguardedResidentPage(MirrorReader& reader) {
     PrivatePages page(1, false);
     FillPattern(page.Words(), 1, 5);
+    AgcDriver::GuestMemory::CollectWritesUncached(page.Address(), PageBytes);
     Locked([&] { Residency().Manager().Use(page.Address(), PageBytes, ResidencyAccess::Read); });
     Expect(Resident(page.Address()), "write watch: a page the guest cannot write was not admitted");
     Expect(!AgcDriver::GuestMemory::WriteGuarded(PageOf(page.Address())), "write watch: a page the guest cannot write was guarded");
@@ -142,10 +144,10 @@ enum class Recording { Idle, Busy };
 
 constexpr std::uint32_t WrittenSubpage = 3;
 
-void DriverWrite(MirrorReader& reader, MirrorReader& other, Recording recording, const std::string& what, std::uint32_t value, const std::function<void(Commands&, const SharedPages&)>& store) {
-    SharedPages pages(2);
+void DriverWrite(MirrorReader& reader, MirrorReader& other, SharedPages& pages, Recording recording, const std::string& what, std::uint32_t value, const std::function<void(Commands&, const SharedPages&)>& store) {
     PrivatePages scratch(1);
     FillPattern(pages.Words(), 2, 6);
+    AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     bool stored = false;
     const auto expected = [&](std::uint64_t page, std::uint32_t subpage) { return stored && page == 0 && subpage == WrittenSubpage ? value : Pattern(6, page, subpage * WordsPerSubpage); };
     Locked([&] { Residency().Manager().Use(pages.Address(), PageBytes, ResidencyAccess::Read); });
@@ -166,10 +168,12 @@ void DriverWrite(MirrorReader& reader, MirrorReader& other, Recording recording,
 
 void DriverWritesBeforeDispatch(MirrorReader& reader) {
     MirrorReader other;
+    std::vector<std::unique_ptr<SharedPages>> regions;
+    const auto fresh = [&]() -> SharedPages& { return *regions.emplace_back(std::make_unique<SharedPages>(2)); };
     for (const auto recording : {Recording::Idle, Recording::Busy}) {
-        DriverWrite(reader, other, recording, "a WRITE_DATA", LabelValue, [](Commands& commands, const SharedPages& pages) { commands.WriteData(pages.Address(0, WrittenSubpage), {LabelValue}); });
-        DriverWrite(reader, other, recording, "a 4 KiB DMA copy", Pattern(6, 1, 0), [](Commands& commands, const SharedPages& pages) { commands.DmaCopy(pages.Address(0, WrittenSubpage), pages.Address(1, 0), static_cast<std::uint32_t>(SubpageBytes)); });
-        DriverWrite(reader, other, recording, "a 6-byte DMA copy", Pattern(6, 1, 2 * WordsPerSubpage), [](Commands& commands, const SharedPages& pages) { commands.DmaCopy(pages.Address(0, WrittenSubpage), pages.Address(1, 2), 6u); });
+        DriverWrite(reader, other, fresh(), recording, "a WRITE_DATA", LabelValue, [](Commands& commands, const SharedPages& pages) { commands.WriteData(pages.Address(0, WrittenSubpage), {LabelValue}); });
+        DriverWrite(reader, other, fresh(), recording, "a 4 KiB DMA copy", Pattern(6, 1, 0), [](Commands& commands, const SharedPages& pages) { commands.DmaCopy(pages.Address(0, WrittenSubpage), pages.Address(1, 0), static_cast<std::uint32_t>(SubpageBytes)); });
+        DriverWrite(reader, other, fresh(), recording, "a 6-byte DMA copy", Pattern(6, 1, 2 * WordsPerSubpage), [](Commands& commands, const SharedPages& pages) { commands.DmaCopy(pages.Address(0, WrittenSubpage), pages.Address(1, 2), 6u); });
     }
 }
 

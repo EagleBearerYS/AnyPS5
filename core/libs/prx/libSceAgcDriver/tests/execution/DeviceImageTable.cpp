@@ -475,8 +475,18 @@ void RunRuntimeDescriptors(AgcDriver::VulkanDevice& device) {
     SetArgument(4, unnormalized, images[0]);
     const auto unread = RunRuntime(device, RuntimeSampleCode, 5);
     Require(!Faulted(unread) && ZeroGroup(unread, 4) && NewMisses(unread) == Lanes, "run-time descriptors: the first use of an unnormalized run-time S# faulted, sampled or did not miss:\n" + unread.log);
+    const auto accepted = RunRuntime(device, RuntimeSampleCode, 5);
+    Require(!Faulted(accepted) && NewMisses(accepted) == 0u && accepted.after.rejected == accepted.before.rejected, "run-time descriptors: an unnormalized run-time S# on a single-level 2D T# faulted, missed again or was rejected:\n" + accepted.log);
+    RequireRed(accepted, 4, [](std::uint32_t) { return std::bit_cast<std::uint32_t>(FloatTexels[0]); }, "run-time descriptors: a sample through an unnormalized run-time S# at coordinates within the first texel");
+    Require(Group(accepted, 4) == Group(RunDirect(device, SampleDirectCode, images[0], unnormalized), 0), "run-time descriptors: the sample through an unnormalized run-time S# differs from the direct binding of that S#");
+
+    auto wrapped = unnormalized;
+    wrapped[0] &= ~7u;
+    SetArgument(4, wrapped, images[0]);
+    const auto wrapUnread = RunRuntime(device, RuntimeSampleCode, 5);
+    Require(!Faulted(wrapUnread) && ZeroGroup(wrapUnread, 4) && NewMisses(wrapUnread) == Lanes, "run-time descriptors: the first use of an unnormalized run-time S# that wraps faulted, sampled or did not miss:\n" + wrapUnread.log);
     const auto rejected = RunRuntime(device, RuntimeSampleCode, 5);
-    Require(rejected.after.rejected == rejected.before.rejected + 1u && Faulted(rejected) && rejected.log.find("unnormalized") != std::string::npos && rejected.log.find("00008092") != std::string::npos, "run-time descriptors: an unnormalized run-time S# was not rejected with its words and reason:\n" + rejected.log);
+    Require(rejected.after.rejected == rejected.before.rejected + 1u && Faulted(rejected) && rejected.log.find("unnormalized") != std::string::npos && rejected.log.find("00008090") != std::string::npos, "run-time descriptors: an unnormalized run-time S# that wraps was not rejected with its words and reason:\n" + rejected.log);
 }
 
 void RunRejections(AgcDriver::VulkanDevice& device) {

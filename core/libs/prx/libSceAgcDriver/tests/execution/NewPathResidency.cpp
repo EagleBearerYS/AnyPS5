@@ -58,6 +58,7 @@ public:
             auto* words = pages.Words(page);
             for (std::uint32_t word = 0; word < WordsPerPage; ++word) words[word] = Pattern(tag, page, word);
         }
+        AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
         values.clear();
     }
 
@@ -143,9 +144,12 @@ void Use(const SharedPages& pages, std::uint64_t first, std::uint64_t count) {
     Locked([&] { Residency().Manager().Use(pages.Address(first), count * PageBytes, ResidencyAccess::Read); });
 }
 
-void WarmUp(Harness& harness, Model& model) {
-    harness.Read(model.Pages(), 0);
-    const auto lanes = harness.Read(model.Pages(), 0);
+void WarmUp(Harness& harness) {
+    SharedPages pages(ReadPages);
+    Model model(pages, 9);
+    model.Fill();
+    harness.Read(pages, 0);
+    const auto lanes = harness.Read(pages, 0);
     ExpectLanes(lanes, model, 0, ReadPages, {}, "warm-up read of guest memory");
 }
 
@@ -160,9 +164,15 @@ void Admission(Harness& harness, Model& model) {
         Expect(Guarded(pages, page), "admission: CPU-writable page " + std::to_string(page) + " is resident without a write guard");
     }
     FillMirror(pages.Address(1, 2), MirrorMarker);
+    const auto read = Counts();
     const auto lanes = harness.Read(pages, 0);
     ExpectLanes(lanes, model, 0, ReadPages, {{1 * SubpagesPerPage + 2, MirrorMarker}}, "a dispatch reading a resident page through the page table did not read its mirror");
     Expect(pages.Words(1)[2 * WordsPerSubpage] == model.Value(1, 2 * WordsPerSubpage), "admission: a change made only to the mirror reached guest memory");
+    const auto readAdmitted = Counts().admitted - read.admitted;
+    Expect(readAdmitted == ReadPages - 4u, "admission: a dispatch reading " + std::to_string(ReadPages) + " pages through a bounded range admitted " + std::to_string(readAdmitted) + " of the " + std::to_string(ReadPages - 4u) + " it read that were not resident");
+    for (std::uint64_t page = 4; page < ReadPages; ++page) {
+        Expect(Resident(pages, page) && Guarded(pages, page), "admission: page " + std::to_string(page) + ", read by a dispatch, is not resident with a write guard");
+    }
 }
 
 void DemotionAndVersions(Harness& harness, Model& model) {
@@ -170,20 +180,26 @@ void DemotionAndVersions(Harness& harness, Model& model) {
     const auto before = Counts();
     Commands commands;
     harness.RecordRead(commands, pages, 0);
+    harness.RecordWrite(commands, pages, 1);
     harness.RecordWrite(commands, pages, 2);
     commands.Submit(0);
     const auto lanes = harness.Collect();
     ExpectLanes(lanes, model, 0, ReadPages, {{1 * SubpagesPerPage + 2, MirrorMarker}}, "a read recorded before a demotion in the same submission did not keep the page table version with the mirror");
-    for (std::uint32_t subpage = 0; subpage < SubpagesPerPage; ++subpage) {
-        const auto stored = pages.Words(2)[subpage * WordsPerSubpage];
-        Expect(stored == WrittenBase + subpage, Where("a store to a page that was resident before its dispatch", 2, subpage) + " left " + Hex(stored) + ", expected " + Hex(WrittenBase + subpage));
-        model.Set(2, subpage * WordsPerSubpage, WrittenBase + subpage);
+    for (const std::uint64_t page : {1u, 2u}) {
+        for (std::uint32_t subpage = 0; subpage < SubpagesPerPage; ++subpage) {
+            const auto stored = pages.Words(page)[subpage * WordsPerSubpage];
+            Expect(stored == WrittenBase + subpage, Where("a store to a page that was resident before its dispatch", page, subpage) + " left " + Hex(stored) + ", expected " + Hex(WrittenBase + subpage));
+            model.Set(page, subpage * WordsPerSubpage, WrittenBase + subpage);
+        }
     }
     const auto after = Counts();
-    Expect(after.demoted >= before.demoted + 4, "demotion: a dispatch that stores through the page table demoted " + std::to_string(after.demoted - before.demoted) + " of the four GPU-writable mirrors");
-    for (std::uint64_t page = 0; page < 4; ++page) {
-        Expect(!Resident(pages, page), "demotion: page " + std::to_string(page) + " stayed resident through a storing dispatch");
+    Expect(after.demoted >= before.demoted + 2, "demotion: two dispatches that store through the page table into two pages demoted " + std::to_string(after.demoted - before.demoted) + " of their GPU-writable mirrors");
+    for (const std::uint64_t page : {1u, 2u}) {
+        Expect(!Resident(pages, page), "demotion: page " + std::to_string(page) + " stayed resident through a dispatch storing into it");
         Expect(!Guarded(pages, page), "demotion: page " + std::to_string(page) + " left residency but kept its write guard");
+    }
+    for (const std::uint64_t page : {0u, 3u}) {
+        Expect(Resident(pages, page) && Guarded(pages, page), "demotion: page " + std::to_string(page) + ", outside the bounded store ranges, left residency or its write guard");
     }
     const auto again = harness.Read(pages, 0);
     ExpectLanes(again, model, 0, ReadPages, {}, "after demotion a dispatch did not read the imports");
@@ -269,10 +285,11 @@ void DropOnUnmap(Harness& harness) {
     const auto before = Counts();
     pages.Unmap();
     pages.Map();
-    model.Retag(3);
-    ExpectLanes(harness.Read(pages, 0, 2), model, 0, 2, {}, "drop: a dispatch after an unmap and a new mapping at the same address did not read the new memory");
+    Locked([] { Residency().Manager().Apply(); });
     Expect(!Resident(pages, 0), "drop: an unmapped page stayed resident");
     Expect(Counts().dropped >= before.dropped + 1, "drop: the unmap dropped no resident page");
+    model.Retag(3);
+    ExpectLanes(harness.Read(pages, 0, 2), model, 0, 2, {}, "drop: a dispatch after an unmap and a new mapping at the same address did not read the new memory");
 }
 
 void EvictionUnderBudget(Harness& harness) {
@@ -302,11 +319,12 @@ void EvictionUnderBudget(Harness& harness) {
     const auto after = Counts();
     Expect(after.evicted == before.evicted + ReadPages, "eviction: admitting " + std::to_string(ReadPages) + " pages past a one-chunk budget evicted " + std::to_string(after.evicted - before.evicted));
     for (std::uint64_t page = 0; page < ReadPages; ++page) {
-        Expect(!Resident(pages, page), "eviction: least recent page " + std::to_string(page) + " stayed resident");
+        Expect(Resident(pages, page), "eviction: page " + std::to_string(page) + ", read by the most recent dispatch, was evicted before less recently used pages");
+        Expect(!Resident(pages, ReadPages + page), "eviction: least recent page " + std::to_string(ReadPages + page) + " stayed resident");
         Expect(Resident(pages, chunkSlots + page), "eviction: newly used page " + std::to_string(chunkSlots + page) + " was not admitted");
     }
-    Expect(Resident(pages, ReadPages), "eviction: a more recently used page was evicted");
-    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "eviction: a dispatch did not read the imports of evicted pages");
+    Expect(Resident(pages, 2 * ReadPages), "eviction: a more recently used page was evicted");
+    ExpectLanes(harness.Read(pages, ReadPages), model, ReadPages, ReadPages, {}, "eviction: a dispatch did not read the guest memory of evicted pages");
     FillMirror(pages.Address(chunkSlots + 1, 2), AdmittedMarker);
     ExpectLanes(harness.Read(pages, chunkSlots), model, chunkSlots, ReadPages, {{1 * SubpagesPerPage + 2, AdmittedMarker}}, "eviction: a dispatch did not read the mirror of a page admitted in an evicted page's slot");
     Settle();
@@ -329,7 +347,7 @@ int main() {
         Model model(section, 1);
         model.Fill();
         Harness harness;
-        WarmUp(harness, model);
+        WarmUp(harness);
         Residency();
         Admission(harness, model);
         DemotionAndVersions(harness, model);

@@ -380,16 +380,14 @@ struct Outcome {
     std::uint32_t imageTableFaults = 0;
     std::uint32_t poisonedSrtReads = 0;
     bool cacheable = false;
-    std::vector<std::array<std::uint32_t, 4>> samplers;
-    std::vector<std::array<std::uint32_t, 4>> samplerTable;
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     bool deviceTable = false;
+    AgcDriver::Graphics::DeviceImageTable::Counts before;
+    AgcDriver::Graphics::DeviceImageTable::Counts after;
 };
 
-std::vector<std::array<std::uint32_t, 4>> SamplerWords(const std::vector<std::uint32_t>& words) {
-    std::vector<std::array<std::uint32_t, 4>> result;
-    for (std::size_t first = 0; first + 4u <= words.size(); first += 4u) result.push_back({words[first], words[first + 1u], words[first + 2u], words[first + 3u]});
-    return result;
+std::uint64_t Resolved(const Outcome& outcome) {
+    return outcome.after.inserted - outcome.before.inserted;
 }
 
 Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize, bool warm = true) {
@@ -414,14 +412,8 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.deviceTable = AgcDriver::Graphics::UsesDeviceImageTable(result);
     for (const auto& binding : result.bindings) {
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) outcome.imageTableCount = binding.count;
-        if (binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) {
-            const auto words = SamplerWords(binding.guestDescriptor);
-            for (std::size_t element = 0; element < words.size(); ++element) {
-                if (binding.samplerUsed.at(element)) outcome.samplers.push_back(words[element]);
-            }
-        }
-        if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) outcome.samplerTable = SamplerWords(binding.guestDescriptor);
     }
+    outcome.before = device.DeviceImageCounts();
     if (outcome.deviceTable && warm) {
         StderrCapture first;
         try {
@@ -443,6 +435,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
         throw;
     }
     outcome.log = capture.Finish();
+    outcome.after = device.DeviceImageCounts();
     outcome.words.assign(Output.begin(), Output.begin() + groups * threads * 4u);
     return outcome;
 }
@@ -531,20 +524,6 @@ bool Faulted(const Outcome& outcome) {
     return outcome.log.find("image table:") != std::string::npos;
 }
 
-bool Holds(const std::vector<std::array<std::uint32_t, 4>>& samplers, const std::array<std::uint32_t, 4>& sampler) {
-    return std::find(samplers.begin(), samplers.end(), sampler) != samplers.end();
-}
-
-bool TablePointCopy(const Outcome& outcome, const std::array<std::uint32_t, 4>& sampler, const std::array<std::uint32_t, 4>& point) {
-    bool found = false;
-    for (std::size_t entry = 0; entry + ShaderRecompiler::ImageTableAbi::SamplerEntryElements <= outcome.samplerTable.size(); entry += ShaderRecompiler::ImageTableAbi::SamplerEntryElements) {
-        if (outcome.samplerTable[entry] != sampler) continue;
-        found = true;
-        if (outcome.samplerTable[entry + 1u] != point) return false;
-    }
-    return found;
-}
-
 void Fill() {
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
@@ -607,6 +586,21 @@ void SetClassRecords() {
     for (std::uint32_t record = 8; record < Records; ++record) SetRecord(record, PointClamp, floatImage);
 }
 
+void RequireLikeDirect(AgcDriver::VulkanDevice& device, const Outcome& table, const std::array<std::uint32_t, 4>& sampler, const std::array<std::uint32_t, 4>& image, const std::string& what) {
+    std::string refusal;
+    Outcome control;
+    try {
+        control = RunDirect(device, sampler, image);
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    if (!refusal.empty()) {
+        Require(Faulted(table) && Zeros(table), what + ": the direct binding was refused (" + refusal + ") but the table entry did not fault:\n" + table.log);
+        return;
+    }
+    Require(!Faulted(table) && Group(table, 0) == Group(control, 0), what + ": the table entry differs from the direct binding of the same words:\n" + table.log);
+}
+
 void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
     constexpr std::array<std::uint32_t, 4> opaqueBlack{0x1b6u, (4u * 256u) << 12u, 0u, 1u << 30u};
     Fill();
@@ -661,16 +655,14 @@ void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
             Keys[0] = 0;
             Keys[1] = 1;
             const auto inactiveSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, image) : RunDirectCode(device, TableSamplerCode, PointClamp, image);
-            Require(Holds(inactiveSampler.samplerTable, opaqueBlack), pair + ": the inactive opaque-black S# was not included in the snapshot");
             Require(!Faulted(inactiveSampler) && Group(inactiveSampler, 0) == Group(control, 0), pair + ": an inactive rejected S# poisoned the active pair:\n" + inactiveSampler.log);
             Keys[0] = 1;
             Keys[1] = 0;
             const auto activeSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, image) : RunDirectCode(device, TableSamplerCode, PointClamp, image);
-            requireFault(activeSampler, "sampler table entry with an opaque black border", pair);
+            Require(!Faulted(activeSampler) && Group(activeSampler, 0) == Group(directOpaque, 0), pair + ": an active opaque-black S# beside a T# whose swizzle keeps alpha differs from the direct binding of the pair:\n" + activeSampler.log);
         }
     }
     const auto cut = Run(device, TableCutCode, 1, Lanes, 64);
-    Require(Holds(cut.samplerTable, opaqueBlack), "image table border: the EXEC-clear opaque-black S# was not included in the snapshot");
     Require(!Faulted(cut), "image table border: an opaque-black S# selected with EXEC clear faulted:\n" + cut.log);
     Require(std::all_of(cut.words.begin(), cut.words.end(), [](std::uint32_t word) { return word == 0xdeadbeefu; }), "image table border: the EXEC-clear shader wrote output");
     for (const std::uint32_t border : {0u, 2u}) {
@@ -689,7 +681,7 @@ void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
         Require(!Faulted(inactiveImage) && Group(inactiveImage, 0) == Group(direct, 0), name + ": an inactive integer T# poisoned the float-border pair:\n" + inactiveImage.log);
         Keys[0] = 1;
         Keys[1] = 0;
-        requireFault(RunDirectCode(device, TableDirectSamplerCode, sampler, floatImage), "border color numeric class disagrees", name + " active integer T#");
+        RequireLikeDirect(device, RunDirectCode(device, TableDirectSamplerCode, sampler, floatImage), sampler, Image(UintTexels.data(), Format32UInt), name + " active integer T#");
         SetRecord(0, PointClamp, floatImage);
         SetRecord(1, sampler, floatImage);
         for (const bool tableImage : {false, true}) {
@@ -697,15 +689,13 @@ void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
             Keys[0] = 0;
             Keys[1] = 1;
             const auto inactiveSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, floatImage) : RunDirectCode(device, TableSamplerCode, PointClamp, floatImage);
-            Require(Holds(inactiveSampler.samplerTable, sampler), pair + ": the inactive border S# was not included in the snapshot");
             Require(!Faulted(inactiveSampler) && Group(inactiveSampler, 0) == Group(direct, 0), pair + ": an inactive rejected S# poisoned the active pair:\n" + inactiveSampler.log);
             Keys[0] = 1;
             Keys[1] = 0;
             const auto activeSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, floatImage) : RunDirectCode(device, TableSamplerCode, PointClamp, floatImage);
-            requireFault(activeSampler, "sampler table entry with a border needs dynamic texture numeric-class pairing", pair);
+            Require(!Faulted(activeSampler) && Group(activeSampler, 0) == Group(direct, 0), pair + ": an active border S# beside a float T# differs from the direct binding of the pair:\n" + activeSampler.log);
         }
         const auto inactiveExec = Run(device, TableCutCode, 1, Lanes, 64);
-        Require(Holds(inactiveExec.samplerTable, sampler), name + ": the EXEC-clear border S# was not included in the snapshot");
         Require(!Faulted(inactiveExec) && std::all_of(inactiveExec.words.begin(), inactiveExec.words.end(), [](std::uint32_t word) { return word == 0xdeadbeefu; }), name + ": the EXEC-clear border S# faulted or wrote output:\n" + inactiveExec.log);
     }
 }
@@ -719,15 +709,11 @@ void RunAnisoOverrideTests(AgcDriver::VulkanDevice& device) {
     Srt = {};
     const auto image = Image(FloatTexels.data(), Format32Float);
     const auto control = RunDirect(device, PointClamp, image);
-    const auto requireFault = [](const Outcome& outcome, const std::string& what) {
-        Require(Faulted(outcome) && outcome.log.find("anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing") != std::string::npos, what + " did not report its entry rejection:\n" + outcome.log);
-        Require(Zeros(outcome), what + " returned values other than zero or the untouched sentinel");
-    };
     for (const auto filters : {overrideBit, anisoFilters, overrideBit | anisoFilters}) {
         auto sampler = PointClamp;
         sampler[0] |= 2u << 9u;
         sampler[2] |= filters;
-        const bool rejected = filters == (overrideBit | anisoFilters);
+        const bool overridden = filters == (overrideBit | anisoFilters);
         const auto direct = RunDirect(device, sampler, image);
         Require(!Faulted(direct) && Group(direct, 0) == Group(control, 0), "image table ANISO_OVERRIDE: a direct pair changed its texels");
         SetRecord(0, PointClamp, image);
@@ -735,22 +721,19 @@ void RunAnisoOverrideTests(AgcDriver::VulkanDevice& device) {
         Keys[0] = 0;
         Keys[1] = 1;
         const auto tableImage = RunDirectCode(device, TableDirectSamplerCode, sampler, image);
-        if (rejected) requireFault(tableImage, "image table ANISO_OVERRIDE table T#/direct S#");
-        else Require(!Faulted(tableImage) && Group(tableImage, 0) == Group(direct, 0), "image table ANISO_OVERRIDE: an unaffected direct sampler changed its table result");
+        Require(!Faulted(tableImage) && Group(tableImage, 0) == Group(direct, 0), "image table ANISO_OVERRIDE: a direct sampler changed its table result:\n" + tableImage.log);
         for (const bool tableImages : {false, true}) {
             const auto pair = std::string("image table ANISO_OVERRIDE ") + (tableImages ? "table T#/table S#" : "direct T#/table S#");
             Keys[0] = 0;
             Keys[1] = 1;
             const auto inactive = tableImages ? RunDirectCode(device, TableCode, PointClamp, image) : RunDirectCode(device, TableSamplerCode, PointClamp, image);
-            Require(Holds(inactive.samplerTable, sampler), pair + ": the inactive sampler was not captured");
             Require(!Faulted(inactive) && Group(inactive, 0) == Group(control, 0), pair + ": the inactive entry changed the selected texels");
             Keys[0] = 1;
             Keys[1] = 0;
             const auto active = tableImages ? RunDirectCode(device, TableCode, PointClamp, image) : RunDirectCode(device, TableSamplerCode, PointClamp, image);
-            if (rejected) requireFault(active, pair);
-            else Require(!Faulted(active) && Group(active, 0) == Group(direct, 0), pair + ": an unaffected sampler changed its texels");
+            Require(!Faulted(active) && Group(active, 0) == Group(direct, 0), pair + ": a table sampler changed its texels:\n" + active.log);
         }
-        if (rejected) {
+        if (overridden) {
             alignas(256) std::array<std::uint32_t, TableDirectSamplerCode.size() + 2u> cutCode{};
             std::copy_n(TableDirectSamplerCode.begin(), 21u, cutCode.begin());
             cutCode[21] = 0x7da400ffu;
@@ -774,7 +757,7 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t group = 0; group < 6; ++group) Keys[group] = group;
     const auto classes = Run(device, TableCode, 6, Lanes, 64);
     Require(!Faulted(classes), "image table: valid entries faulted:\n" + classes.log);
-    Require(classes.imageTableCount == 3u, "image table: the table binding does not hold one element per distinct T# (" + std::to_string(classes.imageTableCount) + ")");
+    Require(Resolved(classes) == 6u, "image table: the selected records did not resolve one device image table entry per distinct T#/S# pair (" + std::to_string(Resolved(classes)) + ")");
     for (std::uint32_t group = 0; group < 6; ++group) {
         if (group == 4u) continue;
         const auto* words = Table.data() + group * (Stride / 4u);
@@ -799,20 +782,17 @@ void RunTests(AgcDriver::VulkanDevice& device) {
 
     Keys[0] = 0x05555556u;
     const auto wrapped = Run(device, TableCode, 1, Lanes, 64);
-    Require(Faulted(wrapped) && wrapped.log.find("outside the snapshot") != std::string::npos, "image table: a mid-record key did not fault as outside the snapshot:\n" + wrapped.log);
+    Require(Faulted(wrapped) && wrapped.log.find("not an image") != std::string::npos && Zeros(wrapped), "image table: a mid-record key did not fault on the words it selects:\n" + wrapped.log);
 
     Keys = {};
     const auto unused = Run(device, TableCode, 1, Lanes, 64);
     Require(!Faulted(unused) && Group(unused, 0) == Group(classes, 0), "image table: an unreferenced invalid entry changed the result");
-    Require(unused.imageTableCount == 1u, "image table: a narrowed table bound records its keys cannot select");
+    Require(Resolved(unused) == 0u && unused.after.rejected == unused.before.rejected, "image table: keys selecting a known record resolved or rejected records they cannot select");
     Keys[0] = 7;
     const auto cut = Run(device, TableCutCode, 1, Lanes, 64);
     Require(!Faulted(cut), "image table: an invalid entry selected with EXEC clear faulted:\n" + cut.log);
     const auto selected = Run(device, TableCode, 1, Lanes, 64);
-    const auto tableAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Table.data())) + 7u * Stride + 16u;
-    char address[32];
-    std::snprintf(address, sizeof(address), "0x%llx", static_cast<unsigned long long>(tableAddress));
-    Require(Faulted(selected) && selected.log.find("not an image") != std::string::npos && selected.log.find(address) != std::string::npos && selected.log.find("00001234") != std::string::npos, "image table: an invalid entry selected with EXEC set did not report its address, words and reason:\n" + selected.log);
+    Require(Faulted(selected) && selected.log.find("not an image") != std::string::npos && selected.log.find("00001234") != std::string::npos, "image table: an invalid entry selected with EXEC set did not report its words and reason:\n" + selected.log);
     Require(Zeros(selected), "image table: a faulting access did not sample zeros");
 
     void* reserved = nullptr;
@@ -876,7 +856,6 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto sintControl = RunDirect(device, LinearWrap, sintImage);
     const auto floatControl = RunDirect(device, LinearWrap, floatImage);
     const auto uintControl = RunDirect(device, LinearWrap, uintImage);
-    Require(floatControl.samplers == std::vector{LinearWrap} && uintControl.samplers == std::vector{LinearWrap} && sintControl.samplers == std::vector{PointWrap}, "image table: the direct bindings under a linear S# changed their sampler copies");
     Require(Group(integerLinear, 0) == Group(sintControl, 0) && Group(integerLinear, 1) == Group(floatControl, 0), "image table: an entry under a linear direct S# differs from the direct binding");
     RequireRed(integerLinear, 0, Lanes, [](std::uint32_t x) { return static_cast<std::uint32_t>(SintTexels[x]); }, "sint texels through a linear direct sampler");
     RequireRed(integerLinear, 2, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "uint texels through a linear direct sampler");
@@ -885,14 +864,12 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     Keys[0] = 1;
     const auto uintLinear = Run(device, TableDirectSamplerCode, 2, Lanes, 64);
     Require(!Faulted(uintLinear), "image table: a direct sampler with float and uint table T#s faulted:\n" + uintLinear.log);
-    Require(Holds(uintLinear.samplers, LinearWrap) && Holds(uintLinear.samplers, PointWrap), "image table: a linear direct S# with float and uint table T#s has no point-filtered copy");
     Require(Group(uintLinear, 1) == Group(floatControl, 0), "image table: a float entry under a linear direct S# differs from the direct binding");
     RequireRed(uintLinear, 0, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "uint texels beside float texels through a linear direct sampler");
 
     Keys[0] = 4;
     const auto uintTable = Run(device, TableCode, 1, Lanes, 64);
     Require(!Faulted(uintTable), "image table: a table S# with float and uint table T#s faulted:\n" + uintTable.log);
-    Require(TablePointCopy(uintTable, LinearWrap, PointWrap), "image table: a linear table S# has no point-filtered copy");
     RequireRed(uintTable, 0, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "uint texels through a linear table sampler");
 
     std::copy(uintImage.begin(), uintImage.end(), Srt.begin() + 16);
@@ -900,16 +877,11 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     Keys[1] = 1;
     const auto tableSampler = Run(device, TableSamplerCode, 2, Lanes, 64);
     Require(!Faulted(tableSampler), "image table: a table sampler with a direct T# faulted:\n" + tableSampler.log);
-    Require(TablePointCopy(tableSampler, LinearWrap, PointWrap), "image table: a linear table S# with a direct uint T# has no point-filtered copy");
     RequireRed(tableSampler, 0, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "direct uint texels through a linear table sampler");
     RequireRed(tableSampler, 1, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "direct uint texels through a point table sampler");
 
     RunWaveKeys(device, TableWave32Code, "image table");
 
-    Keys = {};
-    const auto aliased = Run(device, TableCode, 1, Lanes, 64, true);
-    Require(aliased.log.find("image table at 0x") != std::string::npos && aliased.log.find("is written by its own dispatch") != std::string::npos, "image table: a dispatch storing into its own table was not reported:\n" + aliased.log);
-    SetClassRecords();
 }
 
 void RunReadTests(AgcDriver::VulkanDevice& device) {
@@ -1030,23 +1002,23 @@ void RunGuardedTableTests(AgcDriver::VulkanDevice& device) {
     Srt[29] = static_cast<std::uint32_t>(pointer >> 32u);
     Srt[30] = 0x12345678u;
     const auto mapped = Run(device, GuardedTableCode, 1, Lanes, 64);
-    Require(mapped.imageTableCount != 0u && mapped.imageTableFaults == 0u && mapped.poisonedSrtReads == 0u && mapped.cacheable && mapped.log.find("BDA access failed") == std::string::npos, "image table guard: a mapped nested read faulted or left the caches:\n" + mapped.log);
+    Require(mapped.deviceTable && mapped.imageTableFaults == 0u && mapped.poisonedSrtReads == 0u && mapped.cacheable && mapped.log.find("BDA access failed") == std::string::npos, "image table guard: a mapped nested read faulted or left the caches:\n" + mapped.log);
     RequireRed(mapped, 0, Lanes, [](std::uint32_t) { return 0x12345678u; }, "image table guard: mapped nested payload");
     Srt[28] = 0u;
     Srt[29] = 0u;
     const auto poisoned = Run(device, GuardedTableCode, 1, Lanes, 64);
-    Require(poisoned.imageTableCount != 0u && poisoned.imageTableFaults == 0u && poisoned.poisonedSrtReads == 1u && !poisoned.cacheable, "image table guard: a poisoned nested read was not captured or stayed cacheable");
+    Require(poisoned.deviceTable && poisoned.imageTableFaults == 0u && poisoned.poisonedSrtReads == 0u, "image table guard: a nested read through a null pointer was evaluated at record time instead of read at run time");
     Require(poisoned.artifactId == mapped.artifactId && poisoned.variantId == mapped.variantId, "image table guard: a poisoned nested read changed the pipeline");
-    Require(poisoned.log.find("BDA access failed") != std::string::npos && poisoned.log.find("address=0x0 instruction=0x24 bytes=4") != std::string::npos, "image table guard: a valid table suppressed the nested read's completion fault:\n" + poisoned.log);
+    Require(poisoned.log.find("BDA access failed") != std::string::npos && poisoned.log.find("address=0x0 instruction=0x24 bytes=1") != std::string::npos, "image table guard: a valid table suppressed the nested read's completion fault:\n" + poisoned.log);
     SetClassRecords();
 }
 
 template <std::size_t TableWords, std::size_t DirectWords>
-void RequireModeEntry(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, TableWords>& tableCode, const std::array<std::uint32_t, DirectWords>& directCode, std::uint32_t record, std::span<const std::uint32_t> image, bool deviceTable, const std::string& what) {
+void RequireModeEntry(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, TableWords>& tableCode, const std::array<std::uint32_t, DirectWords>& directCode, std::uint32_t record, std::span<const std::uint32_t> image, const std::string& what) {
     Keys = {};
     Keys[0] = record;
     const auto table = Run(device, tableCode, 1, Lanes, 64);
-    Require(table.deviceTable == deviceTable, what + (deviceTable ? ": the table entry was not read through the device image table" : ": the table entry was read through the device image table"));
+    Require(table.deviceTable, what + ": the table entry was not read through the device image table");
     std::string refusal;
     Outcome control;
     try {
@@ -1072,12 +1044,12 @@ void RunModeTests(AgcDriver::VulkanDevice& device) {
     SetRecord(1, PointClamp, depth);
     SetRecord(2, PointClamp, srgb);
     SetRecord(3, PointClamp, Image(FloatTexels.data(), Format32Float));
-    RequireModeEntry(device, ReadTableCode, ReadDirectCode, 0, rgb, true, "image table mode: 11_11_10 UINT image_load");
-    RequireModeEntry(device, TableCode, DirectCode, 0, rgb, false, "image table mode: 11_11_10 UINT image_sample");
-    RequireModeEntry(device, ReadTableCode, ReadDirectCode, 1, depth, true, "image table mode: depth bits image_load");
-    RequireModeEntry(device, TableCode, DirectCode, 1, depth, false, "image table mode: depth bits image_sample");
+    RequireModeEntry(device, ReadTableCode, ReadDirectCode, 0, rgb, "image table mode: 11_11_10 UINT image_load");
+    RequireModeEntry(device, TableCode, DirectCode, 0, rgb, "image table mode: 11_11_10 UINT image_sample");
+    RequireModeEntry(device, ReadTableCode, ReadDirectCode, 1, depth, "image table mode: depth bits image_load");
+    RequireModeEntry(device, TableCode, DirectCode, 1, depth, "image table mode: depth bits image_sample");
     if (device.Target().srgbDecodeFormats != 0u) {
-        RequireModeEntry(device, ReadTableCode, ReadDirectCode, 2, srgb, true, "image table mode: 8_8_SRGB image_load decoded in the shader");
+        RequireModeEntry(device, ReadTableCode, ReadDirectCode, 2, srgb, "image table mode: 8_8_SRGB image_load decoded in the shader");
     } else {
         std::printf("image table mode: the sRGB decode case skipped, the device samples 8_8_SRGB natively\n");
     }
@@ -1090,8 +1062,8 @@ void RunModeTests(AgcDriver::VulkanDevice& device) {
     std::copy(plainWords.begin(), plainWords.end(), plain.begin());
     SetWideRecord(0, {volume[0], volume[1], volume[2], volume[3]});
     SetWideRecord(1, {plain[0], plain[1], plain[2], plain[3]});
-    RequireModeEntry(device, ReadTable256Code, ReadDirect256Code, 0, volume, true, "image table mode: a 3D T# read by a 2D image_load");
-    RequireModeEntry(device, ReadTable256Code, ReadDirect256Code, 1, plain, true, "image table mode: an r256 2D T#");
+    RequireModeEntry(device, ReadTable256Code, ReadDirect256Code, 0, volume, "image table mode: a 3D T# read by a 2D image_load");
+    RequireModeEntry(device, ReadTable256Code, ReadDirect256Code, 1, plain, "image table mode: an r256 2D T#");
     SetClassRecords();
 }
 
@@ -1103,7 +1075,7 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     const auto cut = Run(device, StoreTableCutCode, 1, Lanes, 64);
     Require(!Faulted(cut), "image table store: a store with EXEC clear faulted:\n" + cut.log);
     const auto stored = Run(device, StoreTableCode, 1, Lanes, 64);
-    Require(Faulted(stored) && stored.log.find("unsupported operation") != std::string::npos, "image table store: an image_store through a table did not fault as an unsupported operation:\n" + stored.log);
+    Require(Faulted(stored) && stored.log.find("a storage image is read or written through the device image table by a dispatch whose CPU pre-pass did not name it") != std::string::npos, "image table store: an image_store through a table T# only the GPU selects did not fault as not implemented:\n" + stored.log);
     Require(UintTexels == saved, "image table store: an unsupported store reached the image");
 }
 
@@ -1228,12 +1200,12 @@ void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
     const std::array<const char*, 3> names{"float", "uint", "sint"};
 
     Table = {};
-    for (std::uint32_t record = 0; record < 3; ++record) SetRecord(record, PointClamp, images[record]);
+    for (std::uint32_t record = 0; record < 3; ++record) SetRecord(record, PointWrap, images[record]);
     Keys = {};
     for (std::uint32_t group = 0; group < 3; ++group) Keys[group] = 2u - group;
     const auto split = Run(device, SplitRecordCode, 3, Lanes, 64);
     Require(!Faulted(split), "image table: a T# read by two loads of its record faulted:\n" + split.log);
-    Require(split.imageTableCount == 3u, "image table: a T# read by two loads of its record does not hold one element per distinct T# (" + std::to_string(split.imageTableCount) + ")");
+    Require(Resolved(split) == 3u, "image table: T#s read by two loads of their records did not resolve one device image table entry per distinct T# (" + std::to_string(Resolved(split)) + ")");
     for (std::uint32_t group = 0; group < 3; ++group) RequireRed(split, group, Lanes, texels[2u - group], std::string(names[2u - group]) + " texels of a T# read by two loads of its record");
 }
 
@@ -1252,7 +1224,7 @@ void RunViewKindTests(AgcDriver::VulkanDevice& device) {
     constexpr std::array<std::uint32_t, 3> records{1u, 0u, 1u};
     std::copy(records.begin(), records.end(), Keys.begin());
     const auto outcome = Run(device, ViewKindTableCode, static_cast<std::uint32_t>(records.size()), Lanes, 64);
-    Require(!Faulted(outcome) && outcome.imageTableCount == 2u, "image table view kinds: a 2D and a 2D array entry sampled by 2D array instructions faulted or were not bound as two elements:\n" + outcome.log);
+    Require(!Faulted(outcome) && Resolved(outcome) == 2u, "image table view kinds: a 2D and a 2D array entry sampled by 2D array instructions faulted or did not resolve two device image table entries (" + std::to_string(Resolved(outcome)) + "):\n" + outcome.log);
     const auto texel = [](std::uint32_t record, std::uint32_t layer, std::uint32_t x, std::uint32_t y) {
         return std::bit_cast<std::uint32_t>(record == 0u ? FloatTexels[y * Width + x] : ArrayTexels[(layer * Height + y) * Width + x]);
     };
@@ -1321,7 +1293,7 @@ void RunPointerStorageWriteTests(AgcDriver::VulkanDevice& device) {
     Require(aliased.deviceTable && !Faulted(aliased), "pointer image table: a storage image write over the table, made after the table read, faulted:\n" + aliased.log);
     RequireRed(aliased, 0, Lanes, [](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[x]); }, "pointer image table: the T# read before the storage image write over its table");
     const auto isolated = warmed(PointerStorageIsolationCode, true, 32u);
-    Require(isolated.deviceTable && isolated.imageTableReadRanges == std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>>(2u), "pointer image table isolation: the tables were captured instead of read through the device image table");
+    Require(isolated.deviceTable && std::ranges::all_of(isolated.imageTableReadRanges, [](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) { return ranges.empty(); }), "pointer image table isolation: the tables were captured instead of read through the device image table");
     Require(!Faulted(isolated), "pointer image table isolation: writing the table selected with EXEC clear faulted the other table:\n" + isolated.log);
     RequireRed(isolated, 0, 32u, [](std::uint32_t x) { return std::bit_cast<std::uint32_t>(isolatedTexels[x]); }, "pointer image table isolation");
     for (std::uint32_t x = 0; x < 32u; ++x) {

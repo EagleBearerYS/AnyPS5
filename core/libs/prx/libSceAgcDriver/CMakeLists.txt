@@ -1445,7 +1445,7 @@ foreach(agcDeviceTableTest IN ITEMS user_data_sample srt_sample load_query two_t
     target_include_directories(agc_driver_device_table_${agcDeviceTableTest}_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 endforeach()
 
-foreach(agcCaptureTest IN ITEMS draw_device_images memory_buffer_ranges memory_buffer_pending_images memory_buffer_refresh srt_read_ranges)
+foreach(agcCaptureTest IN ITEMS draw_device_images memory_buffer_ranges memory_buffer_pending_images memory_buffer_refresh srt_read_ranges emulated_color_compare)
     target_include_directories(agc_driver_${agcCaptureTest}_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 endforeach()
 

@@ -1106,7 +1106,7 @@ void verifyDeviceImageTables() {
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && plan->info.images[0].deviceTable, "device image tables: a sampled table T# with a direct sampler was not resolved through the device table");
     const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-    require(column.has_value() && !column->keyDomain.has_value() && countPlanningReads(*plan) == 0, "device image tables: the column kept a key domain or the T# loads were removed");
+    require(!column.has_value() && plan->srtReads.empty() && countPlanningReads(*plan) == 0, "device image tables: the table T# was planned as a table column, SRT reads or planning reads instead of being read at run time");
     require(!plan->requiresSpecializationMemory, "device image tables: the plan still needs table memory");
     const auto compiled = CompileTable(request);
     const auto& result = *compiled.result;
@@ -1201,10 +1201,8 @@ void verifyImageTableRegistration() {
     const std::vector<std::uint32_t> storeCode{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0200f08u, 0x00050200u, 0xbf810000u};
     const auto store = CompileTable(TableRequest(storeCode, userData));
     const auto& storePlan = *store.capture->plan;
-    require(storePlan.info.images.size() == 1u && storePlan.info.images[0].table == 0u && storePlan.info.images[0].tableOperation == TableOperation::Unsupported, "image table registration: a table T# feeding image_store was not an unsupported table operation");
-    const auto& storeMap = TableMap(*store.result);
-    const auto storeFault = storeMap[Abi::TableHeader(0) + Abi::TableFault];
-    require((storeFault & Abi::PoisonFlag) != 0u && store.result->imageTablePoison.at(storeFault & ~Abi::PoisonFlag).reason == static_cast<std::uint32_t>(Abi::PoisonReason::UnsupportedOperation) && store.result->imageTableFaults != 0u, "image table registration: the store's table does not fault on use");
+    require(storePlan.info.images.size() == 1u && storePlan.info.images[0].deviceTable, "image table registration: a table T# feeding image_store was not written through the device image table");
+    require(store.result->deviceImages.empty(), "image table registration: a store through a T# only the GPU selects named a key the CPU pre-pass expects");
     require(TableBinding(*store.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*store.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: an unsupported table bound elements");
 
     const std::vector<std::uint32_t> compareCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0fc0108u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
@@ -1223,12 +1221,20 @@ void verifyImageTableRegistration() {
     const std::vector<std::uint32_t> colorCompareCode{0xf4080100u, 0xfa000000u, 0xf40c0500u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108410u, 0xf4280202u, 0x20000000u, 0xf0bc0108u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
     auto colorRequest = TableRequest(colorCompareCode, userData);
     const auto colorPlan = GetResourcePlan(colorRequest);
-    require(colorPlan->info.samplers.size() == 1u && colorPlan->info.samplers[0].table != NoTable && colorPlan->info.images.size() == 1u && colorPlan->info.images[0].table == NoTable, "image table registration: the color compare program does not pair a direct T# with a sampler table");
+    require(colorPlan->info.samplers.size() == 1u && colorPlan->info.samplers[0].table == NoTable && colorPlan->info.samplers[0].deviceTable && colorPlan->info.images.size() == 1u && colorPlan->info.images[0].deviceTable && colorPlan->info.images[0].depthCompare, "image table registration: the color compare program does not pair a device-table T# with a run-time sampler");
     AgcDriver::ShaderMemory colorMemory({});
     const auto colorCapture = colorMemory.Capture(colorRequest);
     const auto colorRegions = colorMemory.Regions();
     colorRequest.context.memory = colorRegions;
-    expectFailure([&] { static_cast<void>(Recompile(colorRequest, *colorCapture)); }, "comparison sampling of a color texture through a sampler table is not implemented", "image table registration: a color compare through a sampler table was accepted");
+    const auto color = Recompile(colorRequest, *colorCapture);
+    require(color->deviceImages.empty() && color->deviceImageInterfaces.size() == 1u, "image table registration: a compare through a sampler only the GPU selects named a key the CPU pre-pass expects, or no image interface");
+    const auto registered = ResourceMaterializer::FindDeviceImageInterface(color->deviceImageInterfaces[0]);
+    require(registered != nullptr && registered->image.depthCompare, "image table registration: the color compare's image interface is not registered as a comparison");
+    DescriptorValue colorTexture;
+    colorTexture.dwordCount = 8u;
+    std::copy(direct.begin(), direct.end(), colorTexture.dwords.begin());
+    const auto match = ResourceMaterializer::TryRuntimeImageMode(registered->image, colorTexture, registered->modes);
+    require(!match.mode.has_value() && match.reason == Abi::PoisonReason::ColorCompare, "image table registration: a color texture compared through a run-time sampler is not refused at use as a color compare");
 }
 
 bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, const void* pointer, std::size_t bytes) {
@@ -1296,17 +1302,11 @@ void verifyDescriptorPhis() {
         request.layout.pushConstantSizeBytes = 128;
         return request;
     };
-    const auto countOps = [](std::span<const std::uint32_t> words, std::uint32_t opcode) {
-        std::size_t count = 0;
-        for (std::size_t cursor = 5; cursor < words.size();) {
-            const auto length = words[cursor] >> 16u;
-            require(length != 0 && length <= words.size() - cursor, "descriptor Phi: truncated SPIR-V instruction");
-            count += (words[cursor] & 0xffffu) == opcode ? 1u : 0u;
-            cursor += length;
-        }
-        return count;
+    const auto expects = [](const RecompileResult& result, const std::array<std::uint32_t, 8>& image, const std::array<std::uint32_t, 4>& sampler) {
+        return std::ranges::any_of(result.deviceImages, [&](const DeviceImageTableAbi::Expectation& expected) {
+            return std::equal(image.begin(), image.end(), expected.key.begin()) && std::equal(sampler.begin(), sampler.end(), expected.key.begin() + DeviceImageTableAbi::SamplerWord);
+        });
     };
-    constexpr std::uint32_t OpImageSampleExplicitLod = 88;
 
     const std::vector<std::uint32_t> samplerCode{0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0xfa000030u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
     const std::vector<std::uint32_t> imageCode{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
@@ -1320,31 +1320,17 @@ void verifyDescriptorPhis() {
         const auto capture = memory.Capture(request);
         request.context.memory = memory.Regions();
         const auto compiled = Recompile(request, *capture);
-        require(countOps(compiled->spirv, OpImageSampleExplicitLod) == 2u, "descriptor Phi: the specialized SPIR-V does not sample once per edge");
+        require(compiled->deviceImages.size() == 2u, "descriptor Phi: the CPU pre-pass does not expect one device image key per edge");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         static_cast<void>(ValidateAndOptimizeSpirv(compiled->spirv, request.target.vulkanVersion, request.target.spirvVersion));
 #endif
-        return capture;
+        return compiled;
     };
-    const auto samplerCapture = compile(samplerCode, 1u, 2u);
-    const auto& samplers = samplerCapture->snapshot.samplers;
-    require(samplers.size() == 2u, "descriptor Phi: the snapshot does not hold both S#s");
-    const auto holds = [&](const std::array<std::uint32_t, 4>& words) {
-        return std::ranges::any_of(samplers, [&](const DescriptorValue& value) {
-            return value.dwordCount == 4u && std::equal(words.begin(), words.end(), value.dwords.begin());
-        });
-    };
-    require(holds(pointWrap) && holds(linearMirror), "descriptor Phi: the snapshot S#s are not the two edges' S#s");
+    const auto samplerResult = compile(samplerCode, 1u, 2u);
+    require(expects(*samplerResult, first, pointWrap) && expects(*samplerResult, first, linearMirror), "descriptor Phi: the expected keys are not the T# with each edge's S#");
 
-    const auto imageCapture = compile(imageCode, 2u, 1u);
-    const auto& images = imageCapture->snapshot.images;
-    require(images.size() == 2u, "descriptor Phi: the snapshot does not hold both T#s");
-    const auto holdsImage = [&](const std::array<std::uint32_t, 8>& words) {
-        return std::ranges::any_of(images, [&](const DescriptorValue& value) {
-            return std::equal(words.begin(), words.end(), value.dwords.begin());
-        });
-    };
-    require(holdsImage(first) && holdsImage(second), "descriptor Phi: the snapshot T#s are not the two edges' T#s");
+    const auto imageResult = compile(imageCode, 2u, 1u);
+    require(expects(*imageResult, first, pointWrap) && expects(*imageResult, second, pointWrap), "descriptor Phi: the expected keys are not each edge's T# with the S#");
 
     auto twoLane = makeRequest(samplerCode, 64u);
     AgcDriver::ShaderMemory twoLaneMemory({});
@@ -1357,8 +1343,7 @@ void verifyDescriptorPhis() {
         if ((twoLaneWords[cursor] & 0xffffu) == spv::OpExecutionMode && twoLaneWords[cursor + 2] == spv::ExecutionModeLocalSize) invocations = std::size_t{twoLaneWords[cursor + 3]} * twoLaneWords[cursor + 4] * twoLaneWords[cursor + 5];
     }
     require(invocations == 32u || invocations == 64u, "descriptor Phi: the wave64 program runs neither one nor two lanes per invocation");
-    const std::size_t lanesPerInvocation = 64u / invocations;
-    require(countOps(twoLaneResult->spirv, OpImageSampleExplicitLod) == 2u * lanesPerInvocation, "descriptor Phi: the specialized wave64 SPIR-V does not sample once per edge and lane");
+    require(twoLaneResult->deviceImages.size() == 2u && expects(*twoLaneResult, first, pointWrap) && expects(*twoLaneResult, first, linearMirror), "descriptor Phi: the wave64 program does not expect the T# with each edge's S#");
 
     auto dynamic = makeRequest(dynamicCode);
     const auto devicePlan = GetResourcePlan(dynamic);
@@ -1374,14 +1359,8 @@ void verifyDescriptorPhis() {
     require(relativePlan->info.images.size() == 1u && relativePlan->info.images[0].deviceTable, "run-time T#: a T# selected through data the shader reads relative to its program counter was not read through the device image table");
 
     const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
-    const auto loopCapture = compile(loopCode, 2u, 1u);
-    const auto& loopImages = loopCapture->snapshot.images;
-    const auto holdsLoopImage = [&](const std::array<std::uint32_t, 8>& words) {
-        return std::ranges::any_of(loopImages, [&](const DescriptorValue& value) {
-            return std::equal(words.begin(), words.end(), value.dwords.begin());
-        });
-    };
-    require(loopImages.size() == 2u && holdsLoopImage(first) && holdsLoopImage(second), "descriptor Phi: the loop's chained T# Phis were not split into the two SRT T#s");
+    const auto loopResult = compile(loopCode, 2u, 1u);
+    require(expects(*loopResult, first, pointWrap) && expects(*loopResult, second, pointWrap), "descriptor Phi: the loop's chained T# Phis were not split into the two SRT T#s");
 
     const std::vector<std::uint32_t> sequentialCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0xfa000030u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
     auto sequential = makeRequest(sequentialCode);
@@ -1514,13 +1493,13 @@ void verifyLaneSelectedDescriptors() {
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
     request.context.memory = memory.Regions();
-    static_cast<void>(Recompile(request, *capture));
-    const auto holds = [&](const std::array<std::uint32_t, 8>& words) {
-        return std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) {
-            return std::equal(words.begin(), words.end(), value.dwords.begin());
+    const auto compiled = Recompile(request, *capture);
+    const auto expects = [&](const std::array<std::uint32_t, 8>& words) {
+        return std::ranges::any_of(compiled->deviceImages, [&](const DeviceImageTableAbi::Expectation& expected) {
+            return std::equal(words.begin(), words.end(), expected.key.begin());
         });
     };
-    require(holds(first) && holds(second), "lane-selected T#: the snapshot T#s are not the two SRT T#s");
+    require(compiled->deviceImages.size() == 2u && expects(first) && expects(second), "lane-selected T#: the CPU pre-pass does not expect the two SRT T#s");
 }
 
 void verifyProgramCounterRelativeData() {
@@ -2979,14 +2958,18 @@ void verifyUnnormalizedSamplers() {
         request.context.memory = memory.Regions();
         return Recompile(request);
     };
-    const auto flags = [](const RecompileResult& result, DescriptorRole role) {
-        for (const auto& binding : result.bindings) {
-            if (binding.role == role) return role == DescriptorRole::GuestSamplers ? binding.samplerUnnormalized : binding.imageUnnormalized;
-        }
-        throw std::runtime_error("unnormalized samplers: the program has no sampler or image binding");
+    const auto bound = [](const RecompileResult& result, bool expected) {
+        const auto flags = [&](DescriptorRole role) {
+            for (const auto& binding : result.bindings) {
+                if (binding.role == role) return role == DescriptorRole::GuestSamplers ? binding.samplerUnnormalized : binding.imageUnnormalized;
+            }
+            throw std::runtime_error("unnormalized samplers: the program has no sampler or image binding");
+        };
+        return flags(DescriptorRole::GuestSamplers) == std::vector<bool>{expected, expected} && flags(DescriptorRole::GuestImages) == std::vector<bool>{expected};
     };
-    const auto proven = [&](const RecompileResult& result, bool expected) {
-        return flags(result, DescriptorRole::GuestSamplers) == std::vector<bool>{expected, expected} && flags(result, DescriptorRole::GuestImages) == std::vector<bool>{expected};
+    const auto proven = [](const RecompileResult& result, bool expected) {
+        namespace Keys = DeviceImageTableAbi;
+        return result.deviceImages.size() == 1u && (result.deviceImages[0].key[Keys::SamplerClassWord] & Keys::RuntimeSampler) != 0u && ((result.deviceImages[0].key[Keys::SamplerWord] & Keys::SamplerUnnormalized) != 0u) == expected;
     };
     const auto auditSpirv = [](std::span<const std::uint32_t> words) {
         std::size_t samples = 0;
@@ -2995,13 +2978,10 @@ void verifyUnnormalizedSamplers() {
             require(count != 0 && count <= words.size() - cursor, "unnormalized samplers: truncated SPIR-V instruction");
             const auto op = words[cursor] & 0xffffu;
             require(op != spv::OpImageSampleImplicitLod && op != spv::OpImageSampleDrefImplicitLod && op != spv::OpImageSampleDrefExplicitLod && op != spv::OpImageGather && op != spv::OpImageDrefGather && op != spv::OpImageQueryLod, "unnormalized samplers: the SPIR-V samples in a form an unnormalized sampler does not allow");
-            if (op == spv::OpImageSampleExplicitLod) {
-                require(count == 7u && words[cursor + 5] == spv::ImageOperandsLodMask, "unnormalized samplers: an explicit-LOD sample has operands other than Lod");
-                ++samples;
-            }
+            if (op == spv::OpImageSampleExplicitLod && count == 7u && words[cursor + 5] == spv::ImageOperandsLodMask) ++samples;
             cursor += count;
         }
-        require(samples != 0u, "unnormalized samplers: the SPIR-V does not sample");
+        require(samples != 0u, "unnormalized samplers: the SPIR-V has no explicit-LOD sample with only the Lod operand for an unnormalized S#");
     };
 
     const auto lz = program(0xf09c0f08u);
@@ -3018,20 +2998,20 @@ void verifyUnnormalizedSamplers() {
         auditSpirv(result.spirv.Words());
     }
 
-    const auto reject = [&](std::uint32_t mimg, const std::array<std::uint32_t, 16>& data, const char* reason, const char* what) {
-        expectFailure([&] { static_cast<void>(recompile(program(mimg), data)); }, reason, what);
+    const auto keyed = [&](std::uint32_t mimg, const std::array<std::uint32_t, 16>& data, const char* what) {
+        require(proven(recompile(program(mimg), data), true), what);
     };
-    reject(0xf0bc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized guest sampler is used with depth comparison, which is not implemented", "unnormalized samplers: image_sample_c_lz was accepted");
-    reject(0xf11c0108u, userData(unnormalized), "unnormalized guest sampler is used by a gather, which is not implemented", "unnormalized samplers: image_gather4_lz was accepted");
-    reject(0xf1800308u, userData(unnormalized), "unnormalized guest sampler is used by image_get_lod, which is not implemented", "unnormalized samplers: image_get_lod was accepted");
-    reject(0xf0800f09u, userData(unnormalized), "unnormalized guest sampler is used by an image_sample_*_a variant, which is not implemented", "unnormalized samplers: image_sample_a was accepted");
-    reject(0xf09c0f18u, imageData(unnormalized, TypeCube, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a cube T# was accepted");
-    reject(0xf09c0f10u, imageData(unnormalized, Type3D, Format8888UNorm, 3u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 3D T# was accepted");
-    reject(0xf09c0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array sample was accepted");
-    reject(0xf09c0f08u, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u), "unnormalized guest sampler samples an image that needs a format conversion or packed access", "unnormalized samplers: a T# with a format conversion was accepted");
-    reject(0xf15c0108u, userData(unnormalized), "unnormalized guest sampler is used by a gather, which is not implemented", "unnormalized samplers: image_gather4_lz_o was accepted");
-    reject(0xf0fc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized guest sampler is used with depth comparison, which is not implemented", "unnormalized samplers: image_sample_c_lz_o was accepted");
-    reject(0xf0dc0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array image_sample_lz_o was accepted");
+    keyed(0xf0bc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized samplers: image_sample_c_lz did not key its device image table entry with the unnormalized S#");
+    keyed(0xf11c0108u, userData(unnormalized), "unnormalized samplers: image_gather4_lz did not key its device image table entry with the unnormalized S#");
+    keyed(0xf1800308u, userData(unnormalized), "unnormalized samplers: image_get_lod did not key its device image table entry with the unnormalized S#");
+    keyed(0xf0800f09u, userData(unnormalized), "unnormalized samplers: image_sample_a did not key its device image table entry with the unnormalized S#");
+    keyed(0xf09c0f18u, imageData(unnormalized, TypeCube, Format8888UNorm, 5u), "unnormalized samplers: a cube T# did not key its device image table entry with the unnormalized S#");
+    keyed(0xf09c0f10u, imageData(unnormalized, Type3D, Format8888UNorm, 3u), "unnormalized samplers: a 3D T# did not key its device image table entry with the unnormalized S#");
+    keyed(0xf09c0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized samplers: a 2D-array sample did not key its device image table entry with the unnormalized S#");
+    keyed(0xf09c0f08u, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u), "unnormalized samplers: a T# with a format conversion did not key its device image table entry with the unnormalized S#");
+    keyed(0xf15c0108u, userData(unnormalized), "unnormalized samplers: image_gather4_lz_o did not key its device image table entry with the unnormalized S#");
+    keyed(0xf0fc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized samplers: image_sample_c_lz_o did not key its device image table entry with the unnormalized S#");
+    keyed(0xf0dc0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized samplers: a 2D-array image_sample_lz_o did not key its device image table entry with the unnormalized S#");
     for (const std::uint32_t mimg : {0xf0c00f08u, 0xf11c0108u, 0xf09c0f18u}) {
         static_cast<void>(recompile(program(mimg), imageData(normalized, mimg == 0xf09c0f18u ? TypeCube : Type2D, Format8888UNorm, mimg == 0xf09c0f18u ? 5u : 0u)));
     }
@@ -3057,7 +3037,7 @@ void verifyUnnormalizedSamplers() {
             if (op == spv::OpImageSampleExplicitLod) coordinates.push_back(words[cursor + 4]);
             cursor += count;
         }
-        return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) { return std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0; });
+        return std::ranges::any_of(coordinates, [&](std::uint32_t id) { return std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0; });
     };
     const auto sampleMasks = [](std::span<const std::uint32_t> words) {
         std::vector<std::uint32_t> masks;
@@ -3081,8 +3061,8 @@ void verifyUnnormalizedSamplers() {
     auditSpirv(foldedLz.spirv.Words());
     require(foldedSamples(foldedLz.spirv.Words()), "unnormalized texel offsets: a constant offset was not added to the coordinates");
     const auto operandLz = recompile(constantLz, userData(normalized), 0x48000u);
-    require(proven(operandLz, false) && operandLz.variantId == foldedLz.variantId && operandLz.PipelineVariantId() != foldedLz.PipelineVariantId(), "unnormalized texel offsets: a normalized S# did not get its own specialization of the shared artifact");
-    require(sampleMasks(operandLz.spirv.Words()) == std::vector<std::uint32_t>{spv::ImageOperandsLodMask | spv::ImageOperandsConstOffsetMask} && !foldedSamples(operandLz.spirv.Words()), "unnormalized texel offsets: a normalized image_sample_lz_o lost its ConstOffset operand");
+    require(proven(operandLz, false) && operandLz.variantId == foldedLz.variantId && operandLz.spirv == foldedLz.spirv, "unnormalized texel offsets: a normalized S# did not share the module that branches on the S#'s FORCE_UNNORMALIZED bit");
+    require(std::ranges::count(sampleMasks(operandLz.spirv.Words()), spv::ImageOperandsLodMask | spv::ImageOperandsConstOffsetMask) != 0, "unnormalized texel offsets: the normalized branch of image_sample_lz_o lost its ConstOffset operand");
     require(recompile(constantLz, userData(unnormalized), 0x48000u).PipelineVariantId() == foldedLz.PipelineVariantId(), "unnormalized texel offsets: the unnormalized S# did not reuse its specialization");
     for (const std::uint32_t mimg : {0xf0dc0f08u, 0xf0d00f08u, 0xf0c00f08u, 0xf0d40f08u, 0xf0c40f08u}) {
         const auto computed = offsetProgram(mimg, 0x100u, 0u);
@@ -3092,19 +3072,19 @@ void verifyUnnormalizedSamplers() {
             auditSpirv(result.spirv.Words());
             require(foldedSamples(result.spirv.Words()), "unnormalized texel offsets: a computed offset was not added to the coordinates");
         }
-        expectFailure([&] { static_cast<void>(recompile(computed, userData(normalized))); }, "normalized guest sampler is used with a texel offset that is not a constant", "unnormalized texel offsets: a normalized computed offset was accepted without maintenance8");
-        expectFailure([&] { static_cast<void>(recompile(computed, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u))); }, "takes only images an unnormalized S# can sample", "unnormalized texel offsets: a computed offset sampled a converted image without maintenance8");
+        expectFailure([&] { static_cast<void>(recompile(computed, userData(normalized))); }, "has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended", "unnormalized texel offsets: a normalized computed offset was accepted without maintenance8");
+        expectFailure([&] { static_cast<void>(recompile(computed, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u))); }, "has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended", "unnormalized texel offsets: a computed offset sampled a converted image without maintenance8");
         const auto masks = sampleMasks(recompile(computed, userData(normalized), 0u, true).spirv.Words());
-        require(!masks.empty() && std::ranges::all_of(masks, [](std::uint32_t mask) { return (mask & spv::ImageOperandsOffsetMask) != 0u; }), "unnormalized texel offsets: a normalized computed offset lost its Offset operand");
+        require(std::ranges::any_of(masks, [](std::uint32_t mask) { return (mask & spv::ImageOperandsOffsetMask) != 0u; }), "unnormalized texel offsets: the normalized branch of a computed offset lost its Offset operand");
     }
 
     const auto gradient = program(0xf0880f08u);
     const auto gradientAddress = nextAddress += 0x1000u;
     const auto gradientUnnormalized = recompile(gradient, userData(unnormalized), gradientAddress);
     const auto gradientNormalized = recompile(gradient, userData(normalized), gradientAddress);
-    require(proven(gradientNormalized, false) && gradientNormalized.variantId == gradientUnnormalized.variantId && gradientNormalized.PipelineVariantId() != gradientUnnormalized.PipelineVariantId(), "unnormalized samplers: a normalized image_sample_d did not get its own specialization of the shared artifact");
-    require(sampleMasks(gradientNormalized.spirv.Words()) == std::vector<std::uint32_t>{spv::ImageOperandsGradMask}, "unnormalized samplers: a normalized image_sample_d lost its derivatives");
-    require(sampleMasks(gradientUnnormalized.spirv.Words()) == std::vector<std::uint32_t>{spv::ImageOperandsLodMask}, "unnormalized samplers: an unnormalized image_sample_d kept its derivatives");
+    require(proven(gradientNormalized, false) && proven(gradientUnnormalized, true) && gradientNormalized.variantId == gradientUnnormalized.variantId && gradientNormalized.spirv == gradientUnnormalized.spirv, "unnormalized samplers: a normalized and an unnormalized image_sample_d did not share the module that branches on the S#'s FORCE_UNNORMALIZED bit");
+    const auto gradientMasks = sampleMasks(gradientNormalized.spirv.Words());
+    require(std::ranges::count(gradientMasks, spv::ImageOperandsGradMask) != 0 && std::ranges::count(gradientMasks, spv::ImageOperandsLodMask) != 0, "unnormalized samplers: image_sample_d has no sample with derivatives for a normalized S# and with only a LOD for an unnormalized S#");
 
     const std::array<std::uint32_t, 5> pixelCode{0xf0800f08u, 0x00400801u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
     const auto pixelData = userData(unnormalized);
@@ -3130,12 +3110,12 @@ void verifyUnnormalizedSamplers() {
         return samples;
     };
     const auto pixelUnnormalized = Recompile(pixel);
-    require(proven(pixelUnnormalized, true), "unnormalized samplers: a pixel image_sample through an unnormalized S# was not flagged");
+    require(bound(pixelUnnormalized, true), "unnormalized samplers: a pixel image_sample through an unnormalized S# on a target without device image tables was not flagged");
     auditSpirv(pixelUnnormalized.spirv.Words());
     const auto normalizedPixelData = userData(normalized);
     pixel.context.userData = normalizedPixelData;
     const auto pixelNormalized = Recompile(pixel);
-    require(proven(pixelNormalized, false) && implicitSamples(pixelNormalized.spirv.Words()) == 1u, "unnormalized samplers: a pixel image_sample through a normalized S# is not an implicit-LOD sample");
+    require(bound(pixelNormalized, false) && implicitSamples(pixelNormalized.spirv.Words()) == 1u, "unnormalized samplers: a pixel image_sample through a normalized S# on a target without device image tables is not an implicit-LOD sample");
 }
 
 void verifyUnusedUnnormalizedSampler() {
@@ -3785,7 +3765,6 @@ void verifyGuardedNullPointers() {
         0xe0701000u, 0x80010102u, 0xbf810000u};
     const std::vector<std::uint32_t> descriptorCode{0xf4040280u, 0xfa000018u, 0xbf8cc07fu, 0xf4080105u, 0xfa000000u, 0xbf8cc07fu, 0x34040082u, 0xe0701000u,
         0x80010002u, 0xbf810000u};
-    const auto slotPc = [](const IrResourcePlan& plan, std::uint32_t slot) { return plan.srtReads.at(slot).value->Flags<MemoryFlags>().pc; };
     const auto faultBinding = [](const RecompileResult& result) {
         return std::any_of(result.bindings.begin(), result.bindings.end(), [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::FaultBuffer; });
     };
@@ -3797,11 +3776,11 @@ void verifyGuardedNullPointers() {
     point(payloadAddress);
     AgcDriver::ShaderMemory validMemory({});
     const auto valid = validMemory.Capture(branch.request);
-    require(valid->snapshot.srtPoison.empty() && valid->plan->guardedSrtSlots.size() == 1u && slotPc(*valid->plan, valid->plan->guardedSrtSlots[0]) == 0x2cu && GuardRecords(*valid), "guarded pointer: a mapped nested pointer was poisoned, or its read has no guard");
-    require(valid->snapshot.flattenedSrt.at(valid->plan->guardedSrtSlots[0]) == payload, "guarded pointer: a mapped nested read does not hold its word");
-    branch.request.context.memory = validMemory.Regions();
+    const auto validRegions = validMemory.Regions();
+    require(valid->plan->srtReads.empty() && valid->snapshot.srtPoison.empty() && !RegionsTouch(validRegions, payloadAddress, 4u), "guarded pointer: a program whose branch condition reads memory read its nested pointer in the capture instead of at run time");
+    branch.request.context.memory = validRegions;
     const auto validResult = Recompile(branch.request, *valid);
-    require(validResult->poisonedSrtReads == 0u && faultBinding(*validResult) && validResult->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a guarded program has no fault buffer");
+    require(validResult->poisonedSrtReads == 0u && faultBinding(*validResult) && validResult->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a program reading a nested pointer at run time has no fault buffer");
 
     for (const auto pointer : {std::uint64_t{0}, unmapped}) {
         for (const auto condition : {1u, 0u}) {
@@ -3810,17 +3789,14 @@ void verifyGuardedNullPointers() {
             branch.request.context.memory = {};
             AgcDriver::ShaderMemory memory({});
             const auto capture = memory.Capture(branch.request);
-            const auto& poison = capture->snapshot.srtPoison;
-            require(poison.size() == 1u && poison[0].pc == 0x2cu && poison[0].address == pointer && slotPc(*capture->plan, poison[0].slot) == 0x2cu, "guarded pointer: the nested read was not poisoned at its pc and address");
-            require(GuardRecords(*capture), "guarded pointer: the poison record is not where the guard reads it");
             const auto regions = memory.Regions();
-            require(!RegionsTouch(regions, pointer, 4u) && RegionsCover(regions, root.data() + 6, 8u), "guarded pointer: the captured regions are wrong");
+            require(capture->plan->srtReads.empty() && capture->snapshot.srtPoison.empty() && !RegionsTouch(regions, pointer, 4u), "guarded pointer: a null or unmapped nested pointer was read or poisoned in the capture instead of read at run time");
             branch.request.context.memory = regions;
             const auto result = Recompile(branch.request, *capture);
-            require(result->poisonedSrtReads == 1u && faultBinding(*result) && result->bdaAbiVersion == BdaAbi::Version, "guarded pointer: the poisoned capture does not report through the fault buffer");
-            require(samePipeline(*result, *validResult), "guarded pointer: poison changed the variant, the specialization or the module");
+            require(result->poisonedSrtReads == 0u && faultBinding(*result) && result->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a null or unmapped nested pointer read at run time has no fault buffer to report through");
+            require(samePipeline(*result, *validResult), "guarded pointer: a null or unmapped nested pointer changed the variant, the specialization or the module");
             const auto replay = Recompile(branch.request);
-            require(replay.poisonedSrtReads == 1u && samePipeline(replay, *result), "guarded pointer: a replay of the captured regions did not reproduce the poison");
+            require(replay.poisonedSrtReads == 0u && samePipeline(replay, *result), "guarded pointer: a replay of the captured regions did not reproduce the result");
             verifyResult(*result, replay);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
             static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
@@ -3830,33 +3806,22 @@ void verifyGuardedNullPointers() {
     root[4] = 1u;
 
     NestedRequest chain(chainCode, root.data());
+    const auto runtimeChain = [&](const char* what) {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(chain.request);
+        const auto regions = memory.Regions();
+        require(capture->plan->srtReads.empty() && capture->snapshot.srtPoison.empty() && !RegionsTouch(regions, unmapped, 8u) && !RegionsTouch(regions, payloadAddress, 4u), what);
+        chain.request.context.memory = regions;
+        return Recompile(chain.request, *capture);
+    };
     point(unmapped);
-    AgcDriver::ShaderMemory chainMemory({});
-    const auto chained = chainMemory.Capture(chain.request);
-    const auto& chainPoison = chained->snapshot.srtPoison;
-    require(chainPoison.size() == 3u && GuardRecords(*chained), "guarded pointer: a pointer read through an unmapped pointer did not poison its two words and the read through it");
-    for (const auto& poison : chainPoison) {
-        const auto own = slotPc(*chained->plan, poison.slot);
-        const bool pointerWord = own == 0x2cu && (poison.address == unmapped || poison.address == unmapped + 4u);
-        const bool throughPointer = own == 0x38u && poison.address == unmapped;
-        require(poison.pc == 0x2cu && (pointerWord || throughPointer), "guarded pointer: a derived poison does not name the inaccessible read");
-    }
-    chain.request.context.memory = chainMemory.Regions();
-    const auto chainResult = Recompile(chain.request, *chained);
+    const auto chainResult = runtimeChain("guarded pointer: a pointer chain through an unmapped pointer was read or poisoned in the capture instead of read at run time");
     indirect = 0;
     point(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&indirect)));
-    AgcDriver::ShaderMemory nullChainMemory({});
-    const auto nullChain = nullChainMemory.Capture(chain.request);
-    require(nullChain->snapshot.srtPoison.size() == 1u && nullChain->snapshot.srtPoison[0].pc == 0x38u && nullChain->snapshot.srtPoison[0].address == 0u && GuardRecords(*nullChain), "guarded pointer: a null pointer read from memory did not poison the read through it");
-    chain.request.context.memory = nullChainMemory.Regions();
-    const auto nullChainResult = Recompile(chain.request, *nullChain);
+    const auto nullChainResult = runtimeChain("guarded pointer: a pointer chain through a null pointer in memory was read or poisoned in the capture instead of read at run time");
     indirect = payloadAddress;
-    AgcDriver::ShaderMemory mappedChainMemory({});
-    const auto mappedChain = mappedChainMemory.Capture(chain.request);
-    require(mappedChain->snapshot.srtPoison.empty() && mappedChain->plan->guardedSrtSlots.size() == 3u && GuardRecords(*mappedChain), "guarded pointer: a mapped pointer chain was poisoned, or its reads have no guards");
-    chain.request.context.memory = mappedChainMemory.Regions();
-    const auto mappedChainResult = Recompile(chain.request, *mappedChain);
-    require(chainResult->poisonedSrtReads == 3u && nullChainResult->poisonedSrtReads == 1u && mappedChainResult->poisonedSrtReads == 0u, "guarded pointer: a chain result does not count its poisoned reads");
+    const auto mappedChainResult = runtimeChain("guarded pointer: a mapped pointer chain was read or poisoned in the capture instead of read at run time");
+    require(chainResult->poisonedSrtReads == 0u && nullChainResult->poisonedSrtReads == 0u && mappedChainResult->poisonedSrtReads == 0u && faultBinding(*chainResult), "guarded pointer: a pointer chain read at run time counted poisoned reads or has no fault buffer");
     require(samePipeline(*chainResult, *mappedChainResult) && samePipeline(*nullChainResult, *mappedChainResult), "guarded pointer: a chain's poison changed the variant, the specialization or the module");
 
     const auto poisonedWords = [](const ResourceCapture& capture, std::uint32_t pc, std::uint64_t base) {
@@ -3902,11 +3867,11 @@ void verifyGuardedNullPointers() {
         vertex.request.context.memory = {};
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(vertex.request);
-        require(poisonedWords(*capture, 0x20u, 0x10u), "guarded pointer: a vertex V# behind a branch and a null pointer did not poison its four words at its pc");
         const auto regions = memory.Regions();
+        require(capture->plan->srtReads.empty() && capture->snapshot.srtPoison.empty() && !RegionsTouch(regions, 0x10u, 16u), "guarded pointer: a vertex V# behind a branch and a null pointer was read or poisoned in the capture instead of read at run time");
         vertex.request.context.memory = regions;
         const auto result = Recompile(vertex.request, *capture);
-        require(result->poisonedSrtReads == 4u && faultBinding(*result) && !result->spirv.empty(), "guarded pointer: a vertex capture with a poisoned V# has no fault buffer");
+        require(result->poisonedSrtReads == 0u && faultBinding(*result) && !result->spirv.empty(), "guarded pointer: a vertex program reading a V# through a null pointer at run time has no fault buffer");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, vertex.request.target.vulkanVersion, vertex.request.target.spirvVersion));
 #endif
@@ -3914,10 +3879,10 @@ void verifyGuardedNullPointers() {
     NestedRequest rootless(branchCode, nullptr);
     AgcDriver::ShaderMemory rootlessMemory({});
     const auto rootlessCapture = rootlessMemory.Capture(rootless.request);
-    require(rootlessCapture->snapshot.nullRootReads != 0u && GuardRecords(*rootlessCapture), "guarded pointer: reads through a null user-data pointer were not counted");
+    require(rootlessCapture->plan->srtReads.empty() && rootlessCapture->snapshot.nullRootReads == 0u && rootlessCapture->snapshot.srtPoison.empty() && rootlessMemory.Regions().empty(), "guarded pointer: reads through a null user-data pointer were made in the capture instead of at run time");
     rootless.request.context.memory = rootlessMemory.Regions();
     const auto rootlessResult = Recompile(rootless.request, *rootlessCapture);
-    require(rootlessResult->poisonedSrtReads >= rootlessCapture->snapshot.nullRootReads, "guarded pointer: a capture through a null user-data pointer is cacheable");
+    require(rootlessResult->poisonedSrtReads == 0u && faultBinding(*rootlessResult) && samePipeline(*rootlessResult, *validResult), "guarded pointer: a program reading through a null user-data pointer at run time has no fault buffer or another pipeline");
     point(0u);
 #ifdef _WIN32
     VirtualFree(reserved, 0, MEM_RELEASE);
@@ -4089,6 +4054,8 @@ int main(int argc, char** argv) {
         RecompileRequest request{};
         request.shader = {ShaderStage::Vertex, 0x10000u, code, 0, {}};
         request.target = BufferTarget();
+        static constexpr std::array<std::uint32_t, 3> captureCapabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityClipDistance};
+        request.target.supportedCapabilities = captureCapabilities;
         request.context.waveSize = 64;
         request.context.userDataBaseRegister = 8;
         request.context.userData = userData;

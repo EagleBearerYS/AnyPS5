@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
@@ -248,10 +249,6 @@ std::uint64_t Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const
     const std::span<const std::uint32_t> code = offsets ? std::span<const std::uint32_t>(OffsetCode) : array ? std::span<const std::uint32_t>(ArrayCode) : std::span<const std::uint32_t>(Code);
     const auto result = Compile(device, Format1616UNorm, sampler, code, useCache);
     if (expectedVariant != 0) Require(result.cacheHit && result.variantId == expectedVariant, std::string(name) + " did not reuse the compiled comparison artifact");
-    for (const auto& binding : result.bindings) {
-        Require(binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers, "emulated comparison retained a sampler binding");
-        Require(std::all_of(binding.imageSamplers.begin(), binding.imageSamplers.end(), [](const auto& samplers) { return samplers.empty(); }), "emulated comparison retained an unused sampler association");
-    }
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -298,10 +295,6 @@ void RunCube(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char
     }
     Output.fill(-1.0f);
     const auto result = Compile(device, Format1616UNorm, sampler, CubeCode, false, true, true);
-    for (const auto& binding : result.bindings) {
-        Require(binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers, "cube emulated comparison retained a sampler binding");
-        Require(std::all_of(binding.imageSamplers.begin(), binding.imageSamplers.end(), [](const auto& samplers) { return samplers.empty(); }), "cube emulated comparison retained an unused sampler association");
-    }
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -309,10 +302,20 @@ void RunCube(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char
     }
 }
 
-bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
-    return std::any_of(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) {
-        return std::any_of(binding.imageDepthCompare.begin(), binding.imageDepthCompare.end(), [](bool compare) { return compare; });
-    });
+bool ComparesNatively(const ShaderRecompiler::RecompileResult& result) {
+    namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
+    using ShaderRecompiler::ResourceMaterializer;
+    Require(result.deviceImages.size() == 1u, "the comparison names " + std::to_string(result.deviceImages.size()) + " device image keys, expected 1");
+    const auto& key = result.deviceImages[0].key;
+    const auto interface = ResourceMaterializer::FindDeviceImageInterface(static_cast<std::uint64_t>(key[Abi::InterfaceWord]) | (static_cast<std::uint64_t>(key[Abi::InterfaceWord + 1u]) << 32u));
+    Require(interface != nullptr, "the comparison's device image key names no registered image interface");
+    ShaderRecompiler::DescriptorValue descriptor;
+    descriptor.dwordCount = Abi::DescriptorWords;
+    std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
+    const auto match = ResourceMaterializer::TryRuntimeImageMode(interface->image, descriptor, interface->modes);
+    Require(match.mode.has_value(), "the comparison's T# matches no mode of its image interface: " + match.detail);
+    const auto& mode = interface->modes.at(*match.mode);
+    return mode.depthCompare && (mode.emulatedCompare & ShaderRecompiler::EmulatedCompare::Enabled) == 0u;
 }
 
 void RunSrgbCubeZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, const char* name) {
@@ -325,7 +328,7 @@ void RunSrgbCubeZero(AgcDriver::VulkanDevice& device, std::uint32_t format, cons
     }
     Output.fill(-1.0f);
     const auto result = Compile(device, format, sampler, CubeCode, false, true, true);
-    Require(!BindsDepthCompare(result), std::string(name) + " kept a depth-compare binding");
+    Require(!ComparesNatively(result), std::string(name) + " took the native comparison path");
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -337,7 +340,7 @@ void RunSrgbZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sa
     Output.fill(-1.0f);
     const auto result = Compile(device, format, sampler, Code, useCache);
     if (useCache) Require(result.cacheHit && result.variantId == expectedVariant, std::string(name) + " did not reuse the compiled comparison artifact");
-    Require(!BindsDepthCompare(result), std::string(name) + " kept a depth-compare binding");
+    Require(!ComparesNatively(result), std::string(name) + " took the native comparison path");
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -383,8 +386,8 @@ int main() {
         Reject(*device, Format1616UNorm, {ClampEdge, FilterAnisoBilinear}, "point or bilinear");
         Reject(*device, Format1616UNorm, {ClampEdge, FilterAnisoPoint}, "point or bilinear");
         FillTexels();
-        Require(BindsDepthCompare(Compile(*device, Format32Float, {ClampEdge, FilterBilinear})), "an R32 float texture left the native comparison path");
-        Require(!BindsDepthCompare(Compile(*device, Format8888UNorm, {ClampEdge, FilterBilinear})), "a color texture kept a depth-compare binding");
+        Require(ComparesNatively(Compile(*device, Format32Float, {ClampEdge, FilterBilinear})), "an R32 float texture left the native comparison path");
+        Require(!ComparesNatively(Compile(*device, Format8888UNorm, {ClampEdge, FilterBilinear})), "a color texture took the native comparison path");
         for (const bool useCache : {false, true}) {
             const auto variant = useCache ? Run(*device, {ClampEdge, FilterPoint}, "cached UNORM before sRGB", false, true) : 0u;
             if (useCache) Require(variant != 0, "the cached comparison has no compiled artifact identity");

@@ -234,17 +234,6 @@ void Gather(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char*
     }
 }
 
-std::vector<std::uint32_t> PairedSamplers(const ShaderRecompiler::RecompileResult& result, std::uint32_t format) {
-    for (const auto& binding : result.bindings) {
-        if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) continue;
-        for (std::uint32_t element = 0; element < binding.count; ++element) {
-            if (((binding.guestDescriptor.at(element * 8u + 1u) >> 20u) & 0x1ffu) == format) return binding.imageSamplers.at(element);
-        }
-    }
-    Require(false, "image sample reduction: no sampled image of format " + std::to_string(format));
-    return {};
-}
-
 float ExpectedColor(std::uint32_t tid, bool sampled) {
     if (!sampled) return static_cast<float>(Red(static_cast<int>(tid & 3u), 0)) / 255.0f;
     const int x = static_cast<int>(std::floor(Input[tid * 3u + 0u] * static_cast<float>(Size) - 0.5f));
@@ -265,9 +254,14 @@ void RunWithColors(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Reco
     }
 }
 
+void Dispatch(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result) {
+    device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(Code.data()));
+    device.WaitIdle();
+}
+
 void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason) {
     try {
-        static_cast<void>(Compile(device, format, sampler));
+        Dispatch(device, Compile(device, format, sampler));
     } catch (const std::exception& error) {
         Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
         return;
@@ -286,10 +280,8 @@ int main() {
         FillInput();
         const Sampler minBilinear{ReductionMin, FilterBilinear, MipPoint};
         const auto loaded = Compile(*device, Format32Float, minBilinear, LoadedCode);
-        Require(PairedSamplers(loaded, Format32Float) == std::vector<std::uint32_t>{0u} && PairedSamplers(loaded, Format8888UNorm).empty(), "image_load of 8_8_8_8 next to a min sampler: wrong image-sampler pairs");
         const auto sampled = Compile(*device, Format32Float, minBilinear, SampledCode);
-        Require(PairedSamplers(sampled, Format32Float) == std::vector<std::uint32_t>{0u} && PairedSamplers(sampled, Format8888UNorm) == std::vector<std::uint32_t>{0u}, "8_8_8_8 sampled through a min sampler: wrong image-sampler pairs");
-        static_cast<void>(Compile(*device, Format32SInt, {ReductionMin, FilterPoint, MipPoint}));
+        Dispatch(*device, Compile(*device, Format32SInt, {ReductionMin, FilterPoint, MipPoint}));
         Reject(*device, Format32SInt, {ReductionMin, FilterBilinear, MipPoint}, "needs point filtering");
         Reject(*device, Format32SInt, {ReductionMax, FilterPoint, MipLinear}, "needs point filtering");
         if (!device->SamplerFilterMinmax()) {
