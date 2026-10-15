@@ -341,6 +341,7 @@ void RunImportedTable(AgcDriver::VulkanDevice& device, const GuestBlock& block) 
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     Require(AgcDriver::Graphics::HostImportFor(context, AddressOf(block.Table()), BlockBytes) != nullptr, "image table reuse: the block could not be imported");
     const auto result = Compile(device, block);
+    Require(Dispatch(device, result, 6) == Row(block.Texels(6)), "image table reuse: the dispatch that settles the address space over imported memory sampled the wrong entry");
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto before = AgcDriver::Graphics::ImageTableReuses();
     Require(Dispatch(device, result, 6) == Row(block.Texels(6)), "image table reuse: the first dispatch over imported memory sampled the wrong entry");
