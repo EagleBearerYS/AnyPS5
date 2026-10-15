@@ -382,6 +382,18 @@ void ExpectModules() {
     single.samples = 1;
     const auto module = PixelModule(single, true);
     Require(module.offsets.empty() && !Has(module, spv::BuiltInSampleId), "1x: a single-sample pixel shader changed");
+    single.customLocations = true;
+    const auto sampleZero = PixelModule(single, true);
+    const auto sampleZeroTable = [](const std::vector<std::array<float, 2>>& table) {
+        if (table.size() != 32u) return false;
+        for (std::uint32_t index = 0; index < table.size(); ++index) {
+            const auto location = index % 8u == 0u ? CustomLocation(index / 8u, 0u) : std::uint8_t{0u};
+            if (table[index][0] != ShaderRecompiler::SampleLocationOffset(location, 0u) || table[index][1] != ShaderRecompiler::SampleLocationOffset(location, 1u)) return false;
+        }
+        return true;
+    };
+    Require(sampleZero.variableOffset && !Has(sampleZero, spv::BuiltInSampleId) && !Has(sampleZero, spv::CapabilitySampleRateShading) && Has(sampleZero, spv::BuiltInFragCoord) && std::ranges::any_of(sampleZero.tables, sampleZeroTable), "1x sample-zero path: PERSP_SAMPLE is not at each pixel's sample 0, or the shader reads SampleId");
+    std::printf("merge check: 1x sample-zero module reads no SampleId and interpolates at each pixel's sample 0\n");
 }
 
 void ExpectSampleLocations() {

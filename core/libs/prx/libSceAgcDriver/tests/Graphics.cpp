@@ -2697,6 +2697,18 @@ void multisampleTests() {
     iteratedStencil.context[0x1b4] &= ~ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
     state = DecodeState(withInputs(iteratedStencil, {ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::Ancillary}));
     Require(state.samples == 1 && state.depth && state.depth->samples == 1, "sample and sample-index inputs into a one-sample depth target (PPSA07411) did not rasterize sample 0 alone");
+    {
+        auto village = iteratedStencil;
+        village.context[0x1b3] = village.context[0x1b4] = 0x2301u;
+        const auto villageState = DecodeState(village);
+        Require(villageState.samples == 1 && villageState.depth && villageState.depth->samples == 1 && !villageState.perSampleShading, "PPSA01556's 0x2301 inputs into a one-sample depth target did not rasterize sample 0 alone");
+        auto pixel = AgcDriver::Graphics::DecodePixelStageInfo(village.context, AgcDriver::Graphics::ExportMappings(villageState));
+        pixel.iteratesSamples = villageState.perSampleShading;
+        pixel.sampleLocations = AgcDriver::Graphics::PixelSampleLocations(villageState, pixel);
+        Require(pixel.inputAddr == 0x2301u && !pixel.iteratesSamples && pixel.positionLocation == ShaderRecompiler::PixelPositionLocation::Center, "PPSA01556's 0x2301 request is not a once-per-pixel request at the pixel centre");
+        Require(pixel.sampleLocations[0] == 0x04u && pixel.sampleLocations[8] == 0x04u && pixel.sampleLocations[16] == 0x0cu && pixel.sampleLocations[24] == 0x0cu, "PPSA01556's request did not carry each pixel's sample 0 of the checkerboard");
+        std::printf("merge check: PPSA01556 0x2301 decodes to samples=%u, request sample 0 locations %02x %02x %02x %02x\n", villageState.samples, pixel.sampleLocations[0], pixel.sampleLocations[8], pixel.sampleLocations[16], pixel.sampleLocations[24]);
+    }
     iteratedStencil.context[0x293] = 0x06030000u;
     state = DecodeState(iteratedStencil);
     Require(state.samples == 1 && state.depth && state.depth->samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE into one-sample depth and color targets did not rasterize sample 0 alone");
