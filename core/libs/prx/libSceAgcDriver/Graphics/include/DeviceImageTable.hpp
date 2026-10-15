@@ -56,6 +56,7 @@ public:
         std::uint64_t refreshed = 0;
         std::uint64_t replaced = 0;
         std::uint64_t clears = 0;
+        std::uint64_t evicted = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
     };
@@ -73,6 +74,7 @@ private:
         bool parked = false;
         std::shared_ptr<StorageTexture> storage;
         bool written = false;
+        std::uint64_t used = 0;
     };
     struct ValidationState {
         std::uint64_t epoch = 0;
@@ -87,6 +89,7 @@ private:
     void record(Recorder& recorder);
     DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse);
     void refreshPerUse(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>& resolved);
+    void evict(const Context& build, Recorder& recorder);
     std::uint32_t reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message, bool report = true);
     void insert(const DeviceImageKeys::Key& key, const DeviceImageValue& value, Recorder& recorder);
     void retire(const Entry& entry, Recorder& recorder);
@@ -108,6 +111,7 @@ private:
     std::vector<DeviceImageMiss> expected;
     std::vector<DeviceImageKeys::Key> current;
     std::vector<DeviceImageKeys::Key> perUseKeys;
+    std::uint64_t evictionCheck = 0;
     struct DispatchStorageUse {
         DeviceImageKeys::Key key{};
         std::shared_ptr<StorageTexture> image;

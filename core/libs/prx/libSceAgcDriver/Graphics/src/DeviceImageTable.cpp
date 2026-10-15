@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <set>
 #include <span>
 #include <utility>
 
@@ -86,6 +87,7 @@ std::uint64_t DeviceImageTable::HeaderAddress() const {
 
 void DeviceImageTable::Expect(std::span<const Abi::Expectation> images) {
     std::lock_guard lock(mutex);
+    const auto presents = Recorder::Presents();
     for (const auto& image : images) {
         current.push_back(image.key);
         const auto found = keys.Find(image.key);
@@ -94,6 +96,7 @@ void DeviceImageTable::Expect(std::span<const Abi::Expectation> images) {
             continue;
         }
         const auto held = entries.find(image.key);
+        if (held != entries.end()) held->second.used = presents;
         if (found->fault != 0u && (held == entries.end() || !held->second.parked)) throw std::runtime_error(rejectionText(image.key, found->fault));
     }
 }
@@ -102,6 +105,7 @@ void DeviceImageTable::BeforeDispatch(const Context& build, Recorder& recorder) 
     std::lock_guard lock(mutex);
     resolve(build, recorder);
     refresh(build, recorder);
+    evict(build, recorder);
     record(recorder);
     report();
 }
@@ -124,6 +128,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
                 perUseKeys.push_back(miss.key);
                 resolved.push_back(miss.key);
             }
+            entry.used = Recorder::Presents();
             entries[miss.key] = std::move(entry);
             ++totals.inserted;
         }
@@ -155,6 +160,36 @@ void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder) {
         }
     }
     if (failure) std::rethrow_exception(failure);
+}
+
+void DeviceImageTable::evict(const Context& build, Recorder& recorder) {
+    constexpr std::uint64_t CheckPresents = 60u;
+    constexpr std::uint64_t IdlePresents = 120u;
+    const auto presents = Recorder::Presents();
+    if (presents < evictionCheck + CheckPresents) return;
+    evictionCheck = presents;
+    std::uint64_t pinned = 0;
+    for (const auto& [key, entry] : entries) {
+        if (entry.texture != nullptr) pinned += entry.guestBytes;
+    }
+    const auto budget = SampledTextureCacheBudget(build) / 2u;
+    if (pinned <= budget) return;
+    std::vector<std::pair<std::uint64_t, DeviceImageKeys::Key>> idle;
+    for (const auto& [key, entry] : entries) {
+        if (entry.texture != nullptr && !entry.perUse && entry.used + IdlePresents <= presents) idle.emplace_back(entry.used, key);
+    }
+    std::ranges::sort(idle, [](const auto& left, const auto& right) { return left.first < right.first; });
+    std::set<DeviceImageKeys::Key> dropped;
+    for (const auto& [used, key] : idle) {
+        if (pinned <= budget / 2u * 3u / 2u) break;
+        auto held = entries.find(key);
+        pinned -= std::min(pinned, held->second.guestBytes);
+        retire(held->second, recorder);
+        entries.erase(held);
+        dropped.insert(key);
+    }
+    if (dropped.empty()) return;
+    totals.evicted += keys.Retain([&](const DeviceImageKeys::Key& key) { return !dropped.contains(key); });
 }
 
 std::vector<std::shared_ptr<StorageTexture>> DeviceImageTable::DispatchStorage() const {
