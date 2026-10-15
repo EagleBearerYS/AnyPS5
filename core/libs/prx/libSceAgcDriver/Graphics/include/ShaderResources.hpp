@@ -242,6 +242,7 @@ public:
     bool StagesWrites() const { return staging != nullptr; }
     void RecordStagingIn(VkCommandBuffer commands) const;
     void RecordStagingOut(VkCommandBuffer commands) const;
+    void PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push);
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
         for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
     }
@@ -419,6 +420,7 @@ private:
     GuestBufferMemory guestMemory;
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
+    std::int64_t computeShaderData = -1;
     bool pageTableStores = false;
     bool storesUnbounded = false;
     bool computeBuild = false;

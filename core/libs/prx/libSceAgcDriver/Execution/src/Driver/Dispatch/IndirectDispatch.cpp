@@ -29,7 +29,6 @@ void Driver::dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> 
     const auto initiator = packet.back();
     int path = IndirectGpu;
     if (!gpuIndirect) path = IndirectDisabled;
-    else if ((initiator & 0x20u) != 0) path = IndirectThreadDimensions;
     else if (arguments % 4 != 0) path = IndirectMisaligned;
     if (path != IndirectGpu) {
         recordQueuedLabelsBeforeRead(submission.queue);
@@ -41,7 +40,7 @@ void Driver::dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> 
     }
 
     const std::array<std::uint32_t, 5> unresolved{0xc0031500u, 0, 0, 0, initiator};
-    dispatch(queue, unresolved, submission, arguments);
+    dispatch(queue, unresolved, submission, arguments, (initiator & 0x20u) != 0);
 }
 
 }

@@ -153,6 +153,7 @@ private:
         append(key, value.tgSizeEnable);
         append(key, value.threadIdComponentCount);
         append(key, value.PartialGroups());
+        append(key, value.threadsFromMemory);
         append(key, value.scratchDwords);
     }
 

@@ -1,0 +1,25 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint words[]; };
+layout(push_constant) uniform Parameters {
+    Words threads;
+    Words scratch;
+    uint sizeX;
+    uint sizeY;
+    uint sizeZ;
+    uint unused;
+} parameters;
+
+void main() {
+    uvec3 count = uvec3(parameters.threads.words[0], parameters.threads.words[1], parameters.threads.words[2]);
+    uvec3 size = uvec3(parameters.sizeX, parameters.sizeY, parameters.sizeZ);
+    uvec3 groups = count / size + uvec3(notEqual(count % size, uvec3(0u)));
+    parameters.scratch.words[0] = groups.x;
+    parameters.scratch.words[1] = groups.y;
+    parameters.scratch.words[2] = groups.z;
+    parameters.scratch.words[3] = count.x;
+    parameters.scratch.words[4] = count.y;
+    parameters.scratch.words[5] = count.z;
+}

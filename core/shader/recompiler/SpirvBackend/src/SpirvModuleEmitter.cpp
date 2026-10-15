@@ -44,7 +44,17 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         return EmitLocalInvocationIndex(state);
     }
     if (kind == StageInputKind::DispatchThreadLimit) {
-        return EmitShaderDataDwordLoad(state, state.program.Metadata().bindings.DispatchThreadLimitDword() + component);
+        const auto dword = state.program.Metadata().bindings.DispatchThreadLimitDword();
+        if (!state.program.Info().dispatchThreadLimitInMemory) return EmitShaderDataDwordLoad(state, dword + component);
+        const auto low = Unary(state, spv::OpUConvert, TypeScalarU64(state), EmitShaderDataDwordLoad(state, dword));
+        const auto high = Unary(state, spv::OpUConvert, TypeScalarU64(state), EmitShaderDataDwordLoad(state, dword + 1u));
+        const auto address = Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), low, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), high, ConstantU32(state, 32u)));
+        const auto element = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, Unary(state, spv::OpUConvert, TypeScalarU64(state), ConstantU32(state, component * 4u)));
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeU32(state)), pointer, element);
+        const auto loaded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), loaded, pointer, spv::MemoryAccessAlignedMask, 4u);
+        return loaded;
     }
     if (kind == StageInputKind::RasterPrimitive) {
         return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::RasterPrimitive, static_cast<std::uint32_t>(RasterPrimitive::Triangle));

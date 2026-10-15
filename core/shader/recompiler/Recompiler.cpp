@@ -676,6 +676,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.bufferAddressDword = bindings.layout.BufferAddressDword();
     result.samplerSlotDword = bindings.layout.SamplerSlotDword();
+    result.dispatchThreadLimitDword = bindings.layout.DispatchThreadLimitDword();
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
@@ -969,6 +970,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .memoryOffsetDword = artifact.memoryOffsetDword,
         .bufferAddressDword = artifact.bufferAddressDword,
         .samplerSlotDword = artifact.samplerSlotDword,
+        .dispatchThreadLimitDword = artifact.dispatchThreadLimitDword,
         .shaderDataDwords = artifact.shaderDataDwords,
         .imageMetadataDword = artifact.imageMetadataDword,
         .runtimeImageCount = artifact.runtimeImageCount,
@@ -1365,6 +1367,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(size);
     }
     for (const auto threads : partialThreads(request)) mix(threads);
+    mix(request.context.compute.has_value() && request.context.compute->threadsFromMemory);
     mix(request.layout.pushConstantOffsetBytes);
     if (request.context.pixel) {
         for (const auto mapping : request.context.pixel->targetExportMapping) mix(mapping);

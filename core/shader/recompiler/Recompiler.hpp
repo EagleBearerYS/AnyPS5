@@ -51,9 +51,10 @@ struct ShaderComputeStageInfo {
     std::uint32_t threadIdComponentCount;
     std::array<std::uint32_t, 3> partialThreads;
     std::uint32_t scratchDwords = 0;
+    bool threadsFromMemory = false;
 
     [[nodiscard]] bool PartialGroups() const {
-        return partialThreads != std::array<std::uint32_t, 3>{};
+        return threadsFromMemory || partialThreads != std::array<std::uint32_t, 3>{};
     }
 };
 
@@ -506,6 +507,7 @@ struct CompiledShaderArtifact {
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t bufferAddressDword = 0;
     std::uint32_t samplerSlotDword = 0;
+    std::uint32_t dispatchThreadLimitDword = 0;
     std::uint32_t shaderDataDwords = 0;
     std::uint32_t imageMetadataDword = 0;
     std::uint32_t runtimeImageCount = 0;

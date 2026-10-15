@@ -86,6 +86,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         computeStorage.scratchSizeDwords = compute.scratchDwords;
         computeStorage.threadIdsNum = static_cast<int>(compute.threadIdComponentCount);
         computeStorage.partialGroups = compute.PartialGroups();
+        computeStorage.threadsFromMemory = compute.threadsFromMemory;
         // Workgroup ids (and the thread-group size word) follow the user SGPRs.
         computeStorage.workgroupRegister = static_cast<int>(context.userDataBaseRegister + context.userData.size());
         ShaderStageInputInfo result;

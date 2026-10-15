@@ -50,6 +50,7 @@ struct ShaderInfo {
     std::vector<BufferStoreSite> bufferLoads;
     bool unboundedLoads = false;
     bool dispatchThreadLimit = false;
+    bool dispatchThreadLimitInMemory = false;
     bool rasterPrimitive = false;
     bool layerExported = false;
 

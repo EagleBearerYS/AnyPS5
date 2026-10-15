@@ -137,7 +137,7 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 27, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 28, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 36, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 9, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
@@ -466,6 +466,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.bufferAddressDword);
     writer.Value(result.samplerSlotDword);
+    writer.Value(result.dispatchThreadLimitDword);
     writer.Value(result.shaderDataDwords);
     writer.Value(result.imageMetadataDword);
     writer.Value(result.runtimeImageCount);
@@ -512,6 +513,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.memoryOffsetDword);
     reader.Value(result.bufferAddressDword);
     reader.Value(result.samplerSlotDword);
+    reader.Value(result.dispatchThreadLimitDword);
     reader.Value(result.shaderDataDwords);
     reader.Value(result.imageMetadataDword);
     reader.Value(result.runtimeImageCount);
@@ -772,6 +774,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.List(info.bufferLoads, writeSite);
     writer.Value(info.unboundedLoads);
     writer.Value(info.dispatchThreadLimit);
+    writer.Value(info.dispatchThreadLimitInMemory);
     writer.Value(info.rasterPrimitive);
     writer.Value(info.layerExported);
 }
@@ -882,6 +885,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.List(info.bufferLoads, 21, readSite);
     reader.Value(info.unboundedLoads);
     reader.Value(info.dispatchThreadLimit);
+    reader.Value(info.dispatchThreadLimitInMemory);
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);
 }

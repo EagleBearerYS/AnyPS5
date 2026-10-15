@@ -1285,7 +1285,6 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block);
     }
-    // The import is retired by the next reconcile; the block itself is left to the process.
     HostImportFor(context, address, bytes);
 }
 

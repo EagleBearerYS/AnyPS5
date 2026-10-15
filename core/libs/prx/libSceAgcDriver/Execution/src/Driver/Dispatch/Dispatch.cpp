@@ -94,7 +94,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::runTimeResult(c
     return ShaderRecompiler::RunTimeResult(entry, runtime, settled);
 }
 
-void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
+void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments, bool threadDimensions) {
     PerformanceTimer timing("Driver.Dispatch");
     const auto address = (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u);
     auto registeredShader = RegisteredProgram(*submission.shaders, address, {0});
@@ -153,6 +153,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
     if (partialLastGroup) compute.partialThreads = partialGroups;
+    if (indirectArguments != 0 && threadDimensions) {
+        compute.threadsFromMemory = true;
+        compute.partialThreads = compute.numThreads;
+    }
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
         {(packet[4] & 0x8000u) != 0 ? 32u : 64u, 0, userData, compute, std::nullopt, std::nullopt, memory, RegisteredFloatMode(snapshot)},
@@ -176,6 +180,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     mix(address);
     mix(packet[4] & 0x8000u);
     for (const auto threads : compute.partialThreads) mix(threads);
+    mix(compute.threadsFromMemory);
     for (const auto offset : {0x207u, 0x208u, 0x209u, 0x212u, 0x213u}) {
         const auto found = queue.shader.find(offset);
         mix(found == queue.shader.end() ? (1ull << 32u) : found->second);
@@ -272,7 +277,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         phaseTiming.Phase(PhaseLabels);
         try {
             if (indirectArguments != 0) {
-                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, address, std::move(prepared));
+                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, address, std::move(prepared), compute.threadsFromMemory ? std::optional(compute.numThreads) : std::nullopt);
                 countIndirect(outcome.cpuReason, outcome.argumentReadMs);
             } else {
                 localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], address, std::move(prepared));

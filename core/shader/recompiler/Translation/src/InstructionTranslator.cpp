@@ -209,6 +209,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         }
     }
     if (options.stage == ShaderStageKind::Compute && options.inputInfo.compute->partialGroups) {
+        program.Info().dispatchThreadLimitInMemory = options.inputInfo.compute->threadsFromMemory;
         for (std::uint32_t axis = 0; axis < 3u; axis++) {
             initialExec = &entryIr.LogicalAnd(*initialExec, entryIr.ULessThan(builtin(StageInputKind::GlobalInvocationId, axis), builtin(StageInputKind::DispatchThreadLimit, axis)));
         }

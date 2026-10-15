@@ -1547,6 +1547,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 bindings.push_back(std::move(item));
             }
             for (const auto index : offsetsInData) allocations[index].dataAllocation = shaderData;
+            if (shader.stage == ShaderRecompiler::ShaderStage::Compute) computeShaderData = shaderData;
             for (auto index = firstSlotPatch; index < samplerSlotPatches.size(); ++index) samplerSlotPatches[index].dataAllocation = shaderData;
             for (auto index = firstBinding; index < bindings.size(); ++index) {
                 if (bindings[index].imageSlots) bindings[index].slotDataAllocation = shaderData;
@@ -1920,7 +1921,6 @@ std::uint32_t SetDescriptorLimit(const VkPhysicalDeviceLimits& limits, VkDescrip
     }
 }
 
-// What one chain pool holds; a set needing more of any type gets a dedicated pool.
 constexpr std::uint32_t ChainPoolSets = 1024;
 constexpr std::array<VkDescriptorPoolSize, 4> ChainPoolSizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_SAMPLER, 512}}};
 constexpr std::array<VkDescriptorPoolSize, 4> ChainPoolCreateSizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096 + 2}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_SAMPLER, 512}}};
@@ -3125,6 +3125,17 @@ void ShaderResources::CheckFaults() const {
 void ShaderResources::WriteBackBuffers() {
     if (bda) checkBdaFault();
     guestMemory.Release();
+}
+
+void ShaderResources::PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push) {
+    const std::array<std::uint32_t, 2> words{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const auto position = program.dispatchThreadLimitDword * 4u;
+    if (!program.pushConstants.empty()) {
+        Require(position + sizeof(words) <= program.pushConstants.size() && position + sizeof(words) <= push.size(), "a dispatch thread limit lies outside the shader's push constants");
+        std::memcpy(push.data() + position, words.data(), sizeof(words));
+        return;
+    }
+    patchShaderData(-1, computeShaderData, position, words);
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::MemoryReads() const {
