@@ -481,21 +481,15 @@ std::optional<ImportedPage> ImportOf(VkDevice device, std::uint64_t page) {
         result.serial = view->serial;
     }
     const auto end = pageBegin + result.bytes;
-    auto cursor = pageBegin;
-    const auto lease = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
-    auto found = std::upper_bound(lease.begin(), lease.end(), pageBegin, [](std::uint64_t value, const auto& range) { return value < range->address; });
-    if (found != lease.begin()) --found;
-    for (; found != lease.end() && (*found)->address < end; ++found) {
-        const auto& range = **found;
-        const auto rangeEnd = range.address + range.bytes;
-        if (rangeEnd <= cursor) continue;
-        if (range.address > cursor || range.writable) {
+    for (auto cursor = pageBegin; cursor < end;) {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(cursor), false);
+        if (range == nullptr || range->writable) {
             result.cpuWritable = true;
             return result;
         }
-        cursor = rangeEnd;
+        cursor = range->address + range->bytes;
     }
-    result.cpuWritable = cursor < end;
+    result.cpuWritable = false;
     return result;
 }
 
