@@ -1483,7 +1483,9 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     SrtRuntime now = runtime;
     if (runtime.readNow != nullptr && plan.srtReads.empty()) now.readMemory = runtime.readNow;
     now.readTrace = nullptr;
-    auto images = ResourceMaterializer::ExpectedDeviceImages(plan, now);
+    SrtRuntime settled = now;
+    if (runtime.readAfterWrites != nullptr && plan.srtReads.empty()) settled.readMemory = runtime.readAfterWrites;
+    auto images = ResourceMaterializer::ExpectedDeviceImages(plan, settled);
     std::vector<DescriptorValue> stores;
     std::vector<DescriptorValue> loads;
     ResourceMaterializer::EvaluateMemoryBuffers(plan, now, stores, loads);

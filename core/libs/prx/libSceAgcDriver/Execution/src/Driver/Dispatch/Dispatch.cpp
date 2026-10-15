@@ -22,17 +22,20 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult
     ShaderRecompiler::SrtRuntime runtime;
     runtime.userData = userData;
     runtime.shaderBase = shaderBase;
-    runtime.readMemory = [](void*, std::uint64_t at, std::uint32_t* value) {
+    runtime.readMemory = [](void* waits, std::uint64_t at, std::uint32_t* value) {
+        const bool waitForWrites = waits != nullptr && *static_cast<const bool*>(waits);
         std::uint32_t word = 0;
         switch (queryPendingWrite(at, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
             case ShaderMemory::PendingWrite::Sync:
-                return false;
+                return waitForWrites && ShaderMemory::ReadAfterPendingWrites(at, value);
             case ShaderMemory::PendingWrite::KnownValue:
             case ShaderMemory::PendingWrite::VerifyKnownValue:
                 break;
-            case ShaderMemory::PendingWrite::None:
             case ShaderMemory::PendingWrite::Raw:
             case ShaderMemory::PendingWrite::VerifyRaw:
+                if (waitForWrites) return ShaderMemory::ReadAfterPendingWrites(at, value);
+                [[fallthrough]];
+            case ShaderMemory::PendingWrite::None:
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(word))) return false;
                 std::memcpy(&word, reinterpret_cast<const void*>(at), sizeof(word));
                 break;
@@ -40,7 +43,10 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::refreshedResult
         *value = word;
         return true;
     };
-    auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, runtime);
+    bool waitForWrites = true;
+    auto settled = runtime;
+    settled.userContext = &waitForWrites;
+    auto expected = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(plan, settled);
     ShaderRecompiler::DeviceImageTableAbi::NameInterfaces(expected, compiled.deviceImageInterfaces);
     ShaderRecompiler::ShaderInvocation ranges;
     const bool rebounded = memoryBuffers && ShaderRecompiler::RefreshMemoryBuffers(plan, runtime, compiled, ranges);

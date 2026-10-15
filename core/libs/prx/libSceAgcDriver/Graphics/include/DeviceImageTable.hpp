@@ -125,6 +125,8 @@ private:
     Counts totals;
     Counts reported;
     std::uint64_t reportedPresents = 0;
+    std::uint64_t reportedWaitReads = 0;
+    std::uint64_t reportedWaitNanoseconds = 0;
     long long lastReport = 0;
 };
 

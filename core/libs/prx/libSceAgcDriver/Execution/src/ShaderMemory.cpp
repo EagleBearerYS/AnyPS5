@@ -55,6 +55,9 @@ struct CaptureProfile {
 
 constexpr std::uint64_t WordWaitNanoseconds = 50000;
 
+std::atomic<std::uint64_t> pendingReadWaits{0};
+std::atomic<std::uint64_t> pendingReadWaitNanoseconds{0};
+
 bool WordwisePages() {
     static const bool wordwise = std::getenv("APS5_NO_WORDWISE_CAPTURE") == nullptr;
     return wordwise;
@@ -208,7 +211,28 @@ bool ShaderMemory::overlapsInitial(std::uint64_t begin, std::uint64_t end) const
     return after != initial.begin() && std::prev(after)->first + std::prev(after)->second.size() > begin;
 }
 
+ShaderMemory::PendingReadWaits ShaderMemory::PendingReadWaitCounts() {
+    return {pendingReadWaits.load(std::memory_order_relaxed), pendingReadWaitNanoseconds.load(std::memory_order_relaxed)};
+}
+
+bool ShaderMemory::ReadAfterPendingWrites(std::uint64_t address, std::uint32_t* value) {
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(*value))) return false;
+    const auto started = std::chrono::steady_clock::now();
+    GuestMemory::Read(address, std::as_writable_bytes(std::span(value, 1)), alignof(std::uint32_t));
+    pendingReadWaits.fetch_add(1, std::memory_order_relaxed);
+    pendingReadWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+    return true;
+}
+
 bool ShaderMemory::readNow(void* context, std::uint64_t address, std::uint32_t* value) {
+    return readLive(context, address, value, false);
+}
+
+bool ShaderMemory::readAfterWrites(void* context, std::uint64_t address, std::uint32_t* value) {
+    return readLive(context, address, value, true);
+}
+
+bool ShaderMemory::readLive(void* context, std::uint64_t address, std::uint32_t* value, bool waitForWrites) {
     auto& self = *static_cast<ShaderMemory*>(context);
     if (address % sizeof(*value) != 0 || address > std::numeric_limits<std::uint64_t>::max() - sizeof(*value)) return false;
     if (self.overlapsInitial(address, address + sizeof(*value))) {
@@ -234,13 +258,15 @@ bool ShaderMemory::readNow(void* context, std::uint64_t address, std::uint32_t* 
     std::uint32_t word = 0;
     switch (self.pendingWrite(address, sizeof(word), std::as_writable_bytes(std::span(&word, 1)))) {
         case PendingWrite::Sync:
-            return false;
+            return waitForWrites && ReadAfterPendingWrites(address, value);
         case PendingWrite::KnownValue:
         case PendingWrite::VerifyKnownValue:
             break;
-        case PendingWrite::None:
         case PendingWrite::Raw:
         case PendingWrite::VerifyRaw:
+            if (waitForWrites) return ReadAfterPendingWrites(address, value);
+            [[fallthrough]];
+        case PendingWrite::None:
             if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(word))) return false;
             std::memcpy(&word, reinterpret_cast<const void*>(address), sizeof(word));
             break;
@@ -349,6 +375,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.pendingWrite = &pending;
     runtime.readWords = &readWords;
     runtime.readNow = &readNow;
+    runtime.readAfterWrites = &readAfterWrites;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);

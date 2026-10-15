@@ -43,6 +43,12 @@ public:
         std::uint64_t served, verified, mismatches;
     };
     static KnownValueCounts KnownValues();
+    struct PendingReadWaits {
+        std::uint64_t reads = 0;
+        std::uint64_t nanoseconds = 0;
+    };
+    static PendingReadWaits PendingReadWaitCounts();
+    static bool ReadAfterPendingWrites(std::uint64_t address, std::uint32_t* value);
     // Told, for a dword read that went through the hook, whether the bytes read before the hook's
     // wait were still there after it (the driver's evidence for later raw reads).
     using PendingWriteObserver = void (*)(std::uint64_t address, bool unchanged);
@@ -88,6 +94,8 @@ private:
     static bool read(void* context, std::uint64_t address, std::uint32_t* value);
     static bool readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
     static bool readNow(void* context, std::uint64_t address, std::uint32_t* value);
+    static bool readAfterWrites(void* context, std::uint64_t address, std::uint32_t* value);
+    static bool readLive(void* context, std::uint64_t address, std::uint32_t* value, bool waitForWrites);
     static bool accessible(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool pending(void* context, std::uint64_t address, std::uint64_t bytes);
     Page& page(std::uint64_t base);
