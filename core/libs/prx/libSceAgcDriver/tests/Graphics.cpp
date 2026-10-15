@@ -6089,8 +6089,7 @@ int main(int argc, char** argv) {
                 });
             }
             Require(mock.live == 0, "image mirror epoch tests leaked Vulkan objects");
-            std::cout << "a writable image mirror is compared once per collect epoch unless the driver stores into it
-";
+            std::cout << "a writable image mirror is compared once per collect epoch unless the driver stores into it\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--perdraw-bench") {

@@ -1349,7 +1349,6 @@ void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access)
     registry(false);
     ClearImageMirrors(importing.device);
     ClearHostImports(importing.device);
-    ClearSnapshotCopies(importing.device);
 #ifndef _WIN32
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[0].pointer, heapBytes);
 #endif

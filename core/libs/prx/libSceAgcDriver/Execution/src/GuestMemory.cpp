@@ -707,6 +707,8 @@ bool Accessible(const void* pointer, std::size_t bytes, bool writable) {
     return address != 0 && bytes <= std::numeric_limits<std::uintptr_t>::max() - address && verify(address, bytes, writable).empty();
 }
 
+std::uint64_t UnwatchSerial() { return unwatchSerial.load(std::memory_order_acquire); }
+
 std::uint64_t ForgetSerial() {
     return forgetSerial.load(std::memory_order_acquire);
 }

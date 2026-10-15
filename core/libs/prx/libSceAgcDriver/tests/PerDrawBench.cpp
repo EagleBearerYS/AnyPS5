@@ -209,5 +209,4 @@ void RunPerDrawBench(const AgcDriver::Graphics::Context& context) {
         for (auto* block : blocks) mutation.Remove(block);
     }
     ClearImageMirrors(context.device);
-    ClearSnapshotCopies(context.device);
 }
