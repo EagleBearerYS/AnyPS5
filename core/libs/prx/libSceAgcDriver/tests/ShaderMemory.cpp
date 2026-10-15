@@ -1469,6 +1469,28 @@ void verifyTableSnapshotReuse() {
         require((codes[key] & Abi::PoisonFlag) == 0u && std::equal(heap + static_cast<std::size_t>(key) * 8u, heap + static_cast<std::size_t>(key) * 8u + 8u, images->guestDescriptor.begin() + static_cast<std::ptrdiff_t>(element) * 8), ("table snapshot reuse: key " + std::to_string(key) + " selects the wrong record of a reused table").c_str());
     }
 
+    const auto resolvedBefore = ResourceMaterializer::TableReuse();
+    alignas(16) static std::array<std::uint32_t, 4> otherOutput{};
+    const auto otherOutputV = TableV(otherOutput.data(), 0u, static_cast<std::uint32_t>(sizeof(otherOutput)));
+    const std::array<std::uint32_t, 4> outputV{guest.srt[12], guest.srt[13], guest.srt[14], guest.srt[15]};
+    std::copy(otherOutputV.begin(), otherOutputV.end(), guest.srt.begin() + 12);
+    const auto otherBuffer = CompileTable(request);
+    std::copy(outputV.begin(), outputV.end(), guest.srt.begin() + 12);
+    const auto resolvedShared = ResourceMaterializer::TableReuse();
+    require(otherBuffer.result != compiled.result && otherBuffer.result->variantId == compiled.result->variantId && resolvedShared.resolutionsShared - resolvedBefore.resolutionsShared == 1u && resolvedShared.resolutions == resolvedBefore.resolutions && TableMap(*otherBuffer.result) == map && TableBinding(*otherBuffer.result, DescriptorRole::ImageTable)->guestDescriptor == images->guestDescriptor, "table snapshot reuse: a result for another buffer did not reuse the unchanged table's resolution");
+    const auto storedWord = heap[5u * 8u];
+    heap[5u * 8u] = heap[6u * 8u];
+    const auto restoredMap = map;
+    const auto storedTable = CompileTable(request);
+    heap[5u * 8u] = storedWord;
+    const auto resolvedStored = ResourceMaterializer::TableReuse();
+    require(resolvedStored.resolutionsShared == resolvedShared.resolutionsShared && resolvedStored.resolutions - resolvedShared.resolutions == 1u && TableMap(*storedTable.result) != restoredMap, "table snapshot reuse: a table changed by a CPU store took the resolution of its old words");
+    const auto& storedMap = TableMap(*storedTable.result);
+    const auto storedCodes = TableCodes(storedMap, 0);
+    const auto* storedImages = TableBinding(*storedTable.result, DescriptorRole::ImageTable);
+    const auto storedElement = storedMap.at(storedCodes.at(5u) + Abi::ImageRecordElement);
+    require(storedImages != nullptr && std::equal(heap + 6u * 8u, heap + 6u * 8u + 1u, storedImages->guestDescriptor.begin() + static_cast<std::ptrdiff_t>(storedElement) * 8) && std::equal(heap + 5u * 8u + 1u, heap + 5u * 8u + 8u, storedImages->guestDescriptor.begin() + static_cast<std::ptrdiff_t>(storedElement) * 8 + 1), "table snapshot reuse: the resolution after a CPU store does not hold the stored record");
+
     constexpr std::uint32_t SmallRecords = 64;
     std::vector<std::vector<std::uint32_t>> smallStorage(17, std::vector<std::uint32_t>(SmallRecords * 8u + 1024u));
     std::vector<TableGuest> smallGuests(smallStorage.size());
