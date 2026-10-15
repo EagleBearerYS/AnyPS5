@@ -1,0 +1,4 @@
+BASE=5d9dcc42d2ec5401aebd089028b8d4d7410a77b4
+REPEAT=20
+EXTRA_TESTS='^agc_driver_pipeline_optimized_readback|^agc_driver_shutdown_threads'
+NO_BEFORE=1
