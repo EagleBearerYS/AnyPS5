@@ -1761,10 +1761,13 @@ void ShaderResources::buildComplete() {
         guestMemory.UploadFinish();
         timing.uploadMs += phase(BuildPhase::Upload);
         if (usesBda) {
-            if (auto* residency = ResidencyDriver::Active(); residency != nullptr && (pageTableStores || !guestMemory.Writes().empty())) {
-                std::vector<ResidencyRange> grants;
-                for (const auto& [begin, end] : guestMemory.Writes()) grants.push_back({begin, end - begin});
-                residency->BeforeWritingDispatch(grants, pageTableStores);
+            if (auto* residency = ResidencyDriver::Active()) {
+                residency->BeforeDispatch();
+                if (pageTableStores || !guestMemory.Writes().empty()) {
+                    std::vector<ResidencyRange> grants;
+                    for (const auto& [begin, end] : guestMemory.Writes()) grants.push_back({begin, end - begin});
+                    residency->BeforeWritingDispatch(grants, pageTableStores);
+                }
             }
             bda = std::make_unique<BdaResources>(context, guestMemory);
         } else if (usesFaultBuffer) {

@@ -34,6 +34,11 @@ void ResidencyDriver::OrderingPoint() {
     appliedAtOrderingPoints.fetch_add(1, std::memory_order_relaxed);
 }
 
+void ResidencyDriver::BeforeDispatch() {
+    const std::lock_guard lock(GuestMemory::GpuMutex());
+    manager.Apply();
+}
+
 void ResidencyDriver::BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports) {
     for (const auto& grant : grants) manager.Demote(grant.address, grant.bytes);
     if (writableImports) manager.DemoteWritable();
@@ -140,6 +145,7 @@ ResidencyToken ResidencyDriver::record(std::span<const ResidencyCopy> copies, bo
         chunks.insert(copy.mirror.chunk);
     }
     if (located.empty()) return recorder.CallerToken();
+    for (const auto& copy : located) recorder.FlushStoresOverlapping((copy.page << ResidencyPageShift) + copy.offset, copy.bytes);
     if (intoMirror) {
         std::vector<Recorder::SectionObject> objects;
         for (const auto chunk : chunks) objects.push_back({mirrors.Chunk(chunk).get(), true});

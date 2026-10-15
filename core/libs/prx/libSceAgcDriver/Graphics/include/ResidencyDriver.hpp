@@ -62,6 +62,7 @@ public:
     ResidencyManager& Manager() { return manager; }
     const ResidencyMirrors& Mirrors() const { return mirrors; }
     void OrderingPoint();
+    void BeforeDispatch();
     void BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports);
     ResidencyPublication Publish();
     std::vector<Recorder::SectionObject> ChunkObjects(bool written) const;
