@@ -1,7 +1,6 @@
 #include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -92,15 +91,7 @@ int main() {
         for (std::uint32_t surface = 0; surface < MaxSurfaces; ++surface) texels[surface * Stride / 4u] = Marker(surface);
         const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
         const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + (MaxSurfaces - 1u) * Stride);
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(texels, blockBytes, true, true, true);
-        }
-        const auto release = [&] {
-            AgcDriver::Graphics::ClearCachedTextures(device->Device());
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(texels);
-        };
+        const auto release = [&] { AgcDriver::Graphics::ClearCachedTextures(device->Device()); };
         try {
             auto first = Store(*device, base, 0);
             Require(first != nullptr, "surface 0 has no cached storage image");

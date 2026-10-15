@@ -1,6 +1,5 @@
 #include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -93,10 +92,6 @@ int main() {
         TestGuest::Vector<std::uint32_t> storage((BlockBytes + 0x10000u) / 4u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + BlockBytes / 4u, Untouched);
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(texels, BlockBytes, true, true, true);
-        }
         const auto surface = AddressOf(texels);
         const auto chainBytes = GuestBytes(texels, 1u);
         const auto singleBytes = GuestBytes(texels, 0u);
@@ -118,10 +113,6 @@ int main() {
             AgcDriver::Graphics::FlushCachedTextures(device->Device());
         }
         device->WaitIdle();
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(texels);
-        }
         std::puts("pending exact surface tests passed");
         return 0;
     } catch (const std::exception& error) {

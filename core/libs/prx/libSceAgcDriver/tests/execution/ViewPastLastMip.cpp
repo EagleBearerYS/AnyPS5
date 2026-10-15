@@ -1,6 +1,5 @@
 #include "GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "Recompiler.hpp"
@@ -72,10 +71,7 @@ void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::ui
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-    {
-        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-        AgcDriver::Graphics::FlushCachedTextures(device.Device());
-    }
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(texels), SurfaceBytes);
     device.WaitIdle();
 }
 
@@ -94,18 +90,10 @@ int main() {
         TestGuest::Vector<std::uint32_t> storage((SurfaceBytes + 0x10000u) / 4u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + SurfaceBytes / 4u, Untouched);
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(texels, SurfaceBytes, true, true, true);
-        }
         Store(*device, texels, 3u, StorePastCode);
         Check(texels, false, "store through level 3");
         Store(*device, texels, 2u, StoreLastCode);
         Check(texels, true, "store through level 2 after level 3");
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(texels);
-        }
         std::puts("view past the last mip tests passed");
         return 0;
     } catch (const std::exception& error) {

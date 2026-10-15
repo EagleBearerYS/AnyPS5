@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -138,12 +139,12 @@ public:
         }
         Require(texels != nullptr, "store over untracked: cannot allocate the guest surface");
         std::fill(texels, texels + SurfaceBytes / 4u, Untouched);
-        GuestAllocations::Mutation().Add(texels, SurfaceBytes, true, true, true);
+        if (watched) GuestAllocations::Mutation().Add(texels, SurfaceBytes, true, true, true);
     }
 
     ~Surface() {
-        GuestAllocations::Mutation().Remove(texels);
         if (!watched) return;
+        GuestAllocations::Mutation().Remove(texels);
 #ifdef _WIN32
         GuestArena::GuestArenaReset_nid_postfix(texels, SurfaceBytes);
         GuestArena::GuestArenaRelease_nid_postfix(texels, SurfaceBytes);
@@ -203,6 +204,7 @@ template <typename THold>
 void Settle(THold& hold, const Surface& surface, std::uint32_t result) {
     if (!HoldPending(hold, surface, result)) return;
     StorageTexture::FlushAllPending("store over untracked fixture");
+    if (auto* recorder = AgcDriver::Graphics::Recorder::Active()) recorder->Sync();
     hold.unlock();
 }
 
