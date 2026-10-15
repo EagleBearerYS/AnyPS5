@@ -1,0 +1,3 @@
+BASE=43855cb5e8c5dd8cf3f8051d89ffc39f3916bd75
+REPEAT=5
+EXTRA_TESTS='agc_shader_bindless|agc_shader_memory|agc_shader_disk_cache|agc_driver_bindless_images|agc_driver_image_table|agc_driver_image_table_cache|agc_driver_image_table_cache_bounds|agc_driver_image_table_reuse'
