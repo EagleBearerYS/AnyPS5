@@ -677,6 +677,7 @@ static void pageTableRootTests(const Context& shared, const BdaTestAccess& acces
     }
     auto context = shared;
     context.bufferPool.reset();
+    context.hostImportAlignment = 65536;
     constexpr std::size_t bytes = 2 * 65536;
     void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536);
 #ifdef _WIN32
@@ -728,14 +729,13 @@ static void pageTableRootTests(const Context& shared, const BdaTestAccess& acces
         Require(std::equal(list.begin(), list.end(), own.begin(), own.end(), [](const Abi::Range& left, const Abi::Range& right) { return std::memcmp(&left, &right, sizeof(left)) == 0; }), "the table root does not hold the build's own ranges");
         Require(std::none_of(list.begin(), list.end(), [&](const auto& range) { return range.begin < address + bytes && address < range.end; }), "the heap the page table maps is also an own range of the build");
         const auto heap = std::find_if(mapped.begin(), mapped.end(), [&](const auto& range) { return range.begin <= address && address < range.end; });
-        Require(heap != mapped.end() && heap->end >= address + bytes && heap->permissions == Abi::Read, "the write interval split the heap's read-only range");
+        Require(heap != mapped.end() && heap->end >= address + bytes && heap->permissions == (Abi::Read | Abi::Write), "the imported writable heap is not one writable range");
         const auto device = heap->deviceAddress + (address - heap->begin);
-        Require(Ref::Translate(leaves, list, address + 8u, 64u, Abi::Read, grants) == Ref::Translation{device + 8u, 0u}, "a 64-byte read across the write grant of one read-only range faulted");
+        Require(Ref::Translate(leaves, list, address + 8u, 64u, Abi::Read, grants) == Ref::Translation{device + 8u, 0u}, "a 64-byte read across the write grant of the heap faulted");
         for (const std::uint64_t offset : {0u, 15u, 16u, 44u, 45u, 48u, 65532u, 65536u, static_cast<unsigned>(bytes) - 4u}) {
-            const bool granted = offset >= 16u && offset + 4u <= 48u;
             Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Read, grants) == Ref::Translation{device + offset, 0u}, "the page table alone did not translate the registered heap at +" + std::to_string(offset));
-            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write) == Ref::Fault(Abi::FaultReason::Permission), "the page table alone let a store reach the read-only mirror at +" + std::to_string(offset));
-            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write, grants) == (granted ? Ref::Translation{device + offset, 0u} : Ref::Fault(Abi::FaultReason::Permission)), "the write grant did not decide a store to the mirror at +" + std::to_string(offset));
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write) == Ref::Translation{device + offset, 0u}, "the page table alone kept a store from the writable heap at +" + std::to_string(offset));
+            Require(Ref::Translate(leaves, {}, address + offset, 4u, Abi::Write, grants) == Ref::Translation{device + offset, 0u}, "a write grant kept a store from the writable heap at +" + std::to_string(offset));
         }
         const Ref::Leaves none;
         for (const auto probe : Ref::Probes(mapped)) {
