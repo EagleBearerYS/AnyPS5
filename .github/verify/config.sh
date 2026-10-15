@@ -1,0 +1,4 @@
+BASE=0029e62f974c453a5f6c7333f3bdb13e770e3903
+REPEAT=3
+EXTRA_TESTS='agc_driver_pixel_sample_iteration|agc_driver_sample_mask_multisample|agc_driver_graphics|agc_driver_pixel_ancillary_word|agc_driver_relative_ancillary|agc_shader_memory|request_serializer|pixel_ancillary'
+NO_BEFORE=1
