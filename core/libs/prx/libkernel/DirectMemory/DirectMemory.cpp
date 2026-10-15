@@ -155,6 +155,30 @@ static int mprotect(void* addr, size_t len, int prot) {
 }
 #endif
 
+#if defined(__linux__)
+static void MapUnmappedPages(void* addr, size_t len) {
+    constexpr std::uintptr_t hostPage = 0x1000;
+    auto cursor = reinterpret_cast<std::uintptr_t>(addr);
+    const auto end = cursor + len;
+    while (cursor < end) {
+        auto runEnd = cursor;
+        while (runEnd < end && ::msync(reinterpret_cast<void*>(runEnd), hostPage, MS_ASYNC) != 0 && errno == ENOMEM) runEnd += hostPage;
+        if (runEnd == cursor) {
+            cursor += hostPage;
+            continue;
+        }
+        auto* run = reinterpret_cast<void*>(cursor);
+        void* mapped = ::mmap(run, runEnd - cursor, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        if (mapped != run) {
+            const int error = mapped == MAP_FAILED ? errno : EEXIST;
+            if (mapped != MAP_FAILED) ::munmap(mapped, runEnd - cursor);
+            throw std::system_error(error, std::generic_category(), "cannot map the unmapped pages of a host stack");
+        }
+        cursor = runEnd;
+    }
+}
+#endif
+
 namespace {
 
 constexpr int GuestMapFixedFlag = 0x10;
@@ -1046,8 +1070,15 @@ int DoMprotect(const void* addr, size_t len, int prot) {
         const auto insideBytes = static_cast<std::size_t>(insideEnd - inside);
 #ifdef _WIN32
         if (nativeProtection != PROT_NONE && !KernelArena::Get().Owns(insidePointer, insideBytes)) CommitReservedPages(insidePointer, insideBytes);
+        const bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
+#else
+        bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
+        if (!protectedPages && errno == ENOMEM) {
+            MapUnmappedPages(insidePointer, insideBytes);
+            protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
+        }
 #endif
-        if (mprotect(insidePointer, insideBytes, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "mprotect failed");
+        if (!protectedPages) throw std::system_error(errno, std::generic_category(), "mprotect failed");
         NoteGuestStackProtection(inside, insideBytes, (prot & 3) == 3);
         RecordProtection(insidePointer, insideBytes, prot);
         return 0;
