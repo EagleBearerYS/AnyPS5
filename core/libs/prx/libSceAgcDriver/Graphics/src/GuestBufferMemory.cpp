@@ -3731,8 +3731,10 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             static const bool bdaFlush = std::getenv("APS5_BDA_FLUSH") != nullptr;
             if (!(addressable && region.hostBacked) || bdaFlush) {
                 StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "imported buffer region");
-            } else if (const auto traced = GhostIntersections(region.begin, region.end); !traced.empty() && StorageTexture::AnyPendingOverlaps(traced) && GhostBudget(Recorder::Presents(), 16)) {
-                GhostTrace("address-based build maps heap 0x%llx+0x%llx in place without storing the results pending over traced memory (first traced part 0x%llx+0x%llx, writable %d)", static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end - region.begin), static_cast<unsigned long long>(traced.front().first), static_cast<unsigned long long>(traced.front().second - traced.front().first), region.writable ? 1 : 0);
+            } else if (const auto traced = GhostIntersections(region.begin, region.end); !traced.empty()) {
+                const bool pending = StorageTexture::AnyPendingOverlaps(traced);
+                const bool shadowed = AnyShadowedOverlaps(traced);
+                if ((pending || shadowed || region.writable) && GhostBudget(Recorder::Presents(), 16)) GhostTrace("address-based build maps heap 0x%llx+0x%llx in place with no store and no publish (first traced part 0x%llx+0x%llx: results pending %d, unpublished unit-shadow results %d, writable %d)", static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end - region.begin), static_cast<unsigned long long>(traced.front().first), static_cast<unsigned long long>(traced.front().second - traced.front().first), pending ? 1 : 0, shadowed ? 1 : 0, region.writable ? 1 : 0);
             }
             continue;
         }

@@ -4744,6 +4744,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (blockUnits) {
             // The kept blocks alone pass through the retiler (windows of their slices).
             const auto storedBytes = writeBackWindows(segments, keep, firstStored, lastStored, shadowed, imported, saveUnits.empty() ? nullptr : savedBytes.get());
+            if (GhostTraced(descriptor.baseAddress, guestBytes)) {
+                std::uint64_t intoShadow = 0;
+                std::uint64_t intoImport = 0;
+                for (const auto& range : shadowed) intoShadow += range.end - range.begin;
+                for (const auto& [from, to] : imported) intoImport += to - from;
+                GhostTrace("store image %p surface 0x%llx+0x%llx by block write-back for %s: 0x%llx bytes into the unit shadow in %zu ranges, 0x%llx bytes into the import in %zu ranges", static_cast<const void*>(this), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), flushReason != nullptr ? flushReason : "?", static_cast<unsigned long long>(intoShadow), shadowed.size(), static_cast<unsigned long long>(intoImport), imported.size());
+            }
             countStorageWriteBack(storedBytes, true);
             if (profile) Profile().storageGpu += timer.lap();
             forgetStored();
