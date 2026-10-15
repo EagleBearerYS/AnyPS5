@@ -166,6 +166,8 @@ void countStorageWriteBack(std::uint64_t bytes, bool direct) {
 struct LiveImages {
     std::mutex mutex;
     std::vector<StorageTexture*> textures;
+    std::mutex keysMutex;
+    std::unordered_map<std::uint64_t, std::size_t> keyAddresses;
 };
 
 LiveImages& Live() {
@@ -1066,6 +1068,11 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
     texture->upload();
     texture->defaultMip = mipLevel;
     texture->view = texture->createView(mipLevel, false, texture->storageFormat);
+    if (texture->descriptor.dccAddress != 0) {
+        auto& live = Live();
+        std::lock_guard lock(live.keysMutex);
+        ++live.keyAddresses[texture->descriptor.dccAddress];
+    }
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -3899,6 +3906,12 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
     return coverage;
 }
 
+bool StorageTexture::KeysLiveAt(std::uint64_t address) {
+    auto& live = Live();
+    std::lock_guard lock(live.keysMutex);
+    return live.keyAddresses.contains(address);
+}
+
 std::size_t StorageTexture::NoteKeysFill(std::uint64_t address, std::size_t bytes, std::uint8_t key) {
     static const bool refillDisabled = std::getenv("APS5_NO_KEYS_REFILL") != nullptr;
     DccKeys keys = DccKeys::Mixed;
@@ -4955,10 +4968,17 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
 }
 
 StorageTexture::~StorageTexture() {
+    bool listed = false;
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
-        std::erase(live.textures, this);
+        listed = std::erase(live.textures, this) != 0;
+    }
+    if (listed && descriptor.dccAddress != 0) {
+        auto& live = Live();
+        std::lock_guard lock(live.keysMutex);
+        const auto found = live.keyAddresses.find(descriptor.dccAddress);
+        if (found != live.keyAddresses.end() && --found->second == 0) live.keyAddresses.erase(found);
     }
     // Cache eviction flushes first; anything still pending here is being torn down with the device.
     {
