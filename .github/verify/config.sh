@@ -1,0 +1,3 @@
+BASE=187e5fc0ac213e6f2cdceb08749b1db4d71cbfee
+REPEAT=20
+EXTRA_TESTS='guest_kernel_stack_protect'
