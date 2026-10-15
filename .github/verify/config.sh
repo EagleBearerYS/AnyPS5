@@ -1,0 +1,4 @@
+BASE=0c4816f6119e5dc1208b16b25a171d1c88aa18f4
+REPEAT=20
+EXTRA_TESTS='agc_write_tracking|agc_shader_table_snapshot_reuse'
+NO_BEFORE=1
