@@ -1,7 +1,9 @@
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -154,31 +156,84 @@ static void* APS5_VABI WriteLeftGuard(void*) {
     return nullptr;
 }
 
-static void ProtectWholeStack() {
+#ifdef _WIN32
+struct HostStackLayout {
+    std::uintptr_t guard;
+    std::uintptr_t committed;
+};
+
+static HostStackLayout QueryHostStack(std::uintptr_t start, std::uintptr_t end) {
+    HostStackLayout layout{0, end};
+    for (auto cursor = start; cursor < end;) {
+        MEMORY_BASIC_INFORMATION memory{};
+        Require(VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) == sizeof(memory));
+        if (memory.State == MEM_COMMIT && (memory.Protect & PAGE_GUARD) != 0) layout.guard = cursor;
+        else if (memory.State == MEM_COMMIT && layout.committed == end) layout.committed = cursor;
+        cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+    }
+    return layout;
+}
+
+static void GrowStack(std::uintptr_t below) {
+    static void (*volatile const next)(std::uintptr_t) = GrowStack;
+    volatile unsigned char frame[1024];
+    frame[0] = 1;
+    if (reinterpret_cast<std::uintptr_t>(&frame[0]) > below) next(below);
+    frame[sizeof(frame) - 1] = 2;
+}
+
+static void RequireGrowableStack(std::uintptr_t start, std::uintptr_t end) {
+    const auto before = QueryHostStack(start, end);
+    Require(before.guard > start && before.guard < before.committed);
+    Require(QueryPage(before.committed).writable);
+    GrowStack(before.guard - 0x2000);
+    const auto after = QueryHostStack(start, end);
+    Require(after.guard != 0 && after.guard < before.guard);
+    Require(QueryPage(before.guard).writable);
+}
+#endif
+
+static void ProtectStack(std::uintptr_t skippedBytes) {
     int local = 0;
     void* start = nullptr;
     void* end = nullptr;
     Require(sceKernelIsStack(&local, &start, &end) == SCE_OK);
-    const auto stackBytes = reinterpret_cast<std::uintptr_t>(end) - reinterpret_cast<std::uintptr_t>(start);
-    Require(mprotect_nid_postfix(start, stackBytes, 0xc2) == 0);
-    Require(QueryPage(reinterpret_cast<std::uintptr_t>(start)).writable);
-    static_cast<volatile unsigned char*>(start)[0] = 6;
+    const auto low = reinterpret_cast<std::uintptr_t>(start) + skippedBytes;
+    const auto high = reinterpret_cast<std::uintptr_t>(end);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(low), high - low, 0xc2) == 0);
+#ifdef _WIN32
+    RequireGrowableStack(reinterpret_cast<std::uintptr_t>(start), high);
+    Require(mprotect_nid_postfix(start, Page, 0) == 0);
+    RequireGrowableStack(reinterpret_cast<std::uintptr_t>(start), high);
+#else
+    Require(QueryPage(low).writable);
+    reinterpret_cast<volatile unsigned char*>(low)[0] = 6;
+#endif
 }
 
 #ifdef _WIN32
-static DWORD WINAPI ProtectReservedStack(void*) {
-    ProtectWholeStack();
+static DWORD WINAPI ProtectReservedStack(void* partial) {
+    int local = 0;
+    void* start = nullptr;
+    void* end = nullptr;
+    Require(sceKernelIsStack(&local, &start, &end) == SCE_OK);
+    const auto low = reinterpret_cast<std::uintptr_t>(start);
+    const auto guard = QueryHostStack(low, reinterpret_cast<std::uintptr_t>(end)).guard;
+    Require(guard - low >= 2 * Page);
+    ProtectStack(partial != nullptr ? ((guard - low) / 2) & ~(Page - 1) : 0);
     return 0;
 }
 
 static void ProtectHostStacks() {
-    ProtectWholeStack();
-    HANDLE thread = CreateThread(nullptr, HostBytes * 4, ProtectReservedStack, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-    Require(thread != nullptr);
-    Require(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
-    DWORD exitCode = 1;
-    Require(GetExitCodeThread(thread, &exitCode) != 0 && exitCode == 0);
-    Require(CloseHandle(thread) != 0);
+    ProtectStack(0);
+    for (void* partial : {static_cast<void*>(nullptr), reinterpret_cast<void*>(1)}) {
+        HANDLE thread = CreateThread(nullptr, HostBytes * 4, ProtectReservedStack, partial, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+        Require(thread != nullptr);
+        Require(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
+        DWORD exitCode = 1;
+        Require(GetExitCodeThread(thread, &exitCode) != 0 && exitCode == 0);
+        Require(CloseHandle(thread) != 0);
+    }
 }
 #endif
 
@@ -186,7 +241,7 @@ int main() {
 #ifdef _WIN32
     ProtectHostStacks();
 #else
-    ProtectWholeStack();
+    ProtectStack(0);
 #endif
     std::atomic<bool> passed{false};
     Pthread thread = nullptr;
