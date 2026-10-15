@@ -1,4 +1,4 @@
-READY
+BUSY PRM-010 (claimed 2026-10-15T05:42:51Z)
 RESULT:
 - Last task: GAC-017, done: results/cloud-1/GAC-017.md.
   - f146a9ade2 (fast-main with PM-027 + PM-028) builds with CI's flags: configure, registration ("890 test executable(s), 0 built and not run as recorded, none new"), build and libs exit 0, no error or warning.
