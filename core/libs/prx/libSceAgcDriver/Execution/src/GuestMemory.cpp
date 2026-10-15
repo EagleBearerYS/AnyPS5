@@ -1070,6 +1070,34 @@ struct ThreadCollectMemo {
 };
 thread_local ThreadCollectMemo threadCollectMemo;
 
+struct ThreadExactMemo {
+    static constexpr std::size_t Probes = 16;
+    std::array<WriteTracker::Memo, 1024> slots{};
+
+    static std::size_t Slot(std::uintptr_t first) {
+        return static_cast<std::size_t>(((first >> 12) * 0x9e3779b97f4a7c15ull) >> 54);
+    }
+
+    const WriteTracker::Memo* Find(std::uintptr_t first, std::uintptr_t stop, std::uint64_t epoch) const {
+        for (std::size_t probe = 0, slot = Slot(first); probe < Probes; ++probe, slot = (slot + 1) % slots.size()) {
+            const auto& entry = slots[slot];
+            if (entry.epoch != epoch) return nullptr;
+            if (entry.begin == first && entry.end == stop) return &entry;
+        }
+        return nullptr;
+    }
+
+    void Remember(std::uintptr_t first, std::uintptr_t stop, std::uint64_t epoch, std::uint64_t unwatched) {
+        for (std::size_t probe = 0, slot = Slot(first); probe < Probes; ++probe, slot = (slot + 1) % slots.size()) {
+            auto& entry = slots[slot];
+            if (entry.epoch == epoch && (entry.begin != first || entry.end != stop)) continue;
+            entry = {first, stop, epoch, unwatched};
+            return;
+        }
+    }
+};
+thread_local ThreadExactMemo* threadExactMemo = nullptr;
+
 bool sharedCollectMemo() {
     static const bool shared = std::getenv("APS5_SHARED_COLLECT_MEMO") != nullptr;
     return shared;
@@ -1152,9 +1180,15 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     const auto epoch = currentCollectEpoch();
     const auto unwatched = unwatchSerial.load(std::memory_order_acquire);
     const bool useMemo = memoized && collectMemoEnabled() && bytes != 0;
+    const auto lookedUpFirst = first;
+    const auto lookedUpStop = stop;
     if (useMemo && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
+        if (const auto* exact = threadExactMemo != nullptr ? threadExactMemo->Find(first, stop, epoch) : nullptr; exact != nullptr && exact->unwatched == unwatched) {
+            collectMemoHits.fetch_add(1, std::memory_order_relaxed);
+            return tracker.generation.load(std::memory_order_relaxed);
+        }
         for (const auto& entry : threadCollectMemo.entries) {
             if (entry.epoch == epoch && entry.unwatched == unwatched && entry.begin <= first && stop <= entry.end) {
                 // The current generation, not the memoized one: blocks stamped since (MarkWritten, an
@@ -1192,8 +1226,12 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
-        if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial};
-        else threadCollectMemo.entries[threadCollectMemo.next++ % threadCollectMemo.entries.size()] = {first, stop, epoch, serial};
+        if (sharedCollectMemo()) {
+            tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial};
+        } else {
+            threadCollectMemo.entries[threadCollectMemo.next++ % threadCollectMemo.entries.size()] = {first, stop, epoch, serial};
+            if (threadCollectEpoch != 0) ShaderRecompiler::ThreadOwned(threadExactMemo).Remember(lookedUpFirst, lookedUpStop, epoch, serial);
+        }
     }
     return tracker.generation;
 }
