@@ -1,6 +1,6 @@
 # PM-038: drop the bench and step-timer commits from perf/shader-image-table-reuse-v3
 
-Apply on the branch head 830bfa53f with `git apply PM-038-drop-bench-timers.patch.md` and commit it as `chore(agc): drop the Village-like bench and the step timers`. Result: tree 5a7364a66, the same as the clean history 805155311.
+Apply on the branch head a5cd6de0d with `git apply PM-038-drop-bench-timers.patch.md` and commit it as `chore(agc): drop the Village-like bench and the step timers`. Result: tree f8c55a966, the same as the clean history 636753bfb.
 
 ```diff
 diff --git a/core/libs/prx/libSceAgcDriver/Execution/include/StepTimers.hpp b/core/libs/prx/libSceAgcDriver/Execution/include/StepTimers.hpp
