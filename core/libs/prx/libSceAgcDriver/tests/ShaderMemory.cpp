@@ -1951,7 +1951,8 @@ void verifyTableSpanQuery() {
     FillTableSrt(guest, heap, Stride, Records);
     auto wideCode = TableWholeCode;
     std::replace(wideCode.begin(), wideCode.end(), 0x8f108510u, 0x9310b010u);
-    const auto request = TableRequest(wideCode, TableUserData(guest));
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(wideCode, userData);
     spanQueryBegin = address;
     spanQueryEnd = address + static_cast<std::uint64_t>(Records - 1u) * Stride + 32u;
     spanQueriesToPages = 0;
