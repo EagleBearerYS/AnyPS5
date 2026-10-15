@@ -1469,7 +1469,7 @@ void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access,
         piece.allocated = sizes[index].first;
         piece.bytes = sizes[index].second;
 #ifdef _WIN32
-        piece.pointer = GuestArena::GuestArenaAllocate_nid_postfix(piece.allocated, block);
+        piece.pointer = GuestArena::GuestArenaAllocate_nid_postfix(piece.allocated + block, block);
         Require(piece.pointer != nullptr, "cannot allocate the address copy cap ranges in the guest arena");
         GuestArena::GuestArenaCommit_nid_postfix(piece.pointer, piece.allocated, PAGE_READWRITE, piece.allocated);
         piece.mapping = piece.pointer;
@@ -1548,7 +1548,7 @@ void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access,
     for (const auto& piece : pieces) {
 #ifdef _WIN32
         GuestArena::GuestArenaReset_nid_postfix(piece.pointer, piece.allocated);
-        GuestArena::GuestArenaRelease_nid_postfix(piece.pointer, piece.allocated);
+        GuestArena::GuestArenaRelease_nid_postfix(piece.pointer, piece.allocated + block);
 #else
         munmap(piece.mapping, piece.allocated + block);
 #endif
