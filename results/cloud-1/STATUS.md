@@ -1,4 +1,4 @@
-READY
+BUSY PM-031 (claimed 2026-10-15T04:07:15Z)
 RESULT:
 - Last task: GAC-016, done: results/cloud-1/GAC-016.md.
   - test/village-fast-main 00582f7a45 (fast-main with PM-027 in place of the switch helper) builds with CI's flags: configure, registration, build and libs exit 0, no compile error.
