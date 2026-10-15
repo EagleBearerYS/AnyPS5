@@ -28,7 +28,9 @@
 
 namespace {
 
-alignas(65536) std::byte imageData[16u << 20u];
+constexpr std::size_t imageBytes = 16u << 20u;
+std::byte imageStorage[imageBytes + 65536];
+std::byte* const imageData = reinterpret_cast<std::byte*>((reinterpret_cast<std::uint64_t>(imageStorage) + 65535) & ~std::uint64_t{65535});
 
 long long setting(const char* name, long long fallback) {
     const char* value = std::getenv(name);
@@ -138,7 +140,7 @@ void RunPerDrawBench(const AgcDriver::Graphics::Context& context) {
     const auto reads = static_cast<std::size_t>(setting("BENCH_READS", 16));
     const bool image = setting("BENCH_IMAGE", 1) != 0;
     Require(GuestMemory::WriteWatched(), "the bench needs the guest write watch");
-    std::memset(imageData, 0x5a, sizeof(imageData));
+    std::memset(imageData, 0x5a, imageBytes);
     std::vector<std::byte*> blocks;
     for (std::size_t index = 0; index < runs; ++index) {
         auto* block = allocateWatched(runBytes * 2);
@@ -150,7 +152,7 @@ void RunPerDrawBench(const AgcDriver::Graphics::Context& context) {
         for (auto* block : blocks) mutation.Add(block, runBytes, true, true, true);
         if (image) {
             mutation.RegisterMainImage();
-            mutation.Protect(imageData, sizeof(imageData), true, true, true, [] {});
+            mutation.Protect(imageData, imageBytes, true, true, true, [] {});
         }
     }
     const auto registered = GuestAllocations::GuestAllocationsAcquire_nid_postfix().size();
@@ -165,7 +167,7 @@ void RunPerDrawBench(const AgcDriver::Graphics::Context& context) {
         const bool epochStart = build % epochBuilds == 0;
         if (epochStart) GuestMemory::BumpCollectEpoch();
         for (std::size_t dirty = 0; dirty < dirtyBlocks; ++dirty) blocks[(build * 7 + dirty * 13) % runs][(dirty * 65536 + build * 64) % runBytes] = static_cast<std::byte>(build);
-        for (std::size_t dirty = 0; dirty < imageDirty; ++dirty) imageData[(build * 4099 + dirty * 1048583) % sizeof(imageData)] = static_cast<std::byte>(build);
+        for (std::size_t dirty = 0; dirty < imageDirty; ++dirty) imageData[(build * 4099 + dirty * 1048583) % imageBytes] = static_cast<std::byte>(build);
         if (snapshotVary) own[0] = static_cast<std::byte>(build);
         std::array<double, 6> us{};
         auto at = std::chrono::steady_clock::now();
@@ -200,7 +202,7 @@ void RunPerDrawBench(const AgcDriver::Graphics::Context& context) {
         const auto per = [&](std::size_t phase) { return sums[phase] / static_cast<double>(count); };
         std::printf("[perdraw-bench] %s (%zu builds), us per build: acquire %.1f, prepare %.1f, finish %.1f, bda %.1f, write-back %.1f, release %.1f, total %.1f\n", label, count, per(0), per(1), per(2), per(3), per(4), per(5), per(0) + per(1) + per(2) + per(3) + per(4) + per(5));
     };
-    std::printf("[perdraw-bench] %zu heap runs of %zu KiB, %zu registered ranges, image %d (writable stand-in %zu MiB), %zu builds, epoch every %zu, %zu dirty heap blocks and %zu image bytes per build, %zu reads, %zu writes, %zu snapshots%s\n", runs, runBytes >> 10u, registered, image ? 1 : 0, sizeof(imageData) >> 20u, builds, epochBuilds, dirtyBlocks, imageDirty, reads, writes, snapshots, snapshotVary ? " (varying)" : "");
+    std::printf("[perdraw-bench] %zu heap runs of %zu KiB, %zu registered ranges, image %d (writable stand-in %zu MiB), %zu builds, epoch every %zu, %zu dirty heap blocks and %zu image bytes per build, %zu reads, %zu writes, %zu snapshots%s\n", runs, runBytes >> 10u, registered, image ? 1 : 0, imageBytes >> 20u, builds, epochBuilds, dirtyBlocks, imageDirty, reads, writes, snapshots, snapshotVary ? " (varying)" : "");
     print("all", totals, builds);
     print("first build of an epoch", firstEpochBuild, firsts);
     print("later builds of an epoch", laterBuilds, laters);
