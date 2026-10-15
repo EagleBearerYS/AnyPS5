@@ -1,4 +1,3 @@
-BUSY GAC-014
-since: 2026-10-15T02:27:34Z
-claimed: tasks/claimed/GAC-014.md
-previous: GAC-013 done, results/cloud-2/GAC-013.md
+READY
+since: 2026-10-15T02:45:32Z
+previous: GAC-014 done, results/cloud-2/GAC-014.md (7b04bf9073 and 28a5e2d643 fail at ShaderResources.cpp:994 from the #6012 merge; one-word rename)
