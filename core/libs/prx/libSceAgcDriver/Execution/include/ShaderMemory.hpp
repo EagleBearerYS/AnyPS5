@@ -148,10 +148,19 @@ struct SharedWords {
     std::size_t count = 0;
     std::size_t offset = 0;
     std::weak_ptr<const ShaderRecompiler::SrtGuestWords> block;
+    std::size_t region = 0;
+    std::size_t regions = 0;
 };
-void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t first, std::span<const std::byte> bytes, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks);
+void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t region, std::size_t first, std::span<const std::byte> bytes, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks);
 bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const SharedWords> leftShared, std::span<const std::uint32_t> right, std::span<const SharedWords> rightShared, std::size_t* compared = nullptr);
-std::size_t VouchSharedRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<const SharedWords> shared, ShaderMemory::PendingWriteQuery pending, std::vector<std::uint8_t>& vouched);
+struct VouchedRegions {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    std::size_t words = 0;
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
+};
+std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched);
 
 }
 

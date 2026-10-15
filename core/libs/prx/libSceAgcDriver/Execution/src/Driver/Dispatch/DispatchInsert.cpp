@@ -38,7 +38,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
             const auto offset = fresh->words.size();
             fresh->words.resize(offset + count);
             std::memcpy(fresh->words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
-            AppendSharedWords(fresh->shared, offset, region.bytes, supplied);
+            AppendSharedWords(fresh->shared, fresh->runs.size() - 1u, offset, region.bytes, supplied);
         }
 
         DataWordPositionCounts dataCounts;

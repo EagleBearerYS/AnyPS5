@@ -582,7 +582,7 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::TakeRecentRegions() {
     return result;
 }
 
-void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t first, std::span<const std::byte> bytes, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks) {
+void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t region, std::size_t first, std::span<const std::byte> bytes, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks) {
     const auto address = reinterpret_cast<std::uintptr_t>(bytes.data());
     const auto count = bytes.size() / sizeof(std::uint32_t);
     if (count == 0) return;
@@ -594,12 +594,13 @@ void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t first, std:
         const auto offset = static_cast<std::size_t>((address - begin) / sizeof(std::uint32_t));
         if (!shared.empty()) {
             auto& last = shared.back();
-            if (last.first + last.count == first && last.offset + last.count == offset && !last.block.owner_before(block) && !block.owner_before(last.block)) {
+            if (last.first + last.count == first && last.offset + last.count == offset && last.region + last.regions == region && !last.block.owner_before(block) && !block.owner_before(last.block)) {
                 last.count += count;
+                ++last.regions;
                 return;
             }
         }
-        shared.push_back({first, count, offset, block});
+        shared.push_back({first, count, offset, block, region, 1u});
         return;
     }
 }
@@ -632,34 +633,35 @@ bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const Shar
     return same;
 }
 
-std::size_t VouchSharedRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<const SharedWords> shared, ShaderMemory::PendingWriteQuery pending, std::vector<std::uint8_t>& vouched) {
-    vouched.assign(regions.size(), 0u);
-    if (shared.empty() || regions.empty()) return 0;
+std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched) {
+    vouched.clear();
+    if (shared.empty() || regions == 0) return 0;
     thread_local std::vector<std::pair<const ShaderRecompiler::SrtGuestWords*, bool>>* blocksSlot = nullptr;
     auto& blocks = ShaderRecompiler::ThreadOwned(blocksSlot);
     blocks.clear();
     auto& totals = CaptureTotals();
     std::size_t words = 0;
-    std::size_t region = 0;
-    std::size_t position = 0;
     for (const auto& entry : shared) {
+        if (entry.regions == 0 || entry.region > regions || entry.regions > regions - entry.region || (!vouched.empty() && entry.region < vouched.back().end)) continue;
         const auto block = entry.block.lock();
-        if (block == nullptr) continue;
+        if (block == nullptr || block->low >= block->high) continue;
         auto known = std::find_if(blocks.begin(), blocks.end(), [&](const auto& seen) { return seen.first == block.get(); });
         if (known == blocks.end()) {
-            const bool good = block->low < block->high && ShaderMemory::Vouched(pending, block->low, block->high - block->low, ShaderRecompiler::LoadStamp(*block));
+            const bool good = ShaderMemory::Vouched(pending, block->low, block->high - block->low, ShaderRecompiler::LoadStamp(*block));
             (good ? totals.vouchedBlocks : totals.refusedBlocks).fetch_add(1, std::memory_order_relaxed);
             known = blocks.insert(blocks.end(), {block.get(), good});
         }
         if (!known->second) continue;
-        while (region < regions.size() && position < entry.first) position += regions[region++].bytes.size() / sizeof(std::uint32_t);
-        while (region < regions.size()) {
-            const auto count = regions[region].bytes.size() / sizeof(std::uint32_t);
-            if (position + count > entry.first + entry.count) break;
-            vouched[region++] = 1u;
-            position += count;
-            words += count;
+        if (!vouched.empty() && vouched.back().end == entry.region) {
+            auto& last = vouched.back();
+            last.end += entry.regions;
+            last.words += entry.count;
+            last.low = std::min(last.low, block->low);
+            last.high = std::max(last.high, block->high);
+        } else {
+            vouched.push_back({entry.region, entry.region + entry.regions, entry.count, block->low, block->high});
         }
+        words += entry.count;
     }
     blocks.clear();
     totals.vouchedWords.fetch_add(words, std::memory_order_relaxed);

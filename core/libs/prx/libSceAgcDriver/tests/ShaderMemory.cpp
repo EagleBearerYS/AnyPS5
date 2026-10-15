@@ -1476,7 +1476,7 @@ void verifyTableSnapshotReuse() {
             const auto offset = variant.words.size();
             variant.words.resize(offset + region.bytes.size() / sizeof(std::uint32_t));
             std::memcpy(variant.words.data() + offset, region.bytes.data(), region.bytes.size());
-            AgcDriver::AppendSharedWords(variant.shared, offset, region.bytes, supplied);
+            AgcDriver::AppendSharedWords(variant.shared, variant.runs.size() - 1u, offset, region.bytes, supplied);
         }
         return variant;
     };
@@ -1516,22 +1516,25 @@ void verifyTableSnapshotReuse() {
     const auto identityBytes = std::as_bytes(std::span(identityBlock->words));
     const std::vector<std::uint32_t> copiedWords(identityBlock->words);
     std::vector<AgcDriver::SharedWords> whole, tail, twin, copied, misaligned, nothing;
-    AgcDriver::AppendSharedWords(whole, 1u, identityBytes, identityBlocks);
-    AgcDriver::AppendSharedWords(tail, 2u, identityBytes.subspan(4u), identityBlocks);
-    AgcDriver::AppendSharedWords(twin, 1u, std::as_bytes(std::span(twinBlock->words)), identityBlocks);
-    AgcDriver::AppendSharedWords(copied, 1u, std::as_bytes(std::span(copiedWords)), identityBlocks);
-    AgcDriver::AppendSharedWords(misaligned, 1u, identityBytes.subspan(2u, 8u), identityBlocks);
-    AgcDriver::AppendSharedWords(nothing, 1u, identityBytes.subspan(0u, 0u), identityBlocks);
+    AgcDriver::AppendSharedWords(whole, 0u, 1u, identityBytes, identityBlocks);
+    AgcDriver::AppendSharedWords(tail, 0u, 2u, identityBytes.subspan(4u), identityBlocks);
+    AgcDriver::AppendSharedWords(twin, 0u, 1u, std::as_bytes(std::span(twinBlock->words)), identityBlocks);
+    AgcDriver::AppendSharedWords(copied, 0u, 1u, std::as_bytes(std::span(copiedWords)), identityBlocks);
+    AgcDriver::AppendSharedWords(misaligned, 0u, 1u, identityBytes.subspan(2u, 8u), identityBlocks);
+    AgcDriver::AppendSharedWords(nothing, 0u, 1u, identityBytes.subspan(0u, 0u), identityBlocks);
     require(whole.size() == 1u && whole[0].first == 1u && whole[0].count == 4u && whole[0].offset == 0u && tail.size() == 1u && tail[0].first == 2u && tail[0].count == 3u && tail[0].offset == 1u && twin.size() == 1u && twin[0].block.lock() == twinBlock && copied.empty() && misaligned.empty() && nothing.empty(), "draw cache identity: words were credited to a block they were not copied from");
-    std::vector<AgcDriver::SharedWords> joined, gapped, crossed;
-    AgcDriver::AppendSharedWords(joined, 1u, identityBytes.subspan(0u, 8u), identityBlocks);
-    AgcDriver::AppendSharedWords(joined, 3u, identityBytes.subspan(8u), identityBlocks);
-    AgcDriver::AppendSharedWords(gapped, 1u, identityBytes.subspan(0u, 4u), identityBlocks);
-    AgcDriver::AppendSharedWords(gapped, 3u, identityBytes.subspan(4u, 4u), identityBlocks);
-    AgcDriver::AppendSharedWords(gapped, 4u, identityBytes.subspan(12u, 4u), identityBlocks);
-    AgcDriver::AppendSharedWords(crossed, 1u, identityBytes.subspan(0u, 4u), identityBlocks);
-    AgcDriver::AppendSharedWords(crossed, 2u, std::as_bytes(std::span(twinBlock->words)).subspan(4u, 4u), identityBlocks);
-    require(joined.size() == 1u && joined[0].first == 1u && joined[0].count == 4u && joined[0].offset == 0u && gapped.size() == 3u && gapped[1].first == 3u && gapped[1].offset == 1u && gapped[2].first == 4u && gapped[2].offset == 3u && crossed.size() == 2u && crossed[1].block.lock() == twinBlock, "draw cache identity: consecutive words of one block were not joined, or words of two places were");
+    std::vector<AgcDriver::SharedWords> joined, gapped, crossed, skipped;
+    AgcDriver::AppendSharedWords(joined, 0u, 1u, identityBytes.subspan(0u, 8u), identityBlocks);
+    AgcDriver::AppendSharedWords(joined, 1u, 3u, identityBytes.subspan(8u), identityBlocks);
+    AgcDriver::AppendSharedWords(gapped, 0u, 1u, identityBytes.subspan(0u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(gapped, 1u, 3u, identityBytes.subspan(4u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(gapped, 2u, 4u, identityBytes.subspan(12u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(crossed, 0u, 1u, identityBytes.subspan(0u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(crossed, 1u, 2u, std::as_bytes(std::span(twinBlock->words)).subspan(4u, 4u), identityBlocks);
+    AgcDriver::AppendSharedWords(skipped, 0u, 1u, identityBytes.subspan(0u, 8u), identityBlocks);
+    AgcDriver::AppendSharedWords(skipped, 2u, 3u, identityBytes.subspan(8u), identityBlocks);
+    require(skipped.size() == 2u && skipped[0].region == 0u && skipped[0].regions == 1u && skipped[1].region == 2u && skipped[1].regions == 1u, "draw cache identity: words of regions that are not consecutive were joined");
+    require(joined.size() == 1u && joined[0].first == 1u && joined[0].count == 4u && joined[0].offset == 0u && joined[0].region == 0u && joined[0].regions == 2u && gapped.size() == 3u && gapped[1].first == 3u && gapped[1].offset == 1u && gapped[2].first == 4u && gapped[2].offset == 3u && crossed.size() == 2u && crossed[1].block.lock() == twinBlock, "draw cache identity: consecutive words of one block were not joined, or words of two places were");
     const std::vector<std::uint32_t> leftWords{9u, 1u, 2u, 3u, 4u};
     auto rightWords = leftWords;
     std::size_t identityCompared = 0;
@@ -1545,7 +1548,7 @@ void verifyTableSnapshotReuse() {
     const std::vector<AgcDriver::SharedWords> beyond{{3u, 4u, 0u, identityBlock}};
     auto doomed = std::make_shared<const SrtGuestWords>(SrtGuestWords{{{0x2000u, 4u}}, {1u, 2u, 3u, 4u}});
     std::vector<AgcDriver::SharedWords> dead;
-    AgcDriver::AppendSharedWords(dead, 1u, std::as_bytes(std::span(doomed->words)), std::span<const std::shared_ptr<const SrtGuestWords>>(&doomed, 1u));
+    AgcDriver::AppendSharedWords(dead, 0u, 1u, std::as_bytes(std::span(doomed->words)), std::span<const std::shared_ptr<const SrtGuestWords>>(&doomed, 1u));
     doomed.reset();
     require(!AgcDriver::SameCapturedWords(leftWords, whole, rightWords, twin, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: different words from two blocks matched");
     require(!AgcDriver::SameCapturedWords(leftWords, unowned, rightWords, unowned, &identityCompared) && identityCompared == leftWords.size(), "draw cache identity: runs without a block vouched for words");
@@ -1735,20 +1738,22 @@ void verifyTableVouch() {
             captured.counts.push_back(region.bytes.size() / sizeof(std::uint32_t));
             captured.words.resize(offset + region.bytes.size() / sizeof(std::uint32_t));
             std::memcpy(captured.words.data() + offset, region.bytes.data(), region.bytes.size());
-            AgcDriver::AppendSharedWords(captured.shared, offset, region.bytes, captured.blocks);
+            AgcDriver::AppendSharedWords(captured.shared, captured.addresses.size() - 1u, offset, region.bytes, captured.blocks);
         }
         const auto after = ResourceMaterializer::TableReuse();
         captured.reuse = {after.unwritten - before.unwritten, after.compared - before.compared, after.wordsRead - before.wordsRead, after.shared - before.shared, after.columns - before.columns};
         return captured;
     };
     const auto vouch = [](const Captured& captured, AgcDriver::ShaderMemory::PendingWriteQuery pending, std::vector<std::uint8_t>& vouched) {
-        std::vector<MemoryRegion> regions;
-        std::size_t offset = 0;
-        for (std::size_t index = 0; index < captured.addresses.size(); index++) {
-            regions.push_back({captured.addresses[index], std::as_bytes(std::span(captured.words).subspan(offset, captured.counts[index]))});
-            offset += captured.counts[index];
+        std::vector<AgcDriver::VouchedRegions> ranges;
+        const auto words = AgcDriver::VouchSharedRegions(captured.shared, captured.addresses.size(), pending, ranges);
+        vouched.assign(captured.addresses.size(), 0u);
+        std::size_t covered = 0;
+        for (const auto& range : ranges) {
+            std::fill(vouched.begin() + static_cast<std::ptrdiff_t>(range.begin), vouched.begin() + static_cast<std::ptrdiff_t>(range.end), std::uint8_t{1});
+            for (auto index = range.begin; index < range.end; index++) covered += captured.counts[index];
         }
-        return AgcDriver::VouchSharedRegions(regions, captured.shared, pending, vouched);
+        return covered == words ? words : std::size_t{0};
     };
 
     auto* heap = AllocateWatchedTable(Bytes);

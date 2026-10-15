@@ -116,10 +116,10 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
         }
     }
 
-    thread_local std::vector<std::uint8_t>* vouchedSlot = nullptr;
+    thread_local std::vector<VouchedRegions>* vouchedSlot = nullptr;
     auto& vouched = ShaderRecompiler::ThreadOwned(vouchedSlot);
     vouched.clear();
-    if (!variant.shared.empty() && vouchedValidation()) VouchSharedRegions(regions, variant.shared, &queryPendingWrite, vouched);
+    if (!variant.shared.empty() && vouchedValidation()) VouchSharedRegions(variant.shared, regions.size(), &queryPendingWrite, vouched);
     pending.Load();
     bool unmapped = false;
     if (!validateCaptured(program, queue, regions, *variant.compiled, true, pending, &unmapped, &sampling, masked ? &mask : nullptr, vouched)) return unmapped ? EntryOutcome::Inaccessible : EntryOutcome::Differing;

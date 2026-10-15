@@ -167,7 +167,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
                 const auto offset = variant->words.size();
                 variant->words.resize(offset + count);
                 std::memcpy(variant->words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
-                AppendSharedWords(variant->shared, offset, region.bytes, stageCapture.supplied);
+                AppendSharedWords(variant->shared, variant->runs.size() - 1u, offset, region.bytes, stageCapture.supplied);
             }
             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
             if (traceDrawCache() && entry != nullptr && matched[i] == nullptr && i < entry->stages.size()) {

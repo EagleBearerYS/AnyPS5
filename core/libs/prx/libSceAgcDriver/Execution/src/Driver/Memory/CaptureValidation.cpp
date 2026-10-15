@@ -57,13 +57,23 @@ bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captu
     return stable;
 }
 
-bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped, std::optional<SampledReadScope>* sampling, const DataMask* data, std::span<const std::uint8_t> vouched) {
+bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped, std::optional<SampledReadScope>* sampling, const DataMask* data, std::span<const VouchedRegions> vouched) {
     using Policy = ShaderMemory::PendingWrite;
 
     thread_local std::vector<std::size_t>* pendingSlot = nullptr;
     auto& pending = ShaderRecompiler::ThreadOwned(pendingSlot);
     pending.clear();
-    for (std::size_t i = 0; i < captured.size(); ++i) {
+    thread_local std::vector<VouchedRegions>* skippedSlot = nullptr;
+    auto& skipped = ShaderRecompiler::ThreadOwned(skippedSlot);
+    skipped.clear();
+    for (const auto& range : vouched) {
+        if (range.begin < range.end && range.end <= captured.size() && (skipped.empty() || skipped.back().end <= range.begin) && !view.Overlaps(range.low, static_cast<std::size_t>(range.high - range.low))) skipped.push_back(range);
+    }
+    for (std::size_t i = 0, range = 0; i < captured.size(); ++i) {
+        if (range < skipped.size() && i == skipped[range].begin) {
+            i = skipped[range++].end - 1u;
+            continue;
+        }
         const auto& region = captured[i];
         if (view.Overlaps(region.guestAddress, region.bytes.size())) pending.push_back(i);
     }
@@ -107,14 +117,15 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
         observable.clear();
         reachedPending = 0;
         if (data != nullptr) data->live->clear();
-        for (std::size_t i = 0; i < captured.size(); ++i) {
+        for (std::size_t i = 0, range = 0; i < captured.size(); ++i) {
+            if (range < skipped.size() && i == skipped[range].begin) {
+                first += skipped[range].words;
+                i = skipped[range++].end - 1u;
+                continue;
+            }
             const auto& region = captured[i];
             const bool isPending = next < pending.size() && pending[next] == i;
             if (isPending) ++next;
-            if (!isPending && i < vouched.size() && vouched[i] != 0u) {
-                first += region.bytes.size() / sizeof(std::uint32_t);
-                continue;
-            }
             const bool unsynced = isPending ? rawPending : inPlace;
             const bool known = isPending && knownOffsets[next - 1] != NoKnownValue;
             bool same = false;
