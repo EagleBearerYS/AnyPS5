@@ -730,6 +730,24 @@ void ProtectPage(std::uint64_t address, bool readable) {
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(static_cast<std::uintptr_t>(address), 4096);
 }
 
+void CheckStoreAcrossImports() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto boundary = base + 2 * Block;
+    std::memset(memory, 0x11, 3 * Block);
+    Require(ImportWatched(base, 2 * Block, [] { return true; }) && Watched(base, 2 * Block), "an import that stays watched left the watch");
+    Require(ImportWatched(boundary, Block, [] { return true; }, false) && !Watched(boundary, Block), "an import that leaves the watch stayed watched");
+    const auto before = CollectWrites(base, 2 * Block);
+    Require(before != 0 && UnchangedSince(base, 2 * Block, before), "the watched import was not collected");
+    Require(MarkWritten(boundary - 64, 128) == 0, "a GPU write across a watched import and an unwatched one is trusted");
+    Require(!UnchangedSince(base + Block, Block, before), "a GPU write across a watched import and an unwatched one left the watched import's last block unchanged");
+    Require(StoredOver(boundary - 64, 64, before) && !StoredOver(base + Block, Block - 64, before), "a GPU write across a watched import and an unwatched one is not seen over exactly its watched bytes");
+    Require(UnchangedSince(base, Block, before), "a GPU write across a watched import and an unwatched one stamped a block it did not write");
+    const auto beforeOwn = TrackerGeneration();
+    Require(StoreOwnBytes(boundary - 64, 128, [&] { std::memset(reinterpret_cast<void*>(boundary - 64), 0x22, 128); }) == 0, "an own store across a watched import and an unwatched one is trusted");
+    Require(!UnchangedSince(base + Block, Block, beforeOwn) && UnchangedSince(base, Block, beforeOwn), "an own store across a watched import and an unwatched one did not stamp exactly the watched block it wrote");
+}
+
 void CheckUnwatchedImport() {
     void* memory = AllocateWatched(3 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -946,6 +964,7 @@ int main() {
         CheckImportWindow();
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
+        CheckStoreAcrossImports();
         CheckUnwatchedImport();
         CheckCommittedRanges();
     } catch (const std::exception& error) {
