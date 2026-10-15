@@ -40,6 +40,7 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         return DrawVerdict::Drawn;
     }
     if (const auto pass = Graphics::DecodeDepthExpandPass(queue)) {
+        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
         if (drawParameters.indirect) {
             recordQueuedLabelsBeforeRead(submission.queue);
             if (!indirectRecordsDraw(*drawParameters.indirect)) return DrawVerdict::Nothing;
