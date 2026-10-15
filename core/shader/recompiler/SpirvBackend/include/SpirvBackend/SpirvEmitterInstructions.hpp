@@ -351,6 +351,7 @@ std::uint32_t EmitDataOrderedCount(SpirvValueEmitContext& ctx, const IrValue& in
 void EmitImageQueryDimensions(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageQueryLod(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageRead(SpirvValueEmitContext& ctx, const IrValue& inst);
+void EmitPoisonedDescriptor(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t taken, std::uint32_t programCounter);
 void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageWrite(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageSampleRaw(SpirvValueEmitContext& ctx, const IrValue& inst);

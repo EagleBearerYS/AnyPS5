@@ -7,6 +7,7 @@ namespace ShaderRecompiler {
 
 class ResourceTracker {
 public:
+    [[nodiscard]] bool SplitDescriptorPointers(IrProgram& program) const;
     void Track(IrProgram& program) const;
 };
 

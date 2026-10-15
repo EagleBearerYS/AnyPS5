@@ -1918,6 +1918,15 @@ void EmitImageRead(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitImage(ctx, inst);
 }
 
+void EmitPoisonedDescriptor(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t taken, std::uint32_t programCounter) {
+    auto& state = ctx.state;
+    if (state.faultBufferVariable == 0) ctx.Fail(inst, "reads a poisoned descriptor without a fault buffer");
+    EmitIfCondition(state, taken, [&] {
+        const auto zero = ConstantU32(state, 0u);
+        RecordBdaFaultWords(state, zero, zero, zero, programCounter, BdaAbi::FaultReason::PoisonedDescriptor);
+    });
+}
+
 void EmitImageWrite(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitImage(ctx, inst);
 }

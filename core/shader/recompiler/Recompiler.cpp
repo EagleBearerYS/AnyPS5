@@ -289,12 +289,17 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         tessellationLowering.Lower(program, inputInfo.vertex->tess);
     }
 
+    constexpr ResourceTracker resourceTracker;
+    if (resourceTracker.SplitDescriptorPointers(program)) {
+        deadCodeEliminator.Eliminate(program);
+        dumpIr("pointers");
+    }
+
     constexpr SrtWalker srtWalker;
     srtWalker.BuildPlan(program);
     deadCodeEliminator.Eliminate(program);
     dumpIr("srt");
 
-    constexpr ResourceTracker resourceTracker;
     resourceTracker.Track(program);
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
@@ -544,6 +549,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
+    for (const auto& block : program.Blocks()) result.poisonedDescriptorReads += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::PoisonedDescriptor; }));
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
@@ -856,6 +862,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .runtimeImageResources = artifact.runtimeImageResources,
         .registrationModule = artifact.registrationModule,
         .bdaAbiVersion = artifact.bdaAbiVersion,
+        .poisonedDescriptorReads = artifact.poisonedDescriptorReads,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
         .vertexOffsetSgpr = artifact.vertexOffsetSgpr,

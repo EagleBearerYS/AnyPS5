@@ -33,6 +33,7 @@
 #include <map>
 #include <future>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <span>
 #include <string>
@@ -1988,6 +1989,134 @@ void verifyDescriptorPhis() {
     };
     require(planImages(splitReloads(8u)) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s");
     expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted");
+}
+
+void verifyDescriptorPointerPhis() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    constexpr std::uint32_t OpImageSampleExplicitLod = 88;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture textures[2];
+    static std::array<std::uint32_t, 4> output{};
+    static std::array<std::uint32_t, 12> table{};
+    static std::array<std::uint32_t, 24> srt{};
+    const auto imageDescriptor = [](const Texture& texture) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    };
+    const auto first = imageDescriptor(textures[0]);
+    const auto second = imageDescriptor(textures[1]);
+    const std::array<std::uint32_t, 4> pointWrap{0u, 0u, 0u, 0u};
+    const std::array<std::uint32_t, 4> linearMirror{0x49u, 0u, 0x00500000u, 0u};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const auto tableAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(table.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    std::copy(first.begin(), first.end(), srt.begin());
+    std::copy(pointWrap.begin(), pointWrap.end(), srt.begin() + 8);
+    std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+    srt[20] = 1u;
+    srt[22] = static_cast<std::uint32_t>(tableAddress);
+    srt[23] = static_cast<std::uint32_t>(tableAddress >> 32u);
+    std::copy(second.begin(), second.end(), table.begin());
+    std::copy(linearMirror.begin(), linearMirror.end(), table.begin() + 8);
+    const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    const auto makeRequest = [&](std::span<const std::uint32_t> code, std::optional<ShaderPixelStageInfo> pixel = std::nullopt) {
+        RecompileRequest request{};
+        request.shader = {pixel ? ShaderStage::Fragment : ShaderStage::Compute, 0x22000u, code, 0, {}};
+        request.context.waveSize = 64u;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        if (pixel) request.context.pixel = *pixel;
+        else request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 64;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        return request;
+    };
+    const auto compile = [](RecompileRequest request) {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        request.context.memory = memory.Regions();
+        const auto compiled = Recompile(request, *capture);
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(compiled->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
+        return std::make_pair(capture, compiled);
+    };
+    const auto countOps = [](std::span<const std::uint32_t> words, std::uint32_t opcode) {
+        std::size_t count = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto length = words[cursor] >> 16u;
+            require(length != 0 && length <= words.size() - cursor, "descriptor pointer Phi: truncated SPIR-V instruction");
+            count += (words[cursor] & 0xffffu) == opcode ? 1u : 0u;
+            cursor += length;
+        }
+        return count;
+    };
+    const auto holds = [](const std::vector<DescriptorValue>& values, std::span<const std::uint32_t> words) {
+        return std::ranges::any_of(values, [&](const DescriptorValue& value) {
+            return value.dwordCount == words.size() && std::equal(words.begin(), words.end(), value.dwords.begin());
+        });
+    };
+    const auto faultBuffer = [](const RecompileResult& compiled) {
+        return std::ranges::any_of(compiled.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::FaultBuffer; });
+    };
+
+    const std::vector<std::uint32_t> validCode{0xf4000400u, 0xfa000050u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xbf068010u, 0xbf850002u, 0xf4040000u, 0xfa000058u, 0xbf8cc07fu, 0xf40c0200u, 0xfa000000u,
+        0xf4080500u, 0xfa000020u, 0x7e020280u, 0x7e040280u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20401u, 0xbf8c3f70u, 0x34100084u, 0xe0781000u, 0x80060408u, 0xbf810000u};
+    const auto valid = makeRequest(validCode);
+    const auto validPlan = GetResourcePlan(valid);
+    require(validPlan->info.images.size() == 2u && validPlan->info.samplers.size() == 2u && !validPlan->info.usesFaultBuffer, "descriptor pointer Phi: a T# and an S# read through either of two pointers were not planned once per pointer");
+    const auto [validCapture, validCompiled] = compile(valid);
+    require(holds(validCapture->snapshot.images, first) && holds(validCapture->snapshot.images, second), "descriptor pointer Phi: the snapshot T#s are not the ones each pointer points at");
+    require(holds(validCapture->snapshot.samplers, pointWrap) && holds(validCapture->snapshot.samplers, linearMirror), "descriptor pointer Phi: the snapshot S#s are not the ones each pointer points at");
+    require(countOps(validCompiled->spirv, OpImageSampleExplicitLod) == 2u && validCompiled->poisonedDescriptorReads == 0u, "descriptor pointer Phi: the SPIR-V does not sample once per pointer");
+
+    const std::vector<std::uint32_t> villageCode{0xc80a0002u, 0x7e000280u, 0x7e020280u, 0xbe86047eu, 0xf40c0200u, 0xfa000000u, 0xd4c10000u, 0x00020483u, 0xbf8cc07fu,
+        0xf0000f08u, 0x00020400u, 0x8afe007eu, 0xbf89fff7u, 0xbefe0406u, 0xbf8c3f70u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+    ShaderPixelStageInfo pixel{};
+    pixel.interpolatorCount = 1u;
+    pixel.inputAddr = PixelInputBit(PixelInput::PerspectiveCenter);
+    pixel.hasPerspectiveCenterVgpr = true;
+    pixel.targetOutputMode[0] = 9u;
+    pixel.targetExportMapping.fill(0xe4u);
+    const auto village = makeRequest(villageCode, pixel);
+    const auto villagePlan = GetResourcePlan(village);
+    require(villagePlan->info.images.size() == 1u && villagePlan->info.usesFaultBuffer, "descriptor pointer Phi: a waterfall whose ballot overwrites the T# pointer was not planned with a poisoned back edge");
+    const auto [villageCapture, villageCompiled] = compile(village);
+    require(villageCapture->snapshot.images.size() == 1u && holds(villageCapture->snapshot.images, first), "descriptor pointer Phi: the waterfall's entry edge does not read the T# its user data points at");
+    require(villageCompiled->poisonedDescriptorReads == 1u && villageCompiled->bdaAbiVersion == BdaAbi::Version && faultBuffer(*villageCompiled), "descriptor pointer Phi: the poisoned back edge has no fault to report");
+    require(countOps(villageCompiled->spirv, spv::OpImageFetch) + countOps(villageCompiled->spirv, spv::OpImageRead) == 1u, "descriptor pointer Phi: the poisoned back edge reads an image");
+
+    const std::vector<std::uint32_t> directCode{0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0x7e020280u, 0x7e040280u, 0x7e060288u, 0xbe86047eu, 0xbf8cc07fu, 0xf0000f08u, 0x00020401u,
+        0xd4c30008u, 0x00020103u, 0x7e060280u, 0x8afe087eu, 0xbf89fff9u, 0xbefe0406u, 0xbf8c3f70u, 0x34100084u, 0xe0781000u, 0x80060408u, 0xbf810000u};
+    const auto direct = makeRequest(directCode);
+    const auto directPlan = GetResourcePlan(direct);
+    require(directPlan->info.images.size() == 1u && directPlan->info.usesFaultBuffer, "descriptor Phi: a T# whose first dwords hold a ballot on the loop's back edge was not planned with a poisoned back edge");
+    const auto [directCapture, directCompiled] = compile(direct);
+    require(holds(directCapture->snapshot.images, first) && directCompiled->poisonedDescriptorReads == 1u && faultBuffer(*directCompiled), "descriptor Phi: the T# with a ballot on the back edge does not read its entry T# and report the back edge");
+
+    const std::vector<std::uint32_t> forwardCode{0xf4000400u, 0xfa000050u, 0xf4080600u, 0xfa000040u, 0x7e020280u, 0x7e040280u, 0xbf8cc07fu, 0xbf068010u, 0xbf850002u, 0xd4c30000u, 0x00020088u,
+        0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf0000f08u, 0x00020401u, 0xbf8c3f70u, 0x34100084u, 0xe0781000u, 0x80060408u, 0xbf810000u};
+    const std::vector<std::uint32_t> advancingCode{0xf4080600u, 0xfa000040u, 0x7e020280u, 0x7e040280u, 0xbe900380u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf0000f08u, 0x00020401u,
+        0x8000a000u, 0x82018001u, 0x80108110u, 0xbf0a8210u, 0xbf85fff6u, 0xbf8c3f70u, 0x34100084u, 0xe0781000u, 0x80060408u, 0xbf810000u};
+    const std::array<std::pair<const std::vector<std::uint32_t>*, const char*>, 2> refused{{
+        {&forwardCode, "descriptor pointer Phi: a T# pointer holding a compare mask on a forward edge was accepted"},
+        {&advancingCode, "descriptor pointer Phi: a T# pointer advanced on the loop's back edge was poisoned"},
+    }};
+    for (const auto& [code, message] : refused) {
+        const auto request = makeRequest(*code);
+        expectFailure([&] { static_cast<void>(GetResourcePlan(request)); }, "GetImageResource dword 0 is not a valid runtime value", message);
+    }
 }
 
 void verifyUniformTableImage() {
@@ -5175,6 +5304,7 @@ int main(int argc, char** argv) {
         verifyPointerImageTable();
         verifyPointerTableOffsetCarry();
         verifyDescriptorPhis();
+        verifyDescriptorPointerPhis();
         verifyUniformTableImage();
         verifyLaneSelectedDescriptors();
         verifyProgramCounterRelativeData();
