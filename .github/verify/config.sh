@@ -1,0 +1,4 @@
+BASE=ab82f50a1b5a292793597fd8ec6ba7f121595140
+REPEAT=3
+EXTRA_TESTS='agc_shader_table_snapshot_reuse|agc_driver_image_table_vouched_lookups|agc_driver_image_table_vouch_queued_draws|agc_write_tracking'
+NO_BEFORE=1
