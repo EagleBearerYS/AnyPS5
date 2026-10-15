@@ -88,7 +88,7 @@ private:
     void resolve(const Context& build, Recorder& recorder);
     void refresh(const Context& build, Recorder& recorder);
     void record(Recorder& recorder);
-    DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse);
+    DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse, bool report);
     void refreshPerUse(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>& resolved);
     void evict(const Context& build, Recorder& recorder);
     std::uint32_t reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message, bool report = true);
@@ -110,6 +110,7 @@ private:
     std::array<std::uint64_t, MaxRecorderStreams> ringBatch{};
     std::vector<DeviceImageMiss> pending;
     std::vector<DeviceImageMiss> expected;
+    std::vector<DeviceImageMiss> candidates;
     std::vector<DeviceImageKeys::Key> current;
     std::vector<DeviceImageKeys::Key> perUseKeys;
     std::uint64_t evictionCheck = 0;

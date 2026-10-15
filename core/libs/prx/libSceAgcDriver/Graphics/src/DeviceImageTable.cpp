@@ -93,12 +93,12 @@ void DeviceImageTable::Expect(std::span<const Abi::Expectation> images) {
         current.push_back(image.key);
         const auto found = keys.Find(image.key);
         if (!found.has_value()) {
-            expected.push_back({image.key, image.pc});
+            (image.candidate ? candidates : expected).push_back({image.key, image.pc});
             continue;
         }
         const auto held = entries.find(image.key);
         if (held != entries.end()) held->second.used = presents;
-        if (found->fault != 0u && (held == entries.end() || !held->second.parked)) throw std::runtime_error(rejectionText(image.key, found->fault));
+        if (found->fault != 0u && !image.candidate && (held == entries.end() || !held->second.parked)) throw std::runtime_error(rejectionText(image.key, found->fault));
     }
 }
 
@@ -113,7 +113,7 @@ void DeviceImageTable::BeforeDispatch(const Context& build, Recorder& recorder) 
 
 void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     std::vector<DeviceImageKeys::Key> resolved;
-    const auto add = [&](std::vector<DeviceImageMiss>& queued, std::uint64_t& counter, bool named) {
+    const auto add = [&](std::vector<DeviceImageMiss>& queued, std::uint64_t& counter, bool named, bool required) {
         if (queued.empty()) return;
         const auto misses = DistinctDeviceImageMisses(queued);
         queued.clear();
@@ -121,9 +121,9 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
             if (keys.Find(miss.key).has_value()) continue;
             ++counter;
             Entry entry;
-            const auto value = lookup(build, miss.key, miss.pc, entry, named);
+            const auto value = lookup(build, miss.key, miss.pc, entry, named, required || !named);
             insert(miss.key, value, recorder);
-            if (named && value.fault != 0u) throw std::runtime_error(rejectionText(miss.key, value.fault));
+            if (required && value.fault != 0u) throw std::runtime_error(rejectionText(miss.key, value.fault));
             if (entry.texture == nullptr && entry.storage == nullptr) continue;
             if (entry.perUse) {
                 perUseKeys.push_back(miss.key);
@@ -134,8 +134,9 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
             ++totals.inserted;
         }
     };
-    add(pending, totals.distinct, false);
-    add(expected, totals.expected, true);
+    add(pending, totals.distinct, false, false);
+    add(expected, totals.expected, true, true);
+    add(candidates, totals.expected, true, false);
     refreshPerUse(build, recorder, resolved);
     for (const auto& key : current) {
         const auto held = entries.find(key);
@@ -225,7 +226,7 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
         }
         ++totals.refreshed;
         Entry fresh;
-        const auto value = lookup(build, key, 0u, fresh, true);
+        const auto value = lookup(build, key, 0u, fresh, true, true);
         Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a per-use device image entry was not in the table");
         if (value.fault != 0u) throw std::runtime_error(rejectionText(key, value.fault));
         if (fresh.texture != entry.texture || fresh.sampler != entry.sampler || fresh.storage != entry.storage) {
@@ -242,7 +243,7 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
     }
 }
 
-DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse) {
+DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse, bool report) {
     using Reason = ShaderRecompiler::ImageTableAbi::PoisonReason;
     const auto id = static_cast<std::uint64_t>(key[Abi::InterfaceWord]) | (static_cast<std::uint64_t>(key[Abi::InterfaceWord + 1u]) << 32u);
     const auto interface = ShaderRecompiler::ResourceMaterializer::FindDeviceImageInterface(id);
@@ -253,7 +254,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
     const auto rejected = [&](Reason reason, const std::string& message) {
         const bool runtimeSampler = (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u;
         const auto text = runtimeSampler ? message + " (S# " + HexWords(std::span<const std::uint32_t>(key).subspan(Abi::SamplerWord, Abi::SamplerWords)) + ")" : message;
-        return DeviceImageValue{0u, 0u, reject(key, pc, static_cast<std::uint32_t>(reason), text) + 1u};
+        return DeviceImageValue{0u, 0u, reject(key, pc, static_cast<std::uint32_t>(reason), text, report) + 1u};
     };
     const auto match = ShaderRecompiler::ResourceMaterializer::TryRuntimeImageMode(interface->image, descriptor, interface->modes);
     if (!match.mode.has_value()) return rejected(match.reason, match.detail);
@@ -392,7 +393,7 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
         }
         ++totals.refreshed;
         Entry fresh;
-        const auto value = lookup(build, key, 0u, fresh, false);
+        const auto value = lookup(build, key, 0u, fresh, false, true);
         Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a refreshed device image entry was not in the table");
         if (fresh.texture != entry.texture || fresh.sampler != entry.sampler) {
             retire(entry, recorder);

@@ -1431,7 +1431,9 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
         return values;
     };
     const auto add = [&](const Abi::Expectation& expectation) {
-        if (std::ranges::find(expected, expectation) == expected.end()) expected.push_back(expectation);
+        const auto same = std::ranges::find_if(expected, [&](const Abi::Expectation& held) { return held.key == expectation.key && held.pc == expectation.pc && held.image == expectation.image && held.mapSampler == expectation.mapSampler; });
+        if (same == expected.end()) expected.push_back(expectation);
+        else same->candidate = same->candidate && expectation.candidate;
     };
     expected.reserve(plan.info.deviceImageUses.size());
     for (const auto& use : plan.info.deviceImageUses) {
@@ -1449,6 +1451,7 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
             Abi::Expectation expectation;
             expectation.pc = use.firstUsePc;
             expectation.image = use.image;
+            expectation.candidate = joinedImage;
             auto& key = expectation.key;
             std::copy_n(value.begin(), Abi::DescriptorWords, key.begin());
             if (Abi::NullDescriptor(key[0], key[1])) continue;
@@ -1466,6 +1469,7 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
             }
             for (const auto& sampler : samplers) {
                 auto sampled = expectation;
+                sampled.candidate = joinedImage || joinedSampler;
                 std::copy_n(sampler.begin(), Abi::SamplerWords, sampled.key.begin() + Abi::SamplerWord);
                 const bool exactAtBase = use.levelZero && (sampled.key[Abi::SamplerWord] & Abi::SamplerUnnormalized) != 0u;
                 sampled.key[Abi::SamplerClassWord] = Abi::RuntimeSampler | (exactAtBase ? Abi::SamplerExactAtBase : 0u);

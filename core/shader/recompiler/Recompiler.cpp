@@ -1101,6 +1101,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         DeviceImageTableAbi::NameInterfaces(result.deviceImages, result.deviceImageInterfaces);
         std::optional<RuntimeImageModeMatch> refusal;
         for (const auto& expectation : result.deviceImages) {
+            if (expectation.candidate) continue;
             const bool runtimeSampler = (expectation.key[DeviceImageTableAbi::SamplerClassWord] & DeviceImageTableAbi::RuntimeSampler) != 0u;
             if (images.at(expectation.image).foldTexelOffsetsOnly && runtimeSampler && (expectation.key[DeviceImageTableAbi::SamplerWord] & DeviceImageTableAbi::SamplerUnnormalized) == 0u) {
                 throw std::runtime_error("a normalized S# is used with an image sample that has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
@@ -1323,6 +1324,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(image.image);
         mix(image.pc);
         mix(image.mapSampler);
+        mix(image.candidate);
         for (const auto word : image.key) mix(word);
     }
     mixWords(snapshot.flattenedSrt);
