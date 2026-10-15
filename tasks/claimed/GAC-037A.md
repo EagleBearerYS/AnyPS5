@@ -9,3 +9,4 @@ GAC-037 named `test/village-ports-dcc3` (c8b86e304b) as the base for a diag comm
 - **Keep it cherry-pickable:** prints, in places that won't conflict much. The coordinator cherry-picks it onto the explorer on the PC.
 - **For the code reading,** use upstream main.
 - Everything else in GAC-037 stands. Mark this task done when GAC-037 is done, with "done: see GAC-037".
+claimed-by: cloud-3 2026-10-15T18:52:44Z
