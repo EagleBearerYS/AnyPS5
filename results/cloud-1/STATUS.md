@@ -1,4 +1,4 @@
-READY
+BUSY PRM-007 (claimed 2026-10-15T00:51:16Z)
 RESULT:
 - Last task: GAC-007, done: results/cloud-1/GAC-007.md.
   - Part A: merge a5c72131df (upstream 6239ceffc8 + fork 7ae42fd181) builds with CI's flags. `^agc` has 571 tests, 0 failed, 41 skipped (all expected). The three expand tests passed 10 of 10 each. The full suite fails 6 of 1220, the same 6 that fail on plain 6239ceffc8.
