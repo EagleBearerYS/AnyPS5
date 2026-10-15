@@ -1028,6 +1028,7 @@ struct TableGuest {
     std::array<std::uint32_t, 20> srt{};
 };
 
+constexpr std::uint32_t TableFormat16UNorm = 7;
 constexpr std::uint32_t TableFormat8888UNorm = 56;
 constexpr std::uint32_t TableFormat32UInt = 20;
 constexpr std::uint32_t TableFormat16SInt = 12;
@@ -2720,6 +2721,14 @@ void verifySelectedRecordFallbacks() {
     require(writtenColumn.has_value() && !writtenColumn->selected && writtenColumn->keyDomains.empty(), "selected record fallbacks: a key loaded from a buffer the shader writes selected its record");
     const auto written = CompileTable(writtenRequest);
     require(written.capture->snapshot.tables.tables.at(0).keys == 4u, "selected record fallbacks: a key loaded from a buffer the shader writes did not keep the whole table");
+    require(!loadedPlan->descriptorSources.at(loadedPlan->info.images[0].source).tableColumn->keyDomains.empty(), "selected record fallbacks: a key loaded from a constant buffer has no key domain");
+    auto pointerWritten = loadedKey;
+    const auto end = std::find(pointerWritten.begin(), pointerWritten.end(), 0xbf810000u);
+    require(end != pointerWritten.end(), "selected record fallbacks: the program has no s_endpgm");
+    pointerWritten.insert(end, {0xdc708000u, 0x001c0100u});
+    const auto pointerPlan = GetResourcePlan(TableRequest(pointerWritten, userData));
+    const auto& pointerColumn = pointerPlan->descriptorSources.at(pointerPlan->info.images.at(0).source).tableColumn;
+    require(pointerPlan->info.bdaWrites && pointerColumn.has_value() && !pointerColumn->selected && pointerColumn->keyDomains.empty(), "selected record fallbacks: a key loaded from a constant buffer in a shader that stores through a pointer selected its record or kept its key domain");
 
     const auto lanePlan = GetResourcePlan(TableRequest(TableWholeCode, userData));
     require(!lanePlan->info.images.empty() && !lanePlan->descriptorSources.at(lanePlan->info.images[0].source).tableColumn->selected, "selected record fallbacks: a T# selected per lane left the table");
@@ -2759,6 +2768,114 @@ void verifySelectedRecordOffsetCarry() {
     guest.srt[16] = 8u;
     const auto wrapped = CompileTable(request);
     require(TableSelected(wrapped.capture->snapshot.tables, 0u, "selected record offset carry: the record past the wrap does not hold one readable selected record") == image && TableCovered(wrapped.regions, words + 0x50u / 4u, sizeof(image)), "selected record offset carry: the record past the wrap was not selected");
+}
+
+std::vector<std::uint32_t> WithImageOperation(std::vector<std::uint32_t> code, std::uint32_t word0, bool keepSample) {
+    const auto sample = std::find(code.begin(), code.end(), 0xf09c0f08u);
+    require(sample != code.end() && sample + 1 != code.end(), "image operation variant: the program has no image_sample_lz");
+    if (keepSample) {
+        code.insert(sample + 2, {word0, 0x00050000u});
+    } else {
+        sample[0] = word0;
+        sample[1] = 0x00050000u;
+    }
+    return code;
+}
+
+void verifySelectedRecordDirectOperations() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const std::array<std::tuple<const char*, std::uint32_t, std::uint32_t>, 4> operations{{{"image_store", 0xf0200f08u, TableFormat32UInt}, {"image_atomic_add", 0xf0440108u, TableFormat32UInt}, {"image_load_pck", 0xf0080f08u, TableFormat32UInt}, {"image_load_by2", 0xf1080308u, TableFormat16UNorm}}};
+    for (const auto& [name, word0, format] : operations) {
+        const auto what = std::string("selected record direct operations: ") + name;
+        heap[2] = TableT(textures[1].bytes.data(), format, TableType2D);
+        const auto code = WithImageOperation(TableSrtKeyCode, word0, false);
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.images.size() == 1u && plan->info.images[0].table == NoTable && !plan->descriptorSources.at(plan->info.images[0].source).tableColumn.has_value(), (what + " through a T# whose record the CPU evaluates was planned through an image table").c_str());
+        const auto compiled = CompileTable(request);
+        require(TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2])), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
+        const auto wholeCode = WithImageOperation(TableWholeCode, word0, false);
+        const auto whole = GetResourcePlan(TableRequest(wholeCode, userData));
+        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == TableOperation::Unsupported, (what + " through a T# keyed per lane left the image table or lost its unsupported mark").c_str());
+    }
+    const auto mixedCode = WithImageOperation(TableSrtKeyCode, 0xf0200f08u, true);
+    const auto mixed = GetResourcePlan(TableRequest(mixedCode, userData));
+    require(mixed->info.images.size() == 2u && std::ranges::all_of(mixed->info.images, [&](const ImageResource& image) { return image.table == NoTable && !mixed->descriptorSources.at(image.source).tableColumn.has_value(); }), "selected record direct operations: a T# sampled and stored was planned through an image table for one of its operations");
+    const auto sampled = GetResourcePlan(TableRequest(TableSrtKeyCode, userData));
+    require(sampled->info.images.size() == 1u && sampled->info.images[0].table == 0u && sampled->descriptorSources.at(sampled->info.images[0].source).tableColumn->selected, "selected record direct operations: a T# that is only sampled no longer selects its record");
+}
+
+void verifyEvaluableHeapSamplerDirect() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const auto heapSampler = [](std::vector<std::uint32_t> code) {
+        const auto direct = std::find(code.begin(), code.end(), 0xf4080200u);
+        require(direct != code.end() && direct[1] == 0xfa000010u, "evaluable heap sampler: the program has no S# load from the SRT");
+        code.erase(direct, direct + 2);
+        const auto shift = std::find(code.begin(), code.end(), 0x8f108510u);
+        require(shift != code.end(), "evaluable heap sampler: the program has no key shift");
+        code.insert(shift + 1, {0xf4280202u, 0x20000000u});
+        return code;
+    };
+    const auto evaluatedCode = heapSampler(TableSrtKeyCode);
+    const auto evaluated = GetResourcePlan(TableRequest(evaluatedCode, userData));
+    require(evaluated->info.samplers.size() == 1u && evaluated->info.samplers[0].table == NoTable && !evaluated->descriptorSources.at(evaluated->info.samplers[0].source).tableColumn.has_value(), "evaluable heap sampler: an S# read from a heap at an offset the SRT walker evaluates was planned through a sampler table");
+    const auto perLaneCode = heapSampler(TableWholeCode);
+    const auto perLane = GetResourcePlan(TableRequest(perLaneCode, userData));
+    require(perLane->info.samplers.size() == 1u && perLane->info.samplers[0].table != NoTable && perLane->descriptorSources.at(perLane->info.samplers[0].source).tableColumn.has_value(), "evaluable heap sampler: an S# read from a heap at an offset keyed per lane was not planned through a sampler table");
+}
+
+void verifySelectedRecordUniformIndex() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const auto twoWaves = [&](const std::vector<std::uint32_t>& code) {
+        auto request = TableRequest(code, userData);
+        request.context.compute->numThreads = {128u, 1u, 1u};
+        return CompileTable(request);
+    };
+    const auto nonUniform = [](const TableCompiled& compiled) {
+        const auto spirv = compiled.result->spirv.Words();
+        std::uint32_t count = 0;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            if ((spirv[cursor] & 0xffffu) == spv::OpDecorate && (spirv[cursor] >> 16u) == 3u && spirv[cursor + 2u] == spv::DecorationNonUniform) ++count;
+        }
+        return count;
+    };
+    const auto selected = twoWaves(TableSrtKeyCode);
+    require(TableBinding(*selected.result, DescriptorRole::ImageTable) != nullptr && nonUniform(selected) == 0u, "selected record uniform index: the image table index of a selected record in a two-wave workgroup is decorated NonUniform");
+    const auto whole = twoWaves(TableWholeCode);
+    require(nonUniform(whole) != 0u, "selected record uniform index: the image table index of a table keyed per lane in a two-wave workgroup is not decorated NonUniform");
 }
 
 void verifyDescriptorPhis() {
@@ -6088,6 +6205,9 @@ int main(int argc, char** argv) {
             verifyPointerTableOffsetCarry();
             verifySelectedRecordFallbacks();
             verifySelectedRecordOffsetCarry();
+            verifySelectedRecordDirectOperations();
+            verifyEvaluableHeapSamplerDirect();
+            verifySelectedRecordUniformIndex();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }

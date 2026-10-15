@@ -204,6 +204,14 @@ alignas(256) constexpr std::array<std::uint32_t, 17> StoreTableCutCode{
     0xbf810000u,
 };
 
+constexpr std::uint32_t SelectedStoreValue = 0xc0de5eedu;
+
+alignas(256) constexpr std::array<std::uint32_t, 18> SelectedStoreCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4000400u, 0xfa000060u, 0xf4200444u, 0x20000000u,
+    0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e0802ffu, SelectedStoreValue, 0xf0208f08u,
+    0x00090401u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 30> PointerCode{
     0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x8f108202u, 0xf4200444u,
     0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0x360200bfu, 0x7e020d01u,
@@ -1050,6 +1058,30 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     Require(UintTexels == saved, "image table store: an unsupported store reached the image");
 }
 
+void RunSelectedStoreTests(AgcDriver::VulkanDevice& device) {
+    alignas(256) static std::array<std::uint32_t, Width * Height> storeTexels{};
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registered(storeTexels.data(), sizeof(storeTexels));
+    for (std::uint32_t texel = 0; texel < storeTexels.size(); ++texel) storeTexels[texel] = 0x5000u + texel;
+    const auto saved = storeTexels;
+    SetClassRecords();
+    SetRecord(9, PointClamp, Image(storeTexels.data(), Format32UInt));
+    Keys = {};
+    Keys[3] = 9u;
+    Srt[24] = 12u;
+    const auto stored = Run(device, SelectedStoreCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(storeTexels.data()), sizeof(storeTexels), nullptr, "test");
+    device.WaitIdle();
+    Require(!Faulted(stored) && stored.imageTableCount == 0u, "image table selected store: an image_store through a T# whose record the CPU evaluates faulted or was bound through an image table:\n" + stored.log);
+    for (std::uint32_t texel = 0; texel < storeTexels.size(); ++texel) {
+        const auto expected = texel < Lanes ? SelectedStoreValue : saved[texel];
+        Require(storeTexels[texel] == expected, "image table selected store: texel " + std::to_string(texel) + " holds " + std::to_string(storeTexels[texel]) + " after an image_store through a T# whose record the CPU evaluates, expected " + std::to_string(expected));
+    }
+}
+
 void RunPointerTests(AgcDriver::VulkanDevice& device) {
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
     const auto uintImage = Image(UintTexels.data(), Format32UInt);
@@ -1379,6 +1411,7 @@ int main() {
         RunSelectedRecordTests(*device);
         RunModeTests(*device);
         RunStoreTests(*device);
+        RunSelectedStoreTests(*device);
         RunPointerTests(*device);
         RunPointerRecordTests(*device);
         RunSplitRecordTests(*device);

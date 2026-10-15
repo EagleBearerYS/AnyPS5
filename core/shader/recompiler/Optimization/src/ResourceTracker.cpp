@@ -1289,6 +1289,7 @@ private:
             return;
         }
         IndexMemoryUsers();
+        const auto directImages = DirectImageHandles();
         for (auto& block : m_program.Blocks()) {
             for (IrValue* inst : block->Instructions()) {
                 const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
@@ -1300,7 +1301,10 @@ private:
                     continue;
                 }
                 const auto memory = m_program.Resources().memoryInfo[flags.index];
-                static_cast<void>(PlanTableColumn(*inst->Argument(0)->Resolve(), false, memory.imageR128));
+                IrValue& image = *inst->Argument(0)->Resolve();
+                if (std::ranges::none_of(directImages, [&](const IrValue* handle) { return SameHandle(*handle, image); })) {
+                    static_cast<void>(PlanTableColumn(image, false, memory.imageR128));
+                }
                 if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
                     static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
                 }
@@ -1342,6 +1346,54 @@ private:
         MakeSource(handle, 4u, true, false, descriptor);
         std::uint32_t badDword = 0;
         return ValidateSource(descriptor, badDword);
+    }
+
+    bool DirectImage(const IrValue& handle) {
+        if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u) {
+            return false;
+        }
+        DescriptorSource descriptor;
+        MakeSource(handle, 8u, false, false, descriptor);
+        std::uint32_t badDword = 0;
+        return ValidateSource(descriptor, badDword);
+    }
+
+    std::vector<const IrValue*> DirectImageHandles() {
+        std::vector<const IrValue*> handles;
+        for (auto& block : m_program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
+                if (imageInfo.access == ImageAccess::None || inst->ArgumentCount() == 0u) {
+                    continue;
+                }
+                const auto flags = inst->Flags<MemoryFlags>();
+                if (flags.index >= m_program.Resources().memoryInfo.size()) {
+                    continue;
+                }
+                const auto& memory = m_program.Resources().memoryInfo[flags.index];
+                const bool tableUnsupported = imageInfo.resourceClass == ImageResourceClass::Storage || memory.imagePacked || memory.imageByElements != 0u;
+                const IrValue* handle = inst->Argument(0)->Resolve();
+                if (tableUnsupported && DirectImage(*handle)) {
+                    handles.push_back(handle);
+                }
+            }
+        }
+        return handles;
+    }
+
+    bool SameHandle(const IrValue& left, const IrValue& right) const {
+        if (&left == &right) {
+            return true;
+        }
+        if (left.Opcode() != right.Opcode() || left.ArgumentCount() != right.ArgumentCount()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < left.ArgumentCount(); index++) {
+            if (!EquivalentValue(m_program.Resources(), left.Argument(index), right.Argument(index))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     bool IsTablePlanningMemory(std::uint32_t index) const {
@@ -1403,6 +1455,7 @@ private:
         for (auto& source : m_sources) {
             if (source.tableColumn.has_value() && source.tableColumn->selected && SelectionWritten(*source.tableColumn)) {
                 source.tableColumn->selected = false;
+                source.tableColumn->keyDomains.clear();
             }
             if (!source.tableColumn.has_value() || source.tableColumn->keyDomains.empty()) {
                 continue;
