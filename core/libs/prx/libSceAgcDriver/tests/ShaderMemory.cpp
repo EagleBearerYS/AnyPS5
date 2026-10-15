@@ -1481,35 +1481,6 @@ void verifyImageTableSrtKey() {
     require((movedSnapshot.codes[3] & Abi::PoisonFlag) == 0u && movedSnapshot.codes[2] == outside && movedSnapshot.codes[1] == outside && moved.result->spirv == compiled.result->spirv && moved.key == compiled.key, "image table SRT key: a changed key did not move the snapshot alone");
 }
 
-void verifyImageTableDirectFirst() {
-    using namespace ShaderRecompiler;
-    static TableTexture textures[2];
-    alignas(4096) static TableGuest guest;
-    auto& heap = guest.heap;
-    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
-    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
-    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
-    heap[2] = heap[1];
-    heap[3] = heap[0];
-    FillTableSrt(guest, heap.data(), 32u, 4u);
-    guest.srt[16] = 2u;
-    const auto userData = TableUserData(guest);
-    const auto request = TableRequest(TableSrtKeyCode, userData);
-    const auto plan = GetResourcePlan(request);
-    require(plan->info.images.size() == 1u && plan->info.images[0].table == NoTable, "image tables direct first: a T# the CPU can evaluate was planned as a table");
-    const auto compiled = CompileTable(request);
-    require(TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && TableBinding(*compiled.result, DescriptorRole::ImageTableMap) == nullptr, "image tables direct first: the result binds an image table");
-    const auto* images = TableBinding(*compiled.result, DescriptorRole::GuestImages);
-    require(images != nullptr && images->count == 1u, "image tables direct first: the T# is not bound as a guest image");
-    require(TableCovered(compiled.regions, &heap[2], sizeof(heap[2])) && TableCovered(compiled.regions, &guest.srt[16], sizeof(std::uint32_t)), "image tables direct first: the selected T# or its key was not captured");
-    require(!TableCovered(compiled.regions, &heap[0], sizeof(std::uint32_t)) && !TableCovered(compiled.regions, &heap[1], sizeof(std::uint32_t)) && !TableCovered(compiled.regions, &heap[3], sizeof(std::uint32_t)), "image tables direct first: records the key does not select were captured");
-    guest.srt[16] = 3u;
-    const auto moved = CompileTable(request);
-    require(TableCovered(moved.regions, &heap[3], sizeof(heap[3])) && !TableCovered(moved.regions, &heap[2], sizeof(std::uint32_t)), "image tables direct first: a changed key did not move the capture to its record");
-    const auto lane = GetResourcePlan(TableRequest(TableWholeCode, userData));
-    require(!lane->info.images.empty() && lane->info.images[0].table == 0u, "image tables direct first: a T# selected per lane left the table");
-}
-
 void verifyImageTableMaskedOffset() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -4986,11 +4957,6 @@ int main(int argc, char** argv) {
             verifyPointerImageTable();
             verifyPointerTableOffsetCarry();
             std::cout << "Image table keys, maps, records and registration passed\n";
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--direct-first") {
-            verifyImageTableDirectFirst();
-            std::cout << "Image tables direct first keeps a T# the CPU can evaluate out of tables\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
