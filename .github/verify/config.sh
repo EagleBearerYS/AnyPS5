@@ -1,0 +1,3 @@
+BASE=6596a1d3a2e02484d969f9d4092b3b563a9caa61
+REPEAT=3
+EXTRA_TESTS='agc_driver_depth_expand_out_of_place|agc_driver_depth_expand_review|agc_driver_graphics|agc_driver_bda_device|agc_driver_bda_span_reads|agc_sparse_buffer_holes'
