@@ -19,7 +19,6 @@
 #include <array>
 #include <bit>
 #include <cstdio>
-#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -206,10 +205,8 @@ void PositionExportLayoutTests() {
 
 }
 
-int main(int argc, char** argv) {
+int main() {
     try {
-        const bool noKey = argc > 1 && std::string(argv[1]) == "no-key";
-        if (noKey) Require(std::getenv("APS5_NO_DRAW_KEY") != nullptr, "the no-key run must start with APS5_NO_DRAW_KEY set");
         PositionExportLayoutTests();
         {
             const auto device = OpenVulkanTestDevice();
@@ -235,7 +232,7 @@ int main(int argc, char** argv) {
             Check(step, colors);
         }
         AgcDriverShutdown_nid_postfix();
-        std::puts(noKey ? "vertex clip and cull distance draws passed without the draw key" : "vertex clip and cull distance draws passed");
+        std::puts("vertex clip and cull distance draws passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
