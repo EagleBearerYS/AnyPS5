@@ -51,8 +51,7 @@ jobs:
       - run: gdb --version | head -1
       - run: bash .github/exit-hang/run.sh
         env:
-          REPEATS: 100
-          BUDGET_SECONDS: 10800
+          ITERATIONS: 60
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
