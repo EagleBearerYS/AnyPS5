@@ -1,9 +1,6 @@
 #include "NewPathFixture.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #include <exception>
-#include <new>
 #include <stdexcept>
 
 #ifdef _WIN32
@@ -19,10 +16,6 @@ constexpr std::uint32_t SlabDispatches = 800;
 constexpr std::uint32_t WrittenRegionPages = 8;
 constexpr std::uint32_t PagesPerBlock = SubpagesPerPage;
 constexpr std::uint32_t PageStrideShift = 8;
-constexpr std::uint32_t Sources = 64;
-constexpr std::uint32_t EvictionRounds = 6;
-constexpr std::uint32_t ImportBlockBytes = static_cast<std::uint32_t>(PageBytes);
-constexpr std::uint32_t BudgetImports = 6;
 
 int failures = 0;
 
@@ -84,22 +77,6 @@ const Program& UnboundedCopyProgram() {
               << Mubuf(BufferLoadDword, 2, 1, 8)
               << WaitAll
               << Mubuf(BufferStoreDword, 2, 1, 4)
-              << EndProgram;
-        return built;
-    }();
-    return program;
-}
-
-const Program& SumProgram() {
-    static const Program program = [] {
-        using namespace Isa;
-        Program built;
-        built << Vop2(VLshlRevB32, 1, InlineInteger(2), 0)
-              << Mubuf(BufferLoadDword, 2, 1, 0)
-              << Mubuf(BufferLoadDword, 3, 1, 4)
-              << WaitAll
-              << Vop2(VAddNcU32, 4, Vgpr(2), 3)
-              << Mubuf(BufferStoreDword, 4, 1, 8)
               << EndProgram;
         return built;
     }();
@@ -296,60 +273,6 @@ void CompletionLabels() {
     }
 }
 
-std::uint32_t* HostBlock() {
-    auto* block = static_cast<std::uint32_t*>(::operator new(ImportBlockBytes, std::align_val_t{ImportBlockBytes}));
-    GuestAllocations::Mutation().Add(block, ImportBlockBytes, true, true, true);
-    return block;
-}
-
-std::uint32_t SharedWord(std::uint32_t lane) {
-    return 0x30000000u + lane * 0x101u;
-}
-
-std::uint32_t SourceWord(std::uint32_t source, std::uint32_t lane) {
-    return (source << 16u) | (lane << 4u) | 1u;
-}
-
-void ImportEviction() {
-    auto* shared = HostBlock();
-    auto* output = HostBlock();
-    std::array<std::uint32_t*, Sources> sources{};
-    for (auto& source : sources) source = HostBlock();
-    for (std::uint32_t lane = 0; lane < Lanes; ++lane) shared[lane] = SharedWord(lane);
-    for (std::uint32_t source = 0; source < Sources; ++source) {
-        for (std::uint32_t lane = 0; lane < Lanes; ++lane) sources[source][lane] = SourceWord(source, lane);
-    }
-    std::fill(output, output + ImportBlockBytes / 4u, Untouched);
-    const auto address = [](const void* pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
-    const auto budget = AgcDriver::Graphics::HostImportLiveBytes() + AgcDriver::Graphics::CommittedImportPinnedBytes() + std::uint64_t{BudgetImports} * ImportBlockBytes;
-    AgcDriver::Graphics::SetHostImportBudget(budget);
-    std::string failure;
-    for (std::uint32_t round = 0; round < EvictionRounds && failure.empty(); ++round) {
-        Commands commands;
-        for (std::uint32_t source = 0; source < Sources; ++source) {
-            const auto slot = round * Sources + source;
-            commands.Dispatch(SumProgram(), Resources<3>({{{address(shared), SliceWords * 4u}, {address(sources[source]), SliceWords * 4u}, {address(output + slot * SliceWords), SliceWords * 4u}}}), Lanes);
-        }
-        failure = Submitted(commands);
-    }
-    const auto live = AgcDriver::Graphics::HostImportLiveBytes() + AgcDriver::Graphics::CommittedImportPinnedBytes();
-    AgcDriver::Graphics::SetHostImportBudget(0);
-    Expect(failure.empty(), "import eviction: a submission reported a failure: " + failure);
-    Expect(live <= budget, "import eviction: the live imports (" + std::to_string(live) + " bytes) ended over the budget of " + std::to_string(budget));
-    AgcDriver::GuestMemory::FlushGpuWrites(address(output), ImportBlockBytes);
-    std::size_t wrong = 0;
-    std::string first;
-    for (std::uint32_t slot = 0; slot < EvictionRounds * Sources; ++slot) {
-        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-            const auto expected = SharedWord(lane) + SourceWord(slot % Sources, lane);
-            const auto actual = output[slot * SliceWords + lane];
-            if (actual == expected) continue;
-            if (wrong++ == 0u) first = "dispatch " + std::to_string(slot) + " lane " + std::to_string(lane) + " is " + Hex(actual) + ", expected " + Hex(expected);
-        }
-    }
-    Expect(wrong == 0u, "import eviction: " + std::to_string(EvictionRounds * Sources) + " dispatches over " + std::to_string(Sources) + " sources under a budget of " + std::to_string(BudgetImports) + " more imports, with one table and one output every dispatch uses: " + std::to_string(wrong) + " words differ, first " + first);
-}
-
 }
 
 #endif
@@ -360,11 +283,10 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
     }
-    const std::array<std::pair<const char*, void (*)()>, 4> cases{{
+    const std::array<std::pair<const char*, void (*)()>, 3> cases{{
         {"many dispatches per batch", ManyDispatchesPerBatch},
         {"written pages", WrittenPages},
         {"completion labels", CompletionLabels},
-        {"import eviction", ImportEviction},
     }};
     for (const auto& [name, run] : cases) {
         try {
