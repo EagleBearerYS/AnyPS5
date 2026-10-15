@@ -20,6 +20,7 @@ class PipelineCache;
 class TextureDetiler;
 class GpuColorTransfer;
 class BufferPool;
+class BdaArena;
 class TextureCache;
 class RenderCache;
 class DrawQueue;
@@ -235,6 +236,7 @@ struct Context {
         }
         return type;
     }
+    mutable std::shared_ptr<BdaArena> bdaArena;
 };
 
 inline void EndRenderPass(const Context& context, VkCommandBuffer commands) {

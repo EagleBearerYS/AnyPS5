@@ -365,6 +365,7 @@ struct VulkanDevice::State {
     std::map<std::uint64_t, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
     std::unique_ptr<Graphics::GpuColorTransfer> colorTransfer;
     std::shared_ptr<Graphics::BufferPool> bufferPool;
+    std::shared_ptr<Graphics::BdaArena> bdaArena;
     std::unique_ptr<Graphics::PlaceholderImages> placeholderImages;
     std::unique_ptr<Graphics::TextureCache> textureCache;
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
@@ -722,6 +723,8 @@ struct VulkanDevice::State {
             pipelineManifest.reset();
             context.bufferPool.reset();
             bufferPool.reset();
+            context.bdaArena.reset();
+            bdaArena.reset();
             const auto destroyFence = reinterpret_cast<PFN_vkDestroyFence>(deviceProc(device, "vkDestroyFence"));
             if (acquireFence) destroyFence(device, acquireFence, nullptr);
             const auto destroyQueryPool = reinterpret_cast<PFN_vkDestroyQueryPool>(deviceProc(device, "vkDestroyQueryPool"));
@@ -1708,6 +1711,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     Graphics::AttachCommittedImports(graphicsContext(), Graphics::PrepareImportWatch(graphicsContext()) == Graphics::ImportWatch::Watch);
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
+    state->bdaArena = std::make_shared<Graphics::BdaArena>();
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, state->pipelineCreationCacheControl);
     if (const auto directory = ShaderRecompiler::ShaderCacheDirectory(); !directory.empty()) {
         char name[96];
@@ -3268,6 +3272,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.samplerCache = state->samplerCache.get();
     context.descriptorHeap = state->descriptorHeap.get();
     context.deviceImages = state->deviceImages.get();
+    context.bdaArena = state->bdaArena;
     context.pipelineRecorder = state->pipelineReplay.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;

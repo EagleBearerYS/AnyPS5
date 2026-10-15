@@ -19,11 +19,44 @@
 
 namespace AgcDriver::Graphics {
 
+BdaArena::Slice BdaArena::Take(const Context& context, std::size_t bytes) {
+    Require(bytes != 0 && bytes <= SlabBytes, "a BDA table or fault record does not fit a slab");
+    if (!context.bdaArena) context.bdaArena = std::make_shared<BdaArena>();
+    const auto arena = context.bdaArena;
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16);
+    std::shared_ptr<Buffer> retired;
+    std::lock_guard lock(arena->mutex);
+    auto offset = (arena->used + alignment - 1u) / alignment * alignment;
+    if (arena->current == nullptr || offset + bytes > SlabBytes) {
+        retired = std::move(arena->current);
+        std::unique_ptr<Buffer> slab;
+        if (!arena->free.empty()) {
+            slab = std::move(arena->free.back());
+            arena->free.pop_back();
+        } else {
+            slab = std::make_unique<Buffer>(context, SlabBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        }
+        const std::weak_ptr<BdaArena> owner = arena;
+        arena->current = std::shared_ptr<Buffer>(slab.release(), [owner](Buffer* released) {
+            if (const auto live = owner.lock()) {
+                std::lock_guard returned(live->mutex);
+                live->free.emplace_back(released);
+                return;
+            }
+            delete released;
+        });
+        arena->used = 0;
+        offset = 0;
+    }
+    arena->used = offset + bytes;
+    return {arena->current, offset, bytes, arena->current->Bytes().data() + offset};
+}
+
 BdaResources::BdaResources(const Context& context) : deviceImages(context.deviceImages) {
     static_assert(std::endian::native == std::endian::little);
     Require(ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
-    fault = std::make_unique<Buffer>(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    std::memset(fault->Bytes().data(), 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+    fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes);
+    std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
 }
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) : BdaResources(context) {
@@ -37,27 +70,27 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     ownRanges = memory.OwnRanges();
     writeGrants = memory.WriteGrants();
     Require(ownRanges.size() <= std::numeric_limits<std::uint32_t>::max() && writeGrants.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
-    tableBytes = sizeof(Abi::Header) + ownRanges.size() * sizeof(Abi::Range) + writeGrants.size() * sizeof(Abi::Grant);
+    const auto tableBytes = sizeof(Abi::Header) + ownRanges.size() * sizeof(Abi::Range) + writeGrants.size() * sizeof(Abi::Grant);
     Require(tableBytes <= context.limits.maxStorageBufferRange, "BDA descriptors exceed storage buffer range limit");
     for (const auto& range : ownRanges) Require((range.permissions & Abi::Write) == 0 || range.end <= Abi::WrittenAddressLimit, "a writable BDA range ends past the addresses the written-page record can hold");
     for (const auto& grant : writeGrants) Require(grant.end <= Abi::WrittenAddressLimit, "a BDA write grant ends past the addresses the written-page record can hold");
     ValidateBdaRangeList(ownRanges);
     ValidateBdaGrants(writeGrants);
-    table = std::make_unique<Buffer>(context, tableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    table = BdaArena::Take(context, tableBytes);
     const Abi::Header header{Abi::TableVersion, static_cast<std::uint32_t>(ownRanges.size()), static_cast<std::uint32_t>(writeGrants.size()), 0, pages != nullptr ? pages->Address() : 0u, 0};
-    auto* bytes = table->Bytes().data();
+    auto* bytes = table.data;
     std::memcpy(bytes, &header, sizeof(header));
     if (!ownRanges.empty()) std::memcpy(bytes + sizeof(header), ownRanges.data(), ownRanges.size() * sizeof(Abi::Range));
     if (!writeGrants.empty()) std::memcpy(bytes + sizeof(header) + ownRanges.size() * sizeof(Abi::Range), writeGrants.data(), writeGrants.size() * sizeof(Abi::Grant));
 }
 
 VkDescriptorBufferInfo BdaResources::Table() const {
-    Require(table != nullptr, "BDA page table was not requested");
-    return {table->Handle(), 0, tableBytes};
+    Require(table.slab != nullptr, "BDA page table was not requested");
+    return {table.slab->Handle(), table.offset, table.bytes};
 }
 
 VkDescriptorBufferInfo BdaResources::Fault() const {
-    return {fault->Handle(), 0, ShaderRecompiler::BdaAbi::FaultBufferBytes};
+    return {fault.slab->Handle(), fault.offset, ShaderRecompiler::BdaAbi::FaultBufferBytes};
 }
 
 namespace {
@@ -71,7 +104,7 @@ bool LoopGuardTripped() {
 void BdaResources::CheckFault() const {
     markWrittenPages();
     ShaderRecompiler::BdaAbi::Fault report{};
-    std::memcpy(&report, fault->Bytes().data(), sizeof(report));
+    std::memcpy(&report, fault.data, sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
         Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.reserved == 0, "BDA fault record has data without publication");
         return;
@@ -82,7 +115,7 @@ void BdaResources::CheckFault() const {
         // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
         loopGuardTripped.store(true, std::memory_order_relaxed);
         std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
-        std::memset(fault->Bytes().data(), 0, fault->Bytes().size());
+        std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::FaultBufferBytes);
         return;
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
@@ -123,7 +156,7 @@ void BdaResources::CheckFault() const {
         throw std::runtime_error(message.str());
     }
     message << "BDA access failed: address=0x" << std::hex << report.address << " instruction=0x" << report.instruction << std::dec << " bytes=" << report.bytes << " stage=" << report.stage << " reason=" << static_cast<std::uint32_t>(report.reason);
-    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Permission && table != nullptr) {
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Permission && table.slab != nullptr) {
         auto range = pages != nullptr ? pages->Find(report.address) : std::nullopt;
         if (!range.has_value()) {
             const auto found = std::upper_bound(ownRanges.begin(), ownRanges.end(), report.address, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& candidate) { return value < candidate.begin; });
@@ -153,7 +186,7 @@ void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vec
 
 void BdaResources::markWrittenPages() const {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    auto* words = reinterpret_cast<std::uint32_t*>(fault->Bytes().data());
+    auto* words = reinterpret_cast<std::uint32_t*>(fault.data);
     Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
