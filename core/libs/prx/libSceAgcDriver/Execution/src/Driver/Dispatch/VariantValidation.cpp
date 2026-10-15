@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -76,6 +77,11 @@ bool Driver::syncPendingRuns(std::uint64_t program, std::uint32_t queue, const S
     return true;
 }
 
+bool Driver::vouchedValidation() {
+    static const bool enabled = std::getenv("APS5_NO_VOUCHED_VALIDATION") == nullptr;
+    return enabled;
+}
+
 EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live) {
     if (live != nullptr) live->clear();
     const bool masked = live != nullptr && !variant.dataPositions.empty();
@@ -110,9 +116,13 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
         }
     }
 
+    thread_local std::vector<std::uint8_t>* vouchedSlot = nullptr;
+    auto& vouched = ShaderRecompiler::ThreadOwned(vouchedSlot);
+    vouched.clear();
+    if (!variant.shared.empty() && vouchedValidation()) VouchSharedRegions(regions, variant.shared, &queryPendingWrite, vouched);
     pending.Load();
     bool unmapped = false;
-    if (!validateCaptured(program, queue, regions, *variant.compiled, true, pending, &unmapped, &sampling, masked ? &mask : nullptr)) return unmapped ? EntryOutcome::Inaccessible : EntryOutcome::Differing;
+    if (!validateCaptured(program, queue, regions, *variant.compiled, true, pending, &unmapped, &sampling, masked ? &mask : nullptr, vouched)) return unmapped ? EntryOutcome::Inaccessible : EntryOutcome::Differing;
     if (Graphics::Recorder::PublishGeneration() != publish) return EntryOutcome::PublishMoved;
     if (Graphics::StorageTexture::PendingSerial() != pendingSerial) return EntryOutcome::PendingMoved;
     if (GuestMemory::ForgetSerial() != forget) return EntryOutcome::ForgetMoved;

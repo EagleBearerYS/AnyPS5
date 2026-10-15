@@ -1715,6 +1715,11 @@ void verifyTableVouch() {
     struct Captured {
         ImageTableReuseCounts reuse;
         std::uint64_t calls = 0;
+        std::vector<std::uint64_t> addresses;
+        std::vector<std::size_t> counts;
+        std::vector<std::uint32_t> words;
+        std::vector<AgcDriver::SharedWords> shared;
+        std::vector<std::shared_ptr<const SrtGuestWords>> blocks;
     };
     const auto capture = [](const RecompileRequest& request, AgcDriver::ShaderMemory::PendingWriteQuery pending) {
         Captured captured;
@@ -1723,9 +1728,27 @@ void verifyTableVouch() {
         AgcDriver::ShaderMemory memory({}, pending);
         static_cast<void>(memory.Capture(request));
         captured.calls = AgcDriver::ShaderMemory::Vouches().calls - calls;
+        captured.blocks = memory.SuppliedBlocks();
+        for (const auto& region : memory.TakeRecentRegions()) {
+            const auto offset = captured.words.size();
+            captured.addresses.push_back(region.guestAddress);
+            captured.counts.push_back(region.bytes.size() / sizeof(std::uint32_t));
+            captured.words.resize(offset + region.bytes.size() / sizeof(std::uint32_t));
+            std::memcpy(captured.words.data() + offset, region.bytes.data(), region.bytes.size());
+            AgcDriver::AppendSharedWords(captured.shared, offset, region.bytes, captured.blocks);
+        }
         const auto after = ResourceMaterializer::TableReuse();
         captured.reuse = {after.unwritten - before.unwritten, after.compared - before.compared, after.wordsRead - before.wordsRead, after.shared - before.shared, after.columns - before.columns};
         return captured;
+    };
+    const auto vouch = [](const Captured& captured, AgcDriver::ShaderMemory::PendingWriteQuery pending, std::vector<std::uint8_t>& vouched) {
+        std::vector<MemoryRegion> regions;
+        std::size_t offset = 0;
+        for (std::size_t index = 0; index < captured.addresses.size(); index++) {
+            regions.push_back({captured.addresses[index], std::as_bytes(std::span(captured.words).subspan(offset, captured.counts[index]))});
+            offset += captured.counts[index];
+        }
+        return AgcDriver::VouchSharedRegions(regions, captured.shared, pending, vouched);
     };
 
     auto* heap = AllocateWatchedTable(Bytes);
@@ -1739,29 +1762,106 @@ void verifyTableVouch() {
     std::replace(wideCode.begin(), wideCode.end(), 0x8f108510u, 0x9310b010u);
     const auto request = TableRequest(wideCode, userData);
     const auto tableWords = static_cast<std::size_t>(Records) * 8u;
+    const auto onlyTable = [&](const Captured& captured, const std::vector<std::uint8_t>& vouched) {
+        if (vouched.size() != captured.addresses.size()) return false;
+        for (std::size_t index = 0; index < vouched.size(); index++) {
+            if ((captured.addresses[index] >= address && captured.addresses[index] < address + Bytes) != (vouched[index] != 0u)) return false;
+        }
+        return true;
+    };
 
     const auto fresh = capture(request, nullptr);
     require(fresh.reuse.columns == 1u && fresh.reuse.wordsRead == tableWords, "table vouch: the first snapshot did not read the strided table once");
     const auto unchanged = capture(request, nullptr);
-    if (!watched) {
+    if (watched) {
+        require(unchanged.reuse.unwritten == 1u && unchanged.reuse.wordsRead == 0u, "table vouch: an unwritten strided table was read again");
+        require(unchanged.calls == 1u, ("table vouch: an unwritten table of " + std::to_string(Records) + " strided records was vouched for in " + std::to_string(unchanged.calls) + " calls instead of one").c_str());
+    } else {
         require(unchanged.reuse.compared == 1u && unchanged.calls == 0u, "table vouch: an unchanged unwatched strided table was not compared");
+    }
+
+    std::vector<std::uint8_t> vouched;
+    const auto vouchesBefore = AgcDriver::ShaderMemory::Vouches();
+    const auto unchangedWords = vouch(unchanged, nullptr, vouched);
+    const auto vouchesAfter = AgcDriver::ShaderMemory::Vouches();
+    if (watched) {
+        require(unchangedWords == tableWords && onlyTable(unchanged, vouched), "table vouch: the regions of an unchanged shared table were not vouched for, or other regions were");
+        require(vouchesAfter.calls - vouchesBefore.calls == 1u && vouchesAfter.blocks - vouchesBefore.blocks == 1u && vouchesAfter.refused == vouchesBefore.refused && vouchesAfter.words - vouchesBefore.words == tableWords, "table vouch: one shared block was not vouched for once");
+    } else {
+        require(unchangedWords == 0u && unchanged.shared.empty() && std::none_of(vouched.begin(), vouched.end(), [](std::uint8_t flag) { return flag != 0u; }), "table vouch: an unwatched table's regions were vouched for");
+    }
+    if (!watched) {
         std::cout << "table vouch without write watching passed\n";
         return;
     }
-    require(unchanged.reuse.unwritten == 1u && unchanged.reuse.wordsRead == 0u, "table vouch: an unwritten strided table was read again");
-    require(unchanged.calls == 1u, ("table vouch: an unwritten table of " + std::to_string(Records) + " strided records was vouched for in " + std::to_string(unchanged.calls) + " calls instead of one").c_str());
+    const auto refused = [&](const std::string& what, AgcDriver::ShaderMemory::PendingWriteQuery pending) {
+        const auto before = AgcDriver::ShaderMemory::Vouches();
+        const auto words = vouch(unchanged, pending, vouched);
+        const auto after = AgcDriver::ShaderMemory::Vouches();
+        require(words == 0u && std::none_of(vouched.begin(), vouched.end(), [](std::uint8_t flag) { return flag != 0u; }) && after.refused - before.refused == 1u, ("table vouch: " + what + ": the shared table was still vouched for").c_str());
+    };
 
-    heap[300u * RecordWords + 9u] ^= 0x10u;
-    const auto between = capture(request, nullptr);
-    require(between.reuse.unwritten == 0u && between.reuse.compared == 1u && between.reuse.columns == 0u, "table vouch: a CPU store between two records did not make the table compared and kept");
-    const auto afterBetween = capture(request, nullptr);
-    require(afterBetween.reuse.unwritten == 1u && afterBetween.calls == 1u, "table vouch: the table compared after a store between two records was not reused unwritten");
+    pendingTableKnown = false;
+    pendingTableWord = address + 100u * Stride;
+    refused("a pending GPU write into a record", &PendingTableWrite);
+    pendingTableWord = address + 100u * Stride + 40u;
+    refused("a pending GPU write between two records", &PendingTableWrite);
+    pendingTableWord = address + Bytes + 4096u;
+    require(vouch(unchanged, &PendingTableWrite, vouched) == tableWords, "table vouch: a pending GPU write outside the table refused it");
+    pendingTableWord = 0;
 
-    const auto words = texture(3000u);
-    std::memcpy(heap + 7u * RecordWords, words.data(), sizeof(words));
-    const auto stored = capture(request, nullptr);
-    require(stored.reuse.unwritten == 0u && stored.reuse.compared == 0u && stored.reuse.columns == 1u, "table vouch: a CPU store into a record did not make the table read again");
-    require(capture(request, nullptr).reuse.unwritten == 1u, "table vouch: the table read again after a CPU store was not reused unwritten");
+    constexpr std::size_t UnrelatedBytes = 65536;
+    void* unrelated = ::operator new(UnrelatedBytes, std::align_val_t{UnrelatedBytes});
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(unrelated, UnrelatedBytes, true, true, false);
+    }
+    refused("a changed guest mapping", nullptr);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(unrelated);
+    }
+    ::operator delete(unrelated, std::align_val_t{UnrelatedBytes});
+
+    const auto rewrite = [&](const std::string& what, const std::function<void()>& store, bool gap) {
+        auto held = capture(request, nullptr);
+        if (held.reuse.unwritten == 0u) held = capture(request, nullptr);
+        std::vector<std::uint8_t> heldVouched;
+        require(held.reuse.unwritten == 1u && vouch(held, nullptr, heldVouched) == tableWords, ("table vouch: " + what + ": the table was not vouched for before the store").c_str());
+        store();
+        const auto before = AgcDriver::ShaderMemory::Vouches();
+        require(vouch(held, nullptr, heldVouched) == 0u && AgcDriver::ShaderMemory::Vouches().refused - before.refused == 1u, ("table vouch: " + what + ": the table captured before the store was still vouched for").c_str());
+        const auto after = capture(request, nullptr);
+        if (gap) {
+            require(after.reuse.unwritten == 0u && after.reuse.compared == 1u && after.reuse.columns == 0u, ("table vouch: " + what + ": the table was not compared and kept").c_str());
+            require(vouch(held, nullptr, heldVouched) == tableWords, ("table vouch: " + what + ": a capture sharing the compared table was not vouched for again").c_str());
+            require(capture(request, nullptr).reuse.unwritten == 1u, ("table vouch: " + what + ": the compared table was not reused unwritten after").c_str());
+        } else {
+            require(after.reuse.unwritten == 0u && after.reuse.compared == 0u && after.reuse.columns == 1u, ("table vouch: " + what + ": the table was not read again").c_str());
+            require(vouch(held, nullptr, heldVouched) == 0u, ("table vouch: " + what + ": the replaced table was vouched for after it was read again").c_str());
+        }
+    };
+    std::uint32_t replacement = 3000u;
+    const auto record = [&](std::uint32_t index) { return address + static_cast<std::uint64_t>(index) * Stride; };
+    rewrite("a CPU store into a record", [&] { const auto words = texture(replacement++); std::memcpy(heap + 7u * RecordWords, words.data(), sizeof(words)); }, false);
+    rewrite("a driver store (CP write, DMA copy or fill)", [&] { const auto words = texture(replacement++); AgcDriver::GuestMemory::Write(record(1234u), std::as_bytes(std::span(words)), 4); }, false);
+    rewrite("a GPU result stored by the driver", [&] { const auto words = texture(replacement++); AgcDriver::GuestMemory::StoreOwnBytes(record(2048u), std::as_bytes(std::span(words))); }, false);
+    rewrite("a CPU store between two records", [&] { heap[300u * RecordWords + 9u] ^= 0x10u; }, true);
+    rewrite("a GPU write into an import (MarkWritten)", [&] { AgcDriver::GuestMemory::MarkWritten(record(3000u) + 32u, 16u); }, true);
+
+    {
+        auto held = capture(request, nullptr);
+        std::vector<std::uint8_t> heldVouched;
+        require(held.reuse.unwritten == 1u && !held.blocks.empty() && vouch(held, nullptr, heldVouched) == tableWords, "table vouch: the held table was not vouched for");
+        held.blocks.clear();
+        heap[11u * RecordWords + 2u] ^= 0x10u;
+        const auto replaced = capture(request, nullptr);
+        heap[11u * RecordWords + 2u] ^= 0x10u;
+        const auto before = AgcDriver::ShaderMemory::Vouches();
+        require(replaced.reuse.columns == 1u && held.shared.size() == 1u && held.shared[0].block.expired() && vouch(held, nullptr, heldVouched) == 0u && AgcDriver::ShaderMemory::Vouches().calls == before.calls, "table vouch: a released table block was vouched for");
+        static_cast<void>(capture(request, nullptr));
+    }
+
     std::cout << "table vouch with write watching passed\n";
 }
 

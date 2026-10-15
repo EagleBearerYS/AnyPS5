@@ -5,6 +5,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "ThreadOwned.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -56,6 +57,9 @@ struct CaptureProfile {
     std::atomic<std::uint64_t> suppliedCopied{0};
     std::atomic<std::uint64_t> suppliedSpilled{0};
     std::atomic<std::uint64_t> vouchCalls{0};
+    std::atomic<std::uint64_t> vouchedBlocks{0};
+    std::atomic<std::uint64_t> refusedBlocks{0};
+    std::atomic<std::uint64_t> vouchedWords{0};
 };
 
 constexpr std::uint64_t WordWaitNanoseconds = 50000;
@@ -439,7 +443,8 @@ void ShaderMemory::CountHandleMemo(bool hit) {
 }
 
 ShaderMemory::VouchCounts ShaderMemory::Vouches() {
-    return {CaptureTotals().vouchCalls.load(std::memory_order_relaxed)};
+    auto& totals = CaptureTotals();
+    return {totals.vouchCalls.load(std::memory_order_relaxed), totals.vouchedBlocks.load(std::memory_order_relaxed), totals.refusedBlocks.load(std::memory_order_relaxed), totals.vouchedWords.load(std::memory_order_relaxed)};
 }
 
 ShaderMemory::SupplyCounts ShaderMemory::Supplies() {
@@ -625,6 +630,40 @@ bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const Shar
     same = same && equal(at, left.size());
     if (compared != nullptr) *compared = checked;
     return same;
+}
+
+std::size_t VouchSharedRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<const SharedWords> shared, ShaderMemory::PendingWriteQuery pending, std::vector<std::uint8_t>& vouched) {
+    vouched.assign(regions.size(), 0u);
+    if (shared.empty() || regions.empty()) return 0;
+    thread_local std::vector<std::pair<const ShaderRecompiler::SrtGuestWords*, bool>>* blocksSlot = nullptr;
+    auto& blocks = ShaderRecompiler::ThreadOwned(blocksSlot);
+    blocks.clear();
+    auto& totals = CaptureTotals();
+    std::size_t words = 0;
+    std::size_t region = 0;
+    std::size_t position = 0;
+    for (const auto& entry : shared) {
+        const auto block = entry.block.lock();
+        if (block == nullptr) continue;
+        auto known = std::find_if(blocks.begin(), blocks.end(), [&](const auto& seen) { return seen.first == block.get(); });
+        if (known == blocks.end()) {
+            const bool good = block->low < block->high && ShaderMemory::Vouched(pending, block->low, block->high - block->low, ShaderRecompiler::LoadStamp(*block));
+            (good ? totals.vouchedBlocks : totals.refusedBlocks).fetch_add(1, std::memory_order_relaxed);
+            known = blocks.insert(blocks.end(), {block.get(), good});
+        }
+        if (!known->second) continue;
+        while (region < regions.size() && position < entry.first) position += regions[region++].bytes.size() / sizeof(std::uint32_t);
+        while (region < regions.size()) {
+            const auto count = regions[region].bytes.size() / sizeof(std::uint32_t);
+            if (position + count > entry.first + entry.count) break;
+            vouched[region++] = 1u;
+            position += count;
+            words += count;
+        }
+    }
+    blocks.clear();
+    totals.vouchedWords.fetch_add(words, std::memory_order_relaxed);
+    return words;
 }
 
 DataWordPositionCounts DataWordPositions(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint32_t, std::uint64_t>> leaves, std::span<const std::uint64_t> otherReads, std::span<const std::uint32_t> words, std::span<const std::uint32_t> flattenedSrt, std::vector<std::uint32_t>& positions, std::vector<std::uint32_t>& slots) {

@@ -264,6 +264,7 @@ function(add_shader_recompiler target runtimeTarget)
             LinkUserDataCalls
             FindTableCalls
             LinkCalls
+            LoadStamp
             WriteFileAtomically
     )
     set(shaderCacheManifest)

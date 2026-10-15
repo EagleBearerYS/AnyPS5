@@ -451,7 +451,6 @@ struct ColumnKey {
 
 struct ColumnMemo {
     ColumnKey key;
-    SrtWriteStamp stamp;
     std::shared_ptr<const SrtGuestWords> read;
     ColumnContents contents;
     std::uint64_t low = 0;
@@ -916,8 +915,9 @@ private:
     }
 
     bool Unwritten(const ColumnMemo& memo) const {
-        if (memo.stamp.generation == 0u || runtime.unchangedSince == nullptr || runtime.supplyWords == nullptr || memo.read->low >= memo.read->high) return false;
-        if (!runtime.unchangedSince(runtime.userContext, memo.read->low, memo.read->high - memo.read->low, memo.stamp)) return false;
+        if (runtime.unchangedSince == nullptr || runtime.supplyWords == nullptr || memo.read->low >= memo.read->high) return false;
+        const auto vouched = LoadStamp(*memo.read);
+        if (vouched.generation == 0u || !runtime.unchangedSince(runtime.userContext, memo.read->low, memo.read->high - memo.read->low, vouched)) return false;
         return runtime.supplyWords(runtime.userContext, memo.read);
     }
 
@@ -937,7 +937,7 @@ private:
             comparedWords = std::move(read);
             return false;
         }
-        if (stamp.generation != 0u) memo.stamp = stamp;
+        StoreStamp(*memo.read, stamp);
         return true;
     }
 
@@ -975,14 +975,14 @@ private:
         if (found == memos.end()) found = memos.emplace(memos.end());
         auto& memo = *found;
         memo.key = key;
-        memo.stamp = stamp;
         std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
         std::uint64_t past = 0;
         for (const auto& [address, count] : runs) {
             first = std::min(first, address);
             past = std::max(past, address + static_cast<std::uint64_t>(count) * sizeof(std::uint32_t));
         }
-        memo.read = std::make_shared<const SrtGuestWords>(SrtGuestWords{std::move(runs), std::move(words), first < past ? first : 0u, first < past ? past : 0u});
+        memo.read = std::make_shared<const SrtGuestWords>(SrtGuestWords{std::move(runs), std::move(words), std::make_shared<SrtStampCell>(), first < past ? first : 0u, first < past ? past : 0u});
+        StoreStamp(*memo.read, stamp);
         memo.contents = records.contents;
         memo.low = low;
         memo.high = high;

@@ -57,7 +57,7 @@ bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captu
     return stable;
 }
 
-bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped, std::optional<SampledReadScope>* sampling, const DataMask* data) {
+bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped, std::optional<SampledReadScope>* sampling, const DataMask* data, std::span<const std::uint8_t> vouched) {
     using Policy = ShaderMemory::PendingWrite;
 
     thread_local std::vector<std::size_t>* pendingSlot = nullptr;
@@ -111,6 +111,10 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
             const auto& region = captured[i];
             const bool isPending = next < pending.size() && pending[next] == i;
             if (isPending) ++next;
+            if (!isPending && i < vouched.size() && vouched[i] != 0u) {
+                first += region.bytes.size() / sizeof(std::uint32_t);
+                continue;
+            }
             const bool unsynced = isPending ? rawPending : inPlace;
             const bool known = isPending && knownOffsets[next - 1] != NoKnownValue;
             bool same = false;
