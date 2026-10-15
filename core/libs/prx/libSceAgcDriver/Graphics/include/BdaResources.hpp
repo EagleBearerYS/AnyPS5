@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "Recompiler.hpp"
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -64,6 +65,7 @@ private:
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;
+    std::vector<std::vector<std::byte>> imageTableBytes;
 };
 
 }

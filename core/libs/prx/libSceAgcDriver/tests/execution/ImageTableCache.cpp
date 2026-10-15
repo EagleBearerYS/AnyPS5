@@ -103,8 +103,8 @@ struct Captured {
 
 Captured Capture(std::byte* table) {
     using namespace ShaderRecompiler;
-    static const std::array<std::uint32_t, 3> capabilities{29u, 5302u, 1u};
-    static const std::array<std::string_view, 1> extensions{"SPV_EXT_descriptor_indexing"};
+    static const std::array<std::uint32_t, 6> capabilities{29u, 5302u, 1u, 11u, 5347u, 4448u};
+    static const std::array<std::string_view, 3> extensions{"SPV_EXT_descriptor_indexing", "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     const auto srtAddress = Address(Srt.data());
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     RecompileRequest request{};
