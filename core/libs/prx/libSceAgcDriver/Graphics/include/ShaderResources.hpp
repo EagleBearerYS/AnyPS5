@@ -201,7 +201,7 @@ public:
     };
     WritableSet Writable() const { return {guestMemory.WriteGrants(), pageTableStores}; }
     bool UsesDeviceImages() const { return deviceImages; }
-    std::uint32_t TableMapSamplerClass(std::uint32_t sampler) const;
+    void ExpectDeviceImages(DeviceImageTable& table, const ShaderRecompiler::RecompileResult& program) const;
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     // Whether a region the recorded work reads in place through a host import overlaps the range.
     bool ReadsOverlap(std::uint64_t address, std::size_t bytes) const;

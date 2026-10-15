@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
@@ -3839,16 +3840,25 @@ std::uint32_t DeviceTableSamplerClass(const Sampler* sampler, std::span<const st
     return bits;
 }
 
-std::uint32_t ShaderResources::TableMapSamplerClass(std::uint32_t sampler) const {
+void ShaderResources::ExpectDeviceImages(DeviceImageTable& table, const ShaderRecompiler::RecompileResult& program) const {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
-    for (const auto& table : tableStages) {
-        const auto& map = table.map;
-        if (map.size() <= Abi::HeaderSamplerClasses || map[Abi::HeaderSamplerClasses] == 0u) continue;
-        const auto at = static_cast<std::size_t>(map[Abi::HeaderSamplerClasses]) + sampler;
-        Require(at < map.size(), "a device image expectation names sampler " + std::to_string(sampler) + ", which the image table map has no class for");
-        return map[at];
+    namespace Keys = ShaderRecompiler::DeviceImageTableAbi;
+    const auto& expected = program.deviceImages;
+    if (std::ranges::none_of(expected, [](const Keys::Expectation& image) { return image.mapSampler != Keys::NoMapSampler; })) {
+        table.Expect(expected);
+        return;
     }
-    throw std::runtime_error("a device image expectation names a sampler class, but no stage of the dispatch has an image table map with sampler classes");
+    const auto stage = std::ranges::find_if(tableStages, [&](const TableStage& candidate) { return candidate.program == &program; });
+    Require(stage != tableStages.end() && stage->map.size() > Abi::HeaderSamplerClasses && stage->map[Abi::HeaderSamplerClasses] != 0u, "a device image expectation names a sampler class, but its stage has no image table map with sampler classes");
+    const auto& map = stage->map;
+    auto keys = expected;
+    for (auto& image : keys) {
+        if (image.mapSampler == Keys::NoMapSampler) continue;
+        const auto at = static_cast<std::size_t>(map[Abi::HeaderSamplerClasses]) + image.mapSampler;
+        Require(at < map.size(), "a device image expectation names sampler " + std::to_string(image.mapSampler) + ", which the image table map has no class for");
+        image.key[Keys::SamplerClassWord] = map[at];
+    }
+    table.Expect(keys);
 }
 
 void ShaderResources::finishImageTables() {

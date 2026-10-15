@@ -1264,7 +1264,7 @@ private:
     }
 
     bool DeviceTables() const {
-        return m_deviceImageTables && m_program.Resources().stage == IrShaderStage::Compute;
+        return m_deviceImageTables;
     }
 
     bool DeviceAccess(const IrValue& inst) {

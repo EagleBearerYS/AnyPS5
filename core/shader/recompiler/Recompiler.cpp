@@ -1384,7 +1384,7 @@ namespace {
 void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     const auto& plan = *capture.plan;
     SrtRuntime now = runtime;
-    if (runtime.readNow != nullptr) now.readMemory = runtime.readNow;
+    if (runtime.readNow != nullptr && plan.srtReads.empty()) now.readMemory = runtime.readNow;
     now.readTrace = nullptr;
     auto images = ResourceMaterializer::ExpectedDeviceImages(plan, now);
     if (std::none_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; })) {
