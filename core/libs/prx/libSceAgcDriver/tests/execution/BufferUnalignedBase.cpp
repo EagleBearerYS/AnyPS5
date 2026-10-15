@@ -83,6 +83,13 @@ std::uint32_t ViewDword(const std::uint8_t* view, std::uint32_t dword) {
     return value;
 }
 
+std::uint32_t ViewBytesAt(const std::uint8_t* view, std::uint32_t byte) {
+    if (byte + 4u > ViewBytes) return 0;
+    std::uint32_t value = 0;
+    std::memcpy(&value, view + byte, sizeof(value));
+    return value;
+}
+
 std::uint32_t ViewField(const std::uint8_t* view, std::uint32_t byte, std::uint32_t mask) {
     return (ViewDword(view, byte / 4u) >> ((byte % 4u) * 8u)) & mask;
 }
@@ -165,7 +172,7 @@ void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         for (std::uint32_t half = 0; half < 2u; ++half) {
             const auto actual = Output[lane * 2u + half];
-            const auto expected = ViewDword(view, lane / 4u + half);
+            const auto expected = ViewBytesAt(view, lane + half * 4u);
             Require(actual == expected, run + ": lane " + std::to_string(lane) + " dword " + std::to_string(half) + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
     }
