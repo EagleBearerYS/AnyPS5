@@ -1232,7 +1232,7 @@ private:
                     continue;
                 }
                 const auto memory = m_program.Resources().memoryInfo[flags.index];
-                static_cast<void>(PlanTableColumn(*inst->Argument(0)->Resolve(), false, memory.imageR128));
+                if (!m_program.Metadata().srtAtRunTime) static_cast<void>(PlanTableColumn(*inst->Argument(0)->Resolve(), false, memory.imageR128));
                 if (imageInfo.needsSampler && inst->ArgumentCount() > 1u) sampled.push_back(inst);
             }
         }
@@ -1242,7 +1242,7 @@ private:
         }
         for (const IrValue* inst : sampled) {
             IrValue& sampler = *inst->Argument(1)->Resolve();
-            if (!DirectSampler(sampler) && std::ranges::find(runtimeSamplers, &sampler) == runtimeSamplers.end()) static_cast<void>(PlanTableColumn(sampler, true, false));
+            if (!m_program.Metadata().srtAtRunTime && !DirectSampler(sampler) && std::ranges::find(runtimeSamplers, &sampler) == runtimeSamplers.end()) static_cast<void>(PlanTableColumn(sampler, true, false));
         }
         PlanDeviceColumns();
         for (const auto& plan : m_tableColumns) {

@@ -14,6 +14,7 @@ void PlanBuilder::Run() {
     _program.Resources().srtReads.clear();
     _program.Metadata().dynamicReads.clear();
     const bool runtime = ReadsAtRunTime();
+    _program.Metadata().srtAtRunTime = runtime;
     for (auto& block : _program.Blocks()) {
         for (IrValue* inst : block->Instructions()) {
             const auto op = inst->Opcode();
@@ -92,7 +93,6 @@ bool PlanBuilder::ReadsAtRunTime() const {
             const IrValue* value = pending.back()->Resolve();
             pending.pop_back();
             if (!seen.insert(value).second) continue;
-            if (value->Opcode() == IrOpcode::LoadAddressU32 && !value->Argument(1)->Resolve()->HasImmediate()) return true;
             if (value->Opcode() == IrOpcode::Phi || value->Opcode() == IrOpcode::GetShaderBase) return true;
             for (std::size_t index = 0; index < value->ArgumentCount(); index++) pending.push_back(value->Argument(index));
         }
