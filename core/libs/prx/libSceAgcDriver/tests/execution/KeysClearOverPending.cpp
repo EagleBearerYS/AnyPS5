@@ -130,7 +130,6 @@ std::uint8_t* NewBlock(std::size_t bytes) {
     const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(bytes), nullptr);
     Require(section != nullptr, "keys clear over pending results: cannot create a shared section");
     GuestArena::GuestArenaMap_nid_postfix(block, bytes, section, 0, PAGE_READWRITE);
-    CloseHandle(section);
 #else
     std::uint8_t* block = nullptr;
     void* mapped = mmap(nullptr, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
