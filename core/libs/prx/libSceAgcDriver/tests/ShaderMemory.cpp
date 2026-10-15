@@ -1975,6 +1975,71 @@ void verifyTableSpanQuery() {
     std::cout << "table span query passed\n";
 }
 
+void verifyTableEdgeStore() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Records = 4096;
+    constexpr std::uint32_t Stride = 48;
+    constexpr std::size_t Bytes = static_cast<std::size_t>(Records) * Stride;
+    constexpr std::size_t Tail = 65536;
+    constexpr std::size_t RecordWords = Stride / 4u;
+    const auto texture = [](std::uint32_t index) { return TableT(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x100000000ull + index * 256ull)), TableFormat8888UNorm, TableType2D, 1u + index % 5u); };
+    auto* heap = AllocateWatchedTable(Bytes + Tail);
+    for (std::uint32_t record = 0; record < Records; record++) {
+        const auto words = texture(record % 1024u);
+        std::copy(words.begin(), words.end(), heap + record * RecordWords);
+        std::fill_n(heap + record * RecordWords + 8u, 4u, 0x5a5a5a5au);
+    }
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(heap));
+    if (AgcDriver::GuestMemory::CollectWrites(address, Bytes) == 0) {
+        std::cout << "table edge store without write watching skipped\n";
+        return;
+    }
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::GuestMemory::Unwatch(address + Bytes, Tail);
+    alignas(4096) static TableGuest guest;
+    FillTableSrt(guest, heap, Stride, Records);
+    auto wideCode = TableWholeCode;
+    std::replace(wideCode.begin(), wideCode.end(), 0x8f108510u, 0x9310b010u);
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(wideCode, userData);
+    struct Captured {
+        ImageTableReuseCounts reuse;
+        std::vector<std::shared_ptr<const SrtGuestWords>> blocks;
+    };
+    const auto capture = [&] {
+        Captured captured;
+        const auto before = ResourceMaterializer::TableReuse();
+        AgcDriver::ShaderMemory memory({}, nullptr);
+        static_cast<void>(memory.Capture(request));
+        captured.blocks = memory.SuppliedBlocks();
+        const auto after = ResourceMaterializer::TableReuse();
+        captured.reuse = {after.unwritten - before.unwritten, after.compared - before.compared, after.wordsRead - before.wordsRead, after.shared - before.shared, after.columns - before.columns};
+        return captured;
+    };
+    const auto vouched = [](const Captured& captured) {
+        const auto& block = captured.blocks.front();
+        return AgcDriver::ShaderMemory::Vouched(nullptr, block->low, block->high - block->low, LoadStamp(*block));
+    };
+    const auto last = address + static_cast<std::uint64_t>(Records - 1u) * Stride;
+    std::uint32_t replacement = 3000u;
+    const auto across = [&](const std::string& what, const std::function<void(std::span<const std::byte>)>& store) {
+        auto held = capture();
+        if (held.reuse.unwritten == 0u) held = capture();
+        require(held.reuse.unwritten == 1u && held.blocks.size() == 1u && vouched(held), ("table edge store: " + what + ": the table was not vouched for before the store").c_str());
+        std::array<std::uint32_t, RecordWords + 16u> words{};
+        const auto record = texture(replacement++);
+        std::copy(record.begin(), record.end(), words.begin());
+        std::fill(words.begin() + 8, words.end(), 0x77777777u);
+        store(std::as_bytes(std::span(words)));
+        require(!vouched(held), ("table edge store: " + what + " across the heap's edge into unwatched memory did not end the heap's epoch").c_str());
+        require(capture().reuse.columns == 1u, ("table edge store: " + what + ": the table was not read again").c_str());
+    };
+    static_cast<void>(capture());
+    across("a driver store", [&](std::span<const std::byte> bytes) { AgcDriver::GuestMemory::Write(last, bytes, 4); });
+    across("a GPU result stored by the driver", [&](std::span<const std::byte> bytes) { AgcDriver::GuestMemory::StoreOwnBytes(last, bytes); });
+    std::cout << "table edge store passed\n";
+}
+
 void verifyImageTables() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -6031,6 +6096,7 @@ int main(int argc, char** argv) {
             verifyTableStampRace();
             verifyTableVouch();
             verifyTableSpanQuery();
+            verifyTableEdgeStore();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
