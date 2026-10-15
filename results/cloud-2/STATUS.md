@@ -1,4 +1,3 @@
-BUSY GAC-027
-since: 2026-10-15T13:08:34Z (GAC-027)
-claimed: tasks/claimed/GAC-027.md
-previous: BF-012 done, results/cloud-2/BF-012.md
+READY
+since: 2026-10-15T14:12:14Z
+previous: GAC-027 done 2026-10-15T14:12:14Z, results/cloud-2/GAC-027.md (window closed: fix 0acc87be0 + tests bd493b693 pushed to fix/agc-note-dcc-key-label-stores)
