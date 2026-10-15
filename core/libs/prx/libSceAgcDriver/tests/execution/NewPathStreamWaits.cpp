@@ -2,6 +2,7 @@
 #include "VulkanTestDevice.hpp"
 #include <chrono>
 #include <exception>
+#include <optional>
 #include <thread>
 
 #ifdef _WIN32
@@ -80,7 +81,7 @@ Observation WatchRecord(std::uint64_t target, volatile std::uint32_t* label, std
 
 class Memory {
 public:
-    Memory() : sources(Copies * CopyPages), destinations(Copies * CopyPages), slots(1) {
+    Memory() : sources(Copies * CopyPages), destinations(Copies * CopyPages), checks(TailBytes / PageBytes), slots(1) {
         std::memset(sources.Data(), 0x3c, sources.Bytes());
         for (std::uint32_t copy = 0; copy < Copies; ++copy) {
             auto* tail = sources.Data() + (std::uint64_t{copy + 1u} * CopyPages) * PageBytes - 16u;
@@ -91,6 +92,7 @@ public:
 
     void Reset() {
         std::memset(destinations.Data(), 0xc3, destinations.Bytes());
+        std::memset(checks.Data(), 0xa5, checks.Bytes());
         std::memset(slots.Data(), 0, slots.Bytes());
     }
 
@@ -101,22 +103,37 @@ public:
         }
     }
 
-    std::uint64_t LastTail() const { return destinations.Address(std::uint64_t{Copies} * CopyPages * PageBytes - 16u); }
-    const std::uint8_t* SourceTail() const { return sources.Data() + std::uint64_t{Copies} * CopyPages * PageBytes - 16u; }
-
-    void SpinThenStore(Commands& commands) const {
+    void Spin(Commands& commands) const {
         const auto output = BufferResource(Slot(SpinOutput), SpinLanes * 4u);
         commands.Dispatch(Spinner, output, SpinLanes);
     }
 
-    std::uint64_t LastSpin() const { return Slot(SpinOutput) + (SpinLanes - 1u) * 4u; }
+    void CopyTail(Commands& commands) const {
+        commands.DmaCopy(checks.Address(), destinations.Address(Total - TailBytes), static_cast<std::uint32_t>(TailBytes));
+    }
+
+    std::optional<std::uint64_t> TailMismatch() const {
+        AgcDriver::GuestMemory::FlushGpuWrites(checks.Address(), TailBytes);
+        const auto* expected = sources.Data() + (Total - TailBytes);
+        for (std::uint64_t byte = 0; byte < TailBytes; ++byte) {
+            if (checks.Data()[byte] != expected[byte]) return byte;
+        }
+        return std::nullopt;
+    }
+
+    std::uint8_t Checked(std::uint64_t byte) const { return checks.Data()[byte]; }
+    std::uint8_t Source(std::uint64_t byte) const { return sources.Data()[Total - TailBytes + byte]; }
 
     std::uint64_t Slot(std::uint32_t index) const { return slots.Address(std::uint64_t{index} * 64u); }
     volatile std::uint32_t* SlotWords(std::uint32_t index) const { return slots.Words() + index * 16u; }
 
+    static constexpr std::uint64_t Total = std::uint64_t{Copies} * CopyPages * PageBytes;
+    static constexpr std::uint64_t TailBytes = 2 * PageBytes;
+
 private:
     PrivatePages sources;
     PrivatePages destinations;
+    PrivatePages checks;
     PrivatePages slots;
 };
 
@@ -124,33 +141,30 @@ void GpuSideWait(Memory& memory) {
     memory.Reset();
     const auto label = memory.Slot(0);
     const auto target = memory.Slot(1);
-    const auto check = memory.Slot(2);
-    const auto spun = memory.Slot(3);
     Commands waiter;
     waiter.Wait(label, Equal, 1u, 0xffffffffu);
     waiter.WriteData(target, {Later});
-    waiter.DmaCopy(check, memory.LastTail(), 16u);
-    waiter.DmaCopy(spun, memory.LastSpin(), 4u);
+    memory.CopyTail(waiter);
     waiter.Submit(WaiterQueue);
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     Expect(!Recorded(target), "GPU-side wait: the work after a wait was recorded before any writer of its label existed");
+    Commands spin;
+    memory.Spin(spin);
+    spin.Submit(WriterQueue);
     Commands writer;
     memory.SlowWrites(writer);
-    memory.SpinThenStore(writer);
     writer.WriteData(label, {1u});
     writer.Submit(WriterQueue);
     const auto seen = WatchRecord(target, memory.SlotWords(0), 0u);
     Expect(seen.recorded, "GPU-side wait: the waiter never recorded the work after its wait");
     Expect(seen.beforeLanding, "GPU-side wait: the waiter recorded the work after a wait on another queue's recorded label only once the label was in memory (a CPU wait)");
     WaitIdle();
-    AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(0), 4 * 64u);
+    AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(0), 2 * 64u);
+    AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(SpinOutput), SpinLanes * 4u);
     Expect(memory.SlotWords(1)[0] == Later, "GPU-side wait: the store after the wait did not land");
-    Expect(memory.SlotWords(3)[0] == Spun(SpinLanes - 1u), "GPU-side wait: the copy after the wait read the writer's last dispatch result as " + Hex(memory.SlotWords(3)[0]) + ", expected " + Hex(Spun(SpinLanes - 1u)));
-    const auto* copied = reinterpret_cast<const volatile std::uint8_t*>(memory.SlotWords(2));
-    for (std::uint32_t byte = 0; byte < 16u; ++byte) {
-        if (copied[byte] == memory.SourceTail()[byte]) continue;
-        Expect(false, "GPU-side wait: the copy after the wait read byte " + std::to_string(byte) + " of the writer's last copy as " + Hex(copied[byte]) + ", before the writer's copy landed (" + Hex(memory.SourceTail()[byte]) + ")");
-        break;
+    Expect(memory.SlotWords(SpinOutput)[SpinLanes - 1u] == Spun(SpinLanes - 1u), "GPU-side wait: the writer's spinning dispatch stored " + Hex(memory.SlotWords(SpinOutput)[SpinLanes - 1u]) + ", expected " + Hex(Spun(SpinLanes - 1u)));
+    if (const auto byte = memory.TailMismatch()) {
+        Expect(false, "GPU-side wait: the GPU copy after the wait read byte " + std::to_string(*byte) + " of the writer's last copy as " + Hex(memory.Checked(*byte)) + ", before the writer's copy in the label's batch landed (" + Hex(memory.Source(*byte)) + ")");
     }
 }
 
