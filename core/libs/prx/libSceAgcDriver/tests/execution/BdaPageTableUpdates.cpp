@@ -41,7 +41,7 @@ constexpr std::uint32_t OutputBase = 0x18000;
 TestGuest::Array<std::uint32_t, 20> Program;
 
 std::span<const std::uint32_t> Code() {
-    const TestGuest::Vector<std::uint32_t> code{0x34040084, 0x4a0404ff, LoadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff, OutputBase, 0xdc388ff8, 0x04000002, 0xbf8c3f70, 0xdc708000, 0x00000503, 0xdc708004, 0x00000703, 0xbf810000};
+    const std::vector<std::uint32_t> code{0x34040084, 0x4a0404ff, LoadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff, OutputBase, 0xdc388ff8, 0x04000002, 0xbf8c3f70, 0xdc708000, 0x00000503, 0xdc708004, 0x00000703, 0xbf810000};
     std::copy(code.begin(), code.end(), Program.begin());
     return std::span<const std::uint32_t>(Program.data(), code.size());
 }
@@ -94,13 +94,13 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-TestGuest::Vector<std::uint32_t> Initial(std::uint32_t seed) {
-    TestGuest::Vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
+std::vector<std::uint32_t> Initial(std::uint32_t seed) {
+    std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
     for (std::uint32_t dword = (LoadBase - 0x100u) / 4u; dword < (LoadBase + 0x500u) / 4u; ++dword) memory[dword] = seed + dword * 0x00010203u;
     return memory;
 }
 
-std::uint32_t Bytes(const TestGuest::Vector<std::uint32_t>& memory, std::uint32_t address) {
+std::uint32_t Bytes(const std::vector<std::uint32_t>& memory, std::uint32_t address) {
     std::uint32_t value = 0;
     for (std::uint32_t byte = 0; byte < 4u; ++byte) {
         const std::uint32_t at = address + byte;
@@ -114,7 +114,7 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::uint32_t
     const auto initial = Initial(seed);
     std::memcpy(guest.Data(), initial.data(), BlockBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    const TestGuest::Vector<std::uint32_t> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
     const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -127,7 +127,7 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::uint32_t
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-    TestGuest::Vector<std::uint32_t> memory(BlockBytes / 4u);
+    std::vector<std::uint32_t> memory(BlockBytes / 4u);
     std::memcpy(memory.data(), guest.Data(), BlockBytes);
     auto expected = initial;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
