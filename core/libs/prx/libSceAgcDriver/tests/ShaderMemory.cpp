@@ -1420,7 +1420,7 @@ void verifyDescriptorPhis() {
         }
         return body;
     };
-    require(planImages(distinctLoads(63u)) == 64u, "descriptor Phi: 64 distinct T#s were not given one image each");
+    require(planImages(distinctLoads(63u), false) == 64u, "descriptor Phi: 64 distinct T#s were not given one image each on a target without device image tables");
     expectFailure([&] { static_cast<void>(planImages(distinctLoads(64u), false)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: more than 64 distinct T#s were accepted on a target without device image tables");
     const auto unsplit = planOf(distinctLoads(64u), true);
     require(unsplit->info.images.size() == 1u && unsplit->info.images[0].deviceTable, "descriptor Phi: more than 64 distinct T#s were not read through the device image table as one run-time T#");
@@ -1432,7 +1432,7 @@ void verifyDescriptorPhis() {
         }
         return body;
     };
-    require(planImages(splitReloads(8u)) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s");
+    require(planImages(splitReloads(8u), false) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s on a target without device image tables");
     expectFailure([&] { static_cast<void>(planImages(splitReloads(260u), false)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted on a target without device image tables");
     const auto web = planOf(splitReloads(260u), true);
     require(web->info.images.size() == 1u && web->info.images[0].deviceTable, "descriptor Phi: a web over more than 512 descriptor tuples was not read through the device image table as one run-time T#");
@@ -1490,8 +1490,13 @@ void verifyLaneSelectedDescriptors() {
     request.target.bdaAbiVersion = BdaAbi::Version;
     request.target.fragmentShaderBarycentricEnabled = false;
     request.layout.pushConstantSizeBytes = 128;
+    auto snapshot = request;
+    const std::array<std::uint32_t, 2> snapshotCapabilities{29u, spv::CapabilityInt64};
+    snapshot.target.supportedCapabilities = snapshotCapabilities;
+    const auto snapshotPlan = GetResourcePlan(snapshot);
+    require(snapshotPlan->info.images.size() == 2u && snapshotPlan->info.samplers.size() == 1u, "lane-selected T#: the T#s selected per lane were not planned as one image each on a target without device image tables");
     const auto plan = GetResourcePlan(request);
-    require(plan->info.images.size() == 2u && plan->info.samplers.size() == 1u, "lane-selected T#: the T#s selected per lane were not planned as one image each");
+    require(plan->info.images.size() == 1u && plan->info.images[0].deviceTable && plan->info.samplers.size() == 1u, "lane-selected T#: the T#s selected per lane were not read through the device image table as one run-time T#");
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
     request.context.memory = memory.Regions();

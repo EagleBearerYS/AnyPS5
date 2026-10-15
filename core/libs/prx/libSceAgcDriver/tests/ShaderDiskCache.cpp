@@ -1236,17 +1236,10 @@ std::vector<PlanFixture> planFixtures() {
     fragment.pixel = pixel;
     fixtures.push_back(std::move(fragment));
 
-    std::vector<std::uint32_t> phiTables(24, 0u);
-    place(phiTables, 0, bufferWords(PlanTableAddress, 32u, 4u));
-    place(phiTables, 8, bufferWords(PlanMaterialAddress, 16u, 3u));
-    place(phiTables, 12, bufferWords(PlanOutputAddress, 0u, 16u));
-    place(phiTables, 16, {0x49u, 0u, 0x00500000u, 0u});
-    phiTables[20] = 1u;
-    add("bindless table beside a sampler phi", 64, {0xf4080100u, 0xfa000000u, 0xf4000440u, 0xfa000050u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xbf8cc07fu, 0xbf068011u, 0xbf850003u, 0xf4080200u, 0xfa000010u, 0xbf820002u, 0xf4080200u, 0xfa000040u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0xbf8cc07fu, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xbf8c3f70u, 0xe0700000u, 0x80070000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, phiTables}, {PlanTableAddress, heap}, {PlanMaterialAddress, materials}});
-    auto nested = phis;
-    nested[28] = static_cast<std::uint32_t>(PlanPayloadAddress);
-    nested[29] = static_cast<std::uint32_t>(PlanPayloadAddress >> 32u);
-    add("guarded nested read beside a sampler phi", 32, {0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u, 0xf4080500u, 0xfa000020u, 0xf4040700u, 0xfa000070u, 0xbf8cc07fu, 0xf400078eu, 0xfa000000u, 0xbf820002u, 0xf4080500u, 0xfa000030u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0x7e02021eu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xe0700004u, 0x80060100u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, nested}, {PlanPayloadAddress, payload}});
+    add("bindless table written by a store with a mip", 64, {0xf4080100u, 0xfa000000u, 0xf4080300u, 0xfa000020u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xbf8cc07fu, 0xf0240f08u, 0x00050004u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, tables}, {PlanTableAddress, heap}, {PlanMaterialAddress, materials}});
+    auto mipRoot = root;
+    place(mipRoot, 8, imageWords(PlanTextureAddress));
+    add("guarded nested read beside a store with a mip", 64, {0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u, 0xbf8cc07fu, 0xbf068008u, 0xbf850003u, 0xf4000305u, 0xfa000000u, 0xbf8cc07fu, 0x7e02020cu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xf40c0400u, 0xfa000020u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xbf8cc07fu, 0xf0240f08u, 0x00040104u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, mipRoot}, {PlanPayloadAddress, payload}});
     return fixtures;
 }
 
