@@ -565,6 +565,13 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
 
 [[nodiscard]] RecompileResult Recompile(const RecompileRequest& request);
 
+struct MultisampleLoadCounts {
+    std::uint64_t loads = 0;
+    std::uint64_t fmaskLoads = 0;
+};
+
+MultisampleLoadCounts TranslatedMultisampleLoads();
+
 struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
 

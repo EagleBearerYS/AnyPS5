@@ -259,6 +259,7 @@ function(add_shader_recompiler target runtimeTarget)
             FindUserDataTail
             LinkUserDataTail
             ThreadOwned
+            TranslatedMultisampleLoads
             UnresolvableSwappcTarget
             ValidateAndOptimizeSpirv
             FindUserDataCalls

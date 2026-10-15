@@ -1,11 +1,15 @@
 #include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
+#include <atomic>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
 
 namespace {
+
+std::atomic<std::uint64_t> multisampleLoads{0};
+std::atomic<std::uint64_t> fmaskLoads{0};
 
 MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
     if (inst.family != RdnaInstructionFamily::MIMG) {
@@ -158,6 +162,7 @@ bool TranslationContext::imageBy(const RdnaInstruction& inst) {
 
 bool TranslationContext::imageLoad(const RdnaInstruction& inst) {
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
+    if (memory.imageDimension == RdnaImageDimension::Dim2DMsaa || memory.imageDimension == RdnaImageDimension::Dim2DMsaaArray) multisampleLoads.fetch_add(1, std::memory_order_relaxed);
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
     IrValue& exec = ir.GetExec();
@@ -168,6 +173,7 @@ bool TranslationContext::imageLoad(const RdnaInstruction& inst) {
 
 bool TranslationContext::imageMsaaLoad(const RdnaInstruction& inst) {
     MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
+    fmaskLoads.fetch_add(1, std::memory_order_relaxed);
     memory.dataDwords = 1u;
     memory.componentCount = 1u;
     IrValue* resource = getImageResource(memory);
@@ -221,6 +227,10 @@ bool TranslationContext::imageGather(const RdnaInstruction& inst) {
         writeOperand(offsetOperand(inst.destination, index), &ir.CompositeExtract(result, index));
     }
     return true;
+}
+
+MultisampleLoadCounts TranslatedMultisampleLoads() {
+    return {multisampleLoads.load(std::memory_order_relaxed), fmaskLoads.load(std::memory_order_relaxed)};
 }
 
 }
