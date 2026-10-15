@@ -1,0 +1,3 @@
+BASE=f633042dfdf0d51f4af58fafbade3fa9d47fd169
+REPEAT=5
+EXTRA_TESTS='agc_driver_sample_location_grid_fallback|agc_driver_covered_centroid_state|^agc'
