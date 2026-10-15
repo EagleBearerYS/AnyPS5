@@ -442,16 +442,17 @@ std::uint32_t RotationSeed(std::uint32_t build) {
 
 void RecordRotation() {
     constexpr std::uint64_t BuildBytes = std::uint64_t{ChunksPerBuild} * ChunkBytes;
-    constexpr std::uint64_t SpanBytes = std::uint64_t{RotationBuilds} * BuildBytes;
+    constexpr std::uint64_t StrideBytes = BuildBytes + ChunkBytes;
+    constexpr std::uint64_t SpanBytes = std::uint64_t{RotationBuilds} * StrideBytes;
     PrivatePages region(static_cast<std::uint32_t>((SpanBytes + ChunkBytes) / PageBytes));
     const auto base = (region.Address() + ChunkBytes - 1u) & ~(ChunkBytes - 1u);
-    const auto what = std::to_string(RotationBuilds) + " bounded builds of one batch storing to " + std::to_string(ChunksPerBuild) + " distinct 128 KiB chunks each (" + std::to_string(RotationBuilds * ChunksPerBuild) + " chunks, more than the " + std::to_string(ShaderRecompiler::BdaAbi::WrittenPageSlots) + " a fault record holds)";
+    const auto what = std::to_string(RotationBuilds) + " bounded builds of one batch storing to " + std::to_string(ChunksPerBuild) + " distinct 128 KiB chunks each (" + std::to_string(RotationBuilds * ChunksPerBuild) + " chunks, more than one fault record admits), one unused chunk after each build's range";
     Expect(AgcDriver::GuestMemory::Watched(base, SpanBytes), what + ": the committed guest memory is not write-watched");
     AgcDriver::GuestMemory::CollectWritesUncached(base, SpanBytes);
     const auto generation = AgcDriver::GuestMemory::TrackerGeneration();
     Commands commands;
     for (std::uint32_t build = 0; build < RotationBuilds; ++build) {
-        const auto buffer = NewPath::BufferResource(base + build * BuildBytes, static_cast<std::uint32_t>(BuildBytes));
+        const auto buffer = NewPath::BufferResource(base + build * StrideBytes, static_cast<std::uint32_t>(BuildBytes));
         const std::array<std::uint32_t, 5> userData{buffer[0], buffer[1], buffer[2], buffer[3], RotationSeed(build)};
         commands.Dispatch(ChunkStoreProgram(), userData, ChunksPerBuild);
     }
@@ -465,7 +466,7 @@ void RecordRotation() {
     std::string first;
     for (std::uint32_t build = 0; build < RotationBuilds; ++build) {
         for (std::uint32_t lane = 0; lane < ChunksPerBuild; ++lane) {
-            const auto word = (build * BuildBytes + lane * ChunkBytes) / 4u;
+            const auto word = (build * StrideBytes + lane * ChunkBytes) / 4u;
             const auto expected = RotationSeed(build) + lane;
             const auto stored = words[word];
             const auto after = words[word + 1u];
@@ -483,15 +484,22 @@ void RecordRotation() {
     std::size_t unmarked = 0;
     std::size_t spurious = 0;
     std::string firstUnmarked;
+    std::string firstSpurious;
     for (std::size_t block = 0; block < blocks; ++block) {
-        const bool stored = block % (ChunkBytes / PageBytes) == 0u;
+        const auto offset = block * PageBytes;
+        const auto within = offset % StrideBytes;
+        const auto build = std::to_string(offset / StrideBytes);
+        const bool covered = within < BuildBytes;
+        const bool stored = covered && within % ChunkBytes == 0u;
         if (stored && (changed[block] != AgcDriver::GuestMemory::BlockWritten || cpu[block] != 0u)) {
-            if (unmarked++ == 0u) firstUnmarked = "block " + std::to_string(block) + " (build " + std::to_string(block * PageBytes / BuildBytes) + ")";
+            if (unmarked++ == 0u) firstUnmarked = "block " + std::to_string(block) + " (build " + build + ")";
         }
-        if (!stored && changed[block] != AgcDriver::GuestMemory::BlockUnchanged) ++spurious;
+        if (!covered && changed[block] != AgcDriver::GuestMemory::BlockUnchanged) {
+            if (spurious++ == 0u) firstSpurious = "block " + std::to_string(block) + " (after build " + build + ")";
+        }
     }
-    Expect(unmarked == 0u, what + ": " + std::to_string(unmarked) + " of " + std::to_string(blocks / 2u) + " stored 64 KiB blocks were not marked written by the GPU at completion, first " + firstUnmarked);
-    Expect(spurious == 0u, what + ": " + std::to_string(spurious) + " 64 KiB blocks no build stored to were marked written");
+    Expect(unmarked == 0u, what + ": " + std::to_string(unmarked) + " of " + std::to_string(RotationBuilds * ChunksPerBuild) + " stored 64 KiB blocks were not marked written by the GPU at completion, first " + firstUnmarked);
+    Expect(spurious == 0u, what + ": " + std::to_string(spurious) + " 64 KiB blocks outside every build's write range were marked written, first " + firstSpurious);
 }
 
 enum class Mix { Clean, UnboundedFault, InvalidRectangle };
