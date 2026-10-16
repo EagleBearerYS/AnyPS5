@@ -453,6 +453,7 @@ struct DrawProfile {
     std::array<std::uint64_t, IndirectPathCount> indirect{};
     std::uint64_t indirectRewritten = 0;
     double indirectReadUs = 0;
+    IndirectPassStats indirectPasses;
     // Draw packets that drew nothing, by DrawSkip, and their time.
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
@@ -546,7 +547,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         for (std::size_t i = 1; i < IndirectPathCount && room(); ++i) {
             if (profile.indirect[i] != 0) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", IndirectDrawPathNames[i], static_cast<unsigned long long>(profile.indirect[i]));
         }
-        if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "), argument reads %.1f ms", profile.indirectReadUs / 1000.0);
+        if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "), argument reads %.1f ms; gpu-side passes %llu begun, %llu continued; argument barriers %llu recorded, %llu skipped", profile.indirectReadUs / 1000.0, static_cast<unsigned long long>(profile.indirectPasses.passesBegun), static_cast<unsigned long long>(profile.indirectPasses.passesContinued), static_cast<unsigned long long>(profile.indirectPasses.barriersRecorded), static_cast<unsigned long long>(profile.indirectPasses.barriersSkipped));
     }
     if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; skipped packets:");
     for (std::size_t i = 0; i < profile.skips.size() && room(); ++i) {
@@ -580,6 +581,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.indirect.fill(0);
     profile.indirectRewritten = 0;
     profile.indirectReadUs = 0;
+    profile.indirectPasses = {};
     profile.skips.fill(0);
     profile.skipUs.fill(0);
 }
@@ -820,6 +822,43 @@ std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>> DrawCopiedWriters
 
 const char* IndirectDrawPathName(IndirectDrawPath path) {
     return IndirectDrawPathNames[static_cast<std::size_t>(path)];
+}
+
+namespace {
+
+struct IndirectPassCounts {
+    std::atomic<std::uint64_t> passesBegun{0};
+    std::atomic<std::uint64_t> passesContinued{0};
+    std::atomic<std::uint64_t> barriersRecorded{0};
+    std::atomic<std::uint64_t> barriersSkipped{0};
+};
+
+IndirectPassCounts& PassCounts() {
+    static IndirectPassCounts counts;
+    return counts;
+}
+
+bool IndirectPassContinueOff() {
+    return std::getenv("APS5_NO_INDIRECT_PASS_CONTINUE") != nullptr;
+}
+
+}
+
+void CountIndirectPass(bool continued, bool barrier) {
+    auto& counts = PassCounts();
+    (continued ? counts.passesContinued : counts.passesBegun).fetch_add(1, std::memory_order_relaxed);
+    (barrier ? counts.barriersRecorded : counts.barriersSkipped).fetch_add(1, std::memory_order_relaxed);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    ++(continued ? stats.indirectPasses.passesContinued : stats.indirectPasses.passesBegun);
+    ++(barrier ? stats.indirectPasses.barriersRecorded : stats.indirectPasses.barriersSkipped);
+}
+
+IndirectPassStats IndirectPassCounters() {
+    const auto& counts = PassCounts();
+    return {counts.passesBegun.load(std::memory_order_relaxed), counts.passesContinued.load(std::memory_order_relaxed), counts.barriersRecorded.load(std::memory_order_relaxed), counts.barriersSkipped.load(std::memory_order_relaxed)};
 }
 
 void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten) {
@@ -1391,11 +1430,13 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
 // the record's dword as the first vertex / instance, and the constant is what the fixed-function
 // fetch must start at). The scratch is kept until the batch completed. Returns whether a copy was
 // rewritten; `argumentBuffer`/`argumentOffset` receive where the draw reads the records.
-bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const IndirectRecord& indirect, std::unique_ptr<DeviceBuffer>& scratch, VkBuffer& argumentBuffer, VkDeviceSize& argumentOffset, const std::function<void(std::uint32_t)>& countBarrier) {
+bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const IndirectRecord& indirect, std::unique_ptr<DeviceBuffer>& scratch, VkBuffer& argumentBuffer, VkDeviceSize& argumentOffset, const std::function<void(std::uint32_t)>& countBarrier, bool barrier = true) {
     using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
     const auto* args = indirect.args;
-    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
-    countBarrier(1);
+    if (barrier) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        countBarrier(1);
+    }
     if (recorded) {
         // Read in place from the import when the batch runs (a synchronous draw waits for its own).
         recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
@@ -1787,7 +1828,15 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
     const PassAccess passAccess{passReads, resources.GpuWrites(), passImages, passAttachments, unknownMemory, unknownMemory};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || cpuDrawIndex || meshIndirect, fenced, passAccess);
+    using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> argumentRanges;
+    if (gpuIndirect) {
+        argumentRanges.emplace_back(args->arguments, args->arguments + args->RangeBytes());
+        if (args->countIndirect) argumentRanges.emplace_back(args->countAddress, args->countAddress + 4);
+    }
+    const bool rewriteRecords = gpuIndirect && (args->vertexRule == Rule::Constant || args->instanceRule == Rule::Constant);
+    const bool argumentsVisible = gpuIndirect && !rewriteRecords && !IndirectPassContinueOff() && recorder->IndirectArgumentsVisible(argumentRanges);
+    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || (gpuIndirect && !argumentsVisible) || cpuDrawIndex || meshIndirect, fenced, passAccess);
     const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
@@ -1816,7 +1865,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
     if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
+    bool argumentBarrier = false;
     if (continued) {
+        if (gpuIndirect) rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier, false);
         record.pipeline->Continue(commands, state);
     } else {
         for (const auto& proxy : record.proxies) {
@@ -1833,7 +1884,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
-            rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+            argumentBarrier = !argumentsVisible || !recorder->IndirectArgumentsVisible(argumentRanges);
+            rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier, argumentBarrier);
+            if (argumentBarrier) recorder->NoteIndirectArgumentBarrier();
         } else if (cpuDrawIndex) {
             recordCpuReadArguments(context, commands, draw, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
         }
@@ -1869,6 +1922,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
     if (args != nullptr) CountIndirectDraw(record.indirect->path, record.indirect->readMs, rewritten);
+    if (gpuIndirect) CountIndirectPass(continued, argumentBarrier);
     auto checkRecords = indirectRecordCheck(record.indirect);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
     std::function<void(VkCommandBuffer)> storeProxies;
@@ -2393,6 +2447,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         meshArguments = directMeshArguments(context, draw, inputs.restartTable);
     } else if (gpuIndirect) {
         rewritten = recordIndirectArguments(context, commands, recorder, recorded, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+        CountIndirectPass(false, true);
     } else if (args != nullptr && args->StageReadsDrawIndex()) {
         recordCpuReadArguments(context, commands, draw, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
     }

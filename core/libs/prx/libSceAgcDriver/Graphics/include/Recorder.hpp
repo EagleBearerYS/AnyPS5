@@ -68,6 +68,8 @@ public:
     };
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass = {});
+    bool IndirectArgumentsVisible(GuestRangeList ranges) const;
+    void NoteIndirectArgumentBarrier();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
     // label store (RecordStore), or before a command that writes or reads a queued range (the
@@ -641,6 +643,9 @@ private:
             std::function<void(VkCommandBuffer)> afterPass;
         } renderPass;
         PassHazards passHazards;
+        bool indirectArgumentsVisible = false;
+        bool indirectUnknownWrites = false;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> indirectWrites;
         // A pass ended in this batch: Submit records the host-read barrier its draws left out.
         bool hostReadOwed = false;
         // Queued DCC key stores (see QueueKeyStore).
@@ -742,6 +747,8 @@ private:
     bool closeStoreRun(bool atSubmit = false);
     // Ends the render pass a draw left open (vkCmdEndRenderPass, the pass's trailing barrier).
     void endOpenRenderPass(bool barrier = true);
+    VkCommandBuffer passCommands(VkAccessFlags* coveredAccess = nullptr);
+    void hideIndirectArguments();
     // Records the queued key stores as one run (`forWriter`: before a command writing, reading or
     // labelling over one, not at Submit).
     void recordKeyStores(bool forWriter);

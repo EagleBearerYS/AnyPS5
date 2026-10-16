@@ -1359,6 +1359,33 @@ std::uint64_t Recorder::ReapsWithWork() {
 }
 
 VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
+    const auto commands = passCommands(coveredAccess);
+    hideIndirectArguments();
+    return commands;
+}
+
+void Recorder::hideIndirectArguments() {
+    if (open == nullptr) return;
+    open->indirectArgumentsVisible = false;
+    open->indirectUnknownWrites = false;
+    open->indirectWrites.clear();
+}
+
+bool Recorder::IndirectArgumentsVisible(GuestRangeList ranges) const {
+    if (open == nullptr || !open->indirectArgumentsVisible || open->indirectUnknownWrites) return false;
+    return std::none_of(ranges.begin(), ranges.end(), [&](const std::pair<std::uint64_t, std::uint64_t>& range) {
+        return std::any_of(open->indirectWrites.begin(), open->indirectWrites.end(), [&](const std::pair<std::uint64_t, std::uint64_t>& written) { return range.first < written.second && written.first < range.second; });
+    });
+}
+
+void Recorder::NoteIndirectArgumentBarrier() {
+    ensureOpen();
+    open->indirectArgumentsVisible = true;
+    open->indirectUnknownWrites = false;
+    open->indirectWrites.clear();
+}
+
+VkCommandBuffer Recorder::passCommands(VkAccessFlags* coveredAccess) {
     ensureOpen();
     // Work recorded after a draw's render pass or an inline store run must see their writes: the
     // pass's end and the run's trailing barrier go in first (a per-batch run waits for Submit, or
@@ -1378,7 +1405,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
     ensureOpen();
     auto& pass = open->renderPass;
     if (!pass.open || forced || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
-        const auto commands = Commands();
+        const auto commands = passCommands();
         open->passHazards.Clear();
         open->passHazards.BeginPass();
         return {commands, false, true};
@@ -1388,7 +1415,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
     const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass;
     const bool elide = merge && hazard == PassHazard::None;
     endOpenRenderPass(!merge);
-    const auto commands = Commands();
+    const auto commands = passCommands();
     if (!elide) open->passHazards.Clear();
     open->passHazards.BeginPass();
     return {commands, false, !elide};
@@ -1405,6 +1432,10 @@ void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool
     pass.key = key;
     pass.fenced = pass.fenced || fenced;
     open->passHazards.Add(access);
+    if (open->indirectArgumentsVisible) {
+        open->indirectUnknownWrites = open->indirectUnknownWrites || access.anyWrites;
+        open->indirectWrites.insert(open->indirectWrites.end(), access.writes.begin(), access.writes.end());
+    }
 }
 
 void Recorder::endOpenRenderPass(bool barrier) {
@@ -1618,6 +1649,7 @@ void Recorder::recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sour
 void Recorder::flushPendingStore() {
     auto& run = open->run;
     if (run.bytes.empty()) return;
+    hideIndirectArguments();
     function(cmdUpdateBuffer, "vkCmdUpdateBuffer")(open->commands, run.buffer, run.offset, run.bytes.size(), run.bytes.data());
     run.recorded.emplace_back(run.buffer, run.offset, run.offset + run.bytes.size());
     run.storedBytes += run.bytes.size();
@@ -1631,6 +1663,7 @@ bool Recorder::closeStoreRun(bool atSubmit) {
         run.queued.clear();
         open->queuedDumps = 0;
         if (stores.empty()) return false;
+        hideIndirectArguments();
         // A label says the work before it is done: the queued key stores (results of that work)
         // land ahead of every store of the run, and the pass a draw left open ends.
         if (!open->keyStores.empty()) recordKeyStores(true);
@@ -1903,7 +1936,7 @@ void Recorder::AddGpuTiming(CommandClass which, double nanoseconds, std::uint64_
 
 std::uint32_t Recorder::BeginGpuTiming(std::uint64_t key) {
     if (!GpuTimingEnabled()) return NoTiming;
-    Commands();
+    passCommands();
     return beginTiming(key);
 }
 
@@ -2162,6 +2195,7 @@ void Recorder::recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch
 }
 
 void Recorder::dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment) {
+    hideIndirectArguments();
     recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, dumpPipeline);
     struct {
