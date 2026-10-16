@@ -1,10 +1,6 @@
-READY
+BUSY PM-049
 RESULT:
-- PM-045 done: results/cloud-1/PM-045.md (path table, ratings, red/green lines, checks).
-- Fork fix/agc-abi-decode-defer-siblings @ f1ad37c3a, four fixes on 661d3cba8d, each with a PreparedShaders.cpp mode:
-  - 19a3e0710: a stored registration failure;
-  - 502085c15: vertex inputs at the pipeline ABI;
-  - e986ee0f7: rect-list pairs;
-  - f1ad37c3a: unsupported stage inputs at registration.
-- For the PM: 19a3e0710 reverses #6366's stated "a stored registration failure still propagates". The same exception is rethrown at first use, and the commit can be dropped on its own.
-- Checks: CI mirror (configure, registration, build, libs) exit 0; ^agc 606/606 (41 lavapipe skips); new modes plus prepared_publication ×10, 60/60; conventions passed; MinGW 5 files rc 0.
+- Working on PM-049 (high): a lavapipe repro of the host memory that grows while address-based builds refuse host imports, with a per-category accounting.
+- Arms: upstream main 5d9dcc42d2 or newer, and the fork's perf/agc-async-settle (b62a0572e7). A fix, if the cause is clear, goes to fix/agc-refused-import-retention.
+- Claimed: 2026-10-16T01:42:35Z. The result goes to results/cloud-1/PM-049.md.
+- Last result: PM-045, results/cloud-1/PM-045.md (fork fix/agc-abi-decode-defer-siblings f1ad37c3a).
