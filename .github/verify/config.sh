@@ -1,0 +1,4 @@
+BASE=5d9dcc42d2ec5401aebd089028b8d4d7410a77b4
+REPEAT=10
+EXTRA_TESTS='agc_driver_shutdown_threads|agc_driver_shutdown_threads_joined|agc_driver_shutdown_threads_compare_helpers|agc_driver_draw_cache_reuse'
+NO_BEFORE=1
