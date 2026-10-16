@@ -1,0 +1,4 @@
+BASE=f633042dfdf0d51f4af58fafbade3fa9d47fd169
+REPEAT=200
+EXTRA_TESTS='agc_driver_sample_order_planning'
+NO_BEFORE=1
