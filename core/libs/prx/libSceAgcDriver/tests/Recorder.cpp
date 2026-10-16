@@ -777,6 +777,87 @@ void pendingWriteSnapshotBenchmark(Recorder& recorder) {
     recorder.Sync();
 }
 
+struct PendingImages {
+    static constexpr std::uint64_t Spacing = 65536;
+    Context context;
+    TextureDetiler detiler;
+    GuestTextureResource resource{};
+    std::uint64_t guestBytes = 0;
+    std::vector<std::byte> memory;
+    std::uint64_t base = 0;
+    std::vector<std::shared_ptr<StorageTexture>> images;
+
+    static Context WithoutImports(Context context) {
+        context.hostImportAlignment = 0;
+        return context;
+    }
+
+    PendingImages(const Context& created, std::size_t count) : context(WithoutImports(created)), detiler(context), memory((count + 1) * Spacing, std::byte{0x55}) {
+        context.detiler = &detiler;
+        resource.width = 64;
+        resource.height = 64;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kLinear;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        guestBytes = DescribeSurface(resource).guestBytes;
+        Require(guestBytes < Spacing, "pending overlap fixture images do not leave gaps between them");
+        base = (reinterpret_cast<std::uintptr_t>(memory.data()) + Spacing - 1) & ~(Spacing - 1);
+        for (std::size_t index = 0; index < count; ++index) {
+            resource.baseAddress = base + index * Spacing;
+            images.push_back(StorageTexture::Create(context, detiler, resource, 0));
+            images.back()->MarkDirty();
+        }
+    }
+
+    void Store(const Device& device, Recorder& recorder) {
+        for (const auto& image : images) image->WriteBack();
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        images.clear();
+    }
+};
+
+void pendingOverlapIndexTests(const Device& device, Recorder& recorder) {
+    constexpr std::size_t count = 8;
+    PendingImages pending(device.GetContext(), count);
+    const auto base = pending.base;
+    const auto spacing = PendingImages::Spacing;
+    const auto walks = StorageTexture::PendingOverlapWalks();
+    const std::array inside{std::pair{base + 3 * spacing + 16, base + 3 * spacing + 32}};
+    Require(StorageTexture::AnyPendingOverlaps(inside) && StorageTexture::PendingOverlapWalks() == walks + 1, "a range inside a pending storage image was not found by one walk of the pending images");
+    const std::array gaps{std::pair{base + pending.guestBytes, base + spacing}, std::pair{base + 5 * spacing + pending.guestBytes, base + 6 * spacing}, std::pair{base + count * spacing, base + count * spacing + 4096}};
+    for (int repeat = 0; repeat < 64; ++repeat) Require(!StorageTexture::AnyPendingOverlaps(gaps), "a range between the pending storage images overlapped one");
+    Require(StorageTexture::PendingOverlapWalks() == walks + 1, "ranges the pending image index rules out walked the pending storage images");
+    const std::array edge{std::pair{base + 6 * spacing + pending.guestBytes - 1, base + 6 * spacing + pending.guestBytes}};
+    Require(StorageTexture::AnyPendingOverlaps(edge) && StorageTexture::PendingOverlapWalks() == walks + 2, "the last byte of a pending storage image was not found");
+    pending.Store(device, recorder);
+    std::cout << "pending overlap index tests passed\n";
+}
+
+void pendingOverlapIndexBenchmark(const Device& device, Recorder& recorder) {
+    for (const std::size_t count : {8u, 64u, 512u}) {
+        PendingImages pending(device.GetContext(), count);
+        const std::array gap{std::pair{pending.base + pending.guestBytes, pending.base + PendingImages::Spacing}};
+        const std::array inside{std::pair{pending.base + (count - 1) * PendingImages::Spacing, pending.base + (count - 1) * PendingImages::Spacing + 16}};
+        constexpr int queries = 100000;
+        for (const auto& [name, ranges] : {std::pair{"gap", std::span<const std::pair<std::uint64_t, std::uint64_t>>(gap)}, std::pair{"last image", std::span<const std::pair<std::uint64_t, std::uint64_t>>(inside)}}) {
+            std::array<double, 5> samples{};
+            for (auto& sample : samples) {
+                bool found = false;
+                const auto start = std::chrono::steady_clock::now();
+                for (int query = 0; query < queries; ++query) found = StorageTexture::AnyPendingOverlaps(ranges) || found;
+                sample = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / queries;
+                Require(found == (ranges.data() == inside.data()), "the pending overlap benchmark found another answer");
+            }
+            std::sort(samples.begin(), samples.end());
+            std::cout << "pending overlap benchmark: " << count << " pending images, " << name << " query, median " << samples[2] << " ns\n";
+        }
+        pending.Store(device, recorder);
+    }
+}
+
 void readListTests(const Device& device, Recorder& recorder) {
     using Ranges = Recorder::ReadList;
     Require(Recorder::ValidReadList({{0x1000, 0x2000}, {0x2000, 0x2100}}) && Recorder::ValidReadList({}), "a sorted disjoint list is refused");
@@ -8094,6 +8175,14 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-pending-write-snapshot") {
             pendingWriteSnapshotBenchmark(recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pending-overlap-index-only") {
+            pendingOverlapIndexTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-pending-overlap-index") {
+            pendingOverlapIndexBenchmark(device, recorder);
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--storage-upload-lifetime-only" || std::string_view(argv[1]) == "--storage-upload-failure-only")) {

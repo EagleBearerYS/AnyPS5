@@ -348,6 +348,7 @@ public:
     static std::uint64_t SinglePassMoves();
     static std::uint64_t RefreshesProved();
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t PendingOverlapWalks();
     std::uint64_t GuestBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
