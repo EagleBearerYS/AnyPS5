@@ -4442,6 +4442,18 @@ void GuestBufferMemory::WriteBack() {
     heapReferences.clear();
 }
 
+bool GuestBufferMemory::SpaceReusable() const {
+    return space != nullptr && lease.empty() && !space->mirrored && space->sparseMirrors.empty() && space->writableMirrors.empty() && space->heapMirrors.empty() && space->copied.empty();
+}
+
+bool GuestBufferMemory::SpaceCurrent() const {
+    if (space == nullptr || Spaces().current.load() != space) return false;
+    if (space->device != context.device || space->generation != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    return space->importsEpoch == state.epoch;
+}
+
 std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferMemory::DirectRegions() const {
     if (!uploaded || committed) return std::nullopt;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> result;

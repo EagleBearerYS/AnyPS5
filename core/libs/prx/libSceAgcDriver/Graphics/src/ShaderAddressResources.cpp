@@ -32,6 +32,9 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         guestMemory.AcquireRegistered();
         const auto snapshotsStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         for (const auto& snapshot : snapshots) guestMemory.AddSnapshot(snapshot);
+        if (computeObject && AddressReuse()) {
+            for (const auto& snapshot : snapshots) addressSnapshots.emplace_back(snapshot.address, std::vector<std::byte>(snapshot.bytes.begin(), snapshot.bytes.end()));
+        }
         if (profile) GuestBufferMemory::CountAddressBuild(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - snapshotsStart).count());
     }
 }
