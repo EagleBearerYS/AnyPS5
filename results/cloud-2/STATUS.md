@@ -1,4 +1,3 @@
-BUSY PRM-012
-since: 2026-10-16T02:52:15Z (PRM-012)
-claimed: tasks/claimed/PRM-012.md
-previous: PM-047 done 2026-10-16T02:51:19Z, results/cloud-2/PM-047.md (gaps found in all three; fixes on review/6636-buffer-alias-sizes, review/6641-shutdown-siblings, review/6646-sparse-heap-mirror)
+READY
+since: 2026-10-16T03:14:55Z
+previous: PRM-012 done 2026-10-16T03:14:55Z, results/cloud-2/PRM-012.md (#6454 1213/5/61, #6636 1211/6/60, #6646 1213/5/60 passed/failed/skipped; only non-baseline failure: #6636 agc_driver_mesh_index_cache, also on its merge base)
