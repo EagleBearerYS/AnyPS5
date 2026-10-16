@@ -52,6 +52,7 @@ public:
                 reset(cursor, size);
                 const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
                 if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
+                privateBytes += size;
                 if (!created.empty() && created.back().first + created.back().second == cursor) created.back().second += size;
                 else created.emplace_back(cursor, size);
                 cursor += size;
@@ -74,6 +75,13 @@ public:
     void Reset(void* address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         reset(reinterpret_cast<std::uintptr_t>(address), bytes);
+    }
+
+    void Committed(std::uint64_t* privateCommitted, std::uint64_t* sharedCommitted, std::uint64_t* directCommitted) {
+        std::lock_guard lock(mutex);
+        *privateCommitted = privateBytes;
+        *sharedCommitted = sharedBytes;
+        *directCommitted = directBytes;
     }
 
     void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false) {
@@ -110,6 +118,7 @@ public:
                 while (done + runBytes < bytes && (base + runBytes) % chunkBytes != 0 && single(done + runBytes)) runBytes += pageBytes;
                 split(base, runBytes);
                 commitResident(base, runBytes);
+                directBytes += runBytes;
                 residentRuns.emplace(base, Run{base + runBytes, {}, static_cast<std::uint32_t>(runBytes >> 12)});
                 for (std::size_t at = 0; at < runBytes; at += pageBytes) {
                     const auto slot = slotOf(done + at);
@@ -119,7 +128,7 @@ public:
                         slot->saved.reset();
                     }
                     shared->aliases.push_back(base + at);
-                    views.emplace(base + at, View{shared, protection, {}, 0, owned, offset + done + at, 0, 0, true, slot});
+                    views.emplace(base + at, View{shared, protection, {}, 0, owned, offset + done + at, 0, 0, true, slot, true});
                     invalidate(*shared);
                 }
                 remember(freshRanges, base, base + runBytes);
@@ -136,9 +145,10 @@ public:
             }
             split(base, pageBytes);
             mapShared(base, section, offset + done, protection);
+            (resident ? directBytes : sharedBytes) += pageBytes;
             slot->stored = true;
             shared->aliases.push_back(base);
-            views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot});
+            views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot, resident});
             remember(freshRanges, base, base + pageBytes);
             invalidate(*shared);
             done += pageBytes;
@@ -531,6 +541,7 @@ private:
         std::uint8_t collected = 0;
         bool resident = false;
         std::shared_ptr<Physical> slot;
+        bool direct = false;
     };
     struct Run {
         std::uintptr_t end;
@@ -815,14 +826,18 @@ private:
             if (memory.Type == MEM_MAPPED) {
                 if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(cursor), MEM_PRESERVE_PLACEHOLDER)) fail("unmap shared guest page");
                 const auto found = views.find(cursor);
+                (found != views.end() && found->second.direct ? directBytes : sharedBytes) -= allocationEnd - cursor;
                 if (found != views.end()) {
                     std::erase(found->second.page->aliases, cursor);
                     views.erase(found);
                     forget(freshRanges, cursor, cursor + pageBytes);
                 }
             } else if (memory.Type == MEM_PRIVATE) {
-                if (const auto run = residentRuns.find(cursor); run != residentRuns.end()) evict(run);
+                const auto run = residentRuns.find(cursor);
+                auto& counted = run != residentRuns.end() ? directBytes : privateBytes;
+                if (run != residentRuns.end()) evict(run);
                 if (!VirtualFree(reinterpret_cast<void*>(cursor), allocationEnd - cursor, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("release private guest memory");
+                counted -= allocationEnd - cursor;
             } else {
                 throw std::runtime_error("unsupported guest mapping type");
             }
@@ -891,6 +906,9 @@ private:
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;
     bool watchResident = false;
+    std::uint64_t privateBytes = 0;
+    std::uint64_t sharedBytes = 0;
+    std::uint64_t directBytes = 0;
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;

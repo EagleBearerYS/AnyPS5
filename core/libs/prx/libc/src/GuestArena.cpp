@@ -108,7 +108,7 @@ public:
             std::snprintf(message, sizeof(message), "guest arena commit 0x%llx+0x%zx overlaps a used range", static_cast<unsigned long long>(start), bytes);
             throw std::runtime_error(message);
         }
-        _used.emplace(start, end);
+        AddUsed(start, end);
         return true;
     }
 
@@ -121,7 +121,7 @@ public:
             std::snprintf(message, sizeof(message), "fixed guest mapping 0x%llx+0x%zx overlaps %s", static_cast<unsigned long long>(start), bytes, OverlapsHostRegion(start, bytes) ? "a host region in the guest arena" : "a guest arena range");
             throw std::runtime_error(message);
         }
-        _used.emplace(start, start + bytes);
+        AddUsed(start, start + bytes);
     }
 
     void Release(const void* pointer, std::size_t bytes) {
@@ -137,13 +137,18 @@ public:
                 ++it;
                 continue;
             }
-            it = _used.erase(it);
-            if (rangeStart < start) _used.emplace(rangeStart, start);
-            if (rangeEnd > end) _used.emplace(end, rangeEnd);
+            it = EraseUsed(it);
+            if (rangeStart < start) AddUsed(rangeStart, start);
+            if (rangeEnd > end) AddUsed(end, rangeEnd);
         }
         for (const auto& [holeStart, holeEnd] : _holes) {
-            if (holeStart < end && start < holeEnd) _used.emplace(holeStart, holeEnd);
+            if (holeStart < end && start < holeEnd) AddUsed(holeStart, holeEnd);
         }
+    }
+
+    std::uint64_t ReservedBytes() {
+        std::lock_guard lock(_lock);
+        return _usedBytes > _seededBytes ? _usedBytes - _seededBytes : 0;
     }
 
 private:
@@ -175,10 +180,11 @@ private:
         }
         _hostRegions = _holes;
         _holes.emplace_back(SystemReservedStart, SystemReservedEnd);
-        for (const auto& [holeStart, holeEnd] : _holes) _used.emplace(holeStart, holeEnd);
+        for (const auto& [holeStart, holeEnd] : _holes) AddUsed(holeStart, holeEnd);
         _base = ArenaStart;
         _end = end;
 #endif
+        _seededBytes = _usedBytes;
     }
 
 #if defined(__linux__)
@@ -194,10 +200,10 @@ private:
             if (end <= ArenaStart || begin >= ApplicationAreaEnd) continue;
             const auto first = std::max(begin, ArenaStart);
             const auto last = std::min(end, ApplicationAreaEnd);
-            _used.emplace(first, last);
+            AddUsed(first, last);
             _hostRegions.emplace_back(first, last);
         }
-        _used.emplace(SystemReservedStart, SystemReservedEnd);
+        AddUsed(SystemReservedStart, SystemReservedEnd);
         _hostRegions.emplace_back(SystemReservedStart, SystemReservedEnd);
         ReserveFreeRanges();
         _base = ArenaStart;
@@ -235,14 +241,25 @@ private:
         }
         if (cursor < ApplicationAreaEnd) TryReserve(occupied, cursor, ApplicationAreaEnd);
         for (const auto& [from, to] : occupied) {
-            _used.emplace(from, to);
+            AddUsed(from, to);
             _hostRegions.emplace_back(from, to);
         }
     }
 #endif
 
+    void AddUsed(std::uintptr_t start, std::uintptr_t end) {
+        if (_used.emplace(start, end).second) _usedBytes += end - start;
+    }
+
+    std::map<std::uintptr_t, std::uintptr_t>::iterator EraseUsed(std::map<std::uintptr_t, std::uintptr_t>::iterator it) {
+        _usedBytes -= it->second - it->first;
+        return _used.erase(it);
+    }
+
     std::mutex _lock;
     std::map<std::uintptr_t, std::uintptr_t> _used;
+    std::uint64_t _usedBytes = 0;
+    std::uint64_t _seededBytes = 0;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _holes;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostRegions;
     void RequireAllocatable(std::size_t alignment) const {
@@ -265,7 +282,7 @@ private:
 
     void* Claim(std::uintptr_t candidate, std::size_t bytes) {
         if (candidate == 0) throw std::runtime_error("guest address space arena exhausted");
-        _used.emplace(candidate, candidate + bytes);
+        AddUsed(candidate, candidate + bytes);
         return reinterpret_cast<void*>(candidate);
     }
 
@@ -446,6 +463,55 @@ int PosixProtection(std::uint32_t windowsProtection) {
 void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
     return mmap(pointer, bytes, PosixProtection(protection), MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 }
+
+class PrivateCommits {
+public:
+    static PrivateCommits& Get() {
+        static auto* commits = new PrivateCommits;
+        return *commits;
+    }
+
+    void Commit(std::uintptr_t start, std::uintptr_t end) {
+        std::lock_guard lock(_lock);
+        Forget(start, end);
+        _ranges.emplace(start, end);
+        _bytes += end - start;
+    }
+
+    void Reset(std::uintptr_t start, std::uintptr_t end) {
+        std::lock_guard lock(_lock);
+        Forget(start, end);
+    }
+
+    std::uint64_t Bytes() {
+        std::lock_guard lock(_lock);
+        return _bytes;
+    }
+
+private:
+    void Forget(std::uintptr_t start, std::uintptr_t end) {
+        auto it = _ranges.lower_bound(start);
+        if (it != _ranges.begin() && std::prev(it)->second > start) --it;
+        while (it != _ranges.end() && it->first < end) {
+            const auto first = it->first;
+            const auto last = it->second;
+            _bytes -= last - first;
+            it = _ranges.erase(it);
+            if (first < start) {
+                _ranges.emplace(first, start);
+                _bytes += start - first;
+            }
+            if (last > end) {
+                it = _ranges.emplace(end, last).first;
+                _bytes += last - end;
+            }
+        }
+    }
+
+    std::mutex _lock;
+    std::map<std::uintptr_t, std::uintptr_t> _ranges;
+    std::uint64_t _bytes = 0;
+};
 }
 #endif
 
@@ -466,13 +532,27 @@ void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_
         if (marked) Arena::Get().Release(pointer, bytes);
         throw;
     }
+    const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+    PrivateCommits::Get().Commit(start, start + bytes);
 }
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
     if (PlaceAt(pointer, bytes, 0x01) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "guest arena reset failed");
+    const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+    PrivateCommits::Get().Reset(start, start + bytes);
 }
 #endif
+
+void GuestArenaUsage_nid_no_patch(GuestArenaUsage* usage) {
+    *usage = {};
+    usage->reservedBytes = Arena::Get().ReservedBytes();
+#ifdef _WIN32
+    WindowsMappings::Get().Committed(&usage->privateBytes, &usage->sharedBytes, &usage->directBytes);
+#elif defined(__linux__)
+    usage->privateBytes = PrivateCommits::Get().Bytes();
+#endif
+}
 
 bool GuestArenaWriteWatched_nid_postfix() {
     return Arena::Get().WriteWatched();
