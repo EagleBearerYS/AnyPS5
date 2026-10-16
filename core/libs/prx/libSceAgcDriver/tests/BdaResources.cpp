@@ -1,5 +1,6 @@
 #include "BdaTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -1720,6 +1721,76 @@ void sparseHeapMirrorTests(const Context& context, const BdaTestAccess& access) 
 #endif
 }
 
+void sparseHeapMirrorRegrowthTests(const Context& context) {
+#ifndef _WIN32
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "guest write watch unavailable: sparse heap mirror regrowth not tested\n";
+        return;
+    }
+    constexpr std::size_t reserved = 16u << 20u;
+    constexpr std::size_t page = 65536;
+    constexpr VkBufferUsageFlags mirrorUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    void* mapped = mmap(nullptr, reserved, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED, "cannot reserve the sparse heap");
+    auto* guest = static_cast<std::uint8_t*>(mapped);
+    const auto base = reinterpret_cast<std::uintptr_t>(mapped);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, reserved);
+    const auto commit = [&](std::size_t offset) {
+        Require(mprotect(guest + offset, page, PROT_READ | PROT_WRITE) == 0, "cannot commit a sparse heap page");
+        std::memset(guest + offset, 0x5a, page);
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(base + offset, page);
+    };
+    const auto extent = [&] {
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        memory.Upload(true);
+        const auto ranges = memory.AddressRanges();
+        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == base; });
+        const std::uint64_t end = found != ranges.end() ? found->end - base : 0;
+        memory.WriteBack();
+        return end;
+    };
+    auto& pool = *GetBufferPool(context);
+    std::vector<BufferAllocation> held;
+    for (std::size_t mib = 1; mib <= 8; ++mib) {
+        while (const auto taken = pool.Take(mib << 20u, mirrorUsage)) held.push_back(*taken);
+    }
+    extent();
+    commit(0);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(mapped, reserved, true, true, true);
+    }
+    const auto before = MirrorCounters();
+    auto current = extent();
+    Require(current != 0 && current < reserved && MirrorCounters().heapMirrors == before.heapMirrors + 1, "a sparse heap was not mirrored");
+    constexpr std::size_t rounds = 3;
+    std::size_t retained = 0;
+    for (std::size_t round = 0; round < rounds; ++round) {
+        commit(current);
+        const auto grown = extent();
+        Require(grown > current && MirrorCounters().heapMirrors == before.heapMirrors + 1, "a sparse heap committed past its mirror was not mirrored again");
+        while (const auto taken = pool.Take(current, mirrorUsage)) {
+            ++retained;
+            held.push_back(*taken);
+        }
+        current = grown;
+    }
+    for (const auto& allocation : held) pool.Put(allocation);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(mapped);
+    }
+    extent();
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, reserved);
+    munmap(mapped, reserved);
+    Require(MirrorCounters().heapMirrors == before.heapMirrors, "the sparse heap mirror outlived its range");
+    Require(retained == 0, "the buffer pool holds " + std::to_string(retained) + " of the " + std::to_string(rounds) + " sparse heap mirrors its regrowth superseded");
+#else
+    static_cast<void>(context);
+#endif
+}
+
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     alignas(64) std::array<std::uint32_t, 16> guest{};
     guest[0] = 123;
@@ -1947,6 +2018,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     sparseHeapTests(context, access);
     hostWriteWatchExclusionTests();
     sparseHeapMirrorTests(context, access);
+    sparseHeapMirrorRegrowthTests(context);
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");

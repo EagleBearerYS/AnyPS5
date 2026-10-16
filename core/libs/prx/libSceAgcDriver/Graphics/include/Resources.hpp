@@ -19,6 +19,7 @@ public:
     std::span<std::byte> Bytes();
     bool Mapped() const { return mapping != nullptr; }
     void Invalidate();
+    void Unpool() noexcept;
 
 private:
     void initializeAddress(VkBufferUsageFlags usage);
@@ -36,6 +37,7 @@ private:
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize offset = 0;
     bool slab = false;
+    bool pooled = true;
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags properties;
     std::shared_ptr<BufferPool> cache;

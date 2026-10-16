@@ -1887,6 +1887,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         state.failed.insert(range->address);
         return nullptr;
     }
+    if (sparse) mirror->buffer->Unpool();
     // Read stores GPU results pending in the range first (write-backs of earlier copies of it);
     // named for the [hooksync] attribution like the refresh's flush.
     {

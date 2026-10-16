@@ -110,8 +110,12 @@ Buffer::~Buffer() {
     release();
 }
 
+void Buffer::Unpool() noexcept {
+    pooled = false;
+}
+
 void Buffer::release() noexcept {
-    if (ready && cache) {
+    if (ready && cache && pooled) {
         cache->Put({buffer, memory, mapping, deviceAddress, allocationBytes, capacity, usage, properties, offset, slab, size});
         return;
     }
