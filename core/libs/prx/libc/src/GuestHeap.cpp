@@ -228,8 +228,6 @@ void* GuestHeapAllocate_nid_postfix(std::size_t bytes) {
 void GuestHeapFree_nid_postfix(void* pointer) {
     if (pointer == nullptr) return;
     GuestAllocations::Mutation mutation;
-    const auto range = mutation.Find(pointer);
-    mutation.RequireUnpinned(pointer, range.bytes);
     free(mutation, pointer);
 }
 
