@@ -515,11 +515,53 @@ bool BdaReadCacheAvailable(const SpirvEmitterState& state) {
     return state.bdaReadCache[0] != 0u && !state.module.InHelperFunction();
 }
 
+void DeclareBdaVectorCache(SpirvEmitterState& state) {
+    state.bdaVectorCache = {};
+    if (state.bdaSegmentFunction == 0u) return;
+    const auto pointer = TypePointer(state, spv::StorageClassPrivate, TypeScalarU64(state));
+    const auto zero = BdaConstant(state, 0u);
+    for (auto& variable : state.bdaVectorCache) {
+        variable = state.module.AllocateId();
+        state.module.EmitGlobalVariable({spv::OpVariable, pointer, variable, spv::StorageClassPrivate, zero});
+    }
+}
+
+bool BdaVectorCacheAvailable(const SpirvEmitterState& state) {
+    return state.bdaVectorCache[0] != 0u;
+}
+
+BdaCacheProbe ProbeBdaVectorCache(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes) {
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto load = [&](std::uint32_t variable) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, u64, value, variable);
+        return value;
+    };
+    const auto both = [&](std::uint32_t left, std::uint32_t right) { return Binary(state, spv::OpLogicalAnd, boolean, left, right); };
+    const auto end = Binary(state, spv::OpIAdd, u64, address, bytes);
+    const auto device = Binary(state, spv::OpIAdd, u64, address, load(state.bdaVectorCache[2]));
+    const auto inside = both(Binary(state, spv::OpULessThanEqual, boolean, load(state.bdaVectorCache[0]), address), Binary(state, spv::OpULessThanEqual, boolean, end, load(state.bdaVectorCache[1])));
+    const auto aligned = Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u64, device, BdaConstant(state, 3u)), BdaConstant(state, 0u));
+    return {both(both(Binary(state, spv::OpULessThan, boolean, address, end), inside), aligned), device};
+}
+
+void RefreshBdaVectorCache(SpirvEmitterState& state, std::uint32_t address) {
+    const auto segment = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, SegmentType(state), segment, state.bdaSegmentFunction, address);
+    for (std::uint32_t field = 0; field < 3u; ++field) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeScalarU64(state), value, segment, field);
+        state.module.AddFunction(spv::OpStore, state.bdaVectorCache[field], value);
+    }
+}
+
 void DefineGetBdaPointer(SpirvEmitterState& state) {
     if (state.faultBufferVariable != 0) DefineBdaFaultFunction(state);
     if (!state.program.Info().usesDma) return;
     state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites);
     if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state);
+    DeclareBdaVectorCache(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
     if (!BdaByteReadsForced()) state.bdaProbeFunction = DefineBdaLookup(state, "probe_bda_pointer", false);
     DefineBdaDwordReadFunctions(state);

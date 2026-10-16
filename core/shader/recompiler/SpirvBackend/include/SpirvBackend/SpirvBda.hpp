@@ -16,6 +16,14 @@ std::uint32_t BdaLoadAddress(SpirvEmitterState& state, std::uint32_t index);
 void DefineBdaFaultFunction(SpirvEmitterState& state);
 void DeclareBdaReadCache(SpirvEmitterState& state);
 bool BdaReadCacheAvailable(const SpirvEmitterState& state);
+void DeclareBdaVectorCache(SpirvEmitterState& state);
+bool BdaVectorCacheAvailable(const SpirvEmitterState& state);
+struct BdaCacheProbe {
+    std::uint32_t hit;
+    std::uint32_t device;
+};
+BdaCacheProbe ProbeBdaVectorCache(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes);
+void RefreshBdaVectorCache(SpirvEmitterState& state, std::uint32_t address);
 void DefineBdaDwordReadFunctions(SpirvEmitterState& state);
 void DefineBdaSpanReadFunctions(SpirvEmitterState& state);
 void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason);

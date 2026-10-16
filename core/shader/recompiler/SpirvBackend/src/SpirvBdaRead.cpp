@@ -38,6 +38,15 @@ std::uint32_t BdaAccessMask(const SpirvEmitterState& state, const IrValue& inst)
     return BdaAccessMask(BdaCoherent(state, inst));
 }
 
+std::uint32_t LoadBdaDevice(SpirvEmitterState& state, const IrValue& inst, std::uint32_t device) {
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, device);
+    const auto value = state.module.AllocateId();
+    if (BdaCoherent(state, inst)) state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+    else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, BdaAccessMask(false), 4u);
+    return value;
+}
+
 std::uint32_t EmitBdaByte(SpirvEmitterState& state, std::uint32_t guest, std::uint32_t instruction, std::uint32_t accessMask) {
     const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
     const auto bytePointer = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType);
@@ -764,18 +773,48 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
     }
     const auto function = state.bdaSpanReadFunctions[state.bdaStopsInvocations][BdaCoherent(state, inst)];
     if (function == 0) ctx.Fail(inst, "BDA span read function is missing");
-    const auto read = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionCall, BdaSpanReadResultType(state), read, function, address, ConstantU32(state, offset), ConstantU32(state, used), instruction);
-    if (state.bdaStopsInvocations) {
+    const auto vector = TypeU32Vector(state, 4);
+    const auto span = [&] {
+        const auto read = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, BdaSpanReadResultType(state), read, function, address, ConstantU32(state, offset), ConstantU32(state, used), instruction);
+        if (!state.bdaStopsInvocations) return read;
         const auto stopped = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), stopped, read, 1u);
         StopBdaInvocationIf(state, Binary(state, spv::OpINotEqual, TypeBool(state), stopped, ConstantU32(state, 0u)));
+        const auto loaded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, vector, loaded, read, 0u);
+        return loaded;
+    };
+    auto read = 0u;
+    if (BdaVectorCacheAvailable(state) && state.module.InHelperFunction()) {
+        const auto u64 = TypeScalarU64(state);
+        const auto boolean = TypeBool(state);
+        const auto start = static_cast<std::int32_t>(offset + first * 4u);
+        const auto magnitude = BdaConstant(state, start < 0 ? static_cast<std::uint64_t>(-static_cast<std::int64_t>(start)) : static_cast<std::uint64_t>(start));
+        const auto firstAddress = Binary(state, start < 0 ? spv::OpISub : spv::OpIAdd, u64, address, magnitude);
+        const auto unwrapped = Binary(state, spv::OpUGreaterThanEqual, boolean, start < 0 ? address : firstAddress, start < 0 ? magnitude : address);
+        const auto bytes = BdaConstant(state, (last - first + 1u) * 4u);
+        const auto missed = Unary(state, spv::OpLogicalNot, boolean, ProbeBdaVectorCache(state, firstAddress, bytes).hit);
+        EmitIfCondition(state, Binary(state, spv::OpLogicalAnd, boolean, unwrapped, missed), [&] { RefreshBdaVectorCache(state, firstAddress); });
+        const auto cached = ProbeBdaVectorCache(state, firstAddress, bytes);
+        read = EmitValueIfElse(state, Binary(state, spv::OpLogicalAnd, boolean, unwrapped, cached.hit), vector, [&] {
+            std::array<std::uint32_t, 4> loaded{};
+            for (std::uint32_t dword = 0; dword < 4u; ++dword) {
+                loaded[dword] = ConstantU32(state, 0u);
+                if (dword < first || dword > last || !isUsed(dword)) continue;
+                loaded[dword] = LoadBdaDevice(state, inst, dword == first ? cached.device : Binary(state, spv::OpIAdd, u64, cached.device, BdaConstant(state, (dword - first) * 4u)));
+            }
+            const auto composite = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, vector, composite, loaded[0], loaded[1], loaded[2], loaded[3]);
+            return composite;
+        }, span);
+    } else {
+        read = span();
     }
     for (std::uint32_t dword = first; dword <= last; ++dword) {
         if (!isUsed(dword)) continue;
         values[dword] = state.module.AllocateId();
-        if (state.bdaStopsInvocations) state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), values[dword], read, 0u, dword);
-        else state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), values[dword], read, dword);
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), values[dword], read, dword);
     }
     return values;
 }

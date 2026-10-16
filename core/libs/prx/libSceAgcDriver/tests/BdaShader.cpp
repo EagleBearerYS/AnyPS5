@@ -159,6 +159,38 @@ std::vector<std::uint32_t> MakeBdaSpanReadTestShader(std::uint64_t address, std:
     }, extracted);
 }
 
+std::vector<std::uint32_t> MakeBdaCachedReadTestShader(const std::vector<BdaCachedRead>& reads) {
+    using namespace ShaderRecompiler;
+    return MakeShader(0u, false, false, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t) {
+        auto& state = ctx.state;
+        const auto vector = TypeU32Vector(state, 4);
+        std::vector<std::uint32_t> values;
+        for (const auto& read : reads) {
+            const auto label = state.currentLabel;
+            state.module.BeginHelperFunction();
+            const auto helper = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunction, vector, helper, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, vector));
+            EmitLabel(state, state.module.AllocateId());
+            const auto loaded = EmitBdaDwordReads(ctx, instruction, BdaConstant(state, read.address), 0u, read.dwords, true);
+            std::array<std::uint32_t, 4> parts{};
+            for (std::uint32_t dword = 0; dword < 4u; ++dword) parts[dword] = dword < read.dwords ? loaded[dword] : ConstantU32(state, 0u);
+            const auto composite = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, vector, composite, parts[0], parts[1], parts[2], parts[3]);
+            state.module.AddFunction(spv::OpReturnValue, composite);
+            state.module.AddFunction(spv::OpFunctionEnd);
+            state.module.EndHelperFunction();
+            state.currentLabel = label;
+            const auto called = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunctionCall, vector, called, helper);
+            for (std::uint32_t dword = 0; dword < read.dwords; ++dword) {
+                values.push_back(state.module.AllocateId());
+                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), values.back(), called, dword);
+            }
+        }
+        return values;
+    });
+}
+
 std::vector<std::uint32_t> MakeBdaDwordWriteTestShader(std::uint64_t address, std::uint32_t dwords, const std::uint32_t* values) {
     using namespace ShaderRecompiler;
     return MakeShader(address, false, true, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {

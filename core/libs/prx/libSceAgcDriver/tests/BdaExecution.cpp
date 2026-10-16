@@ -785,10 +785,61 @@ static void RunBdaPageTableVersionTests(const Context& context) {
     for (const auto* version : {&base, &first, &second, &third, &fourth, &overridden, &reoverridden}) expectTranslations(*version, "after every later version was built");
 }
 
+static void RunBdaCachedReadTests(const Context& context, bool paged) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    constexpr std::uint64_t guest = 0x7fff12340000ULL;
+    std::array<std::unique_ptr<Buffer>, 3> memory;
+    for (std::uint32_t index = 0; index < memory.size(); ++index) {
+        memory[index] = std::make_unique<Buffer>(context, 72, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        for (std::uint32_t byte = 0; byte < 72u; ++byte) memory[index]->Bytes()[byte] = static_cast<std::byte>(byte * 5u + index * 64u + 1u);
+    }
+    const std::array<Abi::Range, 3> ranges{{
+        {guest, guest + 64, memory[0]->DeviceAddress(), Abi::Read, 0},
+        {guest + 64, guest + 128, memory[1]->DeviceAddress(), Abi::Read, 0},
+        {guest + 128, guest + 192, memory[2]->DeviceAddress() + 1u, Abi::Read, 0},
+    }};
+    const auto byteAt = [&](std::uint64_t address) {
+        const auto range = static_cast<std::uint32_t>((address - guest) / 64u);
+        return static_cast<std::uint32_t>(memory[range]->Bytes()[address - guest - range * 64u + (range == 2u ? 1u : 0u)]);
+    };
+    const std::vector<BdaCachedRead> reads{{guest, 1}, {guest + 4, 1}, {guest + 64, 1}, {guest + 60, 1}, {guest + 62, 1}, {guest + 68, 1}, {guest + 56, 3}, {guest + 132, 1}, {guest + 136, 2}, {guest + 4, 1}, {guest + 192, 1}};
+    std::vector<std::uint32_t> expected;
+    for (const auto& read : reads) {
+        for (std::uint32_t dword = 0; dword < read.dwords; ++dword) {
+            const auto address = read.address + dword * 4u;
+            std::uint32_t value = 0;
+            if (address + 4u <= guest + 192u) {
+                for (std::uint32_t byte = 0; byte < 4u; ++byte) value |= byteAt(address + byte) << (byte * 8u);
+            }
+            expected.push_back(value);
+        }
+    }
+    Buffer fault(context, sizeof(Abi::Fault), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer output(context, expected.size() * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    {
+        const std::string label = std::string("BDA cached reads") + (paged ? " (paged): " : ": ");
+        const auto pages = PagesFor(context, paged, ranges);
+        const auto table = MakeBinding(context, paged, pages, ranges);
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        std::memset(output.Bytes().data(), 0xee, output.Bytes().size());
+        Pipeline pipeline(context, MakeBdaCachedReadTestShader(reads), {table.get(), &fault, &output});
+        pipeline.Run(1);
+        Abi::Fault report{};
+        std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+        Require(report.state == Abi::FaultState::Ready && report.reason == Abi::FaultReason::Unmapped && report.address == guest + 192u && report.bytes == 1u && report.instruction == 0x1234, label + "the read past the last range did not publish its fault");
+        for (std::size_t index = 0; index < expected.size(); ++index) {
+            std::uint32_t value = 0;
+            std::memcpy(&value, output.Bytes().data() + index * sizeof(value), sizeof(value));
+            Require(value == expected[index], label + "dword " + std::to_string(index) + " read " + std::to_string(value) + ", expected " + std::to_string(expected[index]));
+        }
+    }
+}
+
 void RunBdaExecutionTests(const Context& context) {
     RunBdaPageTableTests(context);
     RunBdaPageTableVersionTests(context);
     for (const bool paged : {false, true}) RunBdaReadTests(context, paged);
+    for (const bool paged : {false, true}) RunBdaCachedReadTests(context, paged);
     RunBdaWrittenPageTests(context);
 }
 
