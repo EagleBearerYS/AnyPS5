@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PIPELINECREATION_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PIPELINECREATION_HPP
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -80,18 +81,18 @@ private:
 
 class CreationGate {
 public:
-    static constexpr std::size_t WordsInFlight = std::size_t{1} << 20u;
+    static constexpr std::size_t CompilerBytesPerWord = 12288;
 
     explicit CreationGate(std::size_t words) : words(words) {
         auto& gate = State();
         std::unique_lock lock(gate.mutex);
         if (CreationAhead::Active()) {
             const auto ticket = gate.issued++;
-            gate.changed.wait(lock, [&] { return ticket == gate.admitted && (gate.inFlight == 0 || gate.inFlight + words <= WordsInFlight); });
+            gate.changed.wait(lock, [&] { return ticket == gate.admitted && (gate.inFlight == 0 || gate.inFlight + words <= budgetWords(gate)); });
             ++gate.admitted;
         }
         gate.inFlight += words;
-        ++gate.creations;
+        gate.peak = std::max(gate.peak, ++gate.creations);
         lock.unlock();
         gate.changed.notify_all();
     }
@@ -121,6 +122,30 @@ public:
         return gate.creations;
     }
 
+    static std::size_t PeakCreations() {
+        auto& gate = State();
+        std::lock_guard lock(gate.mutex);
+        return gate.peak;
+    }
+
+    static std::size_t EstimateBytes(std::size_t words) { return words * CompilerBytesPerWord; }
+    static std::size_t DefaultBudgetBytes();
+
+    static std::size_t BudgetWords() {
+        auto& gate = State();
+        std::lock_guard lock(gate.mutex);
+        return budgetWords(gate);
+    }
+
+    static void SetBudgetBytes(std::size_t bytes) {
+        auto& gate = State();
+        {
+            std::lock_guard lock(gate.mutex);
+            gate.budgetBytes = bytes;
+        }
+        gate.changed.notify_all();
+    }
+
 private:
     struct Shared {
         std::mutex mutex;
@@ -129,12 +154,15 @@ private:
         std::uint64_t admitted = 0;
         std::size_t inFlight = 0;
         std::size_t creations = 0;
+        std::size_t peak = 0;
+        std::size_t budgetBytes = 0;
     };
 
-    static Shared& State() {
-        static Shared shared;
-        return shared;
+    static std::size_t budgetWords(const Shared& gate) {
+        return std::max<std::size_t>(1, (gate.budgetBytes != 0 ? gate.budgetBytes : DefaultBudgetBytes()) / CompilerBytesPerWord);
     }
+
+    static Shared& State();
 
     std::size_t words;
 };

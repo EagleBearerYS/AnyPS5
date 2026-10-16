@@ -6,6 +6,14 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace AgcDriver {
 
@@ -58,6 +66,28 @@ bool& CreationAhead::Flag() {
 std::size_t CreationThread::Words() {
     static const std::size_t words = RetainedBudgetBytes / (std::max(2u, std::thread::hardware_concurrency()) * RetainedBytesPerWord);
     return words;
+}
+
+CreationGate::Shared& CreationGate::State() {
+    static Shared shared;
+    return shared;
+}
+
+std::size_t CreationGate::DefaultBudgetBytes() {
+    static const std::size_t budget = [] {
+        std::uint64_t physical = 0;
+#ifdef _WIN32
+        MEMORYSTATUSEX status{};
+        status.dwLength = sizeof(status);
+        if (GlobalMemoryStatusEx(&status)) physical = status.ullTotalPhys;
+#else
+        const auto pages = sysconf(_SC_PHYS_PAGES);
+        const auto pageSize = sysconf(_SC_PAGESIZE);
+        if (pages > 0 && pageSize > 0) physical = static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
+#endif
+        return static_cast<std::size_t>(physical != 0 ? physical / 16u : std::uint64_t{4} << 30u);
+    }();
+    return budget;
 }
 
 bool CreationThread::Current() {

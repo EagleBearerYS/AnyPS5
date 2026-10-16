@@ -777,8 +777,6 @@ ComputePipelineReplayResult VulkanDevice::ReplayComputePipeline(const ComputePip
     }
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(capture.spirv, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false));
-#else
-    throw std::runtime_error("compute pipeline replay requires ANYPS5_ENABLE_SPIRV_TOOLS=ON");
 #endif
     ShaderRecompiler::RecompileResult shader;
     shader.spirv = capture.spirv;
@@ -880,9 +878,12 @@ ComputePipelineReplayResult VulkanDevice::ReplayComputePipeline(const ComputePip
     layoutInfo.pPushConstantRanges = capture.pushConstants.data();
     check(state->DeviceFunction<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(state->device, &layoutInfo, nullptr, &objects.layout), "vkCreatePipelineLayout replay");
     result.layoutMilliseconds = elapsed(phase);
+    std::optional<CreationGate> gate;
+    gate.emplace(capture.spirv.size());
     phase = std::chrono::steady_clock::now();
     CreateComputePipeline([&, createPipelines = state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")](const VkComputePipelineCreateInfo& info, VkPipeline* created) { return createPipelines(state->device, replay.cache, 1, &info, nullptr, created); }, objects.module, objects.layout, capture.flags, capture.stageFlags, specialization.Info(), capture.requiredSubgroupSize, &objects.pipeline);
     result.pipelineMilliseconds = elapsed(phase);
+    gate.reset();
     phase = std::chrono::steady_clock::now();
     const auto getCache = state->DeviceFunction<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     std::size_t cacheBytes = 0;

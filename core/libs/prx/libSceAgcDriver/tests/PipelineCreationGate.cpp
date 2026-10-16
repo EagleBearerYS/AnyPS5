@@ -30,7 +30,7 @@ void Bounded() {
             const CreationGate gate(size);
             const auto inFlight = CreationGate::InFlight();
             const auto creations = CreationGate::Creations();
-            if (creations > 1u && inFlight > CreationGate::WordsInFlight) exceeded = true;
+            if (creations > 1u && inFlight > CreationGate::BudgetWords()) exceeded = true;
             if (creations > 1u) ++overlapped;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         });
@@ -39,6 +39,16 @@ void Bounded() {
     Require(!exceeded, "creations together over the words in flight ran at the same time");
     Require(overlapped > 0u, "creations that fit together did not run at the same time");
     Require(CreationGate::InFlight() == 0u && CreationGate::Creations() == 0u, "the gate kept words of finished creations");
+    Require(CreationGate::PeakCreations() > 1u, "the gate's peak missed creations that ran at the same time");
+}
+
+void DerivedBudget() {
+    CreationGate::SetBudgetBytes(0);
+    const auto derived = CreationGate::BudgetWords();
+    Require(CreationGate::DefaultBudgetBytes() != 0u && derived == std::max<std::size_t>(1u, CreationGate::DefaultBudgetBytes() / CreationGate::CompilerBytesPerWord), "the default budget is not the share of physical memory in words");
+    CreationGate::SetBudgetBytes(CreationGate::EstimateBytes(250000));
+    Require(CreationGate::BudgetWords() == 250000u, "a budget of one estimate does not admit that creation's words");
+    CreationGate::SetBudgetBytes(CreationGate::EstimateBytes(std::size_t{1} << 20u));
 }
 
 void InOrder() {
@@ -165,7 +175,9 @@ void LargeOnOneThread() {
 
 int main() {
     try {
+        CreationGate::SetBudgetBytes(CreationGate::EstimateBytes(std::size_t{1} << 20u));
         Bounded();
+        DerivedBudget();
         InOrder();
         FramesFirst();
         LargeOnOneThread();

@@ -1,5 +1,7 @@
 #include "ComputePipelineFixture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
