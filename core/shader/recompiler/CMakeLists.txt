@@ -225,6 +225,7 @@ function(add_shader_recompiler target runtimeTarget)
     set(shaderCacheReviewedNames
             BuildBarycentricGeometryShader
             RunGpuSrtProgram
+            HeapFragmentEligible
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources

@@ -85,13 +85,13 @@ namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(CompiledShaderArtifact) == 240, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 208, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 496, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(ShaderInvocation) == 232, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
-static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
+static_assert(sizeof(CompiledShaderInfo) == 360, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 92, "ImageResource changed: update the info encoder");
@@ -99,10 +99,10 @@ static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update th
 static_assert(sizeof(SampledResourcePair) == 12, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
 static_assert(sizeof(StageOutput) == 48, "StageOutput changed: update the info encoder");
-static_assert(sizeof(IrBindingLayout) == 80, "IrBindingLayout changed: update the layout encoder");
+static_assert(sizeof(IrBindingLayout) == 88, "IrBindingLayout changed: update the layout encoder");
 static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: update the layout encoder");
-static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult changed: update the allocation encoder");
-static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
+static_assert(sizeof(BindingAllocationResult) == 192, "BindingAllocationResult changed: update the allocation encoder");
+static_assert(sizeof(CompiledBindingLayout) == 96, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
 static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
@@ -145,7 +145,7 @@ static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: upda
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
-static_assert(fieldCount<IrResourcePlan>() == 24, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 31, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
@@ -468,6 +468,8 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.runtimeImageCount);
     writer.Values(std::span<const std::uint32_t>(result.runtimeImageResources));
     writer.Value(result.registrationModule);
+    writer.Value(result.gpuResolvedImages);
+    writer.Value(result.samplerSlotDword);
     writer.List(result.vertexInputPatches, [](Writer& out, const VertexInputPatch& patch) {
         out.Value(patch.location);
         out.Value(patch.word);
@@ -515,6 +517,8 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.runtimeImageCount);
     reader.Values(result.runtimeImageResources);
     reader.Value(result.registrationModule);
+    reader.Value(result.gpuResolvedImages);
+    reader.Value(result.samplerSlotDword);
     reader.List(result.vertexInputPatches, 20, [](Reader& in, VertexInputPatch& patch) {
         in.Value(patch.location);
         in.Value(patch.word);
@@ -559,6 +563,11 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
         out.Value(constant.value);
     });
     writer.List(invocation.bindings, encodeBinding);
+    writer.List(invocation.heapSlotWords, [](Writer& out, const RuntimeAbi::HeapSlotWord& word) {
+        out.Value(word.dword);
+        out.Value(word.kind);
+        out.Value(word.element);
+    });
     writer.Value<std::uint64_t>(invocation.pushConstants.size());
     for (const auto byte : invocation.pushConstants) writer.Value(static_cast<std::uint8_t>(byte));
     writer.List(invocation.vertexAttributes, [](Writer& out, const VertexAttribute& attribute) {
@@ -588,6 +597,7 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     });
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
+    writer.Value(invocation.userDataRegisterReads);
 }
 
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
@@ -597,6 +607,11 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
         in.Value(constant.value);
     });
     reader.List(invocation.bindings, 8, decodeBinding);
+    reader.List(invocation.heapSlotWords, 12, [](Reader& in, RuntimeAbi::HeapSlotWord& word) {
+        in.Value(word.dword);
+        in.Value(word.kind);
+        in.Value(word.element);
+    });
     std::vector<std::uint8_t> pushConstants;
     reader.Values(pushConstants);
     invocation.pushConstants.resize(pushConstants.size());
@@ -628,6 +643,7 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     });
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
+    reader.Value(invocation.userDataRegisterReads);
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
@@ -638,6 +654,9 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.dispatchThreadLimit);
     writer.Value(layout.runtimeImageCount);
     writer.Value(layout.runtimeStateDwords);
+    writer.Value(layout.samplerSlotDwords);
+    writer.Value(layout.imageSlotDwords);
+    writer.Value(layout.gpuResolvedImages);
     writer.Values(std::span<const std::uint32_t>(layout.userDataRegisters));
     writer.List(layout.descriptors, [](Writer& out, const IrDescriptorBinding& descriptor) {
         out.Value(descriptor.kind);
@@ -653,6 +672,9 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.dispatchThreadLimit);
     reader.Value(layout.runtimeImageCount);
     reader.Value(layout.runtimeStateDwords);
+    reader.Value(layout.samplerSlotDwords);
+    reader.Value(layout.imageSlotDwords);
+    reader.Value(layout.gpuResolvedImages);
     reader.Values(layout.userDataRegisters);
     reader.List(layout.descriptors, 12, [](Reader& in, IrDescriptorBinding& descriptor) {
         in.Value(descriptor.kind);
@@ -1066,6 +1088,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
     writer.Values(std::span<const std::uint8_t>(plan.cleanFlatSlots));
     writer.Values(std::span<const std::uint8_t>(plan.pureFlatSlots));
     writer.Value(plan.denseValueIds);
+    writer.Value(plan.gpuConstantCheckSlots);
     writer.Value(plan.requiresSpecializationMemory);
     writer.Value(plan.srtPlanComplete);
     writer.Value(plan.resourceTrackingComplete);
@@ -1222,6 +1245,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     reader.Values(plan.cleanFlatSlots);
     reader.Values(plan.pureFlatSlots);
     reader.Value(plan.denseValueIds);
+    reader.Value(plan.gpuConstantCheckSlots);
     reader.Value(plan.requiresSpecializationMemory);
     reader.Value(plan.srtPlanComplete);
     reader.Value(plan.resourceTrackingComplete);
