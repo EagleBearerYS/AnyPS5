@@ -1,4 +1,3 @@
-BUSY PM-052
-since: 2026-10-16T05:32:52Z (PM-052)
-claimed: tasks/claimed/PM-052.md
-previous: PM-050 done 2026-10-16T05:32:10Z, results/cloud-2/PM-050.md (#6678 review: gaps found, PC-only; no commits)
+READY
+since: 2026-10-16T06:04:21Z
+previous: PM-052 done 2026-10-16T06:04:19Z, results/cloud-2/PM-052.md (#6683 review: gaps found, R1 recipe replays skip depth location transitions (PC-only); no commits, review/6683-sample-order-gaps not pushed)
