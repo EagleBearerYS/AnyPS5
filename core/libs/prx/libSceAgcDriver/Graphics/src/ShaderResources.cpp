@@ -2076,6 +2076,11 @@ bool AddressReuseEnabled() {
     return enabled;
 }
 
+bool AddressDispatchReuseEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_ADDRESS_DISPATCH_REUSE") == nullptr;
+    return enabled;
+}
+
 void CompleteSnapshotWrites(std::span<const GuestMemorySnapshot> snapshots) {
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || Recorder::InCompletion()) return;
@@ -2095,7 +2100,7 @@ void ShaderResources::noteReusable() {
     addressReuse = false;
     directRegions.clear();
     addressWrites.clear();
-    const bool addressBased = usesBda && drawBuild && AddressReuseEnabled();
+    const bool addressBased = usesBda && (drawBuild ? AddressReuseEnabled() : AddressDispatchReuseEnabled());
     if (guestMemory.HasCopiedWrites() || (!addressBased && (HoldsLease() || usesBda)) || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
     if (addressBased && std::any_of(tableStages.begin(), tableStages.end(), [](const TableStage& table) { return std::find(table.elementTextures.begin(), table.elementTextures.end(), std::numeric_limits<std::size_t>::max()) != table.elementTextures.end(); })) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
@@ -2841,7 +2846,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     auto& outcome = report != nullptr ? *report : proof;
     outcome = {ProofPath::Full, ProofFailure::Other};
     if (!reusable) return refuse(AddressReuse::NotReusable);
-    if (InUse()) return refuse(AddressReuse::InUse);
+    if (drawBuild && InUse()) return refuse(AddressReuse::InUse);
     CompleteSnapshotWrites(snapshots);
     if (!guestMemory.SameSnapshots(snapshots)) return refuse(AddressReuse::Snapshots);
     struct Suspend {
@@ -4814,6 +4819,99 @@ void ShaderResources::EndUse() noexcept {
     if (!addressReuse) return;
     reuseProved = false;
     guestMemory.SuspendSpace();
+}
+
+std::shared_ptr<ShaderResources::DispatchUse> ShaderResources::BeginDispatchUse() {
+    if (!addressReuse || bda == nullptr) return {};
+    auto use = std::make_shared<DispatchUse>();
+    bool idle = false;
+    if (ownRecordBusy->compare_exchange_strong(idle, true, std::memory_order_acq_rel)) {
+        use->ownRecord = ownRecordBusy;
+    } else {
+        SpareRecord spare;
+        {
+            std::lock_guard lock(spareRecords->mutex);
+            if (!spareRecords->idle.empty()) {
+                spare = std::move(spareRecords->idle.back());
+                spareRecords->idle.pop_back();
+            }
+        }
+        if (spare.record == nullptr) {
+            spare.record = BdaResources::FaultRecord(context);
+            spare.bindings = faultRecordBindings(*spare.record);
+        }
+        use->record = std::move(spare.record);
+        use->bindings = std::move(spare.bindings);
+        use->spares = spareRecords;
+    }
+    use->hold = BeginUse();
+    return use;
+}
+
+ShaderResources::DispatchUse::~DispatchUse() {
+    if (ownRecord != nullptr) ownRecord->store(false, std::memory_order_release);
+    if (spares == nullptr) return;
+    std::lock_guard lock(spares->mutex);
+    spares->idle.push_back({std::move(record), std::move(bindings)});
+}
+
+void ShaderResources::CompleteDispatchUse(DispatchUse& use) {
+    try {
+        if (use.ownRecord != nullptr) bda->CheckFault();
+        else bda->CheckFault(*use.record);
+    } catch (...) {
+        reusable = false;
+        throw;
+    }
+    if (SkipWriteBack()) return;
+    for (const auto& [begin, end] : addressWrites) GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+}
+
+void ShaderResources::BindUse(VkCommandBuffer commands, VkPipelineLayout layout, const DispatchUse* use) const {
+    if (use == nullptr || use->bindings == nullptr) {
+        Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout);
+        return;
+    }
+    const auto set = use->bindings->allocation.set;
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, nullptr);
+}
+
+std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::faultRecordBindings(const Buffer& record) const {
+    Require(context.descriptorCache != nullptr && _set != VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE, "a dispatch's own fault record needs the descriptor cache and one descriptor set");
+    std::map<VkDescriptorType, std::uint32_t> counts;
+    for (const auto& binding : bindings) counts[binding.layout.descriptorType] += (binding.flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) != 0 ? std::max(1u, static_cast<std::uint32_t>(binding.imageAllocations.size())) : binding.layout.descriptorCount;
+    std::vector<VkDescriptorPoolSize> sizes;
+    for (const auto& [type, count] : counts) {
+        if (count != 0) sizes.push_back({type, count});
+    }
+    const auto variable = tableBindings[0] != std::numeric_limits<std::size_t>::max() ? std::optional<std::uint32_t>(std::max(1u, static_cast<std::uint32_t>(bindings[tableBindings[0]].imageAllocations.size()))) : std::nullopt;
+    auto result = std::make_shared<DrawBindings>();
+    result->cache = context.descriptorCache;
+    result->layout = _layout;
+    result->allocation = result->cache->AllocateRewritten(_layout, sizes, updateAfterBind, variable);
+    Require(result->allocation.set != VK_NULL_HANDLE, "dispatch fault record descriptor allocation failed");
+    auto buffers = descriptorBuffers;
+    auto writes = descriptorWrites;
+    const auto fault = BdaResources::FaultRecordDescriptor(record);
+    bool bound = false;
+    auto nextWrite = writes.begin();
+    for (const auto& binding : bindings) {
+        while (nextWrite != writes.end() && nextWrite->dstBinding == binding.layout.binding) {
+            auto& write = *nextWrite++;
+            write.dstSet = result->allocation.set;
+            if (binding.allocations.empty()) continue;
+            const auto offset = static_cast<std::size_t>(write.pBufferInfo - descriptorBuffers.data());
+            write.pBufferInfo = buffers.data() + offset;
+            for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
+                if (allocations[binding.allocations[element]].role != ShaderRecompiler::DescriptorRole::FaultBuffer) continue;
+                buffers[offset + element] = fault;
+                bound = true;
+            }
+        }
+    }
+    Require(nextWrite == writes.end() && bound, "dispatch fault record writes disagree with their descriptor bindings");
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    return result;
 }
 
 void ShaderResources::WriteBackBuffers() {

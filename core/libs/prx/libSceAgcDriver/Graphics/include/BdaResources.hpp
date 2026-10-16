@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "Recompiler.hpp"
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,6 +19,9 @@ public:
     VkDescriptorBufferInfo Table() const;
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    static std::shared_ptr<Buffer> FaultRecord(const Context& context);
+    static VkDescriptorBufferInfo FaultRecordDescriptor(const Buffer& record);
+    void CheckFault(Buffer& record) const;
     struct ImageTableFaults {
         std::uint32_t stage = 0;
         std::uint64_t shader = 0;
@@ -53,7 +57,7 @@ private:
     // The page table is read-only to the shader, so consecutive builds mapping the same ranges to the
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
-    void markWrittenPages() const;
+    void markWrittenPages(Buffer& record) const;
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
     std::size_t tableBytes = 0;

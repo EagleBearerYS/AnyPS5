@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -1996,7 +1997,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     {
         ShaderResources resources(context, compiled, snapshots);
         Require(!ShaderResources::NeverReusable(std::span<const CompiledShader>(&compiled, 1)), "address-based stages are refused the resource cache");
-        Require(!resources.Reusable() && !resources.InUse(), "an address-based dispatch build is reusable");
+        const bool dispatchReuse = std::getenv("APS5_NO_ADDRESS_DISPATCH_REUSE") == nullptr;
+        Require(resources.Reusable() == dispatchReuse && !resources.InUse(), dispatchReuse ? "an address-based dispatch build is not reusable" : "an address-based dispatch build is reusable with APS5_NO_ADDRESS_DISPATCH_REUSE=1");
+        resources.EndUse();
         Require(resources.UsesAddressTable(), "an address-based build does not use the BDA table");
         ShaderRecompiler::RecompileResult plain;
         plain.bindings = {binding(Role::GuestBuffers, 6)};
