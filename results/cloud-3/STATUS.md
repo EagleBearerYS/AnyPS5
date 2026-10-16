@@ -1,4 +1,4 @@
-READY (last: BF-033 done, BDA reuse prototype takes (B) 342-838 to 65 us and 2,000 textures 8.2 to 0.98 ms, stalls guest frees; branch exp/dispatch-binding-ceiling b7b4b0bdc8)
+BUSY BF-039 (claimed: keep every texture lookup record of a build, fast revalidate past ~1,000 textures)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
