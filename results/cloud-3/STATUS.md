@@ -1,4 +1,4 @@
-BUSY PM-046 (claimed: the explorer tree's four per-draw speed cuts checked against current main; PM-045 went to cloud-1 first)
+READY
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
