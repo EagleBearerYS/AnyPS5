@@ -35,6 +35,8 @@ public:
     void ReleaseSampler(std::uint32_t slot) noexcept;
     std::uint32_t AllocateImage(Array array, VkImageView view, VkImageLayout layout);
     std::uint32_t AllocateImageRun(Array array, std::span<const VkImageView> imageViews, VkImageLayout layout);
+    std::uint32_t ReserveImage(Array array, VkImageLayout layout);
+    void WriteImage(Array array, std::uint32_t slot, VkImageView view, VkImageLayout layout);
     void ReleaseImage(Array array, std::uint32_t slot) noexcept;
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, VkDescriptorSet set) const;
 

@@ -65,6 +65,24 @@ struct OwnedViews {
     std::vector<VkImageView> views;
 };
 
+class PooledView {
+public:
+    PooledView() = default;
+    ~PooledView();
+    PooledView(const PooledView&) = delete;
+    PooledView& operator=(const PooledView&) = delete;
+    void Start(const Context& context, const VkImageViewCreateInfo& info, const char* what);
+    bool Started() const { return state != nullptr; }
+    VkImageView Get() const;
+    std::uint32_t SampledSlot(VkImageLayout layout) const;
+    void Destroy() noexcept;
+    static void Settle();
+
+private:
+    struct State;
+    std::shared_ptr<State> state;
+};
+
 class Texture {
 public:
     Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool decodedCopy = false);
@@ -95,9 +113,10 @@ public:
     Texture& operator=(const Texture&) = delete;
 
     VkImageView View() const;
-    VkImageView FirstLayerView() const { return firstLayerView; }
+    VkImageView FirstLayerView() const { return firstLayerView.Get(); }
     VkImageView BaseLevelView() const;
-    std::uint32_t SampledSlot(VkImageView view) const;
+    enum class SampledView : std::uint8_t { Whole, FirstLayer, BaseLevel };
+    std::uint32_t SampledSlot(SampledView which) const;
     struct ViewRange {
         VkImageViewType type;
         std::uint32_t levels;
@@ -125,6 +144,7 @@ private:
     void release() noexcept;
     void createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
     void prepareBaseLevelView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
+    void startBaseLevelView() const;
     void recordDepthCopy(VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept);
     void recordDecodedCopy(VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept);
 
@@ -134,15 +154,13 @@ private:
     // The snapshot constructor's image (null for a view of a storage image); `owned` frees it.
     VkImage image = VK_NULL_HANDLE;
     std::shared_ptr<OwnedImage> owned;
-    VkImageView view = VK_NULL_HANDLE;
-    VkImageView firstLayerView = VK_NULL_HANDLE;
+    PooledView view;
+    PooledView firstLayerView;
     ViewRange viewRange{};
     ViewRange firstLayerRange{};
     std::optional<VkImageViewCreateInfo> baseLevelInfo;
     mutable std::mutex baseLevelMutex;
-    mutable VkImageView baseLevelView = VK_NULL_HANDLE;
-    mutable std::mutex slotMutex;
-    mutable std::map<VkImageView, std::uint32_t> sampledSlots;
+    mutable PooledView baseLevelView;
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;

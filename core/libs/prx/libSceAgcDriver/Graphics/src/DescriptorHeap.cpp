@@ -190,6 +190,20 @@ std::uint32_t DescriptorHeap::AllocateImageRun(Array array, std::span<const VkIm
     return first;
 }
 
+std::uint32_t DescriptorHeap::ReserveImage(Array array, VkImageLayout layout) {
+    Require(array != Array::Samplers, "a reserved image slot is not a sampler slot");
+    return allocate(array, {VK_NULL_HANDLE, VK_NULL_HANDLE, layout});
+}
+
+void DescriptorHeap::WriteImage(Array array, std::uint32_t slot, VkImageView view, VkImageLayout layout) {
+    Require(array != Array::Samplers && view != VK_NULL_HANDLE, "an image slot needs an image view");
+    std::lock_guard lock(mutex);
+    auto& slots = arrays[static_cast<std::size_t>(array)];
+    Require(slot != 0u && slot < slots.entries.size(), std::string("a written ") + ArrayNames[static_cast<std::size_t>(array)] + " slot was never reserved");
+    slots.entries[slot] = {VK_NULL_HANDLE, view, layout};
+    for (const auto& item : views) write(item, array, slot, 1);
+}
+
 void DescriptorHeap::ReleaseImage(Array array, std::uint32_t slot) noexcept {
     release(array, slot);
 }

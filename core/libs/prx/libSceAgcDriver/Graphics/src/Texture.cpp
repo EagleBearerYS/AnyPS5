@@ -32,6 +32,11 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <set>
+#include <thread>
 
 namespace AgcDriver::Graphics {
 
@@ -469,7 +474,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
 
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView");
+        view.Start(context, viewInfo, "vkCreateImageView");
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
@@ -551,7 +556,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView depth copy");
+        view.Start(context, viewInfo, "vkCreateImageView depth copy");
         createFirstLayerView(descriptor, viewInfo);
         static_cast<void>(components);
         depthCopyTextures.fetch_add(1, std::memory_order_relaxed);
@@ -638,7 +643,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView decoded copy");
+        view.Start(context, viewInfo, "vkCreateImageView decoded copy");
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
@@ -803,7 +808,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView storage view");
+        view.Start(context, viewInfo, "vkCreateImageView storage view");
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
@@ -828,12 +833,12 @@ Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthForma
     viewFormat = depthFormat;
     viewInfo.components = components;
     viewInfo.subresourceRange = {aspect, 0, 1, baseLayer, viewType == VK_IMAGE_VIEW_TYPE_2D ? 1u : VK_REMAINING_ARRAY_LAYERS};
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView depth plane");
+    view.Start(context, viewInfo, "vkCreateImageView depth plane");
     viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
     if (viewType != VK_IMAGE_VIEW_TYPE_2D_ARRAY) return;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.subresourceRange.layerCount = 1;
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &firstLayerView), "vkCreateImageView depth plane first layer");
+    firstLayerView.Start(context, viewInfo, "vkCreateImageView depth plane first layer");
     firstLayerRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
 }
 
@@ -845,7 +850,7 @@ void Texture::createFirstLayerView(const GuestTextureResource& descriptor, VkIma
     if (descriptor.dimension != TextureDimension::k2DArray) return;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.subresourceRange.layerCount = 1;
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &firstLayerView), "vkCreateImageView first layer");
+    firstLayerView.Start(context, viewInfo, "vkCreateImageView first layer");
     firstLayerRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
 }
 
@@ -859,38 +864,38 @@ void Texture::prepareBaseLevelView(const GuestTextureResource& descriptor, VkIma
     baseLevelInfo = viewInfo;
 }
 
-VkImageView Texture::BaseLevelView() const {
+void Texture::startBaseLevelView() const {
     Require(baseLevelInfo.has_value(), "a base-level view needs a mipmapped 1D, 2D or 2D array texture");
     std::lock_guard lock(baseLevelMutex);
-    if (!baseLevelView) {
-        VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
-        usage.usage = viewUsage;
-        auto info = *baseLevelInfo;
-        if (viewUsage != 0u) info.pNext = &usage;
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &baseLevelView), "vkCreateImageView base level");
-    }
-    return baseLevelView;
+    if (baseLevelView.Started()) return;
+    VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+    usage.usage = viewUsage;
+    auto info = *baseLevelInfo;
+    if (viewUsage != 0u) info.pNext = &usage;
+    baseLevelView.Start(context, info, "vkCreateImageView base level");
 }
 
-std::uint32_t Texture::SampledSlot(VkImageView imageView) const {
-    Require(imageView != VK_NULL_HANDLE && context.descriptorHeap != nullptr, "a sampled image slot needs a view and the descriptor heap");
-    std::lock_guard lock(slotMutex);
-    if (const auto found = sampledSlots.find(imageView); found != sampledSlots.end()) return found->second;
-    const auto slot = context.descriptorHeap->AllocateImage(DescriptorHeap::Array::SampledImages, imageView, layout);
-    sampledSlots.emplace(imageView, slot);
-    return slot;
+VkImageView Texture::BaseLevelView() const {
+    startBaseLevelView();
+    return baseLevelView.Get();
+}
+
+std::uint32_t Texture::SampledSlot(SampledView which) const {
+    Require(context.descriptorHeap != nullptr, "a sampled image slot needs the descriptor heap");
+    if (which == SampledView::BaseLevel) {
+        startBaseLevelView();
+        return baseLevelView.SampledSlot(layout);
+    }
+    const auto& chosen = which == SampledView::FirstLayer ? firstLayerView : view;
+    Require(chosen.Started(), "a sampled image slot needs a view");
+    return chosen.SampledSlot(layout);
 }
 
 void Texture::release() noexcept {
-    for (const auto& [imageView, slot] : sampledSlots) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::SampledImages, slot);
-    sampledSlots.clear();
     upload.reset();
-    if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
-    view = VK_NULL_HANDLE;
-    if (firstLayerView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, firstLayerView, nullptr);
-    firstLayerView = VK_NULL_HANDLE;
-    if (baseLevelView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, baseLevelView, nullptr);
-    baseLevelView = VK_NULL_HANDLE;
+    view.Destroy();
+    firstLayerView.Destroy();
+    baseLevelView.Destroy();
     copyViews.reset();
     // The image and its memory go with the last holder: this texture, or the batch still uploading it.
     owned.reset();
@@ -899,9 +904,167 @@ void Texture::release() noexcept {
 }
 
 VkImageView Texture::View() const {
-    return view;
+    return view.Get();
 }
 
+namespace {
+
+struct ViewCreations {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::condition_variable settled;
+    std::deque<std::pair<std::uint64_t, std::function<void()>>> tasks;
+    std::set<std::uint64_t> open;
+    std::uint64_t issued = 0;
+    std::string failure;
+    std::uint32_t workers = 0;
+};
+
+ViewCreations& ViewPool() {
+    static ViewCreations* const pool = new ViewCreations;
+    return *pool;
+}
+
+void viewWorker() {
+    auto& pool = ViewPool();
+    std::unique_lock lock(pool.mutex);
+    for (;;) {
+        pool.wake.wait(lock, [&] { return !pool.tasks.empty(); });
+        auto [ticket, task] = std::move(pool.tasks.front());
+        pool.tasks.pop_front();
+        lock.unlock();
+        task();
+        lock.lock();
+        pool.open.erase(ticket);
+        pool.settled.notify_all();
+    }
+}
+
+}
+
+struct PooledView::State {
+    std::mutex mutex;
+    std::condition_variable created;
+    bool finished = false;
+    VkImageView view = VK_NULL_HANDLE;
+    std::string failure;
+    std::optional<std::uint32_t> slot;
+    VkImageLayout slotLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    DescriptorHeap* heap = nullptr;
+    VkDevice device = VK_NULL_HANDLE;
+    PFN_vkDestroyImageView destroy = nullptr;
+};
+
+void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info, const char* what) {
+    Require(state == nullptr, std::string(what) + ": a pooled view is started once");
+    std::optional<VkImageViewMinLodCreateInfoEXT> minLod;
+    std::optional<VkImageViewUsageCreateInfo> usage;
+    for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next != nullptr; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT) minLod = *reinterpret_cast<const VkImageViewMinLodCreateInfoEXT*>(next);
+        else if (next->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO) usage = *reinterpret_cast<const VkImageViewUsageCreateInfo*>(next);
+        else Require(false, std::string(what) + ": an image view chain holds a structure the view pool does not copy");
+    }
+    auto target = std::make_shared<State>();
+    target->heap = context.descriptorHeap;
+    target->device = context.device;
+    target->destroy = context.Function<PFN_vkDestroyImageView>("vkDestroyImageView");
+    const auto create = context.Function<PFN_vkCreateImageView>("vkCreateImageView");
+    auto& pool = ViewPool();
+    {
+        std::lock_guard poolLock(pool.mutex);
+        const auto ticket = ++pool.issued;
+        pool.open.insert(ticket);
+        pool.tasks.emplace_back(ticket, [create, request = info, minLod, usage, target, label = std::string(what)]() mutable {
+            request.pNext = nullptr;
+            if (usage) {
+                usage->pNext = nullptr;
+                request.pNext = &*usage;
+            }
+            if (minLod) {
+                minLod->pNext = request.pNext;
+                request.pNext = &*minLod;
+            }
+            VkImageView made = VK_NULL_HANDLE;
+            const auto result = create(target->device, &request, nullptr, &made);
+            std::string failure;
+            {
+                std::lock_guard lock(target->mutex);
+                target->finished = true;
+                if (result != VK_SUCCESS) {
+                    failure = label + " failed on the view pool: VkResult " + std::to_string(static_cast<int>(result));
+                } else {
+                    target->view = made;
+                    if (target->slot) {
+                        try {
+                            target->heap->WriteImage(DescriptorHeap::Array::SampledImages, *target->slot, made, target->slotLayout);
+                        } catch (const std::exception& error) {
+                            failure = label + ": " + error.what();
+                        }
+                    }
+                }
+                target->failure = failure;
+            }
+            target->created.notify_all();
+            if (failure.empty()) return;
+            auto& views = ViewPool();
+            std::lock_guard poolLock(views.mutex);
+            if (views.failure.empty()) views.failure = failure;
+        });
+        if (pool.workers == 0) {
+            for (std::uint32_t worker = 0; worker < 2; ++worker) std::thread(viewWorker).detach();
+            pool.workers = 2;
+        }
+    }
+    pool.wake.notify_one();
+    state = std::move(target);
+}
+
+VkImageView PooledView::Get() const {
+    if (state == nullptr) return VK_NULL_HANDLE;
+    std::unique_lock lock(state->mutex);
+    state->created.wait(lock, [&] { return state->finished; });
+    Require(state->failure.empty(), state->failure);
+    return state->view;
+}
+
+std::uint32_t PooledView::SampledSlot(VkImageLayout layout) const {
+    Require(state != nullptr && state->heap != nullptr, "a sampled image slot needs a view and the descriptor heap");
+    std::lock_guard lock(state->mutex);
+    if (state->slot) return *state->slot;
+    Require(state->failure.empty(), state->failure);
+    if (state->finished) {
+        state->slot = state->heap->AllocateImage(DescriptorHeap::Array::SampledImages, state->view, layout);
+    } else {
+        state->slot = state->heap->ReserveImage(DescriptorHeap::Array::SampledImages, layout);
+        state->slotLayout = layout;
+    }
+    return *state->slot;
+}
+
+void PooledView::Destroy() noexcept {
+    if (state == nullptr) return;
+    {
+        std::unique_lock lock(state->mutex);
+        state->created.wait(lock, [&] { return state->finished; });
+        if (state->slot) state->heap->ReleaseImage(DescriptorHeap::Array::SampledImages, *state->slot);
+        if (state->view != VK_NULL_HANDLE) state->destroy(state->device, state->view, nullptr);
+        state->slot.reset();
+        state->view = VK_NULL_HANDLE;
+    }
+    state.reset();
+}
+
+PooledView::~PooledView() {
+    Destroy();
+}
+
+void PooledView::Settle() {
+    auto& pool = ViewPool();
+    std::unique_lock lock(pool.mutex);
+    const auto issued = pool.issued;
+    pool.settled.wait(lock, [&] { return pool.open.empty() || *pool.open.begin() > issued; });
+    Require(pool.failure.empty(), pool.failure);
+}
 
 namespace {
 

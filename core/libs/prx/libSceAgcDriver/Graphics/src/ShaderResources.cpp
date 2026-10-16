@@ -1832,7 +1832,7 @@ void ShaderResources::buildComplete() {
                     slot[0] = image.StorageSlot(storageAtomic64[index] ? image.Atomic64View(storageMips[index], storageLayers[index]) : storageAtomic[index] ? image.AtomicView(storageMips[index], storageLayers[index]) : image.StorageView(storageMips[index], storageLayers[index]));
                 } else {
                     const auto& texture = *textures[index];
-                    slot[0] = texture.SampledSlot(textureBaseLevel[index] ? texture.BaseLevelView() : textureFirstLayer[index] ? texture.FirstLayerView() : texture.View());
+                    slot[0] = texture.SampledSlot(textureBaseLevel[index] ? Texture::SampledView::BaseLevel : textureFirstLayer[index] ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole);
                 }
                 const auto position = binding.slotDwords[element] * 4u;
                 patchShaderData(binding.slotPushOffset >= 0 ? binding.slotPushOffset + static_cast<std::int32_t>(position) : -1, binding.slotDataAllocation, position, slot);
@@ -2661,7 +2661,7 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
         baseLevel = range.levels > 1u;
     }
     DeviceTableTexture result;
-    result.slot = texture->SampledSlot(baseLevel ? texture->BaseLevelView() : firstLayer ? texture->FirstLayerView() : texture->View());
+    result.slot = texture->SampledSlot(baseLevel ? Texture::SampledView::BaseLevel : firstLayer ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole);
     result.address = resource.baseAddress;
     result.guestBytes = guestBytes;
     result.snapshot = looked != nullptr && looked->source == nullptr && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0 && looked->generation != 0;
@@ -2751,7 +2751,7 @@ void ShaderResources::finishImageTables() {
             const auto index = table.elementTextures[element];
             if (index == std::numeric_limits<std::size_t>::max()) continue;
             const auto& texture = *textures[index];
-            map[map[Abi::HeaderImageSlots] + element] = texture.SampledSlot(textureFirstLayer[index] ? texture.FirstLayerView() : texture.View());
+            map[map[Abi::HeaderImageSlots] + element] = texture.SampledSlot(textureFirstLayer[index] ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole);
         }
         if (map[Abi::HeaderSamplerClasses] != 0u) {
             Require(context.deviceImages != nullptr, "a program reading images through the device image table needs the device's table");

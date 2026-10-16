@@ -3656,6 +3656,7 @@ void Recorder::submitStream(std::uint32_t stream) {
         submission.signalSemaphoreCount = 1;
         submission.pSignalSemaphores = &target.timeline;
     }
+    PooledView::Settle();
     const auto submitStart = std::chrono::steady_clock::now();
     Check(function(queueSubmit, "vkQueueSubmit")(target.queue, 1, &submission, batch->fence), "vkQueueSubmit recorder");
     batch->submitted = true;
