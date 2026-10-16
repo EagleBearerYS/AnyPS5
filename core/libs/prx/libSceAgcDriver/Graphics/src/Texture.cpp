@@ -3015,22 +3015,97 @@ void StorageTexture::refreshGeneration() {
     generation = *std::min_element(layerGeneration.begin(), layerGeneration.end());
 }
 
+void StorageTexture::MarkDirtyRegion(std::uint32_t mip, std::uint32_t depthSlice, std::uint32_t depthSlices, std::uint32_t arraySlice, VkRect2D area) {
+    if (descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle) && !IsDccClear(filledKeys)) {
+        traceKeyStore("first write", descriptor, guestBytes);
+        MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+        uploadedKeys = DccKeys::Uncompressed;
+    }
+    const bool volume = descriptor.dimension == TextureDimension::k3D;
+    const auto units = descriptor.dccAddress != 0 && uploadedKeys != DccKeys::Uncompressed ? std::nullopt : regionUnits(mip, volume ? depthSlice : arraySlice, volume ? depthSlices : 1u, area);
+    if (!units.has_value()) {
+        markLayersPending(0, trackedLayers);
+        return;
+    }
+    if (!units->empty()) markUnitsPending(*units);
+}
+
+std::optional<std::vector<std::pair<std::uint32_t, std::uint32_t>>> StorageTexture::regionUnits(std::uint32_t level, std::uint32_t firstLayer, std::uint32_t layers, VkRect2D area) const {
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
+    if (area.extent.width == 0 || area.extent.height == 0 || layers == 0) return runs;
+    if (level >= descriptor.mipCount || firstLayer >= arrayLayers || trackedLayers <= 1) return std::nullopt;
+    const auto lastLayer = std::min<std::uint32_t>(arrayLayers, firstLayer + layers);
+    if (!blockUnits) {
+        if (trackedLayers != arrayLayers) return std::nullopt;
+        runs.emplace_back(firstLayer, lastLayer);
+        return runs;
+    }
+    if (BlockWidth(descriptor.format) != 1 || mips.size() <= level) return std::nullopt;
+    const auto& mip = mips[level];
+    const auto block = ThinBlockLayout(descriptor.tileMode, BytesPerElement(descriptor.format));
+    if (block[0] == 0 || block[1] == 0 || block[2] == 0 || mip.blocksPerRow == 0) return std::nullopt;
+    const auto clampAxis = [](std::int32_t offset, std::uint32_t extent, std::uint32_t limit) {
+        const auto begin = std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max(offset, 0)), limit);
+        const auto end = std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max(offset, 0)) + extent, limit);
+        return std::pair{begin, end};
+    };
+    const auto [x0, x1] = clampAxis(area.offset.x, area.extent.width, mip.width);
+    const auto [y0, y1] = clampAxis(area.offset.y, area.extent.height, mip.height);
+    if (x1 <= x0 || y1 <= y0) return runs;
+    const auto add = [&](std::uint64_t begin, std::uint64_t end) {
+        const auto first = static_cast<std::uint32_t>(begin / trackedLayerBytes);
+        const auto last = static_cast<std::uint32_t>(std::min<std::uint64_t>((end + trackedLayerBytes - 1u) / trackedLayerBytes, trackedLayers));
+        if (first >= last) return;
+        if (!runs.empty() && first <= runs.back().second) runs.back().second = std::max(runs.back().second, last);
+        else runs.emplace_back(first, last);
+    };
+    for (auto layer = firstLayer; layer < lastLayer; ++layer) {
+        if (!geometry.HasLayer(level, layer)) continue;
+        const auto sliceBegin = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+        if (mip.tail) {
+            add(sliceBegin, sliceBegin + mip.tiledSize);
+            continue;
+        }
+        const auto columnBegin = x0 / block[1];
+        const auto columnEnd = std::min<std::uint64_t>((x1 + block[1] - 1u) / block[1], mip.blocksPerRow);
+        const auto rowBegin = y0 / block[2];
+        const auto rowEnd = (y1 + block[2] - 1u) / block[2];
+        for (auto row = rowBegin; row < rowEnd; ++row) add(sliceBegin + (row * mip.blocksPerRow + columnBegin) * block[0], sliceBegin + (row * mip.blocksPerRow + columnEnd) * block[0]);
+    }
+    std::sort(runs.begin(), runs.end());
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> merged;
+    for (const auto& run : runs) {
+        if (!merged.empty() && run.first <= merged.back().second) merged.back().second = std::max(merged.back().second, run.second);
+        else merged.push_back(run);
+    }
+    return merged;
+}
+
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
-    CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
+    const std::pair<std::uint32_t, std::uint32_t> run{first, first + count};
+    markUnitsPending(std::span(&run, 1));
+}
+
+void StorageTexture::markUnitsPending(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs) {
+    for (const auto& [first, end] : runs) CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, end - first, static_cast<unsigned long long>(generation));
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
-    for (std::uint32_t layer = first; layer < first + count; ++layer) layerPending[layer] = true;
+    for (const auto& [first, end] : runs) {
+        for (std::uint32_t layer = first; layer < end; ++layer) layerPending[layer] = true;
+    }
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
     // this image's content). An alias written since keeps its own newer results pending.
     if (auto source = borrowedFrom.lock(); source != nullptr && borrowedUnits.size() == trackedLayers) {
         bool superseded = false;
-        for (std::uint32_t unit = first; unit < first + count; ++unit) {
-            if (!borrowedUnits[unit]) continue;
-            borrowedUnits[unit] = false;
-            if (source->version != borrowedVersion || !source->layerPending[unit]) continue;
-            source->layerPending[unit] = false;
-            unitsSuperseded.fetch_add(1, std::memory_order_relaxed);
-            superseded = true;
+        for (const auto& [first, end] : runs) {
+            for (std::uint32_t unit = first; unit < end; ++unit) {
+                if (!borrowedUnits[unit]) continue;
+                borrowedUnits[unit] = false;
+                if (source->version != borrowedVersion || !source->layerPending[unit]) continue;
+                source->layerPending[unit] = false;
+                unitsSuperseded.fetch_add(1, std::memory_order_relaxed);
+                superseded = true;
+            }
         }
         if (superseded) source->reconcilePending();
     }

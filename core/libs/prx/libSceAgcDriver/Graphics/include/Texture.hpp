@@ -204,6 +204,7 @@ public:
     void WriteBack();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
+    void MarkDirtyRegion(std::uint32_t mip, std::uint32_t depthSlice, std::uint32_t depthSlices, std::uint32_t arraySlice, VkRect2D area);
     void Flush();
     // Stores every pending image overlapping the range, except `except`; returns whether any was.
     // Stores into host-imported memory are recorded (not waited for): a CPU reader syncs afterwards.
@@ -450,6 +451,8 @@ private:
     // Marks `count` tracked layers from `first` pending and registers the image (MarkDirty's
     // registration; APS5_EAGER_WRITEBACK=1 stores at once instead).
     void markLayersPending(std::uint32_t first, std::uint32_t count);
+    void markUnitsPending(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs);
+    std::optional<std::vector<std::pair<std::uint32_t, std::uint32_t>>> regionUnits(std::uint32_t level, std::uint32_t firstLayer, std::uint32_t layers, VkRect2D area) const;
     // Registers or unregisters the image as its pending layers say (after a write-back).
     void reconcilePending();
     // Pending images whose surface shares one of the 64 KiB write-stamp blocks firstBlock..lastBlock
