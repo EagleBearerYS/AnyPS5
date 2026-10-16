@@ -324,6 +324,8 @@ public:
     // the GPU copies out of an import (gpuCopy) notes its read itself when the copy is recorded.
     // For the recorder's read tracking (ShaderResources::MarkGpuWrites); nothing once committed.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const;
+    bool ReadsInPlace(std::uint64_t address, std::uint64_t bytes) const;
+    bool InPlaceReadsOverlap(std::uint64_t address, std::uint64_t bytes) const;
     struct SplitReads {
         std::shared_ptr<const std::vector<std::pair<std::uint64_t, std::uint64_t>>> space;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> own;
