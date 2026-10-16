@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -1391,6 +1392,7 @@ void ShaderResources::Complete() {
         buildPrepare(shaders, nullptr, 0, 0, 0);
     }
     buildComplete();
+    if (heapStage) RefreshHeapStage(shaders);
     forgetDeferredInputs();
 }
 
@@ -1405,6 +1407,7 @@ void ShaderResources::forgetDeferredInputs() {
 void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
     buildPrepare(shaders, target, colorAttachments, indexAddress, indexBytes);
     buildComplete();
+    if (heapStage) RefreshHeapStage(shaders);
 }
 
 namespace {
@@ -1729,11 +1732,18 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 Require(stageStorageBuffers <= limits.maxPerStageDescriptorUpdateAfterBindStorageBuffers && stageResources <= limits.maxPerStageUpdateAfterBindResources, "shader descriptors exceed per-stage limits");
                 updateAfterBind = true;
             };
+            const bool heapShader = (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute) && shader.program->gpuResolvedImages;
+            if (heapShader) {
+                Require(BindlessTexturesEnabled(), "a GPU-mode stage needs the bindless heap (APS5_GPU_HEAP)");
+                heapStage = true;
+                if (shader.stage == ShaderRecompiler::ShaderStage::Compute) NoteHeapComputeStage();
+            }
             for (const auto& binding : shader.program->bindings) {
-                Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || (shader.stage == ShaderRecompiler::ShaderStage::Fragment && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "unexpected descriptor set: a shader resource must use its stage's descriptor set");
+                Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || ((shader.stage == ShaderRecompiler::ShaderStage::Fragment || heapShader) && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "unexpected descriptor set: a shader resource must use its stage's descriptor set");
                 if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable) {
                     const bool storage = binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable;
                     Require(binding.binding == (storage ? ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding : ShaderRecompiler::RuntimeAbi::ImageTableBinding) && binding.kind == (storage ? ShaderRecompiler::DescriptorKind::StorageImage : ShaderRecompiler::DescriptorKind::SampledImage) && binding.guestDescriptor.size() == static_cast<std::size_t>(binding.count) * 8u && binding.imageShapes.size() == binding.count && binding.imageDepthCompare.size() == binding.count && binding.imageSamplers.size() == binding.count, "image table binding is malformed");
+                    NoteImageTableBuild();
                     auto& table = tableStage(shader);
                     Require(storage ? !table.storage : !table.sampled, "a stage binds two image tables");
                     Require(table.images == nullptr || table.images->count == binding.count, "a stage's image tables disagree on their elements");
@@ -1742,7 +1752,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     table.firstSampler = firstSampler;
                     continue;
                 }
-                Require(occupied.insert(binding.binding).second, "duplicate shader binding");
+                const bool sharedHeapArray = heapShader && (binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers || (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::SampledImage));
+                Require(occupied.insert(binding.binding).second || sharedHeapArray, "duplicate shader binding");
                 if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) {
                     addSamplerTable(binding, flags, tableStage(shader));
                     continue;
@@ -1763,6 +1774,28 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {allocations.size() - 1u}});
                     continue;
                 }
+                if (heapShader) {
+                    if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) goto perDrawBinding;
+                    if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) {
+                        Require(binding.kind == ShaderRecompiler::DescriptorKind::SampledImage || binding.kind == ShaderRecompiler::DescriptorKind::Sampler, "a GPU-mode stage binds sampled images and samplers only");
+                        addImageBinding(binding, flags);
+                        bindings.back().heap = true;
+                        continue;
+                    }
+                    if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer || binding.role == ShaderRecompiler::DescriptorRole::Gds) goto perDrawBinding;
+                    if (binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
+                        goto perDrawBinding;
+                    }
+                    Require(binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt, std::string("a GPU-mode fragment stage has an unsupported ") + roleName(binding.role) + " binding");
+                    Require(binding.count == 1 && !binding.guestDescriptor.empty(), "invalid GPU-mode shader data binding");
+                    if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, binding.guestDescriptor);
+                    Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {}, {}};
+                    item.heap = true;
+                    item.role = binding.role;
+                    bindings.push_back(std::move(item));
+                    continue;
+                }
+            perDrawBinding:
                 const bool addressRole = binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer;
                 const bool bufferRole = addressRole || binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
                 const bool imageRole = binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers;
@@ -1821,7 +1854,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 }
                 bindings.push_back(std::move(item));
             }
-            for (const auto index : offsetsInData) allocations[index].dataAllocation = shaderData;
+            for (const auto index : offsetsInData) allocations[index].dataAllocation = heapShader ? (shader.stage == ShaderRecompiler::ShaderStage::Fragment ? HeapRingDataFragment : HeapRingDataVertex) : shaderData;
             for (auto index = firstDeferred; index < deferredImages.size(); ++index) {
                 deferredImages[index].firstSampler = firstSampler;
                 deferredImages[index].samplerCount = samplers.size() - firstSampler;
@@ -1843,7 +1876,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             const auto samplerFaults = map[ShaderRecompiler::ImageTableAbi::HeaderSamplerFaults];
             Require(static_cast<std::uint64_t>(faults) + elements <= map.size() && static_cast<std::uint64_t>(samplerFaults) + map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount] / 4u <= map.size(), "image table map is truncated");
             if (table.images == nullptr) continue;
-            table.set = splitSets && table.stage == ShaderRecompiler::ShaderStage::Fragment ? 1u : 0u;
+            table.set = splitSets && !heapStage && table.stage == ShaderRecompiler::ShaderStage::Fragment ? 1u : 0u;
             table.elementBase = tableElements[table.set];
             table.map[ShaderRecompiler::ImageTableAbi::HeaderElementBase] = table.elementBase;
             tableElements[table.set] += elements;
@@ -1875,6 +1908,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         splitSets = SplitsSets(context, shaders);
         std::array<std::vector<VkDescriptorSetLayoutBinding>, 2> descriptions;
         for (const auto& binding : bindings) {
+            if (binding.heap) continue;
             const auto set = setOf(binding);
             descriptions[set].push_back(binding.layout);
             (set == 0 ? layoutBindingFlags : fragmentBindingFlags).push_back(binding.flags | (updateAfterBind && binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0));
@@ -1919,8 +1953,12 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             owns = true;
             return CreateSetLayout(context, description, updateAfterBind, flags);
         };
+        if (heapStage) {
+            Require(splitSets && descriptions[1].empty(), "a GPU-mode fragment stage needs split sets and no per-draw fragment bindings");
+            fragmentLayoutKey = {0x48454150u};
+        }
         _layout = createLayout(layoutKey, descriptions[0], layoutBindingFlags, ownsLayout);
-        if (splitSets) {
+        if (splitSets && !heapStage) {
             fragment.layout = createLayout(fragmentLayoutKey, descriptions[1], fragmentBindingFlags, fragment.ownsLayout);
             {
                 const auto sizes = splitPoolSizes(1);
@@ -2008,20 +2046,27 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     std::array<VkShaderStageFlags, 2> storageTableFlags{};
     bool updateAfterBind = false;
     std::uint64_t storageBuffers = 0;
+    const auto heapShader = [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->gpuResolvedImages && (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute); };
+    const bool heapStage = std::any_of(shaders.begin(), shaders.end(), heapShader);
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         const VkShaderStageFlags flags = VulkanStage(shader.stage);
+        const bool gpuMode = heapShader(shader);
         std::uint64_t stageStorageBuffers = 0;
         std::uint64_t stageResources = 0;
         for (const auto& binding : shader.program->bindings) {
-            const auto set = binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet ? 1 : 0;
+            const auto set = !heapStage && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet ? 1 : 0;
             if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) {
-                tableFlags[split && shader.stage == ShaderRecompiler::ShaderStage::Fragment ? 1 : 0] |= flags;
+                tableFlags[split && !heapStage && shader.stage == ShaderRecompiler::ShaderStage::Fragment ? 1 : 0] |= flags;
                 continue;
             }
             if (binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable) {
                 storageTableFlags[split && shader.stage == ShaderRecompiler::ShaderStage::Fragment ? 1 : 0] |= flags;
                 continue;
+            }
+            if (gpuMode) {
+                const bool heapImage = (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers;
+                if (heapImage || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt) continue;
             }
             if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) {
                 descriptions[set].push_back({binding.binding, VK_DESCRIPTOR_TYPE_SAMPLER, context.samplerTableCapacity, flags, nullptr});
@@ -2063,6 +2108,14 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     }
     result.layouts.split = split;
     result.layouts.main = context.descriptorCache->Layout(result.mainKey, descriptions[0], updateAfterBind, bindingFlags[0]);
+    if (heapStage) {
+        Require(split && descriptions[1].empty(), "a GPU-mode stage needs split sets and no per-draw fragment bindings");
+        auto& heap = BindlessHeap::For(context);
+        result.fragmentKey = {0x48454150u};
+        result.layouts.fragment = heap.HeapLayout();
+        result.layouts.data = heap.DataLayout();
+        return result;
+    }
     if (split) result.layouts.fragment = context.descriptorCache->Layout(result.fragmentKey, descriptions[1], updateAfterBind, bindingFlags[1]);
     return result;
 }
@@ -2117,6 +2170,7 @@ void ShaderResources::buildComplete() {
                 return VkDescriptorImageInfo{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
             };
             for (const auto& binding : bindings) {
+                if (binding.heap) continue;
                 if (binding.flags != 0) {
                     for (std::size_t first = 0; first < binding.imageAllocations.size();) {
                         if (binding.imageAllocations[first] == std::numeric_limits<std::size_t>::max()) {
@@ -2189,6 +2243,10 @@ void ShaderResources::buildComplete() {
                 pushPatches.emplace_back(static_cast<std::uint32_t>(allocation.pushByte), allocation.adjustment);
                 continue;
             }
+            if (allocation.dataAllocation == HeapRingDataVertex || allocation.dataAllocation == HeapRingDataFragment) {
+                heapStages[allocation.dataAllocation == HeapRingDataFragment ? 1u : 0u].dataPatches.emplace_back(allocation.dataByte, allocation.adjustment);
+                continue;
+            }
             Require(allocation.dataAllocation >= 0, "a guest buffer off the storage buffer offset alignment in a shader without shader data is not implemented");
             auto& data = allocations[static_cast<std::size_t>(allocation.dataAllocation)];
             Require(data.buffer != nullptr && allocation.dataByte < data.size, "guest buffer offset lies outside the shader's data buffer");
@@ -2257,10 +2315,17 @@ void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
     reusable = false;
+    spaceReuse = false;
     directRegions.clear();
-    if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
+    const bool spaceReusable = drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
+    if (!spaceReusable && (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled()))) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
+    if (spaceReusable) {
+        spaceReuse = true;
+        reusable = true;
+        return;
+    }
     const auto regions = guestMemory.DirectRegions();
     if (!regions.has_value()) return;
     for (const auto& [begin, end] : *regions) {
@@ -2290,8 +2355,13 @@ std::uint64_t ShaderResources::DepthGuardRefusals() {
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     const bool loopGuard = LoopGuardEnabled();
     return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
-        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
+        const bool readOnlyBda = shader.program != nullptr && !ShaderStoresThroughAddresses(shader.program->spirv) && !SpaceReuseDisabled();
+        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard, readOnlyBda](const ShaderRecompiler::DescriptorBinding& binding) { return (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && !readOnlyBda) || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
     });
+}
+
+bool ShaderResources::SpaceReuseDisabled() {
+    return !GpuHeapEnabled();
 }
 
 // APS5_PROFILE_DRAW: the per-device descriptor caches' counters, every 10 s.
@@ -2316,6 +2386,13 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
     visit(static_cast<std::uint32_t>(shader.stage));
     visit(static_cast<std::uint32_t>(program.PipelineVariantId()));
     visit(static_cast<std::uint32_t>(program.PipelineVariantId() >> 32u));
+    if (shader.heap != nullptr && program.heapTemplateId != 0) {
+        visit(0u);
+        visit(0x48454150u);
+        visit(static_cast<std::uint32_t>(program.heapTemplateId));
+        visit(static_cast<std::uint32_t>(program.heapTemplateId >> 32u));
+        return;
+    }
     visit(static_cast<std::uint32_t>(program.bindings.size()));
     const auto packBits = [&](const std::vector<bool>& bits) {
         visit(static_cast<std::uint32_t>(bits.size()));
@@ -4024,6 +4101,7 @@ std::uint64_t ShaderResources::DataWordsHash(const CompiledShader& shader) {
 
 bool ShaderResources::DataWordsDiffer(const CompiledShader& shader) const {
     Require(shader.program != nullptr, "missing compiled shader");
+    if (heapStage) return false;
     const auto& program = *shader.program;
     if (program.bindings.size() != bindings.size()) return true;
     for (std::size_t index = 0; index < program.bindings.size(); ++index) {
@@ -4044,6 +4122,7 @@ bool ShaderResources::RefreshData(VkCommandBuffer commands, const CompiledShader
 
 bool ShaderResources::refreshData(VkCommandBuffer commands, const CompiledShader& shader, Recorder* recorder) {
     Require(shader.program != nullptr, "missing compiled shader");
+    if (heapStage) return false;
     const auto& program = *shader.program;
     Require(program.bindings.size() == bindings.size(), "template bindings disagree with the shader");
     bool recorded = false;
@@ -4841,6 +4920,7 @@ void ShaderResources::release() noexcept {
 std::uint32_t ShaderResources::setOf(const Binding& binding) const {
     constexpr auto count = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
     if (binding.set >= 0) return static_cast<std::uint32_t>(binding.set);
+    if (heapStage) return 0u;
     return splitSets && binding.layout.binding / count == static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Stage::Fragment) ? 1u : 0u;
 }
 
@@ -4871,10 +4951,12 @@ ShaderResources::DrawBindings::~DrawBindings() {
 
 std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const {
     std::vector<MovedBuffer> moved;
-    if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return moved;
+    if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || (usesBda && !spaceReuse)) return moved;
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) return std::nullopt;
+        const bool heapShader = (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute) && shader.program->gpuResolvedImages;
         for (const auto& binding : shader.program->bindings) {
+            if (heapShader && (DataRole(binding.role) || binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers)) continue;
             if (DataRole(binding.role)) {
                 const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
                 if (kept == bindings.end() || kept->allocations.size() != 1) return std::nullopt;
@@ -4982,7 +5064,7 @@ std::size_t ShaderResources::MaxDrawSnapshotBytes() {
 }
 
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved, bool movedOnly) const {
-    if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
+    if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || (usesBda && !spaceReuse)) return {};
     const auto reads = guestMemory.InPlaceReads();
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
     std::size_t totalSnapshotBytes = 0;
@@ -5065,6 +5147,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     auto& counts = HostThreadLocal<std::array<std::vector<VkDescriptorPoolSize>, 2>, CountsStorage>();
     for (auto& set : counts) set.clear();
     for (const auto& binding : bindings) {
+        if (binding.heap) continue;
         const auto set = setOf(binding);
         ++described[set];
         auto& typed = counts[set];
@@ -5086,7 +5169,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         result->layout = _layout;
         Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
-    if (described[1] != 0 || splitSets) {
+    if (!heapStage && (described[1] != 0 || splitSets)) {
         result->fragmentAllocation = result->cache->AllocateRewritten(fragment.layout, sizesOf(1), updateAfterBind, variableOf(1));
         result->fragmentLayout = fragment.layout;
         Require(result->fragmentAllocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
@@ -5097,6 +5180,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     for (std::size_t index = 0; index < selected.size(); ++index) snapshotIndices[selected[index]] = index;
     auto nextWrite = writes.begin();
     for (const auto& binding : bindings) {
+        if (binding.heap) continue;
         const auto original = setOf(binding) == 0 ? _set : fragment.set;
         while (nextWrite != writes.end() && nextWrite->dstBinding == binding.layout.binding && nextWrite->dstSet == original) {
             auto& write = *nextWrite++;
@@ -5122,6 +5206,215 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
 void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
     if (_set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, 0, 1, &_set, 0, nullptr);
     if (fragment.set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragment.set, 0, nullptr);
+    BindHeap(commands, bindPoint, layout);
+}
+
+void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
+    if (!heapStage) return;
+    auto& heap = BindlessHeap::For(context);
+    const std::array<VkDescriptorSet, 2> sets{heap.HeapSet(), heap.DataSet()};
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 2, sets.data(), static_cast<std::uint32_t>(heapOffsets.size()), heapOffsets.data());
+}
+
+PipelineSetLayouts ShaderResources::SetLayouts() const {
+    if (!heapStage) return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey};
+    auto& heap = BindlessHeap::For(context);
+    return {_layout, heap.HeapLayout(), true, layoutKey, fragmentLayoutKey, heap.DataLayout()};
+}
+
+void ShaderResources::RefreshHeapStage(std::span<const CompiledShader> shaders) {
+    for (const auto& shader : shaders) {
+        if ((shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute) && shader.program != nullptr && shader.program->gpuResolvedImages) writeHeapStage(shader);
+    }
+}
+
+void ShaderResources::writeHeapStage(const CompiledShader& shader) {
+    namespace Abi = ShaderRecompiler::RuntimeAbi;
+    auto& heap = BindlessHeap::For(context);
+    constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
+    const bool fragmentStage = shader.stage == ShaderRecompiler::ShaderStage::Fragment;
+    const VkShaderStageFlags stageBit = fragmentStage ? VK_SHADER_STAGE_FRAGMENT_BIT : shader.stage == ShaderRecompiler::ShaderStage::Compute ? VK_SHADER_STAGE_COMPUTE_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+    auto& stageState = heapStages[fragmentStage ? 1u : 0u];
+    const auto ownHeap = [&](const Binding& binding) { return binding.heap && (binding.layout.stageFlags & stageBit) != 0u; };
+    thread_local std::vector<std::uintptr_t> key;
+    key.clear();
+    for (const auto& binding : bindings) {
+        if (!ownHeap(binding)) continue;
+        if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) {
+            for (const auto index : binding.imageAllocations) {
+                if (index == std::numeric_limits<std::size_t>::max()) {
+                    key.push_back(0u);
+                    continue;
+                }
+                const auto view = textureSrgb[index] ? textures[index]->SrgbView(textureFirstLayer[index], textureBaseLevel[index]) : textureBaseLevel[index] ? textures[index]->BaseLevelView() : textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View();
+                key.insert(key.end(), {reinterpret_cast<std::uintptr_t>(textures[index].get()), reinterpret_cast<std::uintptr_t>(view), static_cast<std::uintptr_t>(textures[index]->Layout())});
+            }
+        } else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) {
+            for (const auto index : binding.imageAllocations) key.push_back(reinterpret_cast<std::uintptr_t>(samplers[index].get()));
+        }
+    }
+    bool current = key == stageState.key;
+    const auto slotSerial = heap.SlotSerial();
+    const bool unmoved = current && EpochProofs() && stageState.slotSerial == slotSerial;
+    if (!unmoved && current && CommitTrims()) {
+        current = heap.GenerationsCurrent(stageState.slots, stageState.slotGenerations, stageState.samplerSlots, stageState.samplerGenerations);
+    } else if (!unmoved && current) {
+        std::size_t generation = 0;
+        for (std::uint32_t kind = 0; current && kind < stageState.slots.size(); ++kind) {
+            for (const auto slot : stageState.slots[kind]) {
+                if (!current) break;
+                current = generation < stageState.slotGenerations.size() && heap.SlotGeneration(kind, slot) == stageState.slotGenerations[generation++];
+            }
+        }
+        for (std::size_t i = 0; current && i < stageState.samplerSlots.size(); ++i) current = i < stageState.samplerGenerations.size() && heap.SamplerGeneration(stageState.samplerSlots[i]) == stageState.samplerGenerations[i];
+    }
+    if (!current) {
+        stageState.key = key;
+        for (auto& kindSlots : stageState.slots) kindSlots.clear();
+        stageState.samplerSlots.clear();
+        stageState.samplerObjects.clear();
+        stageState.lookupMemo.clear();
+        std::size_t cursor = 0;
+        for (const auto& binding : bindings) {
+            if (!ownHeap(binding)) continue;
+            const auto kind = binding.layout.binding % bindingCount;
+            if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) {
+                auto& kindSlots = stageState.slots[kind];
+                for (const auto index : binding.imageAllocations) {
+                    if (index == std::numeric_limits<std::size_t>::max()) {
+                        ++cursor;
+                        kindSlots.push_back(heap.AbsentSlot(kind, context.nullDescriptors ? VK_NULL_HANDLE : context.placeholderImages->View(kind)));
+                        continue;
+                    }
+                    const auto view = reinterpret_cast<VkImageView>(key[cursor + 1]);
+                    cursor += 3;
+                    const auto slot = heap.TextureSlot(kind, textures[index], view, textures[index]->Layout());
+                    Require(slot.has_value(), "the global image heap is full");
+                    kindSlots.push_back(*slot);
+                }
+            } else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) {
+                for (const auto index : binding.imageAllocations) {
+                    ++cursor;
+                    const auto slot = heap.SamplerSlot(samplers[index]);
+                    Require(slot.has_value(), "the global sampler heap is full");
+                    stageState.samplerSlots.push_back(*slot);
+                    stageState.samplerObjects.push_back(samplers[index].get());
+                }
+            }
+        }
+    }
+    if (current) stageState.slotSerial = slotSerial;
+    if (!current) {
+        stageState.slotSerial = 0;
+        stageState.slotGenerations.clear();
+        for (std::uint32_t kind = 0; kind < stageState.slots.size(); ++kind) {
+            for (const auto slot : stageState.slots[kind]) stageState.slotGenerations.push_back(heap.SlotGeneration(kind, slot));
+        }
+        stageState.samplerGenerations.clear();
+        for (const auto slot : stageState.samplerSlots) stageState.samplerGenerations.push_back(heap.SamplerGeneration(slot));
+        stageState.slotSerial = slotSerial;
+    }
+    const auto& slots = stageState.slots;
+    const auto& samplerSlots = stageState.samplerSlots;
+    static const bool verifySlots = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+    if (verifySlots) {
+        static std::atomic<std::uint64_t> checked{0}, wrong{0};
+        for (const auto& binding : bindings) {
+            if (!ownHeap(binding) || binding.layout.descriptorType != VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) continue;
+            const auto kind = binding.layout.binding % bindingCount;
+            for (std::size_t element = 0; element < binding.imageAllocations.size(); ++element) {
+                const auto index = binding.imageAllocations[element];
+                if (index == std::numeric_limits<std::size_t>::max()) continue;
+                ++checked;
+                if (element >= stageState.slots[kind].size() || heap.SlotTexture(kind, stageState.slots[kind][element]) != textures[index].get()) ++wrong;
+            }
+        }
+        if (checked.load() % 100000u < 8u) std::fprintf(stderr, "[heap-slots] verify: %llu image slots checked, %llu hold another texture\n", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(wrong.load()));
+    }
+    const auto abiStage = fragmentStage ? Abi::Stage::Fragment : Abi::Stage::Main;
+    const auto dataBinding = Abi::BindingNumber(abiStage, Abi::Binding::ShaderData);
+    const auto flatBinding = Abi::BindingNumber(abiStage, Abi::Binding::FlattenedSrt);
+    const auto offsetIndex = [](std::uint32_t binding) {
+        std::array<std::uint32_t, 4> numbers{Abi::BindingNumber(Abi::Stage::Main, Abi::Binding::ShaderData), Abi::BindingNumber(Abi::Stage::Main, Abi::Binding::FlattenedSrt), Abi::BindingNumber(Abi::Stage::Fragment, Abi::Binding::ShaderData), Abi::BindingNumber(Abi::Stage::Fragment, Abi::Binding::FlattenedSrt)};
+        std::sort(numbers.begin(), numbers.end());
+        return static_cast<std::size_t>(std::find(numbers.begin(), numbers.end(), binding) - numbers.begin());
+    };
+    const std::size_t dataIndex = offsetIndex(dataBinding);
+    const std::size_t flatIndex = offsetIndex(flatBinding);
+    const auto& program = *shader.program;
+    for (const auto& binding : program.bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::ShaderData && binding.role != ShaderRecompiler::DescriptorRole::FlattenedSrt) continue;
+        const auto& words = binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt && shader.heap != nullptr && !shader.heap->flattenedSrt.empty() ? shader.heap->flattenedSrt : binding.guestDescriptor;
+        if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, words);
+        auto span = heap.Allocate(words.size());
+        if (binding.role != ShaderRecompiler::DescriptorRole::ShaderData) {
+            std::memcpy(span.words.data(), words.data(), words.size() * sizeof(std::uint32_t));
+            heapOffsets[flatIndex] = span.offset;
+            continue;
+        }
+        thread_local std::vector<std::uint32_t> patched;
+        patched.assign(words.begin(), words.end());
+        if (shader.heap != nullptr) std::copy_n(shader.heap->userData.begin(), std::min(shader.heap->userData.size(), patched.size()), patched.begin());
+        for (const auto& [byte, adjustment] : stageState.dataPatches) {
+            Require(byte < patched.size() * sizeof(std::uint32_t), "a GPU-mode guest buffer offset lies outside the shader data");
+            reinterpret_cast<std::byte*>(patched.data())[byte] = static_cast<std::byte>(adjustment);
+        }
+        {
+            constexpr auto metadataWords = sizeof(Abi::ResourceMetadata) / sizeof(std::uint32_t);
+            const auto lookupWord = [&](std::size_t position, std::uint32_t kind, const std::array<std::uint32_t, Abi::GpuLookupKeyDwords>& lookupKey, std::uint32_t slot) {
+                if (stageState.lookupMemo.size() <= position) stageState.lookupMemo.resize(position + 1u);
+                auto& memo = stageState.lookupMemo[position];
+                if (memo.valid && memo.slot == slot && memo.key == lookupKey) return memo.word;
+                memo = {lookupKey, slot, heap.LookupWord(kind, lookupKey.data(), slot), true};
+                return memo.word;
+            };
+            for (std::uint32_t image = 0; image < program.runtimeImageCount; ++image) {
+                const auto offset = program.imageMetadataDword + image * metadataWords;
+                const auto kind = patched[offset + offsetof(Abi::ResourceMetadata, binding) / 4u] % bindingCount;
+                if (kind >= Abi::FirstStorageImageBinding && kind < static_cast<std::uint32_t>(Abi::Binding::Samplers)) continue;
+                auto& first = patched[offset + offsetof(Abi::ResourceMetadata, firstElement) / 4u];
+                if (kind < Abi::FirstImageBinding) continue;
+                if (!(kind < slots.size() && first < slots[kind].size())) {
+                    char text[320];
+                    std::snprintf(text, sizeof(text), "AGC graphics: GPU-mode image metadata names an element the stage does not bind (stage %u, image %u of %u, kind %u, first %u, slots of the kind %zu, flags 0x%x, element count %u, bindings %zu, stage state reused %d)", static_cast<unsigned>(shader.stage), image, program.runtimeImageCount, kind, first, kind < slots.size() ? slots[kind].size() : std::size_t{0}, patched[offset + offsetof(Abi::ResourceMetadata, flags) / 4u], patched[offset + offsetof(Abi::ResourceMetadata, elementCount) / 4u], bindings.size(), current ? 1 : 0);
+                    throw std::runtime_error(text);
+                }
+                first = slots[kind][first];
+                if (patched[offset + offsetof(Abi::ResourceMetadata, elementCount) / 4u] == 1u) {
+                    std::array<std::uint32_t, Abi::GpuLookupKeyDwords> lookupKey{};
+                    lookupKey[0] = patched[offset + offsetof(Abi::ResourceMetadata, binding) / 4u];
+                    lookupKey[1] = patched[offset + offsetof(Abi::ResourceMetadata, flags) / 4u];
+                    std::copy_n(patched.begin() + static_cast<std::ptrdiff_t>(offset + offsetof(Abi::ResourceMetadata, descriptor) / 4u), 8, lookupKey.begin() + 2);
+                    const auto resolved = first;
+                    first = lookupWord(image, kind, lookupKey, resolved);
+                    if (first == Abi::GpuLookupSentinel) heap.AddLookupFixup(static_cast<std::uint32_t>(span.offset / sizeof(std::uint32_t) + offset + offsetof(Abi::ResourceMetadata, firstElement) / 4u), resolved, lookupKey.data());
+                }
+            }
+            const bool slotWords = !program.registrationModule;
+            for (const auto& word : program.heapSlotWords) {
+                Require(word.dword < patched.size(), "a GPU-mode slot word lies outside the shader data");
+                if (word.kind == static_cast<std::uint32_t>(Abi::Binding::Samplers)) {
+                    Require(word.element < samplerSlots.size(), "a GPU-mode slot word names a sampler the stage does not bind");
+                    patched[word.dword] = samplerSlots[word.element];
+                    continue;
+                }
+                Require(word.kind < slots.size() && word.element < slots[word.kind].size(), "a GPU-mode slot word names an image the stage does not bind");
+                patched[word.dword] = slots[word.kind][word.element];
+            }
+            Require(slotWords || program.samplerSlotDword + samplerSlots.size() <= patched.size(), "GPU-mode sampler slots exceed the shader data");
+            if (!slotWords) std::copy(samplerSlots.begin(), samplerSlots.end(), patched.begin() + program.samplerSlotDword);
+            for (std::size_t element = 0; !slotWords && element < samplerSlots.size() && element < stageState.samplerObjects.size(); ++element) {
+                const auto* cacheKey = stageState.samplerObjects[element] != nullptr ? stageState.samplerObjects[element]->CacheKey() : nullptr;
+                if (cacheKey == nullptr) continue;
+                const std::array<std::uint32_t, Abi::GpuLookupKeyDwords> samplerKey{0x53414d50u, (*cacheKey)[4], (*cacheKey)[0], (*cacheKey)[1], (*cacheKey)[2], (*cacheKey)[3], 0u, 0u, 0u, 0u};
+                auto& word = patched[program.samplerSlotDword + element];
+                word = lookupWord(program.runtimeImageCount + element, BindlessHeap::SamplerKind, samplerKey, samplerSlots[element]);
+                if (word == Abi::GpuLookupSentinel) heap.AddLookupFixup(static_cast<std::uint32_t>(span.offset / sizeof(std::uint32_t) + program.samplerSlotDword + element), samplerSlots[element], samplerKey.data());
+            }
+            std::memcpy(span.words.data(), patched.data(), patched.size() * sizeof(std::uint32_t));
+            heapOffsets[dataIndex] = span.offset;
+        }
+    }
 }
 
 namespace {

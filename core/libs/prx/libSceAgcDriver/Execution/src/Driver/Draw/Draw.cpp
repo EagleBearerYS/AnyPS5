@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -692,6 +694,29 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a stage data hit differs from its full build in its %s (%zu data positions refreshed)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.dataPositions.size());
         throw std::runtime_error(message);
     };
+    const auto ringWords = [&](std::size_t i) {
+        const auto& variant = *matched[i];
+        if (!variant.ring) return;
+        auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+        const auto& user = programs[i].userData;
+        for (const auto index : variant.compiled->heapUserWords) {
+            require(index < user.size(), "a ring vertex template reads a user word the draw does not have");
+            words->userData.push_back(user[index]);
+        }
+        words->vertexAttributes = *variant.ringAttributes;
+        if (variant.ringFlat != nullptr) words->flattenedSrt = *variant.ringFlat;
+        decodeVertexInfo(i);
+        require(vertexInfos[i].has_value(), "a ring vertex hit has no vertex stage info");
+        const auto& vertex = *vertexInfos[i];
+        for (auto& attribute : words->vertexAttributes) {
+            require(attribute.location < vertex.resourcesNum && attribute.location < vertex.resources.size(), "a ring vertex attribute lies outside the draw's vertex resources");
+            attribute.resource = vertex.resources[attribute.location];
+            if (vertex.fetchEmbedded) attribute.fetchIndex = vertex.resourcesDst[attribute.location].fetchIndex;
+        }
+        stageCaptures[i].heapWords = std::move(words);
+        stageCaptures[i].direct = true;
+        stageCaptures[i].ringVertex = true;
+    };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::vector<std::size_t> resultIndex(programs.size(), 0);
@@ -704,6 +729,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
 
             programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
             memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
+            ringWords(i);
         } else {
             const auto candidate = std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes; });
             if (candidate != dataCandidates[i].end() && !verifyDrawDataHits()) {
@@ -712,6 +738,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 reused[i] = true;
                 programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
                 memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
+                ringWords(i);
             } else {
                 if (!dataCandidates[i].empty() && !verifyDrawDataHits()) decodeVertexInfo(i);
                 if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
@@ -738,7 +765,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
         require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
-        stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes});
+        stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].heapWords.get()});
         pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
     }
 
@@ -761,7 +788,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         };
         for (std::size_t i = 0; i < programs.size(); ++i) {
             const auto& capture = stageCaptures[i];
-            if (reused[i] || capture.compiled == nullptr || !CacheableResult(*capture.compiled)) continue;
+            if (reused[i] || capture.compiled == nullptr || (capture.direct && !capture.ringVertex) || !CacheableResult(*capture.compiled)) continue;
             stored = true;
             const auto& words = programs[i].userData;
             for (std::size_t w = 0; w < words.size(); ++w) {
