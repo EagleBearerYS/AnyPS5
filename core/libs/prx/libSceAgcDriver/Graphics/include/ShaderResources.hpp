@@ -231,6 +231,7 @@ public:
     bool ChecksFaults() const { return bda != nullptr; }
     void CheckFaults() const;
     bool InUse() const { return usesInFlight.load(std::memory_order_acquire) != 0; }
+    bool ReusesAddressSpace() const { return addressReuse; }
     std::shared_ptr<const void> BeginUse();
     void CompleteUse();
     void EndUse() noexcept;
@@ -555,6 +556,8 @@ private:
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
     bool addressReuse = false;
+    bool reuseProved = false;
+    bool reusedUse = false;
     std::atomic<std::uint32_t> usesInFlight{0};
     std::vector<std::pair<std::uint64_t, std::uint64_t>> addressWrites;
     std::vector<DirectRegion> directRegions;

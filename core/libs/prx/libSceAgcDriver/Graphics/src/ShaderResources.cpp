@@ -2819,8 +2819,19 @@ const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::spa
 
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report, std::span<const GuestMemorySnapshot> snapshots) {
     if (!addressReuse) return proveBuild(shaders, report);
-    if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
-    if (!reusable || InUse() || !guestMemory.SameSnapshots(snapshots)) return false;
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto refuse = [&](AddressReuse reason) {
+        CountAddressReuse(reason, profile ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()) : 0);
+        return false;
+    };
+    CountAddressReuseProof();
+    ProofReport proof;
+    auto& outcome = report != nullptr ? *report : proof;
+    outcome = {ProofPath::Full, ProofFailure::Other};
+    if (!reusable) return refuse(AddressReuse::NotReusable);
+    if (InUse()) return refuse(AddressReuse::InUse);
+    if (!guestMemory.SameSnapshots(snapshots)) return refuse(AddressReuse::Snapshots);
     struct Suspend {
         GuestBufferMemory& memory;
         bool armed = true;
@@ -2828,14 +2839,15 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             if (armed) memory.SuspendSpace();
         }
     } suspend{guestMemory};
-    if (!guestMemory.ResumeSpace()) return false;
-    const bool proved = proveBuild(shaders, report);
-    if (proved && guestMemory.SpaceImportsCurrent()) {
-        suspend.armed = false;
-        return true;
+    if (!guestMemory.ResumeSpace()) return refuse(AddressReuse::Space);
+    if (!proveBuild(shaders, &outcome)) return refuse(outcome.failure == ProofFailure::Imports ? AddressReuse::Imports : AddressReuse::Proof);
+    if (!guestMemory.SpaceImportsCurrent()) {
+        outcome.failure = ProofFailure::Imports;
+        return refuse(AddressReuse::Imports);
     }
-    if (proved && report != nullptr) report->failure = ProofFailure::Imports;
-    return false;
+    suspend.armed = false;
+    reuseProved = true;
+    return true;
 }
 
 bool ShaderResources::proveBuild(std::span<const CompiledShader> shaders, ProofReport* report) {
@@ -4733,6 +4745,8 @@ void ShaderResources::CheckFaults() const {
 std::shared_ptr<const void> ShaderResources::BeginUse() {
     if (!addressReuse) return {};
     usesInFlight.fetch_add(1, std::memory_order_acq_rel);
+    reusedUse = std::exchange(reuseProved, false);
+    if (reusedUse) HoldReusedSpace(true);
     return guestMemory.SpaceHold();
 }
 
@@ -4743,8 +4757,12 @@ void ShaderResources::CompleteUse() {
     }
     struct Completed {
         std::atomic<std::uint32_t>& uses;
-        ~Completed() { uses.fetch_sub(1, std::memory_order_acq_rel); }
-    } completed{usesInFlight};
+        bool reused;
+        ~Completed() {
+            if (reused) HoldReusedSpace(false);
+            uses.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    } completed{usesInFlight, reusedUse};
     try {
         CheckFaults();
     } catch (...) {
@@ -4756,7 +4774,9 @@ void ShaderResources::CompleteUse() {
 }
 
 void ShaderResources::EndUse() noexcept {
-    if (addressReuse) guestMemory.SuspendSpace();
+    if (!addressReuse) return;
+    reuseProved = false;
+    guestMemory.SuspendSpace();
 }
 
 void ShaderResources::WriteBackBuffers() {
