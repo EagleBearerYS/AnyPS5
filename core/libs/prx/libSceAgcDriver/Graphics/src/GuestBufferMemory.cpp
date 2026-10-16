@@ -1983,7 +1983,7 @@ void GuestBufferMemory::AcquireRegistered() {
         return &region;
     };
     std::vector<std::pair<std::size_t, std::shared_ptr<const GuestAllocations::Range>>> pending;
-    std::vector<const HostImport*> kept;
+    std::vector<std::pair<std::size_t, std::shared_ptr<const GuestAllocations::Range>>> reused;
     for (const auto& range : lease) {
         if (!range->readable || !range->gpu) continue;
         validate(range->address, range->bytes);
@@ -1991,13 +1991,30 @@ void GuestBufferMemory::AcquireRegistered() {
         if (const auto* old = reusable(range)) {
             region.direct = old->direct;
             region.mirror = old->mirror;
-            if (region.direct != nullptr) kept.push_back(region.direct);
+            if (region.direct != nullptr) reused.emplace_back(regions.size(), range);
             else mirrored = true;
         } else {
             pending.emplace_back(regions.size(), range);
         }
         regions.push_back(std::move(region));
     }
+    std::vector<std::uint64_t> pendingWindows;
+    for (const auto& [index, range] : pending) {
+        if (const auto own = windowOf(*range)) pendingWindows.push_back(*own);
+    }
+    std::sort(pendingWindows.begin(), pendingWindows.end());
+    std::vector<const HostImport*> kept;
+    bool moved = false;
+    for (const auto& [index, range] : reused) {
+        if (const auto own = windowOf(*range); own && std::binary_search(pendingWindows.begin(), pendingWindows.end(), *own)) {
+            regions[index].direct = nullptr;
+            pending.emplace_back(index, range);
+            moved = true;
+            continue;
+        }
+        kept.push_back(regions[index].direct);
+    }
+    if (moved) std::sort(pending.begin(), pending.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
     if (!kept.empty()) {
         withImports([&](HostImports& state) {
             const auto stamp = ++state.useCounter;
