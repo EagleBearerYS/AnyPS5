@@ -1266,6 +1266,7 @@ void spaceOnlyEvictionTests(const Context& context, const BdaTestAccess& access)
         for (const auto& requested : HostImportCounters().requesters) total += requested.refused;
         return total;
     };
+    const auto rememberedByBuilds = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Build)].remembered; };
     build();
     for (std::size_t index = 0; index < mapped; ++index) Require(HostImportCovers(importing, address(at(index)), piece), "a range the budget holds was not imported by the address-based build");
     Require(!HostImportCovers(importing, address(wanted), piece), "a range past the budget was imported by the address-based build");
@@ -1275,6 +1276,7 @@ void spaceOnlyEvictionTests(const Context& context, const BdaTestAccess& access)
     for (int round = 0; round < agingBuilds; ++round) build();
     const auto aged = AddressSpaceCounters();
     Require(aged.hits - start.hits == agingBuilds, "the address-based builds did not reuse the cached address space: " + std::to_string(aged.hits - start.hits) + " hits");
+    Require(aged.copiedBytes - start.copiedBytes == agingBuilds * piece, "the cached space did not copy the refused range once per build: " + std::to_string(aged.copiedBytes - start.copiedBytes) + " bytes");
     const auto refusedBeforeHeld = refused();
     {
         GuestBufferMemory leased(importing);
@@ -1293,6 +1295,7 @@ void spaceOnlyEvictionTests(const Context& context, const BdaTestAccess& access)
     Require(evicted.spaceOnlyEvictions - held.spaceOnlyEvictions == 1 && !HostImportCovers(importing, address(at(0)), piece), "the upload did not retire exactly the least recently used import that only the space used: " + std::to_string(evicted.spaceOnlyEvictions - held.spaceOnlyEvictions) + " retired");
     for (std::size_t index = 1; index < mapped; ++index) Require(serial(at(index)) == serials[index], "the upload retired an import other than the least recently used one");
     const auto wantedSerial = serial(wanted);
+    const auto rememberedBeforeRebuild = rememberedByBuilds();
     {
         GuestBufferMemory leased(importing);
         leased.AcquireRegistered();
@@ -1310,6 +1313,7 @@ void spaceOnlyEvictionTests(const Context& context, const BdaTestAccess& access)
     }
     const auto rebuilt = AddressSpaceCounters();
     Require(rebuilt.rebuiltEpoch - evicted.rebuiltEpoch == 1 && rebuilt.rebuiltAfterEviction - evicted.rebuiltAfterEviction == 1, "the address space was not rebuilt once after the retirement");
+    Require(rememberedByBuilds() - rememberedBeforeRebuild == 1, "the rebuilt space's walk asked for the retired range again instead of answering from the refusal memory");
     std::uint64_t uploadRefusals = 0;
     for (int round = 0; round < steadyRounds; ++round) {
         const auto before = refused();
@@ -1321,10 +1325,144 @@ void spaceOnlyEvictionTests(const Context& context, const BdaTestAccess& access)
     Require(serial(wanted) == wantedSerial && uploadRefusals == 0 && HostImportCovers(importing, address(wanted), piece), "later uploads did not use the wanted range's import: " + std::to_string(uploadRefusals) + " refused");
     Require(!HostImportCovers(importing, address(at(0)), piece), "an address-based build took the retired range's import back from the uploads");
     Require(steady.spaceOnlyEvictions == rebuilt.spaceOnlyEvictions && steady.rebuiltEpoch == rebuilt.rebuiltEpoch && steady.hits - rebuilt.hits == steadyRounds, "a full budget with one range in use kept retiring imports or rebuilding the address space");
+    Require(steady.copiedBytes - rebuilt.copiedBytes == steadyRounds * piece, "the rebuilt space did not copy the retired range once per build: " + std::to_string(steady.copiedBytes - rebuilt.copiedBytes) + " bytes");
     {
         GuestAllocations::Mutation mutation;
         for (std::size_t index = 0; index < mapped; ++index) mutation.Remove(at(index));
         mutation.Remove(wanted);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+void spaceEvictionWarmupTests(const Context& context) {
+    if (!AddressSpaceCounters().enabled) {
+        std::cout << "address space cache off: the space's eviction warm-up not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t mapped = 4;
+    constexpr int warmup = 16;
+    auto* block = static_cast<std::uint8_t*>(::operator new((2 * mapped + 1) * piece, std::align_val_t{piece}));
+    const auto at = [&](std::size_t index) { return block + 2 * index * piece; };
+    auto* wanted = at(mapped);
+    std::memset(block, 0x5a, (2 * mapped + 1) * piece);
+    const auto address = [](const std::uint8_t* pointer) { return reinterpret_cast<std::uintptr_t>(pointer); };
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < mapped; ++index) mutation.Add(at(index), piece, true, false, true);
+        mutation.Add(wanted, piece, true, true, true);
+    }
+    SetHostImportBudget(HostImportLiveBytes() + mapped * piece);
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    const auto upload = [&] {
+        GuestBufferMemory plain(importing);
+        plain.AddReadable(address(wanted) + 64, 64);
+        plain.Upload(false);
+        plain.WriteBack();
+    };
+    build();
+    for (int use = 0; use < 300; ++use) Require(HostImportCovers(importing, address(at(mapped - 1)), piece), "the address-based build did not import the last range the budget holds");
+    const auto start = AddressSpaceCounters();
+    for (int round = 0; round < 3; ++round) build();
+    upload();
+    const auto early = AddressSpaceCounters();
+    Require(early.hits - start.hits == 3 && early.spaceOnlyEvictions == start.spaceOnlyEvictions && !HostImportCovers(importing, address(wanted), piece), "an upload retired an import only the space used before the space had served " + std::to_string(warmup) + " builds");
+    for (int round = 3; round < warmup; ++round) build();
+    upload();
+    const auto warm = AddressSpaceCounters();
+    Require(warm.spaceOnlyEvictions - start.spaceOnlyEvictions == 1 && HostImportCovers(importing, address(wanted), piece) && !HostImportCovers(importing, address(at(0)), piece), "an upload was refused although the space had served " + std::to_string(warmup) + " builds and only it used the budget's imports");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < mapped; ++index) mutation.Remove(at(index));
+        mutation.Remove(wanted);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+void spaceEvictionWindowTests(const Context& context) {
+    if (!AddressSpaceCounters().enabled) {
+        std::cout << "address space cache off: the space's eviction window not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t mapped = 4;
+    constexpr int window = 256;
+    constexpr int rounds = 600;
+    auto* block = static_cast<std::uint8_t*>(::operator new((2 * mapped + 3) * piece, std::align_val_t{piece}));
+    const auto at = [&](std::size_t index) { return block + 2 * index * piece; };
+    auto* first = at(mapped);
+    auto* second = at(mapped + 1);
+    std::memset(block, 0x3c, (2 * mapped + 3) * piece);
+    const auto address = [](const std::uint8_t* pointer) { return reinterpret_cast<std::uintptr_t>(pointer); };
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < mapped; ++index) mutation.Add(at(index), piece, true, false, true);
+        mutation.Add(first, piece, true, true, true);
+        mutation.Add(second, piece, true, true, true);
+    }
+    SetHostImportBudget(HostImportLiveBytes() + mapped * piece);
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    const auto upload = [&](const std::uint8_t* range) {
+        GuestBufferMemory plain(importing);
+        plain.AddReadable(address(range) + 64, 64);
+        plain.Upload(false);
+        plain.WriteBack();
+    };
+    const auto serial = [&](const std::uint8_t* pointer) { return HostImportSerial(importing, address(pointer), piece, false); };
+    for (int round = 0; round <= 300; ++round) build();
+    const auto start = AddressSpaceCounters();
+    std::uint64_t firstSerial = 0;
+    std::uint64_t secondSerial = 0;
+    int firstRound = -1;
+    int secondRound = -1;
+    for (int round = 0; round < rounds; ++round) {
+        upload(first);
+        if (round > 0) upload(second);
+        if (firstRound < 0 && serial(first) != 0) {
+            firstRound = round;
+            firstSerial = serial(first);
+        }
+        if (secondRound < 0 && serial(second) != 0) {
+            secondRound = round;
+            secondSerial = serial(second);
+        }
+        Require(firstRound < 0 || serial(first) == firstSerial, "the second hot range took the first one's import: round " + std::to_string(round));
+        Require(secondRound < 0 || serial(second) == secondSerial, "the first hot range took the second one's import: round " + std::to_string(round));
+        build();
+    }
+    const auto end = AddressSpaceCounters();
+    Require(firstRound == 0, "the first hot range was not imported at its first upload");
+    Require(secondRound >= window, "the second hot range retired another import only the space used " + std::to_string(secondRound) + " builds after the first, inside the " + std::to_string(window) + "-build window");
+    Require(secondRound <= window + 1, "the second hot range was still refused " + std::to_string(secondRound) + " builds after the first retirement");
+    Require(end.spaceOnlyEvictions - start.spaceOnlyEvictions == 2 && end.rebuiltAfterEviction - start.rebuiltAfterEviction == 2, "two hot ranges did not settle after two retirements and two rebuilds: " + std::to_string(end.spaceOnlyEvictions - start.spaceOnlyEvictions) + " retirements, " + std::to_string(end.rebuiltAfterEviction - start.rebuiltAfterEviction) + " rebuilds");
+    Require(serial(at(0)) == 0 && serial(at(1)) == 0 && serial(at(2)) != 0 && serial(at(3)) != 0, "the retirements took other imports than the two least recently used ones");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < mapped; ++index) mutation.Remove(at(index));
+        mutation.Remove(first);
+        mutation.Remove(second);
     }
     ClearHostImports(importing.device);
     SetHostImportBudget(0);
@@ -2585,6 +2723,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importBlockBudgetTests(context);
     importRefusalMemoryTests(context);
     spaceOnlyEvictionTests(context, access);
+    spaceEvictionWarmupTests(context);
+    spaceEvictionWindowTests(context);
     evictingRefusalMemoryTests(context);
     evictingRefusalAgingTests(context);
     evictingRefusalRangeTests(context);
