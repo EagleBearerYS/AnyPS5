@@ -82,14 +82,29 @@ struct GuestBufferMemory::AddressSpace {
     mutable std::size_t nextOverrideTable = 0;
     mutable std::uint64_t stamped = 0;
     std::shared_ptr<const void> retired;
+    mutable std::shared_ptr<const BdaPageTable> inherited;
 };
 
 namespace {
 
 struct RetiredImport;
 
+struct LeasedRange {
+    std::uint64_t address;
+    std::uint64_t bytes;
+    std::weak_ptr<const GuestAllocations::Range> range;
+};
+
+std::vector<LeasedRange> leasedRanges(const GuestAllocations::Lease& lease) {
+    std::vector<LeasedRange> ranges;
+    ranges.reserve(lease.size());
+    for (const auto& range : lease) ranges.push_back({range->address, range->bytes, range});
+    return ranges;
+}
+
 struct RetiredSet {
     std::vector<std::shared_ptr<void>> held;
+    std::vector<const HostImport*> entries;
     std::shared_ptr<RetiredSet> next;
 };
 
@@ -107,6 +122,15 @@ std::shared_ptr<const void> RetiredSince() {
     auto& retired = Retired();
     std::lock_guard lock(retired.mutex);
     return retired.current;
+}
+
+std::vector<const HostImport*> RetiredImportsSince(const std::shared_ptr<const void>& token) {
+    std::vector<const HostImport*> entries;
+    auto& retired = Retired();
+    std::lock_guard lock(retired.mutex);
+    for (const auto* set = static_cast<const RetiredSet*>(token.get()); set != nullptr; set = set->next.get()) entries.insert(entries.end(), set->entries.begin(), set->entries.end());
+    std::sort(entries.begin(), entries.end());
+    return entries;
 }
 
 struct AddressSpaceCache {
@@ -167,6 +191,8 @@ struct HostImports {
     std::uint64_t buildFloor = 0;
     bool retireAllowed = true;
     bool retireRefused = false;
+    std::vector<LeasedRange> refreshedLease;
+    bool refreshedLeaseValid = false;
 };
 
 struct RetireScope {
@@ -229,7 +255,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     ++state.epoch;
     state.liveBytes -= it->second.bytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
-    RetainRetiredImport(holder);
+    RetainRetiredImport(holder, &holder->node.mapped());
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) return;
     if (hold) recorder->KeepThroughHold(std::move(holder));
@@ -976,6 +1002,97 @@ const GuestAllocations::Range* containingRange(const GuestAllocations::Lease& le
 
 // Drops imports whose registered range changed or disappeared: their pages may no longer back the
 // guest addresses. Walks the imports only when the registry changed since the last walk.
+using Intervals = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+
+Intervals changedIntervals(const std::vector<LeasedRange>& before, const GuestAllocations::Lease& after) {
+    Intervals changed;
+    const auto add = [&](std::uint64_t begin, std::uint64_t bytes) {
+        const auto end = begin + bytes;
+        if (!changed.empty() && begin <= changed.back().second) changed.back().second = std::max(changed.back().second, end);
+        else changed.emplace_back(begin, end);
+    };
+    std::size_t old = 0;
+    std::size_t now = 0;
+    while (old < before.size() || now < after.size()) {
+        if (old < before.size() && now < after.size() && !before[old].range.owner_before(after[now]) && !after[now].owner_before(before[old].range)) {
+            ++old;
+            ++now;
+            continue;
+        }
+        if (now == after.size() || (old < before.size() && before[old].address <= after[now]->address)) {
+            add(before[old].address, before[old].bytes);
+            ++old;
+        } else {
+            add(after[now]->address, after[now]->bytes);
+            ++now;
+        }
+    }
+    return changed;
+}
+
+Intervals mergedIntervals(Intervals intervals) {
+    std::sort(intervals.begin(), intervals.end());
+    Intervals merged;
+    for (const auto& [begin, end] : intervals) {
+        if (!merged.empty() && begin <= merged.back().second) merged.back().second = std::max(merged.back().second, end);
+        else merged.emplace_back(begin, end);
+    }
+    return merged;
+}
+
+bool nearInterval(const Intervals& intervals, std::uint64_t begin, std::uint64_t end) {
+    const auto it = std::lower_bound(intervals.begin(), intervals.end(), begin, [](const std::pair<std::uint64_t, std::uint64_t>& interval, std::uint64_t value) { return interval.second < value; });
+    return it != intervals.end() && it->first <= end;
+}
+
+template<typename TVisit>
+void forEachImportNear(HostImports& state, const Intervals& intervals, TVisit&& visit) {
+    if (state.imports.empty()) return;
+    auto next = state.imports.begin();
+    for (const auto& [begin, end] : intervals) {
+        if (next == state.imports.end()) return;
+        auto it = state.imports.upper_bound(begin);
+        if (it != state.imports.begin()) --it;
+        if (it->first < next->first) it = next;
+        for (; it != state.imports.end() && it->first <= end; ++it) {
+            next = std::next(it);
+            if (it->second.base + it->second.bytes < begin) continue;
+            visit(it);
+        }
+    }
+}
+
+void refreshChangedImports(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t generation) {
+    const auto changed = changedIntervals(state.refreshedLease, lease);
+    std::vector<std::map<std::uint64_t, HostImport>::iterator> stale;
+    forEachImportNear(state, changed, [&](std::map<std::uint64_t, HostImport>::iterator it) {
+        if (!sameRange(it->second, lease)) stale.push_back(it);
+    });
+    if (!state.retireAllowed && !stale.empty()) {
+        state.retireRefused = true;
+        return;
+    }
+    state.refreshedGeneration = generation;
+    state.refreshedLease = leasedRanges(lease);
+    static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
+    for (const auto it : stale) {
+        if (trace && leasedRangeOwner(lease, it->first, it->first + it->second.bytes) != nullptr) std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx retired: the range was mapped again\n", static_cast<unsigned long long>(it->first), static_cast<unsigned long long>(it->second.bytes));
+        retireImport(context.device, state, it, lease);
+    }
+    const auto unwatch = [](std::map<std::uint64_t, HostImport>::iterator it) {
+        if (it->second.unwatched) GuestMemory::Unwatch(it->first, it->second.bytes);
+    };
+    const auto restored = GuestMemory::TakeRestoredWatches();
+    if (restored.size() == 1 && restored.front().first == 0 && restored.front().second == std::numeric_limits<std::uint64_t>::max()) {
+        for (auto it = state.imports.begin(); it != state.imports.end(); ++it) unwatch(it);
+    } else {
+        forEachImportNear(state, changed, unwatch);
+        if (!restored.empty()) forEachImportNear(state, mergedIntervals(restored), unwatch);
+    }
+    for (auto it = state.failed.begin(); it != state.failed.end();) it = !nearInterval(changed, it->second.base, it->second.base + it->second.bytes) || sameRun(it->second, importRun(lease, it->first)) ? std::next(it) : state.failed.erase(it);
+    for (auto it = state.failedJoins.begin(); it != state.failedJoins.end();) it = !nearInterval(changed, it->second.base, it->second.base + it->second.bytes) || sameRun(it->second, joinedRun(lease, it->second.base, it->second.base + it->second.bytes)) ? std::next(it) : state.failedJoins.erase(it);
+}
+
 void refreshImports(const Context& context, HostImports& state, const GuestAllocations::Lease& lease) {
     ReleaseRetiredCommittedImports();
     if (state.device != context.device) {
@@ -996,17 +1113,26 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
         state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
         state.refreshedGeneration = 0;
+        state.refreshedLease.clear();
+        state.refreshedLeaseValid = false;
         ++state.epoch;
     }
     if (state.destroyBuffer == nullptr) state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
     if (state.freeMemory == nullptr) state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
     const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     if (generation == state.refreshedGeneration) return;
+    if (state.refreshedLeaseValid) {
+        refreshChangedImports(context, state, lease, generation);
+        return;
+    }
     if (!state.retireAllowed && std::any_of(state.imports.begin(), state.imports.end(), [&](const auto& item) { return !sameRange(item.second, lease); })) {
         state.retireRefused = true;
         return;
     }
     state.refreshedGeneration = generation;
+    state.refreshedLease = leasedRanges(lease);
+    state.refreshedLeaseValid = true;
+    static_cast<void>(GuestMemory::TakeRestoredWatches());
     for (auto it = state.imports.begin(); it != state.imports.end();) {
         if (sameRange(it->second, lease)) {
             if (it->second.unwatched) GuestMemory::Unwatch(it->first, it->second.bytes);
@@ -1740,10 +1866,11 @@ std::string unservedView(std::uint64_t begin, std::uint64_t end, const char* why
 
 }
 
-void RetainRetiredImport(std::shared_ptr<void> holder) {
+void RetainRetiredImport(std::shared_ptr<void> holder, const HostImport* entry) {
     auto& retired = Retired();
     std::lock_guard lock(retired.mutex);
     retired.current->held.push_back(std::move(holder));
+    retired.current->entries.push_back(entry);
     auto next = std::make_shared<RetiredSet>();
     retired.current->next = next;
     retired.current = std::move(next);
@@ -1830,23 +1957,59 @@ void GuestBufferMemory::AcquireRegistered() {
     lap(timing.importsUs, at);
     regions.reserve(lease.size());
     bool mirrored = false;
+    const auto previous = addressSpaceCacheEnabled() ? spaces.current.load() : nullptr;
+    const bool reuse = previous != nullptr && previous->device == context.device;
+    const auto retiredImports = reuse ? RetiredImportsSince(previous->retired) : std::vector<const HostImport*>{};
+    std::size_t oldRange = 0;
+    std::size_t oldRegion = 0;
+    const auto reusable = [&](const std::shared_ptr<const GuestAllocations::Range>& range) -> const Region* {
+        if (!reuse) return nullptr;
+        const auto& oldLease = previous->lease;
+        while (oldRange < oldLease.size() && oldLease[oldRange]->address < range->address) ++oldRange;
+        if (oldRange == oldLease.size() || oldLease[oldRange] != range) return nullptr;
+        const auto& base = previous->base;
+        while (oldRegion < base.size() && base[oldRegion].end <= range->address) ++oldRegion;
+        if (oldRegion == base.size() || base[oldRegion].begin > range->address || base[oldRegion].end < range->address + range->bytes) return nullptr;
+        const auto& region = base[oldRegion];
+        if (region.direct == nullptr && region.mirror == nullptr) return nullptr;
+        if (region.direct != nullptr && std::binary_search(retiredImports.begin(), retiredImports.end(), region.direct)) return nullptr;
+        return &region;
+    };
+    std::vector<std::pair<std::size_t, std::shared_ptr<const GuestAllocations::Range>>> pending;
+    std::vector<const HostImport*> kept;
     for (const auto& range : lease) {
         if (!range->readable || !range->gpu) continue;
         validate(range->address, range->bytes);
         Region region{range->address, range->address + range->bytes, range->writable};
+        if (const auto* old = reusable(range)) {
+            region.direct = old->direct;
+            region.mirror = old->mirror;
+            if (region.direct != nullptr) kept.push_back(region.direct);
+            else mirrored = true;
+        } else {
+            pending.emplace_back(regions.size(), range);
+        }
+        regions.push_back(std::move(region));
+    }
+    if (!kept.empty()) {
+        withImports([&](HostImports& state) {
+            const auto stamp = ++state.useCounter;
+            for (const auto* entry : kept) entry->lastUse = stamp;
+        });
+    }
+    for (const auto& [index, range] : pending) {
+        auto& region = regions[index];
         const HostImport* entry = nullptr;
         if (importable) withImports([&](HostImports& state) { entry = importAllocation(context, state, range->address, lease, 0, false); });
         lap(timing.importsUs, at);
         if (entry != nullptr) {
             region.direct = entry;
-            regions.push_back(std::move(region));
             continue;
         }
         Require(!range->writable && !range->releasable, unservedRange(*range, "only a read-only range of the main image is mirrored"));
         region.mirror = acquireMirror(context, range);
         lap(timing.mirrorsUs, at);
         mirrored = true;
-        regions.push_back(std::move(region));
     }
     regionsSorted = true;
     if (mirrored) {
@@ -1891,6 +2054,10 @@ void GuestBufferMemory::AcquireRegistered() {
             built->ranges = std::move(ranges);
             built->base = std::move(regions);
             built->retired = retiredSince;
+            if (reuse) {
+                std::lock_guard tableLock(previous->tableMutex);
+                built->inherited = previous->pageTable != nullptr ? previous->pageTable : previous->inherited;
+            }
             regions.clear();
             lease.clear();
             space = std::move(built);
@@ -2218,8 +2385,9 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& 
         std::lock_guard lock(space->tableMutex);
         if (space->pageTable == nullptr || space->residencySerial != serial) {
             space->resident = WithResidentPages(space->ranges);
-            const std::array<std::shared_ptr<const BdaPageTable>, 1> shares{space->pageTable};
+            const std::array<std::shared_ptr<const BdaPageTable>, 2> shares{space->pageTable, space->inherited};
             space->pageTable = BdaPageTable::Build(context, space->resident, shares);
+            space->inherited.reset();
             space->residencySerial = serial;
         }
         return space->pageTable;

@@ -37,7 +37,7 @@ struct HostImport {
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
 
-void RetainRetiredImport(std::shared_ptr<void> holder);
+void RetainRetiredImport(std::shared_ptr<void> holder, const HostImport* entry);
 
 struct ImportProbe {
     const char* failure = nullptr;

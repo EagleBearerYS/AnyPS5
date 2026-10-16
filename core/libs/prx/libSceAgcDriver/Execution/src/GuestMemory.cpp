@@ -1057,12 +1057,26 @@ TrackerLock lockTracker(WriteTracker& tracker) {
     return TrackerLock(tracker, std::move(lock));
 }
 
+struct RestoredWatches {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    bool overflowed = false;
+};
+
+RestoredWatches& restoredWatches() {
+    static RestoredWatches restored;
+    return restored;
+}
+
 #ifdef _WIN32
 void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     if (!tracker.watched || bytes == 0 || bytes > tracker.size || address < tracker.base || address - tracker.base > tracker.size - bytes) return;
     tracker.coverage.Restore(address, bytes, generation);
+    auto& restored = restoredWatches();
+    constexpr std::size_t RestoredLimit = 4096;
+    if (restored.ranges.size() < RestoredLimit) restored.ranges.emplace_back(address, address + bytes);
+    else restored.overflowed = true;
     ++tracker.generation;
     tracker.noteCpuStore(address, address + bytes, tracker.generation);
     for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
@@ -1288,6 +1302,18 @@ void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t byt
 #endif
 }
 
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> TakeRestoredWatches() {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    auto& restored = restoredWatches();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> taken;
+    if (restored.overflowed) taken.emplace_back(0, std::numeric_limits<std::uint64_t>::max());
+    else taken.swap(restored.ranges);
+    restored.ranges.clear();
+    restored.overflowed = false;
+    return taken;
 }
 
 void Unwatch(std::uint64_t address, std::size_t bytes) {
