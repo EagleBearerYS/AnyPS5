@@ -1,0 +1,4 @@
+BASE=082c3268acfe60fcb7f952cbc60ad10eedc9cd50
+REPEAT=10
+EXTRA_TESTS='agc_driver_host_write_hook|agc_driver_host_write_pending_storage|^agc'
+NO_BEFORE=1
