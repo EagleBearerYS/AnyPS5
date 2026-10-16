@@ -1608,7 +1608,7 @@ void RunHeapMirrorUnwatchTests(const Context& context, const BdaTestAccess& acce
         std::size_t bytes = 0;
     };
     std::array<Piece, 3> pieces{};
-    const std::array<std::pair<std::size_t, std::size_t>, 3> sizes{{{heapBytes, heapBytes}, {heapBytes, idleBytes}, {busyBytes, busyBytes}}};
+    const std::array<std::pair<std::size_t, std::size_t>, 3> sizes{{{heapBytes + block, heapBytes}, {heapBytes + block, idleBytes}, {busyBytes + block, busyBytes}}};
     for (std::size_t index = 0; index < pieces.size(); ++index) {
         auto& piece = pieces[index];
         piece.allocated = sizes[index].first;
