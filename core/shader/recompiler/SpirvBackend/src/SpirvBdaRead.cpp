@@ -523,36 +523,13 @@ std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst
     });
 }
 
-void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
+void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits, std::uint32_t enabled) {
     auto& state = ctx.state;
     if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
-    const auto instruction = BdaInstructionPc(state, inst);
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA write width");
-    const auto storeBytes = [&] {
-        EmitBdaOverflowCheck(state, address, bits / 8u, instruction);
-        for (std::uint32_t byte = 0u; byte < bits / 8u; ++byte) {
-            const auto guest = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, BdaConstant(state, byte));
-            const auto physical = state.module.AllocateId();
-            state.module.AddFunction(spv::OpFunctionCall, TypeScalarU64(state), physical, state.bdaWritePointerFunction, guest, ConstantU32(state, 1u), instruction);
-            EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u)), [&] {
-                const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
-                const auto pointer = state.module.AllocateId();
-                state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType), pointer, physical);
-                const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), value, ConstantU32(state, byte * 8u));
-                state.module.AddFunction(spv::OpStore, pointer, Unary(state, spv::OpUConvert, byteType, shifted), BdaAccessMask(state, inst), 1u);
-                state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, guest);
-            });
-        }
-    };
-    if (bits != 32u) {
-        storeBytes();
-        return;
-    }
-    const auto unaligned = BdaAddressUnaligned(state, address);
-    EmitIfCondition(state, unaligned, storeBytes);
-    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), [&] {
-        EmitBdaStoreAt(state, address, 4u, TypePhysicalU32Pointer(state), value, instruction, BdaAccessMask(state, inst));
-    });
+    const auto function = state.bdaWriteFunctions[BdaCoherent(state, inst)];
+    if (function == 0) ctx.Fail(inst, "BDA write function is missing");
+    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), function, address, value, ConstantU32(state, bits / 8u), BdaInstructionPc(state, inst), enabled);
 }
 
 void DefineBdaByteWriteFunctions(SpirvEmitterState& state) {
@@ -604,6 +581,45 @@ void DefineBdaByteWriteFunctions(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpReturn);
         state.module.AddFunction(spv::OpFunctionEnd);
         state.bdaByteWriteFunctions[coherent] = function;
+    }
+}
+
+void DefineBdaWriteFunctions(SpirvEmitterState& state) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto voidType = state.module.Type(spv::OpTypeVoid);
+    const auto type = state.module.Type(spv::OpTypeFunction, voidType, u64, u32, u32, u32, boolean);
+    const auto& memory = state.program.Resources().memoryInfo;
+    const bool coherentAccesses = std::any_of(memory.begin(), memory.end(), [](const MemoryInfo& info) { return info.coherent; });
+    for (const bool coherent : {false, true}) {
+        if (coherent && !coherentAccesses) continue;
+        const auto function = state.module.AllocateId();
+        state.module.AddName(function, std::string("write_bda") + (coherent ? "_coherent" : ""));
+        state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, type);
+        const auto address = state.module.AllocateId();
+        const auto value = state.module.AllocateId();
+        const auto bytes = state.module.AllocateId();
+        const auto instruction = state.module.AllocateId();
+        const auto enabled = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+        state.module.AddFunction(spv::OpFunctionParameter, u32, value);
+        state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
+        state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
+        state.module.AddFunction(spv::OpFunctionParameter, boolean, enabled);
+        EmitLabel(state, state.module.AllocateId());
+        EmitIfCondition(state, enabled, [&] {
+            const auto dword = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpIEqual, boolean, bytes, ConstantU32(state, 4u)), Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, address)));
+            EmitIfCondition(state, dword, [&] { EmitBdaStoreAt(state, address, 4u, TypePhysicalU32Pointer(state), value, instruction, BdaAccessMask(coherent)); });
+            EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, dword), [&] {
+                const auto limit = Binary(state, spv::OpISub, u64, BdaConstant(state, std::numeric_limits<std::uint64_t>::max()), Unary(state, spv::OpUConvert, u64, bytes));
+                EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, boolean, address, limit), [&] { RecordBdaFault(state, address, bytes, instruction, BdaAbi::FaultReason::Overflow); });
+                state.module.AddFunction(spv::OpFunctionCall, voidType, state.module.AllocateId(), state.bdaByteWriteFunctions[coherent], address, value, bytes, instruction);
+            });
+        });
+        state.module.AddFunction(spv::OpReturn);
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.bdaWriteFunctions[coherent] = function;
     }
 }
 

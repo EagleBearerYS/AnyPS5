@@ -313,11 +313,11 @@ bool byteStores(SpirvEmitterState& state) {
 }
 
 void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t address, std::uint32_t value, std::uint32_t bits = 32u) {
+    auto& state = context.state;
     if (context.Memory(instruction).gpuDescriptor) {
-        EmitBdaWrite(context, instruction, address, value, bits);
+        EmitBdaWrite(context, instruction, address, value, bits, ConstantBool(state, true));
         return;
     }
-    auto& state = context.state;
     const auto access = directAccess(context, instruction, resource, true);
     const auto u32 = TypeU32(state);
     const auto index = directWordIndex(state, directBaseWord(state, access), address);
@@ -749,7 +749,8 @@ void rawStore(SpirvValueEmitContext& context, const IrValue& instruction, std::u
         const auto values = storeValues(state, data, components);
         for (std::uint32_t component = 0; component < components; ++component) {
             const auto access = address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
-            EmitIfCondition(state, access.inBounds, [&] { writeBuffer(context, instruction, resource, access.guest, values[component], memory.dataBits); });
+            if (memory.gpuDescriptor) EmitBdaWrite(context, instruction, access.guest, values[component], memory.dataBits, access.inBounds);
+            else EmitIfCondition(state, access.inBounds, [&] { writeBuffer(context, instruction, resource, access.guest, values[component], memory.dataBits); });
         }
     });
 }
@@ -1075,21 +1076,19 @@ std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruct
     std::vector<std::uint32_t> values;
     for (const auto& argument : extra) values.push_back(argument.value);
     if (shape.constantDescriptor || (!outOfLine && accessEmissions(state, shape.key) < 2u)) return body(operands, active, std::span<const std::uint32_t>(values));
+    const bool gated = request.kind != AccessKind::ScalarLoad;
     const auto call = [&] {
         auto arguments = accessArguments(context, instruction, shape, request.kind, operands);
+        if (gated) arguments.push_back({TypeBool(state), active});
         arguments.insert(arguments.end(), extra.begin(), extra.end());
         const auto result = callAccessHelper(state, shape.key, helperName(request, memory), valueType == 0u ? TypeVoid(state) : valueType, arguments, [&](std::span<const std::uint32_t> parameters) {
             const auto helper = helperValues(state, shape, request.kind, operands, memory.gpuDescriptor, parameters);
-            return body(helper.values, ConstantBool(state, true), parameters.subspan(helper.next));
+            const auto enabled = gated ? parameters[helper.next] : ConstantBool(state, true);
+            return body(helper.values, enabled, parameters.subspan(helper.next + (gated ? 1u : 0u)));
         });
         return valueType == 0u ? 0u : result;
     };
-    if (request.kind == AccessKind::ScalarLoad) return call();
-    if (valueType == 0u) {
-        EmitIfCondition(state, active, [&] { static_cast<void>(call()); });
-        return 0u;
-    }
-    return EmitValueOrDefaultIfCondition(state, active, valueType, zero, call);
+    return call();
 }
 
 }

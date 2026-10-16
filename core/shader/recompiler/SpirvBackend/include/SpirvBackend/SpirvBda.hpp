@@ -37,9 +37,10 @@ void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition);
 std::uint32_t BdaInstructionPc(SpirvEmitterState& state, const IrValue& inst);
 std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bits);
 std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, const std::function<std::uint32_t()>& uncached);
-void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits = 32u);
+void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits, std::uint32_t enabled);
 void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits);
 void DefineBdaByteWriteFunctions(SpirvEmitterState& state);
+void DefineBdaWriteFunctions(SpirvEmitterState& state);
 void EmitBdaDwordWrites(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t offset, std::uint32_t dwords, std::uint32_t value);
 std::uint32_t EmitBdaAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bytes, const std::function<std::uint32_t(std::uint32_t)>& operation);
 // Reads the dwords of a 1-4 dword load at address + offset that the program extracts, with one

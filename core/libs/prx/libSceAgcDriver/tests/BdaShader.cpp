@@ -271,7 +271,7 @@ std::vector<std::uint32_t> MakeBdaLaneStoreTestShader(std::uint64_t address, std
             case BdaLaneStore::Byte: EmitBdaStore(ctx, instruction, target, value, 8u); break;
             case BdaLaneStore::Short: EmitBdaStore(ctx, instruction, target, value, 16u); break;
             case BdaLaneStore::Dword: EmitBdaStore(ctx, instruction, target, value, 32u); break;
-            case BdaLaneStore::RuntimeDword: EmitBdaWrite(ctx, instruction, target, value, 32u); break;
+            case BdaLaneStore::RuntimeDword: EmitBdaWrite(ctx, instruction, target, value, 32u, ConstantBool(state, true)); break;
             case BdaLaneStore::Dwordx4: {
                 const auto vector = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), vector, value, value, value, value);
@@ -354,10 +354,10 @@ std::vector<std::uint32_t> MakeImageStoreRecordTestShader(const std::array<std::
     return shader;
 }
 
-std::vector<std::uint32_t> MakeBdaWriteTestShader(std::uint64_t address, std::uint32_t value, std::uint32_t bits, bool coherent) {
+std::vector<std::uint32_t> MakeBdaWriteTestShader(std::uint64_t address, std::uint32_t value, std::uint32_t bits, bool coherent, bool enabled) {
     using namespace ShaderRecompiler;
     auto shader = MakeShader(address, coherent, true, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {
-        EmitBdaWrite(ctx, instruction, base, ConstantU32(ctx.state, value), bits);
+        EmitBdaWrite(ctx, instruction, base, ConstantU32(ctx.state, value), bits, ConstantBool(ctx.state, enabled));
         return std::vector<std::uint32_t>{ConstantU32(ctx.state, 1u)};
     }, 0u, true);
 #if ANYPS5_ENABLE_SPIRV_TOOLS

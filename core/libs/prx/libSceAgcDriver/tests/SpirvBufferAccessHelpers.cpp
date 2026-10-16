@@ -23,12 +23,14 @@ struct Function {
     std::uint32_t control = 0;
     std::string name;
     std::size_t widestSwitch = 0;
+    std::map<std::uint32_t, std::uint32_t> calls;
     std::size_t bufferMemoryLoads = 0;
 };
 
 struct Module {
     std::map<std::uint32_t, Function> functions;
     std::map<std::uint32_t, std::uint32_t> callsFromMain;
+    std::map<std::uint32_t, std::uint32_t> branchedCallsFromMain;
     std::size_t mainBufferMemoryLoads = 0;
 };
 
@@ -63,6 +65,9 @@ Module Parse(std::span<const std::uint32_t> words) {
     std::set<std::uint32_t> physicalPointerTypes;
     std::set<std::uint32_t> physicalPointers;
     std::uint32_t current = 0;
+    std::uint32_t label = 0;
+    std::uint32_t merge = 0;
+    std::set<std::uint32_t> conditionalTargets;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
@@ -80,6 +85,14 @@ Module Parse(std::span<const std::uint32_t> words) {
             module.functions[current].control = operands[2];
         }
         if (op == spv::OpFunctionEnd) current = 0;
+        if (op == spv::OpLabel) label = operands[0];
+        if (op == spv::OpSelectionMerge) merge = operands[0];
+        if (op == spv::OpBranchConditional) {
+            for (const auto target : {operands[1], operands[2]}) {
+                if (target != merge) conditionalTargets.insert(target);
+            }
+        }
+        if (current != 0 && op == spv::OpFunctionCall) ++module.functions[current].calls[operands[2]];
         if (current != 0 && (op == spv::OpLoad || op == spv::OpAtomicLoad) && physicalPointers.contains(operands[2])) ++module.functions[current].bufferMemoryLoads;
         if (current != 0 && op == spv::OpSwitch) {
             std::set<std::uint32_t> targets{operands[1]};
@@ -89,6 +102,7 @@ Module Parse(std::span<const std::uint32_t> words) {
         }
         if (current != 0 && current == entry) {
             if (op == spv::OpFunctionCall) ++module.callsFromMain[operands[2]];
+            if (op == spv::OpFunctionCall && conditionalTargets.contains(label)) ++module.branchedCallsFromMain[operands[2]];
             if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && physicalPointers.contains(operands[2])) ++module.mainBufferMemoryLoads;
         }
         cursor += count;
@@ -159,9 +173,22 @@ int main() {
         const auto formatted = Calls(module, "load_formatted_buffer_");
         Expect(formatted.size() == 1u && formatted[0] == 1u, "expected one formatted load helper called once, found " + Describe(formatted));
         Expect(module.mainBufferMemoryLoads == 0u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected its s_buffer_load_dword to read through their helper");
+        std::uint32_t write = 0;
+        for (const auto& [id, function] : module.functions) {
+            if (function.name == "write_bda") write = id;
+        }
+        Expect(write != 0u, "the module has no write_bda function");
         for (const auto& [id, function] : module.functions) {
             if (function.name.starts_with("load_scalar_buffer_")) Expect(function.bufferMemoryLoads == 3u, function.name + " loads buffer memory " + std::to_string(function.bufferMemoryLoads) + " times, expected three times: through its cached translation, through a refilled one and through the uncached read");
             if (function.name.starts_with("load_formatted_buffer_")) Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per format layout and the invalid format (at most 15)");
+            if (function.name.starts_with("store_buffer_x3")) {
+                const auto found = function.calls.find(write);
+                const auto writes = found == function.calls.end() ? 0u : found->second;
+                Expect(writes == 3u, function.name + " calls write_bda " + std::to_string(writes) + " times, expected once per component");
+            }
+            const auto branched = module.branchedCallsFromMain.find(id);
+            const bool access = function.name.starts_with("load_buffer_") || function.name.starts_with("store_buffer_") || function.name.starts_with("load_formatted_buffer_") || function.name.starts_with("buffer_atomic_address_");
+            Expect(!access || branched == module.branchedCallsFromMain.end(), "main calls " + function.name + " from a conditional block " + std::to_string(branched == module.branchedCallsFromMain.end() ? 0u : branched->second) + " times, expected its active lanes passed to it instead");
         }
     } catch (const std::exception& error) {
         std::cerr << "SpirvBufferAccessHelpers: " << error.what() << '\n';

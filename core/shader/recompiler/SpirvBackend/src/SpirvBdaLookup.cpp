@@ -602,6 +602,7 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
         state.bdaAtomicPointerFunction = DefineBdaLookup(state, "get_bda_atomic_pointer", true, BdaAbi::Read | BdaAbi::Write);
         state.bdaNoteWriteFunction = DefineBdaNoteWrite(state);
         DefineBdaByteWriteFunctions(state);
+        DefineBdaWriteFunctions(state);
     }
 }
 
