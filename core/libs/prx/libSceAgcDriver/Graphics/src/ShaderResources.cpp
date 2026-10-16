@@ -2830,7 +2830,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     } suspend{guestMemory};
     if (!guestMemory.ResumeSpace()) return false;
     const bool proved = proveBuild(shaders, report);
-    if (proved && guestMemory.SpaceImportsCurrent()) {
+    if (proved && guestMemory.SpaceImportsCurrent() && (bda == nullptr || bda->TableCurrent())) {
         suspend.armed = false;
         return true;
     }
