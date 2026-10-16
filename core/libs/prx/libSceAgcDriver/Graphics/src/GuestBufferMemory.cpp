@@ -145,6 +145,7 @@ struct AddressSpaceCache {
     std::atomic<std::uint64_t> spaceOnlyEvictions{0};
     std::atomic<std::uint64_t> rebuiltAfterEviction{0};
     std::atomic<bool> evictedSinceRebuild{false};
+    std::atomic<std::uint64_t> copiedBytes{0};
 };
 
 AddressSpaceCache& Spaces() {
@@ -184,6 +185,7 @@ struct EvictingRefusal {
     std::uint64_t ready;
     std::uint64_t readyHeld;
     bool joined;
+    std::uint64_t opens;
 };
 
 // Imports persist across draws, keyed by allocation base, and are dropped when their allocation leaves
@@ -203,6 +205,9 @@ struct HostImports {
     std::map<std::pair<std::uint64_t, std::uint64_t>, ImportFailure> failedBlocks;
     std::map<std::pair<std::uint64_t, std::uint64_t>, ImportRefusal> refusals;
     std::map<std::pair<std::uint64_t, std::uint64_t>, EvictingRefusal> evictingRefusals;
+    std::uint64_t spaceBuilds = 0;
+    std::uint64_t spaceBuiltAt = 0;
+    std::uint64_t spaceEvictedAt = 0;
     // Registry generation the imports were last reconciled with.
     std::uint64_t refreshedGeneration = 0;
     // Bumped whenever an import is dropped, so HostImport pointers taken under the lock earlier can be
@@ -992,30 +997,54 @@ bool pointerHeld(const HostImports& state, const HostImport& entry) {
 }
 
 constexpr std::uint64_t ProtectedUses = 256;
+constexpr std::uint64_t SpaceWarmupBuilds = 16;
+constexpr std::uint64_t SpaceEvictionWindowBuilds = 256;
 
-bool evictable(const HostImports& state, const HostImport& entry) {
+bool aged(const HostImports& state, const HostImport& entry) {
     return !pointerHeld(state, entry) && entry.lastUse + ProtectedUses < state.useCounter;
 }
 
-bool evictingRefusalCurrent(const HostImports& state, const EvictingRefusal& refusal, std::uint64_t budget) {
-    return refusal.epoch == state.epoch && refusal.liveBytes == state.liveBytes && budget <= refusal.budget && refusal.window == importWindow.load(std::memory_order_relaxed) && state.useCounter < refusal.ready && (state.buildFloor <= refusal.floor || state.useCounter < refusal.readyHeld);
+bool spaceOnlyUse(const HostImports& state, const HostImport& entry) {
+    return entry.spaceUse + ProtectedUses >= state.useCounter;
 }
 
-std::uint64_t retireLeastRecent(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t wanted) {
+std::uint64_t spaceEvictionsOpen(const HostImports& state) {
+    const auto windowEnd = state.spaceEvictedAt == 0 ? 0 : state.spaceEvictedAt - 1 + SpaceEvictionWindowBuilds;
+    return std::max(state.spaceBuiltAt + SpaceWarmupBuilds, windowEnd);
+}
+
+bool evictable(const HostImports& state, const HostImport& entry) {
+    return aged(state, entry) && (!spaceOnlyUse(state, entry) || state.spaceBuilds >= spaceEvictionsOpen(state));
+}
+
+bool evictingRefusalCurrent(const HostImports& state, const EvictingRefusal& refusal, std::uint64_t budget) {
+    return refusal.epoch == state.epoch && refusal.liveBytes == state.liveBytes && budget <= refusal.budget && refusal.window == importWindow.load(std::memory_order_relaxed) && state.useCounter < refusal.ready && state.spaceBuilds < refusal.opens && (state.buildFloor <= refusal.floor || state.useCounter < refusal.readyHeld);
+}
+
+std::uint64_t retireLeastRecent(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t wanted, std::uint64_t making, std::uint64_t budget) {
     std::uint64_t freed = 0;
+    std::vector<ImportRefusal> spaceOnly;
     while (freed < wanted) {
         auto oldest = state.imports.end();
         for (auto it = state.imports.begin(); it != state.imports.end(); ++it) {
             if (evictable(state, it->second) && (oldest == state.imports.end() || it->second.lastUse < oldest->second.lastUse)) oldest = it;
         }
         if (oldest == state.imports.end()) break;
-        if (oldest->second.spaceUse + ProtectedUses >= state.useCounter) {
+        if (spaceOnlyUse(state, oldest->second)) {
             auto& spaces = Spaces();
             spaces.spaceOnlyEvictions.fetch_add(1, std::memory_order_relaxed);
             spaces.evictedSinceRebuild.store(true, std::memory_order_relaxed);
+            if (!oldest->second.joined) spaceOnly.push_back({oldest->second.base, oldest->second.bytes, GuestAllocations::Mapped(oldest->second.ranges.begin(), oldest->second.ranges.end()), 0, 0});
         }
         freed += oldest->second.bytes;
         retireImport(context.device, state, oldest, lease);
+    }
+    if (spaceOnly.empty()) return freed;
+    state.spaceEvictedAt = state.spaceBuilds + 1;
+    for (auto& refusal : spaceOnly) {
+        refusal.liveBytes = state.liveBytes + making;
+        refusal.budget = budget;
+        state.refusals.insert_or_assign(std::pair{refusal.base, refusal.bytes}, std::move(refusal));
     }
     return freed;
 }
@@ -1091,12 +1120,17 @@ bool importsStale(const Context& context, const HostImports& state);
 const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict, ImportRequester requester);
 
 // The bytes retireLeastRecent could free outside [begin, end).
-std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std::uint64_t end, std::uint64_t& ready, std::uint64_t& readyHeld) {
+std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std::uint64_t end, std::uint64_t& ready, std::uint64_t& readyHeld, std::uint64_t& opens) {
     std::uint64_t bytes = 0;
     for (const auto& [base, entry] : state.imports) {
         if (entry.base + entry.bytes > begin && entry.base < end) continue;
         if (evictable(state, entry)) {
             bytes += entry.bytes;
+            continue;
+        }
+        if (aged(state, entry)) {
+            ready = std::min(ready, entry.spaceUse + ProtectedUses + 1);
+            opens = std::min(opens, spaceEvictionsOpen(state));
             continue;
         }
         auto& horizon = pointerHeld(state, entry) ? readyHeld : ready;
@@ -1188,7 +1222,8 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     const auto live = state.liveBytes - replaced;
     auto ready = std::numeric_limits<std::uint64_t>::max();
     auto readyHeld = std::numeric_limits<std::uint64_t>::max();
-    const auto evictable = evict && live + bytes > budget ? evictableBytes(state, base, base + bytes, ready, readyHeld) : 0;
+    auto opens = std::numeric_limits<std::uint64_t>::max();
+    const auto evictable = evict && live + bytes > budget ? evictableBytes(state, base, base + bytes, ready, readyHeld, opens) : 0;
     if (live + bytes > budget + evictable) {
         // A refused import turns every later use of the range into CPU copies, so say so.
         static auto lastReport = std::chrono::steady_clock::now() - std::chrono::seconds(60);
@@ -1211,7 +1246,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             std::fprintf(stderr, "[gpu] host import budget: %llu MiB live of %llu MiB (APS5_HOST_IMPORT_MIB); %llu imports (%llu MiB) refused so far, %llu of them remembered, last 0x%llx+0x%llx by %s\n", static_cast<unsigned long long>(state.liveBytes >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(refused), static_cast<unsigned long long>(refusedBytes >> 20u), static_cast<unsigned long long>(remembered), static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), ImportRequesterName(requester));
         }
         const auto room = budget + evictable > live ? budget + evictable - live : 0;
-        if (evict) state.evictingRefusals.insert_or_assign(std::pair{base, bytes}, EvictingRefusal{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end()), state.epoch, state.liveBytes, budget, room, importWindow.load(std::memory_order_relaxed), state.buildFloor, ready, readyHeld, joined});
+        if (evict) state.evictingRefusals.insert_or_assign(std::pair{base, bytes}, EvictingRefusal{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end()), state.epoch, state.liveBytes, budget, room, importWindow.load(std::memory_order_relaxed), state.buildFloor, ready, readyHeld, joined, opens});
         if (stepDown && containing != run.ranges.end() && room >= (*containing)->bytes) return importAllocation(context, state, address, lease, requester, end, evict, std::min(bytes / 2, room));
         if (containing != run.ranges.end() && run.ranges.size() > 1) remember((*containing)->address, (*containing)->bytes, GuestAllocations::Mapped{*containing});
         return nullptr;
@@ -1221,7 +1256,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    if (state.liveBytes + bytes > budget) retireLeastRecent(context, state, lease, state.liveBytes + bytes - budget);
+    if (state.liveBytes + bytes > budget) retireLeastRecent(context, state, lease, state.liveBytes + bytes - budget, bytes, budget);
     HostImport entry{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0};
     entry.range = run.ranges.front();
     entry.ranges = std::move(run.ranges);
@@ -1370,6 +1405,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         state.failedBlocks.clear();
         state.refusals.clear();
         state.evictingRefusals.clear();
+        state.spaceEvictedAt = 0;
         state.sparseRunEnds.clear();
         state.sparseRunJoins.clear();
         state.device = context.device;
@@ -2367,7 +2403,7 @@ LeaseStats LeaseCounters() {
 AddressSpaceStats AddressSpaceCounters() {
     const auto& cache = Spaces();
     const auto load = [](const std::atomic<std::uint64_t>& counter) { return counter.load(std::memory_order_relaxed); };
-    return {addressSpaceCacheEnabled(), load(cache.hits), load(cache.rebuiltFirst), load(cache.rebuiltGeneration), load(cache.rebuiltEpoch), load(cache.rebuiltDevice), load(cache.rebuiltWaiterDrop), load(cache.unpublished), load(cache.dissolvedOverlap), load(cache.dissolvedImports), load(cache.waiterDrops), load(cache.spaceOnlyEvictions), load(cache.rebuiltAfterEviction)};
+    return {addressSpaceCacheEnabled(), load(cache.hits), load(cache.rebuiltFirst), load(cache.rebuiltGeneration), load(cache.rebuiltEpoch), load(cache.rebuiltDevice), load(cache.rebuiltWaiterDrop), load(cache.unpublished), load(cache.dissolvedOverlap), load(cache.dissolvedImports), load(cache.waiterDrops), load(cache.spaceOnlyEvictions), load(cache.rebuiltAfterEviction), load(cache.copiedBytes)};
 }
 
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit) {
@@ -2459,6 +2495,7 @@ void ClearHostImports(VkDevice device) {
     state.failedBlocks.clear();
     state.refusals.clear();
     state.evictingRefusals.clear();
+    state.spaceEvictedAt = 0;
     state.device = VK_NULL_HANDLE;
     state.refreshedGeneration = 0;
     ++state.epoch;
@@ -2852,7 +2889,7 @@ void GuestBufferMemory::CountAddressBuild(double snapshotsUs) {
     const auto delta = [](std::uint64_t now, std::uint64_t before) { return static_cast<unsigned long long>(now - before); };
     const auto space = AddressSpaceCounters();
     const auto& spaceSeen = totals.spaceSeen;
-    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu; space-only evictions %llu, rebuilds after them %llu%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), delta(space.spaceOnlyEvictions, spaceSeen.spaceOnlyEvictions), delta(space.rebuiltAfterEviction, spaceSeen.rebuiltAfterEviction), space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
+    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu; space-only evictions %llu, rebuilds after them %llu, copied ranges %.0f KiB per hit%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), delta(space.spaceOnlyEvictions, spaceSeen.spaceOnlyEvictions), delta(space.rebuiltAfterEviction, spaceSeen.rebuiltAfterEviction), space.hits == spaceSeen.hits ? 0.0 : static_cast<double>(space.copiedBytes - spaceSeen.copiedBytes) / static_cast<double>(space.hits - spaceSeen.hits) / 1024.0, space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
     totals.tableSeen = table;
     totals.spaceSeen = space;
     totals.builds = 0;
@@ -2895,6 +2932,7 @@ void GuestBufferMemory::AcquireRegistered() {
             else if (current->importsEpoch != state.epoch) spaces.rebuiltEpoch.fetch_add(1, std::memory_order_relaxed);
             else hit = true;
             if (!hit && spaces.evictedSinceRebuild.exchange(false, std::memory_order_relaxed)) spaces.rebuiltAfterEviction.fetch_add(1, std::memory_order_relaxed);
+            ++state.spaceBuilds;
             importFloor = state.useCounter + 1;
             if (hit) {
                 const auto stamp = ++state.useCounter;
@@ -2916,7 +2954,12 @@ void GuestBufferMemory::AcquireRegistered() {
             spaces.hits.fetch_add(1, std::memory_order_relaxed);
             space = std::move(current);
             lap(timing.leaseUs, at);
-            for (const auto& range : space->copied) addCopiedRange(range);
+            std::uint64_t copiedBytes = 0;
+            for (const auto& range : space->copied) {
+                addCopiedRange(range);
+                copiedBytes += range.end - range.begin;
+            }
+            spaces.copiedBytes.fetch_add(copiedBytes, std::memory_order_relaxed);
             regionsSorted = sortedLookup;
             lap(timing.importsUs, at);
             // Writable mirrors are compared with guest memory per build, as acquireMirror does for
@@ -2942,6 +2985,7 @@ void GuestBufferMemory::AcquireRegistered() {
             if (importable) refreshImports(context, state, lease);
             if (importFloor == 0) importFloor = state.useCounter + 1;
             state.buildFloor = importFloor;
+            state.spaceBuiltAt = state.spaceBuilds;
             // Taken before the pass: the imports it takes are the registry's ones (just reconciled, so
             // none is retired by a make below), and a mirror's preparation may sync the recorder, whose
             // completions can retire an import already taken; that moves the epoch, and Upload then

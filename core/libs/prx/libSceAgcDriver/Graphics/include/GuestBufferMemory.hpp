@@ -204,6 +204,7 @@ struct AddressSpaceStats {
     std::uint64_t waiterDrops = 0;
     std::uint64_t spaceOnlyEvictions = 0;
     std::uint64_t rebuiltAfterEviction = 0;
+    std::uint64_t copiedBytes = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
