@@ -27,7 +27,6 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
-void ClearStagingBuffers(VkDevice device);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes);
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
@@ -247,6 +246,7 @@ public:
     bool StagesWrites() const { return staging != nullptr; }
     void RecordStagingOut(VkCommandBuffer commands) const;
     void PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push);
+    void PatchLinearStoreBase(const ShaderRecompiler::RecompileResult& program, std::span<std::byte, PipelinePushConstantBytes> push);
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
         for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
     }
@@ -435,8 +435,8 @@ private:
     std::vector<GuestBufferMemory::ImportSegment> stagedSegments;
     std::vector<VkDeviceSize> stagedOffsets;
     std::shared_ptr<Buffer> staging;
-    std::vector<ShaderRecompiler::BdaAbi::Range> planWriteStaging();
-    std::vector<ShaderRecompiler::BdaAbi::Range> planExactStaging(std::uint64_t begin, std::uint64_t end);
+    void planWriteStaging();
+    std::pair<std::uint64_t, std::uint64_t> stagedRange{};
     bool usesFaultBuffer = false;
     bool faultChecks = false;
     bool imageStoresRecorded = false;

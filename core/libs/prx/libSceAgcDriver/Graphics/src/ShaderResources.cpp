@@ -1134,7 +1134,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     computeBuild = true;
     imageStoresRecorded = compute.program != nullptr && compute.program->imageStoresRecorded;
     this->linearThreads = linearThreads;
-    if (compute.program != nullptr) linearStore = compute.program->linearStore;
+    if (compute.program != nullptr && compute.program->linearStoreBaseDword != ShaderRecompiler::NoLinearStoreBaseDword) linearStore = compute.program->linearStore;
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (!deferred) {
         prepareAddressBindings(shaders);
@@ -1765,8 +1765,9 @@ void ShaderResources::buildComplete() {
                     residency->BeforeWritingDispatch(grants, pageTableStores && storesUnbounded);
                 }
             }
-            const auto staged = computeBuild && pageTableStores ? planWriteStaging() : std::vector<ShaderRecompiler::BdaAbi::Range>{};
-            bda = std::make_unique<BdaResources>(context, guestMemory, staged, batchFaultRecord());
+            if (computeBuild && pageTableStores) planWriteStaging();
+            bda = std::make_unique<BdaResources>(context, guestMemory, std::span<const ShaderRecompiler::BdaAbi::Range>{}, batchFaultRecord());
+            if (staging != nullptr) bda->NoteExactWrites({stagedRange});
         } else if (usesFaultBuffer) {
             bda = std::make_unique<BdaResources>(context);
         }
@@ -3047,114 +3048,31 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     guestMemory.MarkDirectWrites();
 }
 
-namespace {
-
-struct ExactStagingKey {
-    VkDevice device = VK_NULL_HANDLE;
-    std::uint32_t stream = 0;
-    std::uint64_t begin = 0;
-    std::uint64_t end = 0;
-    auto operator<=>(const ExactStagingKey&) const = default;
-};
-
-struct ExactStagingEntry {
-    std::shared_ptr<Buffer> buffer;
-    VkDeviceSize bytes = 0;
-    std::uint64_t used = 0;
-};
-
-struct ExactStagingCache {
-    std::mutex mutex;
-    std::map<ExactStagingKey, ExactStagingEntry> entries;
-    VkDeviceSize bytes = 0;
-    std::uint64_t uses = 0;
-};
-
-ExactStagingCache& ExactStagingBuffers() {
-    static ExactStagingCache cache;
-    return cache;
-}
-
-std::shared_ptr<Buffer> exactStagingBuffer(const Context& context, const ExactStagingKey& key, VkDeviceSize bytes) {
-    constexpr VkDeviceSize budget = 256u * 1024u * 1024u;
-    auto& cache = ExactStagingBuffers();
-    std::lock_guard lock(cache.mutex);
-    auto& entry = cache.entries[key];
-    entry.used = ++cache.uses;
-    if (entry.buffer != nullptr && entry.bytes >= bytes) return entry.buffer;
-    cache.bytes -= entry.bytes;
-    entry.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    entry.bytes = bytes;
-    cache.bytes += bytes;
-    while (cache.bytes > budget && cache.entries.size() > 1) {
-        auto oldest = cache.entries.end();
-        for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-            if (it->first == key) continue;
-            if (oldest == cache.entries.end() || it->second.used < oldest->second.used) oldest = it;
-        }
-        if (oldest == cache.entries.end()) break;
-        cache.bytes -= oldest->second.bytes;
-        cache.entries.erase(oldest);
-    }
-    return entry.buffer;
-}
-
-}
-
-void ClearStagingBuffers(VkDevice device) {
-    auto& cache = ExactStagingBuffers();
-    std::map<ExactStagingKey, ExactStagingEntry> released;
-    std::lock_guard lock(cache.mutex);
-    for (auto it = cache.entries.begin(); it != cache.entries.end();) {
-        if (it->first.device != device) {
-            ++it;
-            continue;
-        }
-        cache.bytes -= it->second.bytes;
-        released.insert(cache.entries.extract(it++));
-    }
-}
-
-std::vector<ShaderRecompiler::BdaAbi::Range> ShaderResources::planExactStaging(std::uint64_t begin, std::uint64_t end) {
-    auto segments = guestMemory.WritableImportSegments(begin, end);
-    VkDeviceSize total = 0;
-    for (const auto& segment : segments) total += segment.end - segment.begin;
-    if (total != end - begin) return {};
-    for (const auto& segment : segments) {
-        for (const auto& shadowed : guestMemory.ShadowOverrides()) {
-            if (shadowed.begin < segment.end && segment.begin < shadowed.end) return {};
-        }
-    }
-    auto* recorder = Recorder::Active();
-    if (recorder == nullptr) return {};
-    std::vector<VkDeviceSize> offsets;
-    VkDeviceSize cursor = 0;
-    for (const auto& segment : segments) {
-        cursor = (cursor + 255u) / 256u * 256u + (segment.begin & 255u);
-        offsets.push_back(cursor);
-        cursor += segment.end - segment.begin;
-    }
-    staging = exactStagingBuffer(context, ExactStagingKey{context.device, recorder->CallerStream(), begin, end}, cursor);
-    std::vector<ShaderRecompiler::BdaAbi::Range> overrides;
-    overrides.reserve(segments.size());
-    for (std::size_t index = 0; index < segments.size(); ++index) overrides.push_back({segments[index].begin, segments[index].end, staging->DeviceAddress() + offsets[index], ShaderRecompiler::BdaAbi::Read | ShaderRecompiler::BdaAbi::Write, 0u});
-    stagedSegments = std::move(segments);
-    stagedOffsets = std::move(offsets);
-    stagedWriteBuilds.fetch_add(1, std::memory_order_relaxed);
-    return overrides;
-}
-
-std::vector<ShaderRecompiler::BdaAbi::Range> ShaderResources::planWriteStaging() {
+void ShaderResources::planWriteStaging() {
     constexpr VkDeviceSize maximum = 64u * 1024u * 1024u;
-    if (!linearStore.has_value()) return {};
+    if (!linearStore.has_value()) return;
     const auto& linear = *linearStore;
-    if (linearThreads == 0 || linear.stride == 0 || linear.stride != linear.elementBytes) return {};
+    if (linearThreads == 0 || linear.stride == 0 || linear.stride != linear.elementBytes) return;
     const auto elements = std::min<std::uint64_t>(linearThreads, linear.records);
     const auto bytes = elements * linear.stride;
-    if (bytes == 0 || bytes > maximum || linear.base > std::numeric_limits<std::uint64_t>::max() - bytes) return {};
+    if (bytes == 0 || bytes > maximum || linear.base > std::numeric_limits<std::uint64_t>::max() - bytes) return;
     const auto end = linear.base + bytes;
-    if (accessesUnbounded || std::any_of(readRanges.begin(), readRanges.end(), [&](const auto& range) { return range.first < end && linear.base < range.second; })) return {};
-    return planExactStaging(linear.base, end);
+    if (accessesUnbounded || std::any_of(readRanges.begin(), readRanges.end(), [&](const auto& range) { return range.first < end && linear.base < range.second; })) return;
+    auto segments = guestMemory.WritableImportSegments(linear.base, end);
+    VkDeviceSize total = 0;
+    for (const auto& segment : segments) total += segment.end - segment.begin;
+    if (total != bytes) return;
+    for (const auto& segment : segments) {
+        for (const auto& shadowed : guestMemory.ShadowOverrides()) {
+            if (shadowed.begin < segment.end && segment.begin < shadowed.end) return;
+        }
+    }
+    staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    stagedOffsets.clear();
+    for (const auto& segment : segments) stagedOffsets.push_back(segment.begin - linear.base);
+    stagedSegments = std::move(segments);
+    stagedRange = {linear.base, end};
+    stagedWriteBuilds.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ShaderResources::RecordStagingOut(VkCommandBuffer commands) const {
@@ -3164,6 +3082,19 @@ void ShaderResources::RecordStagingOut(VkCommandBuffer commands) const {
         const VkBufferCopy region{stagedOffsets[index], segment.offset, segment.end - segment.begin};
         copy(commands, staging->Handle(), segment.buffer, 1, &region);
     }
+}
+
+void ShaderResources::PatchLinearStoreBase(const ShaderRecompiler::RecompileResult& program, std::span<std::byte, PipelinePushConstantBytes> push) {
+    if (program.linearStoreBaseDword == ShaderRecompiler::NoLinearStoreBaseDword) return;
+    const auto address = staging != nullptr ? staging->DeviceAddress() : VkDeviceAddress{0};
+    const std::array<std::uint32_t, 2> words{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const auto position = program.linearStoreBaseDword * 4u;
+    if (!program.pushConstants.empty()) {
+        Require(position + sizeof(words) <= program.pushConstants.size() && position + sizeof(words) <= push.size(), "a linear store base lies outside the shader's push constants");
+        std::memcpy(push.data() + position, words.data(), sizeof(words));
+        return;
+    }
+    patchShaderData(-1, computeShaderData, position, words);
 }
 
 std::uint64_t StagedWriteBuilds() {

@@ -172,6 +172,7 @@ void BdaResources::CheckFault() const {
     const bool recorded = ownRecord != 0 && StorageTexture::StoresRecordedFor(ownRecord);
     const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
     markWrittenPages(words, std::span(&self, 1));
+    markExactWrites(std::span(&self, 1));
     if (recorded) StorageTexture::ResolveRecordedStores(ownRecord, images ? &*images : nullptr);
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, fault.data, sizeof(report));
@@ -266,6 +267,7 @@ void BatchFaultRecord::Check(std::span<const BatchFaultUser> users) const {
     const bool recorded = StorageTexture::StoresRecordedFor(id);
     const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
     BdaResources::applyWrittenPages(words, sharing);
+    BdaResources::markExactWrites(sharing);
     if (recorded) StorageTexture::ResolveRecordedStores(id, images ? &*images : nullptr);
     if (words[Abi::WrittenOverflowWord] != 0) {
         std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
@@ -333,6 +335,15 @@ void BdaResources::applyWrittenPages(std::uint32_t* words, std::span<const BdaRe
         words[Abi::WrittenSlotsWord + 2 * slot + 1] = 0;
     }
     words[Abi::WrittenCountWord] = 0;
+}
+
+void BdaResources::markExactWrites(std::span<const BdaResources* const> users) {
+    if (std::none_of(users.begin(), users.end(), [](const BdaResources* user) { return !user->exactWrites.empty(); })) return;
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (shadowed(users)) gpu.lock();
+    for (const auto* user : users) {
+        for (const auto& [begin, end] : user->exactWrites) markWrittenRange(begin, static_cast<std::size_t>(end - begin), users);
+    }
 }
 
 void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users) {

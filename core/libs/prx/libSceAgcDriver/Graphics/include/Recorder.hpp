@@ -198,7 +198,6 @@ public:
     void OrderAfterQueue(std::uint32_t queue);
     void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     std::shared_ptr<BatchFaultRecord> CallerFaultRecord(std::uint32_t chunks);
-    std::uint32_t CallerStream() const { return streamOfCaller(); }
     bool CallerFaultRecordCurrent(const BatchFaultRecord& record) const;
     BatchFaults& CallerBatchFaults();
     using Token = std::array<std::uint64_t, MaxRecorderStreams>;
