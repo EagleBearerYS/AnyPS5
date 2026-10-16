@@ -69,6 +69,24 @@ const IrValue* nanPassingOtherArm(const IrValue& value) {
     return value.Argument(2);
 }
 
+const IrValue* tinyProductOtherArm(const IrValue& value) {
+    if ((value.Opcode() != IrOpcode::SelectU32 && value.Opcode() != IrOpcode::SelectF32) || value.ArgumentCount() != 3u) return nullptr;
+    const IrValue& product = *bitsOf(*value.Argument(2));
+    if (product.Opcode() != IrOpcode::FPMul32 || product.ArgumentCount() != 2u) return nullptr;
+    const IrValue& tiny = *value.Argument(0)->Resolve();
+    if (tiny.Opcode() != IrOpcode::ULessThan32 || tiny.ArgumentCount() != 2u || !isImmediate(*tiny.Argument(1)->Resolve(), 0x207fffffu)) return nullptr;
+    const IrValue& below = *tiny.Argument(0)->Resolve();
+    if (below.Opcode() != IrOpcode::ISub32 || below.ArgumentCount() != 2u || !isImmediate(*below.Argument(1)->Resolve(), 1u)) return nullptr;
+    const IrValue* magnitude = MaskedOperand(*below.Argument(0)->Resolve(), IrOpcode::BitwiseAnd32, 0x7fffffffu);
+    if (magnitude == nullptr) return nullptr;
+    const IrValue& scaled = *bitsOf(*magnitude);
+    if (scaled.Opcode() != IrOpcode::FPMul32 || scaled.ArgumentCount() != 2u) return nullptr;
+    const IrValue& lifted = *scaled.Argument(0)->Resolve();
+    if (lifted.Opcode() != IrOpcode::FPMul32 || lifted.ArgumentCount() != 2u || !isImmediate(*lifted.Argument(1)->Resolve(), 0x5f800000u)) return nullptr;
+    if (lifted.Argument(0)->Resolve() != product.Argument(0)->Resolve() || scaled.Argument(1)->Resolve() != product.Argument(1)->Resolve()) return nullptr;
+    return value.Argument(1);
+}
+
 class DenormalFreeValues {
 public:
     bool Contains(const IrValue* value) {
@@ -88,6 +106,7 @@ private:
         }
         if (FlushedF32Source(value) != nullptr || MaskedOperand(value, IrOpcode::BitwiseAnd32, 0x80000000u) != nullptr || outputModifierResult(value)) return true;
         if (const IrValue* other = nanPassingOtherArm(value)) return Contains(other);
+        if (const IrValue* sign = tinyProductOtherArm(value)) return Contains(sign);
         switch (value.Opcode()) {
             case IrOpcode::ConvertIToF32:
             case IrOpcode::ConvertUToF32:

@@ -259,6 +259,34 @@ int main() {
         return b.eliminate() == 3u && !passes.HasUses() && !quiets.HasUses() && !signals.HasUses() && otherValue.HasUses() && unknownArm.HasUses();
     });
 
+    passed &= run("a product whose tiny results are replaced by their sign needs no flush, look-alikes do", [] {
+        Builder b;
+        const auto asFloat = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&bits}); };
+        const auto asBits = [&](IrValue& value) -> IrValue& { return b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&value}); };
+        const auto product = [&](std::uint32_t scale, std::uint32_t bound, bool sameFactor, bool zeroAddend) -> IrValue& {
+            auto& lhsBits = b.flush(b.unknown());
+            auto& rhsBits = b.flush(b.unknown());
+            auto& lhs = asFloat(lhsBits);
+            auto& rhs = asFloat(rhsBits);
+            auto& other = asFloat(b.flush(b.unknown()));
+            auto& exact = b.emit(IrOpcode::FPMul32, IrType::F32, {&lhs, &rhs});
+            auto& lifted = b.emit(IrOpcode::FPMul32, IrType::F32, {&lhs, &b.constant(scale)});
+            auto& scaled = b.emit(IrOpcode::FPMul32, IrType::F32, {&lifted, sameFactor ? &rhs : &other});
+            auto& magnitude = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&asBits(scaled), &b.constant(0x7fffffffu)});
+            IrValue* tiny = &b.emit(IrOpcode::ULessThan32, IrType::Bool, {&b.emit(IrOpcode::ISub32, IrType::U32, {&magnitude, &b.constant(1u)}), &b.constant(bound)});
+            if (zeroAddend) tiny = &b.emit(IrOpcode::LogicalAnd, IrType::Bool, {tiny, &b.emit(IrOpcode::IEqual32, IrType::Bool, {&b.unknown(), &b.constant(0u)})});
+            auto& sign = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.emit(IrOpcode::BitwiseXor32, IrType::U32, {&lhsBits, &rhsBits}), &b.constant(0x80000000u)});
+            return b.flush(asBits(b.emit(IrOpcode::SelectF32, IrType::F32, {tiny, &asFloat(sign), &exact})));
+        };
+        auto& flushedProduct = product(0x5f800000u, 0x207fffffu, true, false);
+        auto& otherScale = product(0x5f000000u, 0x207fffffu, true, false);
+        auto& otherBound = product(0x5f800000u, 0x203fffffu, true, false);
+        auto& otherFactor = product(0x5f800000u, 0x207fffffu, false, false);
+        auto& withAddend = product(0x5f800000u, 0x207fffffu, true, true);
+        for (IrValue* flushed : {&flushedProduct, &otherScale, &otherBound, &otherFactor, &withAddend}) b.keep(*flushed);
+        return b.eliminate() == 1u && !flushedProduct.HasUses() && otherScale.HasUses() && otherBound.HasUses() && otherFactor.HasUses() && withAddend.HasUses();
+    });
+
     passed &= run("the sign bit of a value needs no flush", [] {
         Builder b;
         auto& sign = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.unknown(), &b.constant(0x80000000u)}));
