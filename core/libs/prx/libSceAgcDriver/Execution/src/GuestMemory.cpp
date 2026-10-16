@@ -1915,6 +1915,8 @@ constexpr std::size_t HolderColumns = 12;
 constexpr std::uint32_t UnassignedHolder = 0xfffffffeu;
 constexpr std::uint32_t PresenterHolderTag = 0xfffffffdu;
 constexpr int PresenterColumn = 1;
+constexpr std::uint32_t CommitterHolderTag = 0xfffffffcu;
+constexpr int CommitterColumn = 2;
 using HolderMatrixValues = std::array<std::array<std::uint64_t, GpuLockSiteCount>, HolderColumns>;
 struct HolderMatrix {
     std::array<std::atomic<std::uint32_t>, HolderColumns> tags{};
@@ -1923,6 +1925,7 @@ struct HolderMatrix {
         for (auto& tag : tags) tag.store(UnassignedHolder, std::memory_order_relaxed);
         tags[0].store(0xffffffffu, std::memory_order_relaxed);
         tags[PresenterColumn].store(PresenterHolderTag, std::memory_order_relaxed);
+        tags[CommitterColumn].store(CommitterHolderTag, std::memory_order_relaxed);
     }
     void Snapshot(HolderMatrixValues& into) const {
         for (std::size_t h = 0; h < HolderColumns; ++h) {
@@ -2016,6 +2019,7 @@ const char* HolderName(std::size_t column, char* text, std::size_t size) {
     const auto tag = Holders().tags[column].load(std::memory_order_relaxed);
     if (tag == 0xffffffffu) std::snprintf(text, size, "untagged");
     else if (tag == PresenterHolderTag) std::snprintf(text, size, "presenter");
+    else if (tag == CommitterHolderTag) std::snprintf(text, size, "committer");
     else std::snprintf(text, size, "q0x%x", tag);
     return text;
 }
@@ -2230,6 +2234,23 @@ void TagGpuLockSite(GpuLockSite site) {
 
 void MarkPresenterThread() {
     LockStats().holderColumn = PresenterColumn;
+}
+
+void MarkCommitterThread() {
+    LockStats().holderColumn = CommitterColumn;
+}
+
+std::vector<GpuHoldTotal> GpuHoldTotals() {
+    std::vector<GpuHoldTotal> totals;
+    char holder[24];
+    for (std::size_t h = 0; h < HolderColumns; ++h) {
+        if (Holders().tags[h].load(std::memory_order_relaxed) == UnassignedHolder) continue;
+        for (std::size_t s = 0; s < GpuLockSiteCount; ++s) {
+            const auto ns = Holders().heldNs[h][s].load(std::memory_order_relaxed);
+            if (ns != 0) totals.push_back({HolderName(h, holder, sizeof(holder)), GpuLockSiteNames[s], ns});
+        }
+    }
+    return totals;
 }
 
 void NoteLockedGpuWait(double ms) {
