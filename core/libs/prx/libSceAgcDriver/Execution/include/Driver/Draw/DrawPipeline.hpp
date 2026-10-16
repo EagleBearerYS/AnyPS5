@@ -29,9 +29,11 @@ public:
     static bool& Active();
     static std::atomic<std::uint64_t>& EpochToken();
     static void FollowEpoch(std::uint64_t token);
+    static unsigned Committers();
 
     void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {});
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
+    void Stop();
     bool Busy() const { return outstanding.load(std::memory_order_acquire) != 0; }
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
     bool Overlaps(std::uint64_t address, std::size_t bytes);
@@ -58,6 +60,7 @@ private:
     std::uint32_t idleWaiters = 0;
     bool committerWaiting = false;
     bool stopped = false;
+    bool closing = false;
     std::thread thread;
     std::uint64_t commits = 0;
     std::uint64_t commitNs = 0;

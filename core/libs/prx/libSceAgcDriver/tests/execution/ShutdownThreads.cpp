@@ -1,3 +1,5 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include <array>
@@ -63,6 +65,32 @@ void StoppingJoinsCompareHelpers() {
     Require(CompareHelpersRunning() == 0, "a compare after the helpers stopped started them again");
 }
 
+void ShutdownJoinsDrawCommitter() {
+    using namespace AgcDriver::DriverDetail;
+    auto& pipeline = DrawPipeline::Queue0();
+    const auto caller = std::this_thread::get_id();
+    std::promise<std::thread::id> started;
+    auto startedOn = started.get_future();
+    std::promise<void> gate;
+    auto opened = gate.get_future().share();
+    bool queuedRan = false;
+    pipeline.Enqueue([&started, opened] {
+        started.set_value(std::this_thread::get_id());
+        opened.wait();
+    }, {});
+    pipeline.Enqueue([&] { queuedRan = true; }, {});
+    Require(startedOn.get() != caller, "a pipelined commit ran on the caller instead of the draw committer");
+    Require(DrawPipeline::Committers() == 1, "a pipelined commit started no draw committer");
+    gate.set_value();
+    AgcDriverShutdown_nid_postfix();
+    Require(DrawPipeline::Committers() == 0, "the driver's shutdown left the draw committer running");
+    Require(queuedRan, "the driver's shutdown dropped a pipelined commit");
+    bool ranHere = false;
+    pipeline.Enqueue([&] { ranHere = std::this_thread::get_id() == caller; }, {});
+    Require(ranHere, "a commit enqueued after the shutdown ran on another thread");
+    Require(DrawPipeline::Committers() == 0, "a commit enqueued after the shutdown started a draw committer");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -70,6 +98,7 @@ int main(int argc, char** argv) {
         const std::string_view mode = argc > 1 ? argv[1] : "";
         if (mode == "--joined") ClosingJoinsPreparation();
         else if (mode == "--compare-helpers") StoppingJoinsCompareHelpers();
+        else if (mode == "--draw-committer") ShutdownJoinsDrawCommitter();
         else ClosingStartsNoPreparation();
         std::cout << "shutdown threads tests passed\n";
         return 0;
