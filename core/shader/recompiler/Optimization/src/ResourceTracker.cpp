@@ -1517,6 +1517,10 @@ private:
                 BufferStoreSite site{InternSource(siteSource), soffset != nullptr && immediate ? soffset->ImmediateU32() : 0u, !immediate, scalar};
                 site.offset = fixedOffset ? voffset->ImmediateU32() + memory.offset : 0u;
                 site.dynamicOffset = !fixedOffset;
+                const IrValue* vindex = !scalar && inst.ArgumentCount() > 1u ? inst.Argument(1u)->Resolve() : nullptr;
+                const bool fixedIndex = vindex == nullptr || (vindex->HasImmediate() && vindex->Type() == IrType::U32);
+                site.index = vindex != nullptr && fixedIndex ? vindex->ImmediateU32() : 0u;
+                site.dynamicIndex = !fixedIndex;
                 site.fromMemory = fromMemory || (registerSoffset && ReadsGuestMemory(*soffset));
                 if (std::ranges::find(sites, site) == sites.end()) sites.push_back(site);
             } else {

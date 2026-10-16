@@ -319,7 +319,9 @@ void stagedWrite(SpirvValueEmitContext& context, const IrValue& instruction, con
     const auto boolean = TypeBool(state);
     const auto relative = Binary(state, spv::OpISub, u64, address, resource.base);
     const auto elementEnd = Binary(state, spv::OpIMul, u64, Binary(state, spv::OpIAdd, u64, Unary(state, spv::OpUConvert, u64, resource.index), BdaConstant(state, 1u)), Unary(state, spv::OpUConvert, u64, resource.stride));
-    const auto within = both(state, Binary(state, spv::OpULessThan, boolean, resource.index, resource.records), Binary(state, spv::OpULessThanEqual, boolean, Binary(state, spv::OpIAdd, u64, relative, BdaConstant(state, bits / 8u)), elementEnd));
+    const auto indexChecked = Binary(state, spv::OpULessThan, boolean, field(state, resource.word3, 28u, 2u), ConstantU32(state, 2u));
+    const auto indexBounded = Binary(state, spv::OpLogicalOr, boolean, Unary(state, spv::OpLogicalNot, boolean, indexChecked), Binary(state, spv::OpULessThan, boolean, resource.index, resource.records));
+    const auto within = both(state, indexBounded, Binary(state, spv::OpULessThanEqual, boolean, Binary(state, spv::OpIAdd, u64, relative, BdaConstant(state, bits / 8u)), elementEnd));
     EmitIfCondition(state, both(state, enabled, within), [&] {
         const auto physical = Binary(state, spv::OpIAdd, u64, state.linearStoreStaging, relative);
         const bool coherent = context.Memory(instruction).coherent || state.requirements.coherentBuffers;

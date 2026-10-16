@@ -775,6 +775,8 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(site.fromMemory);
         out.Value(site.address);
         out.Value(site.bytes);
+        out.Value(site.index);
+        out.Value(site.dynamicIndex);
     };
     writer.List(info.bufferStores, writeSite);
     writer.Value(info.unboundedStores);
@@ -894,6 +896,8 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(site.fromMemory);
         in.Value(site.address);
         in.Value(site.bytes);
+        in.Value(site.index);
+        in.Value(site.dynamicIndex);
     };
     reader.List(info.bufferStores, 21, readSite);
     reader.Value(info.unboundedStores);

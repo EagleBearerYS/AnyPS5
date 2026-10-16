@@ -20,6 +20,8 @@ struct BufferStoreSite {
     bool fromMemory = false;
     bool address = false;
     std::uint32_t bytes = 0;
+    std::uint32_t index = 0;
+    bool dynamicIndex = false;
 
     bool operator==(const BufferStoreSite& other) const = default;
 };

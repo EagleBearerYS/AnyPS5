@@ -164,6 +164,11 @@ int main() {
         expect("a v_lshl_add_u32 fill whose records exceed the threads of 2^24 groups", Recognized(*device, fill, Descriptor(target.data(), 16u, 0xffffffffu, Raw), cb), 16u, 0xffffffffu, 16u);
         refuse("a fill indexed by v_mad_i32_i24 of the group id", Recognized(*device, Fill({Store, StoreOperands}, false, false, MadSigned24Index), Descriptor(target.data(), 16u, 768u, Raw), cb));
         refuse("a v_mad_u32_u24 fill whose group stride is not the workgroup size", Recognized(*device, Fill({Store, StoreOperands}, false, false, Mad24WrongSizeIndex), Descriptor(target.data(), 16u, 768u, Raw), cb));
+        expect("a fill through a V# checking only its index", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw | 1u << 28u), cb), 16u, 768u, 16u);
+        expect("a fill through a V# checking only that its records are non-zero", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw | 2u << 28u), cb), 16u, 0xffffffffu, 16u);
+        expect("a fill through a V# checking only its offset", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw | 3u << 28u), cb), 16u, 0xffffffffu, 16u);
+        expect("a v_mad_u32_u24 fill through a V# checking only its offset", Recognized(*device, mad24, Descriptor(target.data(), 16u, 768u, Raw | 3u << 28u), cb), 16u, 1u << 30u, 16u);
+        refuse("a fill through a V# checking only its offset against fewer record bytes than an element", Recognized(*device, fill, Descriptor(target.data(), 16u, 8u, Raw | 3u << 28u), cb));
         std::puts("linear store tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -14,6 +14,7 @@
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "ShaderDiskCache.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include <limits>
 #include <list>
 #include <functional>
 #include <map>
@@ -522,7 +523,9 @@ std::optional<LinearStore> MaterializeLinearStore(const ShaderInfo& info, std::s
         elementBytes = format.packedBitfield ? 4u : bits / 8u;
     }
     if (elementBytes == 0u) return std::nullopt;
-    auto records = words[2];
+    const auto mode = (words[3] >> 28u) & 3u;
+    if (mode == 3u && words[2] != 0u && words[2] < elementBytes) return std::nullopt;
+    auto records = mode < 2u || words[2] == 0u ? words[2] : std::numeric_limits<std::uint32_t>::max();
     if (info.linearStore->groupIdBits < 32u) records = static_cast<std::uint32_t>(std::min<std::uint64_t>(records, (std::uint64_t{1} << info.linearStore->groupIdBits) * info.linearStore->groupThreads));
     return LinearStore{static_cast<std::uint64_t>(words[0]) | static_cast<std::uint64_t>(words[1] & 0xffffu) << 32u, stride, records, elementBytes};
 }
@@ -605,7 +608,12 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const D
     if (site.scalar) return std::pair<std::uint64_t, std::uint64_t>{base & ~std::uint64_t{3u}, base + (stride == 0u ? records : static_cast<std::uint64_t>(records) * stride)};
     if (stride != 0u && (word1 >> 31u) != 0u) return std::nullopt;
     const auto mode = (word3 >> 28u) & 3u;
-    if (mode == 3u) return std::pair<std::uint64_t, std::uint64_t>{base, base + records};
+    if (mode == 3u) {
+        if (stride != 0u && site.dynamicIndex) return std::nullopt;
+        const auto first = static_cast<std::uint64_t>(site.index) * stride;
+        const auto lanes = ((word3 >> 23u) & 1u) != 0u ? std::uint64_t{63u} * stride : std::uint64_t{0u};
+        return std::pair<std::uint64_t, std::uint64_t>{base + first, base + first + lanes + records};
+    }
     if ((site.dynamicSoffset && !registerSoffset) || (mode != 0u && (mode != 1u || site.dynamicOffset))) return std::nullopt;
     if (mode == 0u && stride == 0u) return none;
     constexpr std::uint64_t wrap = std::uint64_t{1} << 32u;
