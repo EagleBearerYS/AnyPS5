@@ -1159,11 +1159,48 @@ public:
         const auto it = std::upper_bound(ranges.begin(), ranges.end(), address, [](std::uint64_t value, const std::pair<std::uint64_t, std::uint64_t>& range) { return value < range.second; });
         return it != ranges.end() && it->first < end;
     }
+    std::vector<StorageTexture*> Overlapping(std::uint64_t address, std::size_t bytes) {
+        std::vector<StorageTexture*> found;
+        if (!MayOverlap(address, bytes)) return found;
+        const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+        const auto from = address > longest ? address - longest : 0;
+        auto it = std::lower_bound(entries.begin(), entries.end(), from, [](const Entry& entry, std::uint64_t value) { return entry.begin < value; });
+        std::vector<const Entry*> hits;
+        for (; it != entries.end() && it->begin < end; ++it) {
+            if (it->end > address) hits.push_back(&*it);
+        }
+        std::sort(hits.begin(), hits.end(), [](const Entry* left, const Entry* right) { return left->position < right->position; });
+        found.reserve(hits.size());
+        for (const auto* hit : hits) found.push_back(hit->texture);
+        return found;
+    }
+    void removeAll(std::vector<StorageTexture*> removed) {
+        if (removed.empty()) return;
+        std::sort(removed.begin(), removed.end());
+        std::erase_if(textures, [&](StorageTexture* texture) { return std::binary_search(removed.begin(), removed.end(), texture); });
+        ++version;
+    }
 
 private:
+    struct Entry {
+        std::uint64_t begin;
+        std::uint64_t end;
+        StorageTexture* texture;
+        std::size_t position;
+    };
     void rebuild() {
         ranges.clear();
-        for (const auto* texture : textures) ranges.emplace_back(texture->Descriptor().baseAddress, texture->Descriptor().baseAddress + texture->GuestBytes());
+        entries.clear();
+        longest = 0;
+        for (std::size_t position = 0; position < textures.size(); ++position) {
+            auto* texture = textures[position];
+            const auto begin = texture->Descriptor().baseAddress;
+            const auto end = begin + texture->GuestBytes();
+            entries.push_back({begin, end, texture, position});
+            longest = std::max(longest, end - begin);
+            ranges.emplace_back(begin, end);
+        }
+        std::sort(entries.begin(), entries.end(), [](const Entry& left, const Entry& right) { return left.begin < right.begin; });
         std::sort(ranges.begin(), ranges.end());
         std::size_t merged = 0;
         for (const auto& range : ranges) {
@@ -1175,6 +1212,8 @@ private:
     }
     std::vector<StorageTexture*> textures;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    std::vector<Entry> entries;
+    std::uint64_t longest = 0;
     std::uint64_t version = 0;
     std::uint64_t indexed = ~std::uint64_t{0};
 };
@@ -3228,12 +3267,11 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
         const auto* exempt = refreshing;
-        for (auto it = pending.textures.MayOverlap(address, bytes) ? pending.textures.begin() : pending.textures.end(); it != pending.textures.end();) {
-            auto* texture = *it;
+        std::vector<StorageTexture*> taken;
+        for (auto* texture : pending.textures.Overlapping(address, bytes)) {
             if (texture != except && texture != exempt && texture->overlaps(address, bytes)) {
                 if (!texture->pendingUnitInside(address, bytes)) {
                     pretestSkipped.fetch_add(1, std::memory_order_relaxed);
-                    ++it;
                     continue;
                 }
                 texture->dirty = false;
@@ -3242,11 +3280,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                     if (PublishReasonFor(reason) == PublishReason::Hook && texture->hookSkipSite.load(std::memory_order_relaxed) == static_cast<std::uint8_t>(GuestMemory::CurrentReadSite())) flushedAfterSkipSameSite.fetch_add(1, std::memory_order_relaxed);
                 }
                 if (auto alive = texture->weak_from_this().lock()) flush.push_back(std::move(alive));
-                it = pending.textures.erase(it);
-            } else {
-                ++it;
+                taken.push_back(texture);
             }
         }
+        pending.textures.removeAll(std::move(taken));
         // Still pending for the adjacency rule of writeBack until each one is stored.
         for (const auto& texture : flush) pending.flushing.push_back(texture.get());
         if (!flush.empty()) BumpPendingSerial();
