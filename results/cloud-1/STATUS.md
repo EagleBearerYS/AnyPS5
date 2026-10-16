@@ -1,5 +1,5 @@
 BUSY BF-030
 RESULT:
-- BF-030 interim: results/cloud-1/BF-030.md. The PC should build fork exp/village-fast5-pass-continue-diag @ 511ad9ff7: an indirect draw's vertex fetch is cut at its readable prefix (DescribeCommitted), stays GPU-side; an unreadable base still fails as before.
-- New test agc_driver_indirect_vertex_past_end red on d664cd3647 (the title's "guest memory is not readable" per draw), green on 511ad9ff7. ^agc 626/629 (the three known lavapipe failures); the four indirect tests x10 40/40, also with APS5_PIPELINE_INDIRECT=1.
-- Still working: a CheckRange skip for proven fetches (cut case costs 1.9-3.0 us per draw), then the main branch fix/agc-indirect-vertex-readable-extent.
+- BF-030 interim: results/cloud-1/BF-030.md. Fork exp/village-fast5-pass-continue-diag now @ 19b8f822e = 511ad9ff7 (the readable-prefix cut, which the interim result covers) + a perf commit that skips the second CheckRange walk for proven fetches. Either head fixes the abort; 19b8f822e is the one to build if you have not started.
+- 19b8f822e: ^agc 625/629 (the three known lavapipe failures + the scope_settle flake, which passes alone); the four indirect tests x10 40/40, also with APS5_PIPELINE_INDIRECT=1; vertex phase per draw back to 13.2-13.8 us (base 13.3-14.0).
+- Still working: the main branch fix/agc-indirect-vertex-readable-extent (red, green, ^agc).
