@@ -137,6 +137,25 @@ static void RunWrittenRangeDecodeTests() {
     Require(!decode(), "a claim of an empty slot was accepted");
     words[Abi::WrittenCountWord] = Abi::WrittenPageSlots + 1;
     Require(!decode(), "more claims than slots were accepted");
+    std::fill(words.begin(), words.end(), 0u);
+    std::vector<std::pair<std::uint64_t, std::size_t>> images;
+    const auto decodeImages = [&] {
+        images.clear();
+        return Abi::ForEachWrittenImageRange(words.data(), [&](std::uint64_t address, std::size_t bytes) { images.emplace_back(address, bytes); });
+    };
+    claim(0, 3, chunk, 0b0110u);
+    words[Abi::WrittenListWord + 1] = 4;
+    words[Abi::WrittenSlotsWord + 2 * 4] = Abi::WrittenImageChunkKey(chunk);
+    words[Abi::WrittenSlotsWord + 2 * 4 + 1] = 0b1001u;
+    words[Abi::WrittenListWord + 2] = 6;
+    words[Abi::WrittenSlotsWord + 2 * 6] = Abi::WrittenImageChunkKey(top);
+    words[Abi::WrittenSlotsWord + 2 * 6 + 1] = 0x80000000u;
+    words[Abi::WrittenCountWord] = 3;
+    Require(Abi::WrittenImageChunkKey(chunk) == (Abi::WrittenChunkKey(chunk) | Abi::WrittenImageKeyBit), "an image chunk key is not its memory key with the image bit");
+    Require(decode() && marked == std::vector<std::pair<std::uint64_t, std::size_t>>{{chunk + page, 2 * page}}, "the memory ranges of a record included image chunks or lost a memory chunk");
+    Require(decodeImages() && images == std::vector<std::pair<std::uint64_t, std::size_t>>{{chunk, page}, {chunk + 3 * page, page}, {top + 31 * page, page}}, "the image ranges of a record included memory chunks or were decoded at other addresses");
+    words[Abi::WrittenSlotsWord + 2 * 6] = Abi::WrittenImageKeyBit;
+    Require(!decode() && !decodeImages(), "a claim of an image slot without a chunk was accepted");
 }
 
 static std::shared_ptr<const BdaPageTable> PagesFor(const Context& context, bool paged, std::span<const ShaderRecompiler::BdaAbi::Range> ranges) {
