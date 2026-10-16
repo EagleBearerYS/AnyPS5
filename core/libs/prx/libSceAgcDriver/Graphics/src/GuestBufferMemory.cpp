@@ -2229,7 +2229,8 @@ void GuestBufferMemory::UploadFinish() {
         else for (const auto& [begin, end] : accessRanges) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "page-table access", PublishScope::None);
         for (const auto& [begin, end] : writes) StorageTexture::PublishShadowsOnly(begin, static_cast<std::size_t>(end - begin), PublishScope::Whole, "page-table build");
     }
-    for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
+    const auto regionScope = space != nullptr || !lease.empty() ? PublishScope::None : PublishScope::Whole;
+    for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region", regionScope);
     if (space != nullptr || !lease.empty()) mapShadows();
 }
 
