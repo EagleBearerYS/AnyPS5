@@ -73,6 +73,7 @@ enum class DrawSkip : std::uint8_t { Nothing, Prechecked, Thrown, Count };
 void CountDrawSkip(DrawSkip kind, double us);
 
 void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass);
+bool KeysDecidedOnGpu(const Context& context, const ColorTarget& color);
 
 }
 

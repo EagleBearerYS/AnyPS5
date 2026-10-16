@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetile_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/CmaskClear_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/DccKeyClear_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImage_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecode_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage10_spv.h"
@@ -135,6 +136,11 @@ void TextureDetiler::release() noexcept {
     if (cmaskPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, cmaskPipelineLayout, nullptr);
     if (cmaskDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, cmaskDescriptorLayout, nullptr);
     cmaskErrors.reset();
+    keyClearErrors.reset();
+    for (const auto pool : keyClearDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    if (keyClearPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, keyClearPipeline, nullptr);
+    if (keyClearPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, keyClearPipelineLayout, nullptr);
+    if (keyClearDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, keyClearDescriptorLayout, nullptr);
     for (const auto pool : descriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     for (const auto pool : imageDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     if (imageModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, imageModule, nullptr);
@@ -387,6 +393,13 @@ void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (extent.width + 7u) / 8u, (extent.height + 7u) / 8u, extent.depth);
 }
 
+std::uint32_t TextureDetiler::KeyClearErrors() {
+    if (keyClearErrors == nullptr) return 0;
+    std::uint32_t codes = 0;
+    std::memcpy(&codes, keyClearErrors->Bytes().data(), sizeof(codes));
+    return codes;
+}
+
 std::uint32_t TextureDetiler::CmaskErrors() {
     if (cmaskErrors == nullptr) return 0;
     std::uint32_t codes = 0;
@@ -490,6 +503,107 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
     barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, anyAccess);
     context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, cmask, cmaskOffset, cmaskBytes, 0xffffffffu);
     barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, anyAccess);
+}
+
+void TextureDetiler::DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys, std::uint64_t keysOffset, std::size_t keyCount, VkBuffer decision, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t enabled, const std::array<std::uint32_t, 10>& clearWords) {
+    Require(commands != VK_NULL_HANDLE && keys != VK_NULL_HANDLE && decision != VK_NULL_HANDLE && view != VK_NULL_HANDLE, "a DCC key clear needs a command buffer, the key buffer, its decision buffer and the target view");
+    Require(keyCount != 0 && keyCount <= UINT32_MAX && width != 0 && height != 0, "a DCC key clear needs keys and a target extent");
+    if (keyClearPipeline == VK_NULL_HANDLE) {
+        std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
+        for (std::uint32_t index = 0; index < bindings.size(); ++index) {
+            bindings[index].binding = index;
+            bindings[index].descriptorType = index == 2 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            bindings[index].descriptorCount = 1;
+            bindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &keyClearDescriptorLayout), "vkCreateDescriptorSetLayout DCC key clear");
+        const VkPushConstantRange pushRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, 16 * sizeof(std::uint32_t)};
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &keyClearDescriptorLayout;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+        Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &keyClearPipelineLayout), "vkCreatePipelineLayout DCC key clear");
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = sizeof(DCC_KEY_CLEAR_SPV);
+        moduleInfo.pCode = DCC_KEY_CLEAR_SPV;
+        VkShaderModule keyClearModule = VK_NULL_HANDLE;
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &keyClearModule), "vkCreateShaderModule DCC key clear");
+        VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        pipelineInfo.stage.module = keyClearModule;
+        pipelineInfo.stage.pName = "main";
+        pipelineInfo.layout = keyClearPipelineLayout;
+        const auto created = CreateComputePipeline(context, pipelineInfo, &keyClearPipeline);
+        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, keyClearModule, nullptr);
+        Check(created, "vkCreateComputePipelines DCC key clear");
+        keyClearErrors = std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memset(keyClearErrors->Bytes().data(), 0, 4);
+    }
+    constexpr std::uint32_t setsPerPool = 64;
+    const auto poolIndex = allocatedKeyClearSets / setsPerPool;
+    if (poolIndex == keyClearDescriptorPools.size()) {
+        const std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, setsPerPool * 3}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, setsPerPool}}};
+        VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        info.maxSets = setsPerPool;
+        info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+        info.pPoolSizes = sizes.data();
+        keyClearDescriptorPools.reserve(keyClearDescriptorPools.size() + 1);
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &info, nullptr, &pool), "vkCreateDescriptorPool DCC key clear");
+        keyClearDescriptorPools.push_back(pool);
+    }
+    VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocation.descriptorPool = keyClearDescriptorPools.at(poolIndex);
+    allocation.descriptorSetCount = 1;
+    allocation.pSetLayouts = &keyClearDescriptorLayout;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets DCC key clear");
+    ++allocatedKeyClearSets;
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const auto descriptorOffset = keysOffset - keysOffset % alignment;
+    const auto base = keysOffset - descriptorOffset;
+    const VkDescriptorBufferInfo keysInfo{keys, descriptorOffset, (base + keyCount + 3u) & ~VkDeviceSize{3}};
+    const VkDescriptorBufferInfo decisionInfo{decision, 0, 8 * sizeof(std::uint32_t)};
+    const VkDescriptorImageInfo imageInfo{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorBufferInfo errorInfo{keyClearErrors->Handle(), 0, 4};
+    std::array<VkWriteDescriptorSet, 4> writes{};
+    for (std::uint32_t index = 0; index < writes.size(); ++index) {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = set;
+        writes[index].dstBinding = index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = index == 2 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    }
+    writes[0].pBufferInfo = &keysInfo;
+    writes[1].pBufferInfo = &decisionInfo;
+    writes[2].pImageInfo = &imageInfo;
+    writes[3].pBufferInfo = &errorInfo;
+    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    const auto barrier = [&](VkPipelineStageFlags source, VkPipelineStageFlags destination, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) {
+        VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        memory.srcAccessMask = sourceAccess;
+        memory.dstAccessMask = destinationAccess;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, source, destination, 0, 1, &memory, 0, nullptr, 0, nullptr);
+    };
+    constexpr VkAccessFlags anyWrite = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT;
+    constexpr VkAccessFlags anyAccess = anyWrite | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_HOST_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    std::array<std::uint32_t, 16> push{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(keyCount), width, height, 0u, enabled};
+    std::copy(clearWords.begin(), clearWords.end(), push.begin() + 6);
+    barrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, keyClearPipeline);
+    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, keyClearPipelineLayout, 0, 1, &set, 0, nullptr);
+    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, keyClearPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
+    barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
+    push[4] = 1u;
+    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, keyClearPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Function<PFN_vkCmdDispatchIndirect>("vkCmdDispatchIndirect")(commands, decision, 0);
+    barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, anyAccess);
 }
 
 void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile, std::uint32_t slice, const DetileWindow& window) {

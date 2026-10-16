@@ -18,6 +18,10 @@ void TextureDetiler::BeginBatch() {
         Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), "vkResetDescriptorPool CMASK clear");
     }
     allocatedCmaskSets = 0;
+    for (const auto pool : keyClearDescriptorPools) {
+        Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), "vkResetDescriptorPool DCC key clear");
+    }
+    allocatedKeyClearSets = 0;
     for (const auto pool : imageDescriptorPools) {
         Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), "vkResetDescriptorPool texture detiler");
     }

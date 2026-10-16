@@ -100,6 +100,19 @@ void NoteKeysFillOnGpu(std::uint64_t begin, std::size_t count, DccKeys keys);
 std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, std::uint64_t guestBytes);
 bool KeyWritersPending(const GuestTextureResource& resource, std::uint64_t guestBytes);
 
+class GpuKeyDecisionScope {
+public:
+    GpuKeyDecisionScope(std::uint64_t dccAddress, std::uint32_t elementBytes);
+    ~GpuKeyDecisionScope();
+    GpuKeyDecisionScope(const GpuKeyDecisionScope&) = delete;
+    GpuKeyDecisionScope& operator=(const GpuKeyDecisionScope&) = delete;
+    static bool Covers(std::uint64_t dccAddress, std::uint32_t elementBytes);
+
+private:
+    std::uint64_t previousAddress;
+    std::uint32_t previousElementBytes;
+};
+
 }
 
 #endif

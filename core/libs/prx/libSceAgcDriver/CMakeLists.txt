@@ -96,6 +96,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcDccKeyClearShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/DccKeyClear.comp)
+set(agcDccKeyClearShaderSpv ${agcTextureDetileGeneratedDir}/DccKeyClear.spv)
+set(agcDccKeyClearShaderHeader ${agcTextureDetileGeneratedDir}/DccKeyClear_spv.h)
+add_custom_command(
+        OUTPUT "${agcDccKeyClearShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcDccKeyClearShaderSpv}" "${agcDccKeyClearShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcDccKeyClearShaderSpv} -DOUTPUT=${agcDccKeyClearShaderHeader}
+        -DSYMBOL=DCC_KEY_CLEAR_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcDccKeyClearShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcTexelDecodeShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TexelDecode.comp)
 set(agcTexelDecodeShaderSpv ${agcTextureDetileGeneratedDir}/TexelDecode.spv)
 set(agcTexelDecodeShaderHeader ${agcTextureDetileGeneratedDir}/TexelDecode_spv.h)
@@ -248,6 +261,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeviceImageTable.cpp
         ${agcTextureDetileShaderHeader}
         ${agcCmaskClearShaderHeader}
+        ${agcDccKeyClearShaderHeader}
         ${agcTexelDecodeShaderHeader}
         ${agcTexelDecodeImageShaderHeaders}
         ${agcMeshArgumentsShaderHeader}

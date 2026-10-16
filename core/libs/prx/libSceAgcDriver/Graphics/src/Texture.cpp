@@ -1771,6 +1771,8 @@ bool StorageTexture::Refresh() {
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (descriptor.dccAddress != 0) CompletePendingCpuWrites(context, descriptor.dccAddress, DccKeyBytes(guestBytes));
+    keysDeferred = false;
+    static_cast<void>(deferKeys());
     if (refreshProved()) {
         NoteProved();
         refreshesProved.fetch_add(1, std::memory_order_relaxed);
@@ -1794,7 +1796,7 @@ bool StorageTexture::Refresh() {
     // stamped); an untracked unit is stored whole by that write-back, and a unit pending in both
     // images takes the old order (store, then this image re-uploads it).
     auto alias = pendingAlias();
-    if (alias != nullptr && !(ProvedClearKeys(descriptor, guestBytes, keyProof) == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
+    if (alias != nullptr && !((keysDeferred || ProvedClearKeys(descriptor, guestBytes, keyProof) == DccKeys::Uncompressed) && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
     if (alias != nullptr) {
         std::vector<std::uint8_t> aliasStamped(trackedLayers);
         if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped)) alias = nullptr;
@@ -2035,12 +2037,37 @@ bool StorageTexture::Refresh() {
 }
 
 DccKeys StorageTexture::ProvedKeys() const {
+    if (keysDeferred) return DccKeys::Uncompressed;
     std::optional<DccKeys> keys;
     if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) keys = WaitForKeyWriters(descriptor, guestBytes);
     if (keys.has_value()) keyProof = {};
     else keys = ProvedClearKeys(descriptor, guestBytes, keyProof);
     if (IsDccClear(filledKeys) && *keys != filledKeys && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
     return *keys;
+}
+
+bool StorageTexture::deferKeys() {
+    if (keysDeferred) return true;
+    if (descriptor.dccAddress == 0 || uploadedKeys != DccKeys::Uncompressed || IsDccClear(filledKeys) || !GpuKeyDecisionScope::Covers(descriptor.dccAddress, BytesPerElement(descriptor.format))) return false;
+    if (descriptor.mipCount != 1 || IsConvertedTextureFormat(descriptor.format) || BytesPerElement(descriptor.format) > 8 || ElementView() == VK_NULL_HANDLE) return false;
+    if (HostImportFor(context, descriptor.dccAddress, std::max(DccKeyBytes(guestBytes), DccKeyCount(descriptor, guestBytes))) == nullptr || !KeyWritersPending(descriptor, guestBytes)) return false;
+    keysDeferred = true;
+    keyProof = {};
+    return true;
+}
+
+bool StorageTexture::TakeDeferredKeys() {
+    return std::exchange(keysDeferred, false);
+}
+
+void StorageTexture::NoteKeysClearedOnGpu() {
+    MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+    uploadedKeys = DccKeys::Uncompressed;
+    filledKeys = DccKeys::Uncompressed;
+    keyProof = {};
+    refreshProof = {};
+    ++version;
+    markLayersPending(0, trackedLayers);
 }
 
 std::uint64_t StorageTexture::SinglePassMoves() {
@@ -2232,7 +2259,7 @@ void StorageTexture::upload(const std::vector<bool>* layers, const std::vector<s
         }
         refreshGeneration();
     };
-    uploadedKeys = ProvedClearKeys(descriptor, guestBytes, keyProof);
+    uploadedKeys = deferKeys() ? DccKeys::Uncompressed : ProvedClearKeys(descriptor, guestBytes, keyProof);
     filledKeys = DccKeys::Uncompressed;
     VkClearColorValue clearValue{};
     if (IsDccClear(uploadedKeys) && ClearColorFor(storageFormat, uploadedKeys, clearValue)) {

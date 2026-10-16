@@ -1,0 +1,61 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Keys { uint words[]; } keys;
+layout(set = 0, binding = 1, std430) buffer Decision { uint groups[3]; uint found; uint clear[2]; } decision;
+layout(set = 0, binding = 2) writeonly uniform uimage2D target;
+layout(set = 0, binding = 3, std430) buffer Errors { uint codes; } errors;
+
+layout(push_constant) uniform Push {
+    uint base;
+    uint count;
+    uint width;
+    uint height;
+    uint mode;
+    uint enabled;
+    uint clear[10];
+} push;
+
+shared uint mismatch;
+
+uint keyAt(uint index) {
+    uint byteAddress = push.base + index;
+    return (keys.words[byteAddress / 4u] >> ((byteAddress % 4u) * 8u)) & 0xffu;
+}
+
+uint codeIndex(uint key) {
+    if (key == 0x00u) return 0u;
+    if (key == 0x40u) return 1u;
+    if (key == 0x80u) return 2u;
+    if (key == 0xc0u) return 3u;
+    if (key == 0x20u) return 4u;
+    return 5u;
+}
+
+void main() {
+    if (push.mode == 0u) {
+        uint lane = gl_LocalInvocationIndex;
+        if (lane == 0u) mismatch = 0u;
+        barrier();
+        uint first = keyAt(0u);
+        bool differs = false;
+        for (uint index = lane; index < push.count && !differs; index += 64u) differs = keyAt(index) != first;
+        if (differs) atomicOr(mismatch, 1u);
+        barrier();
+        if (lane != 0u) return;
+        if (mismatch == 0u && first == 0x10u) atomicOr(errors.codes, 1u);
+        uint code = mismatch == 0u ? codeIndex(first) : 5u;
+        bool clear = code < 5u && ((push.enabled >> code) & 1u) != 0u;
+        decision.groups[0] = clear ? (push.width + 7u) / 8u : 0u;
+        decision.groups[1] = (push.height + 7u) / 8u;
+        decision.groups[2] = 1u;
+        decision.found = mismatch == 0u ? first : 0x100u;
+        decision.clear[0] = clear ? push.clear[code * 2u] : 0u;
+        decision.clear[1] = clear ? push.clear[code * 2u + 1u] : 0u;
+        return;
+    }
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= push.width || pixel.y >= push.height) return;
+    imageStore(target, ivec2(pixel), uvec4(decision.clear[0], decision.clear[1], 0u, 0u));
+}

@@ -742,6 +742,24 @@ bool KeyWritersPending(const GuestTextureResource& resource, std::uint64_t guest
     return !PendingFillsLeaveUncompressed(*recorder, resource, count);
 }
 
+namespace {
+
+thread_local std::uint64_t decidedKeys = 0;
+thread_local std::uint32_t decidedElementBytes = 0;
+
+}
+
+GpuKeyDecisionScope::GpuKeyDecisionScope(std::uint64_t dccAddress, std::uint32_t elementBytes) : previousAddress(std::exchange(decidedKeys, dccAddress)), previousElementBytes(std::exchange(decidedElementBytes, elementBytes)) {}
+
+GpuKeyDecisionScope::~GpuKeyDecisionScope() {
+    decidedKeys = previousAddress;
+    decidedElementBytes = previousElementBytes;
+}
+
+bool GpuKeyDecisionScope::Covers(std::uint64_t dccAddress, std::uint32_t elementBytes) {
+    return dccAddress != 0 && decidedKeys == dccAddress && decidedElementBytes == elementBytes;
+}
+
 std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, std::uint64_t guestBytes) {
     const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
     const auto metaAddress = resource.dccAddress;

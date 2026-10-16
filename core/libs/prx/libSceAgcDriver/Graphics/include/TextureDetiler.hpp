@@ -54,6 +54,8 @@ namespace AgcDriver::Graphics {
         void BeginBatch();
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
         std::uint32_t CmaskErrors();
+        std::uint32_t KeyClearErrors();
+        void DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys, std::uint64_t keysOffset, std::size_t keyCount, VkBuffer decision, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t enabled, const std::array<std::uint32_t, 10>& clearWords);
         void DispatchDecode(VkCommandBuffer commands, std::uint32_t guestFormat, VkBuffer source, VkBuffer destination, std::uint64_t texels);
         void DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent);
 
@@ -77,6 +79,12 @@ namespace AgcDriver::Graphics {
         std::vector<VkDescriptorPool> cmaskDescriptorPools;
         std::size_t allocatedCmaskSets = 0;
         std::unique_ptr<Buffer> cmaskErrors;
+        VkDescriptorSetLayout keyClearDescriptorLayout = VK_NULL_HANDLE;
+        VkPipelineLayout keyClearPipelineLayout = VK_NULL_HANDLE;
+        VkPipeline keyClearPipeline = VK_NULL_HANDLE;
+        std::vector<VkDescriptorPool> keyClearDescriptorPools;
+        std::size_t allocatedKeyClearSets = 0;
+        std::unique_ptr<Buffer> keyClearErrors;
         VkDescriptorSetLayout imageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout imagePipelineLayout = VK_NULL_HANDLE;
         VkShaderModule imageModule = VK_NULL_HANDLE;

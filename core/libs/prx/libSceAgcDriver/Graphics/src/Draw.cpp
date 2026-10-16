@@ -163,6 +163,43 @@ void materializeRegisterClear(const Context& context, const ColorTarget& color, 
     resident.Refresh();
 }
 
+void recordDccKeyClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
+    const auto& descriptor = resident->Descriptor();
+    const auto keyCount = DccKeyBytes(resident->GuestBytes());
+    auto* recorder = Recorder::Active();
+    const auto* import = HostImportFor(context, descriptor.dccAddress, keyCount);
+    Require(recorder != nullptr && import != nullptr && context.detiler != nullptr, "a DCC key decision on the GPU needs the recorder, the keys' host import and the detiler");
+    if ((context.detiler->KeyClearErrors() & 1u) != 0) {
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] a DCC key decision on the GPU found comp-to-single keys; their texels were read as stored\n");
+    }
+    constexpr std::array<DccKeys, 5> codes{DccKeys::Clear0000, DccKeys::Clear0001, DccKeys::Clear1110, DccKeys::Clear1111, DccKeys::ClearRegister};
+    const auto elementBytes = static_cast<std::size_t>(color.elementBytes);
+    const std::uint32_t mask = elementBytes >= 4 ? 0xffffffffu : (1u << (elementBytes * 8u)) - 1u;
+    std::array<std::uint32_t, 10> words{};
+    std::uint32_t enabled = 0;
+    for (std::size_t index = 0; index < codes.size(); ++index) {
+        std::array<std::byte, 16> texel{};
+        if (codes[index] == DccKeys::ClearRegister) std::memcpy(texel.data(), color.clearWords.data(), elementBytes);
+        else if (!FillDccClear(color.format, codes[index], color.dccAlphaOnMsb, std::span(texel.data(), elementBytes))) continue;
+        std::array<std::uint32_t, 2> raw{};
+        std::memcpy(raw.data(), texel.data(), sizeof(raw));
+        words[index * 2] = raw[0] & mask;
+        words[index * 2 + 1] = elementBytes == 8 ? raw[1] : 0u;
+        enabled |= 1u << index;
+    }
+    StorageTexture::FlushPending(descriptor.dccAddress, keyCount, nullptr, "fast-clear materialization");
+    if (AnyShadowedOverlaps(descriptor.dccAddress, keyCount)) PublishShadow(descriptor.dccAddress, keyCount, PublishScope::Whole, PublishReason::Keys);
+    recorder->FlushKeyStoresOverlapping(descriptor.dccAddress, keyCount);
+    recorder->FlushStoresOverlapping(descriptor.dccAddress, keyCount);
+    auto decision = std::make_shared<Buffer>(context, 8 * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+    const auto commands = recorder->Commands();
+    recorder->Keep(resident);
+    context.detiler->DispatchDccKeyClear(commands, import->buffer, descriptor.dccAddress - import->base, keyCount, decision->Handle(), resident->ElementView(), descriptor.width, descriptor.height, enabled, words);
+    recorder->Keep(std::move(decision));
+    resident->NoteKeysClearedOnGpu();
+}
+
 enum class CmaskState { Expanded, Cleared, Partial };
 
 struct CmaskProof {
@@ -972,8 +1009,13 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
     std::shared_ptr<StorageTexture> resident;
     try {
-        resident = lookup();
-        if (resident != nullptr) materializeRegisterClear(context, color, *resident);
+        {
+            std::optional<GpuKeyDecisionScope> decided;
+            if (KeysDecidedOnGpu(context, color)) decided.emplace(color.dccAddress, color.elementBytes);
+            resident = lookup();
+        }
+        if (resident != nullptr && resident->TakeDeferredKeys()) recordDccKeyClear(context, color, resident);
+        else if (resident != nullptr) materializeRegisterClear(context, color, *resident);
     } catch (const std::exception& error) {
         static std::mutex reportMutex;
         static std::set<std::uint64_t> reported;
@@ -1582,6 +1624,10 @@ bool RecordDraws() {
     return recordDraws;
 }
 
+}
+
+bool KeysDecidedOnGpu(const Context& context, const ColorTarget& color) {
+    return color.dccAddress != 0 && color.address != 0 && color.bytes != 0 && context.detiler != nullptr && color.samples <= 1 && color.tileMode != ColorTileMode::Linear && color.arrayLastSlice == 0 && color.mipCount == 1 && color.depth == 1 && color.elementBytes != 0 && color.elementBytes <= 8 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED && RecordDraws() && DumpTargetLimit() == 0 && Recorder::Active() != nullptr;
 }
 
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state) {
