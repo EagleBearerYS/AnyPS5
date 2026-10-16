@@ -1,0 +1,4 @@
+BASE=6522b92fdeb1b5e793a5aa0a7e23a9e15c139836
+REPEAT=3
+EXTRA_TESTS='agc_driver_pm4_replay|agc_driver_pm4_replay_tool|agc_driver_shutdown_threads'
+NO_BEFORE=1
