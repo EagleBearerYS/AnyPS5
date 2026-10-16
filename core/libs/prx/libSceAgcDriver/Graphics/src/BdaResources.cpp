@@ -307,7 +307,29 @@ void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vec
 void BdaResources::markWrittenPages() const {
     namespace Abi = ShaderRecompiler::BdaAbi;
     auto* words = reinterpret_cast<std::uint32_t*>(fault->Bytes().data());
-    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
+    markWrittenChunks(words);
+    if (words[Abi::WrittenOverflowWord] == 0) return;
+    markWritableRanges();
+    words[Abi::WrittenOverflowWord] = 0;
+}
+
+void BdaResources::markWritableRanges() const {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    static std::atomic<bool> reported{false};
+    if (!reported.exchange(true, std::memory_order_relaxed)) std::fprintf(stderr, "[gpu] a BDA written-page record overflowed (more than %u chunks of %u pages, or a chunk without a free slot in %u probes): the writable ranges of its page table are marked as written instead\n", Abi::WrittenPageSlots, Abi::WrittenChunkPages, Abi::WrittenPageProbes);
+    if (table == nullptr) return;
+    const auto bytes = table->Bytes();
+    Abi::Header header{};
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    for (std::uint32_t index = 0; index < header.count; ++index) {
+        Abi::Range range{};
+        std::memcpy(&range, bytes.data() + sizeof(header) + index * sizeof(range), sizeof(range));
+        if ((range.permissions & Abi::Write) != 0 && range.end > range.begin) GuestMemory::MarkWritten(range.begin, static_cast<std::size_t>(range.end - range.begin));
+    }
+}
+
+void BdaResources::markWrittenChunks(std::uint32_t* words) const {
+    namespace Abi = ShaderRecompiler::BdaAbi;
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
     Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) {
