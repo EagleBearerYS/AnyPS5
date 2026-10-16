@@ -7,6 +7,9 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#ifdef __linux__
+#include <pthread.h>
+#endif
 
 namespace AgcDriver::DriverDetail {
 
@@ -131,6 +134,10 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 }
 
 void DrawPipeline::run() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "draw-commit");
+#endif
+    GuestMemory::MarkCommitterThread();
     for (;;) {
         Commit* commit = nullptr;
         {
