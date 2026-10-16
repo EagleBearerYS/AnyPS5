@@ -235,6 +235,9 @@ struct RetiredImport {
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
+        node.mapped().range.reset();
+        node.mapped().ranges.clear();
+        GuestAllocations::GuestAllocationsNotifyUnpinned_nid_postfix();
     }
     VkDevice device;
     PFN_vkDestroyBuffer destroyBuffer;
@@ -1269,19 +1272,6 @@ void reportMirrors() {
     AgcDriver::ProfilePrint_nid_no_patch("[buffers] read-only image mirrors: %zu ranges (%.1f MiB), %llu address-based builds mapped them, %llu built\n", state.entries.size(), bytes / 1048576.0, static_cast<unsigned long long>(state.builds), static_cast<unsigned long long>(state.rebuilds));
 }
 
-// Deferred lease release. The lease an address-based build takes (AcquireRegistered) is dropped by its
-// write-back, which runs as a completion action when the batch that recorded the work finished; the
-// work is no longer synced as soon as it is recorded (that sync was ~30000 waits per 200 s). A guest
-// thread that unmaps, mprotects or frees a leased allocation finds it pinned in the registry and calls
-// this waiter (with the registry lock released, see GuestAllocationsRequireUnpinned): under the device
-// lock it submits the recorder and finishes its batches up to the newest one that was recorded with a
-// lease (CountLeaseOutcome notes that serial); the completions release the leases, later batches stay
-// in flight, and the registry rescans. A lease held by a build in progress belongs to a worker holding
-// the device lock, so the waiter waits for that worker first; once it holds the lock every lease of
-// recorded work is in a batch. A lease whose batch was not noted (the record threw between the keep
-// and the note) is covered by draining the recorder when the noted serial is already finished. The
-// waiter yields instead when its own thread holds the device lock (a driver thread mutating the
-// registry mid-packet, as the plain spin did) and reports whether it finished any work.
 struct LeaseState {
     std::mutex mutex;
     LeaseStats stats;
@@ -1295,146 +1285,146 @@ LeaseState& Leases() {
     return state;
 }
 
-bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) noexcept {
+struct PinReleaseQueue {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> pending;
+    std::vector<std::shared_ptr<const GuestBufferMemory::AddressSpace>> dropped;
+    bool started = false;
+};
+
+PinReleaseQueue& PinReleases() {
+    static PinReleaseQueue queue;
+    return queue;
+}
+
+bool overlapsImport(const HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    auto it = state.imports.upper_bound(begin);
+    if (it != state.imports.begin() && std::prev(it)->second.base + std::prev(it)->second.bytes > begin) return true;
+    return it != state.imports.end() && it->first < end;
+}
+
+void releasePins(std::uint64_t address, std::uint64_t end) {
     const auto start = std::chrono::steady_clock::now();
     bool synced = false;
     bool drained = false;
-    bool retiredImport = false;
-    // A range pinned only by the cached address space is released by dropping the cache's
-    // reference: no GPU wait, no device lock (the mutating thread may be a driver thread holding
-    // it). The registry rescans; a range still pinned by a build or a batch holding the space comes
-    // back here and finishes lease batches below.
-    if (auto dropped = Spaces().current.exchange(nullptr); dropped != nullptr) {
-        Spaces().droppedByWaiter.store(true, std::memory_order_relaxed);
-        Spaces().waiterDrops.fetch_add(1, std::memory_order_relaxed);
-        dropped.reset();
-        auto& state = Leases();
-        std::lock_guard lock(state.mutex);
-        ++state.stats.contentionWaits;
-        ++state.stats.cacheDrops;
-        state.stats.contentionMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        return true;
+    auto& leases = Leases();
+    auto* recorder = Recorder::Active();
+    const auto target = leases.newestLeaseToken;
+    if (recorder != nullptr && recorder == leases.leaseRecorder && !recorder->Reached(target)) {
+        Recorder::CountSync(4);
+        recorder->Submit();
+        recorder->WaitToken(target);
+        recorder->Reap();
+        synced = true;
+    } else if (recorder != nullptr && !recorder->Idle()) {
+        Recorder::CountSync(4);
+        recorder->Sync();
+        synced = true;
+        drained = true;
     }
-    if (GuestMemory::GpuMutex().HeldByThisThread()) {
-        try {
-            auto* recorder = Recorder::Active();
-            if (recorder != nullptr && !recorder->Idle()) {
-                Recorder::CountSync(4);
-                recorder->Sync();
-                synced = true;
-                drained = true;
+    if (recorder != nullptr) recorder->FlushDeferredReleases();
+    auto& imports = Imports();
+    bool retired = releaseParkedImports(imports, address, end);
+    bool overlapping = false;
+    {
+        std::lock_guard importsLock(imports.mutex);
+        overlapping = overlapsImport(imports, address, end);
+    }
+    if (overlapping) {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        std::lock_guard importsLock(imports.mutex);
+        auto it = imports.imports.upper_bound(address);
+        if (it != imports.imports.begin() && std::prev(it)->second.base + std::prev(it)->second.bytes > address) --it;
+        while (it != imports.imports.end() && it->first < end) {
+            const auto next = std::next(it);
+            if (it->second.base + it->second.bytes > address) {
+                retireImport(imports.device, imports, it, lease, false);
+                retired = true;
             }
-            if (recorder != nullptr) recorder->FlushDeferredReleases();
-            const auto end = static_cast<std::uint64_t>(address) + bytes;
-            auto& imports = Imports();
-            if (releaseParkedImports(imports, address, end)) retiredImport = true;
-            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-            {
-                std::lock_guard importsLock(imports.mutex);
-                for (auto it = imports.imports.begin(); it != imports.imports.end();) {
-                    const auto base = it->first;
-                    if (base >= end || address >= base + it->second.bytes) {
-                        ++it;
-                        continue;
-                    }
-                    const auto next = std::next(it);
-                    retireImport(imports.device, imports, it, lease, false);
-                    it = next;
-                    retiredImport = true;
-                }
-            }
-            if (retiredImport && recorder != nullptr && !recorder->Idle()) {
-                Recorder::CountSync(4);
-                recorder->Sync();
-                synced = true;
-                drained = true;
-            }
-            if (retiredImport && recorder != nullptr) recorder->FlushDeferredReleases();
-        } catch (const std::exception& error) {
-            std::fprintf(stderr, "[gpu] lease wait failed: %s\n", error.what());
+            it = next;
         }
-    } else {
+    }
+    if (retired && recorder != nullptr && !recorder->Idle()) {
+        Recorder::CountSync(4);
+        recorder->Sync();
+        synced = true;
+        drained = true;
+    }
+    if (retired && recorder != nullptr) recorder->FlushDeferredReleases();
+    std::lock_guard lock(leases.mutex);
+    if (synced) ++leases.stats.contentionSyncs;
+    if (drained) ++leases.stats.contentionDrains;
+    leases.stats.contentionMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+void pinReleaseWorker() {
+    auto& queue = PinReleases();
+    for (;;) {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> work;
+        std::vector<std::shared_ptr<const GuestBufferMemory::AddressSpace>> spaces;
+        {
+            std::unique_lock lock(queue.mutex);
+            queue.wake.wait(lock, [&] { return !queue.pending.empty() || !queue.dropped.empty(); });
+            work.swap(queue.pending);
+            spaces.swap(queue.dropped);
+        }
+        spaces.clear();
+        GuestAllocations::GuestAllocationsNotifyUnpinned_nid_postfix();
+        std::erase_if(work, [](const std::pair<std::uint64_t, std::uint64_t>& range) { return !GuestAllocations::GuestAllocationsPinned_nid_postfix(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(range.first)), static_cast<std::size_t>(range.second - range.first)); });
+        if (work.empty()) continue;
         try {
             std::lock_guard lock(GuestMemory::GpuMutex());
-            auto& state = Leases();
-            auto* recorder = Recorder::Active();
-            const auto target = state.newestLeaseToken;
-            if (recorder != nullptr && recorder == state.leaseRecorder && !recorder->Reached(target)) {
-                Recorder::CountSync(4);
-                recorder->Submit();
-                recorder->WaitToken(target);
-                recorder->Reap();
-                synced = true;
-            } else if (recorder != nullptr && !recorder->Idle()) {
-                Recorder::CountSync(4);
-                recorder->Sync();
-                synced = true;
-                drained = true;
-            } else {
-                // Nothing recorded holds the lease: the holder is a lease-holding object that has
-                // yet to record (a test's, or a build whose worker gave up the lock); give it time.
-                std::this_thread::yield();
-            }
-            if (recorder != nullptr) recorder->FlushDeferredReleases();
-
-            const auto end = static_cast<std::uint64_t>(address) + bytes;
-            auto& imports = Imports();
-            if (releaseParkedImports(imports, address, end)) retiredImport = true;
-            bool overlapsImport = false;
-            {
-                std::lock_guard importsLock(imports.mutex);
-                for (const auto& [base, entry] : imports.imports) {
-                    if (base < end && address < base + entry.bytes) {
-                        overlapsImport = true;
-                        break;
-                    }
-                }
-            }
-            if (overlapsImport) {
-                if (recorder != nullptr && !recorder->Idle()) {
-                    Recorder::CountSync(4);
-                    recorder->Sync();
-                    synced = true;
-                    drained = true;
-                }
-                const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-                {
-                    std::lock_guard importsLock(imports.mutex);
-                    for (auto it = imports.imports.begin(); it != imports.imports.end();) {
-                        const auto base = it->first;
-                        if (base >= end || address >= base + it->second.bytes) {
-                            ++it;
-                            continue;
-                        }
-                        const auto next = std::next(it);
-                        retireImport(imports.device, imports, it, lease, false);
-                        it = next;
-                        retiredImport = true;
-                    }
-                }
-                if (retiredImport && recorder != nullptr && !recorder->Idle()) {
-                    Recorder::CountSync(4);
-                    recorder->Sync();
-                    synced = true;
-                    drained = true;
-                }
-            }
+            for (const auto& [begin, end] : work) releasePins(begin, end);
         } catch (const std::exception& error) {
-            std::fprintf(stderr, "[gpu] lease wait failed: %s\n", error.what());
+            std::fprintf(stderr, "[gpu] pin release failed: %s\n", error.what());
         }
+        GuestAllocations::GuestAllocationsNotifyUnpinned_nid_postfix();
     }
-    auto& state = Leases();
-    std::lock_guard lock(state.mutex);
-    ++state.stats.contentionWaits;
-    if (synced) ++state.stats.contentionSyncs;
-    if (drained) ++state.stats.contentionDrains;
-    state.stats.contentionMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    return synced || retiredImport;
+}
+
+bool RequestPinRelease(std::uintptr_t address, std::size_t bytes) noexcept {
+    try {
+        auto dropped = Spaces().current.exchange(nullptr);
+        if (dropped != nullptr) {
+            Spaces().droppedByWaiter.store(true, std::memory_order_relaxed);
+            Spaces().waiterDrops.fetch_add(1, std::memory_order_relaxed);
+        }
+        {
+            auto& leases = Leases();
+            std::lock_guard lock(leases.mutex);
+            ++leases.stats.contentionWaits;
+            if (dropped != nullptr) ++leases.stats.cacheDrops;
+        }
+        const auto end = static_cast<std::uint64_t>(address) + bytes;
+        if (GuestMemory::GpuMutex().HeldByThisThread()) {
+            dropped.reset();
+            releasePins(address, end);
+            GuestAllocations::GuestAllocationsNotifyUnpinned_nid_postfix();
+            return true;
+        }
+        auto& queue = PinReleases();
+        {
+            std::lock_guard lock(queue.mutex);
+            if (dropped != nullptr) queue.dropped.push_back(std::move(dropped));
+            const std::pair<std::uint64_t, std::uint64_t> request{address, end};
+            if (std::find(queue.pending.begin(), queue.pending.end(), request) == queue.pending.end()) queue.pending.push_back(request);
+            if (!queue.started) {
+                std::thread(pinReleaseWorker).detach();
+                queue.started = true;
+            }
+        }
+        queue.wake.notify_one();
+        return true;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[gpu] pin release request failed: %s\n", error.what());
+        return false;
+    }
 }
 
 void ensurePinWaiter() {
     static const bool registered = [] {
-        GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&WaitForLeasesAndImports);
+        GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&RequestPinRelease);
         return true;
     }();
     static_cast<void>(registered);

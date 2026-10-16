@@ -76,13 +76,10 @@ std::uint64_t GuestAllocationsGeneration_nid_postfix();
 // range whose mapping or protection changed (registry mutations and guest heap decommits).
 void GuestAllocationsSetInvalidator_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes));
 void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t bytes);
-// A mutation of a range that GPU work still leases waits for the lease (RequireUnpinned). The
-// waiter, set by the GPU driver, is called on the mutating thread with the registry lock released
-// and finishes the GPU work that holds leases; it returns whether it finished any (a round that found
-// nothing to wait for counts against the same bound as a plain spin). Without one the mutation spins
-// until the lease is dropped by another thread.
 void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t address, std::size_t bytes));
 void GuestAllocationsAwaitPinWaits_nid_postfix();
+void GuestAllocationsNotifyUnpinned_nid_postfix();
+bool GuestAllocationsPinned_nid_postfix(const void* pointer, std::size_t bytes);
 void GuestAllocationsSetGpuMapObserver_nid_postfix(void (*callback)(const Mapped& ranges, std::uint64_t generation));
 void GuestAllocationsSetUnmapObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes));
 void GuestAllocationsNoteGpuMapping_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
