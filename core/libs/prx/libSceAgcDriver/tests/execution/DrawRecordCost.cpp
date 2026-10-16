@@ -16,7 +16,6 @@
 #include <sys/mman.h>
 #endif
 #ifdef __linux__
-#include <atomic>
 #include <csignal>
 #include <ctime>
 #include <dirent.h>
@@ -24,12 +23,12 @@
 #include <execinfo.h>
 #include <fstream>
 #include <map>
-#include <memory>
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstddef>
@@ -39,7 +38,10 @@
 #include <cstring>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -152,14 +154,21 @@ private:
     std::uint8_t* block = nullptr;
 };
 
+struct Layout {
+    const GuestBlock& data;
+    const GuestBlock& textures;
+    const GuestBlock& target;
+};
+
 std::array<std::uint32_t, 4> BufferDescriptor(std::uint64_t address, std::uint32_t stride, std::uint32_t records, std::uint32_t word3) {
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), records, word3};
 }
 
-void Prepare(const GuestBlock& block) {
+void Prepare(const Layout& layout) {
+    const auto& block = layout.data;
     for (std::uint32_t texture = 0; texture < Textures; ++texture) {
-        const auto address = block.At(TextureOffset + texture * TextureBytes);
-        std::memset(block.Bytes(TextureOffset + texture * TextureBytes), static_cast<int>(TexelByte), TextureBytes);
+        const auto address = layout.textures.At(TextureOffset + texture * TextureBytes);
+        std::memset(layout.textures.Bytes(TextureOffset + texture * TextureBytes), static_cast<int>(TexelByte), TextureBytes);
         const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 7u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
         std::memcpy(block.Bytes(SrtOffset + texture * 32u), words.data(), sizeof(words));
     }
@@ -181,8 +190,9 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-std::vector<std::uint32_t> Commands(const GuestBlock& block, std::uint32_t draws) {
-    const auto color = block.At(ColorOffset);
+std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws) {
+    const auto& block = layout.data;
+    const auto color = layout.target.At(ColorOffset);
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
     const auto srt = block.At(SrtOffset);
@@ -243,11 +253,11 @@ unsigned ColorByte(const GuestBlock& block) {
     return brightest;
 }
 
-void Check(const GuestBlock& block) {
-    std::memset(block.Bytes(ColorOffset), 0, ColorBytes);
-    auto commands = Commands(block, 16);
+void Check(const Layout& layout) {
+    std::memset(layout.target.Bytes(ColorOffset), 0, ColorBytes);
+    auto commands = Commands(layout, 16);
     Submit(commands);
-    const auto byte = ColorByte(block);
+    const auto byte = ColorByte(layout.target);
     Require(byte == Textures * TexelByte, "draw record cost: 16 draws sampling 16 textures of byte " + std::to_string(TexelByte) + " wrote " + std::to_string(byte) + ", expected " + std::to_string(Textures * TexelByte));
 }
 
@@ -374,20 +384,70 @@ std::map<std::string, std::uint64_t> HeldNs() {
 }
 #endif
 
+class Contender {
+public:
+    Contender(std::uint32_t holdUs, std::uint32_t periodUs) : holdUs(holdUs), periodUs(periodUs) {
+        thread = std::thread([this] { run(); });
+    }
+
+    Contender(const Contender&) = delete;
+    Contender& operator=(const Contender&) = delete;
+
+    ~Contender() {
+        stop.store(true, std::memory_order_release);
+        thread.join();
+    }
+
+    std::uint64_t Holds() const { return holds.load(std::memory_order_relaxed); }
+    double WaitedUs() const { return static_cast<double>(waitedNs.load(std::memory_order_relaxed)) / 1e3; }
+
+private:
+    void run() {
+        while (!stop.load(std::memory_order_acquire)) {
+            const auto asked = std::chrono::steady_clock::now();
+            {
+                AgcDriver::GuestMemory::TagGpuLockSite(AgcDriver::GuestMemory::GpuLockSite::Dispatch);
+                std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                const auto got = std::chrono::steady_clock::now();
+                waitedNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(got - asked).count()), std::memory_order_relaxed);
+                while (std::chrono::steady_clock::now() - got < std::chrono::microseconds(holdUs)) {}
+            }
+            holds.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::microseconds(periodUs > holdUs ? periodUs - holdUs : 0));
+        }
+    }
+
+    std::uint32_t holdUs;
+    std::uint32_t periodUs;
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> holds{0};
+    std::atomic<std::uint64_t> waitedNs{0};
+    std::thread thread;
+};
+
 double Median(std::vector<double> values) {
     std::sort(values.begin(), values.end());
     return values[values.size() / 2];
 }
 
-void Cost(const GuestBlock& block, std::uint32_t windows) {
+void Cost(const Layout& layout, std::uint32_t windows) {
+    const auto texture = layout.textures.At(TextureOffset);
+    std::printf("write watch (%s layout): available %d, data block covered %d, watched %d, covers the textures %d, CollectWrites %llu\n", &layout.data == &layout.textures ? "shared" : "split", GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() ? 1 : 0, GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(static_cast<std::uintptr_t>(layout.data.At(0)), 4096) ? 1 : 0, AgcDriver::GuestMemory::WriteWatched() ? 1 : 0, GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(static_cast<std::uintptr_t>(texture), Textures * TextureBytes) ? 1 : 0, static_cast<unsigned long long>(AgcDriver::GuestMemory::CollectWrites(texture, TextureBytes)));
 #ifdef __linux__
     const char* samplePath = std::getenv("DRAW_RECORD_COST_SAMPLES");
     std::unique_ptr<Sampler> sampler = samplePath != nullptr ? std::make_unique<Sampler>(samplePath) : nullptr;
 #endif
+    const char* contend = std::getenv("DRAW_RECORD_COST_CONTEND");
+    std::unique_ptr<Contender> contender;
+    if (contend != nullptr) {
+        const std::string text(contend);
+        const auto colon = text.find(':');
+        contender = std::make_unique<Contender>(static_cast<std::uint32_t>(std::stoul(text.substr(0, colon))), static_cast<std::uint32_t>(std::stoul(text.substr(colon + 1))));
+    }
     const char* sizes = std::getenv("DRAW_RECORD_COST_SIZES");
     for (const auto draws : {64u, 512u, 2048u}) {
         if (sizes != nullptr && std::string(sizes).find(std::to_string(draws)) == std::string::npos) continue;
-        auto commands = Commands(block, draws);
+        auto commands = Commands(layout, draws);
         Submit(commands);
         std::vector<double> perDraw;
 #ifdef __linux__
@@ -434,6 +494,7 @@ void Cost(const GuestBlock& block, std::uint32_t windows) {
 #ifdef __linux__
     if (sampler != nullptr) sampler->Write();
 #endif
+    if (contender != nullptr) std::printf("contender: %llu GPU mutex holds of %s us, waited %.1f us each for the mutex\n", static_cast<unsigned long long>(contender->Holds()), contend, contender->Holds() == 0 ? 0.0 : contender->WaitedUs() / static_cast<double>(contender->Holds()));
 }
 
 }
@@ -446,10 +507,15 @@ int main(int argc, char** argv) {
         }
         Register(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
-        GuestBlock block;
-        Prepare(block);
-        Check(block);
-        if (argc > 2 && std::string(argv[1]) == "--cost") Cost(block, static_cast<std::uint32_t>(std::stoul(argv[2])));
+        const char* layoutName = std::getenv("DRAW_RECORD_COST_LAYOUT");
+        const bool shared = layoutName != nullptr && std::string(layoutName) == "shared";
+        GuestBlock data;
+        std::unique_ptr<GuestBlock> textures = shared ? nullptr : std::make_unique<GuestBlock>();
+        std::unique_ptr<GuestBlock> target = shared ? nullptr : std::make_unique<GuestBlock>();
+        const Layout layout{data, shared ? data : *textures, shared ? data : *target};
+        Prepare(layout);
+        Check(layout);
+        if (argc > 2 && std::string(argv[1]) == "--cost") Cost(layout, static_cast<std::uint32_t>(std::stoul(argv[2])));
         const auto mt = AgcDriver::Graphics::MtRecord::Counted();
         AgcDriverShutdown_nid_postfix();
         if (AgcDriver::Graphics::MtRecord::Threads() != 0) std::printf("mt-record: %u threads, %llu draws recorded in %llu secondary command buffers over %llu render passes\n", AgcDriver::Graphics::MtRecord::Threads(), static_cast<unsigned long long>(mt.draws), static_cast<unsigned long long>(mt.chunks), static_cast<unsigned long long>(mt.runs));
