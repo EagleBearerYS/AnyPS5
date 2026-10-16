@@ -3559,16 +3559,18 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
         ImportWatch decided;
         ~Restore() { SetImportWatch(context, decided); }
     } restore{base, decided};
-    constexpr std::uint32_t side = 256;
-    constexpr std::size_t bytes = side * side * 4;
-    void* block = AllocateWatched(bytes, 65536);
+    constexpr std::uint32_t width = 1024;
+    constexpr std::uint32_t height = 512;
+    constexpr std::size_t bytes = width * height * 4;
+    constexpr std::size_t allocated = bytes + 65536;
+    void* block = AllocateWatched(allocated, 65536);
     if (block == nullptr) {
         std::cout << "skipped, no write watching\n";
         return false;
     }
     struct Release {
         void* block;
-        ~Release() { ReleaseWatched(block, bytes); }
+        ~Release() { ReleaseWatched(block, allocated); }
     } release{block};
     std::memset(block, 0x55, bytes);
     const auto address = reinterpret_cast<std::uint64_t>(block);
@@ -3597,8 +3599,8 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
     context.detiler = &detiler;
     GuestTextureResource resource{};
     resource.baseAddress = address;
-    resource.width = side;
-    resource.height = side;
+    resource.width = width;
+    resource.height = height;
     resource.mipCount = 1;
     resource.tileMode = TextureTileMode::kR64KBX;
     resource.dimension = TextureDimension::k2D;
