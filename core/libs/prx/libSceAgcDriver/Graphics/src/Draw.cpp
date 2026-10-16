@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ExpProfile.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -470,7 +471,9 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     auto& profile = Profile();
     std::lock_guard lock(profile.mutex);
     double drawUs = 0;
+    ExpProfile::Add(ExpProfile::Draws, 1.0);
     for (std::size_t i = 0; i < PhaseCount; ++i) {
+        ExpProfile::Add(ExpProfile::DrawPhaseBase + i, us[i]);
         profile.totalsUs[i] += us[i];
         profile.maxUs[i] = std::max(profile.maxUs[i], us[i]);
         drawUs += us[i];
@@ -1744,7 +1747,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (recorder->HasQueuedKeyStores() && (resources.HoldsLease() || recorder->AnyQueuedKeyStore(touches))) recorder->FlushKeyStores();
     // A queued label store over such memory likewise (Recorder::RecordStore).
     if (recorder->HasQueuedStores() && (resources.HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
-    const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
+    const auto drawBindings = [&] {
+        const ExpProfile::Timer prepareTimer(ExpProfile::PrepareBindings);
+        ExpProfile::Add(ExpProfile::PrepareBindingsCalls, 1);
+        return resources.PrepareDrawBindings(*recorder, record.moved);
+    }();
     const bool capture = CaptureInputsEnabled();
     const bool meshIndirect = state.stages.mesh && args != nullptr;
     const bool addressBased = resources.HoldsLease();
@@ -1820,6 +1827,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         record.pipeline->Begin(commands, *record.framebuffer, state.renderExtent, state);
     }
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
+    std::optional<ExpProfile::Timer> bindTimer;
+    bindTimer.emplace(ExpProfile::BindSets);
     if (drawBindings != nullptr) {
         const auto set = drawBindings->allocation.set;
         const auto fragmentSet = drawBindings->fragmentAllocation.set;
@@ -1828,6 +1837,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     } else {
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     }
+    bindTimer.reset();
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");

@@ -21,6 +21,7 @@
 #include <vector>
 
 namespace AgcDriver { class VulkanDevice; }
+namespace AgcDriver::GuestMemory { struct WriteSubscription; }
 
 namespace AgcDriver::Graphics {
 
@@ -467,7 +468,35 @@ private:
     // holds; `reason` receives why the proof failed (Count: it passed), `overlapping` the surfaces
     // of a Pending failure in element order (empty otherwise), `accepted` whether a foreign overlap
     // was accepted by either rule (the verify switch then runs the full walk beside the proof).
-    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted);
+    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, const std::vector<std::size_t>* only = nullptr, bool withStorage = true);
+    enum class IndexOutcome : std::uint8_t { Accepted, Partial, Fallback };
+    IndexOutcome indexRevalidate(std::span<const CompiledShader> shaders, std::uint64_t serialBefore);
+    void subscribeIndex(std::span<const CompiledShader> shaders);
+    void subscribeBuilt(std::span<const CompiledShader> shaders);
+    void noteIndexProof(std::uint64_t generation, std::uint64_t serialBefore);
+    bool reresolveElements(const std::vector<std::size_t>& elements, std::size_t& replacedCount);
+    struct IndexElement {
+        std::array<std::uint32_t, 8> words{};
+        std::uint32_t count = 0;
+        bool depthCompare = false;
+        bool known = false;
+    };
+    std::shared_ptr<GuestMemory::WriteSubscription> writeSubscription;
+    std::uint64_t subscribedGeneration = 0;
+    std::uint64_t subscribedPendingSerial = 0;
+    std::vector<std::pair<std::uint64_t, std::size_t>> subscribedBlocks;
+    std::vector<std::size_t> perElementTextures;
+    std::vector<std::size_t> comparedTextures;
+    std::vector<std::size_t> depthCopyTextures;
+    std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> comparedTableSpans;
+    std::vector<IndexElement> indexElements;
+    struct ImagePosition {
+        std::size_t texture;
+        std::size_t position;
+        bool table;
+    };
+    std::vector<ImagePosition> indexImagePositions;
+    bool rebound = false;
     // T1 (design_cpu_final M3): brings the overlapping surfaces' own objects up to date exactly as
     // the full walk's lookups would, in the walk's binding order, without the lookups: a storage
     // image's Refresh (which stores the foreign images over its surface first), a view's source's
