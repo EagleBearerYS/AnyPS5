@@ -29,6 +29,10 @@ bool drawParametersOff() {
     return std::getenv("APS5_NO_INDIRECT_DRAW_PARAMETERS") != nullptr;
 }
 
+bool inPlaceConstantsOff() {
+    return std::getenv("APS5_NO_INDIRECT_IN_PLACE_CONSTANT") != nullptr;
+}
+
 }
 
 // The CP-patched SGPRs an indirect draw's vertex stage reads from the draw's own parameters
@@ -60,6 +64,7 @@ std::uint64_t Driver::IndirectDrawKey(std::uint64_t key, const Pm4::DrawParamete
     };
     mix(0x494e44u);
     mix(drawParametersOff());
+    mix(inPlaceConstantsOff());
     for (const std::uint64_t value : {std::uint64_t{indirect.baseVertexLocation}, std::uint64_t{indirect.startInstanceLocation}, std::uint64_t{indirect.drawIndexLocation}, std::uint64_t{indirect.drawIndexEnabled}, std::uint64_t{drawParameters.indexed}, std::uint64_t{indirect.indxOffset != 0}, std::uint64_t{indirect.countIndirect}, std::uint64_t{indirect.count > 1}}) mix(value);
     return key;
 }
@@ -85,7 +90,7 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
         return std::any_of(result.vertexAttributes.begin(), result.vertexAttributes.end(), [&](const ShaderRecompiler::VertexAttribute& attribute) { return attribute.fetchIndex == fetchIndex; });
     };
     const auto patchedWord = [&](std::int32_t sgpr) { return sgpr == indirect.baseVertexSgpr || sgpr == indirect.startInstanceSgpr || (indirect.drawIndexEnabled && sgpr == indirect.drawIndexSgpr); };
-    const auto dimension = [&](std::int32_t k, std::int32_t p, bool shared, bool conflict, std::uint32_t x, bool fetched, Rule& rule, std::uint32_t& constant) {
+    const auto dimension = [&](std::int32_t k, std::int32_t p, bool shared, bool conflict, std::uint32_t x, bool fetched, bool instance, Rule& rule, std::uint32_t& constant) {
         if (indirect.drawParameters) {
             // The stage's index VGPR is the CP's whatever the draw's offset, and it reads the
             // patched SGPR from the draw, so the record's dword is drawn in place when the CP
@@ -98,6 +103,7 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
             else if (p >= 0 && fetched && k != p) fail(Path::NotFolded);
             else if (p >= 0) rule = Rule::InPlace;
             else if (k >= 0 && patchedWord(k)) fail(Path::NotFolded);
+            else if (!fetched && !inPlaceConstantsOff() && (!instance || support.firstInstance)) rule = Rule::InPlace;
             else {
                 rule = Rule::Constant;
                 constant = k >= 0 ? drawUserWord(frontProgram, k) : 0u;
@@ -112,8 +118,8 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
         else if (x != 0) fail(Path::IndxOffset);
         else rule = Rule::InPlace;
     };
-    dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, fetchedAt(0), indirect.vertexRule, indirect.vertexConstant);
-    dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, fetchedAt(1), indirect.instanceRule, indirect.instanceConstant);
+    dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, fetchedAt(0), false, indirect.vertexRule, indirect.vertexConstant);
+    dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, fetchedAt(1), true, indirect.instanceRule, indirect.instanceConstant);
     if (!support.firstInstance && (indirect.instanceRule == Rule::InPlace || indirect.instanceConstant != 0)) fail(Path::FeatureGap);
     if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 256) fail(Path::FeatureGap);
 

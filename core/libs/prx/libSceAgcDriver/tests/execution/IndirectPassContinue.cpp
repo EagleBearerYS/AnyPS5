@@ -150,8 +150,8 @@ void DrawState(std::vector<std::uint32_t>& commands, std::uintptr_t records, con
     Append(commands, 0x69, {0x3b8, TiledAttrib3});
 }
 
-void Draw(std::vector<std::uint32_t>& commands) {
-    Append(commands, 0x2c, {0, BaseVertexLocation, StartInstanceLocation, 0, 1, 0, 0, 16, 2});
+void Draw(std::vector<std::uint32_t>& commands, bool startInstancePatched = true) {
+    Append(commands, 0x2c, {0, BaseVertexLocation, startInstancePatched ? StartInstanceLocation : 0u, 0, 1, 0, 0, 16, 2});
 }
 
 void Submit(std::vector<std::uint32_t> commands) {
@@ -258,6 +258,24 @@ void RecordsWrittenByTheHostBetweenBatches(const GuestBlock& records, const Gues
     std::cout << what << ": the second batch recorded its own barrier\n";
 }
 
+void UnwrittenStartInstanceReadInPlace(const GuestBlock& code, const GuestBlock& records, const GuestBlock& target, bool inPlace) {
+    const std::string what = inPlace ? "two draws whose start instance the CP writes nowhere" : "two draws whose start instance the CP writes nowhere, with APS5_NO_INDIRECT_IN_PLACE_CONSTANT";
+    if (inPlace) unsetenv("APS5_NO_INDIRECT_IN_PLACE_CONSTANT");
+    else setenv("APS5_NO_INDIRECT_IN_PLACE_CONSTANT", "1", 1);
+    Clear(target);
+    std::vector<std::uint32_t> commands;
+    Fill(commands, code, records.Address(), Drawn);
+    DrawState(commands, records.Address(), target);
+    Draw(commands, false);
+    Draw(commands, false);
+    const auto before = AgcDriver::Graphics::IndirectPassCounters();
+    Submit(std::move(commands));
+    unsetenv("APS5_NO_INDIRECT_IN_PLACE_CONSTANT");
+    RequirePasses(Since(before), inPlace ? Passes{1, 1, 1, 1} : Passes{2, 0, 2, 0}, what);
+    Require(Covered(target) != 0, what + " drew nothing");
+    std::cout << what << (inPlace ? ": read in place, one barrier, one pass\n" : ": rewritten per draw, one pass each\n");
+}
+
 }
 
 int main() {
@@ -282,6 +300,8 @@ int main() {
         RecordsRewrittenBetweenDraws(code, records, target, true);
         RecordsRewrittenBetweenDraws(code, records, target, false);
         RecordsWrittenByTheHostBetweenBatches(records, target);
+        UnwrittenStartInstanceReadInPlace(code, records, target, true);
+        UnwrittenStartInstanceReadInPlace(code, records, target, false);
         AgcDriverShutdown_nid_postfix();
         std::puts("GPU-side indirect draws continue the open pass only while nothing wrote their records");
         return 0;
