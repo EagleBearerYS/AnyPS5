@@ -104,6 +104,7 @@ const SpirvInputBinding* SpirvInputBindingForParameter(const SpirvEmitterState& 
 std::uint32_t EmitVertexParameterComponentU32(SpirvEmitterState& state, const SpirvInputBinding& input, std::uint32_t component);
 std::uint32_t EmitInputComponentU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component);
 std::uint32_t EmitLocalInvocationIndex(SpirvEmitterState& state);
+void EmitEntryInvocationIds(SpirvEmitterState& state);
 std::uint32_t EmitBallotLaneActiveBool(SpirvEmitterState& state, std::uint32_t ballot, std::uint32_t lane);
 std::uint32_t EmitSubgroupLaneActiveBool(SpirvEmitterState& state, std::uint32_t lane);
 std::uint32_t EmitBinaryU32(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t lhs, std::uint32_t rhs);

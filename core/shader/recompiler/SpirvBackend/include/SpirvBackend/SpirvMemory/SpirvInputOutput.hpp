@@ -24,6 +24,7 @@ const SpirvInputBinding* SpirvInputBindingForParameter(const SpirvEmitterState& 
 std::uint32_t EmitVertexParameterComponentU32(SpirvEmitterState& state, const SpirvInputBinding& input, std::uint32_t component);
 std::uint32_t EmitInputComponentU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component);
 std::uint32_t EmitLocalInvocationIndex(SpirvEmitterState& state);
+void EmitEntryInvocationIds(SpirvEmitterState& state);
 
 }
 

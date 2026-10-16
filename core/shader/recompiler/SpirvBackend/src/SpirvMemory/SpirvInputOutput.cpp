@@ -193,13 +193,29 @@ namespace ShaderRecompiler
         return value;
     }
 
+    void EmitEntryInvocationIds(SpirvEmitterState& state) {
+        state.entryInvocationId = 0u;
+        state.entryInvocationIndex = 0u;
+        if (state.subgroupLocalInvocationIdVariable != 0u && !HostSubgroupSingleLane(state)) {
+            state.entryInvocationId = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), state.entryInvocationId, state.subgroupLocalInvocationIdVariable);
+        }
+        if (const auto variable = InputVariableForKind(state, StageInputKind::LocalInvocationIndex); variable != 0u) {
+            state.entryInvocationIndex = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), state.entryInvocationIndex, variable);
+        }
+    }
+
     std::uint32_t EmitLocalInvocationIndex(SpirvEmitterState& state) {
         const auto variable = InputVariableForKind(state, StageInputKind::LocalInvocationIndex);
         if (variable == 0) {
             FailEmit("LocalInvocationIndex was not declared");
         }
-        const auto value = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, variable);
+        auto value = state.entryInvocationIndex;
+        if (value == 0u || state.module.InHelperFunction()) {
+            value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), value, variable);
+        }
         if (state.laneCount == 2) {
             const auto waveBase = EmitBinaryU32(state, spv::OpBitwiseAnd, value, ConstantU32(state, ~31u));
             return EmitAddU32(state, EmitAddU32(state, value, waveBase), ConstantU32(state, state.laneHalf * 32));

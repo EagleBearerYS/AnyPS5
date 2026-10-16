@@ -846,7 +846,8 @@ struct CalleeStateScope {
         : state(state), currentLabel(state.currentLabel), currentBlock(state.currentBlock), continueTarget(state.continueTarget), bdaStopsInvocations(state.bdaStopsInvocations),
           bdaStopValue(state.bdaStopValue), bdaPcOverride(state.bdaPcOverride), calleeStopValue(state.calleeStopValue), memoryByteOffsets(state.memoryByteOffsets),
           bufferAddresses(state.bufferAddresses), bufferDwords(state.bufferDwords), ldsBufferBase(state.ldsBufferBase), gdsLength(state.gdsLength),
-          scratchVariable(state.scratchVariable), vectorWindowVariable(state.vectorWindowVariable), ldsVariable(state.ldsVariable), laneHalf(state.laneHalf) {
+          scratchVariable(state.scratchVariable), vectorWindowVariable(state.vectorWindowVariable), ldsVariable(state.ldsVariable), laneHalf(state.laneHalf),
+          entryInvocationId(state.entryInvocationId), entryInvocationIndex(state.entryInvocationIndex) {
     }
     CalleeStateScope(const CalleeStateScope&) = delete;
     CalleeStateScope& operator=(const CalleeStateScope&) = delete;
@@ -867,6 +868,8 @@ struct CalleeStateScope {
         state.vectorWindowVariable = vectorWindowVariable;
         state.ldsVariable = ldsVariable;
         state.laneHalf = laneHalf;
+        state.entryInvocationId = entryInvocationId;
+        state.entryInvocationIndex = entryInvocationIndex;
     }
 
     SpirvEmitterState& state;
@@ -886,6 +889,8 @@ struct CalleeStateScope {
     std::array<std::uint32_t, 2> vectorWindowVariable;
     std::uint32_t ldsVariable;
     std::uint32_t laneHalf;
+    std::uint32_t entryInvocationId;
+    std::uint32_t entryInvocationIndex;
 };
 
 FunctionLayout PlanFunctions(SpirvValueEmitContext& ctx, const IrProgram& program) {
@@ -1055,6 +1060,7 @@ CalleeSignature EmitCalleeFunction(SpirvValueEmitContext& caller, const IrProgra
         }
     }
     EmitMemoryOffsets(state);
+    EmitEntryInvocationIds(state);
     EmitLdsBufferBase(state);
     if (state.gdsVariable != 0u) {
         state.gdsLength = state.module.AllocateId();

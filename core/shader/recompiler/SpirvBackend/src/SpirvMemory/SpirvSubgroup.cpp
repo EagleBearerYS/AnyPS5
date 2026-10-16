@@ -22,6 +22,7 @@ namespace ShaderRecompiler
             if (state.subgroupLocalInvocationIdVariable == 0) {
                 FailEmit("SubgroupLocalInvocationId was not declared before function emission");
             }
+            if (state.entryInvocationId != 0u && !state.module.InHelperFunction()) return state.entryInvocationId;
             const auto value = state.module.AllocateId();
             state.module.AddFunction(spv::OpLoad, TypeU32(state), value, state.subgroupLocalInvocationIdVariable);
             return value;

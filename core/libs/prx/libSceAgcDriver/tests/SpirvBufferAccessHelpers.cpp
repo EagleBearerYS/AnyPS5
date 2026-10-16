@@ -32,6 +32,7 @@ struct Module {
     std::map<std::uint32_t, std::uint32_t> callsFromMain;
     std::map<std::uint32_t, std::uint32_t> branchedCallsFromMain;
     std::size_t mainBufferMemoryLoads = 0;
+    std::map<std::uint32_t, std::size_t> mainBuiltinLoads;
 };
 
 std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
@@ -68,12 +69,14 @@ Module Parse(std::span<const std::uint32_t> words) {
     std::uint32_t label = 0;
     std::uint32_t merge = 0;
     std::set<std::uint32_t> conditionalTargets;
+    std::map<std::uint32_t, std::uint32_t> builtins;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
         if (count == 0 || cursor + count > words.size()) throw std::runtime_error("truncated SPIR-V instruction");
         const auto* operands = words.data() + cursor + 1;
         if (op == spv::OpEntryPoint) entry = operands[1];
+        if (op == spv::OpDecorate && count >= 4u && operands[1] == spv::DecorationBuiltIn) builtins[operands[0]] = operands[2];
         if (op == spv::OpName) {
             std::string name(reinterpret_cast<const char*>(operands + 1), (count - 2u) * 4u);
             module.functions[operands[0]].name = name.c_str();
@@ -104,6 +107,7 @@ Module Parse(std::span<const std::uint32_t> words) {
             if (op == spv::OpFunctionCall) ++module.callsFromMain[operands[2]];
             if (op == spv::OpFunctionCall && conditionalTargets.contains(label)) ++module.branchedCallsFromMain[operands[2]];
             if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && physicalPointers.contains(operands[2])) ++module.mainBufferMemoryLoads;
+            if (op == spv::OpLoad && builtins.contains(operands[2])) ++module.mainBuiltinLoads[builtins.at(operands[2])];
         }
         cursor += count;
     }
@@ -172,6 +176,11 @@ int main() {
         Expect(atomics.size() == 1u && atomics[0] == 2u, "expected one atomic address helper called by the two buffer_atomic_add, found " + Describe(atomics));
         const auto formatted = Calls(module, "load_formatted_buffer_");
         Expect(formatted.size() == 1u && formatted[0] == 1u, "expected one formatted load helper called once, found " + Describe(formatted));
+        for (const auto builtin : {spv::BuiltInSubgroupLocalInvocationId, spv::BuiltInLocalInvocationIndex}) {
+            const auto found = module.mainBuiltinLoads.find(builtin);
+            const auto loads = found == module.mainBuiltinLoads.end() ? 0u : found->second;
+            Expect(loads <= 1u, "main loads built-in " + std::to_string(builtin) + " " + std::to_string(loads) + " times, expected once at its entry");
+        }
         Expect(module.mainBufferMemoryLoads == 0u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected its s_buffer_load_dword to read through their helper");
         std::uint32_t write = 0;
         for (const auto& [id, function] : module.functions) {
