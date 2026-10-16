@@ -11,6 +11,7 @@
 #endif
 #include <windows.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -234,6 +235,54 @@ void WindowsShared(const Graphics::Context& context) {
     Expect(Build(context).leaves == second.leaves, "address space reuse: a build without a mapping change got other leaves than the one before it");
 }
 
+void WindowCompleted(const Graphics::Context& context) {
+    constexpr auto Ranges = static_cast<std::uint32_t>(ImportWindowBytes / Unit);
+    constexpr std::uint32_t Missing = 45;
+    Graphics::SetHostImportWindow(ImportWindowBytes);
+    Block units(HostUnits, Block::Backing::Host);
+    const auto windowStart = (units.Address(8) + ImportWindowBytes - 1u) & ~(ImportWindowBytes - 1u);
+    const auto first = static_cast<std::uint32_t>((windowStart - units.Address(0)) / Unit);
+    const auto other = first + Ranges + 8u;
+    for (std::uint32_t range = 0; range < Ranges; ++range) {
+        if (range != Missing) units.Map(first + range, 1);
+    }
+    units.Map(other, 1);
+    static_cast<void>(Build(context));
+    const auto otherSerial = Serial(context, units.Address(other));
+    std::vector<std::uint64_t> small;
+    for (std::uint32_t range = 0; range < Ranges; ++range) {
+        if (range != Missing) small.push_back(Serial(context, units.Address(first + range)));
+    }
+    std::sort(small.begin(), small.end());
+    small.erase(std::unique(small.begin(), small.end()), small.end());
+    const std::string what = "the cached address space rebuilt after the last of " + std::to_string(Ranges) + " separately mapped 64 KiB ranges completed an 8 MiB import window";
+    Expect(otherSerial != 0u, what + ": the range in another window was not imported");
+    Expect(small.size() == Ranges - 1u && small.front() != 0u, what + ": before the window was complete its " + std::to_string(Ranges - 1u) + " ranges had " + std::to_string(small.size()) + " distinct import serials (lowest " + Hex(small.front()) + "), expected one import each");
+
+    units.Map(first + Missing, 1);
+    std::string failure;
+    try {
+        static_cast<void>(Build(context));
+    } catch (const std::exception& error) {
+        failure = error.what();
+    }
+    Expect(failure.empty(), what + ": the build failed: " + failure);
+    const auto whole = Graphics::HostImportSerial(context, windowStart, static_cast<std::size_t>(ImportWindowBytes), false);
+    Expect(Serial(context, units.Address(other)) == otherSerial, what + ": the range in another window lost its import (serial " + Hex(otherSerial) + ", now " + Hex(Serial(context, units.Address(other))) + ")");
+    Expect(whole != 0u, what + ": no import covers the whole window");
+    if (whole == 0u) return;
+    Expect(!std::binary_search(small.begin(), small.end(), whole), what + ": the window is served by one of the small imports it replaces");
+    std::size_t elsewhere = 0;
+    std::size_t stale = 0;
+    for (std::uint32_t range = 0; range < Ranges; ++range) {
+        const auto serial = Serial(context, units.Address(first + range));
+        if (serial != whole) ++elsewhere;
+        if (std::binary_search(small.begin(), small.end(), serial)) ++stale;
+    }
+    Expect(elsewhere == 0u, what + ": " + std::to_string(elsewhere) + " of the window's " + std::to_string(Ranges) + " ranges are not served by the window's import " + Hex(whole));
+    Expect(stale == 0u, what + ": " + std::to_string(stale) + " ranges are still served by a small import that the window's import replaces");
+}
+
 }
 
 #endif
@@ -253,6 +302,7 @@ int main() {
             return VulkanTestSkipped;
         }
         WindowsShared(context);
+        WindowCompleted(context);
     } catch (const std::exception& error) {
         Expect(false, std::string("exception: ") + error.what());
     }
