@@ -1,0 +1,4 @@
+BASE=5d9dcc42d2ec5401aebd089028b8d4d7410a77b4
+REPEAT=3
+EXTRA_TESTS='agc_descriptor_cache|agc_descriptor_pool_reset_failure'
+NO_BEFORE=1
