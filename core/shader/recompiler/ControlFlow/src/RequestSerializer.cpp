@@ -406,7 +406,7 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
         }
     }
     if (version >= 30u) info.reversedBlend = reader.ReadU32();
-    if (version >= 32u) {
+    if (version >= 33u) {
         for (std::uint32_t& order : info.sampleOrder) order = reader.ReadU32();
     }
     if (version < 5u) {
@@ -782,7 +782,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(32u);
+    writer.WriteU32(33u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -807,6 +807,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.vertexSubgroups);
     writer.WriteBool(request.target.float16DenormPreserve);
     writer.WriteU32Span(request.context.linkedCallFallbacks);
+    writer.WriteBool(request.target.spannedWaves);
     return base64Encode(buffer);
 }
 
@@ -815,7 +816,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 32u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 33u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -851,6 +852,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.linkedCallFallbacks = reader.ReadU32Vector();
         result.request.context.linkedCallFallbacks = result.linkedCallFallbacks;
     }
+    if (version >= 32u) result.request.target.spannedWaves = reader.ReadBool();
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

@@ -1932,7 +1932,12 @@ void DepthStencilTests() {
     queue.context[0x000] = 0x23;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depthWrite && state.depthCompare == VK_COMPARE_OP_ALWAYS && clears(state.stencilFront), "a combined depth and stencil clear draw does not clear both planes");
-    for (const auto control : {4u, 8u}) {
+    for (const auto select : {0xc0u, 0xf00u}) {
+        queue.context[0x000] = 0x23u | select;
+        state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.depthWrite && state.depthCompare == VK_COMPARE_OP_ALWAYS && clears(state.stencilFront), "a copy sample selection without a copy changed a clear draw");
+    }
+    for (const auto control : {4u, 8u, 0x84u, 0x108u}) {
         queue.context[0x000] = 0x22u | control;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
     }
@@ -2106,7 +2111,7 @@ void memoryValueFillTests() {
 }
 
 void depthMaintenanceTests() {
-    for (const auto mode : {0x4u, 0x8u, 0x80u, 0x100u, 0x1000u, 0x4000u}) {
+    for (const auto mode : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u, 0x4000u}) {
         for (const auto clear : {0u, 1u, 2u, 3u}) {
             auto queue = makeState();
             queue.context[0x000] = mode | clear;
@@ -2120,7 +2125,7 @@ void depthMaintenanceTests() {
             expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, reason);
         }
     }
-    for (const auto control : {0u, 1u, 2u, 3u, 0x20u, 0x40u, 0x2000u, 0x2063u}) {
+    for (const auto control : {0u, 1u, 2u, 3u, 0x20u, 0x40u, 0x80u, 0xc0u, 0x100u, 0xf00u, 0x2000u, 0x2063u, 0x2fe3u}) {
         auto queue = makeState();
         queue.context[0x000] = control;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "ordinary depth controls were mistaken for maintenance");
@@ -2691,6 +2696,67 @@ void multisampleTests() {
     Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "a 2x pattern varying between pixels was refused on a device with a 2x2 grid for 4 samples only");
     gridContext.sampleLocationGridSampleCounts |= VK_SAMPLE_COUNT_2_BIT;
     Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "a supported 2x2 sample location grid was refused");
+    queue.context[0x31d] = 0;
+    state = DecodeState(queue);
+    Require(state.samples == 1 && state.colors.size() == 1 && state.colors[0].samples == 1 && state.customSampleLocations && state.sampleLocationGrid, "2x checkerboard rasterization into a one-sample target (PPSA27836) did not rasterize sample 0 alone");
+    const auto sampleZero = AgcDriver::Graphics::SampleLocations(state);
+    const std::array<VkSampleLocationEXT, 4> expectedSampleZero{{{0.75f, 0.5f}, {0.75f, 0.5f}, {0.25f, 0.5f}, {0.25f, 0.5f}}};
+    for (std::size_t pixel = 0; pixel < expectedSampleZero.size(); ++pixel) Require(sampleZero[pixel].x == expectedSampleZero[pixel].x && sampleZero[pixel].y == expectedSampleZero[pixel].y, "a one-sample target did not take sample 0's location in each pixel of the grid");
+    gridContext.sampleLocationSampleCounts = VK_SAMPLE_COUNT_2_BIT;
+    gridContext.sampleLocationGridSampleCounts = VK_SAMPLE_COUNT_2_BIT;
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(gridContext, state); }, "VK_EXT_sample_locations");
+    gridContext.sampleLocationSampleCounts |= VK_SAMPLE_COUNT_1_BIT;
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(gridContext, state); }, "2x2 sample location grid");
+    gridContext.sampleLocationGridSampleCounts |= VK_SAMPLE_COUNT_1_BIT;
+    Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "one-sample grid locations were refused on a device that supports them");
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
+    state = DecodeState(queue);
+    Require(state.samples == 1 && state.customSampleLocations && !state.sampleLocationGrid, "a uniform 2x pattern into a one-sample target did not use sample 0's location");
+    auto stenciled = queue;
+    for (const auto [pixel, word] : {std::pair{0u, 0x0c04u}, std::pair{1u, 0x0c04u}, std::pair{2u, 0x040cu}, std::pair{3u, 0x040cu}}) stenciled.context[0x2fe + pixel * 4u] = word;
+    for (const auto [offset, word] : {std::pair{0x010u, 0x80000180u}, std::pair{0x011u, 0x20000181u}, std::pair{0x012u, 0x00001000u}, std::pair{0x013u, 0x00002000u}, std::pair{0x015u, 0x00002000u}, std::pair{0x007u, 0x003f003fu}, std::pair{0x000u, 0u}, std::pair{0x002u, 0u}, std::pair{0x00au, 0u}, std::pair{0x00bu, 0x3f800000u}, std::pair{0x10bu, 0u}, std::pair{0x10cu, 0x01ffff00u}, std::pair{0x10du, 0x01ffff00u}, std::pair{0x200u, 0x007007b3u}}) stenciled.context[offset] = word;
+    state = DecodeState(stenciled);
+    Require(state.samples == 1 && state.depth && state.depth->samples == 1 && state.stencilTest && state.sampleLocationGrid && state.colors.size() == 1 && state.colors[0].samples == 1, "2x checkerboard rasterization into one-sample stencil and color targets (PPSA27836) did not rasterize sample 0 alone");
+    stenciled.context[0x31d] = 0x9000;
+    expectFailure([&] { DecodeState(stenciled); }, "a color target's sample count differs from the rasterizer's");
+    stenciled.context[0x31d] = 0;
+    stenciled.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
+    stenciled.context[0x1b4] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
+    expectFailure([&] { DecodeState(stenciled); }, "the depth target's sample count differs from the rasterizer's");
+    const auto withInputs = [](AgcDriver::QueueState base, std::initializer_list<ShaderRecompiler::PixelInput> inputs) {
+        for (const auto input : inputs) {
+            base.context[0x1b3] |= ShaderRecompiler::PixelInputBit(input);
+            base.context[0x1b4] |= ShaderRecompiler::PixelInputBit(input);
+        }
+        return base;
+    };
+    for (const auto input : {ShaderRecompiler::PixelInput::PerspectiveCentroid, ShaderRecompiler::PixelInput::LinearCentroid, ShaderRecompiler::PixelInput::SampleCoverage}) expectFailure([&] { DecodeState(withInputs(queue, {input})); }, "sample count differs from the rasterizer's");
+    for (const auto input : {ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::LinearSample, ShaderRecompiler::PixelInput::Ancillary}) {
+        state = DecodeState(withInputs(queue, {input}));
+        Require(state.samples == 1 && !state.perSampleShading, "a sample or sample-index input into a one-sample target did not rasterize sample 0 alone");
+    }
+    for (const auto position : {ShaderRecompiler::PixelInput::PositionX, ShaderRecompiler::PixelInput::PositionY}) expectFailure([&] { DecodeState(withInputs(queue, {ShaderRecompiler::PixelInput::Ancillary, position})); }, "sample count differs from the rasterizer's");
+    auto iterated = queue;
+    iterated.context[0x293] = 0x06030000u;
+    state = DecodeState(iterated);
+    Require(state.samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE into a one-sample target (PPSA27836) did not rasterize sample 0 alone");
+    state = DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::PositionX, ShaderRecompiler::PixelInput::PositionY}));
+    Require(state.samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE with sample and position inputs (PPSA27836) did not rasterize sample 0 alone");
+    state = DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::PerspectiveCentroid, ShaderRecompiler::PixelInput::LinearCentroid}));
+    Require(state.samples == 1, "PS_ITER_SAMPLE with centroid inputs did not rasterize sample 0 alone");
+    expectFailure([&] { DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::SampleCoverage})); }, "sample count differs from the rasterizer's");
+    expectFailure([&] { DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::PositionX})); }, "sample count differs from the rasterizer's");
+    auto iteratedStencil = withInputs(stenciled, {});
+    iteratedStencil.context[0x1b3] &= ~ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
+    iteratedStencil.context[0x1b4] &= ~ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
+    state = DecodeState(withInputs(iteratedStencil, {ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::Ancillary}));
+    Require(state.samples == 1 && state.depth && state.depth->samples == 1, "sample and sample-index inputs into a one-sample depth target (PPSA07411) did not rasterize sample 0 alone");
+    iteratedStencil.context[0x293] = 0x06030000u;
+    state = DecodeState(iteratedStencil);
+    Require(state.samples == 1 && state.depth && state.depth->samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE into one-sample depth and color targets did not rasterize sample 0 alone");
+    auto singleScan = queue;
+    singleScan.context[0x292] = 2;
+    expectFailure([&] { DecodeState(singleScan); }, "a color target's sample count differs from the rasterizer's");
     queue = multisampled();
     queue.context[0x2f8] = 0;
     queue.context[0x292] = 2;
@@ -2831,7 +2897,8 @@ void multisampleTests() {
     queue.context[0x31d] = 0x1000;
     expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples");
     queue.context[0x31d] = 0;
-    expectFailure([&] { DecodeState(queue); }, "sample count differs");
+    queue.context[0x293] = 0x10000u;
+    Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
     queue = multisampled();
     queue.context[0x292] = 2;
     state = DecodeState(queue);
@@ -6336,7 +6403,7 @@ void orderedPixelShaderTests() {
     unordered.target.supportedExtensions = bdaExtensions;
     const auto unorderedKills = countOps(ShaderRecompiler::Recompile(unordered).spirv.Words());
     Require(!unorderedKills.contains(spv::OpTerminateInvocation) && unorderedKills.at(spv::OpKill) == 6u, "a pixel shader with BDA reads and no SPV_KHR_terminate_invocation did not kill on a fault");
-    constexpr std::array<std::uint32_t, 12> vertexBdaCode{0x7e040f00u, 0x7e060280u, 0xdc208001u, 0x047d0002u, 0xdc308008u, 0x057d0002u, 0xbf8c3f70u, 0x4a080b04u, 0x7e0e0d04u, 0xf80008cfu, 0x07070707u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 12> vertexBdaCode{0x7e040f00u, 0x7e060280u, 0xdc208001u, 0x047d0002u, 0xdc308008u, 0x057d0002u, 0xbf8c3f70u, 0x4a080b04u, 0x7e0e0d04u, 0xf80008cfu, 0x07070707u, 0xbf810000u};
     const std::array<std::uint32_t, 5> vertexCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance};
     const auto vertexWords = [&](std::span<const std::string_view> extensions) {
         ShaderRecompiler::RecompileRequest request{};
@@ -8209,12 +8276,13 @@ void pipelineJournalTests() {
             Require(PipelineJournalTotals().recordedCompute == reloaded.recordedCompute + 1 && PipelineJournalTotals().recordedModules == reloaded.recordedModules, "the pipeline whose record was torn was not recorded again, or its module was");
         }
         {
+            const auto before = PipelineJournalTotals();
             auto cancelled = StartPipelineJournalReplay(context, fingerprint, hooks);
             Require(cancelled != nullptr, "the third replay did not start");
             cancelled->Cancel();
             cancelled->Wait();
             const auto after = PipelineJournalTotals();
-            Require(cancelled->Done() && after.replayFailed == 0 && after.replayRejected == 0 && after.replayedGraphics + after.replayPresent <= totals.replayedGraphics + totals.replayPresent + 1, "a cancelled replay did not stop cleanly");
+            Require(cancelled->Done() && after.replayFailed == 0 && after.replayRejected == 0 && after.replayedGraphics + after.replayPresent <= before.replayedGraphics + before.replayPresent + 1, "a cancelled replay did not stop cleanly");
         }
         {
             const std::uint32_t meshWithoutOutputSize = 2u;
