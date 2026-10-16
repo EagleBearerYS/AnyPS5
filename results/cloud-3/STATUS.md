@@ -1,4 +1,4 @@
-READY (BF-022 done: GPU-side indirect draws reading patched SGPRs from draw parameters; result results/cloud-3/BF-022.md, branch exp/agc-indirect-gpu-draw-parameters e280ce9d5)
+BUSY BF-024 (claimed: port BF-022 draw parameters onto Village fast5 tree, branch exp village-fast5-draw-parameters)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
