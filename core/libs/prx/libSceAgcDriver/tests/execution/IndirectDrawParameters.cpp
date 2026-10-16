@@ -316,17 +316,23 @@ double ProcessSeconds() {
 
 struct Timing {
     double wallPerPacket;
+    double submitPerPacket;
     double cpuPerPacket;
 };
 
 // `packets` DRAW_INDIRECT_MULTI packets of `records` records each, as BF-015's benchmark: the
-// depth stage into a tiled target, every record a different depth.
-Timing DrawPackets(const GuestBlock& target, const GuestBlock& records, std::uint32_t perPacket, std::uint32_t packets) {
-    auto commands = State(DepthCode.data(), 1, records.Address());
+// depth stage into a tiled target, every record a different depth. With `startInstance` the CP
+// also writes the start instance (to s9, which the stage does not read), so no dimension needs
+// the GPU path's rewritten record copy.
+Timing DrawPackets(const GuestBlock& target, const GuestBlock& records, std::uint32_t perPacket, std::uint32_t packets, bool startInstance) {
+    auto commands = State(DepthCode.data(), startInstance ? 2 : 1, records.Address());
     Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(target.Address() >> 8u)});
     Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(target.Address() >> 40u)});
     Append(commands, 0x69, {0x3b8, TiledAttrib3});
-    for (std::uint32_t packet = 0; packet < packets; ++packet) Multi(commands, false, 0, perPacket, false);
+    for (std::uint32_t packet = 0; packet < packets; ++packet) {
+        if (startInstance) Append(commands, 0x2c, {0, BaseVertexLocation, StartInstanceLocation, 0, perPacket, 0, 0, 16, 2});
+        else Multi(commands, false, 0, perPacket, false);
+    }
     for (std::uint32_t record = 0; record < perPacket; ++record) {
         const std::array<std::uint32_t, 4> words{3, 1, std::bit_cast<std::uint32_t>(static_cast<float>(record) / 128.0f), 0};
         std::copy(words.begin(), words.end(), records.Words() + record * 4);
@@ -335,9 +341,11 @@ Timing DrawPackets(const GuestBlock& target, const GuestBlock& records, std::uin
     const auto cpuStart = ProcessSeconds();
     const auto start = std::chrono::steady_clock::now();
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the benchmark submission failed");
+    const auto submitted = std::chrono::steady_clock::now();
     AgcDriverWaitIdle_nid_postfix();
     const auto wall = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
-    return {wall / packets, (ProcessSeconds() - cpuStart) * 1e6 / packets};
+    const auto submit = std::chrono::duration<double, std::micro>(submitted - start).count();
+    return {wall / packets, submit / packets, (ProcessSeconds() - cpuStart) * 1e6 / packets};
 }
 
 void Benchmark() {
@@ -346,19 +354,39 @@ void Benchmark() {
     const GuestBlock target;
     const GuestBlock records;
     constexpr std::uint32_t Packets = 64;
-    for (const bool gpu : {false, true}) {
-        SetDrawParameters(gpu);
-        for (const std::uint32_t perPacket : {1u, 8u, 64u}) {
-            static_cast<void>(DrawPackets(target, records, perPacket, Packets));
-            std::vector<Timing> rounds;
-            for (int round = 0; round < 5; ++round) rounds.push_back(DrawPackets(target, records, perPacket, Packets));
-            std::sort(rounds.begin(), rounds.end(), [](const Timing& a, const Timing& b) { return a.wallPerPacket < b.wallPerPacket; });
-            const auto& median = rounds[2];
-            std::printf("%s, %2u records per packet: wall %.1f us per packet (%.2f per record), process CPU %.1f us per packet (%.2f per record); wall per packet min %.1f max %.1f\n", gpu ? "gpu-side (draw parameters)" : "cpu path", perPacket, median.wallPerPacket, median.wallPerPacket / perPacket, median.cpuPerPacket, median.cpuPerPacket / perPacket, rounds.front().wallPerPacket, rounds.back().wallPerPacket);
+    constexpr int Rounds = 9;
+    for (const bool startInstance : {false, true}) {
+        for (const bool gpu : {false, true}) {
+            SetDrawParameters(gpu);
+            for (const std::uint32_t perPacket : {1u, 8u, 64u}) {
+                static_cast<void>(DrawPackets(target, records, perPacket, Packets, startInstance));
+                std::vector<Timing> rounds;
+                for (int round = 0; round < Rounds; ++round) rounds.push_back(DrawPackets(target, records, perPacket, Packets, startInstance));
+                std::sort(rounds.begin(), rounds.end(), [](const Timing& a, const Timing& b) { return a.wallPerPacket < b.wallPerPacket; });
+                const auto& median = rounds[Rounds / 2];
+                std::printf("%s, %s, %2u records per packet: wall %.1f us per packet (%.2f per record; submit %.1f), process CPU %.1f us per packet (%.2f per record); wall per packet min %.1f max %.1f\n", startInstance ? "start instance patched" : "start instance nowhere (BF-015)", gpu ? "gpu-side (draw parameters)" : "cpu path", perPacket, median.wallPerPacket, median.wallPerPacket / perPacket, median.submitPerPacket, median.cpuPerPacket, median.cpuPerPacket / perPacket, rounds.front().wallPerPacket, rounds.back().wallPerPacket);
+            }
         }
     }
     const auto counters = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     std::printf("draw cache: %llu lookups, %llu hits, %llu inserts\n", static_cast<unsigned long long>(counters.lookups), static_cast<unsigned long long>(counters.hits), static_cast<unsigned long long>(counters.inserts));
+}
+
+// Packets of `perPacket` records on one path for `seconds`, for APS5_PROFILE_DRAW's periodic
+// phase report (the driver thread's time per packet).
+void Soak(bool gpu, std::uint32_t perPacket, bool startInstance, double seconds) {
+    Registered(DepthHeader, DepthCode.data(), sizeof(DepthCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    const GuestBlock target;
+    const GuestBlock records;
+    SetDrawParameters(gpu);
+    const auto start = std::chrono::steady_clock::now();
+    std::uint64_t packets = 0;
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < seconds) {
+        static_cast<void>(DrawPackets(target, records, perPacket, 64, startInstance));
+        packets += 64;
+    }
+    std::printf("%s, %u records per packet, start instance %s: %llu packets, %.1f us each\n", gpu ? "gpu-side (draw parameters)" : "cpu path", perPacket, startInstance ? "patched" : "nowhere", static_cast<unsigned long long>(packets), seconds * 1e6 / static_cast<double>(packets));
 }
 
 }
@@ -371,6 +399,11 @@ int main(int argc, char** argv) {
         }
         if (argc > 1 && std::string(argv[1]) == "--benchmark") {
             Benchmark();
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
+        if (argc > 4 && std::string(argv[1]) == "--soak") {
+            Soak(std::string(argv[2]) == "gpu", static_cast<std::uint32_t>(std::stoul(argv[3])), std::string(argv[4]) == "1", 21.0);
             AgcDriverShutdown_nid_postfix();
             return 0;
         }
