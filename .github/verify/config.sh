@@ -1,0 +1,4 @@
+BASE=bde2a8f0afc55893c2635df83317db32d7cea025
+REPEAT=10
+EXTRA_TESTS='agc_driver_lookup_log_fits_build|agc_driver_graphics|^agc'
+NO_BEFORE=1
