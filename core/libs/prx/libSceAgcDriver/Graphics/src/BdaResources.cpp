@@ -130,6 +130,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             if (auto shared = it->buffer.lock(); shared != nullptr) {
                 ++cache.hits;
                 ++cache.classes.spaceTables;
+                tableBytes = sizeof(ShaderRecompiler::BdaAbi::Header) + it->ranges.size() * sizeof(ShaderRecompiler::BdaAbi::Range);
                 table = std::move(shared);
                 cache.entries.splice(cache.entries.begin(), cache.entries, it);
                 return;
