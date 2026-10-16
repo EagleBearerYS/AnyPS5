@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -886,6 +887,14 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
             }
         }
         shadow->Recount();
+    }
+    if (auto* residency = ResidencyDriver::Active()) {
+        std::vector<ResidencyRange> fresh;
+        fresh.reserve(ranges.size());
+        for (const auto& range : ranges) {
+            if (range.end > range.begin) fresh.push_back({range.begin, range.end - range.begin});
+        }
+        residency->DropMirrors(fresh);
     }
     if (lost != 0) {
         Stats().slabLost.fetch_add(lost, std::memory_order_relaxed);

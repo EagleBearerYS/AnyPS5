@@ -65,6 +65,7 @@ public:
     void BeforeDispatch();
     void UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     void BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports);
+    void DropMirrors(std::span<const ResidencyRange> ranges);
     ResidencyPublication Publish();
     std::vector<Recorder::SectionObject> ChunkObjects(bool written) const;
     void KeepChunks();
