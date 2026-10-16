@@ -1987,7 +1987,8 @@ bool StorageTexture::Refresh() {
     }
     if (std::any_of(changed.begin(), changed.end(), [](bool selected) { return selected; })) {
         uploadReason = keysChanged ? "keys" : cpuWrote ? "cpu" : generation == 0 ? "untracked" : flushed ? "flushed" : "store";
-        upload(&changed);
+        const bool blockRuns = !blockUnits && !keysChanged && !anyBorrowed && (tracked || compared) && !stampedBlocks.empty();
+        upload(&changed, blockRuns ? &stampedBlocks : nullptr);
     } else {
         uploadedKeys = keys;
     }
@@ -2145,7 +2146,26 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
 
 constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
 
-void StorageTexture::upload(const std::vector<bool>* layers) {
+std::vector<std::pair<std::uint64_t, std::uint64_t>> StorageTexture::stampedRuns(const std::vector<std::uint8_t>& blocks) const {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+    const auto block = static_cast<std::uint64_t>(ThinBlockLayout(descriptor.tileMode, BytesPerElement(descriptor.format))[0]);
+    if (block == 0) return runs;
+    const auto firstBlock = descriptor.baseAddress / 65536;
+    for (std::size_t index = 0; index < blocks.size(); ++index) {
+        if (blocks[index] == GuestMemory::BlockUnchanged) continue;
+        const auto blockBegin = (firstBlock + index) * 65536;
+        const auto begin = blockBegin > descriptor.baseAddress ? blockBegin - descriptor.baseAddress : 0;
+        const auto end = std::min<std::uint64_t>(blockBegin + 65536 - descriptor.baseAddress, guestBytes);
+        if (begin >= end) continue;
+        const auto low = begin / block * block;
+        const auto high = std::min<std::uint64_t>((end + block - 1) / block * block, guestBytes);
+        if (!runs.empty() && low <= runs.back().second) runs.back().second = std::max(runs.back().second, high);
+        else runs.emplace_back(low, high);
+    }
+    return runs;
+}
+
+void StorageTexture::upload(const std::vector<bool>* layers, const std::vector<std::uint8_t>* blocks) {
     const bool profile = LookupOutcomes::Profiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
@@ -2234,6 +2254,24 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) layerOriginal.assign(trackedLayers, false);
         else captureGuestBytes(layers);
         stampLayers(true);
+        if (!blockUnits && !geometry.thick && descriptor.tileMode != TextureTileMode::kLinear) {
+            auto runs = blocks != nullptr ? stampedRuns(*blocks) : std::vector<std::pair<std::uint64_t, std::uint64_t>>{};
+            if (runs.empty() && layers != nullptr) runs = unitRuns(*layers);
+            const bool whole = runs.empty() || (runs.size() == 1 && runs.front().first == 0 && runs.front().second == guestBytes);
+            if (whole) runs.assign(1, {0, guestBytes});
+            if (!whole && sliceWindows(runs).empty()) return;
+            forgetBorrowed(0, trackedLayers);
+            const auto uploadedBytes = uploadWindows(*import, runs, whole && layers == nullptr && version == 0);
+            countStorageUpload(1, uploadedBytes);
+            if (!whole) {
+                partialUploads.fetch_add(1, std::memory_order_relaxed);
+                partialUploadBytes.fetch_add(uploadedBytes, std::memory_order_relaxed);
+            }
+            ++Profile().storageDirectUploads;
+            ++version;
+            if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
+            return;
+        }
         // A whole-surface upload of a block-unit image goes through the windows too when a unit
         // shadow holds part of the surface (the detile then reads the slabs; a new image has no
         // layout yet); a partial one always does.

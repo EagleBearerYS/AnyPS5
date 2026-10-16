@@ -373,7 +373,8 @@ private:
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     // Uploads the surface, or only the tracked layers `layers` selects (the direct path; the others
     // upload everything).
-    void upload(const std::vector<bool>* layers = nullptr);
+    void upload(const std::vector<bool>* layers = nullptr, const std::vector<std::uint8_t>* blocks = nullptr);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> stampedRuns(const std::vector<std::uint8_t>& blocks) const;
     void captureGuestBytes(const std::vector<bool>* layers);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
