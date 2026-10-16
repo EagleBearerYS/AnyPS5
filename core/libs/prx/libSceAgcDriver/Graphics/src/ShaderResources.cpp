@@ -2489,7 +2489,46 @@ void ShaderResources::captureValidation() {
 // registry mutex), so the pending-image checks are skipped; otherwise one scan answers them for
 // every surface at once. The stamp checks go through one tracker lock, the cache checks through
 // the images' cached flags and one touch of the cache.
+namespace {
+
+struct FastSplit {
+    std::mutex mutex;
+    std::chrono::steady_clock::time_point report = std::chrono::steady_clock::now();
+    std::uint64_t proofs = 0, textures = 0, scans = 0;
+    double loopNs = 0, collectNs = 0, storageNs = 0, scanNs = 0, unchangedNs = 0, tailNs = 0, wholeNs = 0;
+};
+
+FastSplit& fastSplit() {
+    static FastSplit split;
+    return split;
+}
+
+double timerPairNs() {
+    static const double ns = [] {
+        constexpr int pairs = 100000;
+        const auto start = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point sink{};
+        for (int i = 0; i < pairs; ++i) {
+            const auto a = std::chrono::steady_clock::now();
+            const auto b = std::chrono::steady_clock::now();
+            if (b < a) sink = a;
+        }
+        static_cast<void>(sink);
+        return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / pairs;
+    }();
+    return ns;
+}
+
+}
+
 bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted) {
+    static const bool splitProfile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    using SplitClock = std::chrono::steady_clock;
+    const auto splitNs = [](SplitClock::time_point from, SplitClock::time_point to) { return std::chrono::duration<double, std::nano>(to - from).count(); };
+    const auto splitStart = splitProfile ? SplitClock::now() : SplitClock::time_point{};
+    double splitCollect = 0;
+    bool splitScanned = false;
+    SplitClock::time_point splitLoopEnd{}, splitStorageEnd{}, splitScanEnd{}, splitUnchangedEnd{};
     reason = FastFail::Count;
     overlapping.clear();
     accepted = false;
@@ -2531,7 +2570,9 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
+        const auto collectStart = splitProfile ? SplitClock::now() : SplitClock::time_point{};
         surface.collected = GuestMemory::CollectWrites(address, bytes);
+        if (splitProfile) splitCollect += splitNs(collectStart, SplitClock::now());
         if (surface.collected == 0) return fail(FastFail::Collect);
         const auto* source = surface.source;
         if (!keyProofs) {
@@ -2576,6 +2617,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             queries.push_back({address, bytes, surface.generation});
         }
     }
+    if (splitProfile) splitLoopEnd = SplitClock::now();
     for (std::size_t i = 0; i < storageTextures.size(); ++i) {
         if (storageTextures[i] != nullptr && (i >= storageKeys.size() || !StorageImageServesKeys(*storageTextures[i], storageKeys[i]))) return fail(FastFail::StorageKeys);
         if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
@@ -2597,7 +2639,9 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         queries.push_back({address, bytes, image->Generation()});
         images.push_back(image);
     }
+    if (splitProfile) splitStorageEnd = SplitClock::now();
     if (!pending.empty()) {
+        splitScanned = true;
         if (!StorageTexture::ScanPending(pending)) return fail(FastFail::ClearedView);
         // A foreign image over a view under uncompressed keys is no failure while FindPending
         // names the view's own source: the lookup views the source (cachedTexture's hit rule)
@@ -2631,13 +2675,38 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     } else if (unchanged && BuildProfiled()) {
         Revalidations().serialSkips.fetch_add(1, std::memory_order_relaxed);
     }
+    if (splitProfile) splitScanEnd = SplitClock::now();
     if (!GuestMemory::UnchangedSinceAll(queries)) return fail(FastFail::Changed);
+    if (splitProfile) splitUnchangedEnd = SplitClock::now();
     if (!StorageImagesCached(context, images)) return fail(FastFail::Evicted);
     for (const auto* image : images) image->NoteProved();
     for (std::size_t i = 0; i < validatedTextures.size(); ++i) {
         auto& surface = validatedTextures[i];
         if (surface.source == nullptr) surface.generation = surface.collected;
         surface.keys = scannedKeys[i];
+    }
+    if (splitProfile) {
+        const auto end = SplitClock::now();
+        auto& split = fastSplit();
+        std::lock_guard lock(split.mutex);
+        ++split.proofs;
+        split.textures += textures.size();
+        if (splitScanned) ++split.scans;
+        split.loopNs += splitNs(splitStart, splitLoopEnd);
+        split.collectNs += splitCollect;
+        split.storageNs += splitNs(splitLoopEnd, splitStorageEnd);
+        split.scanNs += splitNs(splitStorageEnd, splitScanEnd);
+        split.unchangedNs += splitNs(splitScanEnd, splitUnchangedEnd);
+        split.tailNs += splitNs(splitUnchangedEnd, end);
+        split.wholeNs += splitNs(splitStart, end);
+        if (end - split.report >= std::chrono::seconds(10) && split.proofs != 0) {
+            const auto proofs = static_cast<double>(split.proofs);
+            const auto perTexture = split.textures != 0 ? split.collectNs / static_cast<double>(split.textures) : 0.0;
+            std::fprintf(stderr, "[rescache] fast revalidate split (10 s): %llu proofs, %.0f textures per proof, %llu scanned the pending registry; us per proof: whole %.2f, texture loop %.2f (CollectWrites %.2f = %.1f ns per texture, timer pair %.1f ns), storage loop %.2f, ScanPending %.2f, UnchangedSinceAll %.2f, tail %.2f\n", static_cast<unsigned long long>(split.proofs), static_cast<double>(split.textures) / proofs, static_cast<unsigned long long>(split.scans), split.wholeNs / proofs / 1000, split.loopNs / proofs / 1000, split.collectNs / proofs / 1000, perTexture, timerPairNs(), split.storageNs / proofs / 1000, split.scanNs / proofs / 1000, split.unchangedNs / proofs / 1000, split.tailNs / proofs / 1000);
+            split.proofs = split.textures = split.scans = 0;
+            split.loopNs = split.collectNs = split.storageNs = split.scanNs = split.unchangedNs = split.tailNs = split.wholeNs = 0;
+            split.report = end;
+        }
     }
     return true;
 }
