@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
@@ -251,6 +252,23 @@ void SetDrawParameters(bool on) {
     else setenv("APS5_NO_INDIRECT_DRAW_PARAMETERS", "1", 1);
 }
 
+enum class Arm { Cpu, GpuEachPass, GpuContinued };
+
+const char* ArmName(Arm arm) {
+    return arm == Arm::Cpu ? "cpu path" : arm == Arm::GpuEachPass ? "gpu-side (draw parameters, a pass and barrier per draw: BF-022)" : "gpu-side (draw parameters, pass continued)";
+}
+
+void SetArm(Arm arm) {
+    SetDrawParameters(arm != Arm::Cpu);
+    if (arm == Arm::GpuEachPass) {
+        setenv("APS5_NO_INDIRECT_PASS_CONTINUE", "1", 1);
+        setenv("APS5_NO_INDIRECT_IN_PLACE_CONSTANT", "1", 1);
+    } else {
+        unsetenv("APS5_NO_INDIRECT_PASS_CONTINUE");
+        unsetenv("APS5_NO_INDIRECT_IN_PLACE_CONSTANT");
+    }
+}
+
 std::uint64_t Entries(const AgcDriver::DriverDetail::DrawEntryCounters& counters) {
     return counters.hits + counters.inserts;
 }
@@ -356,37 +374,40 @@ void Benchmark() {
     constexpr std::uint32_t Packets = 64;
     constexpr int Rounds = 9;
     for (const bool startInstance : {false, true}) {
-        for (const bool gpu : {false, true}) {
-            SetDrawParameters(gpu);
+        for (const Arm arm : {Arm::Cpu, Arm::GpuEachPass, Arm::GpuContinued}) {
+            SetArm(arm);
             for (const std::uint32_t perPacket : {1u, 8u, 64u}) {
                 static_cast<void>(DrawPackets(target, records, perPacket, Packets, startInstance));
+                const auto passesBefore = AgcDriver::Graphics::IndirectPassCounters();
                 std::vector<Timing> rounds;
                 for (int round = 0; round < Rounds; ++round) rounds.push_back(DrawPackets(target, records, perPacket, Packets, startInstance));
+                const auto passesAfter = AgcDriver::Graphics::IndirectPassCounters();
                 std::sort(rounds.begin(), rounds.end(), [](const Timing& a, const Timing& b) { return a.wallPerPacket < b.wallPerPacket; });
                 const auto& median = rounds[Rounds / 2];
-                std::printf("%s, %s, %2u records per packet: wall %.1f us per packet (%.2f per record; submit %.1f), process CPU %.1f us per packet (%.2f per record); wall per packet min %.1f max %.1f\n", startInstance ? "start instance patched" : "start instance nowhere (BF-015)", gpu ? "gpu-side (draw parameters)" : "cpu path", perPacket, median.wallPerPacket, median.wallPerPacket / perPacket, median.submitPerPacket, median.cpuPerPacket, median.cpuPerPacket / perPacket, rounds.front().wallPerPacket, rounds.back().wallPerPacket);
+                std::printf("%s, %s, %2u records per packet: wall %.1f us per packet (%.2f per record; submit %.1f), process CPU %.1f us per packet (%.2f per record); wall per packet min %.1f max %.1f; gpu-side passes %llu begun, %llu continued, argument barriers %llu recorded, %llu skipped\n", startInstance ? "start instance patched" : "start instance nowhere (BF-015)", ArmName(arm), perPacket, median.wallPerPacket, median.wallPerPacket / perPacket, median.submitPerPacket, median.cpuPerPacket, median.cpuPerPacket / perPacket, rounds.front().wallPerPacket, rounds.back().wallPerPacket, static_cast<unsigned long long>(passesAfter.passesBegun - passesBefore.passesBegun), static_cast<unsigned long long>(passesAfter.passesContinued - passesBefore.passesContinued), static_cast<unsigned long long>(passesAfter.barriersRecorded - passesBefore.barriersRecorded), static_cast<unsigned long long>(passesAfter.barriersSkipped - passesBefore.barriersSkipped));
             }
         }
     }
+    SetArm(Arm::GpuContinued);
     const auto counters = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     std::printf("draw cache: %llu lookups, %llu hits, %llu inserts\n", static_cast<unsigned long long>(counters.lookups), static_cast<unsigned long long>(counters.hits), static_cast<unsigned long long>(counters.inserts));
 }
 
 // Packets of `perPacket` records on one path for `seconds`, for APS5_PROFILE_DRAW's periodic
 // phase report (the driver thread's time per packet).
-void Soak(bool gpu, std::uint32_t perPacket, bool startInstance, double seconds) {
+void Soak(Arm arm, std::uint32_t perPacket, bool startInstance, double seconds) {
     Registered(DepthHeader, DepthCode.data(), sizeof(DepthCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
     const GuestBlock target;
     const GuestBlock records;
-    SetDrawParameters(gpu);
+    SetArm(arm);
     const auto start = std::chrono::steady_clock::now();
     std::uint64_t packets = 0;
     while (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < seconds) {
         static_cast<void>(DrawPackets(target, records, perPacket, 64, startInstance));
         packets += 64;
     }
-    std::printf("%s, %u records per packet, start instance %s: %llu packets, %.1f us each\n", gpu ? "gpu-side (draw parameters)" : "cpu path", perPacket, startInstance ? "patched" : "nowhere", static_cast<unsigned long long>(packets), seconds * 1e6 / static_cast<double>(packets));
+    std::printf("%s, %u records per packet, start instance %s: %llu packets, %.1f us each\n", ArmName(arm), perPacket, startInstance ? "patched" : "nowhere", static_cast<unsigned long long>(packets), seconds * 1e6 / static_cast<double>(packets));
 }
 
 }
@@ -403,7 +424,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc > 4 && std::string(argv[1]) == "--soak") {
-            Soak(std::string(argv[2]) == "gpu", static_cast<std::uint32_t>(std::stoul(argv[3])), std::string(argv[4]) == "1", 21.0);
+            const std::string arm = argv[2];
+            Soak(arm == "cpu" ? Arm::Cpu : arm == "gpu-each-pass" ? Arm::GpuEachPass : Arm::GpuContinued, static_cast<std::uint32_t>(std::stoul(argv[3])), std::string(argv[4]) == "1", 21.0);
             AgcDriverShutdown_nid_postfix();
             return 0;
         }
