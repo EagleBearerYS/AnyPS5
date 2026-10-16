@@ -1304,7 +1304,6 @@ struct PinReleaseQueue {
     std::mutex mutex;
     std::condition_variable wake;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> pending;
-    std::vector<std::shared_ptr<const GuestBufferMemory::AddressSpace>> dropped;
     bool started = false;
 };
 
@@ -1377,15 +1376,11 @@ void pinReleaseWorker() {
     auto& queue = PinReleases();
     for (;;) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> work;
-        std::vector<std::shared_ptr<const GuestBufferMemory::AddressSpace>> spaces;
         {
             std::unique_lock lock(queue.mutex);
-            queue.wake.wait(lock, [&] { return !queue.pending.empty() || !queue.dropped.empty(); });
+            queue.wake.wait(lock, [&] { return !queue.pending.empty(); });
             work.swap(queue.pending);
-            spaces.swap(queue.dropped);
         }
-        spaces.clear();
-        GuestAllocations::GuestAllocationsNotifyUnpinned_nid_postfix();
         std::erase_if(work, [](const std::pair<std::uint64_t, std::uint64_t>& range) { return !GuestAllocations::GuestAllocationsPinned_nid_postfix(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(range.first)), static_cast<std::size_t>(range.second - range.first)); });
         if (work.empty()) continue;
         try {
@@ -1412,8 +1407,11 @@ bool RequestPinRelease(std::uintptr_t address, std::size_t bytes) noexcept {
             if (dropped != nullptr) ++leases.stats.cacheDrops;
         }
         const auto end = static_cast<std::uint64_t>(address) + bytes;
-        if (GuestMemory::GpuMutex().HeldByThisThread()) {
+        if (dropped != nullptr) {
             dropped.reset();
+            GuestAllocations::GuestAllocationsNotifyUnpinned_nid_postfix();
+        }
+        if (GuestMemory::GpuMutex().HeldByThisThread()) {
             releasePins(address, end);
             GuestAllocations::GuestAllocationsNotifyUnpinned_nid_postfix();
             return true;
@@ -1421,7 +1419,6 @@ bool RequestPinRelease(std::uintptr_t address, std::size_t bytes) noexcept {
         auto& queue = PinReleases();
         {
             std::lock_guard lock(queue.mutex);
-            if (dropped != nullptr) queue.dropped.push_back(std::move(dropped));
             const std::pair<std::uint64_t, std::uint64_t> request{address, end};
             if (std::find(queue.pending.begin(), queue.pending.end(), request) == queue.pending.end()) queue.pending.push_back(request);
             if (!queue.started) {
