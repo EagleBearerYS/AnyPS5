@@ -35,6 +35,7 @@ void InitializeMerged(const QueueState& queue, DrawProgram& program, std::uint32
     program.mergedPointerRequired = pointerRequired;
     program.firstUserSgpr = 0;
     program.userData.insert(program.userData.begin(), 8, 0);
+    program.hiddenUserWords = 8;
     Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, pointerBase);
     Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, pointerBase + 1);
     if (staticAbi) return;
@@ -67,7 +68,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         const auto& snapshot = *program;
         require((address - snapshot.codeAddress) % sizeof(std::uint32_t) == 0, "graphics entry point is not dword aligned");
         require(snapshot.header.empty() || snapshot.type == type, "graphics program refers to an incompatible shader binary type");
-        if (!nullPixel && snapshot.header.empty()) NoteRawGraphicsDraw();
+        if (!nullPixel && snapshot.header.empty()) NoteRawGraphicsDraw(snapshot);
         const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
         DrawProgram result{
             {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},

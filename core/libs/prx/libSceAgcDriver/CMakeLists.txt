@@ -154,6 +154,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawPipeline.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawPrecheck.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawRegisterKey.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawRelocate.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawTiming.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/IndirectDraw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/EntryPoints.cpp
@@ -173,6 +174,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Presentation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/QueueWorker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/Submission.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/SubmissionRing.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/WorkerAffinity.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderRegistry.cpp
@@ -316,6 +318,17 @@ set_target_properties(libSceAgcDriver PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceAgcDriver)
 
 if(BUILD_TESTING)
+    add_test_executable(agc_frame_dump_io_tests tests/FrameDumpIo.cpp)
+    target_include_directories(agc_frame_dump_io_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_frame_dump_io_tests PRIVATE libc)
+    configure_windows_unwind(agc_frame_dump_io_tests)
+    add_test(NAME agc_frame_dump_io COMMAND agc_frame_dump_io_tests)
+    set_tests_properties(agc_frame_dump_io PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_frame_dump_io PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(agc_write_watch_coverage_tests tests/WriteWatchCoverage.cpp)
     target_include_directories(agc_write_watch_coverage_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_write_watch_coverage_tests PRIVATE libc)
@@ -334,6 +347,18 @@ if(BUILD_TESTING)
     set_tests_properties(agc_profile_output PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(agc_profile_output PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(agc_async_log_tests tests/AsyncLog.cpp)
+    target_include_directories(agc_async_log_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_async_log_tests PRIVATE libc)
+    configure_windows_unwind(agc_async_log_tests)
+    add_test(NAME agc_async_log COMMAND agc_async_log_tests)
+    add_test(NAME agc_async_log_fatal COMMAND agc_async_log_tests fatal)
+    set_tests_properties(agc_async_log agc_async_log_fatal PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_async_log agc_async_log_fatal PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
@@ -1528,8 +1553,12 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_native_multisample_depth PROPERTIES TIMEOUT 30)
     add_test(NAME agc_driver_native_depth_retirement COMMAND agc_driver_native_multisample_depth_tests --retirement)
     set_tests_properties(agc_driver_native_depth_retirement PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_native_depth_clears COMMAND agc_driver_native_multisample_depth_tests --clears)
+    add_test(NAME agc_driver_native_depth_clear_refusals COMMAND agc_driver_native_multisample_depth_tests --clear-refusals)
+    set_tests_properties(agc_driver_native_depth_clears agc_driver_native_depth_clear_refusals PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(agc_driver_native_depth_retirement PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(agc_driver_native_depth_clears agc_driver_native_depth_clear_refusals PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     set_tests_properties(agc_sparse_buffer_holes PROPERTIES TIMEOUT 30)
     set_tests_properties(agc_driver_sparse_buffer_holes PROPERTIES TIMEOUT 30)
@@ -1653,6 +1682,23 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME agc_driver_pm4_failure COMMAND agc_driver_pm4_tests failure)
     set_tests_properties(agc_driver_pm4_failure PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set(pm4RingCases "ring|APS5_PM4_RING=4" "ring-empty|APS5_PM4_RING=16" "ring-disabled|APS5_PM4_RING=0" "ring-invalid|APS5_PM4_RING=4x" "ring-report|APS5_PM4_RING=2" "stall-watchdog|APS5_STALL_WATCHDOG_SECS=1"
+            "stall-watchdog-invalid|APS5_STALL_WATCHDOG_SECS=1x" "stall-watchdog-rewind|APS5_STALL_WATCHDOG_SECS=1" "stall-watchdog-order|APS5_STALL_WATCHDOG_SECS=1")
+    if(WIN32)
+        list(APPEND pm4RingCases "ring-report-heap|APS5_PM4_RING=2")
+    endif()
+    foreach(pm4RingCase IN LISTS pm4RingCases)
+        string(REPLACE "|" ";" pm4RingCase "${pm4RingCase}")
+        list(GET pm4RingCase 0 pm4RingMode)
+        list(GET pm4RingCase 1 pm4RingEnvironment)
+        string(REPLACE "-" "_" pm4RingTest "agc_driver_pm4_${pm4RingMode}")
+        add_test(NAME ${pm4RingTest} COMMAND agc_driver_pm4_tests ${pm4RingMode})
+        set_tests_properties(${pm4RingTest} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;${pm4RingEnvironment}" SKIP_RETURN_CODE 77 TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(${pm4RingTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test(NAME agc_descriptor_pool_reset_failure COMMAND agc_driver_graphics_tests --descriptor-pool-reset-failure)
     add_test(NAME agc_driver_address_space_teardown COMMAND agc_driver_graphics_tests --address-space-teardown)
     set_tests_properties(agc_driver_address_space_teardown PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
@@ -1693,6 +1739,12 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_stencil_replay_no_gpl PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_GPL=1" TIMEOUT 30 SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(agc_driver_stencil_replay_no_gpl PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_pipelined_dispatch_item COMMAND agc_driver_pipelined_dispatch_tests)
+    set_tests_properties(agc_driver_pipelined_dispatch_item PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINE_DISPATCH=1" SKIP_RETURN_CODE 77)
+    if(WIN32)
+        set_tests_properties(agc_driver_pipelined_dispatch_item PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
