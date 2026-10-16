@@ -1755,6 +1755,79 @@ bool settleFirstUseTests(const Device& device) {
     std::cout << "settled import first use tests passed\n";
     return true;
 }
+
+bool settleRetireTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    constexpr std::size_t unit = 65536;
+    constexpr int rounds = 64;
+    if (context.hostImportAlignment == 0 || context.hostImportAlignment > unit || context.settleQueue == VK_NULL_HANDLE || !WriteWatched()) {
+        std::cout << "host imports within 64 KiB, a settle queue or write watching unavailable: imports retired during their settle read not tested\n";
+        return false;
+    }
+    std::unique_lock gpu(GpuMutex());
+    PrepareImportWatch(context);
+    if (!settledImportsWatchPrivate(context)) {
+        std::cout << "this device compares every Windows import: imports retired during their settle read not tested\n";
+        return false;
+    }
+    void* pair = AllocateWatched(2 * unit, unit);
+    struct Release {
+        void* pair;
+        ~Release() {
+            SetHostImportRangeWindow(std::uint64_t{64} << 20u);
+            ReleaseWatched(pair, 2 * unit);
+        }
+    } release{pair};
+    const auto address = reinterpret_cast<std::uint64_t>(pair);
+    std::memset(pair, 0x11, 2 * unit);
+    const auto registerPair = [&] {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pair, 2 * unit, true, true, true);
+    };
+    const auto unregisterPair = [&] {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(pair);
+    };
+    Recorder recorder(context);
+    recorder.Activate();
+    SetHostImportRangeWindow(unit);
+    registerPair();
+    const auto before = HostImportSettles();
+    for (int round = 0; round < rounds; ++round) {
+        const auto* cell = HostImportFor(context, address, 16);
+        Require(cell != nullptr && cell->base == address && cell->bytes == unit && cell->unwatched, "(r) the first window of the range was not imported compared");
+        std::this_thread::sleep_for(std::chrono::microseconds(150));
+        HostImportFor(context, address, 16);
+        const auto* grown = HostImportFor(context, address + unit - 16, 32);
+        Require(grown != nullptr && grown->base == address && grown->bytes == 2 * unit, "(r) an access across the windows did not replace the first window's import");
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        HostImportFor(context, address + unit - 16, 32);
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        unregisterPair();
+        registerPair();
+    }
+    const auto after = HostImportSettles();
+    const auto* last = HostImportFor(context, address + unit - 16, 32);
+    Require(last != nullptr && last->bytes == 2 * unit && last->unwatched, "(r) the range was not imported whole and compared after the rounds");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!Watched(address, 2 * unit) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        HostImportFor(context, address + unit - 16, 32);
+    }
+    const bool back = Watched(address, 2 * unit);
+    std::cout << "(r) " << rounds << " window imports replaced after their settle read was submitted: " << after.parked - before.parked << " while the read ran, " << after.waited - before.waited << " waits, " << after.unmapWaits - before.unmapWaits << " unmaps waited for a read\n";
+    Require(after.waited == before.waited, "(r) replacing an import during its settle read waited for the read");
+    Require(after.parked != before.parked, "(r) no import was replaced while its settle read ran");
+    Require(back, "(r) the import that replaced the windows did not return to the write watch");
+    recorder.Sync();
+    recorder.FlushDeferredReleases();
+    unregisterPair();
+    HostImportFor(context, address, 16);
+    std::cout << "imports retired during their settle read tests passed\n";
+    return true;
+}
 #endif
 
 void remappedImportTests(const Device& device) {
@@ -8260,6 +8333,7 @@ int main(int argc, char** argv) {
             return deferredSettleTests(device) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--settle-first-use-only") return settleFirstUseTests(device) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--settle-retire-only") return settleRetireTests(device) ? 0 : 77;
 #endif
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-retirement-only") {
             const auto alignment = device.GetContext().hostImportAlignment;
