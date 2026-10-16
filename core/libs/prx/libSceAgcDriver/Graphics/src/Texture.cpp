@@ -2187,7 +2187,7 @@ constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> StorageTexture::stampedRuns(const std::vector<std::uint8_t>& blocks) const {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
-    const auto block = static_cast<std::uint64_t>(ThinBlockLayout(descriptor.tileMode, BytesPerElement(descriptor.format))[0]);
+    const auto block = descriptor.tileMode == TextureTileMode::kLinear ? std::uint64_t{1} : static_cast<std::uint64_t>(ThinBlockLayout(descriptor.tileMode, BytesPerElement(descriptor.format))[0]);
     if (block == 0) return runs;
     const auto firstBlock = descriptor.baseAddress / 65536;
     for (std::size_t index = 0; index < blocks.size(); ++index) {
@@ -2336,16 +2336,25 @@ void StorageTexture::upload(const std::vector<bool>* layers, const std::vector<s
             if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
             return;
         }
-        // Units another image's results shadow reach the import before the detile reads it in place.
-        PublishShadow(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), PublishScope::Whole, PublishReason::Upload);
+        const bool direct = singlePass();
+        const auto linearRuns = direct && layers == nullptr && blocks != nullptr && descriptor.tileMode == TextureTileMode::kLinear && !geometry.thick ? stampedRuns(*blocks) : std::vector<std::pair<std::uint64_t, std::uint64_t>>{};
+        const bool linearPartial = !linearRuns.empty() && !(linearRuns.size() == 1 && linearRuns.front().first == 0 && linearRuns.front().second == guestBytes);
+        if (linearPartial) {
+            for (const auto& [begin, end] : linearRuns) PublishShadow(descriptor.baseAddress + begin, static_cast<std::size_t>(end - begin), PublishScope::Whole, PublishReason::Upload);
+        } else {
+            PublishShadow(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), PublishScope::Whole, PublishReason::Upload);
+        }
         forgetBorrowed(0, trackedLayers);
         std::uint64_t uploadedBytes = layers == nullptr ? guestBytes : 0;
+        if (linearPartial) {
+            uploadedBytes = 0;
+            for (const auto& [begin, end] : linearRuns) uploadedBytes += end - begin;
+        }
         if (layers != nullptr) {
             for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                 if ((*layers)[layer]) uploadedBytes += trackedLayerBytes;
             }
         }
-        const bool direct = singlePass();
         auto linear = direct ? nullptr : std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         detiler.BeginBatch();
         auto* recorder = Recorder::Active();
@@ -2374,12 +2383,29 @@ void StorageTexture::upload(const std::vector<bool>* layers, const std::vector<s
         }
         const auto importOffset = descriptor.baseAddress - import->base;
         if (direct) {
-            recordDirectUploadBarrier(commands, layers == nullptr);
+            recordDirectUploadBarrier(commands, layers == nullptr && !linearPartial);
             for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                 if (layers != nullptr && !(*layers)[layer]) continue;
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
+                    if (linearPartial) {
+                        const auto sliceBegin = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+                        const auto sliceEnd = sliceBegin + mip.tiledSize;
+                        std::vector<std::pair<std::uint32_t, std::uint32_t>> rows;
+                        for (const auto& [begin, end] : linearRuns) {
+                            const auto low = std::max(begin, sliceBegin);
+                            const auto high = std::min(end, sliceEnd);
+                            if (high <= low || mip.pitchBytes == 0) continue;
+                            const auto first = static_cast<std::uint32_t>((low - sliceBegin) / mip.pitchBytes);
+                            const auto last = static_cast<std::uint32_t>(std::min<std::uint64_t>((high - sliceBegin + mip.pitchBytes - 1) / mip.pitchBytes, mip.height));
+                            if (first >= last) continue;
+                            if (!rows.empty() && first <= rows.back().second) rows.back().second = std::max(rows.back().second, last);
+                            else rows.emplace_back(first, last);
+                        }
+                        for (const auto& [first, last] : rows) detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + sliceBegin, elementLayerView(level, layer), mip, false, layer, {.rowBegin = first, .rowEnd = last, .pipeBankXor = descriptor.pipeBankXor});
+                        continue;
+                    }
                     detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestLayerOffset(layer) + mip.tiledOffset, elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
