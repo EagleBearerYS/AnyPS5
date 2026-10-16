@@ -471,9 +471,9 @@ ShadowSlabPin::~ShadowSlabPin() {
     slab->pins.fetch_sub(1, std::memory_order_relaxed);
 }
 
-std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason, bool waited) {
+std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason) {
     if (!UnitShadowEnabled() || scope == PublishScope::None || bytes == 0) return 0;
-    if (!waited && Recorder::InCompletion() && GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::Store) {
+    if (Recorder::InCompletion() && GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::Store) {
         // The store's own stamp makes the unit stale; a publish recorded now would land over the
         // store when the batch runs (the completion is not waited for).
         Stats().skippedInCompletion.fetch_add(1, std::memory_order_relaxed);

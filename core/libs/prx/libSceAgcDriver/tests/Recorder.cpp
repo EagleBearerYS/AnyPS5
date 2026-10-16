@@ -3679,126 +3679,6 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
-bool completionStoreShadowTests(const Device& device, Recorder& recorder) {
-    const auto& base = device.GetContext();
-    if (!UnitShadowEnabled() || base.hostImportAlignment == 0) {
-        std::cout << "skipped, unit shadows or host imports are unavailable\n";
-        return false;
-    }
-    const auto decided = PrepareImportWatch(base);
-#ifndef _WIN32
-    SetImportWatch(base, ImportWatch::Watch);
-#endif
-    struct Restore {
-        const Context& context;
-        ImportWatch decided;
-        ~Restore() { SetImportWatch(context, decided); }
-    } restore{base, decided};
-    constexpr std::uint32_t width = 1024;
-    constexpr std::uint32_t height = 512;
-    constexpr std::size_t bytes = width * height * 4;
-    constexpr std::size_t allocated = bytes + 65536;
-    constexpr std::size_t storedOffset = 16;
-    void* block = AllocateWatched(allocated, 65536);
-    if (block == nullptr) {
-        std::cout << "skipped, no write watching\n";
-        return false;
-    }
-    struct Release {
-        void* block;
-        ~Release() { ReleaseWatched(block, allocated); }
-    } release{block};
-    std::memset(block, 0x55, bytes);
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true, true);
-    }
-    struct Unregister {
-        const Context& context;
-        void* block;
-        std::uint64_t address;
-        ~Unregister() {
-            {
-                GuestAllocations::Mutation mutation;
-                mutation.Remove(block);
-            }
-            HostImportFor(context, address, bytes);
-        }
-    } unregister{base, block, address};
-    if (HostImportFor(base, address, bytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, bytes)) {
-        std::cout << "skipped, the heap is not imported or not watched\n";
-        return false;
-    }
-    TextureDetiler detiler(base);
-    auto context = base;
-    context.detiler = &detiler;
-    GuestTextureResource resource{};
-    resource.baseAddress = address;
-    resource.width = width;
-    resource.height = height;
-    resource.mipCount = 1;
-    resource.tileMode = TextureTileMode::kR64KBX;
-    resource.dimension = TextureDimension::k2D;
-    resource.format = 56;
-    resource.dstSelX = 4;
-    resource.dstSelY = 5;
-    resource.dstSelZ = 6;
-    resource.dstSelW = 7;
-    Require(DescribeSurface(resource).guestBytes == bytes, "the heap's surface has an unexpected size");
-    const auto settle = [&] {
-        recorder.Submit();
-        device.WaitQueue();
-        recorder.Sync();
-    };
-    constexpr std::array<std::byte, 4> stored{std::byte{0x77}, std::byte{0x77}, std::byte{0x77}, std::byte{0x77}};
-    std::vector<std::byte> read(bytes);
-    const auto run = [&](bool shadowed) {
-        std::memset(block, 0x55, bytes);
-        {
-            auto image = StorageTexture::Create(context, detiler, resource, 0);
-            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            const auto commands = recorder.Commands();
-            recorder.Keep(image);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-            const VkClearColorValue red{{1.0f, 0.0f, 0.0f, 1.0f}};
-            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &red, 1, &range);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-            image->MarkDirty();
-            settle();
-            Require(StorageTexture::FindPending(address, bytes) == image, "the cleared image's results are not pending");
-            if (shadowed) {
-                StorageTexture::FlushPending(address, bytes, nullptr, "storage refresh", PublishScope::None);
-                settle();
-                if (!AnyShadowedOverlaps(address, bytes)) return false;
-                Require(StorageTexture::FindPending(address, bytes) == nullptr, "the image's results stayed pending after their write-back into the unit shadow");
-            }
-            recorder.OnComplete([&] { AgcDriver::GuestMemory::Write(address + storedOffset, stored, 4); });
-            settle();
-            AgcDriver::GuestMemory::Read(address, read, 4);
-            settle();
-        }
-        recorder.Sync();
-        const std::string over = shadowed ? "a shadowed unit" : "a pending image";
-        Require(std::equal(stored.begin(), stored.end(), read.begin() + storedOffset), "a CPU store inside a completion did not reach guest memory over " + over);
-        std::size_t lost = 0;
-        for (std::size_t i = 0; i < bytes; ++i) {
-            if (i >= storedOffset && i < storedOffset + stored.size()) continue;
-            const auto expected = std::array<std::uint8_t, 4>{255, 0, 0, 255}[i % 4];
-            if (static_cast<std::uint8_t>(read[i]) != expected) ++lost;
-        }
-        Require(lost == 0, "a CPU store inside a completion over " + over + " lost " + std::to_string(lost) + " bytes of the image's results around it");
-        return true;
-    };
-    run(false);
-    if (!run(true)) {
-        std::cout << "skipped, the image's write-back did not retile into the unit shadow\n";
-        return false;
-    }
-    std::cout << "a CPU store inside a completion keeps the results of a pending image and of a shadowed unit around it\n";
-    return true;
-}
-
 bool writtenBufferOrderTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -8396,9 +8276,6 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--bda-shadowed-results-only") {
             return addressShadowTests(device, recorder) ? 0 : 77;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--completion-store-shadow-only") {
-            return completionStoreShadowTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--split-writeback-only") {
             if (device.GetContext().hostImportAlignment == 0) {
