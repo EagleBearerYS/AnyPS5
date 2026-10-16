@@ -236,8 +236,9 @@ public:
         return userData;
     }
 
-    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) const {
+    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, ShaderRecompiler::DrawParameterSgprs drawParameters = {}) const {
         ShaderRecompiler::ShaderVertexStageInfo info{};
+        info.drawParameters = drawParameters;
         info.resourcesNum = 2;
         info.resources[0].fields = {BufferTable[0], BufferTable[1], BufferTable[2], BufferTable[3]};
         info.resources[1].fields = {BufferTable[4], BufferTable[5], BufferTable[6], BufferTable[7]};
@@ -474,6 +475,31 @@ std::string Run(Fixture& fixture) {
             fixture.Place(0x51u, bufferIndices, 0x62u);
             fixture.Draw(vertex, draw);
             failures += fixture.Check(what + ", drawn on the GPU", bufferIndices, 0x51u, 0x62u, true);
+        }
+    }
+    if (fixture.device->DrawIndirectSupport().firstInstance && fixture.device->DrawIndirectSupport().drawParameters) {
+        // With the patched SGPRs read from the draw's parameters (the driver zeroes their words).
+        const auto zeroedUserData = fixture.UserData(0u, 0u);
+        AgcDriver::Pm4::DrawParameters draw{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
+        {
+            const std::string what = "indexed indirect record whose program copies v5/v8 before its fetch adds, read with draw parameters, vertex offset 700, start instance 59455";
+            const auto vertex = fixture.Vertex(VertexCode, zeroedUserData, {true, static_cast<std::int32_t>(BaseVertexSgpr), static_cast<std::int32_t>(StartInstanceSgpr), -1});
+            draw.indirect = indexedIndirect;
+            draw.indirect->drawParameters = true;
+            failures += Classified(fixture, what, vertex, zeroedUserData, draw, std::nullopt, Rule::InPlace);
+            fixture.Place(indexedRecord[3], bufferIndices, indexedRecord[4]);
+            fixture.Draw(vertex, draw);
+            failures += fixture.Check(what + ", drawn in place on the GPU", bufferIndices, indexedRecord[3], indexedRecord[4], true);
+        }
+        {
+            // The fixed-function fetch reads at index + base vertex, but this program fetches at
+            // index + s16 while the CP writes the base vertex to s15.
+            const std::string what = "indexed indirect record read with draw parameters whose base vertex goes to s15, which the vertex fetch does not add";
+            const auto vertex = fixture.Vertex(VertexCode, zeroedUserData, {true, 15, static_cast<std::int32_t>(StartInstanceSgpr), -1});
+            draw.indirect = indexedIndirect;
+            draw.indirect->baseVertexSgpr = 15;
+            draw.indirect->drawParameters = true;
+            failures += Classified(fixture, what, vertex, zeroedUserData, draw, Path::NotFolded, Rule::InPlace);
         }
     }
     return failures;

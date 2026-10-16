@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -80,17 +81,26 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
     // DrawIndex counts the draws of one vkCmdDraw*Indirect, not the per-record draws of a device
     // without multiDrawIndirect.
     if (indirect.drawParameters && indirect.drawIndexEnabled && indirect.drawIndexSgpr >= 0 && indirect.count > 1 && !support.multi) fail(Path::FeatureGap);
-    const auto dimension = [&](std::int32_t k, std::int32_t p, bool shared, bool conflict, std::uint32_t x, Rule& rule, std::uint32_t& constant) {
+    const auto fetchedAt = [&](std::uint32_t fetchIndex) {
+        return std::any_of(result.vertexAttributes.begin(), result.vertexAttributes.end(), [&](const ShaderRecompiler::VertexAttribute& attribute) { return attribute.fetchIndex == fetchIndex; });
+    };
+    const auto patchedWord = [&](std::int32_t sgpr) { return sgpr == indirect.baseVertexSgpr || sgpr == indirect.startInstanceSgpr || (indirect.drawIndexEnabled && sgpr == indirect.drawIndexSgpr); };
+    const auto dimension = [&](std::int32_t k, std::int32_t p, bool shared, bool conflict, std::uint32_t x, bool fetched, Rule& rule, std::uint32_t& constant) {
         if (indirect.drawParameters) {
             // The stage's index VGPR is the CP's whatever the draw's offset, and it reads the
-            // patched SGPR from the draw: the record's dword is drawn in place when the CP writes
-            // it to an SGPR, and a dimension it writes nowhere is drawn with offset 0. The index
-            // still misses GE_INDX_OFFSET.
+            // patched SGPR from the draw, so the record's dword is drawn in place when the CP
+            // writes it to an SGPR. The fixed-function fetch of attributes at this rate reads at
+            // the draw's index (the CP's plus the draw's offset), so then the fetch must add the
+            // patched SGPR itself (k == p); a dimension the CP writes nowhere keeps the folded
+            // constant. The index still misses GE_INDX_OFFSET.
             if (x != 0) fail(Path::IndxOffset);
+            else if (p >= 0 && fetched && conflict) fail(Path::FetchUnknown);
+            else if (p >= 0 && fetched && k != p) fail(Path::NotFolded);
             else if (p >= 0) rule = Rule::InPlace;
+            else if (k >= 0 && patchedWord(k)) fail(Path::NotFolded);
             else {
                 rule = Rule::Constant;
-                constant = 0;
+                constant = k >= 0 ? drawUserWord(frontProgram, k) : 0u;
             }
         } else if (p < 0) {
             rule = Rule::Constant;
@@ -102,8 +112,8 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
         else if (x != 0) fail(Path::IndxOffset);
         else rule = Rule::InPlace;
     };
-    dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, indirect.vertexRule, indirect.vertexConstant);
-    dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, indirect.instanceRule, indirect.instanceConstant);
+    dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, fetchedAt(0), indirect.vertexRule, indirect.vertexConstant);
+    dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, fetchedAt(1), indirect.instanceRule, indirect.instanceConstant);
     if (!support.firstInstance && (indirect.instanceRule == Rule::InPlace || indirect.instanceConstant != 0)) fail(Path::FeatureGap);
     if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 256) fail(Path::FeatureGap);
 
