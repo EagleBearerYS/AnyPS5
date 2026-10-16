@@ -49,6 +49,7 @@ public:
     ~Driver();
     void Shutdown();
     void WaitIdle();
+    std::uint64_t DispatchesAdoptedAhead() const;
     void CheckFailure();
     void ReportFailure(std::exception_ptr error);
     void Submit(const Packet* packet, std::uint32_t queue);
@@ -74,6 +75,7 @@ public:
     };
     DispatchCacheFootprint DispatchCacheSize();
     static std::uint64_t DispatchCacheBytes();
+    std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 
 private:
     friend class SampledReadScope;
@@ -110,6 +112,7 @@ private:
     static bool stampValidate();
     static bool dataHits();
     static bool verifyDataHits();
+    static bool pipelineDispatch();
     static std::size_t dispatchVariants();
     static bool insertCompare();
     static std::size_t dispatchCacheEntries();
@@ -141,8 +144,16 @@ private:
     void maybeReportDrawCache(bool profile);
     void reportDrawCache(DrawEntryCounters& counters, bool profile);
     std::string profileDrawCacheLines(const DrawEntryCounters& counters);
-    static std::uint64_t drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial, std::uint64_t* shape = nullptr, std::array<std::uint64_t, 5>* components = nullptr);
+    static std::uint64_t drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial, std::uint64_t* shape = nullptr, std::array<std::uint64_t, 5>* components = nullptr, const DrawRelocation* relocation = nullptr, std::uint64_t* alias = nullptr);
     void traceDrawKeyLookup(const std::array<std::uint64_t, 5>& components, bool cacheMiss);
+    static std::uint64_t drawIdentityKey(const QueueState& queue, const ShaderRegistry& registry);
+    static bool drawRelocationEnabled();
+    static std::uint64_t relocatedContentKey(const RelocatableUserWord& word, std::uint32_t value, bool& readable);
+    static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords);
+    static void applyShaderDataPatches(DispatchVariant& variant);
+    void learnPendingRelocation();
+    void relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
+    void reportDrawRelocation();
     static bool sameVertexInfo(const ShaderRecompiler::ShaderVertexStageInfo& a, const ShaderRecompiler::ShaderVertexStageInfo& b);
     static bool sameDecode(const DrawDecode& a, const DrawDecode& b);
     std::shared_ptr<DrawDecode> decodeDraw(const QueueState& queue, const Submission& submission);
@@ -184,6 +195,7 @@ private:
     static bool traceCopy();
     void traceCopyPending(const char* what, std::uint64_t address, std::size_t bytes, std::uint64_t source, std::uint64_t destination, std::size_t copyBytes, const std::shared_ptr<VulkanDevice>& localDevice);
     static void countIndirect(int path, double readMs);
+    static int indirectArgumentsPath(std::span<const std::uint32_t> packet, std::uint64_t arguments);
     void dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission);
     static bool& sampledRead();
     static bool writeEvidenceEnabled();
@@ -346,6 +358,11 @@ private:
     std::unordered_map<std::uint64_t, std::uint64_t> drawShapes;
     std::unordered_set<std::uint64_t> traceShapes, traceKeysSeen, traceKeysEvicted;
     std::list<std::uint64_t> drawOrder;
+    std::unordered_map<std::uint64_t, std::shared_ptr<const DrawRelocation>> drawRelocations;
+    std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawAliases;
+    DrawRelocationPending drawRelocationPending;
+    std::unordered_map<std::uint64_t, DrawRelocationTrial> drawRelocationTrials;
+    DrawRelocationCounters drawRelocationCounters;
     std::mutex drawCacheMutex;
     std::uint64_t drawCacheHits = 0, drawCacheEvictions = 0, drawCacheVariants = 0, drawCacheVariantBytes = 0;
     std::optional<DrawKeySightings> drawKeySightings;
@@ -399,6 +416,7 @@ private:
 
     std::atomic<std::uint64_t> evidenceReads{0};
     std::atomic<std::uint64_t> evidenceValidations{0};
+    std::atomic<std::uint64_t> dispatchesAdoptedAhead{0};
 
     std::mutex writtenBuffersMutex;
     std::deque<WrittenBuffer> writtenBuffers;
