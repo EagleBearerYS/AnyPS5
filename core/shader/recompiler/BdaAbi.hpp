@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILER_BDAABI_HPP
 #define CORE_SHADER_RECOMPILER_BDAABI_HPP
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -118,7 +119,8 @@ inline constexpr std::uint32_t WrittenChunkPages = 1u << (WrittenChunkShift - Wr
 inline constexpr std::uint32_t WrittenPageSlots = 2048;
 inline constexpr std::uint32_t WrittenPageProbes = 8;
 inline constexpr std::uint32_t WrittenImageKeyBit = 1u << 31;
-inline constexpr std::uint64_t WrittenAddressLimit = std::uint64_t{WrittenImageKeyBit - 1u} << WrittenChunkShift;
+inline constexpr std::uint32_t WrittenImageWholeKey = WrittenImageKeyBit | 0x7fffffffu;
+inline constexpr std::uint64_t WrittenAddressLimit = std::uint64_t{WrittenImageKeyBit - 2u} << WrittenChunkShift;
 inline constexpr std::uint32_t WrittenOverflowWord = sizeof(Fault) / sizeof(std::uint32_t);
 inline constexpr std::uint32_t WrittenCountWord = WrittenOverflowWord + 1;
 inline constexpr std::uint32_t WrittenSlotsWord = WrittenCountWord + 1;
@@ -126,7 +128,7 @@ inline constexpr std::uint32_t WrittenListWord = WrittenSlotsWord + 2 * WrittenP
 inline constexpr std::size_t FaultBufferBytes = (WrittenListWord + WrittenPageSlots) * sizeof(std::uint32_t);
 static_assert((WrittenPageSlots & (WrittenPageSlots - 1)) == 0);
 static_assert(WrittenChunkPages == 32);
-static_assert((WrittenAddressLimit >> WrittenChunkShift) < WrittenImageKeyBit && PageTableEnd <= WrittenAddressLimit);
+static_assert((WrittenAddressLimit >> WrittenChunkShift) < (WrittenImageWholeKey & ~WrittenImageKeyBit) && PageTableEnd <= WrittenAddressLimit);
 
 inline constexpr std::uint32_t WrittenChunkKey(std::uint64_t address) {
     return static_cast<std::uint32_t>(address >> WrittenChunkShift) + 1u;
@@ -147,7 +149,7 @@ bool ForEachWrittenChunk(const std::uint32_t* words, bool images, TMark&& mark) 
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[WrittenListWord + claim];
         const auto key = words[WrittenSlotsWord + 2 * slot];
-        if (((key & WrittenImageKeyBit) != 0) != images) continue;
+        if (((key & WrittenImageKeyBit) != 0) != images || key == WrittenImageWholeKey) continue;
         auto mask = words[WrittenSlotsWord + 2 * slot + 1];
         const auto base = static_cast<std::uint64_t>((key & ~WrittenImageKeyBit) - 1u) << WrittenChunkShift;
         while (mask != 0) {
@@ -168,6 +170,15 @@ bool ForEachWrittenRange(const std::uint32_t* words, TMark&& mark) {
 template<typename TMark>
 bool ForEachWrittenImageRange(const std::uint32_t* words, TMark&& mark) {
     return ForEachWrittenChunk(words, true, std::forward<TMark>(mark));
+}
+
+inline bool WrittenImagesWhole(const std::uint32_t* words) {
+    const auto count = std::min(words[WrittenCountWord], WrittenPageSlots);
+    for (std::uint32_t claim = 0; claim < count; ++claim) {
+        const auto slot = words[WrittenListWord + claim];
+        if (slot < WrittenPageSlots && words[WrittenSlotsWord + 2 * slot] == WrittenImageWholeKey) return true;
+    }
+    return false;
 }
 
 }

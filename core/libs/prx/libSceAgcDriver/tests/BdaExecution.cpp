@@ -154,6 +154,15 @@ static void RunWrittenRangeDecodeTests() {
     Require(Abi::WrittenImageChunkKey(chunk) == (Abi::WrittenChunkKey(chunk) | Abi::WrittenImageKeyBit), "an image chunk key is not its memory key with the image bit");
     Require(decode() && marked == std::vector<std::pair<std::uint64_t, std::size_t>>{{chunk + page, 2 * page}}, "the memory ranges of a record included image chunks or lost a memory chunk");
     Require(decodeImages() && images == std::vector<std::pair<std::uint64_t, std::size_t>>{{chunk, page}, {chunk + 3 * page, page}, {top + 31 * page, page}}, "the image ranges of a record included memory chunks or were decoded at other addresses");
+    Require(!Abi::WrittenImagesWhole(words.data()), "a record without the whole-image key kept its images whole");
+    words[Abi::WrittenListWord + 3] = 9;
+    words[Abi::WrittenSlotsWord + 2 * 9] = Abi::WrittenImageWholeKey;
+    words[Abi::WrittenSlotsWord + 2 * 9 + 1] = 1u;
+    words[Abi::WrittenCountWord] = 4;
+    Require(Abi::WrittenImagesWhole(words.data()), "the whole-image key did not keep the record's images whole");
+    Require(decode() && marked == std::vector<std::pair<std::uint64_t, std::size_t>>{{chunk + page, 2 * page}}, "the whole-image key was decoded as a memory range");
+    Require(decodeImages() && images == std::vector<std::pair<std::uint64_t, std::size_t>>{{chunk, page}, {chunk + 3 * page, page}, {top + 31 * page, page}}, "the whole-image key was decoded as an image range");
+    Require((static_cast<std::uint64_t>((Abi::WrittenImageWholeKey & ~Abi::WrittenImageKeyBit) - 1u) << Abi::WrittenChunkShift) >= Abi::WrittenAddressLimit, "the whole-image key names a chunk a written address can reach");
     words[Abi::WrittenSlotsWord + 2 * 6] = Abi::WrittenImageKeyBit;
     Require(!decode() && !decodeImages(), "a claim of an image slot without a chunk was accepted");
 }
