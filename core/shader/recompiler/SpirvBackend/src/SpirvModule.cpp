@@ -325,6 +325,21 @@ void SpirvModule::AppendFunctionWords(std::span<const std::uint32_t> words) {
     functionInstructions.insert(functionInstructions.end(), words.begin(), words.end());
 }
 
+std::size_t SpirvModule::AnnotationWordCount() const {
+    return annotations.size();
+}
+
+std::vector<std::uint32_t> SpirvModule::TakeAnnotationWords(std::size_t offset) {
+    if (offset > annotations.size()) throw std::runtime_error("SpirvModule::TakeAnnotationWords offset is past the annotations");
+    std::vector<std::uint32_t> words(annotations.begin() + static_cast<std::ptrdiff_t>(offset), annotations.end());
+    annotations.resize(offset);
+    return words;
+}
+
+void SpirvModule::AppendAnnotationWords(std::span<const std::uint32_t> words) {
+    annotations.insert(annotations.end(), words.begin(), words.end());
+}
+
 void SpirvModule::appendString(std::vector<std::uint32_t>& words, const std::string& text) {
     const auto length = text.size();
     const auto wordCount = (length + 1u + 3u) / 4u;

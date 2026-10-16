@@ -58,6 +58,9 @@ public:
     [[nodiscard]] std::size_t FunctionWordCount() const;
     [[nodiscard]] std::vector<std::uint32_t> TakeFunctionWords(std::size_t offset);
     void AppendFunctionWords(std::span<const std::uint32_t> words);
+    [[nodiscard]] std::size_t AnnotationWordCount() const;
+    [[nodiscard]] std::vector<std::uint32_t> TakeAnnotationWords(std::size_t offset);
+    void AppendAnnotationWords(std::span<const std::uint32_t> words);
     void BeginHelperFunction();
     [[nodiscard]] bool InHelperFunction() const { return inHelperFunction; }
     void EndHelperFunction();

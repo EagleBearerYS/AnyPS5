@@ -1874,6 +1874,7 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
         state.module.BeginHelperFunction();
         const Restore restore{state, state.currentLabel, state.tableAccess};
         const auto start = state.module.FunctionWordCount();
+        const auto annotationStart = state.module.AnnotationWordCount();
         std::array<std::uint32_t, 6> parameters{};
         for (std::size_t index = 0; index < parameters.size(); ++index) {
             if ((index != 3u || tableSampler) && (index != 4u || access[4] != 0u) && (index != 5u || access[5] != 0u)) parameters[index] = state.module.AllocateId();
@@ -1914,13 +1915,34 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
             if (types.back() == 0u) ctx.Fail(inst, "passes an image table operand of a type without a SPIR-V type");
         }
         if (passed != body.definitions.size()) ctx.Fail(inst, "reads an operand its image table function does not take");
-        state.module.AddName(id, "table_image_" + std::to_string(memory.resource));
-        state.module.AddFunction(spv::OpFunction, resultType, id, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, std::span<const std::uint32_t>(types)));
-        for (std::size_t index = 0; index < ids.size(); ++index) state.module.AddFunction(spv::OpFunctionParameter, types[index + 1u], ids[index]);
-        state.module.AppendFunctionWords(words);
-        state.module.AddFunction(spv::OpFunctionEnd);
-        for (const auto index : {1u, 3u}) {
-            if (std::find(defined.arguments.begin(), defined.arguments.end(), index) != defined.arguments.end()) DecorateTableNonUniform(state, parameters[index]);
+        const auto appended = state.module.TakeAnnotationWords(annotationStart);
+        const auto locals = SpirvFunctionLocalIds(ids, words);
+        defined.body = {resultType, ids, std::vector<std::uint32_t>(types.begin() + 1, types.end()), words, {}};
+        std::vector<std::uint32_t> shared;
+        for (std::size_t cursor = 0; cursor < appended.size();) {
+            const auto count = appended[cursor] >> spv::WordCountShift;
+            if (count < 2u || count > appended.size() - cursor) ctx.Fail(inst, "emitted a malformed annotation in its image table function");
+            auto& section = locals.contains(appended[cursor + 1u]) ? defined.body.annotations : shared;
+            section.insert(section.end(), appended.begin() + static_cast<std::ptrdiff_t>(cursor), appended.begin() + static_cast<std::ptrdiff_t>(cursor + count));
+            cursor += count;
+        }
+        state.module.AppendAnnotationWords(shared);
+        const auto same = std::find_if(state.tableImageFunctions.begin(), state.tableImageFunctions.end(), [&](const SpirvTableImageFunction& candidate) {
+            return candidate.arguments == defined.arguments && !candidate.body.words.empty() && SameSpirvFunctionBody(candidate.body, defined.body, TypeU32(state));
+        });
+        if (same != state.tableImageFunctions.end()) {
+            defined.function = same->function;
+            defined.body = {};
+        } else {
+            state.module.AppendAnnotationWords(defined.body.annotations);
+            state.module.AddName(id, "table_image_" + std::to_string(memory.resource));
+            state.module.AddFunction(spv::OpFunction, resultType, id, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, std::span<const std::uint32_t>(types)));
+            for (std::size_t index = 0; index < ids.size(); ++index) state.module.AddFunction(spv::OpFunctionParameter, types[index + 1u], ids[index]);
+            state.module.AppendFunctionWords(words);
+            state.module.AddFunction(spv::OpFunctionEnd);
+            for (const auto index : {1u, 3u}) {
+                if (std::find(defined.arguments.begin(), defined.arguments.end(), index) != defined.arguments.end()) DecorateTableNonUniform(state, parameters[index]);
+            }
         }
         function = state.tableImageFunctions.insert(state.tableImageFunctions.end(), std::move(defined));
     }

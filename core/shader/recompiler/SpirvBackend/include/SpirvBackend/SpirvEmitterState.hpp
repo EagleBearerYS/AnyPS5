@@ -3,6 +3,7 @@
 
 #include "SpirvBackend/SpirvModule.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "SpirvBackend/SpirvFunctionMatch.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include <array>
 #include <cstddef>
@@ -95,6 +96,7 @@ struct SpirvTableImageFunction {
     std::vector<std::uint32_t> operands;
     std::uint32_t function = 0;
     std::vector<std::uint32_t> arguments;
+    SpirvFunctionBody body;
 };
 
 struct SpirvScalarLoadGroups {
