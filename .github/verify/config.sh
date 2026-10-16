@@ -1,0 +1,4 @@
+BASE=71bd2876e56a06e462e269b9d13616e07053ccad
+REPEAT=3
+EXTRA_TESTS='guest_shader_link|agc_driver_prepared_shaders_abi_deferred_undecodable_state'
+NO_BEFORE=1
