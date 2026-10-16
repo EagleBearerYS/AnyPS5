@@ -1,0 +1,3 @@
+BASE=a077a88df5bc4ec26a3049aa721ac37ec8f02305
+REPEAT=5
+EXTRA_TESTS='agc_performance_overlay|agc_performance_overlay_statistics'
