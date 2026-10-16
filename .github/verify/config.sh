@@ -1,0 +1,4 @@
+BASE=3d2d8e53055823f97fbe135d4a826c2e0a2bd31f
+REPEAT=3
+EXTRA_TESTS='request_serializer|agc_shader_memory|agc_driver_sample_order_planning|agc_driver_sample_order_grid_reference|agc_driver_sample_order_recipe_depth_locations'
+NO_BEFORE=1
