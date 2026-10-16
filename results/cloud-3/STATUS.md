@@ -1,4 +1,4 @@
-READY (BF-020 done: perf/agc-remember-evicting-refusals 219da69c3 pushed; result results/cloud-3/BF-020.md)
+BUSY BF-022 (claimed: prototype GPU-side indirect draws for patched SGPRs that are not folded, lavapipe numbers)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
