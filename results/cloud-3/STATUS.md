@@ -1,4 +1,4 @@
-READY (GAC-045 done: test/agc-address-copy-evict-on-6479-6646 fee10f45f pushed; result results/cloud-3/GAC-045.md)
+BUSY GAC-046 (claimed: GAC-033's sample order planning test leaks mock Vulkan objects on Windows; reading the test and the library prebuild paths)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
