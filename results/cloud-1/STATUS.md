@@ -1,9 +1,8 @@
-BUSY BF-040
+READY
 RESULT:
-- Working on BF-040 (high), claimed 2026-10-16T20:12:19Z: reuse of address-based dispatch builds, stacked on #6636 (`perf/agc-reuse-address-draw-builds` 89ab0ea75a). Branch `perf/agc-reuse-address-dispatch-builds`.
-- Last finished: BF-037, results/cloud-1/BF-037.md.
-  - The heap ceiling prototype is on `exp/descriptor-heap-ceiling` 8c8249d1a.
-  - With the heap, rebuilds after one image changed drop 15.4 ms → 0.45 ms (N=8) and 59.7 → 43.1 ms (N=4,096; 31.8 ms with the image skip).
-  - Unchanged draws are bound by per-element Revalidate (93 % at N=4,096).
-  - `^agc` 625/625 with the heap off and on.
-- Before that: BF-038.
+- Last finished: BF-040 (high), results/cloud-1/BF-040.md.
+  - Reuse of address-based dispatch builds, stacked on #6636 (`89ab0ea75`): `perf/agc-reuse-address-dispatch-builds` at 1660019df (9dc75640f, 0beb19604, 1660019df). No PR is open.
+  - BF-033 harness (lavapipe), µs per dispatch: 16 textures 519 → 76; 2,000 textures 5,032 → 699; 8 per submission 1,600 → 28.
+  - All 6 new cases are red on #6636's head and green on the branch; new test ×20 passed.
+  - `^agc`: reuse on 608/608, reuse off 608/608, base 607/607. BF-033's 11 stalling tests pass with reuse on.
+- Before that: BF-037.
