@@ -1437,9 +1437,85 @@ bool RequestPinRelease(std::uintptr_t address, std::size_t bytes) noexcept {
     }
 }
 
+struct LiveSpaces {
+    std::mutex mutex;
+    std::vector<std::weak_ptr<const GuestBufferMemory::AddressSpace>> spaces;
+};
+
+LiveSpaces& Live() {
+    static LiveSpaces live;
+    return live;
+}
+
+void trackSpace(const std::shared_ptr<const GuestBufferMemory::AddressSpace>& space) {
+    auto& live = Live();
+    std::lock_guard lock(live.mutex);
+    std::erase_if(live.spaces, [](const auto& entry) { return entry.expired(); });
+    live.spaces.push_back(space);
+}
+
+void DescribePinHolders(std::uintptr_t address, std::size_t bytes, char* text, std::size_t size) noexcept {
+    try {
+        const auto end = static_cast<std::uint64_t>(address) + bytes;
+        const auto overlaps = [&](std::uint64_t begin, std::uint64_t finish) { return begin < end && address < finish; };
+        std::vector<std::shared_ptr<const GuestBufferMemory::AddressSpace>> holding;
+        {
+            std::lock_guard lock(Live().mutex);
+            for (const auto& entry : Live().spaces) {
+                auto space = entry.lock();
+                if (space != nullptr && std::any_of(space->lease.begin(), space->lease.end(), [&](const auto& range) { return overlaps(range->address, range->address + range->bytes); })) holding.push_back(std::move(space));
+            }
+        }
+        std::string out;
+        const auto current = Spaces().current.load();
+        for (const auto& space : holding) {
+            const bool cached = space == current;
+            const auto builds = static_cast<long long>(space.use_count()) - 1 - (cached ? 2 : 0);
+            char line[160];
+            std::snprintf(line, sizeof(line), "%saddress space %llu held by %lld build%s%s", out.empty() ? "" : ", ", static_cast<unsigned long long>(space->serial), builds, builds == 1 ? "" : "s", cached ? " and the address space cache" : "");
+            out += line;
+        }
+        std::size_t imports = 0;
+        std::size_t parked = 0;
+        std::uint64_t first = 0;
+        std::uint64_t firstBytes = 0;
+        {
+            auto& state = Imports();
+            std::lock_guard lock(state.mutex);
+            for (const auto& [base, entry] : state.imports) {
+                if (!overlaps(entry.base, entry.base + entry.bytes)) continue;
+                if (imports++ == 0) {
+                    first = entry.base;
+                    firstBytes = entry.bytes;
+                }
+            }
+            for (const auto& [device, list] : state.parked) {
+                for (const auto& retired : list) {
+                    if (overlaps(retired->node.mapped().base, retired->node.mapped().base + retired->node.mapped().bytes)) ++parked;
+                }
+            }
+        }
+        if (imports != 0) {
+            char line[128];
+            std::snprintf(line, sizeof(line), "%s%zu host import%s (first 0x%llx+0x%llx)", out.empty() ? "" : ", ", imports, imports == 1 ? "" : "s", static_cast<unsigned long long>(first), static_cast<unsigned long long>(firstBytes));
+            out += line;
+        }
+        if (parked != 0) {
+            char line[64];
+            std::snprintf(line, sizeof(line), "%s%zu parked import%s", out.empty() ? "" : ", ", parked, parked == 1 ? "" : "s");
+            out += line;
+        }
+        if (out.empty()) out = "no build, address space or import the driver tracks";
+        std::snprintf(text, size, "%s", out.c_str());
+    } catch (...) {
+        std::snprintf(text, size, "holders unknown");
+    }
+}
+
 void ensurePinWaiter() {
     static const bool registered = [] {
         GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&RequestPinRelease);
+        GuestAllocations::GuestAllocationsSetPinDescriber_nid_postfix(&DescribePinHolders);
         return true;
     }();
     static_cast<void>(registered);
@@ -2107,6 +2183,7 @@ void GuestBufferMemory::AcquireRegistered() {
             space = std::move(built);
             spaces.droppedByWaiter.store(false, std::memory_order_relaxed);
             spaces.current.store(space);
+            trackSpace(space);
         }
     }
     sweepMirrors();

@@ -50,6 +50,7 @@ Registry& registry() {
 std::atomic<std::uint64_t> generation{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> invalidator{nullptr};
 std::atomic<bool (*)(std::uintptr_t, std::size_t)> pinWaiter{nullptr};
+std::atomic<void (*)(std::uintptr_t, std::size_t, char*, std::size_t)> pinDescriber{nullptr};
 std::atomic<std::uint32_t> pinWaits{0};
 std::atomic<void (*)(const Mapped&, std::uint64_t)> gpuMapObserver{nullptr};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> unmapObserver{nullptr};
@@ -237,6 +238,10 @@ void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t, s
     pinWaiter.store(callback, std::memory_order_release);
 }
 
+void GuestAllocationsSetPinDescriber_nid_postfix(void (*callback)(std::uintptr_t, std::size_t, char*, std::size_t)) {
+    pinDescriber.store(callback, std::memory_order_release);
+}
+
 void GuestAllocationsNotifyUnpinned_nid_postfix() {
     if (pinWaits.load(std::memory_order_seq_cst) == 0) return;
     {
@@ -403,7 +408,7 @@ void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t 
 }
 
 [[noreturn]] void PinnedFailure(std::uintptr_t address, std::size_t bytes, const char* why) {
-    char message[160];
+    char message[768];
     std::snprintf(message, sizeof(message), "guest allocation 0x%llx+0x%llx is still pinned by GPU work or an import (%s)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), why);
     throw std::runtime_error(message);
 }
@@ -425,8 +430,16 @@ void awaitUnpinned(MutationState* state, std::uintptr_t address, std::size_t byt
         registry().allLease.reset();
         if (!pinned()) return;
         const auto now = std::chrono::steady_clock::now();
-        if (now >= deadline) PinnedFailure(address, bytes, ("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS)").c_str());
         const bool locked = state != nullptr && state->lock.owns_lock();
+        if (now >= deadline) {
+            char holders[512] = "holders unknown";
+            if (const auto describe = pinDescriber.load(std::memory_order_acquire)) {
+                if (locked) state->lock.unlock();
+                describe(release.first, static_cast<std::size_t>(release.second - release.first), holders, sizeof(holders));
+                if (locked) state->lock.lock();
+            }
+            PinnedFailure(address, bytes, ("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS); held by " + holders).c_str());
+        }
         if (locked) state->lock.unlock();
         if (now >= requested + pinRequestInterval) {
             requested = now;

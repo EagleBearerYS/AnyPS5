@@ -77,6 +77,7 @@ std::uint64_t GuestAllocationsGeneration_nid_postfix();
 void GuestAllocationsSetInvalidator_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes));
 void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t address, std::size_t bytes));
+void GuestAllocationsSetPinDescriber_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes, char* text, std::size_t size));
 void GuestAllocationsAwaitPinWaits_nid_postfix();
 void GuestAllocationsNotifyUnpinned_nid_postfix();
 bool GuestAllocationsPinned_nid_postfix(const void* pointer, std::size_t bytes);
