@@ -1167,7 +1167,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readableFetches;
     for (std::size_t i = 0; i < attributes.size(); ++i) {
         const auto& attribute = attributes[i];
-        if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) {
+        if (NullVertexDescriptor(attribute) || (args != nullptr ? IndirectVertexFetchOutOfRange(attribute) : VertexFetchOutOfRange(attribute))) {
             zeroed[i] = zeroVertexBuffer(context, attribute);
             continue;
         }

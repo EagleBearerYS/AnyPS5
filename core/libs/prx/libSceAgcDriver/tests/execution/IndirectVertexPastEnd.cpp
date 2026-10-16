@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
@@ -253,6 +254,12 @@ public:
     void Submit(const Case& test, std::uintptr_t vertexAddress, std::uint32_t repeats = 1) {
         const auto userData = UserData();
         const auto vertex = Vertex(*device, vertexAddress, userData, test.zeroSelect, block.Address() + ZeroRecordOffset);
+        if (test.zeroSelect >= 0) {
+            const auto zero = std::find_if(vertex.vertexAttributes.begin(), vertex.vertexAttributes.end(), [](const auto& attribute) { return attribute.resource.fields[2] == 0; });
+            Require(zero != vertex.vertexAttributes.end(), "no vertex attribute has 0 records");
+            if (test.direct) Require(!AgcDriver::Graphics::VertexFetchOutOfRange(*zero), "the direct draw would bind the format-sized zero buffer, read out of bounds past its first vertex, instead of a zero-filled copy of every vertex it fetches");
+            else Require(AgcDriver::Graphics::IndirectVertexFetchOutOfRange(*zero), "the GPU-side draw would not bind the zero buffer for a fetch past 0 records");
+        }
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         const std::vector<std::uint32_t> pixelUserData(8, 0u);
         const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
@@ -398,6 +405,7 @@ int main(int argc, char** argv) {
         failures += fixture.Draw({"DRAW_INDIRECT, first vertex 6, a second attribute with 0 records, stride 16, OOB select 0", false, {3, 1, 6, 0, 0}, {0, 0, 0}, 3, 0});
         failures += fixture.Draw({"DRAW_INDIRECT, first vertex 6, a second attribute with 0 records, stride 16, OOB select 1", false, {3, 1, 6, 0, 0}, {0, 0, 0}, 3, 1});
         failures += fixture.Draw({"direct draw, first vertex 6, a second attribute with 0 records, stride 16, OOB select 0", false, {3, 1, 6, 0, 0}, {0, 0, 0}, 3, 0, true});
+        failures += fixture.Draw({"direct draw, first vertex 6, a second attribute with 0 records, stride 16, OOB select 1", false, {3, 1, 6, 0, 0}, {0, 0, 0}, 3, 1, true});
         failures += fixture.DrawUnreadableBase({"DRAW_INDIRECT whose vertex descriptor starts past the block's end", false, {3, 1, 0, 0, 0}, {0, 0, 0}, 1});
         if (!failures.empty()) {
             std::cerr << failures;

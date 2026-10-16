@@ -233,7 +233,12 @@ inline std::uint32_t VertexBufferOutOfBoundsSelect(const ShaderRecompiler::Verte
 inline bool VertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attribute) {
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto select = VertexBufferOutOfBoundsSelect(attribute);
-    return attribute.resource.fields[2] == 0 && (stride == 0 ? select == 2u || select == 3u : select <= 1u);
+    return stride == 0 && (select == 2u || select == 3u) && attribute.resource.fields[2] == 0;
+}
+
+inline bool IndirectVertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    return VertexFetchOutOfRange(attribute) || (attribute.resource.fields[2] == 0 && stride != 0 && VertexBufferOutOfBoundsSelect(attribute) <= 1u);
 }
 
 inline std::uint64_t ZeroStrideAvailableBytes(const ShaderRecompiler::VertexAttribute& attribute) {
