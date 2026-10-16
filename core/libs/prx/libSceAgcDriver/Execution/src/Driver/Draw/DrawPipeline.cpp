@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MtRecord.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -153,7 +154,12 @@ void DrawPipeline::run() {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);
         }
+        Commit retired;
         std::lock_guard lock(mutex);
+        if (Graphics::MtRecord::ReleaseOffCommitter()) {
+            retired = std::move(items.front().commit);
+            Graphics::MtRecord::Release(retired);
+        }
         items.pop_front();
         ++commits;
         commitNs += spent;

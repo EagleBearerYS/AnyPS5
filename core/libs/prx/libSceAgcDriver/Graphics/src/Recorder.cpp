@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MtRecord.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -1408,9 +1409,28 @@ void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool
     open->passHazards.Add(access);
 }
 
+std::optional<bool> Recorder::OpenPassMt() const {
+    if (open == nullptr || !open->renderPass.open) return std::nullopt;
+    return open->renderPass.mt != nullptr;
+}
+
+void Recorder::StartMtRun(std::shared_ptr<MtRecord::Run> run) {
+    Require(open != nullptr && !open->renderPass.open, "an MT recording run starts with its render pass");
+    open->renderPass.mt = std::move(run);
+}
+
+void Recorder::AddMtDraw(std::function<void(VkCommandBuffer, const Context&)> emit) {
+    Require(open != nullptr && open->renderPass.mt != nullptr, "an MT draw outside an MT render pass");
+    open->renderPass.mt->Add(std::move(emit));
+}
+
 void Recorder::endOpenRenderPass(bool barrier) {
     auto& pass = open->renderPass;
     if (open->segmentActive) endSegment(*open);
+    if (pass.mt != nullptr) {
+        pass.mt->Finish(open->commands);
+        Keep(pass.mt);
+    }
     EndRenderPass(context, open->commands);
     // The pass's attachment and shader writes are visible to everything recorded after it (the
     // host sees them at the batch's fence).

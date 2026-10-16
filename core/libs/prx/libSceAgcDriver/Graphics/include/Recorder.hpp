@@ -24,6 +24,10 @@
 
 namespace AgcDriver::Graphics {
 
+namespace MtRecord {
+class Run;
+}
+
 class Buffer;
 
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
@@ -68,6 +72,10 @@ public:
     };
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass = {});
+    std::optional<bool> OpenPassMt() const;
+    void StartMtRun(std::shared_ptr<MtRecord::Run> run);
+    void AddMtDraw(std::function<void(VkCommandBuffer, const Context&)> emit);
+    bool CountingSamples() const { return countingSamples; }
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
     // label store (RecordStore), or before a command that writes or reads a queued range (the
@@ -639,6 +647,7 @@ private:
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
             std::function<void(VkCommandBuffer)> afterPass;
+            std::shared_ptr<MtRecord::Run> mt;
         } renderPass;
         PassHazards passHazards;
         // A pass ended in this batch: Submit records the host-read barrier its draws left out.

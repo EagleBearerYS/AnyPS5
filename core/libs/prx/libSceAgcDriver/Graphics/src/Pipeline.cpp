@@ -407,6 +407,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             rendering.depthAttachmentFormat = HostDepthFormat(context, state.depth->format);
             if (HasStencil(state.depth->format)) rendering.stencilAttachmentFormat = rendering.depthAttachmentFormat;
         }
+        renderingColorFormats = renderingColors;
+        stencilFormat = rendering.stencilAttachmentFormat;
+        rasterizationSamples = static_cast<VkSampleCountFlagBits>(state.samples);
         if (dynamicRendering) {
             depthFormat = state.depth ? HostDepthFormat(context, state.depth->format) : VK_FORMAT_UNDEFINED;
             colorSlots.assign(state.blends.size(), ~0u);
@@ -665,7 +668,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     return framebuffer;
 }
 
-void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state) const {
+void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, bool secondaryContents) const {
     if (dynamicRendering) {
         const auto views = framebuffer.Views();
         Require(views.size() == attachments, "render targets do not match the pipeline's attachments");
@@ -691,8 +694,9 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
         rendering.pColorAttachments = colors.empty() ? nullptr : colors.data();
         if (depthFormat != VK_FORMAT_UNDEFINED) rendering.pDepthAttachment = &depth;
         if (depthFormat != VK_FORMAT_UNDEFINED && HasStencil(depthFormat)) rendering.pStencilAttachment = &depth;
+        if (secondaryContents) rendering.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT_KHR;
         context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
-        Continue(commands, state);
+        if (!secondaryContents) Continue(commands, state);
         return;
     }
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -710,14 +714,34 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     sampleLocations.postSubpassSampleLocationsCount = 1;
     sampleLocations.pPostSubpassSampleLocations = &post;
     if (sampleLocationsEnabled) begin.pNext = &sampleLocations;
-    context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    Continue(commands, state);
+    context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, secondaryContents ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
+    if (!secondaryContents) Continue(commands, state);
+}
+
+VkPipeline Pipeline::Bound() const {
+    if (optimized != nullptr) optimized->Schedule();
+    const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
+    return best != VK_NULL_HANDLE ? best : pipeline;
+}
+
+MtRecord::Inheritance Pipeline::Inheritance(const Framebuffer& framebuffer) const {
+    MtRecord::Inheritance inheritance;
+    inheritance.dynamicRendering = dynamicRendering;
+    inheritance.renderPass = renderPass;
+    inheritance.framebuffer = dynamicRendering ? VK_NULL_HANDLE : framebuffer.Handle();
+    inheritance.colors = renderingColorFormats;
+    inheritance.depth = depthFormat;
+    inheritance.stencil = stencilFormat;
+    inheritance.samples = rasterizationSamples;
+    return inheritance;
 }
 
 void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
-    if (optimized != nullptr) optimized->Schedule();
-    const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, best != VK_NULL_HANDLE ? best : pipeline);
+    ContinueWith(commands, state, Bound());
+}
+
+void Pipeline::ContinueWith(VkCommandBuffer commands, const State& state, VkPipeline bound) const {
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
     context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
     if (state.stencilReplayReference) context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, *state.stencilReplayReference);

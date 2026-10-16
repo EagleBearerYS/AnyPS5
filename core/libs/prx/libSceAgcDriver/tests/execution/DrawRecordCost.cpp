@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MtRecord.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -383,7 +384,9 @@ void Cost(const GuestBlock& block, std::uint32_t windows) {
     const char* samplePath = std::getenv("DRAW_RECORD_COST_SAMPLES");
     std::unique_ptr<Sampler> sampler = samplePath != nullptr ? std::make_unique<Sampler>(samplePath) : nullptr;
 #endif
+    const char* sizes = std::getenv("DRAW_RECORD_COST_SIZES");
     for (const auto draws : {64u, 512u, 2048u}) {
+        if (sizes != nullptr && std::string(sizes).find(std::to_string(draws)) == std::string::npos) continue;
         auto commands = Commands(block, draws);
         Submit(commands);
         std::vector<double> perDraw;
@@ -447,7 +450,9 @@ int main(int argc, char** argv) {
         Prepare(block);
         Check(block);
         if (argc > 2 && std::string(argv[1]) == "--cost") Cost(block, static_cast<std::uint32_t>(std::stoul(argv[2])));
+        const auto mt = AgcDriver::Graphics::MtRecord::Counted();
         AgcDriverShutdown_nid_postfix();
+        if (AgcDriver::Graphics::MtRecord::Threads() != 0) std::printf("mt-record: %u threads, %llu draws recorded in %llu secondary command buffers over %llu render passes\n", AgcDriver::Graphics::MtRecord::Threads(), static_cast<unsigned long long>(mt.draws), static_cast<unsigned long long>(mt.chunks), static_cast<unsigned long long>(mt.runs));
         std::puts("draw record cost: 16 draws sampled 16 textures, 3 vertex buffers and 2 constant buffers");
         return 0;
     } catch (const std::exception& error) {

@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MtRecord.hpp"
 #include <set>
 
 namespace AgcDriver::Graphics {
@@ -49,10 +50,13 @@ public:
     VkPipelineLayout Layout() const;
     std::shared_ptr<Framebuffer> AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<StorageTexture>> owners, VkExtent2D extent, std::uint32_t layers = 1, std::span<const std::uint8_t> persistent = {});
     // Begins the render pass on the framebuffer, binds the pipeline and sets its dynamic state.
-    void Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state) const;
+    void Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, bool secondaryContents = false) const;
     // The same inside a render pass another pipeline of the same attachments began (compatible by
     // construction: the attachment formats alone decide).
     void Continue(VkCommandBuffer commands, const State& state) const;
+    VkPipeline Bound() const;
+    void ContinueWith(VkCommandBuffer commands, const State& state, VkPipeline bound) const;
+    MtRecord::Inheritance Inheritance(const Framebuffer& framebuffer) const;
     bool SplitsFaces() const { return backFaces != VK_NULL_HANDLE; }
     bool Optimized() const { return optimized != nullptr && optimized->handle.load() != VK_NULL_HANDLE; }
     void ContinueBackFaces(VkCommandBuffer commands, const State& state) const;
@@ -90,6 +94,9 @@ private:
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     std::vector<std::uint32_t> colorSlots;
+    std::vector<VkFormat> renderingColorFormats;
+    VkFormat stencilFormat = VK_FORMAT_UNDEFINED;
+    VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     bool sampleLocationsEnabled = false;
     std::vector<CachedFramebuffer> framebuffers;
 };
