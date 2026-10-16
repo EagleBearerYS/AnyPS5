@@ -5228,6 +5228,39 @@ int main(int argc, char** argv) {
             multisampleGuestAccessTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-eviction-only") {
+            drawSnapshotEvictionTests(device);
+            std::cout << "Draw snapshot eviction tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-input-reuse-only") {
+            drawInputReuseTests(device, recorder);
+            std::cout << "Draw input reuse tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-refresh-only") {
+            storageRefreshTests(device, recorder, false);
+            storageRefreshTests(device, recorder, true);
+            std::cout << "Storage refresh tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--write-back-padding-only") {
+            writeBackPaddingTests(device, recorder, false);
+            writeBackPaddingTests(device, recorder, true);
+            std::cout << "Write-back padding tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--single-pass-only") {
+            singlePassTests(device, recorder, false);
+            singlePassTests(device, recorder, true);
+            std::cout << "Single-pass storage tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--stale-generation-only") {
+            staleGenerationTests(device, recorder);
+            std::cout << "Stale generation tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-descriptors-only") {
             drawDescriptorWriteTests(device, recorder);
             std::cout << "Draw descriptor writes and snapshot overrides passed\n";
