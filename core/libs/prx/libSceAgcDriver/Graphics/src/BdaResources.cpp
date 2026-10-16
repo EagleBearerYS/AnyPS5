@@ -117,6 +117,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     const auto& addressRanges = cached.has_value() ? *cached->ranges : built;
     const auto serial = cached.has_value() ? cached->serial : 0;
     auto guardSerial = MultisampleTargetRangeGeneration();
+    guardGeneration = guardSerial;
     if (tableCacheEnabled() && serial != 0) {
         auto& cache = Tables();
         std::lock_guard lock(cache.mutex);
@@ -140,6 +141,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
     }
     auto filtered = ExcludeMultisampleTargetRanges(context.device, addressRanges, guardSerial);
+    guardGeneration = guardSerial;
     const auto& ranges = filtered.has_value() ? *filtered : addressRanges;
     Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
     Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / sizeof(ShaderRecompiler::BdaAbi::Range), "BDA table size overflow");
@@ -226,6 +228,10 @@ VkDescriptorBufferInfo BdaResources::Table() const {
 
 VkDescriptorBufferInfo BdaResources::Fault() const {
     return {fault->Handle(), 0, ShaderRecompiler::BdaAbi::FaultBufferBytes};
+}
+
+bool BdaResources::TableCurrent() const {
+    return table == nullptr || guardGeneration == MultisampleTargetRangeGeneration();
 }
 
 namespace {

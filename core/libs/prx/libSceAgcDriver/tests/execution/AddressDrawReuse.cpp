@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -34,6 +35,14 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -475,6 +484,83 @@ void OversizedVertexBuffer(AgcDriver::VulkanDevice& device) {
     Require(Builds() == before, "address draw reuse: a draw whose vertex buffer descriptor reaches past its allocation built its resources again");
 }
 
+void MultisampleGuard(AgcDriver::VulkanDevice& device) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if ((context.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0) {
+        std::puts("4x color targets unavailable: a reused draw over a range a native multisample target takes not tested");
+        return;
+    }
+    Scene scene(device, 0);
+    Pages color{BlockBytes};
+    Scene::Store(color, ValueOffset, One);
+    color.Register(0, BlockBytes, true);
+    const auto draw = [&] {
+        std::string text;
+        StderrCapture log;
+        try {
+            scene.Draw();
+            scene.Wait();
+        } catch (const std::exception& error) {
+            text = error.what();
+        }
+        return text + log.Finish();
+    };
+    scene.Point(color.Address(ValueOffset));
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One), "address draw reuse: the draw reading the future multisampled color memory did not read the guest value");
+    auto before = Builds();
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One) && Builds() == before, "address draw reuse: a draw over unchanged ranges did not reuse its build");
+    AgcDriver::Graphics::ColorTarget target{};
+    target.address = color.Address();
+    target.surfaceAddress = target.address;
+    target.extent = {Width, Height};
+    target.surfaceExtent = target.extent;
+    target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
+    target.elementBytes = 4;
+    target.bytes = BlockBytes / 4;
+    target.samples = 4;
+    Require(AgcDriver::Graphics::MultisampledColorBytes(target) == BlockBytes, "address draw reuse: the 4x 64x64 RGBA8 target does not take one 64 KiB block");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(AgcDriver::Graphics::MultisampleTargetView(context, target) != VK_NULL_HANDLE, "address draw reuse: the multisampled target has no view");
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+    }
+    char address[64];
+    std::snprintf(address, sizeof(address), "address=0x%llx", static_cast<unsigned long long>(color.Address(ValueOffset)));
+    scene.Clear();
+    before = Builds();
+    auto text = draw();
+    Require(Builds() == before + 1, "address draw reuse: a draw reused its build after a native multisample target took a range its BDA table maps");
+    Require(text.find("BDA access failed") != std::string::npos && text.find(address) != std::string::npos, "address draw reuse: the BDA table rebuilt under a native multisample target still maps the target's span:\n" + text);
+    scene.Point(scene.guest.Address(ValueOffset));
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One), "address draw reuse: the draw after the refused access did not read the guest value");
+    before = Builds();
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One) && Builds() == before, "address draw reuse: a draw under an unchanged native multisample target did not reuse its build");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        AgcDriver::Graphics::ClearMultisampleTargets(context.device);
+    }
+    scene.Point(color.Address(ValueOffset));
+    scene.Clear();
+    before = Builds();
+    text = draw();
+    Require(Builds() == before + 1, "address draw reuse: a draw reused its build after the native multisample target left a range its BDA table leaves out");
+    Require(text.find("BDA access failed") == std::string::npos, "address draw reuse: the draw after the native multisample target left its range faulted:\n" + text);
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One), "address draw reuse: the draw after the native multisample target left its range did not read the guest value");
+    scene.Wait();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -496,6 +582,7 @@ int main(int argc, char** argv) {
             scene.Wait();
         }
         OversizedVertexBuffer(*device);
+        MultisampleGuard(*device);
         std::printf("address draw reuse tests passed (%zu extra registered ranges)\n", ranges);
         return 0;
     } catch (const std::exception& error) {
