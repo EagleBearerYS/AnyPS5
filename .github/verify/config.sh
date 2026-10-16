@@ -1,0 +1,4 @@
+BASE=51d4babc643de5f270a4c96570a43d8c68d5499d
+REPEAT=3
+EXTRA_TESTS='agc_draw_descriptors|agc_driver_draw_cache_relocation|agc_driver_image_table_reuse'
+NO_BEFORE=1
