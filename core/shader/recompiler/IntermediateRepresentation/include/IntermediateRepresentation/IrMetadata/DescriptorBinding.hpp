@@ -45,6 +45,7 @@ struct IrBindingLayout {
     std::uint32_t imageSlotCount = 0;
     std::vector<std::uint32_t> imageSlotBases;
     bool dispatchThreadLimit = false;
+    bool linearStoreBase = false;
     std::uint32_t runtimeImageCount = 0;
     std::uint32_t runtimeStateDwords = 0;
     std::vector<std::uint32_t> userDataRegisters;
@@ -62,8 +63,11 @@ struct IrBindingLayout {
     [[nodiscard]] std::uint32_t DispatchThreadLimitDword() const {
         return ImageSlotDword() + imageSlotCount;
     }
-    [[nodiscard]] std::uint32_t ImageMetadataDword() const {
+    [[nodiscard]] std::uint32_t LinearStoreBaseDword() const {
         return DispatchThreadLimitDword() + (dispatchThreadLimit ? 3u : 0u);
+    }
+    [[nodiscard]] std::uint32_t ImageMetadataDword() const {
+        return LinearStoreBaseDword() + (linearStoreBase ? 2u : 0u);
     }
     [[nodiscard]] std::uint32_t RuntimeStateDword() const {
         return ImageMetadataDword() + runtimeImageCount * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t));

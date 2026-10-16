@@ -101,7 +101,7 @@ std::optional<LinearStoreSite> FindLinearStore(const IrProgram& program, const s
     const auto index = store->Flags<MemoryFlags>().index;
     if (index >= memory.size()) return std::nullopt;
     const auto& site = memory[index];
-    if (site.kind != ResourceKind::Buffer || site.offset != 0u || site.typed || (!site.formatted && site.dataBits == 0u)) return std::nullopt;
+    if (site.kind != ResourceKind::Buffer || !site.gpuDescriptor || site.offset != 0u || site.typed || (!site.formatted && site.dataBits == 0u)) return std::nullopt;
     const auto* handle = store->Argument(0)->Resolve();
     if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) return std::nullopt;
     for (std::size_t word = 0; word < 4u; ++word) {

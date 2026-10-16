@@ -501,6 +501,8 @@ struct VertexInputPatch {
     bool operator==(const VertexInputPatch& other) const = default;
 };
 
+inline constexpr std::uint32_t NoLinearStoreBaseDword = 0xffffffffu;
+
 struct CompiledShaderArtifact {
     std::vector<VertexInputPatch> vertexInputPatches;
     SharedSpirv spirv;
@@ -508,6 +510,7 @@ struct CompiledShaderArtifact {
     std::uint32_t bufferAddressDword = 0;
     std::uint32_t samplerSlotDword = 0;
     std::uint32_t dispatchThreadLimitDword = 0;
+    std::uint32_t linearStoreBaseDword = NoLinearStoreBaseDword;
     std::uint32_t shaderDataDwords = 0;
     std::uint32_t imageMetadataDword = 0;
     std::uint32_t runtimeImageCount = 0;
