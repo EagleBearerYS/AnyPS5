@@ -27,6 +27,7 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+void ClearStagingBuffers(VkDevice device);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes);
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
@@ -159,7 +160,7 @@ public:
     // then no other member may be used. `compute` and `snapshots` must outlive Complete(). An
     // address-based shader (BDA tables) builds entirely in Complete(): its lease acquisition
     // reconciles imports and refreshes mirrors, which needs the lock.
-    ShaderResources(const Context& context, const CompiledShader& compute, bool deferred, std::uint64_t dispatchThreads = 0);
+    ShaderResources(const Context& context, const CompiledShader& compute, bool deferred, std::uint64_t dispatchThreads = 0, std::uint64_t linearThreads = 0);
     void Complete();
     bool Completed() const { return completed; }
     ~ShaderResources();
@@ -244,7 +245,6 @@ public:
     static void RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources);
     void NameProgram(std::uint64_t address) { program = address; }
     bool StagesWrites() const { return staging != nullptr; }
-    void RecordStagingIn(VkCommandBuffer commands) const;
     void RecordStagingOut(VkCommandBuffer commands) const;
     void PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push);
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
@@ -436,6 +436,7 @@ private:
     std::vector<VkDeviceSize> stagedOffsets;
     std::shared_ptr<Buffer> staging;
     std::vector<ShaderRecompiler::BdaAbi::Range> planWriteStaging();
+    std::vector<ShaderRecompiler::BdaAbi::Range> planExactStaging(std::uint64_t begin, std::uint64_t end);
     bool usesFaultBuffer = false;
     bool faultChecks = false;
     bool imageStoresRecorded = false;
@@ -473,6 +474,8 @@ private:
     std::uint32_t writtenChunks = 0;
     bool drawBuild = false;
     std::uint64_t dispatchThreads = 0;
+    std::uint64_t linearThreads = 0;
+    std::optional<ShaderRecompiler::LinearStore> linearStore;
     std::vector<std::shared_ptr<Texture>> textures;
     std::vector<bool> textureFirstLayer;
     std::vector<bool> textureBaseLevel;

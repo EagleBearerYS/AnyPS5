@@ -78,7 +78,7 @@ struct GuestBufferMemory::AddressSpace {
         std::vector<ShaderRecompiler::BdaAbi::Range> overrides;
         std::shared_ptr<const BdaPageTable> table;
     };
-    mutable std::array<OverrideTable, 4> overrideTables;
+    mutable std::array<OverrideTable, 16> overrideTables;
     mutable std::size_t nextOverrideTable = 0;
     mutable std::uint64_t stamped = 0;
     std::shared_ptr<const void> retired;

@@ -690,6 +690,7 @@ struct VulkanDevice::State {
             }
             deviceImages.reset();
             Graphics::ClearCachedTextures(device);
+            Graphics::ClearStagingBuffers(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
@@ -3400,6 +3401,7 @@ struct PreparedDispatch {
     // the prepare's parts for the driver's 'prepare:' rows (PreparePhase order).
     double prepareMs = 0;
     std::uint64_t dispatchThreads = 0;
+    std::uint64_t linearThreads = 0;
     enum PreparePhase : std::size_t { PrepareKey, PrepareFind, PreparePrecollect, PreparePresync, PrepareStageA, PreparePhaseCount };
     std::array<double, PreparePhaseCount> phaseMs{};
     // The stage-A pre-sync (see PrepareDispatch): the newest recorder serial waited for without the
@@ -3699,7 +3701,7 @@ std::uint64_t VulkanDevice::PresyncDraw(const Graphics::State& graphics) {
     return surfaces.empty() ? 0 : presync(surfaces);
 }
 
-std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads) {
+std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads, std::uint64_t linearThreads) {
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
     static const bool lockedBuild = std::getenv("APS5_LOCKED_BUILD") != nullptr;
@@ -3710,6 +3712,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
     const auto& context = readyContext();
     auto prepared = std::make_shared<PreparedDispatch>();
     prepared->dispatchThreads = dispatchThreads;
+    prepared->linearThreads = linearThreads;
     auto phaseStart = start;
     const auto phase = [&](PreparedDispatch::PreparePhase which) {
         if (!profile) return;
@@ -3717,7 +3720,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
         prepared->phaseMs[which] += std::chrono::duration<double, std::milli>(now - phaseStart).count();
         phaseStart = now;
     };
-    prepared->resources = std::make_shared<Graphics::ShaderResources>(context, compute, true, dispatchThreads);
+    prepared->resources = std::make_shared<Graphics::ShaderResources>(context, compute, true, dispatchThreads, linearThreads);
     phase(PreparedDispatch::PrepareStageA);
     // The pre-sync. Stage B's image lookups that read guest memory on the CPU (PresyncSurfaces)
     // wait, through the flush hook and under the mutex, for the recorded work writing those
@@ -3908,11 +3911,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         Graphics::Recorder::CountBarriers(CommandClass::IndirectArguments);
         recorder.EndGpuTiming(timing, 12);
         recorder.NotePendingRead(arguments, 12, Graphics::Recorder::ReadKind::Indirect);
-    }
-    if (resources.StagesWrites()) {
-        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        resources.RecordStagingIn(commands);
-        covered = 0;
     }
     // Results of earlier recorded work are visible to this dispatch, its own to everything after.
     constexpr VkAccessFlags shaderAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
@@ -4244,7 +4242,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     }
     if (resources == nullptr) {
         const auto buildStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        resources = std::make_shared<Graphics::ShaderResources>(context, shaders[0], false, prepared != nullptr ? prepared->dispatchThreads : 0);
+        resources = std::make_shared<Graphics::ShaderResources>(context, shaders[0], false, prepared != nullptr ? prepared->dispatchThreads : 0, prepared != nullptr ? prepared->linearThreads : 0);
         if (profile) timer.add(PhaseResourcesFullBuild, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count());
     }
     resources->PatchPushConstants(pushBytes);

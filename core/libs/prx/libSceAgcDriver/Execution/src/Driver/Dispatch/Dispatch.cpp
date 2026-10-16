@@ -229,6 +229,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
+    const std::uint64_t linearThreads = indirectArguments != 0 || (packet[4] & 0x20u) != 0 || partialLastGroup || groups[1] != 1 || groups[2] != 1 ? 0 : std::uint64_t{groups[0]} * compute.numThreads[0];
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     if (traceIo) {
         std::string words;
@@ -249,7 +250,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     std::shared_ptr<PreparedDispatch> prepared;
     try {
-        prepared = localDevice->PrepareDispatch(compiled, dispatchThreads);
+        prepared = localDevice->PrepareDispatch(compiled, dispatchThreads, linearThreads);
     } catch (const std::exception& error) {
         rethrow(error);
     }
