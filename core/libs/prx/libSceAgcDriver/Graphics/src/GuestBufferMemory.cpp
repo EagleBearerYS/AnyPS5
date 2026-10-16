@@ -2937,7 +2937,7 @@ void GuestBufferMemory::AcquireRegistered() {
             if (hit) {
                 const auto stamp = ++state.useCounter;
                 for (const auto& region : current->base) {
-                    if (region.direct != nullptr) region.direct->spaceUse = stamp;
+                    if (region.direct != nullptr) region.direct->lastUse = stamp;
                 }
             }
         }
