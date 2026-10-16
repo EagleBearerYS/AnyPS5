@@ -1,0 +1,4 @@
+BASE=bd09c493747053f764d59e8365284fbb10ddf660
+REPEAT=3
+EXTRA_TESTS='agc_driver_graphics|pixel_ancillary|agc_driver_pixel_sample_iteration'
+BEFORE_REPEAT=1
