@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProcessTermination.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
@@ -19,6 +20,7 @@
 #include <cstdio>
 #include <cerrno>
 #include <exception>
+#include <memory>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
@@ -127,8 +129,10 @@ std::uint64_t Driver::GpuMapImportThreads() {
 }
 
 Driver& Driver::Get() {
-    static Driver driver;
-    return driver;
+    static const std::unique_ptr<Driver, void (*)(Driver*)> driver(new Driver, [](Driver* ending) {
+        if (!ProcessTerminating()) delete ending;
+    });
+    return *driver;
 }
 
 Driver::~Driver() {
