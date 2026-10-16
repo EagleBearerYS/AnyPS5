@@ -1,4 +1,4 @@
-READY (last: BF-039 done, build lookup records kept past the bound, 2,000 textures 4.67 to 0.75 ms per dispatch; fix/agc-lookup-log-fits-build bde2a8f0af)
+BUSY BF-042 (claimed: measure the open draw-cache PRs #5656, #5609, #6539 on BF-036's draw record harness)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
