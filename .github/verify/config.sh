@@ -1,0 +1,4 @@
+BASE=418d5abb88d532866a23b71dcbc32cc51cbdd0fd
+REPEAT=5
+EXTRA_TESTS='agc_driver_sample_order_planning|agc_driver_sample_order|agc_driver_sample_location_grid_fallback'
+BEFORE_REPEAT=1
