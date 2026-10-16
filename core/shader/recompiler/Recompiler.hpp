@@ -268,6 +268,9 @@ struct SpirvTarget {
     bool vertexSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
+    bool gpuResolvedImages = false;
+    bool gpuConstants = false;
+    bool gpuConstantsVerify = false;
 };
 
 struct BindingLayout {
@@ -333,6 +336,7 @@ inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
+inline constexpr std::uint32_t GpuWorkgroupMemoryDescriptorSet = 3;
 
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
@@ -347,6 +351,14 @@ struct GraphicsCompileContext {
     std::optional<MeshConfiguration> mesh;
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
+};
+
+struct VertexAttribute;
+
+struct HeapStageWords {
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> flattenedSrt;
+    std::vector<VertexAttribute> vertexAttributes;
 };
 
 struct RecompileRequest {
@@ -594,6 +606,8 @@ struct CompiledShaderArtifact {
     std::uint32_t runtimeImageCount = 0;
     std::vector<std::uint32_t> runtimeImageResources;
     bool registrationModule = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t samplerSlotDword = 0;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
     std::vector<VertexInput> vertexInputs;
@@ -616,6 +630,7 @@ struct CompiledShaderArtifact {
 
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
+    std::vector<RuntimeAbi::HeapSlotWord> heapSlotWords;
     std::uint64_t specializationId = 0;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
@@ -654,6 +669,8 @@ struct ResultKeyMemo {
 };
 
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    std::uint64_t heapTemplateId = 0;
+    std::vector<std::uint32_t> heapUserWords;
     bool bdaReadOnly = false;
     ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
