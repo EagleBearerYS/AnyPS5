@@ -142,6 +142,9 @@ struct AddressSpaceCache {
     std::atomic<std::uint64_t> dissolvedOverlap{0};
     std::atomic<std::uint64_t> dissolvedImports{0};
     std::atomic<std::uint64_t> waiterDrops{0};
+    std::atomic<std::uint64_t> spaceOnlyEvictions{0};
+    std::atomic<std::uint64_t> rebuiltAfterEviction{0};
+    std::atomic<bool> evictedSinceRebuild{false};
 };
 
 AddressSpaceCache& Spaces() {
@@ -985,7 +988,7 @@ bool sameRange(const HostImport& entry, const GuestAllocations::Lease& lease, st
 }
 
 bool pointerHeld(const HostImports& state, const HostImport& entry) {
-    return entry.lastUse >= state.buildFloor;
+    return std::max(entry.lastUse, entry.spaceUse) >= state.buildFloor;
 }
 
 constexpr std::uint64_t ProtectedUses = 256;
@@ -1006,6 +1009,11 @@ std::uint64_t retireLeastRecent(const Context& context, HostImports& state, cons
             if (evictable(state, it->second) && (oldest == state.imports.end() || it->second.lastUse < oldest->second.lastUse)) oldest = it;
         }
         if (oldest == state.imports.end()) break;
+        if (oldest->second.spaceUse + ProtectedUses >= state.useCounter) {
+            auto& spaces = Spaces();
+            spaces.spaceOnlyEvictions.fetch_add(1, std::memory_order_relaxed);
+            spaces.evictedSinceRebuild.store(true, std::memory_order_relaxed);
+        }
         freed += oldest->second.bytes;
         retireImport(context.device, state, oldest, lease);
     }
@@ -2359,7 +2367,7 @@ LeaseStats LeaseCounters() {
 AddressSpaceStats AddressSpaceCounters() {
     const auto& cache = Spaces();
     const auto load = [](const std::atomic<std::uint64_t>& counter) { return counter.load(std::memory_order_relaxed); };
-    return {addressSpaceCacheEnabled(), load(cache.hits), load(cache.rebuiltFirst), load(cache.rebuiltGeneration), load(cache.rebuiltEpoch), load(cache.rebuiltDevice), load(cache.rebuiltWaiterDrop), load(cache.unpublished), load(cache.dissolvedOverlap), load(cache.dissolvedImports), load(cache.waiterDrops)};
+    return {addressSpaceCacheEnabled(), load(cache.hits), load(cache.rebuiltFirst), load(cache.rebuiltGeneration), load(cache.rebuiltEpoch), load(cache.rebuiltDevice), load(cache.rebuiltWaiterDrop), load(cache.unpublished), load(cache.dissolvedOverlap), load(cache.dissolvedImports), load(cache.waiterDrops), load(cache.spaceOnlyEvictions), load(cache.rebuiltAfterEviction)};
 }
 
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit) {
@@ -2731,6 +2739,7 @@ void ReportHostImports() {
     const auto counts = HostImportCounters();
     if (std::all_of(counts.requesters.begin(), counts.requesters.end(), [](const HostImportRequesterCounts& requested) { return requested.made == 0 && requested.refused == 0 && requested.failed == 0; })) return;
     std::fprintf(stderr, "[gpu] host imports at shutdown: %s\n", FormatHostImportCounts(counts).c_str());
+    if (const auto space = AddressSpaceCounters(); space.spaceOnlyEvictions != 0) std::fprintf(stderr, "[gpu] address space at shutdown: %llu imports retired that only the address space kept in use, %llu space rebuilds after them\n", static_cast<unsigned long long>(space.spaceOnlyEvictions), static_cast<unsigned long long>(space.rebuiltAfterEviction));
 }
 
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
@@ -2843,7 +2852,7 @@ void GuestBufferMemory::CountAddressBuild(double snapshotsUs) {
     const auto delta = [](std::uint64_t now, std::uint64_t before) { return static_cast<unsigned long long>(now - before); };
     const auto space = AddressSpaceCounters();
     const auto& spaceSeen = totals.spaceSeen;
-    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
+    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu; space-only evictions %llu, rebuilds after them %llu%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), delta(space.spaceOnlyEvictions, spaceSeen.spaceOnlyEvictions), delta(space.rebuiltAfterEviction, spaceSeen.rebuiltAfterEviction), space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
     totals.tableSeen = table;
     totals.spaceSeen = space;
     totals.builds = 0;
@@ -2885,11 +2894,12 @@ void GuestBufferMemory::AcquireRegistered() {
             else if (current->generation != generation) spaces.rebuiltGeneration.fetch_add(1, std::memory_order_relaxed);
             else if (current->importsEpoch != state.epoch) spaces.rebuiltEpoch.fetch_add(1, std::memory_order_relaxed);
             else hit = true;
+            if (!hit && spaces.evictedSinceRebuild.exchange(false, std::memory_order_relaxed)) spaces.rebuiltAfterEviction.fetch_add(1, std::memory_order_relaxed);
             importFloor = state.useCounter + 1;
             if (hit) {
                 const auto stamp = ++state.useCounter;
                 for (const auto& region : current->base) {
-                    if (region.direct != nullptr) region.direct->lastUse = stamp;
+                    if (region.direct != nullptr) region.direct->spaceUse = stamp;
                 }
             }
         }
