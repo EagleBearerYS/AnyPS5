@@ -2686,6 +2686,33 @@ void verifySingleLaneVertexWave() {
     require(withoutKey != withKey, "single-lane vertex wave: vertex subgroup support did not change the cache key");
 }
 
+void verifyExtensionKey() {
+    using namespace ShaderRecompiler;
+    RecompileRequest request{};
+    request.shader.stage = ShaderStage::Compute;
+    const std::array<std::string_view, 2> first{"VK_KHR_a", "VK_KHR_bb"};
+    const std::string copied[2] = {"VK_KHR_a", "VK_KHR_bb"};
+    const std::array<std::string_view, 2> same{copied[0], copied[1]};
+    const std::array<std::string_view, 2> second{"VK_KHR_a", "VK_KHR_bc"};
+    std::vector<std::uint64_t> firstKey, againKey, sameKey, secondKey, backKey;
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, firstKey);
+    RecompileCacheKey::BuildInterface(request, againKey);
+    request.target.supportedExtensions = same;
+    RecompileCacheKey::BuildInterface(request, sameKey);
+    request.target.supportedExtensions = second;
+    RecompileCacheKey::BuildInterface(request, secondKey);
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, backKey);
+    require(firstKey == againKey && firstKey == sameKey && firstKey == backKey, "extension key: the same extension names built different keys");
+    require(firstKey != secondKey, "extension key: a changed extension name kept the key");
+    std::vector<std::uint64_t> expected{2u, 8u};
+    for (const char byte : std::string_view("VK_KHR_a")) expected.push_back(static_cast<unsigned char>(byte));
+    expected.push_back(9u);
+    for (const char byte : std::string_view("VK_KHR_bb")) expected.push_back(static_cast<unsigned char>(byte));
+    require(std::search(firstKey.begin(), firstKey.end(), expected.begin(), expected.end()) != firstKey.end(), "extension key: the names no longer enter the key byte by byte");
+}
+
 void verifyMeshConfiguration() {
     using namespace ShaderRecompiler;
     ShaderMeshInputInfo list;
@@ -5292,6 +5319,7 @@ int main(int argc, char** argv) {
         verifyHalfWaveReduction();
         verifyNarrowVertexWave();
         verifySingleLaneVertexWave();
+        verifyExtensionKey();
         verifyMeshConfiguration();
         verifyPixelInputs();
         verifyCanonicalVersion20And21Requests();

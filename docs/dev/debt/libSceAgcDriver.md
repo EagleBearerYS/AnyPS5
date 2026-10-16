@@ -165,4 +165,5 @@
 
 ### Opt-in draw paths
 
+- [GPU descriptor heap](../../../core/libs/prx/libSceAgcDriver/Graphics/src/BindlessHeap.cpp) (`APS5_GPU_HEAP`) - opt-in. Storage images, buffers, the BDA page table and image tables stay per-draw bindings in set 0 beside the heap. A graphics pipeline built from libraries with a heap fragment stage and a non-heap vertex stage links a pre-rasterization layout whose set 1 is empty while the heap layout has vertex-visible bindings (`VUID-VkGraphicsPipelineCreateInfo-pLibraries-06758`).
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The straight-line SRT walk marks every user word it reads as a value word, so the draws it captures are never relocated (`agc_driver_draw_cache_relocation` expects relocated hits and fails with the switch on). The Linux main-image page table it adds matches what Windows already does by default.
