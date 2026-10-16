@@ -1,4 +1,3 @@
-BUSY BF-023
-since: 2026-10-16T08:38:58Z (BF-023)
-claimed: tasks/claimed/BF-023.md
-previous: PM-059 done, results/cloud-2/PM-059.md (#6730 review: 3 gaps fixed on review/6730-refusal-memory-gaps a48aa76933)
+READY
+since: 2026-10-16T09:06:37Z
+previous: BF-023 done, results/cloud-2/BF-023.md (v2 c5c2d245bf full CI green except known IPv6; v3 6713249c0a ^agc 607/607, graphics x10)
