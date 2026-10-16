@@ -34,6 +34,7 @@ struct Module {
     std::map<std::uint32_t, std::uint32_t> branchedCallsFromMain;
     std::size_t mainBufferMemoryLoads = 0;
     std::map<std::uint32_t, std::size_t> mainBuiltinLoads;
+    std::size_t mainPrivateWideLoads = 0;
 };
 
 std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
@@ -71,6 +72,9 @@ Module Parse(std::span<const std::uint32_t> words) {
     std::uint32_t merge = 0;
     std::set<std::uint32_t> conditionalTargets;
     std::map<std::uint32_t, std::uint32_t> builtins;
+    std::set<std::uint32_t> wideTypes;
+    std::set<std::uint32_t> privateWidePointers;
+    std::set<std::uint32_t> privateWide;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
@@ -83,6 +87,9 @@ Module Parse(std::span<const std::uint32_t> words) {
             module.functions[operands[0]].name = name.c_str();
         }
         if (op == spv::OpTypePointer && operands[1] == spv::StorageClassPhysicalStorageBuffer) physicalPointerTypes.insert(operands[0]);
+        if (op == spv::OpTypeInt && operands[1] == 64u) wideTypes.insert(operands[0]);
+        if (op == spv::OpTypePointer && operands[1] == spv::StorageClassPrivate && wideTypes.contains(operands[2])) privateWidePointers.insert(operands[0]);
+        if (op == spv::OpVariable && privateWidePointers.contains(operands[0])) privateWide.insert(operands[1]);
         if ((op == spv::OpConvertUToPtr || op == spv::OpAccessChain || op == spv::OpPtrAccessChain) && physicalPointerTypes.contains(operands[0])) physicalPointers.insert(operands[1]);
         if (op == spv::OpFunction) {
             current = operands[1];
@@ -110,6 +117,7 @@ Module Parse(std::span<const std::uint32_t> words) {
             if (op == spv::OpFunctionCall && conditionalTargets.contains(label)) ++module.branchedCallsFromMain[operands[2]];
             if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && physicalPointers.contains(operands[2])) ++module.mainBufferMemoryLoads;
             if (op == spv::OpLoad && builtins.contains(operands[2])) ++module.mainBuiltinLoads[builtins.at(operands[2])];
+            if (op == spv::OpLoad && privateWide.contains(operands[2])) ++module.mainPrivateWideLoads;
         }
         cursor += count;
     }
@@ -183,6 +191,7 @@ int main() {
             const auto loads = found == module.mainBuiltinLoads.end() ? 0u : found->second;
             Expect(loads <= 1u, "main loads built-in " + std::to_string(builtin) + " " + std::to_string(loads) + " times, expected once at its entry");
         }
+        Expect(module.mainPrivateWideLoads == 3u, "main loads the read cache " + std::to_string(module.mainPrivateWideLoads) + " times, expected one probe of its begin, end and offset for the three consecutive s_buffer_load_dword");
         Expect(module.mainBufferMemoryLoads == 3u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected once for each s_buffer_load_dword, through its cached translation, with the refill left to the helper");
         std::uint32_t write = 0;
         for (const auto& [id, function] : module.functions) {

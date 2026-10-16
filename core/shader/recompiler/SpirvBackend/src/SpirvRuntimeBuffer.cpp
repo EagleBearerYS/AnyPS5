@@ -832,7 +832,7 @@ struct ScalarAccess {
     std::uint32_t inBounds;
 };
 
-ScalarAccess scalarAccess(SpirvValueEmitContext& context, const IrValue& instruction, const BufferValues& operands) {
+ScalarAccess scalarAccess(SpirvValueEmitContext& context, const IrValue& instruction, const BufferValues& operands, std::uint32_t bytes = 4u) {
     auto& state = context.state;
     const auto resource = descriptor(context, instruction, operands);
     const auto u64 = TypeScalarU64(state);
@@ -841,7 +841,7 @@ ScalarAccess scalarAccess(SpirvValueEmitContext& context, const IrValue& instruc
     const auto noCarry = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), address, operands.offset);
     const auto byte = EmitAndConstant(state, address, ~3u);
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
-    const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
+    const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, bytes)), size)));
     return {resource, byte, offset, inBounds};
 }
 
@@ -1131,7 +1131,7 @@ std::string helperName(const AccessRequest& request, const MemoryInfo& memory) {
 }
 
 template<typename TBody>
-std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruction, const AccessRequest& request, std::uint32_t active, std::uint32_t valueType, std::uint32_t zero, const std::vector<HelperArgument>& extra, bool outOfLine, TBody&& body, bool inlineOnly = false) {
+std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruction, const AccessRequest& request, std::uint32_t active, std::uint32_t valueType, std::uint32_t zero, const std::vector<HelperArgument>& extra, bool outOfLine, TBody&& body, bool inlineOnly = false, bool missPath = false) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
     struct Faults {
@@ -1158,7 +1158,7 @@ std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruct
         });
         return valueType == 0u ? 0u : result;
     };
-    if (request.kind == AccessKind::ScalarLoad && memory.gpuDescriptor && BdaReadCacheAvailable(state)) {
+    if (!missPath && request.kind == AccessKind::ScalarLoad && memory.gpuDescriptor && BdaReadCacheAvailable(state)) {
         const auto access = scalarAccess(context, instruction, operands);
         return EmitBdaCachedDword(context, instruction, scalarGuestAddress(state, access), access.inBounds, call, false);
     }
@@ -1270,13 +1270,97 @@ void DefineFormatCodecs(SpirvEmitterState& state) {
     }
 }
 
+namespace {
+
+bool groupableScalarBufferLoad(SpirvValueEmitContext& context, const IrValue& instruction) {
+    if (instruction.Opcode() != IrOpcode::ReadConstBuffer || instruction.ArgumentCount() < 2u || !fourWordHandle(instruction)) return false;
+    const auto& memory = context.Memory(instruction);
+    return memory.kind == ResourceKind::ScalarBuffer && memory.gpuDescriptor && !memory.planningOnly;
+}
+
+void scanScalarBufferGroups(SpirvValueEmitContext& context, const IrBlock& block) {
+    auto& groups = context.state.scalarBufferGroups;
+    if (!groups.scanned.insert(&block).second) return;
+    std::vector<const IrValue*> run;
+    const auto flush = [&] {
+        if (run.size() > 1u) groups.leaders[run.front()] = run;
+        run.clear();
+    };
+    const auto same = [](const IrValue* left, const IrValue* right) {
+        left = left->Resolve();
+        right = right->Resolve();
+        return left == right || (left->HasImmediate() && right->HasImmediate() && left->Type() == right->Type() && left->ImmediateU32() == right->ImmediateU32());
+    };
+    const auto sameHandle = [&](const IrValue& left, const IrValue& right) {
+        const auto* a = left.Argument(0)->Resolve();
+        const auto* b = right.Argument(0)->Resolve();
+        if (a == b) return true;
+        for (std::size_t word = 0; word < 4u; ++word) {
+            if (!same(a->Argument(word), b->Argument(word))) return false;
+        }
+        return true;
+    };
+    const auto joins = [&](const IrValue& instruction) {
+        const auto& first = *run.front();
+        return sameHandle(instruction, first) && same(instruction.Argument(1), first.Argument(1)) && context.Memory(instruction).offset == context.Memory(first).offset + static_cast<std::uint32_t>(run.size()) * 4u;
+    };
+    for (const IrValue* instruction : block.Instructions()) {
+        if (instruction->Opcode() == IrOpcode::ReferenceU32 || instruction->Opcode() == IrOpcode::GetBufferResource) continue;
+        if (!groupableScalarBufferLoad(context, *instruction)) {
+            flush();
+            continue;
+        }
+        if (!run.empty() && (run.size() == 16u || !joins(*instruction))) flush();
+        run.push_back(instruction);
+    }
+    flush();
+}
+
+std::uint32_t scalarBufferLoad(SpirvValueEmitContext& context, const IrValue& instruction, bool missPath) {
+    auto& state = context.state;
+    return emitAccess(context, instruction, AccessRequest{AccessKind::ScalarLoad, 1u, {}}, 0u, TypeU32(state), ConstantU32(state, 0u), {}, false, [&](const BufferValues& values, std::uint32_t, std::span<const std::uint32_t>) {
+        return scalarLoad(context, instruction, values);
+    }, false, missPath);
+}
+
+}
+
 std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const IrValue& instruction) {
     auto& state = context.state;
     if (std::ranges::find(state.supportedCapabilities, spv::CapabilityInt64) == state.supportedCapabilities.end()) context.Fail(instruction, "scalar buffer bounds require shaderInt64");
     state.module.EmitCapability(spv::CapabilityInt64);
-    return emitAccess(context, instruction, AccessRequest{AccessKind::ScalarLoad, 1u, {}}, 0u, TypeU32(state), ConstantU32(state, 0u), {}, false, [&](const BufferValues& values, std::uint32_t, std::span<const std::uint32_t>) {
-        return scalarLoad(context, instruction, values);
-    });
+    auto& groups = state.scalarBufferGroups;
+    if (const auto defined = groups.defined.find(&instruction); defined != groups.defined.end()) {
+        const auto value = defined->second;
+        groups.defined.erase(defined);
+        return value;
+    }
+    if (groupableScalarBufferLoad(context, instruction) && BdaReadCacheAvailable(state) && instruction.Parent() != nullptr) {
+        scanScalarBufferGroups(context, *instruction.Parent());
+        if (const auto leader = groups.leaders.find(&instruction); leader != groups.leaders.end()) {
+            const auto members = std::move(leader->second);
+            groups.leaders.erase(leader);
+            const auto count = static_cast<std::uint32_t>(members.size());
+            const auto u32 = TypeU32(state);
+            const auto type = state.module.Type(spv::OpTypeArray, u32, ConstantU32(state, count));
+            const auto span = scalarAccess(context, instruction, instructionValues(context, instruction, true), count * 4u);
+            const auto values = EmitBdaCachedDwords(context, instruction, scalarGuestAddress(state, span), span.inBounds, count, type, [&] {
+                std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, type, state.module.AllocateId()};
+                for (const auto* member : members) construct.push_back(scalarBufferLoad(context, *member, true));
+                state.module.AddFunction(construct);
+                return construct[2];
+            });
+            std::uint32_t result = 0;
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const auto value = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeExtract, u32, value, values, index);
+                if (index == 0u) result = value;
+                else groups.defined[members[index]] = value;
+            }
+            return result;
+        }
+    }
+    return scalarBufferLoad(context, instruction, false);
 }
 
 std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t bits, std::uint32_t active, const std::function<std::uint32_t(std::uint32_t)>& operation) {

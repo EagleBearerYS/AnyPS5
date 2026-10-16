@@ -107,6 +107,7 @@ struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
     SpirvScalarLoadGroups scalarLoadGroups;
+    SpirvScalarLoadGroups scalarBufferGroups;
     SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo);
 
     SpirvModule module;

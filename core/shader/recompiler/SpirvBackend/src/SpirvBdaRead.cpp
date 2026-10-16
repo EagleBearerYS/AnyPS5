@@ -525,6 +525,37 @@ std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst
     });
 }
 
+std::uint32_t EmitBdaCachedDwords(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, std::uint32_t dwords, std::uint32_t type, const std::function<std::uint32_t()>& miss) {
+    auto& state = ctx.state;
+    if (!BdaReadCacheAvailable(state)) ctx.Fail(inst, "BDA read cache is missing");
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto& cache = state.bdaReadCache;
+    const auto both = [&](std::uint32_t left, std::uint32_t right) { return Binary(state, spv::OpLogicalAnd, boolean, left, right); };
+    const auto load = [&](std::uint32_t variable) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, u64, value, variable);
+        return value;
+    };
+    const auto end = Binary(state, spv::OpIAdd, u64, address, BdaConstant(state, dwords * 4u));
+    const auto within = both(Binary(state, spv::OpULessThanEqual, boolean, load(cache[0]), address), Binary(state, spv::OpULessThanEqual, boolean, end, load(cache[1])));
+    return EmitValueIfElse(state, both(enabled, within), type, [&] {
+        const auto device = Binary(state, spv::OpIAdd, u64, address, load(cache[2]));
+        std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, type, state.module.AllocateId()};
+        for (std::uint32_t dword = 0; dword < dwords; ++dword) {
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, dword == 0u ? device : Binary(state, spv::OpIAdd, u64, device, BdaConstant(state, dword * 4u)));
+            const auto value = state.module.AllocateId();
+            if (BdaCoherent(state, inst)) state.module.AddFunction(spv::OpAtomicLoad, u32, value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+            else state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(false), 4u);
+            construct.push_back(value);
+        }
+        state.module.AddFunction(construct);
+        return construct[2];
+    }, miss);
+}
+
 void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits, std::uint32_t enabled) {
     auto& state = ctx.state;
     if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
