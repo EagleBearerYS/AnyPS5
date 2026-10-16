@@ -1960,6 +1960,21 @@ void GuestBufferMemory::AcquireRegistered() {
     const auto previous = addressSpaceCacheEnabled() ? spaces.current.load() : nullptr;
     const bool reuse = previous != nullptr && previous->device == context.device;
     const auto retiredImports = reuse ? RetiredImportsSince(previous->retired) : std::vector<const HostImport*>{};
+    const auto window = reuse ? importWindow.load(std::memory_order_relaxed) : 0u;
+    const auto windowOf = [&](const GuestAllocations::Range& range) -> std::optional<std::uint64_t> {
+        if (window == 0 || range.bytes == 0 || (range.address + range.bytes - 1u) / window != range.address / window) return std::nullopt;
+        return range.address / window;
+    };
+    std::vector<std::uint64_t> addedWindows;
+    if (window != 0) {
+        const auto& oldLease = previous->lease;
+        std::size_t old = 0;
+        for (const auto& range : lease) {
+            while (old < oldLease.size() && oldLease[old]->address < range->address) ++old;
+            if (old < oldLease.size() && oldLease[old] == range) continue;
+            if (const auto added = windowOf(*range)) addedWindows.push_back(*added);
+        }
+    }
     std::size_t oldRange = 0;
     std::size_t oldRegion = 0;
     const auto reusable = [&](const std::shared_ptr<const GuestAllocations::Range>& range) -> const Region* {
@@ -1967,6 +1982,7 @@ void GuestBufferMemory::AcquireRegistered() {
         const auto& oldLease = previous->lease;
         while (oldRange < oldLease.size() && oldLease[oldRange]->address < range->address) ++oldRange;
         if (oldRange == oldLease.size() || oldLease[oldRange] != range) return nullptr;
+        if (const auto own = windowOf(*range); own && std::binary_search(addedWindows.begin(), addedWindows.end(), *own)) return nullptr;
         const auto& base = previous->base;
         while (oldRegion < base.size() && base[oldRegion].end <= range->address) ++oldRegion;
         if (oldRegion == base.size() || base[oldRegion].begin > range->address || base[oldRegion].end < range->address + range->bytes) return nullptr;
