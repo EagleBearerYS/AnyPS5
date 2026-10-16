@@ -1,4 +1,5 @@
 #include "BdaAbi.hpp"
+#include "ImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -547,6 +548,13 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(mesh, "workgroup memory outside a mesh shader");
         } else if (variable.storage == spv::StorageClassUniformConstant) {
             Require(decoration.set && decoration.binding, "unbound shader resource");
+            if (ShaderRecompiler::ImageTableAbi::DescriptorHeapEnabled() && *decoration.set == ShaderRecompiler::ImageTableAbi::HeapDescriptorSet) {
+                Require(*decoration.binding == ShaderRecompiler::ImageTableAbi::HeapImageBinding && std::any_of(shader.bindings.begin(), shader.bindings.end(), [](const auto& item) { return item.role == ShaderRecompiler::DescriptorRole::ImageTable; }), "descriptor heap resource without an image table binding");
+                Require(type.size() == 3 && (type[0] & 0xffffu) == spv::OpTypeRuntimeArray, "image table must be declared as a runtime descriptor array");
+                const auto table = std::find_if(shader.bindings.begin(), shader.bindings.end(), [](const auto& item) { return item.role == ShaderRecompiler::DescriptorRole::ImageTable; });
+                descriptors.insert(std::make_pair(table->descriptorSet, table->binding));
+                continue;
+            }
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
             Require(descriptors.insert(key).second || (binding != shader.bindings.end() && binding->role == ShaderRecompiler::DescriptorRole::ImageTable), "duplicate SPIR-V resource binding");

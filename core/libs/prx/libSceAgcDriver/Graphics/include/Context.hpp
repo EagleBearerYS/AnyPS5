@@ -31,6 +31,7 @@ class DescriptorCache;
 class SamplerCache;
 class ShaderResources;
 class PlaceholderImages;
+class DescriptorHeap;
 class VertexInputCache;
 
 class PipelineCacheSynchronization {
@@ -217,6 +218,7 @@ struct Context {
     bool nullDescriptors = false;
     bool bufferInt64Atomics = false;
     const PlaceholderImages* placeholderImages = nullptr;
+    DescriptorHeap* descriptorHeap = nullptr;
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;

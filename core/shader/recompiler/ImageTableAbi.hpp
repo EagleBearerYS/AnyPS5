@@ -2,12 +2,22 @@
 #define CORE_SHADER_RECOMPILER_IMAGETABLEABI_HPP
 
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <string_view>
 
 namespace ShaderRecompiler::ImageTableAbi {
 
 inline constexpr std::uint32_t Version = 2;
+
+inline constexpr std::uint32_t HeapDescriptorSet = 2;
+inline constexpr std::uint32_t HeapImageBinding = 0;
+inline constexpr std::uint32_t HeapPlaceholderSlot = 0;
+
+inline bool DescriptorHeapEnabled() {
+    static const bool enabled = std::getenv("APS5_DESCRIPTOR_HEAP") != nullptr;
+    return enabled;
+}
 
 inline constexpr std::uint32_t HeaderVersion = 0;
 inline constexpr std::uint32_t HeaderElementBase = 1;

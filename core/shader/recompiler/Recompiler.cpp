@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "ImageTableAbi.hpp"
 #include "StencilReplay.hpp"
 #include <algorithm>
 #include <cstring>
@@ -704,12 +705,16 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
 #endif
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> bindingNumbers;
+    std::map<std::uint32_t, std::uint32_t> setNumbers;
     for (std::size_t cursor = 5; cursor < materialized.size();) {
         const auto count = materialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet) setNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
         if (op == spv::OpVariable && count >= 4u) {
-            if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
+            const auto set = setNumbers.find(materialized[cursor + 2u]);
+            if (ImageTableAbi::DescriptorHeapEnabled() && set != setNumbers.end() && set->second == ImageTableAbi::HeapDescriptorSet) module->bindings.push_back(RuntimeAbi::ImageTableBinding);
+            else if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
             module->pushData |= materialized[cursor + 3u] == spv::StorageClassPushConstant;
         }
         cursor += count;

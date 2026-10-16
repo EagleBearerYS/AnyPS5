@@ -1,5 +1,6 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "BdaAbi.hpp"
+#include "ImageTableAbi.hpp"
 #include "PipelineSpecialization.hpp"
 #include "StencilReplay.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
@@ -476,7 +477,16 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     const auto kind = DescriptorBindingForImage(mode);
                     if (std::any_of(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
                     const auto name = "table_images_" + std::to_string(static_cast<std::uint32_t>(kind));
-                    state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
+                    const auto arrayType = state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode));
+                    if (ImageTableAbi::DescriptorHeapEnabled() && stage != IrShaderStage::Compute) {
+                        const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, arrayType), spv::StorageClassUniformConstant);
+                        state.module.AddName(variable, name.c_str());
+                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, ImageTableAbi::HeapDescriptorSet);
+                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, ImageTableAbi::HeapImageBinding);
+                        state.tableImageVariables.push_back({kind, variable});
+                    } else {
+                        state.tableImageVariables.push_back({kind, Define(arrayType, name.c_str(), spv::StorageClassUniformConstant)});
+                    }
                     if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(spv::CapabilitySampled1D);
                 }
             }

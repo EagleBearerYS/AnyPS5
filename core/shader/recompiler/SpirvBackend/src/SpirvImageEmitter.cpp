@@ -1700,7 +1700,13 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;
-        state.tableAccess.element = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        const auto mapped = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        if (ImageTableAbi::DescriptorHeapEnabled() && state.program.Resources().stage != IrShaderStage::Compute) {
+            const auto slot = LoadTableMap(state, Select(state, u32, checked, mapped, ConstantU32(state, 0u)));
+            state.tableAccess.element = Select(state, u32, checked, slot, ConstantU32(state, ImageTableAbi::HeapPlaceholderSlot));
+        } else {
+            state.tableAccess.element = mapped;
+        }
         DecorateTableNonUniform(state, state.tableAccess.element);
         state.tableAccess.dword3 = dword3;
     }

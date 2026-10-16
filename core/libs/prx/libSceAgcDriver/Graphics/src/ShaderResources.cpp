@@ -7,6 +7,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ExpProfile.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -1365,6 +1367,8 @@ double ShaderResources::phase(BuildPhase which) {
     const auto now = std::chrono::steady_clock::now();
     const auto ms = std::chrono::duration<double, std::milli>(now - phaseStart).count();
     addBuildPhase(which, ms);
+    constexpr std::array<std::size_t, BuildPhaseCount> ExpSlots{ExpProfile::BuildBindings, ExpProfile::BuildPrecollect, ExpProfile::BuildUpload, ExpProfile::Count, ExpProfile::BuildStageA, ExpProfile::BuildImages, ExpProfile::BuildBda, ExpProfile::BuildStageB};
+    if (const auto slot = ExpSlots[static_cast<std::size_t>(which)]; slot != ExpProfile::Count) ExpProfile::Add(slot, ms * 1000.0);
     if (ms > 50) AgcDriver::ProfilePrint_nid_no_patch("[resources] %s took %.0f ms (%zu textures, %zu storage images, %zu buffers, bda %d)\n", BuildPhaseNames[static_cast<std::size_t>(which)], ms, textures.size(), storageTextures.size(), allocations.size(), usesBda ? 1 : 0);
     phaseStart = now;
     return ms;
@@ -1672,6 +1676,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             }
         }
         splitSets = SplitsSets(context, shaders);
+        heapTables = context.descriptorHeap != nullptr && std::none_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Compute; });
         std::array<VkShaderStageFlags, 2> tableFlags{};
         for (auto& table : tableStages) {
             Require(table.mapAllocation != std::numeric_limits<std::size_t>::max(), "an image table stage has no map");
@@ -1683,6 +1688,16 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             const auto samplerFaults = map[ShaderRecompiler::ImageTableAbi::HeaderSamplerFaults];
             Require(static_cast<std::uint64_t>(faults) + elements <= map.size() && static_cast<std::uint64_t>(samplerFaults) + map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount] / 4u <= map.size(), "image table map is truncated");
             if (table.images == nullptr) continue;
+            if (heapTables) {
+                table.slotBase = static_cast<std::uint32_t>(table.map.size());
+                table.map.resize(table.map.size() + elements, ShaderRecompiler::ImageTableAbi::HeapPlaceholderSlot);
+                table.map[ShaderRecompiler::ImageTableAbi::HeaderElementBase] = table.slotBase;
+                auto& allocation = allocations[table.mapAllocation];
+                allocation.size = table.map.size() * sizeof(std::uint32_t);
+                Require(allocation.size <= context.limits.maxStorageBufferRange, "image table map exceeds the storage buffer range limit");
+                allocation.buffer = std::make_unique<Buffer>(context, allocation.size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                continue;
+            }
             table.set = splitSets && table.stage == ShaderRecompiler::ShaderStage::Fragment ? 1u : 0u;
             table.elementBase = tableElements[table.set];
             table.map[ShaderRecompiler::ImageTableAbi::HeaderElementBase] = table.elementBase;
@@ -1815,9 +1830,11 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             }
         }
         timing.descriptorsMs = phase(BuildPhase::Descriptors);
+        ExpProfile::Add(ExpProfile::BuildDescriptorsA, timing.descriptorsMs * 1000.0);
         if (BuildProfiled()) {
             timing.prepareMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stageStart).count();
             addBuildPhase(BuildPhase::StageA, timing.prepareMs);
+            ExpProfile::Add(ExpProfile::BuildStageA, timing.prepareMs * 1000.0);
         }
     } catch (...) {
         release();
@@ -1868,8 +1885,9 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
             bindingFlags[set].push_back(0);
         }
     }
+    const bool heap = context.descriptorHeap != nullptr && std::none_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Compute; });
     for (std::size_t set = 0; set < tableFlags.size(); ++set) {
-        if (tableFlags[set] == 0) continue;
+        if (tableFlags[set] == 0 || heap) continue;
         descriptions[set].push_back({ShaderRecompiler::RuntimeAbi::ImageTableBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, context.imageTableCapacity, tableFlags[set], nullptr});
         bindingFlags[set].push_back(VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT);
     }
@@ -2016,12 +2034,18 @@ void ShaderResources::buildComplete() {
             data.buffer->Bytes()[allocation.dataByte] = static_cast<std::byte>(allocation.adjustment);
             dataPatches.push_back({static_cast<std::size_t>(allocation.dataAllocation), allocation.dataByte, allocation.adjustment});
         }
-        timing.descriptorsMs += phase(BuildPhase::Descriptors);
+        {
+            const auto writesMs = phase(BuildPhase::Descriptors);
+            timing.descriptorsMs += writesMs;
+            ExpProfile::Add(ExpProfile::BuildDescriptorsB, writesMs * 1000.0);
+        }
         noteReusable();
         completed = true;
+        ExpProfile::Add(ExpProfile::Builds, 1.0);
         if (BuildProfiled()) {
             timing.completeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stageStart).count();
             addBuildPhase(BuildPhase::StageB, timing.completeMs);
+            ExpProfile::Add(ExpProfile::BuildStageB, timing.completeMs * 1000.0);
             reportDescriptorCaches();
         }
     } catch (...) {
@@ -4166,15 +4190,53 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
     bindings.push_back(std::move(item));
 }
 
+namespace {
+
+struct HeapTableElement {
+    std::weak_ptr<Texture> texture;
+    GuestTextureResource resource{};
+    std::uint64_t guestBytes = 0;
+    std::uint64_t generation = 0;
+    bool firstLayer = false;
+};
+
+struct HeapTableMemo {
+    VkDevice device = VK_NULL_HANDLE;
+    std::vector<std::uint32_t> words;
+    std::uint64_t pendingSerial = 0;
+    std::vector<HeapTableElement> elements;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+};
+
+bool HeapSkipImages() {
+    static const bool enabled = std::getenv("APS5_DESCRIPTOR_HEAP_SKIP_IMAGES") != nullptr;
+    return enabled;
+}
+
+HeapTableMemo& HeapMemoFor(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding) {
+    thread_local std::vector<HeapTableMemo>* slot = nullptr;
+    auto& memos = ShaderRecompiler::ThreadOwned(slot);
+    for (auto& memo : memos) {
+        if (memo.device == device && memo.words == binding.guestDescriptor) return memo;
+    }
+    if (memos.size() >= 4) memos.erase(memos.begin());
+    auto& memo = memos.emplace_back();
+    memo.device = device;
+    memo.words = binding.guestDescriptor;
+    return memo;
+}
+
+}
+
 void ShaderResources::resolveImageTables() {
-    if (tableBindings[0] == std::numeric_limits<std::size_t>::max() && tableBindings[1] == std::numeric_limits<std::size_t>::max()) return;
+    if (!heapTables && tableBindings[0] == std::numeric_limits<std::size_t>::max() && tableBindings[1] == std::numeric_limits<std::size_t>::max()) return;
     auto& counters = TextureCounts();
     for (std::size_t set = 0; set < tableBindings.size(); ++set) {
         if (tableBindings[set] != std::numeric_limits<std::size_t>::max()) bindings[tableBindings[set]].imageAllocations.assign(std::min(tableElements[set], context.imageTableCapacity), std::numeric_limits<std::size_t>::max());
     }
     for (auto& table : tableStages) {
         if (table.images == nullptr) continue;
-        auto& item = bindings[tableBindings[table.set]];
+        auto* item = heapTables ? nullptr : &bindings[tableBindings[table.set]];
         const auto& binding = *table.images;
         const auto faults = table.map[ShaderRecompiler::ImageTableAbi::HeaderElementFaults];
         const auto stageSamplers = std::span<const std::shared_ptr<Sampler>>(samplers).subspan(table.firstSampler, table.samplerCount);
@@ -4203,11 +4265,36 @@ void ShaderResources::resolveImageTables() {
             textureFirstLayer.push_back(firstLayer);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             table.elementTextures[element] = textures.size() - 1u;
-            item.imageAllocations[static_cast<std::size_t>(table.elementBase) + element] = textures.size() - 1u;
+            if (item != nullptr) {
+                item->imageAllocations[static_cast<std::size_t>(table.elementBase) + element] = textures.size() - 1u;
+            } else {
+                const auto assigned = context.descriptorHeap->Assigned();
+                table.map[table.slotBase + element] = textures.back()->HeapSlot(firstLayer);
+                ExpProfile::Add(ExpProfile::HeapSlotLookups, 1.0);
+                ExpProfile::Add(ExpProfile::HeapSlotsAssigned, static_cast<double>(context.descriptorHeap->Assigned() - assigned));
+            }
         };
+        HeapTableMemo* memo = nullptr;
+        if (heapTables && HeapSkipImages()) {
+            memo = &HeapMemoFor(context.device, binding);
+            const auto serial = StorageTexture::PendingSerial();
+            if (memo->elements.size() != binding.count || (memo->pendingSerial != serial && StorageTexture::AnyPendingOverlaps(memo->ranges))) {
+                memo->elements.assign(binding.count, {});
+                memo->ranges.clear();
+            }
+            memo->pendingSerial = serial;
+        }
         const auto state = CurrentTableState();
         std::vector<std::shared_ptr<Texture>> cached;
-        if (auto* reused = FindReusedTable(context.device, binding, state); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+        ExpProfile::Add(ExpProfile::TableElements, static_cast<double>(binding.count));
+        const auto reuseCheckStart = ExpProfile::Enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        auto* reusedCandidate = FindReusedTable(context.device, binding, state);
+        const bool reuseHit = reusedCandidate != nullptr && TableCurrent(*reusedCandidate) && CachedTableTextures(*reusedCandidate, cached);
+        if (ExpProfile::Enabled()) {
+            ExpProfile::Add(ExpProfile::TableReuseCheck, std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - reuseCheckStart).count());
+            ExpProfile::Add(reuseHit ? ExpProfile::TablesReused : ExpProfile::TablesResolved, 1.0);
+        }
+        if (auto* reused = reuseHit ? reusedCandidate : nullptr; reused != nullptr) {
             auto next = cached.begin();
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
@@ -4229,6 +4316,20 @@ void ShaderResources::resolveImageTables() {
         bool reusable = state.epoch != 0;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+            if (memo != nullptr) {
+                auto& remembered = memo->elements[element];
+                const auto unchanged = [&] {
+                    GuestMemory::CollectWrites(remembered.resource.baseAddress, static_cast<std::size_t>(remembered.guestBytes));
+                    return GuestMemory::UnchangedSince(remembered.resource.baseAddress, static_cast<std::size_t>(remembered.guestBytes), remembered.generation);
+                };
+                if (auto texture = remembered.texture.lock(); texture != nullptr && remembered.generation != 0 && unchanged()) {
+                    ExpProfile::Add(ExpProfile::HeapIndexWrites, 1.0);
+                    reusable = false;
+                    bind(element, words, std::move(texture), remembered.resource, remembered.guestBytes, remembered.firstLayer);
+                    continue;
+                }
+                remembered = {};
+            }
             const auto absolute = static_cast<std::uint64_t>(table.elementBase) + element;
             if (absolute >= context.imageTableCapacity) {
                 table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
@@ -4271,6 +4372,14 @@ void ShaderResources::resolveImageTables() {
                     fresh.elements.push_back({MakeTextureKey(context.device, words, components, depthCompare), texture, resource, guestBytes, firstLayer, false, {}});
                     fresh.queries.push_back({resource.baseAddress, static_cast<std::size_t>(guestBytes), looked->generation});
                     fresh.ranges.emplace_back(resource.baseAddress, resource.baseAddress + guestBytes);
+                }
+            }
+            if (memo != nullptr) {
+                GuestMemory::CollectWrites(resource.baseAddress, static_cast<std::size_t>(guestBytes));
+                const auto generation = GuestMemory::TrackerGeneration();
+                if (resource.dccAddress == 0 && generation != 0) {
+                    memo->elements[element] = {texture, resource, guestBytes, generation, firstLayer};
+                    memo->ranges.emplace_back(resource.baseAddress, resource.baseAddress + guestBytes);
                 }
             }
             bind(element, words, std::move(texture), resource, guestBytes, firstLayer);
@@ -4635,6 +4744,13 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
 void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
     if (_set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, 0, 1, &_set, 0, nullptr);
     if (fragment.set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragment.set, 0, nullptr);
+    if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) BindHeap(commands, layout);
+}
+
+void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineLayout layout) const {
+    if (!heapTables || tableStages.empty()) return;
+    const auto set = context.descriptorHeap->Handle();
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, DescriptorHeap::Set, 1, &set, 0, nullptr);
 }
 
 namespace {

@@ -146,6 +146,7 @@ public:
     bool SplitSets() const { return splitSets; }
     PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
+    void BindHeap(VkCommandBuffer commands, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
         DrawBindings(const DrawBindings&) = delete;
@@ -335,6 +336,7 @@ private:
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
         std::vector<std::string> messages;
         std::uint32_t elementBase = 0;
+        std::uint32_t slotBase = 0;
         std::uint32_t set = 0;
         std::size_t firstSampler = 0;
         std::size_t samplerCount = 0;
@@ -504,6 +506,7 @@ private:
         DescriptorCache::SetAllocation cacheAllocation;
     };
     bool splitSets = false;
+    bool heapTables = false;
     std::vector<std::uint32_t> fragmentLayoutKey;
     SetObjects fragment;
     std::uint32_t setOf(const Binding& binding) const;

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -868,8 +869,22 @@ VkImageView Texture::BaseLevelView() const {
     return baseLevelView;
 }
 
+std::uint32_t Texture::HeapSlot(bool firstLayer) const {
+    auto& slot = heapSlots[firstLayer ? 1u : 0u];
+    if (slot == 0u && context.descriptorHeap != nullptr) slot = context.descriptorHeap->Acquire(firstLayer ? firstLayerView : view, layout);
+    return slot;
+}
+
 void Texture::release() noexcept {
     upload.reset();
+    if (context.descriptorHeap != nullptr) {
+        const auto* recorder = Recorder::Active();
+        const auto serial = recorder != nullptr ? recorder->OpenSerial() : 0u;
+        for (auto& slot : heapSlots) {
+            if (slot != 0u) context.descriptorHeap->Release(slot, serial);
+            slot = 0u;
+        }
+    }
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     view = VK_NULL_HANDLE;
     if (firstLayerView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, firstLayerView, nullptr);

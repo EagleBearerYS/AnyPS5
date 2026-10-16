@@ -84,6 +84,7 @@ public:
 
     VkImageView View() const;
     VkImageView FirstLayerView() const { return firstLayerView; }
+    std::uint32_t HeapSlot(bool firstLayer) const;
     VkImageView BaseLevelView() const;
     bool HasSrgbView() const { return srgbInfo.has_value(); }
     VkImageView SrgbView(bool firstLayer, bool baseLevel) const;
@@ -137,6 +138,7 @@ private:
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;
+    mutable std::array<std::uint32_t, 2> heapSlots{};
     VkFormat viewFormat = VK_FORMAT_UNDEFINED;
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<StorageTexture> storageSource;
