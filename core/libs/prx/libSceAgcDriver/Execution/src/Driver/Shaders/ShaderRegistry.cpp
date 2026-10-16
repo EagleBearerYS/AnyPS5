@@ -798,7 +798,12 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     } else if (stage == Stage::Fragment) {
         const auto count = RegisterValue(state.context, 0x1b6) & 0x3fu;
         if (registration && count != 0) return nullptr;
-        pixel = Graphics::DecodePixelStageInfo(state.context, {});
+        try {
+            pixel = Graphics::DecodePixelStageInfo(state.context, {});
+        } catch (const Graphics::UnsupportedStageInputError& error) {
+            if (deferred == nullptr) throw;
+            return defer(error.what());
+        }
         const auto& capabilities = device.Target().supportedCapabilities;
         if (pixel->stencilRefExportEnable && std::ranges::find(capabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == capabilities.end()) return nullptr;
         wave = pixel->wave32 ? 32u : 64u;
@@ -819,7 +824,12 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     }
     plan->userData.resize(userCount);
     if (stage != Stage::Compute && stage != Stage::Fragment && snapshot.type != 6) {
-        vertex = Graphics::DecodeVertexStageInfo(snapshot.header, snapshot.headerAddress, plan->userData, nullptr, true, 8u - firstUser);
+        try {
+            vertex = Graphics::DecodeVertexStageInfo(snapshot.header, snapshot.headerAddress, plan->userData, nullptr, true, 8u - firstUser);
+        } catch (const Graphics::UnsupportedStageInputError& error) {
+            if (deferred == nullptr) throw;
+            return defer(error.what());
+        }
         const auto outputs = state.context.find(0x207u);
         if (vertex && outputs != state.context.end()) vertex->paClVsOutCntl = PositionExportLayout(&snapshot, codeOffset, std::span(snapshot.code).subspan(codeOffset), outputs->second);
     }

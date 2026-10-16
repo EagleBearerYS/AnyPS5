@@ -1076,12 +1076,43 @@ void AbiDeferredRectanglePairs() {
     ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "custom per-vertex interpolation is unsupported");
 }
 
+void AbiDeferredRegisteredInputs() {
+    static AbiHeader pixel;
+    DescribeAbi(pixel, PassthroughPixelCode, 1, {{0x8, ProgramLow(PassthroughPixelCode.data())}, {0x9, ProgramHigh(PassthroughPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 0}, {0x1b3, 0x4002}, {0x1b4, 0x4002}, {0x1c5, 4}});
+    static FetchingHeader fetching;
+    DescribeFront(fetching.abi);
+    DescribeStaticFetch(fetching);
+    auto log = Logged([&] {
+        for (const auto* shader : {&pixel.shader, &fetching.abi.shader}) AgcDriverRegisterShader_nid_postfix(shader);
+    });
+    Require(log.find("could not be prepared at registration (AGC graphics: unsupported SPI_PS_INPUT_ENA/ADDR bit combination") != std::string::npos && log.find("could not be prepared at registration (AGC graphics: statically bound vertex attributes are not implemented)") != std::string::npos, "shaders whose stage inputs registration cannot decode were not left to their use with the decode's reason");
+    const std::array<const Shader*, 2> stages{&fetching.abi.shader, &pixel.shader};
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    log = Logged([&] {
+        AgcDriver::ShaderPreparationScope scope({&fetching.abi.shader, &pixel.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+        AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, {}, primitive);
+        scope.Commit();
+    });
+    Require(Deferrals(log) == 0, "shaders left to their use at registration were logged again when the title created their pipeline");
+    std::vector<std::uint32_t> commands;
+    for (const auto* header : {&fetching.abi, &pixel}) {
+        for (std::size_t index = 0; index < header->shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, header->registers[index].offset, header->registers[index].value});
+        for (std::size_t index = 0; index < header->shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, header->context[index].offset, header->context[index].value});
+    }
+    commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw of shaders left to their use at registration was not submitted");
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "unsupported SPI_PS_INPUT_ENA/ADDR bit combination");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "unsupported SPI_PS_INPUT_ENA/ADDR bit combination");
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
-        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
+        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs" || abiMode == "--abi-deferred-registered-inputs";
         Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
@@ -1092,6 +1123,7 @@ int main(int argc, char** argv) {
             else if (abiMode == "--abi-deferred-registration-failure") AbiDeferredRegistrationFailure();
             else if (abiMode == "--abi-deferred-vertex-inputs") AbiDeferredVertexInputs();
             else if (abiMode == "--abi-deferred-rectangle-pairs") AbiDeferredRectanglePairs();
+            else if (abiMode == "--abi-deferred-registered-inputs") AbiDeferredRegisteredInputs();
             else AbiDeferredRectangle();
             std::cout << "shader ABI deferral tests passed: " << abiMode << '\n';
             return 0;

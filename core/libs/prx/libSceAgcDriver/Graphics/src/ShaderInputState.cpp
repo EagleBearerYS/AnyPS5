@@ -122,7 +122,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     if ((activeInputs & ~knownMask) != 0) {
         char message[128];
         std::snprintf(message, sizeof(message), "AGC graphics: unsupported SPI_PS_INPUT_ENA/ADDR bit combination (ena 0x%x addr 0x%x)", ena, addr);
-        throw std::runtime_error(message);
+        throw UnsupportedStageInputError(message);
     }
     std::array<std::uint32_t, 32> interpolatorSettings{};
     for (std::uint32_t i = 0; i < inputNum; ++i) {
@@ -225,7 +225,7 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
     info.fetchBufferReg = static_cast<std::uint32_t>(vertexBufferReg);
     for (std::uint32_t i = 0; i < shader.num_input_semantics; ++i) {
         const auto& semantic = semantics[i];
-        if (semantic.static_vb_index == 1 || semantic.static_attribute == 1) throw std::runtime_error("AGC graphics: statically bound vertex attributes are not implemented");
+        if (semantic.static_vb_index == 1 || semantic.static_attribute == 1) throw UnsupportedStageInputError("AGC graphics: statically bound vertex attributes are not implemented");
         if (staticAbi) {
             auto& destination = info.resourcesDst.at(info.resourcesNum++);
             destination.registerStart = static_cast<std::int32_t>(semantic.hardware_mapping);

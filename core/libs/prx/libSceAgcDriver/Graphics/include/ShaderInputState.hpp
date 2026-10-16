@@ -6,9 +6,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace AgcDriver::Graphics {
+
+class UnsupportedStageInputError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram = false);
 bool PixelEarlyZ(std::uint32_t shaderControl);
