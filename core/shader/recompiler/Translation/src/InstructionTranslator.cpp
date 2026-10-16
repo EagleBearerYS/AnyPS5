@@ -179,10 +179,14 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
     const auto builtin = [&entryIr](StageInputKind kind, std::uint32_t component = 0u) -> IrValue& {
         return entryIr.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&entryIr.Constant(static_cast<std::uint32_t>(kind)), &entryIr.Constant(component)});
     };
-    const auto drawIndex = [&entryIr, &options, &builtin](StageInputKind kind) -> IrValue& {
+    // A GPU-side indirect draw's stage: the CP's per-record SGPRs come from the draw's parameters,
+    // and the index VGPRs are the CP's (no offset) whatever the draw's offsets are.
+    const DrawParameterSgprs drawParameters = options.stage == ShaderStageKind::Vertex && options.inputInfo.vertex != nullptr ? options.inputInfo.vertex->drawParameters : DrawParameterSgprs{};
+    const auto drawIndex = [&entryIr, &options, &builtin, &drawParameters](StageInputKind kind) -> IrValue& {
+        IrValue& index = builtin(kind);
+        if (drawParameters.enabled) return entryIr.ISub(index, builtin(kind == StageInputKind::VertexIndex ? StageInputKind::BaseVertex : StageInputKind::BaseInstance));
         const auto* fetch = options.embeddedFetch;
         const std::int32_t folded = fetch == nullptr ? -1 : kind == StageInputKind::VertexIndex ? fetch->vertexOffsetSgpr : fetch->instanceOffsetSgpr;
-        IrValue& index = builtin(kind);
         return folded < 0 ? index : entryIr.ISub(index, entryIr.GetUserData(static_cast<ScalarReg>(folded)));
     };
     const auto tessellationBase = [&entryIr](TessellationBaseKind kind) -> IrValue& {
@@ -191,7 +195,8 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
 
     for (std::uint32_t index = 0; index < options.userDataCount; index++) {
         const auto reg = static_cast<ScalarReg>(options.userDataBaseRegister + index);
-        IrValue& value = entryIr.GetUserData(reg);
+        const auto sgpr = static_cast<std::int32_t>(options.userDataBaseRegister + index);
+        IrValue& value = !drawParameters.enabled ? entryIr.GetUserData(reg) : sgpr == drawParameters.baseVertex ? builtin(StageInputKind::BaseVertex) : sgpr == drawParameters.startInstance ? builtin(StageInputKind::BaseInstance) : sgpr == drawParameters.drawIndex ? builtin(StageInputKind::DrawIndex) : entryIr.GetUserData(reg);
         entryIr.SetScalarReg(reg, value);
         entryIr.SetScalarMaskTag(reg, entryIr.ConstantBool(false));
     }

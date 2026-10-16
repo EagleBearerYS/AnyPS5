@@ -185,6 +185,20 @@ struct ShaderVertexResourceDestination {
     std::uint32_t fetchIndex;
 };
 
+// The user SGPRs an indirect draw's CP writes per record (base vertex, start instance, draw index;
+// -1: none), for a vertex stage drawn by vkCmdDraw*Indirect. With `enabled`, the stage reads them
+// from the draw's own parameters (BaseVertex, BaseInstance, DrawIndex) and its vertex and instance
+// index VGPRs are VertexIndex - BaseVertex and InstanceIndex - BaseInstance: the CP's values
+// whatever the draw's offsets, so one stage serves every record.
+struct DrawParameterSgprs {
+    bool enabled = false;
+    std::int32_t baseVertex = -1;
+    std::int32_t startInstance = -1;
+    std::int32_t drawIndex = -1;
+
+    bool operator==(const DrawParameterSgprs&) const = default;
+};
+
 struct ShaderVertexStageInfo {
     static constexpr std::uint32_t MaxResources = 32;
     std::array<ShaderVertexBufferResource, MaxResources> resources;
@@ -194,6 +208,7 @@ struct ShaderVertexStageInfo {
     std::uint32_t fetchBufferReg;
     bool fetchEmbedded;
     std::uint32_t paClVsOutCntl = 0;
+    DrawParameterSgprs drawParameters;
 };
 
 struct ShaderFloatMode {

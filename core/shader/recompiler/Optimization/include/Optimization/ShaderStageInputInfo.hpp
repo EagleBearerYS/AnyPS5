@@ -138,6 +138,7 @@ struct ShaderVertexInputInfo {
     ShaderClipSpaceTransform clipSpace;
     ShaderMeshInputInfo mesh;
     ShaderTessellationInputInfo tess;
+    DrawParameterSgprs drawParameters;
     bool fetchExternal = false;
     bool fetchEmbedded = false;
 };
