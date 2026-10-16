@@ -200,6 +200,20 @@ int main() {
             if (function.name == "write_bda") write = id;
         }
         Expect(write != 0u, "the module has no write_bda function");
+        std::uint32_t segment = 0;
+        for (const auto& [id, function] : module.functions) {
+            if (function.name == "bda_segment") segment = id;
+        }
+        Expect(segment != 0u, "the module has no bda_segment function");
+        std::size_t spanReaders = 0;
+        for (const auto& [id, function] : module.functions) {
+            if (!function.name.starts_with("read_bda_span")) continue;
+            ++spanReaders;
+            const auto found = function.calls.find(segment);
+            const auto refreshes = found == function.calls.end() ? 0u : found->second;
+            Expect(refreshes == 1u && function.bufferMemoryLoads != 0u, function.name + " refreshes the invocation's read segment " + std::to_string(refreshes) + " times and loads buffer memory " + std::to_string(function.bufferMemoryLoads) + " times, expected one refresh and direct loads of spans inside the cached segment");
+        }
+        Expect(spanReaders != 0u, "the module has no read_bda_span function");
         for (const auto& [id, function] : module.functions) {
             if (function.name.starts_with("load_scalar_buffer_")) Expect(function.bufferMemoryLoads == 3u, function.name + " loads buffer memory " + std::to_string(function.bufferMemoryLoads) + " times, expected three times: through its cached translation, through a refilled one and through the uncached read");
             if (function.name.starts_with("load_formatted_buffer_")) {
