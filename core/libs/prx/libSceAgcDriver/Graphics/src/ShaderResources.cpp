@@ -390,7 +390,11 @@ std::vector<LookupRecord>& lookupLog() {
 void logLookup(const LookupRecord& record) {
     // The bound drops the oldest half, never everything: one build's lookups (a few dozen at most)
     // are the newest records, and a capture must find them even when the bound trips mid-build.
-    constexpr std::size_t bound = 1024;
+    static const std::size_t bound = [] {
+        const char* text = std::getenv("APS5_LOOKUP_LOG_BOUND");
+        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+        return static_cast<std::size_t>(parsed >= 2 ? parsed : 1024ull);
+    }();
     auto& log = lookupLog();
     if (log.size() >= bound) log.erase(log.begin(), log.begin() + bound / 2);
     log.push_back(record);
