@@ -735,6 +735,15 @@ bool pointerHeld(const HostImports& state, const HostImport& entry) {
     return entry.lastUse >= state.buildFloor;
 }
 
+bool overlapsHeldImport(const HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    auto it = state.imports.lower_bound(begin);
+    if (it != state.imports.begin() && std::prev(it)->second.base + std::prev(it)->second.bytes > begin) --it;
+    for (; it != state.imports.end() && it->first < end; ++it) {
+        if (pointerHeld(state, it->second)) return true;
+    }
+    return false;
+}
+
 bool evictable(const HostImports& state, const HostImport& entry) {
     constexpr std::uint64_t protectedUses = 256;
     return !pointerHeld(state, entry) && entry.lastUse + protectedUses < state.useCounter;
@@ -816,6 +825,13 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     }
     if (end != 0) run = windowRun(state, std::move(run), address, end, context.hostImportAlignment);
     if (run.ranges.empty()) return nullptr;
+    if (end == 0 && run.ranges.size() > 1 && overlapsHeldImport(state, run.base, run.base + run.bytes)) {
+        const auto own = *std::find_if(run.ranges.begin(), run.ranges.end(), [&](const auto& range) { return address >= range->address && address < range->address + range->bytes; });
+        if (fresh) {
+            if (const auto* current = findImport(state, own->address, own->address + own->bytes)) return current;
+        }
+        run = ImportRun{own->address, own->bytes, {own}};
+    }
     return importRunAt(context, state, std::move(run), false, address, lease, end, evict);
 }
 
