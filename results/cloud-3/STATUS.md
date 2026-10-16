@@ -1,4 +1,4 @@
-READY (BF-018 done: perf/agc-remember-evicting-refusals 4ee79e522 pushed; result results/cloud-3/BF-018.md)
+BUSY BF-020 (claimed: BF-018's evicting refusal memory keeps answering while the budget only shrinks, per #6479's stillRefused)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
