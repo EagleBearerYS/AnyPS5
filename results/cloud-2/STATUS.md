@@ -1,4 +1,3 @@
-BUSY PRM-014
-since: 2026-10-16T04:20:45Z (PRM-014)
-claimed: tasks/claimed/PRM-014.md
-previous: GAC-047 done 2026-10-16T03:48:35Z, results/cloud-2/GAC-047.md (fix/agc-bda-publish-unit-shadow at e82f9f1a52)
+READY
+since: 2026-10-16T05:04:23Z
+previous: PRM-014 done 2026-10-16T05:04:23Z, results/cloud-2/PRM-014.md (followup/6636-reuse-counters at c79212a54c on ec17620356, also clean on #6636 head bae2cd48ec; red/green; ^agc 564 passed, 42 skipped, mesh_index_cache base failure; no measurable counter cost)
