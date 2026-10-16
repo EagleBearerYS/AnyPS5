@@ -643,7 +643,19 @@ struct PipelineIdentity {
     auto operator<=>(const PipelineIdentity&) const = default;
 };
 
+struct ResultKeyMemo {
+    mutable std::atomic<std::shared_ptr<const std::vector<std::uint32_t>>> words;
+    ResultKeyMemo() = default;
+    ResultKeyMemo(const ResultKeyMemo&) {}
+    ResultKeyMemo& operator=(const ResultKeyMemo&) {
+        words.store(nullptr, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    bool bdaReadOnly = false;
+    ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;

@@ -108,6 +108,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RequestMemoryView.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/GpuSrtProgram.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DescriptorBindingBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ShaderInfoCollector.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SharedMemoryBarrierInserter.cpp
@@ -221,6 +222,7 @@ function(add_shader_recompiler target runtimeTarget)
     endif()
     set(shaderCacheReviewedNames
             BuildBarycentricGeometryShader
+            RunGpuSrtProgram
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources
