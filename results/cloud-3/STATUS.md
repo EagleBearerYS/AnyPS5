@@ -1,4 +1,4 @@
-READY (last: PRM-021 done, eight PRs clean on main 3f171d03e0, #6366 fix pushed)
+BUSY PM-065 (claimed: prove or clear the pipelined dispatch data-hit lifetime bug)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
