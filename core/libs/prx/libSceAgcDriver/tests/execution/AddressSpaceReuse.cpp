@@ -39,6 +39,8 @@ using Graphics::Require;
 
 constexpr std::uint64_t Unit = 65536;
 constexpr std::uint64_t ProbeBytes = 4096;
+constexpr std::uint64_t ImportWindowBytes = std::uint64_t{8} << 20u;
+constexpr std::uint32_t HostUnits = static_cast<std::uint32_t>(3u * ImportWindowBytes / Unit);
 
 int failures = 0;
 
@@ -56,10 +58,16 @@ std::string Hex(std::uint64_t value) {
 
 class Block {
 public:
-    explicit Block(std::uint32_t units, std::uintptr_t hint = 0) : bytes(units * Unit), lengths(units, 0u) {
-        base = static_cast<std::uint8_t*>(hint != 0 ? GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(hint, bytes, Unit) : GuestArena::GuestArenaAllocate_nid_postfix(bytes, Unit));
+    enum class Backing { Arena, Host };
+
+    explicit Block(std::uint32_t units, Backing backing = Backing::Arena, std::uintptr_t hint = 0) : bytes(units * Unit), backing(backing), lengths(units, 0u) {
+        if (backing == Backing::Host) {
+            base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        } else {
+            base = static_cast<std::uint8_t*>(hint != 0 ? GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(hint, bytes, Unit) : GuestArena::GuestArenaAllocate_nid_postfix(bytes, Unit));
+            if (base != nullptr) GuestArena::GuestArenaCommit_nid_postfix(base, bytes, PAGE_READWRITE, 16384);
+        }
         Require(base != nullptr, "address space reuse: cannot reserve guest units");
-        GuestArena::GuestArenaCommit_nid_postfix(base, bytes, PAGE_READWRITE, 16384);
         std::memset(base, 0x5a, bytes);
     }
 
@@ -71,6 +79,10 @@ public:
             } catch (const std::exception& error) {
                 std::fprintf(stderr, "FAIL: address space reuse: a unit could not be removed: %s\n", error.what());
             }
+        }
+        if (backing == Backing::Host) {
+            VirtualFree(base, 0, MEM_RELEASE);
+            return;
         }
         GuestArena::GuestArenaReset_nid_postfix(base, bytes);
         GuestArena::GuestArenaRelease_nid_postfix(base, bytes);
@@ -95,6 +107,7 @@ public:
 private:
     std::uint8_t* base = nullptr;
     std::uint64_t bytes = 0;
+    Backing backing = Backing::Arena;
     std::vector<std::uint32_t> lengths;
 };
 
@@ -130,42 +143,51 @@ std::uint64_t Serial(const Graphics::Context& context, std::uint64_t address) {
 }
 
 bool ImportsSurviveRebuilds(const Graphics::Context& context) {
-    Block units(10);
-    units.Map(0, 1);
-    units.Map(3, 1);
-    units.Map(5, 1);
+    Graphics::SetHostImportWindow(ImportWindowBytes);
+    Block units(HostUnits, Block::Backing::Host);
+    const auto windowStart = (units.Address(8) + ImportWindowBytes - 1u) & ~(ImportWindowBytes - 1u);
+    const auto run = static_cast<std::uint32_t>((windowStart - units.Address(0)) / Unit);
+    constexpr std::uint32_t Kept = 0;
+    constexpr std::uint32_t Remapped = 3;
+    constexpr std::uint32_t Elsewhere = 6;
+    constexpr auto Half = static_cast<std::uint32_t>(ImportWindowBytes / 2u / Unit);
+    const auto grownUnit = run;
+    const auto adjacentUnit = run + Half;
+    units.Map(Kept, 1);
+    units.Map(Remapped, 1);
+    units.Map(grownUnit, Half);
     static_cast<void>(Build(context));
-    const auto kept = Serial(context, units.Address(0));
-    const auto remapped = Serial(context, units.Address(3));
-    const auto grown = Serial(context, units.Address(5));
+    const auto kept = Serial(context, units.Address(Kept));
+    const auto remapped = Serial(context, units.Address(Remapped));
+    const auto grown = Serial(context, units.Address(grownUnit));
     if (kept == 0u || remapped == 0u || grown == 0u) return false;
     Expect(kept != remapped && remapped != grown && kept != grown, "address space reuse: three separate ranges share an import serial");
 
-    units.Map(9, 1);
+    units.Map(Elsewhere, 1);
     static_cast<void>(Build(context));
     const std::string elsewhere = "a rebuild after a new range was mapped elsewhere";
-    Expect(Serial(context, units.Address(0)) == kept, elsewhere + ": the unchanged range at " + Hex(units.Address(0)) + " lost its import (serial " + Hex(kept) + " became " + Hex(Serial(context, units.Address(0))) + ")");
-    Expect(Serial(context, units.Address(3)) == remapped, elsewhere + ": the unchanged range at " + Hex(units.Address(3)) + " lost its import");
-    Expect(Serial(context, units.Address(5)) == grown, elsewhere + ": the unchanged range at " + Hex(units.Address(5)) + " lost its import");
-    Expect(Serial(context, units.Address(9)) != 0u, elsewhere + ": the new range at " + Hex(units.Address(9)) + " was not imported");
+    Expect(Serial(context, units.Address(Kept)) == kept, elsewhere + ": the unchanged range at " + Hex(units.Address(Kept)) + " lost its import (serial " + Hex(kept) + " became " + Hex(Serial(context, units.Address(Kept))) + ")");
+    Expect(Serial(context, units.Address(Remapped)) == remapped, elsewhere + ": the unchanged range at " + Hex(units.Address(Remapped)) + " lost its import");
+    Expect(Serial(context, units.Address(grownUnit)) == grown, elsewhere + ": the unchanged range at " + Hex(units.Address(grownUnit)) + " lost its import");
+    Expect(Serial(context, units.Address(Elsewhere)) != 0u, elsewhere + ": the new range at " + Hex(units.Address(Elsewhere)) + " was not imported");
 
-    units.Unmap(3);
-    units.Map(3, 1);
+    units.Unmap(Remapped);
+    units.Map(Remapped, 1);
     static_cast<void>(Build(context));
     const std::string again = "a rebuild after one range was unmapped and mapped again";
-    const auto replaced = Serial(context, units.Address(3));
+    const auto replaced = Serial(context, units.Address(Remapped));
     Expect(replaced != 0u && replaced != remapped, again + ": the range mapped again kept its old import (serial " + Hex(remapped) + ", now " + Hex(replaced) + ")");
-    Expect(Serial(context, units.Address(0)) == kept, again + ": the unchanged range at " + Hex(units.Address(0)) + " lost its import");
-    Expect(Serial(context, units.Address(5)) == grown, again + ": the unchanged range at " + Hex(units.Address(5)) + " lost its import");
+    Expect(Serial(context, units.Address(Kept)) == kept, again + ": the unchanged range at " + Hex(units.Address(Kept)) + " lost its import");
+    Expect(Serial(context, units.Address(grownUnit)) == grown, again + ": the unchanged range at " + Hex(units.Address(grownUnit)) + " lost its import");
 
-    units.Map(6, 1);
+    units.Map(adjacentUnit, Half);
     static_cast<void>(Build(context));
-    const std::string adjacent = "a rebuild after a new range was mapped right after an imported one";
-    const auto regrown = Serial(context, units.Address(5));
+    const std::string adjacent = "a rebuild after a new range was mapped right after an imported one, the two filling one import window";
+    const auto regrown = Serial(context, units.Address(grownUnit));
     Expect(regrown != 0u && regrown != grown, adjacent + ": the import of the range whose run grew was kept (serial " + Hex(grown) + ", now " + Hex(regrown) + ")");
-    Expect(Serial(context, units.Address(6)) != 0u, adjacent + ": the new adjacent range was not imported");
-    Expect(Serial(context, units.Address(0)) == kept, adjacent + ": the unchanged range at " + Hex(units.Address(0)) + " lost its import");
-    Expect(Serial(context, units.Address(3)) == replaced, adjacent + ": the unchanged range at " + Hex(units.Address(3)) + " lost its import");
+    Expect(Serial(context, units.Address(adjacentUnit)) != 0u, adjacent + ": the new adjacent range was not imported");
+    Expect(Serial(context, units.Address(Kept)) == kept, adjacent + ": the unchanged range at " + Hex(units.Address(Kept)) + " lost its import");
+    Expect(Serial(context, units.Address(Remapped)) == replaced, adjacent + ": the unchanged range at " + Hex(units.Address(Remapped)) + " lost its import");
     return true;
 }
 
@@ -180,7 +202,7 @@ void WindowsShared(const Graphics::Context& context) {
         std::printf("address space reuse: the guest arena ends in the window of its allocations, page table window sharing skipped\n");
         return;
     }
-    Block remote(4, static_cast<std::uintptr_t>(nextWindow));
+    Block remote(4, Block::Backing::Arena, static_cast<std::uintptr_t>(nextWindow));
     if (remote.Window() == home.Window() || remote.Window() != remote.Window(3)) {
         std::printf("address space reuse: no allocation in another page table window, window sharing skipped\n");
         return;
