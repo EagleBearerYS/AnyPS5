@@ -5,6 +5,7 @@
 #include "IntermediateRepresentation/IrMetadata/StageIO.hpp"
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -21,6 +22,14 @@ struct BufferStoreSite {
     std::uint32_t bytes = 0;
 
     bool operator==(const BufferStoreSite& other) const = default;
+};
+
+struct LinearStoreSite {
+    std::uint32_t components = 0;
+    std::uint32_t elementBytes = 0;
+    bool descriptorFormat = false;
+
+    bool operator==(const LinearStoreSite& other) const = default;
 };
 
 struct ShaderInfo {
@@ -53,6 +62,7 @@ struct ShaderInfo {
     bool dispatchThreadLimitInMemory = false;
     bool rasterPrimitive = false;
     bool layerExported = false;
+    std::optional<LinearStoreSite> linearStore;
 
     bool operator==(const ShaderInfo& other) const = default;
 };

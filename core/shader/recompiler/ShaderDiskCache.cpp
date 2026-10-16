@@ -91,7 +91,7 @@ static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update th
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 12, "FragmentParameter changed: update the parameter encoder");
 static_assert(sizeof(CompiledShaderInfo) == 344, "CompiledShaderInfo changed: update the info encoder");
-static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
+static_assert(sizeof(ShaderInfo) == 248, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 88, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
@@ -137,7 +137,8 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 28, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 29, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<LinearStoreSite>() == 3, "LinearStoreSite changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 36, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 9, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
@@ -779,6 +780,12 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.Value(info.dispatchThreadLimitInMemory);
     writer.Value(info.rasterPrimitive);
     writer.Value(info.layerExported);
+    writer.Value(info.linearStore.has_value());
+    if (info.linearStore) {
+        writer.Value(info.linearStore->components);
+        writer.Value(info.linearStore->elementBytes);
+        writer.Value(info.linearStore->descriptorFormat);
+    }
 }
 
 void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
@@ -890,6 +897,16 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.dispatchThreadLimitInMemory);
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);
+    bool linearStore = false;
+    reader.Value(linearStore);
+    info.linearStore.reset();
+    if (linearStore) {
+        LinearStoreSite site;
+        reader.Value(site.components);
+        reader.Value(site.elementBytes);
+        reader.Value(site.descriptorFormat);
+        info.linearStore = site;
+    }
 }
 
 void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {

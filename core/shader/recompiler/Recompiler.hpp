@@ -533,6 +533,15 @@ struct CompiledShaderArtifact {
     std::array<std::uint64_t, 2> identity{};
 };
 
+struct LinearStore {
+    std::uint64_t base = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t records = 0;
+    std::uint32_t elementBytes = 0;
+
+    bool operator==(const LinearStore& other) const = default;
+};
+
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
     std::uint64_t specializationId = 0;
@@ -558,6 +567,7 @@ struct ShaderInvocation {
     std::vector<DeviceImageTableAbi::Expectation> deviceImages;
     bool deviceImagesComplete = true;
     std::vector<std::uint64_t> deviceImageInterfaces;
+    std::optional<LinearStore> linearStore;
 };
 
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
