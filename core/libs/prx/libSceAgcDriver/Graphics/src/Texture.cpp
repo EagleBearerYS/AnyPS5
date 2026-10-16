@@ -3213,6 +3213,79 @@ std::optional<std::vector<std::pair<std::uint32_t, std::uint32_t>>> StorageTextu
     return merged;
 }
 
+namespace {
+
+struct RecordedStoreUnits {
+    std::weak_ptr<StorageTexture> image;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> units;
+};
+
+struct RecordedStoreRegistry {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, std::vector<RecordedStoreUnits>> records;
+};
+
+RecordedStoreRegistry& RecordedStores() {
+    static RecordedStoreRegistry registry;
+    return registry;
+}
+
+}
+
+void StorageTexture::MarkStoresRecorded(std::uint64_t record) {
+    if (record == 0 || !blockUnits || trackedLayers <= 1 || (descriptor.dccAddress != 0 && uploadedKeys != DccKeys::Uncompressed)) {
+        MarkDirty();
+        return;
+    }
+    std::vector<std::uint32_t> clean;
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        if (!layerPending[unit]) clean.push_back(unit);
+    }
+    markLayersPending(0, trackedLayers);
+    if (clean.empty()) return;
+    RecordedStoreUnits entry{weak_from_this(), {}};
+    entry.units.reserve(clean.size());
+    for (const auto unit : clean) entry.units.emplace_back(unit, unitMarks[unit]);
+    auto& registry = RecordedStores();
+    std::lock_guard lock(registry.mutex);
+    registry.records[record].push_back(std::move(entry));
+}
+
+bool StorageTexture::StoresRecordedFor(std::uint64_t record) {
+    auto& registry = RecordedStores();
+    std::lock_guard lock(registry.mutex);
+    return registry.records.contains(record);
+}
+
+void StorageTexture::ResolveRecordedStores(std::uint64_t record, const std::vector<std::pair<std::uint64_t, std::uint64_t>>* written) {
+    std::vector<RecordedStoreUnits> entries;
+    {
+        auto& registry = RecordedStores();
+        std::lock_guard lock(registry.mutex);
+        const auto found = registry.records.find(record);
+        if (found == registry.records.end()) return;
+        entries = std::move(found->second);
+        registry.records.erase(found);
+    }
+    if (written == nullptr) return;
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    for (const auto& entry : entries) {
+        const auto image = entry.image.lock();
+        if (image == nullptr) continue;
+        bool released = false;
+        for (const auto& [unit, mark] : entry.units) {
+            if (unit >= image->trackedLayers || unit >= image->unitMarks.size() || !image->layerPending[unit] || image->unitMarks[unit] != mark) continue;
+            const auto begin = image->layerBegin(unit);
+            const auto end = begin + image->layerBytes(unit);
+            if (std::any_of(written->begin(), written->end(), [&](const std::pair<std::uint64_t, std::uint64_t>& range) { return range.first < end && begin < range.second; })) continue;
+            image->layerPending[unit] = false;
+            released = true;
+        }
+        if (released) image->reconcilePending();
+    }
+}
+
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
     const std::pair<std::uint32_t, std::uint32_t> run{first, first + count};
     markUnitsPending(std::span(&run, 1));
@@ -3221,8 +3294,12 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
 void StorageTexture::markUnitsPending(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs) {
     for (const auto& [first, end] : runs) CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, end - first, static_cast<unsigned long long>(generation));
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    if (unitMarks.size() != trackedLayers) unitMarks.resize(trackedLayers, 0);
     for (const auto& [first, end] : runs) {
-        for (std::uint32_t layer = first; layer < end; ++layer) layerPending[layer] = true;
+        for (std::uint32_t layer = first; layer < end; ++layer) {
+            layerPending[layer] = true;
+            ++unitMarks[layer];
+        }
     }
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in

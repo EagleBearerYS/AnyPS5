@@ -204,6 +204,9 @@ public:
     void WriteBack();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
+    void MarkStoresRecorded(std::uint64_t record);
+    static bool StoresRecordedFor(std::uint64_t record);
+    static void ResolveRecordedStores(std::uint64_t record, const std::vector<std::pair<std::uint64_t, std::uint64_t>>* written);
     void MarkDirtyRegion(std::uint32_t mip, std::uint32_t depthSlice, std::uint32_t depthSlices, std::uint32_t arraySlice, VkRect2D area);
     void Flush();
     // Stores every pending image overlapping the range, except `except`; returns whether any was.
@@ -554,6 +557,7 @@ private:
     std::uint64_t trackedLayerBytes = 0;
     std::vector<std::uint64_t> layerGeneration;
     std::vector<bool> layerPending;
+    std::vector<std::uint64_t> unitMarks;
     bool blockUnits = false;
     // Write-back hysteresis (block units, see writeBack): partial stores in the current window of
     // presents, its first present, and the present until which every pending unit is stored.

@@ -35,7 +35,7 @@ public:
     std::uint64_t HeaderAddress() const;
     void Expect(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images, bool complete);
     void BeforeDispatch(const Context& context, Recorder& recorder);
-    void AfterDispatch(const Context& context, Recorder& recorder);
+    void AfterDispatch(const Context& context, Recorder& recorder, std::uint64_t storeRecord = 0);
     std::vector<std::shared_ptr<StorageTexture>> DispatchStorage() const;
 
     struct Rejection {

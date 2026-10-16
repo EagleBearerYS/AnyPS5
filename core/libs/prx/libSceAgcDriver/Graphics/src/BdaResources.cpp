@@ -4,6 +4,7 @@
 #include "DeviceImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <atomic>
@@ -18,6 +19,22 @@
 #include <sstream>
 
 namespace AgcDriver::Graphics {
+
+namespace {
+
+std::uint64_t NextStoreRecord() {
+    static std::atomic<std::uint64_t> next{0};
+    return next.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> WrittenImageRanges(const std::uint32_t* words) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    if (words[Abi::WrittenOverflowWord] != 0 || Abi::WrittenImagesWhole(words) || !Abi::ForEachWrittenImageRange(words, [&](std::uint64_t begin, std::size_t bytes) { ranges.emplace_back(begin, begin + bytes); })) return std::nullopt;
+    return ranges;
+}
+
+}
 
 BdaArena::Slice BdaArena::Take(const Context& context, std::size_t bytes) {
     Require(bytes != 0 && bytes <= SlabBytes, "a BDA table or fault record does not fit a slab");
@@ -54,7 +71,7 @@ BdaArena::Slice BdaArena::Take(const Context& context, std::size_t bytes) {
     return {arena->current, offset, bytes, arena->current->Bytes().data() + offset};
 }
 
-BatchFaultRecord::BatchFaultRecord(const Context& context, std::uint32_t stream, std::uint64_t batch) : slice(BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes)), stream(stream), batch(batch) {
+BatchFaultRecord::BatchFaultRecord(const Context& context, std::uint32_t stream, std::uint64_t batch) : slice(BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes)), stream(stream), batch(batch), id(NextStoreRecord()) {
     std::memset(slice.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
 }
 
@@ -74,6 +91,7 @@ BdaResources::BdaResources(const Context& context, std::shared_ptr<BatchFaultRec
     if (this->shared != nullptr) return;
     fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes);
     std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+    ownRecord = NextStoreRecord();
 }
 
 void BdaResources::UseRecord(const Context& context, std::shared_ptr<BatchFaultRecord> record) {
@@ -85,6 +103,7 @@ void BdaResources::UseRecord(const Context& context, std::shared_ptr<BatchFaultR
     if (fault.slab != nullptr) return;
     fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes);
     std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+    ownRecord = NextStoreRecord();
 }
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides, std::shared_ptr<BatchFaultRecord> shared) : BdaResources(context, std::move(shared)) {
@@ -149,7 +168,11 @@ bool BdaResources::published(const ShaderRecompiler::BdaAbi::Fault& report) {
 void BdaResources::CheckFault() const {
     if (shared != nullptr) return;
     const BdaResources* self = this;
-    markWrittenPages(reinterpret_cast<std::uint32_t*>(fault.data), std::span(&self, 1));
+    auto* words = reinterpret_cast<std::uint32_t*>(fault.data);
+    const bool recorded = ownRecord != 0 && StorageTexture::StoresRecordedFor(ownRecord);
+    const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
+    markWrittenPages(words, std::span(&self, 1));
+    if (recorded) StorageTexture::ResolveRecordedStores(ownRecord, images ? &*images : nullptr);
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, fault.data, sizeof(report));
     if (!published(report)) return;
@@ -240,7 +263,10 @@ void BatchFaultRecord::Check(std::span<const BatchFaultUser> users) const {
     std::vector<const BdaResources*> sharing;
     sharing.reserve(users.size());
     for (const auto& user : users) sharing.push_back(user.bda);
+    const bool recorded = StorageTexture::StoresRecordedFor(id);
+    const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
     BdaResources::applyWrittenPages(words, sharing);
+    if (recorded) StorageTexture::ResolveRecordedStores(id, images ? &*images : nullptr);
     if (words[Abi::WrittenOverflowWord] != 0) {
         std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
         if (BdaResources::shadowed(sharing)) gpu.lock();

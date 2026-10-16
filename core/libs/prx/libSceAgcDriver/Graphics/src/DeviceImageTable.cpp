@@ -159,7 +159,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     current.clear();
 }
 
-void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder) {
+void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder, std::uint64_t storeRecord) {
     std::lock_guard lock(mutex);
     const auto uses = std::exchange(dispatchStorage, {});
     std::exception_ptr failure;
@@ -167,7 +167,8 @@ void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder) {
         recorder.Keep(use.image);
         if (const auto held = entries.find(use.key); held != entries.end() && held->second.storage == use.image) held->second.storage.reset();
         if (!use.written) continue;
-        use.image->MarkDirty();
+        if (storeRecord != 0) use.image->MarkStoresRecorded(storeRecord);
+        else use.image->MarkDirty();
         try {
             static_cast<void>(DepthSurfaceStoreBack(build, *use.image));
         } catch (...) {

@@ -206,6 +206,7 @@ public:
     void MarkGpuWrites(Recorder& recorder);
     void WriteBackBuffers();
     bool NeedsCompletion() const { return bda != nullptr && faultChecks; }
+    std::uint64_t ImageStoreRecord() const { return imageStoresRecorded && bda != nullptr ? bda->StoreRecord() : 0; }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool UsesAddressTable() const { return usesBda; }
     bool MemoryReadsUnknown() const { return usesBda && accessesUnbounded; }
@@ -437,6 +438,7 @@ private:
     std::vector<ShaderRecompiler::BdaAbi::Range> planWriteStaging();
     bool usesFaultBuffer = false;
     bool faultChecks = false;
+    bool imageStoresRecorded = false;
     bool deviceImages = false;
     VkDescriptorSetLayout _layout = VK_NULL_HANDLE;
     // Whether the layout is this object's own (no cache) and destroyed with it.

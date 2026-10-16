@@ -49,6 +49,7 @@ public:
     VkDescriptorBufferInfo Descriptor() const;
     std::uint32_t Stream() const { return stream; }
     std::uint64_t Batch() const { return batch; }
+    std::uint64_t Id() const { return id; }
     bool Admit(std::uint32_t chunks);
     void Check(std::span<const BatchFaultUser> users) const;
 
@@ -57,6 +58,7 @@ private:
     std::uint32_t stream = 0;
     std::uint64_t batch = 0;
     std::uint32_t chunks = 0;
+    std::uint64_t id = 0;
 };
 
 class BdaResources {
@@ -67,6 +69,7 @@ public:
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
     const std::shared_ptr<BatchFaultRecord>& SharedRecord() const { return shared; }
+    std::uint64_t StoreRecord() const { return shared != nullptr ? shared->Id() : ownRecord; }
     void UseRecord(const Context& context, std::shared_ptr<BatchFaultRecord> record);
     struct ImageTableFaults {
         std::uint32_t stage = 0;
@@ -93,6 +96,7 @@ private:
     BdaArena::Slice table;
     BdaArena::Slice fault;
     std::shared_ptr<BatchFaultRecord> shared;
+    std::uint64_t ownRecord = 0;
     const DeviceImageTable* deviceImages = nullptr;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;

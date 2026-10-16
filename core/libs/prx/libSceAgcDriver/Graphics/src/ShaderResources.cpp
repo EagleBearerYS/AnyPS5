@@ -1132,6 +1132,7 @@ bool UsesAddressTables(const CompiledShader& compute) {
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, bool deferred, std::uint64_t dispatchThreads) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), deferredCompute(compute) {
     Require(compute.stage == ShaderRecompiler::ShaderStage::Compute, "compute resources require a compute shader");
     computeBuild = true;
+    imageStoresRecorded = compute.program != nullptr && compute.program->imageStoresRecorded;
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (!deferred) {
         prepareAddressBindings(shaders);
