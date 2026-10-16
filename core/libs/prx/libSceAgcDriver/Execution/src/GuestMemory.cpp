@@ -336,6 +336,9 @@ public:
             if (count != 0) AgcDriver::ProfilePrint_nid_no_patch(" %s=%llu", ReadSiteName(static_cast<ReadSite>(site)), static_cast<unsigned long long>(count));
         }
         AgcDriver::ProfilePrint_nid_no_patch("\n");
+        GuestArena::GuestArenaUsage usage{};
+        GuestArena::GuestArenaUsage_nid_no_patch(&usage);
+        AgcDriver::ProfilePrint_nid_no_patch("[arena] committed %.1f MiB (private %.1f, shared %.1f, direct %.1f), reserved %.1f MiB\n", (usage.privateBytes + usage.sharedBytes + usage.directBytes) / 1048576.0, usage.privateBytes / 1048576.0, usage.sharedBytes / 1048576.0, usage.directBytes / 1048576.0, usage.reservedBytes / 1048576.0);
     }
 private:
     MemoryCounterKind kind;
