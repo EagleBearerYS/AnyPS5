@@ -57,7 +57,7 @@ struct Statistics {
     std::atomic<std::uint64_t> retiled{0}, retiledBytes{0}, refused{0}, refusedBytes{0}, seeds{0}, seedBytes{0};
     std::atomic<std::uint64_t> detiledShadow{0}, detiledShadowBytes{0}, detiledImport{0}, detiledImportBytes{0}, tailPublishes{0};
     std::array<std::atomic<std::uint64_t>, ReasonCount> published{}, publishedBytes{};
-    std::atomic<std::uint64_t> staleDroppedCpu{0}, staleDroppedDriver{0}, skippedInCompletion{0}, evictions{0}, lostOnRetire{0}, droppedOnRetire{0}, slabLost{0}, verified{0}, mismatches{0};
+    std::atomic<std::uint64_t> staleDroppedCpu{0}, staleDroppedDriver{0}, skippedInCompletion{0}, walkedUnits{0}, evictions{0}, lostOnRetire{0}, droppedOnRetire{0}, slabLost{0}, verified{0}, mismatches{0};
 };
 
 Statistics& Stats() {
@@ -373,6 +373,7 @@ std::size_t publishRange(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
     std::vector<std::uint8_t> selected(static_cast<std::size_t>(last - first + 1), 0);
     bool any = false;
     for (auto unit = first; unit <= last; ++unit) {
+        Stats().walkedUnits.fetch_add(1, std::memory_order_relaxed);
         const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
         const bool whole = address <= unitBegin && end >= unitEnd;
         if (scope == PublishScope::PartialUnits && whole) continue;
@@ -817,6 +818,10 @@ void DestroyShadows(VkDevice device) {
         }
         it = registry.byBase.erase(it);
     }
+}
+
+std::uint64_t ShadowUnitsWalked() {
+    return Stats().walkedUnits.load(std::memory_order_relaxed);
 }
 
 std::string ShadowReport() {

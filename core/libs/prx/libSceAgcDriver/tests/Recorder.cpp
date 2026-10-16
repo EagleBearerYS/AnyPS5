@@ -3290,7 +3290,9 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     // A whole publish: the untouched half keeps the seed (the import's bytes), the other the
     // retile's; the copy stamps nothing, and a second publish copies nothing.
     const auto pre = CollectWritesUncached(address, bytes);
-    Require(PublishShadow(unit3, unit, PublishScope::Whole, PublishReason::Hook) == 1, "the whole publish did not copy the unit");
+    const auto walked = ShadowUnitsWalked();
+    Require(PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Hook) == 1, "the whole publish did not copy the unit");
+    Require(ShadowUnitsWalked() - walked == 1, "a publish over the whole import walked units that hold no fresh results");
     Require(recorder.PendingWriteOverlaps(unit3, unit), "the publish noted no pending write");
     recorder.Sync();
     Require(words[3 * unit] == 0x22 && words[3 * unit + unit / 2 - 1] == 0x22 && words[3 * unit + unit / 2] == 0x11 && words[4 * unit - 1] == 0x11 && words[3 * unit - 1] == 0x11 && words[4 * unit] == 0x11, "the published bytes are wrong");
