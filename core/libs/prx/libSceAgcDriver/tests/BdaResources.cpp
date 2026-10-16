@@ -1440,6 +1440,81 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
     return passed;
 }
 
+void RunHeapMirrorRunUnwatchTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t heapBytes = 32 * block;
+    constexpr std::size_t allocated = 2 * heapBytes + block;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: a heap run leaving the write watch not tested\n";
+        return;
+    }
+    auto* guest = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(allocated, block));
+    Require(guest != nullptr, "cannot allocate the heap run in the guest arena");
+    GuestArena::GuestArenaCommit_nid_postfix(guest, allocated, PAGE_READWRITE, allocated);
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: a heap run leaving the write watch not tested\n";
+        return;
+    }
+    void* mapping = mmap(nullptr, allocated + block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED, "cannot map the heap run");
+    auto* guest = reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(mapping) + block - 1) & ~std::uintptr_t{block - 1});
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(guest, 2 * heapBytes);
+#endif
+    std::memset(guest, 0x5a, allocated);
+    const auto first = reinterpret_cast<std::uintptr_t>(guest);
+    const auto second = first + heapBytes;
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (auto* piece : {guest, guest + heapBytes}) {
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, piece, heapBytes, true, false, true);
+            else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, piece);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    Require(AgcDriver::GuestMemory::Watched(first, 2 * heapBytes), "the heap run is not write-watched");
+    const auto before = MirrorCounters();
+    {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        Require(MirrorCounters().heapMirrors == before.heapMirrors + 2, "the first build did not mirror both heaps of the run");
+        leased.WriteBack();
+    }
+    AgcDriver::GuestMemory::Unwatch(first + block, block);
+    Require(!AgcDriver::GuestMemory::Watched(first, heapBytes) && AgcDriver::GuestMemory::Watched(second, heapBytes), "only the first heap of the run should have left the write watch");
+    std::memset(guest + block, 0x6b, block);
+    std::memset(guest + heapBytes + 2 * block, 0x3c, block);
+    {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        Require(MirrorCounters().heapMirrors == before.heapMirrors + 2, "a heap mirror of the run was dropped once part of the run left the write watch");
+        const auto ranges = leased.AddressRanges();
+        const auto served = [&](std::uintptr_t base) {
+            const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == base; });
+            Require(found != ranges.end() && found->deviceAddress != 0u, "a heap of the run is missing from the BDA table");
+            return access.addressBytes(found->deviceAddress);
+        };
+        Require(served(first)[block + 3] == std::byte{0x6b}, "the unwatched heap of the run does not serve its new bytes");
+        Require(served(second)[2 * block + 3] == std::byte{0x3c}, "the watched heap beside an unwatched one missed the CPU's write");
+        leased.WriteBack();
+    }
+    registry(false);
+    ClearImageMirrors(context.device);
+    ClearSnapshotCopies(context.device);
+#ifdef _WIN32
+    GuestArena::GuestArenaReset_nid_postfix(guest, allocated);
+    GuestArena::GuestArenaRelease_nid_postfix(guest, allocated);
+#else
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(guest, 2 * heapBytes);
+    munmap(mapping, allocated + block);
+#endif
+    std::cout << "an address-based build refreshes the unwatched heap of a run in full and its watched neighbour by its writes\n";
+}
+
 void hostWriteWatchExclusionTests() {
 #ifdef _WIN32
     std::vector<std::uint8_t> host(64, 0x31);
