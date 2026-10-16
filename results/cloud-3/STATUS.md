@@ -1,4 +1,4 @@
-READY (BF-024 done: BF-022 draw parameters on the Village fast5 tree; result results/cloud-3/BF-024.md, branch exp/village-fast5-draw-parameters a38c704ea)
+BUSY PM-063 (claimed: CI Linux mirror on PR heads 6146 6366 6012 5966 5967)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
