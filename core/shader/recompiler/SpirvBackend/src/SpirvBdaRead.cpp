@@ -470,7 +470,7 @@ std::uint32_t BroadcastFirstU64(SpirvEmitterState& state, std::uint32_t value) {
 
 }
 
-std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, const std::function<std::uint32_t()>& uncached) {
+std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, const std::function<std::uint32_t()>& uncached, bool refill) {
     auto& state = ctx.state;
     if (!BdaReadCacheAvailable(state)) ctx.Fail(inst, "BDA read cache is missing");
     const auto u32 = TypeU32(state);
@@ -493,7 +493,9 @@ std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst
         else state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(false), 4u);
         return value;
     };
-    return EmitValueIfElse(state, both(enabled, within(load(cache[0]), load(cache[1]))), u32, fast, [&] {
+    const auto hit = both(enabled, within(load(cache[0]), load(cache[1])));
+    if (!refill) return EmitValueIfElse(state, hit, u32, fast, uncached);
+    return EmitValueIfElse(state, hit, u32, fast, [&] {
         const auto segmentType = state.module.Type(spv::OpTypeStruct, u64, u64, u64);
         const auto translate = [&] {
             const auto segment = state.module.AllocateId();

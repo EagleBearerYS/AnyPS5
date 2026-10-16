@@ -183,7 +183,7 @@ int main() {
             const auto loads = found == module.mainBuiltinLoads.end() ? 0u : found->second;
             Expect(loads <= 1u, "main loads built-in " + std::to_string(builtin) + " " + std::to_string(loads) + " times, expected once at its entry");
         }
-        Expect(module.mainBufferMemoryLoads == 0u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected its s_buffer_load_dword to read through their helper");
+        Expect(module.mainBufferMemoryLoads == 3u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected once for each s_buffer_load_dword, through its cached translation, with the refill left to the helper");
         std::uint32_t write = 0;
         for (const auto& [id, function] : module.functions) {
             if (function.name == "write_bda") write = id;
