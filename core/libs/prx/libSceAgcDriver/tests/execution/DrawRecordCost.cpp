@@ -116,6 +116,28 @@ constexpr std::array<std::uint32_t, PixelWords> MakePixelCode() {
 
 alignas(256) constexpr std::array<std::uint32_t, PixelWords> PixelCode = MakePixelCode();
 
+alignas(256) constexpr std::array<std::uint32_t, PixelWords + 1> PixelValueCode = [] {
+    std::array<std::uint32_t, PixelWords + 1> code{};
+    std::size_t n = 0;
+    for (const auto word : PixelCode) {
+        if (word == 0xf800180fu) code[n++] = 0x06101002u;
+        code[n++] = word;
+    }
+    return code;
+}();
+
+bool ObjectValues() {
+    static const bool values = [] {
+        const char* text = std::getenv("DRAW_RECORD_COST_OBJECT_MODE");
+        return text != nullptr && std::string(text) == "value";
+    }();
+    return values;
+}
+
+std::uintptr_t PixelProgram() {
+    return ObjectValues() ? reinterpret_cast<std::uintptr_t>(PixelValueCode.data()) : reinterpret_cast<std::uintptr_t>(PixelCode.data());
+}
+
 struct Header {
     Shader shader{};
     ShaderUserData userData{};
@@ -217,7 +239,7 @@ std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, s
     const auto& block = layout.data;
     const auto color = layout.target.At(ColorOffset);
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexProgram().data());
-    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
+    const auto pixel = PixelProgram();
     const auto srt = block.At(SrtOffset);
     const auto table = block.At(VertexTableOffset);
     const float scale = 32.0f;
@@ -254,8 +276,10 @@ std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, s
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
     for (std::uint32_t draw = 0; draw < draws; ++draw) {
-        const auto object = BufferDescriptor(block.At(ObjectOffset + (static_cast<std::size_t>(set) * MaxDraws + draw) * ObjectBytes), 0, 16, 0x31016facu);
+        const auto objectIndex = ObjectValues() ? std::size_t{0} : static_cast<std::size_t>(set) * MaxDraws + draw;
+        const auto object = BufferDescriptor(block.At(ObjectOffset + objectIndex * ObjectBytes), 0, 16, 0x31016facu);
         Append(commands, 0x76, {0x010, object[0], object[1], object[2], object[3]});
+        if (ObjectValues()) Append(commands, 0x76, {0x00e, set * MaxDraws + draw + 1u});
         Append(commands, 0x2d, {3, 2});
     }
     return commands;
@@ -530,7 +554,8 @@ int main(int argc, char** argv) {
             if (!device) return VulkanTestSkipped;
         }
         Register(VertexHeader, VertexProgram().data(), sizeof(VertexCode), 2);
-        Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+        if (ObjectValues()) Register(PixelHeader, PixelValueCode.data(), sizeof(PixelValueCode), 1);
+        else Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         const char* layoutName = std::getenv("DRAW_RECORD_COST_LAYOUT");
         const bool shared = layoutName != nullptr && std::string(layoutName) == "shared";
         GuestBlock data;
