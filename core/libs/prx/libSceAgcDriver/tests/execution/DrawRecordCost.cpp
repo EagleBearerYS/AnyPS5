@@ -65,7 +65,8 @@ constexpr std::size_t TextureOffset = 0x1000;
 constexpr std::size_t TextureBytes = 4096;
 constexpr std::size_t ObjectOffset = TextureOffset + Textures * TextureBytes;
 constexpr std::size_t ObjectBytes = 256;
-constexpr std::size_t ColorOffset = (ObjectOffset + MaxDraws * ObjectBytes + 65535) & ~static_cast<std::size_t>(65535);
+constexpr std::uint32_t MaxObjectSets = 8;
+constexpr std::size_t ColorOffset = (ObjectOffset + MaxObjectSets * MaxDraws * ObjectBytes + 65535) & ~static_cast<std::size_t>(65535);
 constexpr std::size_t ColorBytes = 65536;
 constexpr std::uint32_t RenderTargetTileMode = 0x1b;
 constexpr std::size_t BlockBytes = (ColorOffset + ColorBytes + 65535) & ~static_cast<std::size_t>(65535);
@@ -83,6 +84,20 @@ alignas(256) constexpr std::array<std::uint32_t, 40> VertexCode{
     0xf80008cfu, 0x04030201u,
     0xbf810000u, 0xbf810000u,
 };
+
+alignas(256) constexpr std::array<std::uint32_t, 40> VertexCodeUser8 = [] {
+    auto code = VertexCode;
+    for (const std::size_t load : {10u, 12u, 14u}) code[load] |= 4u;
+    return code;
+}();
+
+const std::array<std::uint32_t, 40>& VertexProgram() {
+    static const bool userAtEight = [] {
+        const char* text = std::getenv("DRAW_RECORD_COST_VERTEX_SGPR");
+        return text != nullptr && std::string(text) == "8";
+    }();
+    return userAtEight ? VertexCodeUser8 : VertexCode;
+}
 
 constexpr std::size_t PixelWords = 10 + Textures * 10 + 5 + 8 + 3;
 
@@ -181,7 +196,7 @@ void Prepare(const Layout& layout) {
         const auto vertices = BufferDescriptor(block.At(VertexDataOffset + buffer * 0x100u), 16, 3, 0x0104dfacu);
         std::memcpy(block.Bytes(VertexTableOffset + buffer * 16u), vertices.data(), sizeof(vertices));
     }
-    for (std::uint32_t draw = 0; draw < MaxDraws; ++draw) std::memcpy(block.Bytes(ObjectOffset + draw * ObjectBytes), &one, sizeof(one));
+    for (std::uint32_t object = 0; object < MaxObjectSets * MaxDraws; ++object) std::memcpy(block.Bytes(ObjectOffset + object * ObjectBytes), &one, sizeof(one));
 }
 
 void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
@@ -189,10 +204,19 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws) {
+std::uint32_t ObjectSets() {
+    static const std::uint32_t sets = [] {
+        const char* text = std::getenv("DRAW_RECORD_COST_OBJECT_SETS");
+        const auto parsed = text != nullptr ? std::strtoul(text, nullptr, 10) : 1ul;
+        return static_cast<std::uint32_t>(std::clamp<unsigned long>(parsed, 1ul, MaxObjectSets));
+    }();
+    return sets;
+}
+
+std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, std::uint32_t set = 0) {
     const auto& block = layout.data;
     const auto color = layout.target.At(ColorOffset);
-    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
+    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexProgram().data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
     const auto srt = block.At(SrtOffset);
     const auto table = block.At(VertexTableOffset);
@@ -230,7 +254,7 @@ std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws) {
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
     for (std::uint32_t draw = 0; draw < draws; ++draw) {
-        const auto object = BufferDescriptor(block.At(ObjectOffset + draw * ObjectBytes), 0, 16, 0x31016facu);
+        const auto object = BufferDescriptor(block.At(ObjectOffset + (static_cast<std::size_t>(set) * MaxDraws + draw) * ObjectBytes), 0, 16, 0x31016facu);
         Append(commands, 0x76, {0x010, object[0], object[1], object[2], object[3]});
         Append(commands, 0x2d, {3, 2});
     }
@@ -446,8 +470,9 @@ void Cost(const Layout& layout, std::uint32_t windows) {
     const char* sizes = std::getenv("DRAW_RECORD_COST_SIZES");
     for (const auto draws : {64u, 512u, 2048u}) {
         if (sizes != nullptr && std::string(sizes).find(std::to_string(draws)) == std::string::npos) continue;
-        auto commands = Commands(layout, draws);
-        Submit(commands);
+        std::vector<std::vector<std::uint32_t>> commandSets;
+        for (std::uint32_t set = 0; set < ObjectSets(); ++set) commandSets.push_back(Commands(layout, draws, set));
+        for (auto& commands : commandSets) Submit(commands);
         std::vector<double> perDraw;
 #ifdef __linux__
         const auto threads = DriverThreads();
@@ -461,7 +486,7 @@ void Cost(const Layout& layout, std::uint32_t windows) {
             for (const auto& thread : threads) cpuBefore.push_back(ThreadCpuNs(thread.first));
             const auto heldBefore = HeldNs();
 #endif
-            perDraw.push_back(Submit(commands) / draws);
+            perDraw.push_back(Submit(commandSets[window % commandSets.size()]) / draws);
 #ifdef __linux__
             for (std::size_t t = 0; t < threads.size(); ++t) cpu[t].push_back(static_cast<double>(ThreadCpuNs(threads[t].first) - cpuBefore[t]) / 1e3 / draws);
             for (const auto& [key, ns] : HeldNs()) {
@@ -504,7 +529,7 @@ int main(int argc, char** argv) {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        Register(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+        Register(VertexHeader, VertexProgram().data(), sizeof(VertexCode), 2);
         Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         const char* layoutName = std::getenv("DRAW_RECORD_COST_LAYOUT");
         const bool shared = layoutName != nullptr && std::string(layoutName) == "shared";
