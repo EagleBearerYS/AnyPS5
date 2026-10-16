@@ -3,9 +3,15 @@
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "StorageImagePages.hpp"
 #include "BdaPageReference.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -863,11 +869,160 @@ static void RunBdaCachedReadTests(const Context& context, bool paged) {
     }
 }
 
+struct ImageDescriptor {
+    std::uint64_t base;
+    std::uint32_t format;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t tileMode;
+    std::uint32_t type;
+    std::uint32_t maxMip;
+    std::uint32_t baseLevel;
+    std::uint32_t lastLevel;
+    std::uint32_t depth;
+    std::uint32_t baseArray;
+};
+
+static std::array<std::uint32_t, 8> ImageWords(const ImageDescriptor& image) {
+    return {static_cast<std::uint32_t>(image.base >> 8u), static_cast<std::uint32_t>((image.base >> 40u) & 0xffu) | image.format << 20u | ((image.width - 1u) & 3u) << 30u,
+        ((image.width - 1u) >> 2u) | (image.height - 1u) << 14u, 0xfacu | image.baseLevel << 12u | image.lastLevel << 16u | image.tileMode << 20u | image.type << 28u,
+        image.depth | image.baseArray << 16u, image.maxMip << 4u, 0u, 0u};
+}
+
+static std::uint32_t StandardBlockOffset(std::uint32_t elementBytes, bool large, std::uint32_t x, std::uint32_t y) {
+    std::uint32_t offset = 0;
+    switch (elementBytes) {
+        case 1u: offset = ((y << 4) & 0x1f0u) ^ ((y << 5) & 0x400u) ^ (x & 0x00fu) ^ ((x << 5) & 0x200u) ^ ((x << 6) & 0x800u); break;
+        case 2u: offset = ((y << 4) & 0x070u) ^ ((y << 5) & 0x100u) ^ ((y << 6) & 0x400u) ^ ((x << 1) & 0x00eu) ^ ((x << 4) & 0x080u) ^ ((x << 5) & 0x200u) ^ ((x << 6) & 0x800u); break;
+        case 4u: offset = ((y << 4) & 0x070u) ^ ((y << 5) & 0x100u) ^ ((y << 6) & 0x400u) ^ ((x << 2) & 0x00cu) ^ ((x << 5) & 0x080u) ^ ((x << 6) & 0x200u) ^ ((x << 7) & 0x800u); break;
+        case 8u: offset = ((y << 4) & 0x030u) ^ ((y << 6) & 0x100u) ^ ((y << 7) & 0x400u) ^ ((x << 3) & 0x008u) ^ ((x << 5) & 0x0c0u) ^ ((x << 6) & 0x200u) ^ ((x << 7) & 0x800u); break;
+        default: offset = ((y << 4) & 0x030u) ^ ((y << 6) & 0x100u) ^ ((y << 7) & 0x400u) ^ ((x << 6) & 0x0c0u) ^ ((x << 7) & 0x200u) ^ ((x << 8) & 0x800u); break;
+    }
+    if (!large) return offset;
+    switch (elementBytes) {
+        case 1u: return offset ^ ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^ ((y << 6) & 0x1000u) ^ ((y << 7) & 0x4000u);
+        case 2u: return offset ^ ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^ ((y << 7) & 0x1000u) ^ ((y << 8) & 0x4000u);
+        case 4u: return offset ^ ((x << 8) & 0x2000u) ^ ((x << 9) & 0x8000u) ^ ((y << 7) & 0x1000u) ^ ((y << 8) & 0x4000u);
+        case 8u: return offset ^ ((x << 8) & 0x2000u) ^ ((x << 9) & 0x8000u) ^ ((y << 8) & 0x1000u) ^ ((y << 9) & 0x4000u);
+        default: return offset ^ ((x << 9) & 0x2000u) ^ ((x << 10) & 0x8000u) ^ ((y << 8) & 0x1000u) ^ ((y << 9) & 0x4000u);
+    }
+}
+
+static std::uint64_t DriverElementAddress(const std::array<std::uint32_t, 8>& words, std::uint32_t x, std::uint32_t y, std::uint32_t layer, std::uint32_t lod) {
+    const auto descriptor = DecodeTextureResource(words);
+    const auto geometry = DescribeSurface(descriptor);
+    const auto elementBytes = BytesPerElement(descriptor.format);
+    const auto& mip = geometry.mips.at(descriptor.baseLevel + lod);
+    const bool arrayed = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
+    const auto start = descriptor.baseAddress + geometry.GuestLayerOffset(arrayed ? descriptor.baseArray + layer : 0u) + mip.tiledOffset;
+    if (descriptor.tileMode == TextureTileMode::kLinear) return start + static_cast<std::uint64_t>(y) * mip.pitchBytes + static_cast<std::uint64_t>(x) * elementBytes;
+    const auto block = ThinBlockLayout(descriptor.tileMode, elementBytes);
+    auto swizzleX = x;
+    auto swizzleY = y;
+    std::uint64_t blockStart = start;
+    if (mip.tail) {
+        swizzleX += mip.tailX;
+        swizzleY += mip.tailY;
+    } else {
+        blockStart += (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0];
+    }
+    std::uint32_t offset = 0;
+    if (const auto mode = EquationSwizzleMode(descriptor.tileMode); mode != 0u) {
+        const auto* equation = FindTextureSwizzleEquation(mode, elementBytes);
+        Require(equation != nullptr, "no swizzle equation for a tested image");
+        for (std::uint32_t bit = 0; bit < 16u; ++bit) {
+            const auto mask = equation->bits[bit];
+            const auto selected = (swizzleX & (mask & 0xfffu)) ^ ((swizzleY << 12u) & (mask & 0xfff000u)) ^ (((arrayed ? descriptor.baseArray + layer : 0u) << 24u) & (mask & 0xff000000u));
+            offset |= (static_cast<std::uint32_t>(std::popcount(selected)) & 1u) << bit;
+        }
+        offset ^= descriptor.pipeBankXor;
+    } else {
+        offset = StandardBlockOffset(elementBytes, block[0] > 4096u, swizzleX, swizzleY);
+    }
+    return blockStart + (offset & (block[0] - 1u));
+}
+
+static void RunImageStoreRecordTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    namespace Pages = ShaderRecompiler::StorageImagePages;
+    struct Case {
+        const char* name;
+        ImageDescriptor image;
+        ImageStoreRect rect;
+        bool placed;
+    };
+    const std::array<Case, 22> cases{{
+        {"4KB S 8-bit", {0x200000000ull, 1, 256, 200, 5, 9, 0, 0, 0, 0, 0}, {13, 7, 128, 70, 0, 0}, true},
+        {"64KB S_X 32-bit with a pipe-bank XOR, level 1", {0x210003000ull, 56, 300, 150, 25, 9, 4, 0, 4, 0, 0}, {5, 3, 140, 70, 0, 1}, true},
+        {"64KB S_X 32-bit tail level", {0x210003000ull, 56, 300, 150, 25, 9, 8, 0, 8, 0, 0}, {0, 0, 2, 2, 0, 7}, true},
+        {"64KB S 16-bit array layer 2, level 5", {0x220000000ull, 13, 128, 128, 9, 13, 6, 0, 6, 2, 0}, {0, 0, 4, 4, 2, 5}, true},
+        {"64KB S 16-bit array layer 1, level 0", {0x220000000ull, 13, 128, 128, 9, 13, 6, 0, 6, 2, 0}, {17, 9, 100, 110, 1, 0}, true},
+        {"64KB D_X 64-bit", {0x230000000ull, 62, 64, 64, 26, 9, 0, 0, 0, 0, 0}, {0, 0, 64, 64, 0, 0}, true},
+        {"64KB R_X 128-bit with a pipe-bank XOR", {0x24000a000ull, 77, 96, 40, 27, 9, 0, 0, 0, 0, 0}, {3, 1, 90, 37, 0, 0}, true},
+        {"64KB Z_X 8-bit mips through the tail", {0x250000000ull, 1, 200, 100, 24, 9, 7, 0, 7, 0, 0}, {0, 0, 8, 8, 0, 6}, true},
+        {"64KB Z_X 8-bit level 2", {0x250000000ull, 1, 200, 100, 24, 9, 7, 0, 7, 0, 0}, {1, 1, 48, 24, 0, 2}, true},
+        {"linear 32-bit level 2", {0x260000100ull, 20, 512, 16, 0, 9, 2, 0, 2, 0, 0}, {10, 0, 110, 4, 0, 2}, true},
+        {"linear 1D array layer 3", {0x270000000ull, 1, 200, 1, 0, 12, 0, 0, 0, 3, 0}, {7, 0, 150, 1, 3, 0}, true},
+        {"256B S 16-bit", {0x280000000ull, 7, 80, 60, 1, 9, 0, 0, 0, 0, 0}, {0, 0, 80, 60, 0, 0}, true},
+        {"256B D 32-bit", {0x281000000ull, 56, 70, 50, 2, 9, 0, 0, 0, 0, 0}, {5, 5, 60, 40, 0, 0}, true},
+        {"4KB D 32-bit", {0x290000000ull, 20, 130, 90, 6, 9, 0, 0, 0, 0, 0}, {0, 0, 130, 90, 0, 0}, true},
+        {"4KB S_X 16-bit with a pipe-bank XOR", {0x2a0000700ull, 7, 100, 100, 21, 9, 0, 0, 0, 0, 0}, {0, 0, 100, 100, 0, 0}, true},
+        {"4KB D_X 64-bit view base level 1", {0x2b0000000ull, 64, 120, 80, 22, 9, 3, 1, 3, 0, 0}, {0, 0, 60, 40, 0, 0}, true},
+        {"64KB D 32-bit", {0x2c0000000ull, 20, 200, 120, 10, 9, 0, 0, 0, 0, 0}, {0, 0, 200, 120, 0, 0}, true},
+        {"64KB D_T 16-bit", {0x2d0000000ull, 7, 300, 300, 18, 9, 0, 0, 0, 0, 0}, {40, 50, 200, 210, 0, 0}, true},
+        {"rectangle past the level's edge", {0x2e0000000ull, 20, 100, 60, 25, 9, 0, 0, 0, 0, 0}, {80, 40, 50, 50, 0, 0}, true},
+        {"4KB Z (no equation)", {0x2f0000000ull, 20, 64, 64, 4, 9, 0, 0, 0, 0, 0}, {0, 0, 8, 8, 0, 0}, false},
+        {"3D 64KB S", {0x300000000ull, 20, 64, 64, 9, 10, 0, 0, 0, 7, 0}, {0, 0, 8, 8, 0, 0}, false},
+        {"96-bit elements", {0x310000000ull, 72, 64, 64, 9, 9, 0, 0, 0, 0, 0}, {0, 0, 8, 8, 0, 0}, false},
+    }};
+    Buffer table(context, 64, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer output(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    constexpr std::uint64_t page = std::uint64_t{1} << Abi::WrittenPageShift;
+    for (const auto& test : cases) {
+        const auto words = ImageWords(test.image);
+        const std::string label = std::string("image store records, ") + test.name + ": ";
+        std::set<std::uint64_t> expected;
+        for (std::uint32_t row = 0; row < test.rect.height; ++row) {
+            for (std::uint32_t column = 0; column < test.rect.width; ++column) {
+                const auto x = test.rect.x + column;
+                const auto y = test.rect.y + row;
+                const auto store = Pages::Locate(words, x, y, test.rect.layer, test.rect.lod);
+                Require((store.placement != Pages::Placement::Unplaced) == test.placed, label + "the reference placed a store it should not, or left one unplaced");
+                if (store.placement != Pages::Placement::Recorded) continue;
+                const auto level = test.image.baseLevel + test.rect.lod;
+                Require(x < std::max(test.image.width >> level, 1u) && y < std::max(test.image.height >> level, 1u), label + "the reference recorded a store outside the level");
+                const auto driver = DriverElementAddress(words, x, y, test.rect.layer, test.rect.lod);
+                Require(store.address >> Abi::WrittenPageShift == driver >> Abi::WrittenPageShift, label + "element (" + std::to_string(x) + ", " + std::to_string(y) + ") is in page 0x" + std::to_string(driver >> Abi::WrittenPageShift) + " of the driver's layout, not 0x" + std::to_string(store.address >> Abi::WrittenPageShift));
+                expected.insert(driver >> Abi::WrittenPageShift);
+            }
+        }
+        for (const bool subgroups : {false, true}) {
+        const std::string mode = label + (subgroups ? "subgroup notes: " : "lane notes: ");
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        Pipeline pipeline(context, MakeImageStoreRecordTestShader(words, test.rect, subgroups), {&table, &fault, &output});
+        pipeline.Run((test.rect.width * test.rect.height + 63u) / 64u);
+        std::vector<std::uint32_t> recordWords(Abi::FaultBufferBytes / sizeof(std::uint32_t));
+        std::memcpy(recordWords.data(), fault.Bytes().data(), Abi::FaultBufferBytes);
+        Require(recordWords[Abi::WrittenOverflowWord] == 0u, mode + "the record overflowed");
+        std::set<std::uint64_t> recorded;
+        Require(Abi::ForEachWrittenImageRange(recordWords.data(), [&](std::uint64_t begin, std::size_t bytes) {
+            for (std::uint64_t at = begin; at < begin + bytes; at += page) recorded.insert(at >> Abi::WrittenPageShift);
+        }), mode + "invalid written-page record");
+        bool memory = false;
+        Require(Abi::ForEachWrittenRange(recordWords.data(), [&](std::uint64_t, std::size_t) { memory = true; }) && !memory, mode + "image stores recorded memory pages");
+        Require(Abi::WrittenImagesWhole(recordWords.data()) == !test.placed, mode + (test.placed ? "a placed image store kept its image whole" : "an unplaced image store did not keep its image whole"));
+        Require(recorded == expected, mode + "the record names " + std::to_string(recorded.size()) + " pages, the driver's layout " + std::to_string(expected.size()));
+        }
+    }
+}
+
 void RunBdaExecutionTests(const Context& context) {
     RunBdaPageTableTests(context);
     RunBdaPageTableVersionTests(context);
     for (const bool paged : {false, true}) RunBdaReadTests(context, paged);
     for (const bool paged : {false, true}) RunBdaCachedReadTests(context, paged);
+    RunImageStoreRecordTests(context);
     RunBdaWrittenPageTests(context);
 }
 

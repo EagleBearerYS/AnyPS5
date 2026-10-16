@@ -2062,6 +2062,40 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
 
 }
 
+namespace {
+
+void EmitImageStoreRecord(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const ImageResource& base) {
+    auto& state = ctx.state;
+    const auto info = ImageOpcodeInfoOf(inst.Opcode());
+    if (state.imageStoreRecordFunction == 0u || (inst.Opcode() != IrOpcode::ImageWrite && info.access != ImageAccess::Atomic)) return;
+    const auto active = ctx.Arg(inst, inst.ArgumentCount() - 1u);
+    const auto* handle = inst.Argument(0)->Resolve();
+    const auto* address = ctx.ImageAddress(inst.Argument(info.needsSampler ? 2u : 1u));
+    const auto dimension = memory.imageDimension;
+    const bool placed = handle->ArgumentCount() == 8u && address != nullptr && (dimension == RdnaImageDimension::Dim1D || dimension == RdnaImageDimension::Dim1DArray || dimension == RdnaImageDimension::Dim2D || dimension == RdnaImageDimension::Dim2DArray);
+    if (!placed) {
+        EmitIfCondition(state, active, [&] {
+            state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.writtenChunkNoteFunction, ConstantU32(state, BdaAbi::WrittenImageWholeKey), ConstantU32(state, 1u));
+        });
+        return;
+    }
+    const ImageEmitAccess access{inst, memory, base, *address};
+    const auto zero = ConstantU32(state, 0u);
+    const auto components = RdnaImageDimensionInfoFor(dimension).coordinateComponents;
+    const auto x = AddressU32(ctx, access, 0u);
+    const bool rows = dimension == RdnaImageDimension::Dim2D || dimension == RdnaImageDimension::Dim2DArray;
+    const auto y = rows ? AddressU32(ctx, access, 1u) : zero;
+    const auto layer = dimension == RdnaImageDimension::Dim1DArray ? AddressU32(ctx, access, 1u) : dimension == RdnaImageDimension::Dim2DArray ? AddressU32(ctx, access, 2u) : zero;
+    const auto lod = memory.imageHasMip ? AddressU32(ctx, access, components) : zero;
+    std::array<std::uint32_t, 6> words{};
+    for (std::uint32_t word = 0; word < words.size(); ++word) words[word] = ctx.Def(handle->Argument(word));
+    EmitIfCondition(state, active, [&] {
+        state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.imageStoreRecordFunction, words[0], words[1], words[2], words[3], words[4], words[5], x, y, layer, lod);
+    });
+}
+
+}
+
 void DefineDeviceImageLookup(SpirvEmitterState& state) {
     namespace Abi = DeviceImageTableAbi;
     const auto& images = state.program.Info().images;
@@ -2167,6 +2201,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto& memory = ctx.Memory(inst);
     const auto& base = ImageResourceOf(state, memory);
+    EmitImageStoreRecord(ctx, inst, memory, base);
     const auto imageInfo = ImageOpcodeInfoOf(inst.Opcode());
     const auto& samplers = state.program.Info().samplers;
     const bool tableSampler = imageInfo.needsSampler && memory.sampler < samplers.size() && samplers[memory.sampler].table != NoTable;

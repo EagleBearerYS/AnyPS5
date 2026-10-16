@@ -24,6 +24,7 @@ struct BdaCacheProbe {
 };
 BdaCacheProbe ProbeBdaVectorCache(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes);
 void RefreshBdaVectorCache(SpirvEmitterState& state, std::uint32_t address);
+std::uint32_t DefineWrittenChunkNote(SpirvEmitterState& state);
 void DefineBdaDwordReadFunctions(SpirvEmitterState& state);
 void DefineBdaSpanReadFunctions(SpirvEmitterState& state);
 void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason);

@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "SpirvBackend/SpirvEmitterState.hpp"
+#include <span>
 
 namespace ShaderRecompiler {
 
@@ -14,6 +15,10 @@ void EmitImageOperation(SpirvModule& module, const IrValue& value, std::uint32_t
 void EmitImageOperation(SpirvValueEmitContext& context, const IrValue& value, std::uint32_t resultId);
 
 void DefineDeviceImageLookup(SpirvEmitterState& state);
+
+bool ImageStoresRecorded(const IrProgram& program, std::span<const std::uint32_t> capabilities);
+
+void DefineImageStoreRecord(SpirvEmitterState& state);
 
 }
 

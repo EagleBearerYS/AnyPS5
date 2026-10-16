@@ -463,6 +463,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.bdaAbiVersion);
     writer.Value(result.bdaWrites);
     writer.Value(result.usesShaderBase);
+    writer.Value(result.imageStoresRecorded);
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.bufferAddressDword);
     writer.Value(result.samplerSlotDword);
@@ -510,6 +511,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.bdaAbiVersion);
     reader.Value(result.bdaWrites);
     reader.Value(result.usesShaderBase);
+    reader.Value(result.imageStoresRecorded);
     reader.Value(result.memoryOffsetDword);
     reader.Value(result.bufferAddressDword);
     reader.Value(result.samplerSlotDword);

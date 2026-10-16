@@ -10,6 +10,7 @@
 #include "VertexInputSpecialization.hpp"
 #include "FragmentOutputSpecialization.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include "SpirvBackend/SpirvImageEmitter.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "ShaderDiskCache.hpp"
 #include "ShaderCacheDirectory.hpp"
@@ -672,6 +673,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.bdaWrites = program.Info().usesDma && program.Info().bdaWrites;
+    result.imageStoresRecorded = ImageStoresRecorded(program, targetOptions.supportedCapabilities);
     result.usesShaderBase = DeclaresSpecializationId(result.spirv.Words(), PipelineSpecialization::ShaderBaseLow);
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.bufferAddressDword = bindings.layout.BufferAddressDword();
@@ -979,6 +981,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .bdaAbiVersion = artifact.bdaAbiVersion,
         .bdaWrites = artifact.bdaWrites,
         .usesShaderBase = artifact.usesShaderBase,
+        .imageStoresRecorded = artifact.imageStoresRecorded,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
         .vertexOffsetSgpr = artifact.vertexOffsetSgpr,

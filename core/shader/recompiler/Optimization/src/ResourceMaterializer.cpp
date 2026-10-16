@@ -1787,7 +1787,8 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
     resources.info.images = std::move(images);
     resources.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(resources);
     resources.srtGuardOffset = static_cast<std::uint32_t>(resources.srtReads.size());
-    if (tables || !resources.guardedSrtSlots.empty()) resources.info.usesFaultBuffer = true;
+    const bool storedImages = std::ranges::any_of(resources.info.images, [](const ImageResource& image) { return image.written || image.atomic; });
+    if (tables || storedImages || !resources.guardedSrtSlots.empty()) resources.info.usesFaultBuffer = true;
     PrepareImageModes(resources.info);
 }
 

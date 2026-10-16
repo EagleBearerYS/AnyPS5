@@ -419,28 +419,13 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
 
 }
 
-static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
+static void EmitWrittenChunkNote(SpirvEmitterState& state, std::uint32_t key, std::uint32_t bit, std::uint32_t done, std::uint32_t counter) {
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
     const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
     const auto binary = [&](std::uint32_t op, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, op, type, left, right); };
-    const auto voidType = state.module.Type(spv::OpTypeVoid);
-    const auto function = state.module.AllocateId();
-    state.module.AddName(function, "note_bda_write");
-    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, voidType, TypeScalarU64(state)));
-    const auto address = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionParameter, TypeScalarU64(state), address);
-    EmitLabel(state, state.module.AllocateId());
-    const auto done = state.module.AllocateId();
-    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), done, spv::StorageClassFunction);
-    const auto counter = state.module.AllocateId();
-    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), counter, spv::StorageClassFunction);
     state.module.AddFunction(spv::OpStore, done, ConstantBool(state, false));
     state.module.AddFunction(spv::OpStore, counter, constant(0u));
-    const auto u64 = TypeScalarU64(state);
-    const auto key = binary(spv::OpIAdd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::WrittenChunkShift))), constant(1));
-    const auto page = binary(spv::OpBitwiseAnd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::WrittenPageShift))), constant(BdaAbi::WrittenChunkPages - 1u));
-    const auto bit = binary(spv::OpShiftLeftLogical, u32, constant(1u), page);
     const auto hash = binary(spv::OpShiftRightLogical, u32, binary(spv::OpIMul, u32, key, constant(0x9e3779b1u)), constant(32u - static_cast<std::uint32_t>(std::countr_zero(BdaAbi::WrittenPageSlots))));
     const auto scope = constant(spv::ScopeDevice);
     const auto relaxed = constant(spv::MemorySemanticsMaskNone);
@@ -495,6 +480,50 @@ static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
     EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, noted), [&] {
         state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, constant(BdaAbi::WrittenOverflowWord)), scope, relaxed, constant(1u));
     });
+}
+
+static std::array<std::uint32_t, 2> DeclareWrittenChunkNoteVariables(SpirvEmitterState& state) {
+    const auto done = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeBool(state)), done, spv::StorageClassFunction);
+    const auto counter = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), counter, spv::StorageClassFunction);
+    return {done, counter};
+}
+
+static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto binary = [&](std::uint32_t op, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, op, type, left, right); };
+    const auto voidType = state.module.Type(spv::OpTypeVoid);
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, "note_bda_write");
+    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, voidType, u64));
+    const auto address = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+    EmitLabel(state, state.module.AllocateId());
+    const auto [done, counter] = DeclareWrittenChunkNoteVariables(state);
+    const auto key = binary(spv::OpIAdd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::WrittenChunkShift))), constant(1));
+    const auto page = binary(spv::OpBitwiseAnd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::WrittenPageShift))), constant(BdaAbi::WrittenChunkPages - 1u));
+    EmitWrittenChunkNote(state, key, binary(spv::OpShiftLeftLogical, u32, constant(1u), page), done, counter);
+    state.module.AddFunction(spv::OpReturn);
+    state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
+std::uint32_t DefineWrittenChunkNote(SpirvEmitterState& state) {
+    const auto u32 = TypeU32(state);
+    const auto voidType = state.module.Type(spv::OpTypeVoid);
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, "note_written_chunk");
+    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, voidType, u32, u32));
+    const auto key = state.module.AllocateId();
+    const auto bit = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, u32, key);
+    state.module.AddFunction(spv::OpFunctionParameter, u32, bit);
+    EmitLabel(state, state.module.AllocateId());
+    const auto [done, counter] = DeclareWrittenChunkNoteVariables(state);
+    EmitWrittenChunkNote(state, key, bit, done, counter);
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);
     return function;

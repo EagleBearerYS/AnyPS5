@@ -1046,6 +1046,7 @@ void EmitProgram(SpirvEmitterState& state) {
     }
     DefineGetBdaPointer(state);
     DefineDeviceImageLookup(state);
+    DefineImageStoreRecord(state);
     DefineDot2F32F16Function(state);
     for (const IrBlock* block : program.BlockOrder()) {
         const bool needsScratch = std::any_of(block->Instructions().begin(), block->Instructions().end(), [](const IrValue* inst) {

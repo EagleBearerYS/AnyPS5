@@ -1,5 +1,6 @@
 #include "BdaShader.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
+#include "SpirvBackend/SpirvImageEmitter.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
@@ -285,6 +286,62 @@ std::vector<std::uint32_t> MakeBdaLaneStoreTestShader(std::uint64_t address, std
                 });
                 break;
         }
+    });
+    state.module.AddFunction(spv::OpReturn);
+    state.module.AddFunction(spv::OpFunctionEnd);
+    state.module.AddExecutionMode(main, spv::ExecutionModeLocalSize, 64u, 1u, 1u);
+    state.module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", std::vector<std::uint32_t>{invocation});
+    auto shader = Structured(state.module.Finalize());
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    shader = ValidateAndOptimizeSpirv(shader, VK_API_VERSION_1_1, shader[1], false, false);
+#endif
+    return shader;
+}
+
+std::vector<std::uint32_t> MakeImageStoreRecordTestShader(const std::array<std::uint32_t, 8>& words, const ImageStoreRect& rect, bool subgroups) {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformArithmetic};
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::Compute;
+    program.Info().usesFaultBuffer = true;
+    ImageResource image;
+    image.written = true;
+    program.Info().images = {image};
+    SpirvEmitterState state(program, {});
+    state.supportedCapabilities = std::span<const std::uint32_t>(capabilities.data(), subgroups ? capabilities.size() : 1u);
+    state.hostSubgroupSize = 32u;
+    EmitBaseHeader(state.module, program);
+    const auto define = [&](std::uint32_t binding) {
+        const auto variable = state.module.DefineGlobalVariable(TypeStorageBufferPointer(state), spv::StorageClassStorageBuffer);
+        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, 0u);
+        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, binding);
+        return variable;
+    };
+    define(0);
+    state.faultBufferVariable = define(1);
+    define(2);
+    const auto invocation = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassInput, TypeU32Vector(state, 3)), spv::StorageClassInput);
+    state.module.AddAnnotation(spv::OpDecorate, invocation, spv::DecorationBuiltIn, spv::BuiltInGlobalInvocationId);
+    DefineImageStoreRecord(state);
+    if (state.imageStoreRecordFunction == 0u) throw std::runtime_error("the image store record function was not defined");
+    const auto main = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunction, TypeVoid(state), main, spv::FunctionControlMaskNone, TypeFunction(state));
+    EmitLabel(state, state.module.AllocateId());
+    const auto u32 = TypeU32(state);
+    const auto ids = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32Vector(state, 3), ids, invocation);
+    const auto index = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, u32, index, ids, 0u);
+    const auto column = Binary(state, spv::OpUMod, u32, index, ConstantU32(state, rect.width));
+    const auto row = Binary(state, spv::OpUDiv, u32, index, ConstantU32(state, rect.width));
+    const auto inside = Binary(state, spv::OpULessThan, TypeBool(state), index, ConstantU32(state, rect.width * rect.height));
+    EmitIfCondition(state, inside, [&] {
+        const auto x = Binary(state, spv::OpIAdd, u32, column, ConstantU32(state, rect.x));
+        const auto y = Binary(state, spv::OpIAdd, u32, row, ConstantU32(state, rect.y));
+        std::vector<std::uint32_t> call{spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.imageStoreRecordFunction};
+        for (std::uint32_t word = 0; word < 6u; ++word) call.push_back(ConstantU32(state, words[word]));
+        call.insert(call.end(), {x, y, ConstantU32(state, rect.layer), ConstantU32(state, rect.lod)});
+        state.module.AddFunction(call);
     });
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);
