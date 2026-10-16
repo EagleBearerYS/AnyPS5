@@ -415,6 +415,8 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
 }
 
 constexpr std::uint32_t CoveredCentroidIsCenter = 1u << 29u;
+constexpr std::uint32_t SampleZeroRefusedInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+constexpr std::uint32_t PixelCenterPositionInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
 constexpr std::uint32_t CentroidInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid);
 
 bool coveredCentroidSupported(const QueueState& queue) {
@@ -487,6 +489,24 @@ void decodeSampleLocations(const Registers& cx, State& state) {
             state.sampleLocationGrid |= bits != state.sampleLocations[sample];
         }
     }
+}
+
+bool rasterizesSampleZeroOnly(const Registers& cx, const State& state) {
+    if (state.samples <= 1 || state.alphaToCoverage || (read(cx, 0x292) & 1u) == 0) return false;
+    const auto inputs = read(cx, 0x1b3) & read(cx, 0x1b4);
+    const auto refused = state.perSampleShading ? ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage) : SampleZeroRefusedInputs;
+    const bool sampleIndexMovesPosition = (inputs & ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary)) != 0 && (inputs & PixelCenterPositionInputs) != 0;
+    return (inputs & refused) == 0 && !sampleIndexMovesPosition;
+}
+
+void rasterizeSampleZero(State& state) {
+    std::array<std::uint8_t, 32> sampleZero{};
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) sampleZero[pixel * 8u] = state.sampleLocations[pixel * 8u];
+    state.samples = 1;
+    state.perSampleShading = false;
+    state.sampleLocations = sampleZero;
+    state.customSampleLocations = std::any_of(sampleZero.begin(), sampleZero.end(), [](std::uint8_t bits) { return bits != 0; });
+    state.sampleLocationGrid = sampleZero[8] != sampleZero[0] || sampleZero[16] != sampleZero[0] || sampleZero[24] != sampleZero[0];
 }
 
 bool colorControlSupported(std::uint32_t colorControl, bool hasColorTarget) {
@@ -1034,7 +1054,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(ditheredAlphaSamplesSupported(cx), "dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration");
         Require(!result.customSampleLocations, "dithered alpha-to-coverage with custom sample locations is unsupported");
     }
-    Require(!result.depth || result.depth->samples == result.samples, "the depth target's sample count differs from the rasterizer's");
+    const bool depthKeepsSampleZero = result.depth && result.depth->samples == 1 && result.samples > 1;
+    Require(!result.depth || depthKeepsSampleZero || result.depth->samples == result.samples, "the depth target's sample count differs from the rasterizer's");
     zero(cx, 0x292, ScanModeMask & ~1u, "scan conversion mode");
     if (result.samples > 1 && (read(cx, 0x292) & 1u) == 0) {
         const bool filled = result.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
@@ -1049,6 +1070,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     zero(cx, 0x293, ScanControlMask, "primitive discard or out-of-order rasterization");
     result.perSampleShading = result.samples > 1 && (read(cx, 0x293) & PixelShaderIteratesSamples) != 0;
+    if (depthKeepsSampleZero) {
+        Require(rasterizesSampleZeroOnly(cx, result), "the depth target's sample count differs from the rasterizer's");
+        rasterizeSampleZero(result);
+    }
     zero(cx, 0x80, ~0u, "window offset");
     zero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits");
     Require(read(cx, 0x83) == 0xffffu, "clip rectangles are unsupported");
@@ -1114,6 +1139,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.customSampleLocations = true;
             result.sampleLocations.fill(0);
         }
+        if (color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
         Require(color.samples == result.samples, "a color target's sample count differs from the rasterizer's");
         APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
         if (result.colors.empty()) {
