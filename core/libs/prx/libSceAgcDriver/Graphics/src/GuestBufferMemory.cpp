@@ -100,6 +100,7 @@ struct GuestBufferMemory::AddressSpace {
     std::uint64_t serial = 0;
     GuestAllocations::Lease lease;
     std::vector<Region> base;
+    bool baseDisjoint = false;
     struct HeapRun {
         std::uint64_t begin;
         std::uint64_t bytes;
@@ -2926,6 +2927,7 @@ void GuestBufferMemory::AcquireRegistered() {
                 }
                 regions = std::move(extras);
                 lease.clear();
+                built->baseDisjoint = std::adjacent_find(built->base.begin(), built->base.end(), [](const Region& left, const Region& right) { return right.begin < left.end; }) == built->base.end();
                 planSpaceMirrors(*built);
                 {
                     auto reads = std::make_shared<Recorder::ReadList>();
@@ -4660,6 +4662,39 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::InPlaceR
         if (region.direct != nullptr) result.emplace_back(region.begin, inPlaceEnd(region));
     }
     return result;
+}
+
+bool GuestBufferMemory::ReadsInPlace(std::uint64_t address, std::uint64_t bytes) const {
+    if (!uploaded || committed) return false;
+    const auto inside = [&](std::uint64_t begin, std::uint64_t end) { return address >= begin && address < end && bytes <= end - address; };
+    if (space != nullptr) {
+        const auto& base = space->base;
+        if (!space->baseDisjoint) {
+            if (std::any_of(base.begin(), base.end(), [&](const Region& region) { return region.direct != nullptr && inside(region.begin, region.end); })) return true;
+        } else {
+            const auto found = std::upper_bound(base.begin(), base.end(), address, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+            if (found != base.begin() && std::prev(found)->direct != nullptr && inside(std::prev(found)->begin, std::prev(found)->end)) return true;
+        }
+    }
+    return std::any_of(regions.begin(), regions.end(), [&](const Region& region) { return region.direct != nullptr && inside(region.begin, inPlaceEnd(region)); });
+}
+
+bool GuestBufferMemory::InPlaceReadsOverlap(std::uint64_t address, std::uint64_t bytes) const {
+    if (!uploaded || committed) return false;
+    const auto end = address + bytes;
+    if (space != nullptr) {
+        const auto& base = space->base;
+        if (!space->baseDisjoint) {
+            if (std::any_of(base.begin(), base.end(), [&](const Region& region) { return region.direct != nullptr && address < region.end && region.begin < end; })) return true;
+        } else {
+            auto at = std::upper_bound(base.begin(), base.end(), address, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+            if (at != base.begin()) --at;
+            for (; at != base.end() && at->begin < end; ++at) {
+                if (at->direct != nullptr && address < at->end) return true;
+            }
+        }
+    }
+    return std::any_of(regions.begin(), regions.end(), [&](const Region& region) { return region.direct != nullptr && address < inPlaceEnd(region) && region.begin < end; });
 }
 
 std::optional<GuestBufferMemory::SplitReads> GuestBufferMemory::SplitInPlaceReads() const {
