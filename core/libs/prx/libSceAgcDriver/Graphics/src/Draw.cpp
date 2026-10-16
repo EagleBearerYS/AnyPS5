@@ -452,6 +452,7 @@ struct DrawProfile {
     // with a constant, and the time of the CPU record reads (their syncs).
     std::array<std::uint64_t, IndirectPathCount> indirect{};
     std::uint64_t indirectRewritten = 0;
+    std::uint64_t indirectVertexRangesCut = 0;
     double indirectReadUs = 0;
     // Draw packets that drew nothing, by DrawSkip, and their time.
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
@@ -542,7 +543,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     std::uint64_t indirectCpu = 0;
     for (std::size_t i = 1; i < IndirectPathCount; ++i) indirectCpu += profile.indirect[i];
     if ((profile.indirect[0] != 0 || indirectCpu != 0) && room()) {
-        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; indirect: gpu-side %llu (%llu rewritten), cpu-side %llu (", static_cast<unsigned long long>(profile.indirect[0]), static_cast<unsigned long long>(profile.indirectRewritten), static_cast<unsigned long long>(indirectCpu));
+        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; indirect: gpu-side %llu (%llu rewritten, %llu vertex ranges cut), cpu-side %llu (", static_cast<unsigned long long>(profile.indirect[0]), static_cast<unsigned long long>(profile.indirectRewritten), static_cast<unsigned long long>(profile.indirectVertexRangesCut), static_cast<unsigned long long>(indirectCpu));
         for (std::size_t i = 1; i < IndirectPathCount && room(); ++i) {
             if (profile.indirect[i] != 0) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", IndirectDrawPathNames[i], static_cast<unsigned long long>(profile.indirect[i]));
         }
@@ -579,6 +580,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.recipeMisses.fill(0);
     profile.indirect.fill(0);
     profile.indirectRewritten = 0;
+    profile.indirectVertexRangesCut = 0;
     profile.indirectReadUs = 0;
     profile.skips.fill(0);
     profile.skipUs.fill(0);
@@ -590,6 +592,14 @@ void countCache(std::uint64_t DrawProfile::*counter) {
     auto& stats = Profile();
     std::lock_guard lock(stats.mutex);
     ++(stats.*counter);
+}
+
+void countVertexRangesCut(std::uint64_t cuts) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    stats.indirectVertexRangesCut += cuts;
 }
 
 // ValidateShaders decodes every SPIR-V instruction of every stage on every draw. Its outcome depends
@@ -1153,6 +1163,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     fetchValid.reserve(attributes.size());
     std::vector<std::size_t> fetchOf(attributes.size(), 0);
     std::vector<std::shared_ptr<Buffer>> zeroed(attributes.size());
+    std::uint64_t vertexRangesCut = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> readableFetches;
     for (std::size_t i = 0; i < attributes.size(); ++i) {
         const auto& attribute = attributes[i];
         if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) {
@@ -1160,9 +1172,19 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             continue;
         }
         // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
-        const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
+        auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
+        if (args != nullptr) {
+            const auto readable = GuestMemory::DescribeCommitted(address, bytes);
+            if (!readable.ranges.empty() && readable.ranges.front().first == address) {
+                if (!readable.whole) {
+                    bytes = static_cast<std::size_t>(readable.ranges.front().second - address);
+                    ++vertexRangesCut;
+                }
+                readableFetches.emplace_back(address, address + bytes);
+            }
+        }
         const auto firstByte = args == nullptr ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
         Require(!state.hasColorTarget || address + bytes <= state.color.address || state.color.address + state.color.bytes <= address + firstByte, "vertex buffer aliases the render target");
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
@@ -1171,6 +1193,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
         fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
     }
+    if (vertexRangesCut != 0) countVertexRangesCut(vertexRangesCut);
     const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
     std::vector<bool> isSolo(fetches.size(), false);
     for (const auto f : soloFetches) isSolo[f] = true;
@@ -1183,6 +1206,18 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         plannedFetches.push_back(fetches[f]);
     }
     const auto plan = PlanVertexCopies(plannedFetches);
+    const auto provenReadable = [&](std::uint64_t begin, std::uint64_t end) {
+        for (bool advanced = true; begin < end && advanced;) {
+            advanced = false;
+            for (const auto& [first, last] : readableFetches) {
+                if (first <= begin && begin < last) {
+                    begin = last;
+                    advanced = true;
+                }
+            }
+        }
+        return begin >= end;
+    };
     std::vector<VkBuffer> rangeHandles;
     std::vector<VkDeviceSize> rangeOffsets;
     rangeHandles.reserve(plan.copies.size());
@@ -1190,7 +1225,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     for (std::size_t range = 0; range < plan.copies.size(); ++range) {
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
-        GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
+        if (!provenReadable(begin, end)) GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
         if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite)) {
             rangeHandles.push_back(import->buffer);
             rangeOffsets.push_back(begin - import->base);
