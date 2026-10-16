@@ -1,0 +1,4 @@
+BASE=e82f9f1a52d2e2e1e7a442bf8edcea76379a9b54
+REPEAT=10
+EXTRA_TESTS='agc_unit_shadow_completion_store|agc_driver_bda_reads_shadowed_results|agc_driver_bda_reads_shadowed_results_per_build'
+BEFORE_REPEAT=3
