@@ -1,4 +1,4 @@
-READY (last: PM-063 done, CI Linux mirror on five PR heads, clean against the baseline)
+BUSY BF-028 (claimed: build and test the BF-026 into BF-027 merge 86346318d3)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
