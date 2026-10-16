@@ -1084,11 +1084,7 @@ std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruct
         });
         return valueType == 0u ? 0u : result;
     };
-    if (request.kind == AccessKind::ScalarLoad) {
-        if (!memory.gpuDescriptor || !BdaReadCacheAvailable(state)) return call();
-        const auto access = scalarAccess(context, instruction, operands);
-        return EmitBdaCachedDword(context, instruction, scalarGuestAddress(state, access), access.inBounds, call);
-    }
+    if (request.kind == AccessKind::ScalarLoad) return call();
     if (valueType == 0u) {
         EmitIfCondition(state, active, [&] { static_cast<void>(call()); });
         return 0u;

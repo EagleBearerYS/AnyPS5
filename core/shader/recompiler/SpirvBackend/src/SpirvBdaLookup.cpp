@@ -532,16 +532,16 @@ std::uint32_t DefineWrittenChunkNote(SpirvEmitterState& state) {
 void DeclareBdaReadCache(SpirvEmitterState& state) {
     state.bdaReadCache = {};
     if (state.bdaSegmentFunction == 0u) return;
-    const auto pointer = TypePointer(state, spv::StorageClassFunction, TypeScalarU64(state));
+    const auto pointer = TypePointer(state, spv::StorageClassPrivate, TypeScalarU64(state));
     const auto zero = BdaConstant(state, 0u);
     for (auto& variable : state.bdaReadCache) {
         variable = state.module.AllocateId();
-        state.module.AddFunction(spv::OpVariable, pointer, variable, spv::StorageClassFunction, zero);
+        state.module.EmitGlobalVariable({spv::OpVariable, pointer, variable, spv::StorageClassPrivate, zero});
     }
 }
 
 bool BdaReadCacheAvailable(const SpirvEmitterState& state) {
-    return state.bdaReadCache[0] != 0u && !state.module.InHelperFunction();
+    return state.bdaReadCache[0] != 0u;
 }
 
 void DeclareBdaVectorCache(SpirvEmitterState& state) {
@@ -591,6 +591,7 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
     state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites);
     if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state);
     DeclareBdaVectorCache(state);
+    DeclareBdaReadCache(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
     if (!BdaByteReadsForced()) state.bdaProbeFunction = DefineBdaLookup(state, "probe_bda_pointer", false);
     DefineBdaDwordReadFunctions(state);

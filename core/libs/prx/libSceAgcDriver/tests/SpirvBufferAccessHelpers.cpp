@@ -23,6 +23,7 @@ struct Function {
     std::uint32_t control = 0;
     std::string name;
     std::size_t widestSwitch = 0;
+    std::size_t bufferMemoryLoads = 0;
 };
 
 struct Module {
@@ -79,6 +80,7 @@ Module Parse(std::span<const std::uint32_t> words) {
             module.functions[current].control = operands[2];
         }
         if (op == spv::OpFunctionEnd) current = 0;
+        if (current != 0 && (op == spv::OpLoad || op == spv::OpAtomicLoad) && physicalPointers.contains(operands[2])) ++module.functions[current].bufferMemoryLoads;
         if (current != 0 && op == spv::OpSwitch) {
             std::set<std::uint32_t> targets{operands[1]};
             for (std::uint32_t operand = 3; operand < count - 1u; operand += 2u) targets.insert(operands[operand]);
@@ -156,10 +158,10 @@ int main() {
         Expect(atomics.size() == 1u && atomics[0] == 2u, "expected one atomic address helper called by the two buffer_atomic_add, found " + Describe(atomics));
         const auto formatted = Calls(module, "load_formatted_buffer_");
         Expect(formatted.size() == 1u && formatted[0] == 1u, "expected one formatted load helper called once, found " + Describe(formatted));
-        Expect(module.mainBufferMemoryLoads == 6u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected twice for each s_buffer_load_dword: through its cached translation and through a refilled one");
+        Expect(module.mainBufferMemoryLoads == 0u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected its s_buffer_load_dword to read through their helper");
         for (const auto& [id, function] : module.functions) {
-            if (!function.name.starts_with("load_formatted_buffer_")) continue;
-            Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per format layout and the invalid format (at most 15)");
+            if (function.name.starts_with("load_scalar_buffer_")) Expect(function.bufferMemoryLoads == 3u, function.name + " loads buffer memory " + std::to_string(function.bufferMemoryLoads) + " times, expected three times: through its cached translation, through a refilled one and through the uncached read");
+            if (function.name.starts_with("load_formatted_buffer_")) Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per format layout and the invalid format (at most 15)");
         }
     } catch (const std::exception& error) {
         std::cerr << "SpirvBufferAccessHelpers: " << error.what() << '\n';
