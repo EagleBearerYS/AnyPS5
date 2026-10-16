@@ -3972,6 +3972,7 @@ struct RecordedDispatch {
     // Whether the data refresh recorded anything.
     bool refreshed = false;
     bool resourceKeyMatched = false;
+    std::shared_ptr<Graphics::ShaderResources::DispatchUse> use;
 };
 
 VkDevice VulkanDevice::Device() const {
@@ -4346,7 +4347,8 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         ++d.preBarriersRecorded;
     }
     context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->pipeline);
-    resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout);
+    resources.BindUse(commands, record.objects->layout, record.use.get());
+    if (record.use != nullptr && record.use->bindings != nullptr) recorder.Keep(record.use->bindings);
     if (const auto dwords = record.shader->program->workgroupMemoryDwords; dwords != 0) {
         auto memory = state->WorkgroupMemoryFor(context, record.x, record.y, record.z, dwords);
         context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &memory->set, 0, nullptr);
@@ -4399,7 +4401,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     recordStep(PhaseRecordMarks);
     // Only copied written buffers (and BDA fault checks) need work once the GPU is done; without them
     // the batch can signal its labels from the GPU.
-    if (resources.NeedsCompletion() && resources.Reusable()) {
+    if (record.use != nullptr) {
+        auto kept = record.resources;
+        recorder.OnComplete([kept, use = record.use] { kept->CompleteDispatchUse(*use); });
+    } else if (resources.NeedsCompletion() && resources.Reusable()) {
         auto kept = record.resources;
         recorder.OnComplete([kept] { kept->CheckFaults(); });
     } else if (resources.NeedsCompletion()) {
@@ -4625,10 +4630,12 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         contentKey = prepared != nullptr && !prepared->key.empty() ? std::move(prepared->key) : DispatchContentKey(shaders[0], context.device);
         auto cached = preparedFind && prepared != nullptr && prepared->cached != nullptr ? std::move(prepared->cached) : state->resourceCache.Find(contentKey);
         if (cached != nullptr) {
-            if (cached->Revalidate(shaders[0])) {
+            const bool addressBased = cached->ReusesAddressSpace();
+            if (cached->Revalidate(std::span<const Graphics::CompiledShader>(shaders), nullptr, snapshots)) {
                 resources = std::move(cached);
                 fromCache = true;
                 ++d.cacheHits;
+                if (addressBased) Graphics::CountAddressReuse(Graphics::AddressReuse::Reused);
             } else {
                 state->resourceCache.Remove(contentKey, cached.get());
                 ++d.cacheInvalidated;
@@ -4651,6 +4658,10 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         }
     }
     resources->PatchPushConstants(pushBytes);
+    struct SpaceRelease {
+        Graphics::ShaderResources* resources;
+        ~SpaceRelease() { resources->EndUse(); }
+    } spaceRelease{resources.get()};
     if (profile) timer.add(PhaseResourcesHookWaits, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
     // The lookup outcomes of this call: rows with counts on the [indirect] line, and a summary for
     // the longest call.
@@ -4684,6 +4695,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     IndirectOutcome outcome{0, 0};
     RecordedDispatch record{&context, &shaders[0], resources, objects, pushStages, &pushBytes, x, y, z, arguments, nullptr, programAddress, fromCache && TemplateDataRefresh() ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::None, 0, revalidateMs, &timer};
     record.resourceKeyMatched = fromCache;
+    record.use = resources->BeginDispatchUse();
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
     // The indirect hold total below still covers the whole call of a CPU-resolved one.
     const bool indirect = record.arguments != 0 || outcome.cpuReason != 0;

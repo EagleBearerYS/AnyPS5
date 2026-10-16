@@ -163,6 +163,25 @@ public:
         std::vector<Snapshot> snapshots;
         ~DrawBindings();
     };
+    struct SpareRecord {
+        std::shared_ptr<Buffer> record;
+        std::shared_ptr<DrawBindings> bindings;
+    };
+    struct SpareRecords {
+        std::mutex mutex;
+        std::vector<SpareRecord> idle;
+    };
+    struct DispatchUse {
+        DispatchUse() = default;
+        DispatchUse(const DispatchUse&) = delete;
+        DispatchUse& operator=(const DispatchUse&) = delete;
+        ~DispatchUse();
+        std::shared_ptr<const void> hold;
+        std::shared_ptr<DrawBindings> bindings;
+        std::shared_ptr<Buffer> record;
+        std::shared_ptr<std::atomic<bool>> ownRecord;
+        std::shared_ptr<SpareRecords> spares;
+    };
     struct MovedBuffer {
         std::size_t allocation;
         std::uint64_t address;
@@ -236,6 +255,9 @@ public:
     std::shared_ptr<const void> BeginUse();
     void CompleteUse();
     void EndUse() noexcept;
+    std::shared_ptr<DispatchUse> BeginDispatchUse();
+    void CompleteDispatchUse(DispatchUse& use);
+    void BindUse(VkCommandBuffer commands, VkPipelineLayout layout, const DispatchUse* use) const;
     // `shaders` are the stages the object was built from, in build order (a recorded draw's vertex
     // and fragment stages, or one compute stage): their bindings are walked like the build did.
     // How a Revalidate proved (or refused) the object, for the [recipe] line: the proof path taken
@@ -559,6 +581,9 @@ private:
     bool addressReuse = false;
     bool reuseProved = false;
     std::shared_ptr<std::atomic<std::uint32_t>> usesInFlight = std::make_shared<std::atomic<std::uint32_t>>(0u);
+    std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
+    std::shared_ptr<SpareRecords> spareRecords = std::make_shared<SpareRecords>();
+    std::shared_ptr<DrawBindings> faultRecordBindings(const Buffer& record) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> addressWrites;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;

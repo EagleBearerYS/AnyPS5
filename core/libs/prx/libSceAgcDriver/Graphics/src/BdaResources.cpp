@@ -129,6 +129,16 @@ BdaResources::BdaResources(const Context& context) {
     std::memset(fault->Bytes().data(), 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
 }
 
+std::shared_ptr<Buffer> BdaResources::FaultRecord(const Context& context) {
+    auto record = std::make_shared<Buffer>(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::memset(record->Bytes().data(), 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+    return record;
+}
+
+VkDescriptorBufferInfo BdaResources::FaultRecordDescriptor(const Buffer& record) {
+    return {record.Handle(), 0, ShaderRecompiler::BdaAbi::FaultBufferBytes};
+}
+
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory) : BdaResources(context) {
     const auto cached = memory.CachedAddressTable();
     std::vector<ShaderRecompiler::BdaAbi::Range> built;
@@ -239,9 +249,13 @@ bool LoopGuardTripped() {
 }
 
 void BdaResources::CheckFault() const {
-    markWrittenPages();
+    CheckFault(*fault);
+}
+
+void BdaResources::CheckFault(Buffer& record) const {
+    markWrittenPages(record);
     ShaderRecompiler::BdaAbi::Fault report{};
-    std::memcpy(&report, fault->Bytes().data(), sizeof(report));
+    std::memcpy(&report, record.Bytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
         Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.reserved == 0, "BDA fault record has data without publication");
         return;
@@ -252,7 +266,7 @@ void BdaResources::CheckFault() const {
         // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
         loopGuardTripped.store(true, std::memory_order_relaxed);
         std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
-        std::memset(fault->Bytes().data(), 0, fault->Bytes().size());
+        std::memset(record.Bytes().data(), 0, record.Bytes().size());
         return;
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
@@ -304,9 +318,9 @@ void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vec
     imageTableRanges = std::move(ranges);
 }
 
-void BdaResources::markWrittenPages() const {
+void BdaResources::markWrittenPages(Buffer& record) const {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    auto* words = reinterpret_cast<std::uint32_t*>(fault->Bytes().data());
+    auto* words = reinterpret_cast<std::uint32_t*>(record.Bytes().data());
     markWrittenChunks(words);
     if (words[Abi::WrittenOverflowWord] == 0) return;
     markWritableRanges();
