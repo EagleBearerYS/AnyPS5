@@ -231,3 +231,7 @@
 - [Depth mip levels](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth view of mip `DB_DEPTH_VIEW.MIPID` in a chain of `DB_Z_INFO.MAXMIP` levels renders into that level as a surface of its own, at the level's offset and extent from `ComputeElementMipLayout` for the 64 KiB Z_X swizzle, the layout color target mips and sampled depth already use; slices of a chain step by the size of the whole chain. Taken from LEGO Builder's Journey (PPSA05496), which renders depth mip 1 of 64 KiB Z_X surfaces without HTILE; the placement was not compared with a console capture. Multisampled depth mips, other swizzle modes, levels in the packed mip tail and HTILE on a mip chain throw
 
 - [Long Windows pipeline-cache paths](../../../core/libs/prx/libSceAgcDriver/Graphics/src/PipelineCache.cpp): `readHeader` and the failed-read existence check still use ordinary paths. A filename beyond MAX_PATH can prevent header reuse or be reported missing; the shared content reader and journal normalization do not cover these calls.
+
+### Opt-in draw paths
+
+- [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
