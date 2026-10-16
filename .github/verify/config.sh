@@ -1,0 +1,4 @@
+BASE=e09870006df4cb88fa200eedd0f75d25d1fdf14e
+REPEAT=3
+EXTRA_TESTS='agc_performance_overlay|agc_performance_overlay_statistics|pad_input_mapping|pad_keyboard_mouse'
+NO_BEFORE=1
