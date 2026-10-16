@@ -158,6 +158,8 @@ struct SpirvEmitterState {
     std::array<std::uint32_t, 2> bdaByteWriteFunctions {};
     std::array<std::uint32_t, 2> bdaWriteFunctions {};
     std::uint32_t linearStoreStaging = 0;
+    std::map<std::uint32_t, std::uint32_t> formatDecoders;
+    std::map<std::uint32_t, std::uint32_t> formatEncoders;
     std::uint32_t bdaFaultFunction = 0;
     bool nativeF16ModesEmitted = false;
     bool f16DenormPreserveEmitted = false;

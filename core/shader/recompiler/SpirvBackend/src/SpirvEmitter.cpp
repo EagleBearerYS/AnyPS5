@@ -5,6 +5,7 @@
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvModuleSetup.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
+#include "SpirvBackend/SpirvRuntimeBuffer.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -319,6 +320,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.waveExchange && BdaInvocationsMayStop(program);
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
+    DefineFormatCodecs(state);
     state.module.ReturnThroughResultPointers();
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
     return state.module.Finalize();

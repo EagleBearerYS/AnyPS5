@@ -623,19 +623,49 @@ std::vector<std::vector<std::uint32_t>> formatLayouts() {
     return layouts;
 }
 
+const std::vector<std::vector<std::uint32_t>>& sharedFormatLayouts() {
+    static const auto layouts = formatLayouts();
+    return layouts;
+}
+
+std::vector<std::vector<std::uint32_t>> formatMembers(std::size_t layout) {
+    std::vector<std::vector<std::uint32_t>> cases;
+    for (const auto member : sharedFormatLayouts()[layout]) cases.push_back({member});
+    return cases;
+}
+
+std::uint32_t codecKey(std::size_t layout, bool d16, std::uint32_t components) {
+    return static_cast<std::uint32_t>(layout) << 4u | (d16 ? 8u : 0u) | components;
+}
+
+std::uint32_t codecType(SpirvEmitterState& state, std::uint32_t results) {
+    const std::vector<std::uint32_t> members(results, TypeU32(state));
+    return state.module.Type(spv::OpTypeStruct, std::span<const std::uint32_t>(members));
+}
+
+std::vector<std::uint32_t> callCodec(SpirvEmitterState& state, std::map<std::uint32_t, std::uint32_t>& functions, std::uint32_t key, std::uint32_t format, std::span<const std::uint32_t> arguments, std::uint32_t results) {
+    auto& function = functions[key];
+    if (function == 0u) function = state.module.AllocateId();
+    std::vector<std::uint32_t> call{spv::OpFunctionCall, codecType(state, results), state.module.AllocateId(), function, format};
+    call.insert(call.end(), arguments.begin(), arguments.end());
+    state.module.AddFunction(call);
+    std::vector<std::uint32_t> values(results);
+    for (std::uint32_t index = 0; index < results; ++index) {
+        values[index] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), values[index], call[2], index);
+    }
+    return values;
+}
+
 std::uint32_t formatSwitch(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t components, bool store, std::uint32_t data) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
     const auto u32 = TypeU32(state);
     const auto format = field(state, resource.word3, 12u, 7u);
-    static const auto layouts = formatLayouts();
+    const auto& layouts = sharedFormatLayouts();
     const auto type = store || components == 1u ? u32 : TypeU32Composite(state, components);
     const auto zero = store || components == 1u ? ConstantU32(state, 0u) : ConstantU32CompositeZero(state, components);
-    const auto members = [&](std::size_t layout) {
-        std::vector<std::vector<std::uint32_t>> cases;
-        for (const auto member : layouts[layout]) cases.push_back({member});
-        return cases;
-    };
+    const auto members = [&](std::size_t layout) { return formatMembers(layout); };
     const auto result = switchValues(state, format, layouts, false, store ? std::vector<std::uint32_t>{} : std::vector<std::uint32_t>{type}, [&](std::size_t index) -> std::vector<std::uint32_t> {
         if (index == layouts.size()) {
             if (memory.gpuDescriptor) RecordBdaFault(state, resource.base, ConstantU32(state, 0u), BdaInstructionPc(state, instruction), BdaAbi::FaultReason::InvalidDescriptor);
@@ -647,7 +677,7 @@ std::uint32_t formatSwitch(SpirvValueEmitContext& context, const IrValue& instru
         if (store) {
             const auto values = storeValues(state, data, components);
             EmitIfCondition(state, layout.inBounds, [&] {
-                const auto encoded = switchValues(state, format, members(index), true, std::vector<std::uint32_t>(info.componentCount, u32), [&](std::size_t member) {
+                const auto encoded = layouts[index].size() > 1u ? callCodec(state, state.formatEncoders, codecKey(index, memory.d16, components), format, std::span<const std::uint32_t>(values.data(), components), info.componentCount) : switchValues(state, format, members(index), true, std::vector<std::uint32_t>(info.componentCount, u32), [&](std::size_t member) {
                     std::vector<std::uint32_t> parts;
                     for (std::uint32_t component = 0; component < info.componentCount; ++component) parts.push_back(encodeFormatted(state, memory, memberInfo(member), component, components, values));
                     return parts;
@@ -664,12 +694,13 @@ std::uint32_t formatSwitch(SpirvValueEmitContext& context, const IrValue& instru
             read[component] = both(state, layout.inBounds, layout.required[component]);
             raw[component] = EmitValueOrZeroIfCondition(state, read[component], [&] { return readBuffer(context, instruction, resource, layout.addresses[component].guest, info.packedBitfield ? 32u : info.componentBits[component]); });
         }
-        const auto decoded = switchValues(state, format, members(index), true, std::vector<std::uint32_t>(info.componentCount + 1u, u32), [&](std::size_t member) {
+        auto decoded = layouts[index].size() > 1u ? callCodec(state, state.formatDecoders, codecKey(index, memory.d16, 0u), format, std::span<const std::uint32_t>(raw.data(), info.componentCount), info.componentCount + 1u) : switchValues(state, format, members(index), true, std::vector<std::uint32_t>(info.componentCount + 1u, u32), [&](std::size_t member) {
             std::vector<std::uint32_t> parts;
-            for (std::uint32_t component = 0; component < info.componentCount; ++component) parts.push_back(Select(state, u32, read[component], decodeFormatted(state, memory, memberInfo(member), component, raw[component]), ConstantU32(state, 0u)));
+            for (std::uint32_t component = 0; component < info.componentCount; ++component) parts.push_back(decodeFormatted(state, memory, memberInfo(member), component, raw[component]));
             parts.push_back(formattedOne(state, memory, memberInfo(member)));
             return parts;
         });
+        for (std::uint32_t component = 0; component < info.componentCount; ++component) decoded[component] = Select(state, u32, read[component], decoded[component], ConstantU32(state, 0u));
         std::array<std::uint32_t, 4> values{};
         std::copy(decoded.begin(), decoded.begin() + info.componentCount, values.begin());
         return {selectFormatted(state, components, info, layout, values, decoded[info.componentCount])};
@@ -1175,6 +1206,62 @@ void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instr
         state.linearStoreStaging = 0u;
     });
     EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), staged), [&] { store(false); });
+}
+
+void DefineFormatCodecs(SpirvEmitterState& state) {
+    const auto& layouts = sharedFormatLayouts();
+    const auto u32 = TypeU32(state);
+    const auto define = [&](std::uint32_t function, const std::string& name, std::uint32_t parameters, std::uint32_t results, const auto& body) {
+        const auto type = codecType(state, results);
+        std::vector<std::uint32_t> signature(parameters + 2u, u32);
+        signature[0] = type;
+        state.module.AddName(function, name);
+        state.module.AddFunction(spv::OpFunction, type, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, std::span<const std::uint32_t>(signature)));
+        std::vector<std::uint32_t> ids(parameters + 1u);
+        for (auto& id : ids) {
+            id = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunctionParameter, u32, id);
+        }
+        EmitLabel(state, state.module.AllocateId());
+        const std::vector<std::uint32_t> values = body(ids[0], std::span<const std::uint32_t>(ids).subspan(1u));
+        std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, type, state.module.AllocateId()};
+        construct.insert(construct.end(), values.begin(), values.end());
+        state.module.AddFunction(construct);
+        state.module.AddFunction(spv::OpReturnValue, construct[2]);
+        state.module.AddFunction(spv::OpFunctionEnd);
+    };
+    for (const auto& [key, function] : state.formatDecoders) {
+        const auto layout = key >> 4u;
+        MemoryInfo memory{};
+        memory.d16 = (key & 8u) != 0u;
+        const auto info = GetFormatInfo(static_cast<IrBufferFormat>(layouts[layout].front()));
+        define(function, "decode_format_layout_" + std::to_string(layout) + (memory.d16 ? "_d16" : ""), info.componentCount, info.componentCount + 1u, [&](std::uint32_t format, std::span<const std::uint32_t> raw) {
+            return switchValues(state, format, formatMembers(layout), true, std::vector<std::uint32_t>(info.componentCount + 1u, u32), [&](std::size_t member) {
+                const auto memberInfo = GetFormatInfo(static_cast<IrBufferFormat>(layouts[layout][member]));
+                std::vector<std::uint32_t> parts;
+                for (std::uint32_t component = 0; component < info.componentCount; ++component) parts.push_back(decodeFormatted(state, memory, memberInfo, component, raw[component]));
+                parts.push_back(formattedOne(state, memory, memberInfo));
+                return parts;
+            });
+        });
+    }
+    for (const auto& [key, function] : state.formatEncoders) {
+        const auto layout = key >> 4u;
+        const auto components = key & 7u;
+        MemoryInfo memory{};
+        memory.d16 = (key & 8u) != 0u;
+        const auto info = GetFormatInfo(static_cast<IrBufferFormat>(layouts[layout].front()));
+        define(function, "encode_format_layout_" + std::to_string(layout) + "_x" + std::to_string(components) + (memory.d16 ? "_d16" : ""), components, info.componentCount, [&](std::uint32_t format, std::span<const std::uint32_t> data) {
+            std::array<std::uint32_t, 4> values{};
+            std::copy(data.begin(), data.end(), values.begin());
+            return switchValues(state, format, formatMembers(layout), true, std::vector<std::uint32_t>(info.componentCount, u32), [&](std::size_t member) {
+                const auto memberInfo = GetFormatInfo(static_cast<IrBufferFormat>(layouts[layout][member]));
+                std::vector<std::uint32_t> parts;
+                for (std::uint32_t component = 0; component < info.componentCount; ++component) parts.push_back(encodeFormatted(state, memory, memberInfo, component, components, values));
+                return parts;
+            });
+        });
+    }
 }
 
 std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const IrValue& instruction) {

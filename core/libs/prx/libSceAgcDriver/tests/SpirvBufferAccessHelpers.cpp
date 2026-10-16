@@ -23,6 +23,7 @@ struct Function {
     std::uint32_t control = 0;
     std::string name;
     std::size_t widestSwitch = 0;
+    std::size_t switches = 0;
     std::map<std::uint32_t, std::uint32_t> calls;
     std::size_t bufferMemoryLoads = 0;
 };
@@ -100,6 +101,7 @@ Module Parse(std::span<const std::uint32_t> words) {
         if (current != 0 && op == spv::OpSwitch) {
             std::set<std::uint32_t> targets{operands[1]};
             for (std::uint32_t operand = 3; operand < count - 1u; operand += 2u) targets.insert(operands[operand]);
+            ++module.functions[current].switches;
             auto& widest = module.functions[current].widestSwitch;
             widest = std::max(widest, targets.size());
         }
@@ -189,7 +191,17 @@ int main() {
         Expect(write != 0u, "the module has no write_bda function");
         for (const auto& [id, function] : module.functions) {
             if (function.name.starts_with("load_scalar_buffer_")) Expect(function.bufferMemoryLoads == 3u, function.name + " loads buffer memory " + std::to_string(function.bufferMemoryLoads) + " times, expected three times: through its cached translation, through a refilled one and through the uncached read");
-            if (function.name.starts_with("load_formatted_buffer_")) Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per format layout and the invalid format (at most 15)");
+            if (function.name.starts_with("load_formatted_buffer_")) {
+                Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per format layout and the invalid format (at most 15)");
+                Expect(function.switches == 1u, function.name + " has " + std::to_string(function.switches) + " switches, expected only its layout switch with the formats of a layout decoded by shared functions");
+                std::size_t decoders = 0;
+                for (const auto& [callee, count] : function.calls) {
+                    const auto found = module.functions.find(callee);
+                    if (found != module.functions.end() && found->second.name.starts_with("decode_format_layout_")) ++decoders;
+                }
+                Expect(decoders != 0u, function.name + " calls no shared format decoder");
+            }
+            if (function.name.starts_with("decode_format_layout_")) Expect((function.control & spv::FunctionControlDontInlineMask) != 0u && function.switches == 1u, function.name + " is not one DontInline switch over the formats of its layout");
             if (function.name.starts_with("store_buffer_x3")) {
                 const auto found = function.calls.find(write);
                 const auto writes = found == function.calls.end() ? 0u : found->second;
