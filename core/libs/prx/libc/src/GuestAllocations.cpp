@@ -48,6 +48,7 @@ Registry& registry() {
 std::atomic<std::uint64_t> generation{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> invalidator{nullptr};
 std::atomic<bool (*)(std::uintptr_t, std::size_t)> pinWaiter{nullptr};
+std::atomic<std::uint32_t> pinWaits{0};
 std::atomic<void (*)(const Mapped&, std::uint64_t)> gpuMapObserver{nullptr};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> unmapObserver{nullptr};
 std::atomic<std::uint32_t> gpuMapObserverCalls{0};
@@ -59,6 +60,26 @@ std::chrono::milliseconds pinWait() {
     }()};
     return value;
 }
+
+class PinWaitScope {
+public:
+    PinWaitScope() = default;
+    PinWaitScope(const PinWaitScope&) = delete;
+    PinWaitScope& operator=(const PinWaitScope&) = delete;
+
+    ~PinWaitScope() {
+        if (counted && pinWaits.fetch_sub(1, std::memory_order_acq_rel) == 1) pinWaits.notify_all();
+    }
+
+    void Begin() {
+        if (counted) return;
+        counted = true;
+        pinWaits.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+private:
+    bool counted = false;
+};
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(reason);
@@ -174,6 +195,10 @@ void GuestAllocationsNoteGpuMapping_nid_postfix(void* mutation, const void* poin
 
 void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t, std::size_t)) {
     pinWaiter.store(callback, std::memory_order_release);
+}
+
+void GuestAllocationsAwaitPinWaits_nid_postfix() {
+    for (auto waits = pinWaits.load(std::memory_order_acquire); waits != 0; waits = pinWaits.load(std::memory_order_acquire)) pinWaits.wait(waits, std::memory_order_acquire);
 }
 
 #ifdef _WIN32
@@ -319,6 +344,7 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
     auto* state = static_cast<MutationState*>(mutation);
     const auto deadline = std::chrono::steady_clock::now() + pinWait();
     int syncedRounds = 0;
+    PinWaitScope waiting;
     for (;;) {
         registry().readableLease.reset();
         registry().allLease.reset();
@@ -334,6 +360,7 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
             }
         }
         if (!pinned) return;
+        waiting.Begin();
         if (std::chrono::steady_clock::now() >= deadline) PinnedFailure(address, bytes, ("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS)").c_str());
         const auto waiter = pinWaiter.load(std::memory_order_acquire);
         bool progressed = false;

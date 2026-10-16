@@ -1888,6 +1888,7 @@ void GuestBufferMemory::Prewarm(const Context& context) {
 void GuestBufferMemory::AcquireRegistered() {
     Require(!uploaded && regions.empty() && lease.empty() && space == nullptr, "guest allocation lease must precede resource registration");
     ensurePinWaiter();
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) GuestAllocations::GuestAllocationsAwaitPinWaits_nid_postfix();
     retiredSince = RetiredSince();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& timing = ThreadAddressTiming();
