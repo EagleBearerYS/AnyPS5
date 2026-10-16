@@ -47,6 +47,7 @@ void Require(bool condition) {
 
 void InsertPixelDefaultsAfterFrontFace(std::vector<std::uint8_t>& bytes) {
     bytes.insert(bytes.begin() + 261u, {0x0fu, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0u, 0u, 0u, 0u});
+    bytes.insert(bytes.begin() + 282u, 34u, 0u);
 }
 
 std::vector<std::uint8_t> DecodeBase64(std::string_view text) {
@@ -445,6 +446,27 @@ int main() {
         }
         Require(rejected);
     }
+
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.iteratesSamples = true;
+    pixel.positionLocation = ShaderRecompiler::PixelPositionLocation::UpperLeft;
+    pixel.sampleLocations = {0xa5u, 0x5au, 0xc3u, 0x3cu};
+    pixel.sampleLocations.back() = 0x77u;
+    request.context.pixel = pixel;
+    const auto pixelEncoded = serializer.Serialize(request);
+    const auto pixelReplay = serializer.Deserialize(pixelEncoded);
+    Require(pixelReplay.request.context.pixel.has_value() && pixelReplay.request.context.pixel->iteratesSamples && pixelReplay.request.context.pixel->positionLocation == ShaderRecompiler::PixelPositionLocation::UpperLeft && pixelReplay.request.context.pixel->sampleLocations == pixel.sampleLocations);
+    auto pixelBytes = DecodeBase64(pixelEncoded);
+    const auto marker = std::search(pixelBytes.begin(), pixelBytes.end(), pixel.sampleLocations.begin(), pixel.sampleLocations.begin() + 4);
+    Require(marker != pixelBytes.end() && marker - pixelBytes.begin() >= 2 && *(marker - 1) == 3u && *(marker - 2) == 1u);
+    *(marker - 1) = 4u;
+    bool locationRejected = false;
+    try {
+        static_cast<void>(serializer.Deserialize(EncodeBase64(pixelBytes)));
+    } catch (const std::runtime_error& error) {
+        locationRejected = std::string_view(error.what()) == "RequestSerializer: invalid PixelPositionLocation value";
+    }
+    Require(locationRejected);
 
     return 0;
 }
