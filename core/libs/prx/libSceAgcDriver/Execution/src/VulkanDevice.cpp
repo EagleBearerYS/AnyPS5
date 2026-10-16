@@ -342,6 +342,7 @@ struct VulkanDevice::State {
     std::uint32_t maxComputeSubgroupSize = 0;
     // Indirect draw features enabled (see Graphics::Context).
     bool drawIndirectFirstInstance = false;
+    bool drawParameters = false;
     bool multiDrawIndirect = false;
     bool drawIndirectCount = false;
     // The device's resolved entry points (Graphics::DeviceFunctions) and the Graphics::Context
@@ -1475,6 +1476,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     const bool drawParameters = drawParametersFeatures.shaderDrawParameters == VK_TRUE;
     drawParametersFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, nullptr, VK_TRUE};
     if (drawParameters) state->capabilities.push_back(spv::CapabilityDrawParameters);
+    state->drawParameters = drawParameters;
     APS5_LOG_OUT("Vulkan features tessellationAvailable=%u mesh=%u depthClip=%u depthRangeUnrestricted=%u pipelineLibrary=%u", static_cast<unsigned>(state->tessellationShader), static_cast<unsigned>(state->meshShader), static_cast<unsigned>(state->depthClipControl), static_cast<unsigned>(state->depthRangeUnrestricted), static_cast<unsigned>(state->graphicsPipelineLibrary));
     require(available.samplerAnisotropy && available.textureCompressionBC, "device lacks sampler anisotropy or BC texture compression support required for texture sampling");
     enabled.samplerAnisotropy = VK_TRUE;
@@ -3508,7 +3510,7 @@ Graphics::Context VulkanDevice::buildContext() const {
 }
 
 VulkanDevice::IndirectDrawSupport VulkanDevice::DrawIndirectSupport() const {
-    return {state->drawIndirectFirstInstance, state->multiDrawIndirect, state->drawIndirectCount};
+    return {state->drawIndirectFirstInstance, state->multiDrawIndirect, state->drawIndirectCount, state->drawParameters};
 }
 
 std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const {

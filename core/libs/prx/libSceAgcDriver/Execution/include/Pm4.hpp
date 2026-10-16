@@ -54,6 +54,12 @@ struct DrawParameters {
         std::int32_t baseVertexSgpr = -1;
         std::int32_t startInstanceSgpr = -1;
         std::int32_t drawIndexSgpr = -1;
+        // The front stage reads the SGPRs above from the draw's own parameters (BaseVertex,
+        // BaseInstance, DrawIndex; ShaderRecompiler::DrawParameterSgprs), so the records need not
+        // be folded into the stage: one stage draws them all in place.
+        bool drawParameters = false;
+        // The front stage reads DrawIndex: CPU-read records must still go through one multi-draw.
+        bool StageReadsDrawIndex() const { return drawParameters && drawIndexEnabled && drawIndexSgpr >= 0; }
         // Bytes of the record range: (count - 1) * stride + recordBytes, or 0 for no records.
         std::uint64_t RangeBytes() const { return count == 0 ? 0 : static_cast<std::uint64_t>(count - 1) * stride + recordBytes; }
         std::uint32_t VertexDwordOffset() const { return recordBytes == 20 ? 12u : 8u; }

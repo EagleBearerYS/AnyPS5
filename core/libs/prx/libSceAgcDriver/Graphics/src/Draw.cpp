@@ -1360,6 +1360,11 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
                 else context.Resolved(&DeviceFunctions::cmdDrawIndirect, "vkCmdDrawIndirect")(commands, argumentBuffer, offset, 1, args->stride);
             }
         }
+    } else if (args->StageReadsDrawIndex()) {
+        // The CPU-read records, uploaded by recordCpuReadArguments: one multi-draw keeps DrawIndex.
+        const auto count = static_cast<std::uint32_t>(indirect->records.size());
+        if (draw.indexed) context.Resolved(&DeviceFunctions::cmdDrawIndexedIndirect, "vkCmdDrawIndexedIndirect")(commands, argumentBuffer, argumentOffset, count, sizeof(VkDrawIndexedIndirectCommand));
+        else context.Resolved(&DeviceFunctions::cmdDrawIndirect, "vkCmdDrawIndirect")(commands, argumentBuffer, argumentOffset, count, sizeof(VkDrawIndirectCommand));
     } else {
         // The CPU-read records with the driver's rules: an InPlace dimension takes the record's
         // value, a Constant one (the CP writes nowhere) the constant.
@@ -1416,6 +1421,36 @@ bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, R
     argumentBuffer = scratch->Handle();
     argumentOffset = 0;
     return true;
+}
+
+// The CPU-read records of a draw whose stage reads DrawIndex, with the driver's rules, written
+// outside the render pass into a scratch copy that one multi-draw reads: a plain draw per record
+// would give every record DrawIndex 0. Every record keeps its slot (an empty or clamped-away one
+// draws nothing) so its index stays the CP's. The scratch is kept until the batch completed.
+void recordCpuReadArguments(const Context& context, VkCommandBuffer commands, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, std::unique_ptr<DeviceBuffer>& scratch, VkBuffer& argumentBuffer, VkDeviceSize& argumentOffset, const std::function<void(std::uint32_t)>& countBarrier) {
+    using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
+    const auto* args = indirect.args;
+    std::vector<std::uint32_t> words;
+    for (const auto& record : indirect.records) {
+        const auto firstInstance = args->instanceRule == Rule::InPlace ? record.firstInstance : args->instanceConstant;
+        if (draw.indexed) {
+            // The CP clamps the index range to INDEX_BUFFER_SIZE (the bound copy).
+            const bool inRange = record.firstVertexOrIndex < draw.indexCount;
+            const auto vertexOffset = args->vertexRule == Rule::InPlace ? record.vertexOffset : args->vertexConstant;
+            words.insert(words.end(), {inRange ? std::min(record.count, draw.indexCount - record.firstVertexOrIndex) : 0u, record.instances, inRange ? record.firstVertexOrIndex : 0u, vertexOffset, firstInstance});
+        } else {
+            words.insert(words.end(), {record.count, record.instances, args->vertexRule == Rule::InPlace ? record.firstVertexOrIndex : args->vertexConstant, firstInstance});
+        }
+    }
+    const auto bytes = words.size() * sizeof(std::uint32_t);
+    scratch = std::make_unique<DeviceBuffer>(context, bytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto update = context.Resolved(&DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer");
+    constexpr std::size_t UpdateBytes = 65536;
+    for (std::size_t offset = 0; offset < bytes; offset += UpdateBytes) update(commands, scratch->Handle(), offset, std::min(UpdateBytes, bytes - offset), reinterpret_cast<const std::byte*>(words.data()) + offset);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+    countBarrier(1);
+    argumentBuffer = scratch->Handle();
+    argumentOffset = 0;
 }
 
 std::shared_ptr<Buffer> meshArgumentBuffer(const Context& context, std::span<const std::uint32_t> restartTable) {
@@ -1713,6 +1748,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     auto& resources = *record.resources;
     const auto* args = record.indirect != nullptr ? record.indirect->args : nullptr;
     const bool gpuIndirect = args != nullptr && record.indirect->path == IndirectDrawPath::Gpu;
+    const bool cpuDrawIndex = args != nullptr && !gpuIndirect && args->StageReadsDrawIndex();
     using CommandClass = Recorder::CommandClass;
     const auto countBarrier = [&](std::uint32_t count) { Recorder::CountBarriers(CommandClass::Draw, count); };
     // The pass is named by its attachment views (stable while the kept targets live, so unique
@@ -1751,7 +1787,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
     const PassAccess passAccess{passReads, resources.GpuWrites(), passImages, passAttachments, unknownMemory, unknownMemory};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect, fenced, passAccess);
+    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || cpuDrawIndex || meshIndirect, fenced, passAccess);
     const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
@@ -1798,6 +1834,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
             rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+        } else if (cpuDrawIndex) {
+            recordCpuReadArguments(context, commands, draw, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
         }
         // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
         // layout, which a lean draw renders in: no transitions.
@@ -2355,6 +2393,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         meshArguments = directMeshArguments(context, draw, inputs.restartTable);
     } else if (gpuIndirect) {
         rewritten = recordIndirectArguments(context, commands, recorder, recorded, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+    } else if (args != nullptr && args->StageReadsDrawIndex()) {
+        recordCpuReadArguments(context, commands, draw, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
     }
     for (auto& binding : targets) {
         if (binding.proxied) {

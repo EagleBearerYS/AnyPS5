@@ -79,7 +79,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     std::uint64_t shapeKey = 0;
     if (registerKey) {
         const auto keyStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        drawKey = drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), &shapeKey, traceDrawCache() ? &drawKeyComponents : nullptr);
+        drawKey = IndirectDrawKey(drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), &shapeKey, traceDrawCache() ? &drawKeyComponents : nullptr), drawParameters);
         std::lock_guard cacheLock(drawCacheMutex);
         ++drawEntryCounters.lookups;
         ++drawEntryCounters.registerKeyLookups;
@@ -176,6 +176,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
         return std::nullopt;
     };
+    ShaderRecompiler::DrawParameterSgprs drawParameterSgprs;
     if (drawParameters.indirect) {
         auto& indirect = *drawParameters.indirect;
         const auto sgprOf = [&](std::uint32_t location) -> std::int32_t {
@@ -186,6 +187,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         indirect.baseVertexSgpr = sgprOf(indirect.baseVertexLocation);
         indirect.startInstanceSgpr = sgprOf(indirect.startInstanceLocation);
         indirect.drawIndexSgpr = sgprOf(indirect.drawIndexLocation);
+        drawParameterSgprs = IndirectDrawParameters(graphics, programs.front(), localDevice, drawParameters);
+        indirect.drawParameters = drawParameterSgprs.enabled;
+        // The stage reads these words from the draw: their stale values must not key or shape it.
+        for (const auto sgpr : {drawParameterSgprs.baseVertex, drawParameterSgprs.startInstance, drawParameterSgprs.drawIndex}) {
+            if (drawParameterSgprs.enabled && sgpr >= 0) programs.front().userData[static_cast<std::size_t>(sgpr) - programs.front().firstUserSgpr] = 0;
+        }
     }
     std::vector<ShaderRecompiler::MemoryRegion> memory;
     std::vector<ShaderRecompiler::LinkedProgram> linked;
@@ -207,6 +214,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         decodeReads[i].clear();
         vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, 8u - program.firstUserSgpr);
         if (vertexInfos[i]) vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207), program.tailContinuation.get()) | graphics.layerExports;
+        if (vertexInfos[i] && i == 0) vertexInfos[i]->drawParameters = drawParameterSgprs;
     };
     if (!registerKey) {
         for (std::size_t i = 0; i < programs.size(); ++i) decodeVertexInfo(i);
@@ -428,7 +436,9 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         phaseTiming.Phase(DrawRowLabels);
     };
     if (drawParameters.indirect && indirectCpu) {
-
+        // Each record's stage is folded from its patched words, as without draw parameters.
+        drawParameterSgprs = {};
+        drawParameters.indirect->drawParameters = false;
         const auto indirect = *drawParameters.indirect;
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (programResults[i] == nullptr) continue;

@@ -305,6 +305,8 @@ public:
         bool firstInstance;
         bool multi;
         bool count;
+        // shaderDrawParameters: a vertex stage can read BaseVertex, BaseInstance and DrawIndex.
+        bool drawParameters = false;
     };
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
