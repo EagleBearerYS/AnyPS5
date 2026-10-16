@@ -777,6 +777,81 @@ void pendingWriteSnapshotBenchmark(Recorder& recorder) {
     recorder.Sync();
 }
 
+alignas(65536) std::array<std::byte, 16u << 20u> ImageData{};
+
+struct MappedImageData {
+    Context context;
+    std::byte* data = ImageData.data();
+    std::size_t bytes;
+
+    static Context WithoutImports(Context context) {
+        context.hostImportAlignment = 0;
+        return context;
+    }
+
+    MappedImageData(const Context& created, std::size_t mapped) : context(WithoutImports(created)), bytes(mapped) {
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.RegisterMainImage();
+        }
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(data, bytes, true, true, true, [] {});
+    }
+
+    ~MappedImageData() {
+        ClearImageMirrors(context.device);
+    }
+
+    bool Build() const {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        const bool served = std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == reinterpret_cast<std::uint64_t>(data); });
+        leased.WriteBack();
+        return served;
+    }
+
+    void Unmap() const {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(data, bytes, true, true, false, [] {});
+    }
+};
+
+void writableMirrorCompareTests(const Device& device) {
+    MappedImageData image(device.GetContext(), 2 * 65536);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(image.Build() && image.Build(), "GPU-mapped image data is missing from the BDA table");
+    const auto compared = MirrorCounters().blocksCompared;
+    Require(image.Build() && MirrorCounters().blocksCompared == compared, "a build in the same collect epoch compared an unchanged writable image mirror again");
+    AgcDriver::GuestMemory::MarkWritten(reinterpret_cast<std::uint64_t>(image.data) + 16, 16);
+    Require(image.Build() && MirrorCounters().blocksCompared == compared + 2, "a driver store into a writable image mirror's range did not make the next build of the epoch compare the mirror");
+    image.data[65536 + 7] = std::byte{0x42};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto copied = MirrorCounters().blocksCopied;
+    Require(image.Build() && MirrorCounters().blocksCompared == compared + 4 && MirrorCounters().blocksCopied == copied + 1, "the next collect epoch did not compare the writable image mirror and copy the block the CPU wrote");
+    image.Unmap();
+    std::cout << "writable image mirror compare tests passed\n";
+}
+
+void writableMirrorCompareBenchmark(const Device& device) {
+    MappedImageData image(device.GetContext(), ImageData.size());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(image.Build() && image.Build(), "GPU-mapped image data is missing from the BDA table");
+    std::array<double, 5> samples{};
+    for (auto& sample : samples) {
+        const auto compared = MirrorCounters().blocksCompared;
+        constexpr int builds = 20;
+        const auto start = std::chrono::steady_clock::now();
+        for (int build = 0; build < builds; ++build) Require(image.Build(), "GPU-mapped image data is missing from the BDA table");
+        sample = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count() / builds;
+        std::cout << "writable mirror benchmark: " << (MirrorCounters().blocksCompared - compared) / builds << " blocks compared per build\n";
+    }
+    std::sort(samples.begin(), samples.end());
+    std::cout << "writable mirror benchmark: " << (ImageData.size() >> 20u) << " MiB writable image mirror, builds in one collect epoch, median " << samples[2] << " us per build\n";
+    image.Unmap();
+}
+
 void readListTests(const Device& device, Recorder& recorder) {
     using Ranges = Recorder::ReadList;
     Require(Recorder::ValidReadList({{0x1000, 0x2000}, {0x2000, 0x2100}}) && Recorder::ValidReadList({}), "a sorted disjoint list is refused");
@@ -8094,6 +8169,14 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-pending-write-snapshot") {
             pendingWriteSnapshotBenchmark(recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--writable-mirror-compare-only") {
+            writableMirrorCompareTests(device);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-writable-mirror-compare") {
+            writableMirrorCompareBenchmark(device);
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--storage-upload-lifetime-only" || std::string_view(argv[1]) == "--storage-upload-failure-only")) {

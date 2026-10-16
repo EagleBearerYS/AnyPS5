@@ -1150,6 +1150,8 @@ if(BUILD_TESTING)
     add_test(NAME agc_draw_inputs_in_place COMMAND agc_driver_recorder_tests --draw-inputs-in-place-only)
     add_test(NAME agc_pending_write_snapshot COMMAND agc_driver_recorder_tests --pending-write-snapshot-only)
     set_tests_properties(agc_pending_write_snapshot PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_writable_mirror_compare COMMAND agc_driver_recorder_tests --writable-mirror-compare-only)
+    set_tests_properties(agc_writable_mirror_compare PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
         set_tests_properties(agc_pending_write_snapshot PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
