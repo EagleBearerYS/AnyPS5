@@ -313,6 +313,7 @@ public:
     bool SameSnapshots(std::span<const GuestMemorySnapshot> snapshots) const;
     void SuspendSpace() noexcept;
     bool ResumeSpace();
+    void PublishSpaceShadows();
     bool SpaceImportsCurrent();
     std::shared_ptr<const void> SpaceHold() const { return space; }
 

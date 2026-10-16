@@ -4638,6 +4638,11 @@ bool GuestBufferMemory::ResumeSpace() {
     return true;
 }
 
+void GuestBufferMemory::PublishSpaceShadows() {
+    if (space == nullptr || space->base.empty()) return;
+    StorageTexture::PublishShadowsOnly(space->base.front().begin, static_cast<std::size_t>(space->base.back().end - space->base.front().begin), PublishScope::Whole, "address-based heaps");
+}
+
 bool GuestBufferMemory::SpaceImportsCurrent() {
     if (space == nullptr) return false;
     if (context.hostImportAlignment == 0) return true;
