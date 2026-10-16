@@ -171,6 +171,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         rotated->stages = entry->stages;
                         rotated->shape = entry->shape;
                         rotated->recipes.store(entry->recipes.load());
+                        rotated->indirectStages.store(entry->indirectStages.load());
                         for (std::size_t i = 0; i < programs.size(); ++i) {
                             if (ranks[i] == 0) continue;
                             auto& variants = rotated->stages[i];

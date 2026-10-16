@@ -448,6 +448,24 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto baseVertexWord = locate(indirect.baseVertexLocation);
         const auto startInstanceWord = locate(indirect.startInstanceLocation);
         const auto drawIndexWord = indirect.drawIndexEnabled ? locate(indirect.drawIndexLocation) : std::nullopt;
+        const bool keepStages = stageEntries && indirectDrawEntries();
+        const auto keptStages = keepStages && drawHit && entry != nullptr ? entry->indirectStages.load() : nullptr;
+        std::vector<std::shared_ptr<const IndirectStage>> builtStages;
+        std::uint64_t stagesReused = 0, stagesBuilt = 0;
+        const auto reuseStage = [&](const std::vector<std::uint32_t>& inputs, std::size_t programIndex) -> const IndirectStage* {
+            if (keptStages == nullptr) return nullptr;
+            const auto kept = std::find_if(keptStages->begin(), keptStages->end(), [&](const std::shared_ptr<const IndirectStage>& stage) { return stage->inputs == inputs; });
+            if (kept == keptStages->end()) return nullptr;
+            const auto& variant = *(*kept)->variant;
+            std::vector<ShaderRecompiler::MemoryRegion> regions;
+            appendEntryRegions(variant, regions);
+            std::uint64_t imagesFlushed = 0, runsSynced = 0;
+            std::optional<SampledReadScope> sampling;
+            const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
+            if (validateVariant(programs[programIndex].binary.codeAddress, submission.queue, variant, regions, imagesFlushed, runsSynced, sampling) != EntryOutcome::Equal) return nullptr;
+            memory.insert(memory.end(), regions.begin(), regions.end());
+            return kept->get();
+        };
         for (std::uint32_t record = 0; record < records.size(); ++record) {
             const auto& arguments = records[record];
             if (traceIndirect) std::fprintf(stderr, "[draw]   record %u: count %u instances %u first %u vertexOffset %u startInstance %u\n", record, arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance);
@@ -483,10 +501,32 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             for (const auto programIndex : patched) {
                 auto& result = results[resultIndex[programIndex]];
                 const auto pushBytes = result.pushConstants.size();
+                const auto& stageParameters = programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters;
+                std::vector<std::uint32_t> inputs;
+                if (keepStages) {
+                    inputs = {static_cast<std::uint32_t>(programIndex), pushOffsets[programIndex], arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance, static_cast<std::uint32_t>(stageParameters.indexAddress), static_cast<std::uint32_t>(stageParameters.indexAddress >> 32u), stageParameters.indexCount, stageParameters.indexSize, stageParameters.instanceCount};
+                    inputs.insert(inputs.end(), programs[programIndex].userData.begin(), programs[programIndex].userData.end());
+                }
+                if (const auto* kept = reuseStage(inputs, programIndex)) {
+                    result = *kept->variant->compiled;
+                    ++stagesReused;
+                    continue;
+                }
                 decodeVertexInfo(programIndex);
-                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
+                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, stageParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
+                if (!keepStages) continue;
+                ++stagesBuilt;
+                const auto& capture = stageCaptures[programIndex];
+                if (capture.compiled == nullptr || !CacheableResult(*capture.compiled) || (insertCompare() && !captureStable(capture.regions))) continue;
+                auto variant = std::make_shared<DispatchVariant>();
+                variant->compiled = capture.compiled;
+                variant->shader = programs[programIndex].snapshot;
+                variant->forgetSerial = capture.forgetSerial;
+                variant->pushOffset = capture.pushOffset;
+                freshRuns(programIndex, variant->runs, variant->words);
+                builtStages.push_back(std::make_shared<const IndirectStage>(IndirectStage{std::move(inputs), std::move(variant)}));
             }
             fold(*programResults[0], direct);
             if (graphics.rectList && patched.contains(0)) buildRectList();
@@ -500,6 +540,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             phaseTiming.Phase(DrawRowVectors);
             localDevice->Draw(graphics, direct, stages, snapshots);
             phaseTiming.Phase(DrawRowGraphics);
+        }
+        if (!builtStages.empty()) attachIndirectStages(drawKey, std::move(builtStages));
+        if (keepStages && (stagesReused != 0 || stagesBuilt != 0)) {
+            std::lock_guard cacheLock(drawCacheMutex);
+            drawEntryCounters.indirectStagesReused += stagesReused;
+            drawEntryCounters.indirectStagesBuilt += stagesBuilt;
         }
         timing.Mark("draw_and_resource_release");
         return drawn();

@@ -56,6 +56,11 @@ bool Driver::verifyDrawRecipe() {
     return verify;
 }
 
+bool Driver::indirectDrawEntries() {
+    static const bool entries = std::getenv("APS5_NO_INDIRECT_DRAW_ENTRIES") == nullptr;
+    return entries;
+}
+
 std::size_t Driver::drawCacheEntries() {
     static const std::size_t entries = [] {
         const char* text = std::getenv("APS5_DRAW_CACHE_ENTRIES");
@@ -121,6 +126,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         if (found->second->stages.size() == fresh.size()) replacement->stages = found->second->stages;
         if (found->second->decode != nullptr) replacement->decode = found->second->decode;
         replacement->recipes.store(found->second->recipes.load());
+        replacement->indirectStages.store(found->second->indirectStages.load());
     }
     for (std::size_t i = 0; i < fresh.size(); ++i) {
         if (fresh[i] == nullptr) continue;
@@ -218,6 +224,26 @@ void Driver::attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_p
     }
     entry->recipes.store(std::move(records));
     VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Attach, VulkanDevice::RecipeKind::Draw);
+}
+
+void Driver::attachIndirectStages(std::uint64_t key, std::vector<std::shared_ptr<const IndirectStage>> stages) {
+    std::shared_ptr<DrawEntry> entry;
+    {
+        std::lock_guard cacheLock(drawCacheMutex);
+        const auto found = drawCache.find(key);
+        if (found == drawCache.end()) return;
+        entry = found->second;
+    }
+    if (stages.size() > IndirectStageLimit) stages.resize(IndirectStageLimit);
+    const auto built = stages.size();
+    auto kept = std::make_shared<std::vector<std::shared_ptr<const IndirectStage>>>(std::move(stages));
+    if (const auto old = entry->indirectStages.load(); old != nullptr) {
+        for (const auto& stage : *old) {
+            if (kept->size() >= IndirectStageLimit) break;
+            if (std::none_of(kept->begin(), kept->begin() + static_cast<std::ptrdiff_t>(built), [&](const std::shared_ptr<const IndirectStage>& fresh) { return fresh->inputs == stage->inputs; })) kept->push_back(stage);
+        }
+    }
+    entry->indirectStages.store(std::move(kept));
 }
 
 }

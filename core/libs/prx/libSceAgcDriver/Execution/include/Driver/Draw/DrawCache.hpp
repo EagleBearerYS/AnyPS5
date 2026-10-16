@@ -60,6 +60,13 @@ struct DrawRecipeRecord {
     bool Expired() const;
 };
 
+struct IndirectStage {
+    std::vector<std::uint32_t> inputs;
+    std::shared_ptr<DispatchVariant> variant;
+};
+
+inline constexpr std::size_t IndirectStageLimit = 64;
+
 struct DrawEntry {
 
     std::shared_ptr<const DrawDecode> decode;
@@ -67,6 +74,7 @@ struct DrawEntry {
     std::vector<std::vector<std::shared_ptr<DispatchVariant>>> stages;
 
     AtomicSharedPtr<const std::vector<DrawRecipeRecord>> recipes;
+    AtomicSharedPtr<const std::vector<std::shared_ptr<const IndirectStage>>> indirectStages;
     std::uint64_t touched = 0;
     std::list<std::uint64_t>::iterator order;
     std::uint64_t shape = 0;
@@ -94,6 +102,7 @@ struct DrawEntryCounters {
     std::uint64_t differingSameRuns = 0, differingWords = 0, differingRunsChanged = 0;
     std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
     std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0;
+    std::uint64_t indirectStagesReused = 0, indirectStagesBuilt = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
