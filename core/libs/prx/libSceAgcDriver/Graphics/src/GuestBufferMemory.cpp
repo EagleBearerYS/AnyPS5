@@ -74,6 +74,7 @@ struct ImageMirror {
     // Identity for the life of this mirror (see ImageMirrorSerial); the top bit keeps mirror serials
     // apart from host import serials.
     std::uint64_t serial = 0;
+    std::atomic<std::uint64_t> watchedSerial{0};
 };
 
 // The address space. An address-based build maps every readable registered range; building that
@@ -1814,6 +1815,14 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
     return checked;
 }
 
+bool heapMirrorWatched(ImageMirror& mirror) {
+    const auto serial = GuestMemory::UnwatchSerial();
+    if (mirror.watchedSerial.load(std::memory_order_relaxed) == serial) return true;
+    if (!GuestMemory::Watched(mirror.base, static_cast<std::size_t>(mirror.bytes))) return false;
+    mirror.watchedSerial.store(serial, std::memory_order_relaxed);
+    return true;
+}
+
 enum class SpaceMiss { None, First, Device, Generation, Epoch };
 
 SpaceMiss spaceMiss(const Context& context, const GuestBufferMemory::AddressSpace* current, std::uint64_t generation, const HostImports& state) {
@@ -1868,11 +1877,11 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         if (found != state.entries.end() && sameRange(found->second->range, range) && found->second->reserved == range->bytes && found->second->writable == range->writable && found->second->heap == heap) mirror = found->second;
     }
     if (mirror != nullptr) {
-        if (!mirror->sparse) {
+        if (!mirror->sparse && (!heap || heapMirrorWatched(*mirror))) {
             if (!heap && prepareRefresh(*mirror, range->address, range->bytes)) appendBlocks(blocks, *mirror, range->address, range->bytes);
             return mirror;
         }
-        if (refreshSparseMirror(*mirror, blocks)) return mirror;
+        if (mirror->sparse && refreshSparseMirror(*mirror, blocks)) return mirror;
     }
     Pieces pieces;
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->address), range->bytes, range->writable && !heap)) {
@@ -1891,6 +1900,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
     mirror->range = range;
     if (heap) {
         std::uint64_t generation = 0;
+        const auto serial = GuestMemory::UnwatchSerial();
         if (sparse) {
             syncRange(mirror->base, mirror->bytes);
             if (GuestMemory::Watched(mirror->base, static_cast<std::size_t>(mirror->bytes))) generation = collectPieces(pieces);
@@ -1901,10 +1911,18 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         constexpr std::uint64_t block = 65536;
         mirror->generations.assign(static_cast<std::size_t>(((mirror->base + mirror->bytes + block - 1) / block) - mirror->base / block), generation);
         if (generation == 0) {
+            std::shared_ptr<ImageMirror> stale;
             std::lock_guard lock(state.mutex);
             ++state.heapUnwatched;
+            if (const auto found = state.entries.find(range->address); found != state.entries.end() && found->second->heap) {
+                state.heapBytes -= found->second->bytes;
+                stale = std::move(found->second);
+                state.entries.erase(found);
+                ++state.version;
+            }
             return nullptr;
         }
+        mirror->watchedSerial.store(serial, std::memory_order_relaxed);
         if (heapMirrorsBeside(*range) + mirror->bytes > heapMirrorBudget()) {
             sweepMirrors();
             if (const auto held = heapMirrorsBeside(*range); held + mirror->bytes > heapMirrorBudget()) throw std::runtime_error(heapMirrorError(*range, held, "past the budget"));
@@ -2743,7 +2761,7 @@ void GuestBufferMemory::AcquireRegistered() {
                 case SpaceMiss::Device: spaces.rebuiltDevice.fetch_add(1, std::memory_order_relaxed); break;
                 case SpaceMiss::Generation: spaces.rebuiltGeneration.fetch_add(1, std::memory_order_relaxed); break;
                 case SpaceMiss::Epoch: spaces.rebuiltEpoch.fetch_add(1, std::memory_order_relaxed); break;
-                case SpaceMiss::None: hit = true; break;
+                case SpaceMiss::None: hit = std::all_of(current->heapMirrors.begin(), current->heapMirrors.end(), [](ImageMirror* mirror) { return heapMirrorWatched(*mirror); }); break;
             }
             importFloor = state.useCounter + 1;
             if (hit) stampSpaceImports(*current, state);
