@@ -5,10 +5,15 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -573,6 +578,91 @@ void ThrowingProof(AgcDriver::VulkanDevice& device) {
     resources.WriteBack();
 }
 
+void ShadowedValue(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!UnitShadowEnabled() || !AgcDriver::GuestMemory::WriteWatched() || context.detiler == nullptr) {
+        std::puts("address draw reuse: a reused draw over a unit shadow's results not tested, unit shadows or write watching are unavailable");
+        return;
+    }
+    ImportWatch decided{};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        decided = PrepareImportWatch(context);
+#ifndef _WIN32
+        SetImportWatch(context, ImportWatch::Watch);
+#endif
+    }
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() { SetImportWatch(context, decided); }
+    } restore{context, decided};
+    constexpr std::uint32_t side = 128;
+    Scene scene(device, 0);
+    Pages heap{BlockBytes};
+    Scene::Store(heap, ValueOffset, One);
+    heap.Register(0, BlockBytes, true);
+    scene.Point(heap.Address(ValueOffset));
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One), "address draw reuse: the draw reading a fresh heap did not read its value");
+    if (!AgcDriver::GuestMemory::Watched(heap.Address(), BlockBytes)) {
+        std::puts("address draw reuse: a reused draw over a unit shadow's results not tested, the heap's import is compared");
+        scene.Wait();
+        return;
+    }
+    auto before = Builds();
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One) && Builds() == before, "address draw reuse: a draw over an unchanged heap did not reuse its build");
+    GuestTextureResource resource{};
+    resource.baseAddress = heap.Address();
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == BlockBytes, "address draw reuse: the storage image over the heap does not cover exactly its 64 KiB");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        auto* recorder = Recorder::Active();
+        Require(recorder != nullptr, "address draw reuse: no recorder is active");
+        auto image = StorageTexture::Create(context, *context.detiler, resource, 0);
+        const auto commands = recorder->Commands();
+        recorder->Keep(image);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const VkClearColorValue zero{};
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkDirty();
+        StorageTexture::FlushPending(heap.Address(), BlockBytes, nullptr, "storage refresh", PublishScope::None);
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+    }
+    if (!AnyShadowedOverlaps(heap.Address(), BlockBytes)) {
+        std::puts("address draw reuse: a reused draw over a unit shadow's results not tested, the image's write-back did not go into the unit shadow");
+        scene.Wait();
+        return;
+    }
+    float held = 0.0f;
+    std::memcpy(&held, heap.Data() + ValueOffset, sizeof(held));
+    Require(held == One, "address draw reuse: the storage image's write-back into the unit shadow reached the import");
+    before = Builds();
+    scene.Clear();
+    scene.Draw();
+    Require(Builds() == before, "address draw reuse: the draw after a storage image's results went into the unit shadow was not reused");
+    Require(scene.Color() == 0 && scene.Stored() == Bits(Zero), "address draw reuse: a reused address-based draw read the import under a unit shadow's newer results: its reuse published nothing over the heaps it maps");
+    std::puts("address draw reuse: a reused address-based draw reads a unit shadow's results over its heaps");
+    scene.Wait();
+}
+
 void RegisterShader(ShaderHeader& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18u;
@@ -693,6 +783,7 @@ int main(int argc, char** argv) {
             }
             OversizedVertexBuffer(*device);
             ThrowingProof(*device);
+            ShadowedValue(*device);
         }
         DecodeCacheHit();
         AgcDriverShutdown_nid_postfix();
