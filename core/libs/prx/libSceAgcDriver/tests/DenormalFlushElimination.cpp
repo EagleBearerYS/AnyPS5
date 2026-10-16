@@ -287,6 +287,24 @@ int main() {
         return b.eliminate() == 1u && !flushedProduct.HasUses() && otherScale.HasUses() && otherBound.HasUses() && otherFactor.HasUses() && withAddend.HasUses();
     });
 
+    passed &= run("a flush of a select is distributed over its arms when each arm is denormal-free or already flushed", [] {
+        Builder b;
+        auto& condition = b.emit(IrOpcode::ULessThan32, IrType::Bool, {&b.unknown(), &b.constant(16u)});
+        auto& earlier = b.unknown();
+        auto& earlierFlushed = b.flush(earlier);
+        auto& fresh = b.flush(b.unknown());
+        auto& distributed = b.flush(b.emit(IrOpcode::SelectU32, IrType::U32, {&condition, &fresh, &earlier}));
+        auto& unflushedArm = b.flush(b.emit(IrOpcode::SelectU32, IrType::U32, {&condition, &fresh, &b.unknown()}));
+        b.keep(earlierFlushed);
+        b.keep(distributed);
+        b.keep(unflushedArm);
+        if (b.eliminate() != 1u || distributed.HasUses() || !unflushedArm.HasUses()) return false;
+        for (const IrValue* use : earlierFlushed.Uses()) {
+            if (use->Opcode() == IrOpcode::SelectU32 && use->Argument(0)->Resolve() == &condition && use->Argument(1)->Resolve() == &fresh && use->Argument(2)->Resolve() == &earlierFlushed) return true;
+        }
+        return false;
+    });
+
     passed &= run("the sign bit of a value needs no flush", [] {
         Builder b;
         auto& sign = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.unknown(), &b.constant(0x80000000u)}));

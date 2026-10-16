@@ -1,7 +1,10 @@
 #include "Optimization/DenormalFlushEliminator.hpp"
+#include "Optimization/DominatorTree.hpp"
 #include "Optimization/FloatIdioms.hpp"
 #include <cstdint>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace ShaderRecompiler {
 
@@ -159,6 +162,54 @@ private:
 
 }
 
+namespace {
+
+std::uint32_t distributeFlushes(IrProgram& program, DenormalFreeValues& denormalFree) {
+    const DominatorTree tree(program);
+    std::unordered_map<const IrValue*, IrValue*> flushed;
+    std::vector<const IrValue*> added;
+    std::vector<std::pair<std::uint32_t, std::size_t>> scopes;
+    std::uint32_t distributed = 0;
+    const auto available = [&](IrValue* value) -> IrValue* {
+        if (denormalFree.Contains(value)) return value;
+        const auto found = flushed.find(value->Resolve());
+        return found == flushed.end() ? nullptr : found->second;
+    };
+    for (const auto& [block, depth] : tree.Preorder()) {
+        while (!scopes.empty() && scopes.back().first >= depth) {
+            for (std::size_t index = scopes.back().second; index < added.size(); ++index) flushed.erase(added[index]);
+            added.resize(scopes.back().second);
+            scopes.pop_back();
+        }
+        scopes.emplace_back(depth, added.size());
+        const std::vector<IrValue*> instructions(block->Instructions().begin(), block->Instructions().end());
+        for (IrValue* inst : instructions) {
+            if (!inst->HasUses()) continue;
+            IrValue* source = FlushedF32Source(*inst);
+            if (source == nullptr) continue;
+            IrValue* replacement = inst;
+            if (source->Opcode() == IrOpcode::SelectU32 && source->ArgumentCount() == 3u) {
+                IrValue* first = available(source->Argument(1));
+                IrValue* second = available(source->Argument(2));
+                if (first != nullptr && second != nullptr) {
+                    auto& select = program.CreateValue(IrOpcode::SelectU32, IrType::U32);
+                    select.AddArgument(source->Argument(0));
+                    select.AddArgument(first);
+                    select.AddArgument(second);
+                    block->InsertInstructionBefore(inst, &select);
+                    inst->ReplaceAllUsesWith(&select);
+                    replacement = &select;
+                    ++distributed;
+                }
+            }
+            if (flushed.emplace(source, replacement).second) added.push_back(source);
+        }
+    }
+    return distributed;
+}
+
+}
+
 DenormalFlushEliminationStats DenormalFlushEliminator::Eliminate(IrProgram& program) const {
     DenormalFlushEliminationStats stats;
     DenormalFreeValues denormalFree;
@@ -171,6 +222,7 @@ DenormalFlushEliminationStats DenormalFlushEliminator::Eliminate(IrProgram& prog
             ++stats.removedFlushes;
         }
     }
+    stats.removedFlushes += distributeFlushes(program, denormalFree);
     return stats;
 }
 
