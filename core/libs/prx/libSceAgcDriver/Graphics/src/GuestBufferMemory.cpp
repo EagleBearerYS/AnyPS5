@@ -2004,11 +2004,16 @@ void GuestBufferMemory::AcquireRegistered() {
             for (const auto* entry : kept) entry->lastUse = stamp;
         });
     }
+    const HostImport* runEntry = nullptr;
+    const GuestAllocations::Range* runRange = nullptr;
     for (const auto& [index, range] : pending) {
         auto& region = regions[index];
         const HostImport* entry = nullptr;
-        if (importable) withImports([&](HostImports& state) { entry = importAllocation(context, state, range->address, lease, 0, false); });
+        if (runEntry != nullptr && continuesRun(*runRange, *range) && range->address + range->bytes <= runEntry->base + runEntry->bytes) entry = runEntry;
+        else if (importable) withImports([&](HostImports& state) { entry = importAllocation(context, state, range->address, lease, 0, false); });
         lap(timing.importsUs, at);
+        runEntry = entry;
+        runRange = range.get();
         if (entry != nullptr) {
             region.direct = entry;
             continue;
