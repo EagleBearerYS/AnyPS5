@@ -192,7 +192,7 @@ int main() {
             Expect(loads <= 1u, "main loads built-in " + std::to_string(builtin) + " " + std::to_string(loads) + " times, expected once at its entry");
         }
         Expect(module.mainPrivateWideLoads == 3u, "main loads the read cache " + std::to_string(module.mainPrivateWideLoads) + " times, expected one probe of its begin, end and offset for the three consecutive s_buffer_load_dword");
-        Expect(module.mainBufferMemoryLoads == 3u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected once for each s_buffer_load_dword, through its cached translation, with the refill left to the helper");
+        Expect(module.mainBufferMemoryLoads == 1u, "main loads buffer memory " + std::to_string(module.mainBufferMemoryLoads) + " times, expected one vector load for the three consecutive s_buffer_load_dword, through their cached translation, with the refill left to the helper");
         std::uint32_t write = 0;
         for (const auto& [id, function] : module.functions) {
             if (function.name == "write_bda") write = id;

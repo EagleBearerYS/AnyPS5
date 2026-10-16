@@ -543,13 +543,28 @@ std::uint32_t EmitBdaCachedDwords(SpirvValueEmitContext& ctx, const IrValue& ins
     return EmitValueIfElse(state, both(enabled, within), type, [&] {
         const auto device = Binary(state, spv::OpIAdd, u64, address, load(cache[2]));
         std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, type, state.module.AllocateId()};
-        for (std::uint32_t dword = 0; dword < dwords; ++dword) {
+        const bool coherent = BdaCoherent(state, inst);
+        for (std::uint32_t dword = 0; dword < dwords;) {
+            const auto width = coherent ? 1u : std::min(4u, dwords - dword);
+            const auto element = dword == 0u ? device : Binary(state, spv::OpIAdd, u64, device, BdaConstant(state, dword * 4u));
             const auto pointer = state.module.AllocateId();
-            state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, dword == 0u ? device : Binary(state, spv::OpIAdd, u64, device, BdaConstant(state, dword * 4u)));
-            const auto value = state.module.AllocateId();
-            if (BdaCoherent(state, inst)) state.module.AddFunction(spv::OpAtomicLoad, u32, value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
-            else state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(false), 4u);
-            construct.push_back(value);
+            const auto loaded = state.module.AllocateId();
+            if (width == 1u) {
+                state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, element);
+                if (coherent) state.module.AddFunction(spv::OpAtomicLoad, u32, loaded, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+                else state.module.AddFunction(spv::OpLoad, u32, loaded, pointer, BdaAccessMask(false), 4u);
+                construct.push_back(loaded);
+            } else {
+                const auto vector = TypeU32Vector(state, width);
+                state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, vector), pointer, element);
+                state.module.AddFunction(spv::OpLoad, vector, loaded, pointer, BdaAccessMask(false), 4u);
+                for (std::uint32_t component = 0; component < width; ++component) {
+                    const auto value = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpCompositeExtract, u32, value, loaded, component);
+                    construct.push_back(value);
+                }
+            }
+            dword += width;
         }
         state.module.AddFunction(construct);
         return construct[2];
