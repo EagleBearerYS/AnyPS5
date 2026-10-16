@@ -4082,6 +4082,11 @@ std::uint32_t ImageTableCapacity(const Context& context) {
     capacity = std::min(capacity, room(context.limits.maxPerStageDescriptorSampledImages, sampledHeaps));
     capacity = std::min(capacity, room(context.limits.maxPerStageResources, sampledHeaps + storageHeaps + buffers));
     capacity = std::min(capacity, room(context.limits.maxDescriptorSetSampledImages, sampledHeaps * ShaderRecompiler::RuntimeAbi::StageCount));
+    static const std::uint64_t cap = [] {
+        const char* text = std::getenv("APS5_IMAGE_TABLE_CAPACITY");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+    }();
+    if (cap != 0) capacity = std::min(capacity, cap);
     return static_cast<std::uint32_t>(capacity);
 }
 
