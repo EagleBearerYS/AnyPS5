@@ -1,0 +1,4 @@
+BASE=bc27ba7d071e361e15594ef003f58c32dffd13a8
+REPEAT=3
+EXTRA_TESTS='agc_import_settle_first_use|agc_import_settle_earlier_import|agc_import_settle_retire|agc_import_settle_deferred|agc_import_settle_deferred_other_family|agc_import_watch|agc_import_watch_other_family|agc_write_tracking'
+NO_BEFORE=1
