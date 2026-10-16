@@ -1703,6 +1703,15 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_indirect_draw_entries_off COMMAND agc_driver_indirect_draw_entries_tests)
+    set_tests_properties(agc_driver_indirect_draw_entries_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_INDIRECT_DRAW_ENTRIES=1" SKIP_RETURN_CODE 77)
+    add_test(NAME agc_driver_indirect_draw_entries_inline COMMAND agc_driver_indirect_draw_entries_tests)
+    set_tests_properties(agc_driver_indirect_draw_entries_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0" SKIP_RETURN_CODE 77)
+    set_tests_properties(agc_driver_indirect_draw_entries agc_driver_indirect_draw_entries_off agc_driver_indirect_draw_entries_inline PROPERTIES FAIL_REGULAR_EXPRESSION "FATAL:")
+    if(WIN32)
+        set_tests_properties(agc_driver_indirect_draw_entries_off agc_driver_indirect_draw_entries_inline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     add_test(NAME agc_driver_stencil_replay_no_gpl COMMAND agc_driver_stencil_replay_tests)
     set_tests_properties(agc_driver_stencil_replay_no_gpl PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_GPL=1" TIMEOUT 30 SKIP_RETURN_CODE 77)
