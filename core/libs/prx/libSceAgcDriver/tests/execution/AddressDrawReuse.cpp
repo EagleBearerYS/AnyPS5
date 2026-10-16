@@ -475,6 +475,41 @@ void OversizedVertexBuffer(AgcDriver::VulkanDevice& device) {
     Require(Builds() == before, "address draw reuse: a draw whose vertex buffer descriptor reaches past its allocation built its resources again");
 }
 
+void UnwatchedHeapMirror(AgcDriver::VulkanDevice& device) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::puts("write watch unavailable: a reused draw over a heap mirror whose range left the write watch not tested");
+        return;
+    }
+    constexpr std::size_t HeapBytes = 16 * BlockBytes;
+    Scene scene(device, 0);
+    Pages heap{HeapBytes};
+    Scene::Store(heap, ValueOffset, One);
+    heap.Register(0, HeapBytes, false);
+    AgcDriver::Graphics::SetHostImportBudget(HeapBytes / 2);
+    const auto mirrors = AgcDriver::Graphics::MirrorCounters().heapMirrors;
+    scene.Point(heap.Address(ValueOffset));
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One), "address draw reuse: the draw reading a heap the import budget refused did not read the guest value");
+    Require(AgcDriver::Graphics::MirrorCounters().heapMirrors == mirrors + 1, "address draw reuse: the heap the import budget refused was not mirrored");
+    const auto before = Builds();
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 255 && scene.Stored() == Bits(One) && Builds() == before, "address draw reuse: a draw over an unchanged heap mirror did not reuse its build");
+    AgcDriver::GuestMemory::Unwatch(heap.Address(), BlockBytes);
+    Require(!AgcDriver::GuestMemory::Watched(heap.Address(), HeapBytes), "address draw reuse: the heap is still write-watched");
+    Scene::Store(heap, ValueOffset, Zero);
+    const auto unwatched = AgcDriver::Graphics::AddressSpaceCounters();
+    scene.Clear();
+    scene.Draw();
+    Require(scene.Color() == 0 && scene.Stored() == Bits(Zero), "address draw reuse: the draw after the heap's range left the write watch did not read the guest value");
+    Require(Builds() == before + 1, "address draw reuse: a draw whose heap mirror's range left the write watch reused its build");
+    const auto after = AgcDriver::Graphics::AddressSpaceCounters();
+    Require(!after.enabled || after.rebuiltUnwatched == unwatched.rebuiltUnwatched + 1, "address draw reuse: the cached address space was not rebuilt for the heap mirror whose range left the write watch");
+    AgcDriver::Graphics::SetHostImportBudget(0);
+    scene.Wait();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -496,6 +531,7 @@ int main(int argc, char** argv) {
             scene.Wait();
         }
         OversizedVertexBuffer(*device);
+        UnwatchedHeapMirror(*device);
         std::printf("address draw reuse tests passed (%zu extra registered ranges)\n", ranges);
         return 0;
     } catch (const std::exception& error) {

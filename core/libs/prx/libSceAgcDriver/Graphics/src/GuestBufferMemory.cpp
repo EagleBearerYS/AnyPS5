@@ -139,6 +139,7 @@ struct AddressSpaceCache {
     std::atomic<std::uint64_t> rebuiltEpoch{0};
     std::atomic<std::uint64_t> rebuiltDevice{0};
     std::atomic<std::uint64_t> rebuiltWaiterDrop{0};
+    std::atomic<std::uint64_t> rebuiltUnwatched{0};
     std::atomic<std::uint64_t> unpublished{0};
     std::atomic<std::uint64_t> dissolvedOverlap{0};
     std::atomic<std::uint64_t> dissolvedImports{0};
@@ -1823,13 +1824,14 @@ bool heapMirrorWatched(ImageMirror& mirror) {
     return true;
 }
 
-enum class SpaceMiss { None, First, Device, Generation, Epoch };
+enum class SpaceMiss { None, First, Device, Generation, Epoch, Unwatched };
 
 SpaceMiss spaceMiss(const Context& context, const GuestBufferMemory::AddressSpace* current, std::uint64_t generation, const HostImports& state) {
     if (current == nullptr) return SpaceMiss::First;
     if (current->device != context.device) return SpaceMiss::Device;
     if (current->generation != generation) return SpaceMiss::Generation;
     if (current->importsEpoch != state.epoch) return SpaceMiss::Epoch;
+    if (!std::all_of(current->heapMirrors.begin(), current->heapMirrors.end(), [](ImageMirror* mirror) { return heapMirrorWatched(*mirror); })) return SpaceMiss::Unwatched;
     return SpaceMiss::None;
 }
 
@@ -2284,7 +2286,7 @@ LeaseStats LeaseCounters() {
 AddressSpaceStats AddressSpaceCounters() {
     const auto& cache = Spaces();
     const auto load = [](const std::atomic<std::uint64_t>& counter) { return counter.load(std::memory_order_relaxed); };
-    return {addressSpaceCacheEnabled(), load(cache.hits), load(cache.rebuiltFirst), load(cache.rebuiltGeneration), load(cache.rebuiltEpoch), load(cache.rebuiltDevice), load(cache.rebuiltWaiterDrop), load(cache.unpublished), load(cache.dissolvedOverlap), load(cache.dissolvedImports), load(cache.waiterDrops)};
+    return {addressSpaceCacheEnabled(), load(cache.hits), load(cache.rebuiltFirst), load(cache.rebuiltGeneration), load(cache.rebuiltEpoch), load(cache.rebuiltDevice), load(cache.rebuiltWaiterDrop), load(cache.unpublished), load(cache.dissolvedOverlap), load(cache.dissolvedImports), load(cache.waiterDrops), load(cache.rebuiltUnwatched)};
 }
 
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit) {
@@ -2719,7 +2721,7 @@ void GuestBufferMemory::CountAddressBuild(double snapshotsUs) {
     const auto delta = [](std::uint64_t now, std::uint64_t before) { return static_cast<unsigned long long>(now - before); };
     const auto space = AddressSpaceCounters();
     const auto& spaceSeen = totals.spaceSeen;
-    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu; unpublished %llu, dissolved: overlap %llu, imports %llu%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
+    AgcDriver::ProfilePrint_nid_no_patch("[address] %llu address-based builds (10 s), us per build: lease %.0f, imports pass %.0f, mirror prepare %.0f, compare %.0f (%.0f blocks, %.1f copied), snapshots %.0f; space hits %llu / rebuilds: generation %llu, epoch %llu, device %llu, waiter drop %llu, first %llu, unwatched %llu; unpublished %llu, dissolved: overlap %llu, imports %llu%s; [bda-table] hits %llu / misses %llu (space tables %llu), first entry: expired %llu, hash differs low %llu / heap %llu, same hash %llu, none held %llu\n", static_cast<unsigned long long>(totals.builds), per(totals.sums.leaseUs), per(totals.sums.importsUs), per(totals.sums.mirrorsUs), per(totals.sums.compareUs), per(static_cast<double>(totals.sums.blocksCompared)), per(static_cast<double>(totals.sums.blocksCopied)), per(totals.snapshotsUs), delta(space.hits, spaceSeen.hits), delta(space.rebuiltGeneration, spaceSeen.rebuiltGeneration), delta(space.rebuiltEpoch, spaceSeen.rebuiltEpoch), delta(space.rebuiltDevice, spaceSeen.rebuiltDevice), delta(space.rebuiltWaiterDrop, spaceSeen.rebuiltWaiterDrop), delta(space.rebuiltFirst, spaceSeen.rebuiltFirst), delta(space.rebuiltUnwatched, spaceSeen.rebuiltUnwatched), delta(space.unpublished, spaceSeen.unpublished), delta(space.dissolvedOverlap, spaceSeen.dissolvedOverlap), delta(space.dissolvedImports, spaceSeen.dissolvedImports), space.enabled ? "" : " (cache off)", delta(table.hits, seen.hits), delta(table.misses, seen.misses), delta(table.spaceTables, seen.spaceTables), delta(table.firstExpired, seen.firstExpired), delta(table.firstDiffersLow, seen.firstDiffersLow), delta(table.firstDiffersHeap, seen.firstDiffersHeap), delta(table.firstSameHash, seen.firstSameHash), delta(table.firstEmpty, seen.firstEmpty));
     totals.tableSeen = table;
     totals.spaceSeen = space;
     totals.builds = 0;
@@ -2761,7 +2763,8 @@ void GuestBufferMemory::AcquireRegistered() {
                 case SpaceMiss::Device: spaces.rebuiltDevice.fetch_add(1, std::memory_order_relaxed); break;
                 case SpaceMiss::Generation: spaces.rebuiltGeneration.fetch_add(1, std::memory_order_relaxed); break;
                 case SpaceMiss::Epoch: spaces.rebuiltEpoch.fetch_add(1, std::memory_order_relaxed); break;
-                case SpaceMiss::None: hit = std::all_of(current->heapMirrors.begin(), current->heapMirrors.end(), [](ImageMirror* mirror) { return heapMirrorWatched(*mirror); }); break;
+                case SpaceMiss::Unwatched: spaces.rebuiltUnwatched.fetch_add(1, std::memory_order_relaxed); break;
+                case SpaceMiss::None: hit = true; break;
             }
             importFloor = state.useCounter + 1;
             if (hit) stampSpaceImports(*current, state);

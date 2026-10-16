@@ -177,6 +177,7 @@ struct AddressSpaceStats {
     std::uint64_t dissolvedOverlap = 0;
     std::uint64_t dissolvedImports = 0;
     std::uint64_t waiterDrops = 0;
+    std::uint64_t rebuiltUnwatched = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
