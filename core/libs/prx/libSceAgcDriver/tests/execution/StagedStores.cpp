@@ -65,12 +65,12 @@ int main() {
         const auto before = AgcDriver::Graphics::StagedWriteBuilds();
         device->Dispatch(result, 1, 1, 1, address);
         device->WaitIdle();
-        Require(AgcDriver::Graphics::StagedWriteBuilds() == before + 1u, "staged stores: a dispatch storing through a 1 MiB V# did not stage its stores");
         for (std::uint32_t index = 0; index < Dwords; ++index) {
             const bool stored = index % LaneStride == 0u;
             const auto expected = stored ? index / LaneStride + 1u : Pattern(index);
             Require(Target[index] == expected, "staged stores: dword " + std::to_string(index) + " is " + Hex(Target[index]) + ", expected " + Hex(expected) + (stored ? " from the store" : " kept from before the dispatch"));
         }
+        Require(AgcDriver::Graphics::StagedWriteBuilds() == before, "staged stores: a dispatch storing one dword per lane 16 KiB apart through a 1 MiB V#, which writes only part of its range, staged its stores");
         std::puts("staged stores tests passed");
         return 0;
     } catch (const std::exception& error) {
