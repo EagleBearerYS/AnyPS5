@@ -3048,6 +3048,16 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     guestMemory.MarkDirectWrites();
 }
 
+std::optional<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::linearStoreRange() const {
+    if (!linearStore.has_value() || linearThreads == 0 || linearStore->stride == 0) return std::nullopt;
+    const auto& linear = *linearStore;
+    const auto elements = std::min<std::uint64_t>(linearThreads, linear.records);
+    if (elements == 0 || elements > std::numeric_limits<std::uint64_t>::max() / linear.stride) return std::nullopt;
+    const auto bytes = elements * linear.stride + (linear.elementBytes > linear.stride ? linear.elementBytes - linear.stride : 0u);
+    if (linear.base > std::numeric_limits<std::uint64_t>::max() - bytes) return std::nullopt;
+    return std::pair{linear.base, linear.base + bytes};
+}
+
 void ShaderResources::planWriteStaging() {
     constexpr VkDeviceSize maximum = 64u * 1024u * 1024u;
     if (!linearStore.has_value()) return;

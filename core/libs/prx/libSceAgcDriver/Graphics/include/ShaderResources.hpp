@@ -436,6 +436,7 @@ private:
     std::vector<VkDeviceSize> stagedOffsets;
     std::shared_ptr<Buffer> staging;
     void planWriteStaging();
+    std::optional<std::pair<std::uint64_t, std::uint64_t>> linearStoreRange() const;
     std::pair<std::uint64_t, std::uint64_t> stagedRange{};
     bool usesFaultBuffer = false;
     bool faultChecks = false;

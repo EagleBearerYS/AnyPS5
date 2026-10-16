@@ -40,6 +40,12 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         deviceImages = deviceImages || device;
         faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || device || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || loopGuarded));
     }
+    if (const auto linear = linearStoreRange(); linear.has_value() && pageTableStores) {
+        storesUnbounded = false;
+        storeRanges.assign(1, *linear);
+        accessRanges.push_back(*linear);
+        accessesUnbounded = std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->unboundedReads; });
+    }
     if (usesBda) {
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
