@@ -41,6 +41,7 @@ struct HostImport {
     bool joined = false;
     std::shared_ptr<void> chunk;
     mutable std::uint64_t lastUse = 0;
+    mutable std::uint64_t spaceUse = 0;
 };
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
@@ -201,6 +202,8 @@ struct AddressSpaceStats {
     std::uint64_t dissolvedOverlap = 0;
     std::uint64_t dissolvedImports = 0;
     std::uint64_t waiterDrops = 0;
+    std::uint64_t spaceOnlyEvictions = 0;
+    std::uint64_t rebuiltAfterEviction = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
