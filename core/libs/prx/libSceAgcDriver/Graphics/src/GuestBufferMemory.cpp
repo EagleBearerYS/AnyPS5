@@ -827,9 +827,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     if (run.ranges.empty()) return nullptr;
     if (end == 0 && run.ranges.size() > 1 && overlapsHeldImport(state, run.base, run.base + run.bytes)) {
         const auto own = *std::find_if(run.ranges.begin(), run.ranges.end(), [&](const auto& range) { return address >= range->address && address < range->address + range->bytes; });
-        if (fresh) {
-            if (const auto* current = findImport(state, own->address, own->address + own->bytes)) return current;
-        }
+        if (const auto* current = findImport(state, own->address, own->address + own->bytes); current != nullptr && (fresh || std::find(current->ranges.begin(), current->ranges.end(), own) != current->ranges.end())) return current;
         run = ImportRun{own->address, own->bytes, {own}};
     }
     return importRunAt(context, state, std::move(run), false, address, lease, end, evict);
