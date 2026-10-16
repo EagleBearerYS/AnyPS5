@@ -1,4 +1,4 @@
-READY (last: BF-042 done, results/cloud-3/BF-042.md: on BF-036's harness as written the vertex stage is never cached, so no draw-cache PR can help; with the table read from s8 main already hits on static objects; with moving per-object V#s every arm misses; only #6539 hits when the data reaches the shader as a user word value, and #6539 has a heap-use-after-free at exit; #5656 changes nothing)
+BUSY PRM-025 (claimed: #6012 overlay, validation red/green and the full-panel text on a real driver)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
