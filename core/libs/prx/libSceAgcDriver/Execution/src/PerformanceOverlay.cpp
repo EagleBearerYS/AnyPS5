@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -743,6 +744,10 @@ OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t ind
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VkImageViewUsageCreateInfo usageInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    for (const auto layout : {initialLayout, finalLayout}) {
+        if (layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) usageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) usageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
     viewInfo.pNext = &usageInfo;
     VkImageView view = VK_NULL_HANDLE;
     Graphics::Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView performance overlay");
