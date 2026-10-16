@@ -101,6 +101,7 @@ struct GuestBufferMemory::AddressSpace {
     GuestAllocations::Lease lease;
     std::vector<Region> base;
     bool baseDisjoint = false;
+    std::vector<const HostImport*> directImports;
     struct HeapRun {
         std::uint64_t begin;
         std::uint64_t bytes;
@@ -2762,9 +2763,7 @@ void GuestBufferMemory::AcquireRegistered() {
             importFloor = state.useCounter + 1;
             if (hit) {
                 const auto stamp = ++state.useCounter;
-                for (const auto& region : current->base) {
-                    if (region.direct != nullptr) region.direct->lastUse = stamp;
-                }
+                for (const auto* import : current->directImports) import->lastUse = stamp;
             }
         }
         if (hit) {
@@ -2927,6 +2926,11 @@ void GuestBufferMemory::AcquireRegistered() {
                 }
                 regions = std::move(extras);
                 lease.clear();
+                for (const auto& region : built->base) {
+                    if (region.direct != nullptr) built->directImports.push_back(region.direct);
+                }
+                std::sort(built->directImports.begin(), built->directImports.end());
+                built->directImports.erase(std::unique(built->directImports.begin(), built->directImports.end()), built->directImports.end());
                 built->baseDisjoint = std::adjacent_find(built->base.begin(), built->base.end(), [](const Region& left, const Region& right) { return right.begin < left.end; }) == built->base.end();
                 planSpaceMirrors(*built);
                 {
@@ -3210,9 +3214,7 @@ bool GuestBufferMemory::RetakeSpace() {
         if (current->device != context.device || current->generation != generation || current->importsEpoch != state.epoch) return false;
         importFloor = state.useCounter + 1;
         const auto stamp = ++state.useCounter;
-        for (const auto& region : current->base) {
-            if (region.direct != nullptr) region.direct->lastUse = stamp;
-        }
+        for (const auto* import : current->directImports) import->lastUse = stamp;
     }
     spaces.hits.fetch_add(1, std::memory_order_relaxed);
     space = std::move(current);
