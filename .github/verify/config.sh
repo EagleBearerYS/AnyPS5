@@ -1,0 +1,4 @@
+BASE=f474fb7768e68cc6cbaafdc4874429bcb4c1dbc1
+REPEAT=3
+EXTRA_TESTS='agc_recorder_read_list|agc_space_pending_writes|agc_storage_writeback_blocks|agc_host_import_retire|agc_import_watch|agc_driver_graphics|agc_write_tracking'
+NO_BEFORE=1
