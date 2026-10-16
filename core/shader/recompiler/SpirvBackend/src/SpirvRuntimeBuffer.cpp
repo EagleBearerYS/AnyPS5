@@ -529,9 +529,20 @@ std::uint32_t formattedOne(SpirvEmitterState& state, const MemoryInfo& memory, c
 std::uint32_t selectFormatted(SpirvEmitterState& state, std::uint32_t components, const SpirvBufferFormatInfo& info, const FormattedLayout& layout, const std::array<std::uint32_t, 4>& values, std::uint32_t one) {
     const auto u32 = TypeU32(state);
     std::array<std::uint32_t, 4> outputs{};
+    std::uint32_t vector = 0;
+    if (info.componentCount > 2u) {
+        std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, TypeU32Vector(state, info.componentCount), state.module.AllocateId()};
+        construct.insert(construct.end(), values.begin(), values.begin() + info.componentCount);
+        state.module.AddFunction(construct);
+        vector = construct[2];
+    }
     for (std::uint32_t output = 0; output < components; ++output) {
         auto value = values[0];
-        for (std::uint32_t component = 1; component < info.componentCount; ++component) value = Select(state, u32, equal(state, layout.selected[output], ConstantU32(state, component)), values[component], value);
+        if (vector != 0u) {
+            value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpVectorExtractDynamic, u32, value, vector, layout.selected[output]);
+        }
+        for (std::uint32_t component = 1; vector == 0u && component < info.componentCount; ++component) value = Select(state, u32, equal(state, layout.selected[output], ConstantU32(state, component)), values[component], value);
         value = Select(state, u32, equal(state, layout.selectors[output], ConstantU32(state, 1u)), one, value);
         outputs[output] = Select(state, u32, equal(state, layout.selectors[output], ConstantU32(state, 0u)), ConstantU32(state, 0u), value);
     }

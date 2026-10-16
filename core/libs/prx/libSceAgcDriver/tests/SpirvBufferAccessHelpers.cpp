@@ -24,6 +24,7 @@ struct Function {
     std::string name;
     std::size_t widestSwitch = 0;
     std::size_t switches = 0;
+    std::size_t dynamicExtracts = 0;
     std::map<std::uint32_t, std::uint32_t> calls;
     std::size_t bufferMemoryLoads = 0;
 };
@@ -104,6 +105,7 @@ Module Parse(std::span<const std::uint32_t> words) {
             }
         }
         if (current != 0 && op == spv::OpFunctionCall) ++module.functions[current].calls[operands[2]];
+        if (current != 0 && op == spv::OpVectorExtractDynamic) ++module.functions[current].dynamicExtracts;
         if (current != 0 && (op == spv::OpLoad || op == spv::OpAtomicLoad) && physicalPointers.contains(operands[2])) ++module.functions[current].bufferMemoryLoads;
         if (current != 0 && op == spv::OpSwitch) {
             std::set<std::uint32_t> targets{operands[1]};
@@ -209,6 +211,7 @@ int main() {
                     if (found != module.functions.end() && found->second.name.starts_with("decode_format_layout_")) ++decoders;
                 }
                 Expect(decoders != 0u, function.name + " calls no shared format decoder");
+                Expect(function.dynamicExtracts != 0u, function.name + " selects its destination components without a dynamic extract");
             }
             if (function.name.starts_with("decode_format_layout_")) Expect((function.control & spv::FunctionControlDontInlineMask) != 0u && function.switches == 1u, function.name + " is not one DontInline switch over the formats of its layout");
             if (function.name.starts_with("store_buffer_x3")) {

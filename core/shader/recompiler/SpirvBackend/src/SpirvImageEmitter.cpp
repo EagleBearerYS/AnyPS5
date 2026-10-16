@@ -55,9 +55,13 @@ std::uint32_t RuntimeImageSwizzle(SpirvEmitterState& state, std::uint32_t resour
 }
 
 std::uint32_t RuntimeSwizzledComponent(SpirvEmitterState& state, std::uint32_t selector, const std::array<std::uint32_t, 4>& components) {
-    auto result = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 1u)), ConstantU32(state, 1u), ConstantU32(state, 0u));
-    for (std::uint32_t index = 0u; index < components.size(); ++index) result = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, index + 4u)), components[index], result);
-    return result;
+    const auto u32 = TypeU32(state);
+    const auto constant = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 1u)), ConstantU32(state, 1u), ConstantU32(state, 0u));
+    const auto vector = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), vector, components[0], components[1], components[2], components[3]);
+    const auto picked = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVectorExtractDynamic, u32, picked, vector, Binary(state, spv::OpBitwiseAnd, u32, selector, ConstantU32(state, 3u)));
+    return Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), selector, ConstantU32(state, 4u)), picked, constant);
 }
 
 std::uint32_t EffectiveDmask(const MemoryInfo& mem) {
