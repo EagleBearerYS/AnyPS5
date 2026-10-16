@@ -1,4 +1,3 @@
-BUSY GAC-044
-since: 2026-10-15T23:55:19Z (GAC-044)
-claimed: tasks/claimed/GAC-044.md
-previous: GAC-040 done 2026-10-15T21:29:38Z, results/cloud-2/GAC-040.md (with its addendum GAC-040A)
+READY
+since: 2026-10-16T00:12:25Z
+previous: GAC-044 done 2026-10-16T00:12:25Z, results/cloud-2/GAC-044.md (fix/agc-heap-mirror-replan-after-unwatch at 4c18f7745f)
