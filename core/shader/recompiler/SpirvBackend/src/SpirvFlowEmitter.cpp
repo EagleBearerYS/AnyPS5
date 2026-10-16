@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
+#include "Optimization/FloatIdioms.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
@@ -289,6 +290,28 @@ void Invoke(TReturn (*emit)(TContext&, TArguments...), SpirvValueEmitContext& ct
     }(std::index_sequence_for<TArguments...>{});
 }
 
+const IrValue* FloatNanTestSource(const SpirvValueEmitContext& ctx, const IrValue& test) {
+    const IrValue* bits = NanTestedF32Source(test);
+    if (bits == nullptr) return nullptr;
+    bits = bits->Resolve();
+    if (bits->Opcode() == IrOpcode::BitCastU32F32 && bits->ArgumentCount() == 1u) {
+        const IrValue* value = bits->Argument(0)->Resolve();
+        if (value->Type() == IrType::F32 && !value->HasImmediate()) return value;
+    }
+    for (const IrValue* view : bits->Uses()) {
+        if (view->Opcode() == IrOpcode::BitCastF32U32 && view->Parent() == test.Parent() && ctx.definitions.contains(view)) return view;
+    }
+    return nullptr;
+}
+
+bool OnlyFloatNanTests(const SpirvValueEmitContext& ctx, const IrValue& mask) {
+    if (MaskedOperand(mask, IrOpcode::BitwiseAnd32, 0x7fffffffu) == nullptr || !mask.HasUses()) return false;
+    for (const IrValue* use : mask.Uses()) {
+        if (use->ArgumentCount() == 0u || use->Argument(0)->Resolve() != &mask || FloatNanTestSource(ctx, *use) == nullptr) return false;
+    }
+    return true;
+}
+
 void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
     switch (inst.Opcode()) {
         case IrOpcode::Identity: return Invoke(EmitIdentity, ctx, inst);
@@ -403,7 +426,9 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ShiftRightLogical64: return Invoke(EmitShiftRightLogical64, ctx, inst);
         case IrOpcode::ShiftRightArithmetic32: return Invoke(EmitShiftRightArithmetic32, ctx, inst);
         case IrOpcode::ShiftRightArithmetic64: return Invoke(EmitShiftRightArithmetic64, ctx, inst);
-        case IrOpcode::BitwiseAnd32: return Invoke(EmitBitwiseAnd32, ctx, inst);
+        case IrOpcode::BitwiseAnd32:
+            if (OnlyFloatNanTests(ctx, inst)) return;
+            return Invoke(EmitBitwiseAnd32, ctx, inst);
         case IrOpcode::BitwiseAnd64: return Invoke(EmitBitwiseAnd64, ctx, inst);
         case IrOpcode::BitwiseOr32: return Invoke(EmitBitwiseOr32, ctx, inst);
         case IrOpcode::BitwiseXor32: return Invoke(EmitBitwiseXor32, ctx, inst);
@@ -433,7 +458,12 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::SLessThanEqual32: return Invoke(EmitSLessThanEqual32, ctx, inst);
         case IrOpcode::ULessThanEqual32: return Invoke(EmitULessThanEqual32, ctx, inst);
         case IrOpcode::SGreaterThan32: return Invoke(EmitSGreaterThan32, ctx, inst);
-        case IrOpcode::UGreaterThan32: return Invoke(EmitUGreaterThan32, ctx, inst);
+        case IrOpcode::UGreaterThan32:
+            if (const IrValue* value = FloatNanTestSource(ctx, inst)) {
+                ctx.Define(inst, EmitNative<spv::OpIsNan, IrType::U1>(ctx.state, ctx.Def(value)));
+                return;
+            }
+            return Invoke(EmitUGreaterThan32, ctx, inst);
         case IrOpcode::UGreaterThan64: return Invoke(EmitUGreaterThan64, ctx, inst);
         case IrOpcode::INotEqual32: return Invoke(EmitINotEqual32, ctx, inst);
         case IrOpcode::INotEqual64: return Invoke(EmitINotEqual64, ctx, inst);
