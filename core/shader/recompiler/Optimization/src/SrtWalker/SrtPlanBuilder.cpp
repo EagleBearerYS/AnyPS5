@@ -26,7 +26,7 @@ void PlanBuilder::Run() {
                     }
                 }
             }
-            if (IsDescriptorHandle(inst->Opcode())) {
+            if (IsDescriptorHandle(inst->Opcode()) && !(_gpuConstants && inst->Opcode() == IrOpcode::GetAddressResource)) {
                 for (std::size_t index = 0; index < inst->ArgumentCount(); index++) {
                     Collect(inst->Argument(index), 0);
                 }
@@ -34,11 +34,33 @@ void PlanBuilder::Run() {
         }
     }
     for (auto& block : _program.Blocks()) {
+        if (_gpuConstants) break;
         for (IrValue* inst : block->Instructions()) {
             if (inst->Opcode() == IrOpcode::LoadAddressU32 && IsRawRead(_program.Resources(), *inst) && inst->Argument(1)->Resolve()->HasImmediate() && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst)) {
                 Collect(inst, inst->Flags<MemoryFlags>().pc);
             }
         }
+    }
+    _program.Metadata().gpuConstantChecks.clear();
+    if (_gpuConstants && _verify) {
+        _checking = true;
+        _firstCheckSlot = static_cast<std::uint32_t>(_program.Resources().srtReads.size());
+        for (auto& block : _program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() != IrOpcode::GetAddressResource) continue;
+                for (std::size_t index = 0; index < inst->ArgumentCount(); index++) {
+                    Collect(inst->Argument(index), 0);
+                }
+            }
+        }
+        for (auto& block : _program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::LoadAddressU32 && IsRawRead(_program.Resources(), *inst) && inst->Argument(1)->Resolve()->HasImmediate() && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst)) {
+                    Collect(inst, inst->Flags<MemoryFlags>().pc);
+                }
+            }
+        }
+        _checking = false;
     }
     PatchReads();
 }
@@ -92,6 +114,19 @@ void PlanBuilder::Record(IrValue* inst) {
     }
     IrValue* offset = inst->Argument(1)->Resolve();
     const auto foldable = offset->HasImmediate() && offset->Type() == IrType::U32 && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst);
+    if (_checking) {
+        if (!foldable) return;
+        for (std::uint32_t slot = 0; slot < _program.Resources().srtReads.size(); slot++) {
+            if (EquivalentValue(_program.Resources(), inst, _program.Resources().srtReads[slot].value)) {
+                if (slot >= _firstCheckSlot) _program.Metadata().gpuConstantChecks.emplace_back(inst, slot);
+                return;
+            }
+        }
+        const auto slot = static_cast<std::uint32_t>(_program.Resources().srtReads.size());
+        _program.Resources().srtReads.push_back({inst, slot});
+        _program.Metadata().gpuConstantChecks.emplace_back(inst, slot);
+        return;
+    }
     if (!foldable) {
         if (std::find(_program.Metadata().dynamicReads.begin(), _program.Metadata().dynamicReads.end(), inst) == _program.Metadata().dynamicReads.end()) {
             _program.Metadata().dynamicReads.push_back(inst);

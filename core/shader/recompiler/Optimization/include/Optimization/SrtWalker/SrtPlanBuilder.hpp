@@ -13,7 +13,7 @@ namespace ShaderRecompiler::Detail {
 
 class PlanBuilder {
 public:
-    explicit PlanBuilder(IrProgram& program) : _program(program) {}
+    explicit PlanBuilder(IrProgram& program, bool gpuConstants = false, bool verify = false) : _program(program), _gpuConstants(gpuConstants), _verify(verify) {}
 
     void Run();
 
@@ -29,6 +29,10 @@ private:
     void PatchReads();
 
     IrProgram& _program;
+    bool _gpuConstants = false;
+    bool _verify = false;
+    bool _checking = false;
+    std::uint32_t _firstCheckSlot = 0;
     std::vector<IrValue*> _visiting;
     std::unordered_map<IrValue*, std::size_t> _visitingIndex;
     std::unordered_set<IrValue*> _visited;
