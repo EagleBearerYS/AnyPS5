@@ -47,6 +47,7 @@ public:
     static bool MetadataPassesPipelined();
     static void CountPipelinedMetadataPass();
     static std::uint64_t PipelinedMetadataPasses();
+    void QueuedWrites(std::vector<Range>& out);
 private:
     struct Item {
         Commit commit;
@@ -104,6 +105,7 @@ public:
     bool PendingOverlaps(std::uint64_t begin, std::uint64_t end);
     bool PendingOverlapsAny(std::span<const Range> ranges);
     bool PendingKey(std::uint64_t key, std::uint64_t shape);
+    void PendingWrites(std::vector<Range>& out);
     enum class DrainSite : std::uint32_t { Lookup, Reads, Packet, Kept, Count };
     static void NoteDrain(DrainSite site, bool drained);
     static std::string DrainText();

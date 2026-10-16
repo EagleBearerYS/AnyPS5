@@ -61,6 +61,7 @@ struct PipelineSetLayouts {
     bool split = false;
     std::span<const std::uint32_t> mainKey;
     std::span<const std::uint32_t> fragmentKey;
+    VkDescriptorSetLayout data = VK_NULL_HANDLE;
 };
 
 class DescriptorCache {
@@ -144,8 +145,11 @@ public:
     std::span<const VkDescriptorBindingFlags> LayoutBindingFlags() const { return layoutBindingFlags; }
     VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
     bool SplitSets() const { return splitSets; }
-    PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
+    PipelineSetLayouts SetLayouts() const;
+    bool HeapStage() const { return heapStage; }
+    void RefreshHeapStage(std::span<const CompiledShader> shaders);
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
+    void BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
         DrawBindings(const DrawBindings&) = delete;
@@ -182,6 +186,12 @@ public:
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool SpaceReuse() const { return spaceReuse; }
+    static bool SpaceReuseDisabled();
+    bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
+    bool RetakeSpace() { return guestMemory.RetakeSpace(); }
+    bool SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
+    std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
     bool UsesAddressTable() const { return usesBda; }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
@@ -326,6 +336,8 @@ private:
         std::vector<std::size_t> imageAllocations;
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
+        bool heap = false;
+        ShaderRecompiler::DescriptorRole role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     };
 
     struct TableStage {
@@ -489,6 +501,7 @@ private:
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
     bool bdaReadOnly = true;
+    bool spaceReuse = false;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
@@ -507,6 +520,29 @@ private:
         DescriptorCache::SetAllocation cacheAllocation;
     };
     bool splitSets = false;
+    bool heapStage = false;
+    std::array<std::uint32_t, 4> heapOffsets{};
+    void writeHeapStage(const CompiledShader& shader);
+    struct HeapLookupMemo {
+        std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::GpuLookupKeyDwords> key{};
+        std::uint32_t slot = 0;
+        std::uint32_t word = 0;
+        bool valid = false;
+    };
+    struct HeapStageState {
+        std::vector<std::uintptr_t> key;
+        std::array<std::vector<std::uint32_t>, static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::Binding::Count)> slots;
+        std::vector<std::uint32_t> slotGenerations;
+        std::vector<std::uint32_t> samplerSlots;
+        std::vector<std::uint32_t> samplerGenerations;
+        std::uint64_t slotSerial = 0;
+        std::vector<const Sampler*> samplerObjects;
+        std::vector<HeapLookupMemo> lookupMemo;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> dataPatches;
+    };
+    std::array<HeapStageState, 2> heapStages;
+    static constexpr std::int64_t HeapRingDataVertex = -2;
+    static constexpr std::int64_t HeapRingDataFragment = -3;
     std::vector<std::uint32_t> fragmentLayoutKey;
     SetObjects fragment;
     std::uint32_t setOf(const Binding& binding) const;

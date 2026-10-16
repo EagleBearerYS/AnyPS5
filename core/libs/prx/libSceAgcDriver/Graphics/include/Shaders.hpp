@@ -37,7 +37,12 @@ struct CompiledShader {
     ShaderRecompiler::ShaderStage stage;
     const ShaderRecompiler::RecompileResult* program;
     std::uint32_t pushConstantOffset;
+    const ShaderRecompiler::HeapStageWords* heap = nullptr;
 };
+
+inline const std::vector<ShaderRecompiler::VertexAttribute>& DrawVertexAttributes(const CompiledShader& shader) {
+    return shader.heap != nullptr && !shader.heap->vertexAttributes.empty() ? shader.heap->vertexAttributes : shader.program->vertexAttributes;
+}
 
 inline VkShaderStageFlagBits VulkanStage(ShaderRecompiler::ShaderStage stage) {
     switch (stage) {

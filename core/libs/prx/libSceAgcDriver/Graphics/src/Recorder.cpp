@@ -3,9 +3,11 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleCounter_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleDumps_spv.h"
@@ -655,6 +657,22 @@ bool SnapshotOverlaps(std::uint64_t address, std::size_t bytes) {
     const auto snapshot = pendingWrites.load(std::memory_order_acquire);
     return SnapshotOverlaps(snapshot.get(), address, bytes);
 }
+
+}
+
+bool Recorder::ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before) {
+    if (!HookSnapshotEnabled()) return false;
+    const bool labels = !QueuedLabelRanges().empty();
+    const auto now = pendingWrites.load(std::memory_order_acquire);
+    for (const auto& [begin, end] : ranges) {
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (labels && QueuedLabelOverlaps(begin, bytes)) return false;
+        if (AgcDriver::Graphics::SnapshotOverlaps(before, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(now.get(), begin, bytes)) return false;
+    }
+    return !StorageTexture::AnyPendingOverlaps(ranges) && !AnyShadowedOverlaps(ranges);
+}
+
+namespace {
 
 // Whether one merged range of the snapshot contains [address, end) entirely.
 bool SnapshotCovers(std::uint64_t address, std::uint64_t end) {
@@ -3330,6 +3348,15 @@ void Recorder::Submit() {
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submission.commandBufferCount = 1;
     submission.pCommandBuffers = &batch->commands;
+    std::array<VkCommandBuffer, 2> withResolve{VK_NULL_HANDLE, batch->commands};
+    if (auto* heap = BindlessTexturesEnabled() ? BindlessHeap::Existing(context) : nullptr; heap != nullptr) {
+        if (auto resolve = heap->Submitted(*this, submissions + 1); resolve.commands != VK_NULL_HANDLE) {
+            withResolve[0] = resolve.commands;
+            submission.commandBufferCount = 2;
+            submission.pCommandBuffers = withResolve.data();
+            batch->kept.push_back(std::move(resolve.release));
+        }
+    }
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
     CaptureTrace::Log("submit batch=%llu reads=%zu writes=%zu", static_cast<unsigned long long>(serial), batch->reads.size(), batch->writes.size());
