@@ -2012,7 +2012,13 @@ std::atomic<std::int64_t> traceBarriersLeft{[] {
 std::atomic<std::uint64_t> timingPresents{0};
 std::atomic<std::uint64_t> presentSerial{0};
 std::atomic<std::uint64_t> timingDropped{0};
-struct TimingTotals { std::uint64_t count = 0; double ms = 0; std::uint64_t bytes = 0; };
+struct TimingTotals {
+    std::uint64_t count = 0;
+    double ms = 0;
+    std::uint64_t bytes = 0;
+    std::array<std::uint32_t, 3> groups{};
+    bool mixedGroups = false;
+};
 std::mutex timingMutex;
 std::map<std::uint64_t, TimingTotals> timingByKey;
 double timingProgramMs = 0, timingClassMs = 0, timingUnionMs = 0, timingBatchMs = 0;
@@ -2195,6 +2201,7 @@ std::uint32_t Recorder::beginTiming(std::uint64_t key) {
     const auto index = static_cast<std::uint32_t>(open->timedKeys.size());
     open->timedKeys.push_back(key);
     open->timedBytes.push_back(0);
+    open->timedGroups.push_back({});
     // Both stamps wait for everything before them to complete, so the range is the timed work alone
     // (a top-of-pipe stamp is not held back by the barrier that precedes the work).
     context.Function<PFN_vkCmdWriteTimestamp>("vkCmdWriteTimestamp")(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, open->queries, index * 2);
@@ -2206,6 +2213,12 @@ void Recorder::EndGpuTiming(std::uint32_t index, std::uint64_t bytes) {
     if (index == NoTiming || open == nullptr || open->queries == VK_NULL_HANDLE) return;
     if (index < open->timedBytes.size()) open->timedBytes[index] += bytes;
     context.Function<PFN_vkCmdWriteTimestamp>("vkCmdWriteTimestamp")(open->commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, open->queries, index * 2 + 1);
+}
+
+void Recorder::NoteGpuTimingGroups(std::uint32_t index, std::array<std::uint32_t, 3> groups) {
+    auto& open = callerOpen();
+    if (index == NoTiming || open == nullptr || index >= open->timedGroups.size()) return;
+    open->timedGroups[index] = groups;
 }
 
 void Recorder::CountSamples() {
@@ -2703,6 +2716,10 @@ void Recorder::readGpuTiming(Batch& batch) {
         ++totals.count;
         totals.ms += ns / 1e6;
         totals.bytes += batch.timedBytes[i];
+        if (const auto& groups = batch.timedGroups[i]; groups[0] != 0) {
+            if (totals.groups[0] != 0 && totals.groups != groups) totals.mixedGroups = true;
+            totals.groups = groups;
+        }
         (key >= ClassKey(CommandClass::DispatchLeading) && key < ClassKey(CommandClass::Count) ? timingClassMs : timingProgramMs) += ns / 1e6;
         intervals.emplace_back(stamps[i * 2], stamps[i * 2 + 1]);
     }
@@ -2734,7 +2751,11 @@ void Recorder::readGpuTiming(Batch& batch) {
     std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
     // The first field stays the program sum: the measure scripts match on it.
     AgcDriver::ProfilePrint_nid_no_patch("[gputime] %.0f ms of GPU time in %llu batches over 10 s (batch %.0f ms first to last command; classes %.0f ms, all ranges %.0f ms, untimed %.0f ms outside every range; %llu presents; %llu ranges dropped at the %u cap); by program:", timingProgramMs, static_cast<unsigned long long>(timingBatches), timingBatchMs, timingClassMs, timingUnionMs, timingBatchMs - timingUnionMs, static_cast<unsigned long long>(presents), static_cast<unsigned long long>(timingDropped.exchange(0, std::memory_order_relaxed)), MaxTimedRanges);
-    for (std::size_t i = 0; i < hot.size() && i < 12; ++i) AgcDriver::ProfilePrint_nid_no_patch(" 0x%llx x%llu %.0fms", static_cast<unsigned long long>(hot[i].first), static_cast<unsigned long long>(hot[i].second.count), hot[i].second.ms);
+    for (std::size_t i = 0; i < hot.size() && i < 12; ++i) {
+        const auto& totals = hot[i].second;
+        if (totals.groups[0] == 0) AgcDriver::ProfilePrint_nid_no_patch(" 0x%llx x%llu %.0fms", static_cast<unsigned long long>(hot[i].first), static_cast<unsigned long long>(totals.count), totals.ms);
+        else AgcDriver::ProfilePrint_nid_no_patch(" 0x%llx x%llu %.0fms %ux%ux%u%s", static_cast<unsigned long long>(hot[i].first), static_cast<unsigned long long>(totals.count), totals.ms, totals.groups[0], totals.groups[1], totals.groups[2], totals.mixedGroups ? " (last of several)" : "");
+    }
     AgcDriver::ProfilePrint_nid_no_patch("; by class:%s\n", classes.c_str());
     timingByKey.clear();
     timingProgramMs = timingClassMs = timingUnionMs = timingBatchMs = 0;

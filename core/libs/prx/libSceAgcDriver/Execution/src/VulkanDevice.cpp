@@ -3934,6 +3934,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, record.pushBytes->data());
     }
     const auto gpuTiming = recorder.BeginGpuTiming(record.programAddress != 0 ? record.programAddress : record.shader->program->variantId);
+    if (argumentImport == nullptr) recorder.NoteGpuTimingGroups(gpuTiming, {record.x, record.y, record.z});
     if (argumentImport != nullptr) {
         if (record.threadGroup.has_value()) context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect")(commands, record.threadScratch->slab->Handle(), record.threadScratch->offset);
         else context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect")(commands, argumentImport->buffer, arguments - argumentImport->base);
