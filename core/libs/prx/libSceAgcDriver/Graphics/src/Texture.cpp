@@ -3123,6 +3123,8 @@ void StorageTexture::MarkDirtyRegion(std::uint32_t mip, std::uint32_t depthSlice
         traceKeyStore("first write", descriptor, guestBytes);
         MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
+        markLayersPending(0, trackedLayers);
+        return;
     }
     const bool volume = descriptor.dimension == TextureDimension::k3D;
     const auto units = descriptor.dccAddress != 0 && uploadedKeys != DccKeys::Uncompressed ? std::nullopt : regionUnits(mip, volume ? depthSlice : arraySlice, volume ? depthSlices : 1u, area);
