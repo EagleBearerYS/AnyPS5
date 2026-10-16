@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "ShaderDiskCache.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -124,6 +125,7 @@ void Driver::stop() {
     Graphics::ShutdownGuestBufferWorkers();
     Graphics::StopPipelineLibraryWorker();
     Graphics::StopCompareHelpers();
+    ShaderRecompiler::ShaderDiskCache::Shutdown();
     PerformanceTrace::StopOutput();
     StopProfileOutput_nid_no_patch();
     stopped = true;

@@ -2,13 +2,21 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
+#include "CompiledVariant.hpp"
+#include "ShaderDiskCache.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <future>
 #include <iostream>
+#include <memory>
+#include <random>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -16,6 +24,14 @@ namespace {
 
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void SetEnvironment(const char* name, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
 }
 
 void ClosingStartsNoPreparation() {
@@ -91,6 +107,27 @@ void ShutdownJoinsDrawCommitter() {
     Require(DrawPipeline::Committers() == 0, "a commit enqueued after the shutdown started a draw committer");
 }
 
+void ShutdownJoinsShaderCacheWriter() {
+    namespace Cache = ShaderRecompiler::ShaderDiskCache;
+    const auto directory = std::filesystem::temp_directory_path() / ("aps5-shutdown-shader-cache-" + std::to_string(std::random_device{}()));
+    SetEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
+    SetEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    Require(Cache::Enabled(), "the shader cache is not enabled");
+    Require(Cache::Writers() == 1, "the shader cache started no writer");
+    const auto variant = std::make_shared<const ShaderRecompiler::CompiledVariant>();
+    const std::vector<std::byte> queued{std::byte{1}};
+    const std::vector<std::byte> late{std::byte{2}};
+    Cache::Store(queued, variant);
+    AgcDriverShutdown_nid_postfix();
+    Require(Cache::Writers() == 0, "the driver's shutdown left the shader cache writer running");
+    Require(std::filesystem::exists(Cache::EntryDirectory() / Cache::EntryName(queued)), "the driver's shutdown dropped a queued shader cache write");
+    Cache::Store(late, variant);
+    Require(std::filesystem::exists(Cache::EntryDirectory() / Cache::EntryName(late)), "a shader cache store after the shutdown was not written at once");
+    Require(Cache::Writers() == 0, "a shader cache store after the shutdown started a writer");
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -99,6 +136,7 @@ int main(int argc, char** argv) {
         if (mode == "--joined") ClosingJoinsPreparation();
         else if (mode == "--compare-helpers") StoppingJoinsCompareHelpers();
         else if (mode == "--draw-committer") ShutdownJoinsDrawCommitter();
+        else if (mode == "--shader-cache-writer") ShutdownJoinsShaderCacheWriter();
         else ClosingStartsNoPreparation();
         std::cout << "shutdown threads tests passed\n";
         return 0;
