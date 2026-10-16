@@ -16,9 +16,11 @@ using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t SpinLanes = 64;
 constexpr std::uint32_t CalibrationRounds = 1u << 20u;
+constexpr std::uint64_t MaxRounds = std::uint64_t{1} << 31u;
 constexpr std::uint32_t LabelWord = 4096;
 constexpr std::uint32_t LabelValue = 0x1abe1001u;
 constexpr auto Busy = std::chrono::milliseconds(500);
+constexpr auto CalibrationTime = std::chrono::milliseconds(50);
 constexpr auto Idle = std::chrono::milliseconds(300);
 constexpr auto CpuLimit = std::chrono::milliseconds(50);
 constexpr auto WakeLimit = std::chrono::milliseconds(20);
@@ -132,14 +134,19 @@ void Spin(Commands& commands, const GuestBlock& output, std::uint32_t rounds) {
 }
 
 std::uint32_t Calibrate(const GuestBlock& output) {
-    Commands commands;
-    Spin(commands, output, CalibrationRounds);
-    const auto start = Clock::now();
-    commands.Submit(0);
-    WaitIdle();
-    const auto took = std::max<long long>(Milliseconds(Clock::now() - start), 1);
-    const auto rounds = static_cast<std::uint64_t>(CalibrationRounds) * static_cast<std::uint64_t>(Busy.count()) / static_cast<std::uint64_t>(took);
-    return static_cast<std::uint32_t>(std::clamp<std::uint64_t>(rounds, CalibrationRounds, std::uint64_t{1} << 30u));
+    for (std::uint64_t measured = 0;; measured = measured == 0u ? CalibrationRounds : measured * 4u) {
+        Commands commands;
+        Spin(commands, output, measured == 0u ? 1u : static_cast<std::uint32_t>(measured));
+        const auto start = Clock::now();
+        commands.Submit(0);
+        WaitIdle();
+        Settle();
+        const auto took = Clock::now() - start;
+        if (measured == 0u || (took < CalibrationTime && measured < MaxRounds / 4u)) continue;
+        const auto microseconds = std::max<long long>(std::chrono::duration_cast<std::chrono::microseconds>(took).count(), 1);
+        const auto rounds = measured * static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Busy).count()) / static_cast<std::uint64_t>(microseconds);
+        return static_cast<std::uint32_t>(std::clamp<std::uint64_t>(rounds, CalibrationRounds, MaxRounds));
+    }
 }
 
 bool LabelPending(std::uint64_t address) {
