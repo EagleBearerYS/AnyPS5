@@ -177,6 +177,8 @@ enum class SettlePhase : std::uint8_t { Wanted, Submitted, Settled };
 struct PendingSettle {
     SettlePhase phase = SettlePhase::Wanted;
     std::size_t batch = 0;
+    const Recorder* mainRecorder = nullptr;
+    std::uint64_t mainSerial = 0;
 };
 #endif
 
@@ -944,6 +946,8 @@ void submitSettleBatch(const Context& context, HostImports& state) {
 
 void reapSettleBatches(const Context& context, HostImports& state) {
     const auto status = context.Resolved(&DeviceFunctions::getFenceStatus, "vkGetFenceStatus");
+    const auto* recorder = Recorder::Active();
+    const std::uint64_t mainSerial = recorder == nullptr ? 0 : recorder->Submissions();
     for (std::size_t index = 0; index < state.settleBatches.size(); ++index) {
         auto& batch = state.settleBatches[index];
         if (!batch.busy) continue;
@@ -957,6 +961,8 @@ void reapSettleBatches(const Context& context, HostImports& state) {
                 continue;
             }
             settle->second.phase = SettlePhase::Settled;
+            settle->second.mainRecorder = recorder;
+            settle->second.mainSerial = mainSerial;
             state.settleReady.push_back(base);
         }
         for (const auto alias : batch.aliases) state.settleDestroyBuffer(context.device, alias, nullptr);
@@ -979,7 +985,9 @@ void rewatchSettledImports(HostImports& state) {
             continue;
         }
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{base, base + import->second.bytes}}};
-        if (StorageTexture::AnyPendingOverlaps(span)) {
+        const auto* recorder = Recorder::Active();
+        const bool mainPending = recorder != nullptr && recorder == settle->second.mainRecorder && recorder->CompletedThrough() < settle->second.mainSerial;
+        if (mainPending || StorageTexture::AnyPendingOverlaps(span)) {
             deferred.push_back(base);
             continue;
         }
