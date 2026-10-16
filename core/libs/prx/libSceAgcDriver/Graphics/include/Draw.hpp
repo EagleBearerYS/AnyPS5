@@ -19,6 +19,18 @@ struct HostImport;
 // APS5_NO_DRAW_RECIPE=1).
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
+bool PreResolveEnabled();
+void PreResolveDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
+struct PreResolveStats {
+    std::uint64_t resolved = 0;
+    std::uint64_t used = 0;
+    std::uint64_t serialMoved = 0;
+    std::uint64_t notCached = 0;
+    std::uint64_t invalid = 0;
+    std::uint64_t cacheChanged = 0;
+    std::uint64_t unused = 0;
+};
+PreResolveStats PreResolveCounted();
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
 struct DrawInputCopy {

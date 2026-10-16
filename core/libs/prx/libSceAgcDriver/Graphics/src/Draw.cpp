@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MtRecord.hpp"
+#include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -1276,6 +1277,43 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
+struct PreResolvedDraw {
+    bool armed = false;
+    VkDevice device = VK_NULL_HANDLE;
+    const CompiledShader* shaders = nullptr;
+    std::size_t shaderCount = 0;
+    std::uint64_t serial = 0;
+    bool found = false;
+    ResourceCache::Key key;
+    std::shared_ptr<ShaderResources> resources;
+};
+
+PreResolvedDraw& preResolvedDraw() {
+    thread_local PreResolvedDraw* slot = nullptr;
+    return ShaderRecompiler::ThreadOwned(slot);
+}
+
+struct PreResolveCounters {
+    std::atomic<std::uint64_t> resolved{0};
+    std::atomic<std::uint64_t> used{0};
+    std::atomic<std::uint64_t> serialMoved{0};
+    std::atomic<std::uint64_t> notCached{0};
+    std::atomic<std::uint64_t> invalid{0};
+    std::atomic<std::uint64_t> cacheChanged{0};
+    std::atomic<std::uint64_t> unused{0};
+};
+
+PreResolveCounters& preResolveCounters() {
+    static PreResolveCounters counters;
+    return counters;
+}
+
+bool drawResourcesCacheable(std::span<const CompiledShader> shaders) {
+    static const bool noDrawResourceCache = std::getenv("APS5_NO_DRAW_RESOURCE_CACHE") != nullptr;
+    static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    return !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+}
+
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
@@ -1291,10 +1329,29 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+    auto& pre = preResolvedDraw();
+    const bool armed = std::exchange(pre.armed, false);
+    if (armed && !resolved.cacheable) preResolveCounters().unused.fetch_add(1, std::memory_order_relaxed);
     if (resolved.cacheable) {
-        resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
-            const bool valid = cached->Revalidate(shaders);
+        std::shared_ptr<ShaderResources> proven;
+        if (armed) {
+            auto& counters = preResolveCounters();
+            if (pre.device != context.device || pre.shaders != shaders.data() || pre.shaderCount != shaders.size()) counters.unused.fetch_add(1, std::memory_order_relaxed);
+            else if (GuestMemory::GpuHoldSerial() != pre.serial + 1) counters.serialMoved.fetch_add(1, std::memory_order_relaxed);
+            else if (!pre.found) counters.notCached.fetch_add(1, std::memory_order_relaxed);
+            else if (pre.resources == nullptr) counters.invalid.fetch_add(1, std::memory_order_relaxed);
+            else if (SharedResourceCache().Find(pre.key) != pre.resources) counters.cacheChanged.fetch_add(1, std::memory_order_relaxed);
+            else {
+                counters.used.fetch_add(1, std::memory_order_relaxed);
+                proven = std::move(pre.resources);
+                resolved.contentKey = std::move(pre.key);
+            }
+        }
+        pre.resources.reset();
+        const bool preProven = proven != nullptr;
+        if (!preProven) resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        if (auto cached = preProven ? std::move(proven) : SharedResourceCache().Find(resolved.contentKey)) {
+            const bool valid = preProven || cached->Revalidate(shaders);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
@@ -1929,6 +1986,34 @@ bool RecordDraws() {
     return recordDraws;
 }
 
+}
+
+bool PreResolveEnabled() {
+    static const bool enabled = std::getenv("APS5_PRERESOLVE") != nullptr;
+    return enabled;
+}
+
+void PreResolveDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
+    auto& pre = preResolvedDraw();
+    pre.armed = false;
+    pre.resources.reset();
+    if (draw.indirect || !RecordDraws() || Recorder::Active() == nullptr || !drawResourcesCacheable(shaders)) return;
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    pre.serial = GuestMemory::GpuHoldSerial();
+    pre.device = context.device;
+    pre.shaders = shaders.data();
+    pre.shaderCount = shaders.size();
+    pre.key = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize, !trimKey);
+    auto cached = SharedResourceCache().Find(pre.key);
+    pre.found = cached != nullptr;
+    if (cached != nullptr && cached->Revalidate(shaders)) pre.resources = std::move(cached);
+    pre.armed = true;
+    preResolveCounters().resolved.fetch_add(1, std::memory_order_relaxed);
+}
+
+PreResolveStats PreResolveCounted() {
+    const auto& counters = preResolveCounters();
+    return {counters.resolved.load(std::memory_order_relaxed), counters.used.load(std::memory_order_relaxed), counters.serialMoved.load(std::memory_order_relaxed), counters.notCached.load(std::memory_order_relaxed), counters.invalid.load(std::memory_order_relaxed), counters.cacheChanged.load(std::memory_order_relaxed), counters.unused.load(std::memory_order_relaxed)};
 }
 
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state) {

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MtRecord.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -518,6 +519,10 @@ int main(int argc, char** argv) {
         if (argc > 2 && std::string(argv[1]) == "--cost") Cost(layout, static_cast<std::uint32_t>(std::stoul(argv[2])));
         const auto mt = AgcDriver::Graphics::MtRecord::Counted();
         AgcDriverShutdown_nid_postfix();
+        if (AgcDriver::Graphics::PreResolveEnabled()) {
+            const auto pre = AgcDriver::Graphics::PreResolveCounted();
+            std::printf("pre-resolve: %llu draws resolved before the GPU mutex; under it %llu used, %llu redone because another thread held the mutex, %llu not cached, %llu revalidation failed, %llu cache entry replaced, %llu not used\n", static_cast<unsigned long long>(pre.resolved), static_cast<unsigned long long>(pre.used), static_cast<unsigned long long>(pre.serialMoved), static_cast<unsigned long long>(pre.notCached), static_cast<unsigned long long>(pre.invalid), static_cast<unsigned long long>(pre.cacheChanged), static_cast<unsigned long long>(pre.unused));
+        }
         if (AgcDriver::Graphics::MtRecord::Threads() != 0) std::printf("mt-record: %u threads, %llu draws recorded in %llu secondary command buffers over %llu render passes\n", AgcDriver::Graphics::MtRecord::Threads(), static_cast<unsigned long long>(mt.draws), static_cast<unsigned long long>(mt.chunks), static_cast<unsigned long long>(mt.runs));
         std::puts("draw record cost: 16 draws sampled 16 textures, 3 vertex buffers and 2 constant buffers");
         return 0;
