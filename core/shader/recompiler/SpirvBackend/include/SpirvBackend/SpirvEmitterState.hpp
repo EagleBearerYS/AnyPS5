@@ -106,6 +106,10 @@ struct SpirvEmitterState {
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool registrationModules = false;
+    bool gpuResolvedImages = false;
+    bool bdaRangeCache = false;
+    std::unordered_map<const IrValue*, std::uint32_t> gpuConstantChecks;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> bdaRangeCacheVariables;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool robustBufferAccess2 = false;

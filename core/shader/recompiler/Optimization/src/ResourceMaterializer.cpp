@@ -1903,6 +1903,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.descriptorSources = source.descriptorSources;
     plan.controlFlow = source.controlFlow;
     plan.srtReads = source.srtReads;
+    plan.gpuConstantCheckSlots = static_cast<std::uint32_t>(program.Metadata().gpuConstantChecks.empty() ? 0u : source.srtReads.size() - std::min_element(program.Metadata().gpuConstantChecks.begin(), program.Metadata().gpuConstantChecks.end(), [](const auto& left, const auto& right) { return left.second < right.second; })->second);
     plan.cleanFlatSlots = source.cleanFlatSlots;
     plan.requiresSpecializationMemory = source.requiresSpecializationMemory;
     plan.srtPlanComplete = source.srtPlanComplete;
@@ -1939,6 +1940,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         }
     }
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
+    for (std::size_t slot = plan.srtReads.size() - plan.gpuConstantCheckSlots; slot < plan.pureFlatSlots.size(); ++slot) plan.pureFlatSlots[slot] = 0u;
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
     buildCompactPlan(plan);
     return plan;

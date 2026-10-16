@@ -1186,6 +1186,7 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.pixelValidMaskVariable != 0u) {
         state.module.AddFunction(spv::OpStore, state.pixelValidMaskVariable, ConstantU32(state, 1u));
     }
+    for (const auto& [variable, zero] : state.bdaRangeCacheVariables) state.module.AddFunction(spv::OpStore, variable, zero);
     if (AlphaToCoverage(state)) StoreCoverage(state, ConstantI32(state, -1));
     EmitBdaAnchors(state);
     if (OrderedPixelShader(state)) {

@@ -27,6 +27,8 @@ struct SpirvTargetOptions {
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
+    bool gpuResolvedImages = false;
+    bool bdaRangeCache = false;
 };
 
 struct SpirvEmitInfo {

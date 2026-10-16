@@ -226,6 +226,7 @@ function(add_shader_recompiler target runtimeTarget)
             BdaAbi::RangesOrdered
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
+            HeapFragmentEligible
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources
