@@ -162,7 +162,14 @@ void Run(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::Buffer& buffer, s
     const std::span<std::uint32_t> Data(reinterpret_cast<std::uint32_t*>(buffer.Bytes().data()), DataWords);
     std::fill(Data.begin(), Data.end(), Sentinel);
     for (std::uint32_t row = 0; row < Rows.size(); ++row) std::copy(Rows[row].input.begin(), Rows[row].input.end(), Data.begin() + row * Words);
-    device.Dispatch(Compile(ModeFlags[mode], buffer.DeviceAddress()), 1u, 1u, 1u);
+    const auto compiled = Compile(ModeFlags[mode], buffer.DeviceAddress());
+    std::size_t widened = 0;
+    const auto& words = compiled.spirv.Words();
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        if ((words[cursor] & 0xffffu) == spv::OpConvertUToF) ++widened;
+    }
+    Require(widened == 9u, std::string(ModeNames[mode]) + ": the three interpolations widen " + std::to_string(widened) + " operands to f64, expected each of their three operands once");
+    device.Dispatch(compiled, 1u, 1u, 1u);
     device.WaitIdle();
     for (std::uint32_t row = 0; row < Rows.size(); ++row) {
         for (std::uint32_t input = 0; input < 9u; ++input) Require(Data[row * Words + input] == Rows[row].input[input], "interpolation modes changed an input");
