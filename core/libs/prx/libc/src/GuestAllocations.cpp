@@ -411,7 +411,7 @@ void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t 
 namespace {
 
 template <typename Pinned>
-void awaitUnpinned(MutationState* state, std::uintptr_t address, std::size_t bytes, const Pinned& pinned) {
+void awaitUnpinned(MutationState* state, std::uintptr_t address, std::size_t bytes, std::pair<std::uintptr_t, std::uintptr_t> release, const Pinned& pinned) {
     const auto deadline = std::chrono::steady_clock::now() + pinWait();
     registry().readableLease.reset();
     registry().allLease.reset();
@@ -430,7 +430,7 @@ void awaitUnpinned(MutationState* state, std::uintptr_t address, std::size_t byt
         if (locked) state->lock.unlock();
         if (now >= requested + pinRequestInterval) {
             requested = now;
-            if (const auto waiter = pinWaiter.load(std::memory_order_acquire)) waiter(address, bytes);
+            if (const auto waiter = pinWaiter.load(std::memory_order_acquire)) waiter(release.first, release.second - release.first);
         }
         awaitPinRelease(epoch, std::min(deadline, requested + pinRequestInterval));
         if (locked) state->lock.lock();
@@ -443,6 +443,8 @@ public:
         const auto lock = guard();
         held.reserve(ranges.size());
         for (auto& range : ranges) {
+            extent.first = std::min(extent.first, static_cast<std::uintptr_t>(range->address));
+            extent.second = std::max(extent.second, static_cast<std::uintptr_t>(range->address + range->bytes));
             held.push_back(range);
             registry().departing.push_back(std::move(range));
         }
@@ -460,7 +462,8 @@ public:
     DepartingRanges& operator=(const DepartingRanges&) = delete;
 
     void Await(std::uintptr_t address, std::size_t bytes) const {
-        awaitUnpinned(state, address, bytes, [&] { return std::any_of(held.begin(), held.end(), [](const std::weak_ptr<const Range>& entry) { return entry.use_count() > 1; }); });
+        const std::pair<std::uintptr_t, std::uintptr_t> release{std::min(extent.first, address), std::max(extent.second, address + bytes)};
+        awaitUnpinned(state, address, bytes, release, [&] { return std::any_of(held.begin(), held.end(), [](const std::weak_ptr<const Range>& entry) { return entry.use_count() > 1; }); });
     }
 
 private:
@@ -472,6 +475,7 @@ private:
 
     MutationState* state;
     std::vector<std::weak_ptr<const Range>> held;
+    std::pair<std::uintptr_t, std::uintptr_t> extent{std::numeric_limits<std::uintptr_t>::max(), 0};
 };
 
 std::vector<std::weak_ptr<const Range>> weakOf(const std::vector<std::shared_ptr<const Range>>& ranges) {
@@ -498,7 +502,16 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "guest allocation range overflow");
     const auto end = address + bytes;
-    awaitUnpinned(static_cast<MutationState*>(mutation), address, bytes, [&] { return pinnedRange(address, end); });
+    std::pair<std::uintptr_t, std::uintptr_t> release{address, end};
+    const auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end() && it->first < end; ++it) {
+        if (it->first + it->second->bytes <= address) continue;
+        release.first = std::min(release.first, static_cast<std::uintptr_t>(it->first));
+        release.second = std::max(release.second, static_cast<std::uintptr_t>(it->first + it->second->bytes));
+    }
+    awaitUnpinned(static_cast<MutationState*>(mutation), address, bytes, release, [&] { return pinnedRange(address, end); });
 }
 
 void GuestAllocationsRequireAvailable_nid_postfix(void*, const void* pointer, std::size_t bytes) {
