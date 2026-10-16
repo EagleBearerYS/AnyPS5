@@ -253,6 +253,27 @@ bool GuestAllocationsPinned_nid_postfix(const void* pointer, std::size_t bytes) 
     return pinnedRange(address, address + bytes);
 }
 
+bool GuestAllocationsStillMapped_nid_postfix(std::uint64_t begin, std::uint64_t end) {
+    std::lock_guard lock(registry().mutex);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
+    const auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(begin);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end() && it->first < end; ++it) {
+        if (it->second->readable && it->second->bytes != 0 && it->first + it->second->bytes > begin) spans.emplace_back(it->first, it->first + it->second->bytes);
+    }
+    for (const auto& range : registry().departing) {
+        if (range->readable && range->bytes != 0 && range->address < end && begin < range->address + range->bytes) spans.emplace_back(range->address, range->address + range->bytes);
+    }
+    std::sort(spans.begin(), spans.end());
+    auto cursor = begin;
+    for (const auto& [first, last] : spans) {
+        if (first > cursor) break;
+        cursor = std::max(cursor, last);
+    }
+    return begin < end && cursor >= end;
+}
+
 void GuestAllocationsAwaitPinWaits_nid_postfix() {
     for (auto waits = pinWaits.load(std::memory_order_acquire); waits != 0; waits = pinWaits.load(std::memory_order_acquire)) pinWaits.wait(waits, std::memory_order_acquire);
 }
@@ -453,6 +474,24 @@ private:
     std::vector<std::weak_ptr<const Range>> held;
 };
 
+std::vector<std::weak_ptr<const Range>> weakOf(const std::vector<std::shared_ptr<const Range>>& ranges) {
+    return {ranges.begin(), ranges.end()};
+}
+
+void restoreDeparted(const std::vector<std::weak_ptr<const Range>>& departed) {
+    auto& departing = registry().departing;
+    for (const auto& entry : departed) {
+        const auto range = entry.lock();
+        const auto found = std::find(departing.begin(), departing.end(), range);
+        if (range == nullptr || found == departing.end()) continue;
+        registry().ranges.emplace(range->address, std::move(*found));
+        departing.erase(found);
+    }
+    generation.fetch_add(1, std::memory_order_release);
+    registry().readableLease.reset();
+    registry().allLease.reset();
+}
+
 }
 
 void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* pointer, std::size_t bytes) {
@@ -541,8 +580,14 @@ void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer) {
             it = ranges.erase(it);
         }
     }
+    const auto departed = weakOf(taken);
     const DepartingRanges departing(static_cast<MutationState*>(mutation), std::move(taken));
-    departing.Await(range.address, range.bytes);
+    try {
+        departing.Await(range.address, range.bytes);
+    } catch (...) {
+        restoreDeparted(departed);
+        throw;
+    }
     if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(range.address, range.bytes);
 }
 
@@ -599,6 +644,14 @@ std::vector<std::shared_ptr<const Range>> takePatched(const RangePatch& patch) {
     return taken;
 }
 
+void undoPatch(const RangePatch& patch, const std::vector<std::weak_ptr<const Range>>& departed) {
+    auto& ranges = registry().ranges;
+    for (const auto& [key, range] : patch.inserted) {
+        if (const auto found = ranges.find(key); found != ranges.end() && found->second == range) ranges.erase(found);
+    }
+    restoreDeparted(departed);
+}
+
 bool allocationRemains(const Range& range, const RangePatch& patch) {
     for (const auto& [key, entry] : patch.inserted) {
         if (entry->allocationAddress == range.allocationAddress) return true;
@@ -617,9 +670,16 @@ bool allocationRemains(const Range& range, const RangePatch& patch) {
 void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply) {
     recordChange(mutation, pointer, bytes);
     const auto patch = replaceRange(pointer, bytes, false, readable, writable, gpu);
-    const DepartingRanges departing(static_cast<MutationState*>(mutation), takePatched(patch));
-    departing.Await(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-    apply();
+    auto taken = takePatched(patch);
+    const auto departed = weakOf(taken);
+    const DepartingRanges departing(static_cast<MutationState*>(mutation), std::move(taken));
+    try {
+        departing.Await(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+        apply();
+    } catch (...) {
+        undoPatch(patch, departed);
+        throw;
+    }
 }
 
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply) {
@@ -638,6 +698,8 @@ void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std:
         std::uintptr_t end = 0;
         std::uintptr_t allocation = 0;
         bool last = false;
+        RangePatch patch;
+        std::vector<std::weak_ptr<const Range>> departed;
     };
     std::vector<Piece> pieces;
     std::vector<std::shared_ptr<const Range>> taken;
@@ -656,18 +718,27 @@ void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std:
         }
         const auto range = *containing;
         const auto pieceEnd = std::min<std::uint64_t>(end, range.address + range.bytes);
-        const auto patch = replaceRange(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, true, false, false, false);
+        auto patch = replaceRange(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, true, false, false, false);
         const bool last = !allocationRemains(range, patch);
-        for (auto& piece : takePatched(patch)) taken.push_back(std::move(piece));
-        pieces.push_back({cursor, pieceEnd, range.allocationAddress, last});
+        auto piece = takePatched(patch);
+        pieces.push_back({cursor, pieceEnd, range.allocationAddress, last, std::move(patch), weakOf(piece)});
+        for (auto& entry : piece) taken.push_back(std::move(entry));
         cursor = pieceEnd;
     }
     require(!pieces.empty(), "unmap address is not registered");
     const DepartingRanges departing(static_cast<MutationState*>(mutation), std::move(taken));
-    departing.Await(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-    for (const auto& piece : pieces) {
-        apply(reinterpret_cast<const void*>(piece.begin), piece.end - piece.begin, reinterpret_cast<const void*>(piece.allocation), piece.last);
-        if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(piece.begin, piece.end - piece.begin);
+    std::size_t applied = 0;
+    try {
+        departing.Await(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+        while (applied < pieces.size()) {
+            const auto& piece = pieces[applied];
+            apply(reinterpret_cast<const void*>(piece.begin), piece.end - piece.begin, reinterpret_cast<const void*>(piece.allocation), piece.last);
+            ++applied;
+            if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(piece.begin, piece.end - piece.begin);
+        }
+    } catch (...) {
+        for (auto index = pieces.size(); index > applied; --index) undoPatch(pieces[index - 1].patch, pieces[index - 1].departed);
+        throw;
     }
     if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 }
