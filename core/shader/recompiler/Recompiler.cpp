@@ -522,7 +522,9 @@ std::optional<LinearStore> MaterializeLinearStore(const ShaderInfo& info, std::s
         elementBytes = format.packedBitfield ? 4u : bits / 8u;
     }
     if (elementBytes == 0u) return std::nullopt;
-    return LinearStore{static_cast<std::uint64_t>(words[0]) | static_cast<std::uint64_t>(words[1] & 0xffffu) << 32u, stride, words[2], elementBytes};
+    auto records = words[2];
+    if (info.linearStore->groupIdBits < 32u) records = static_cast<std::uint32_t>(std::min<std::uint64_t>(records, (std::uint64_t{1} << info.linearStore->groupIdBits) * info.linearStore->groupThreads));
+    return LinearStore{static_cast<std::uint64_t>(words[0]) | static_cast<std::uint64_t>(words[1] & 0xffffu) << 32u, stride, records, elementBytes};
 }
 
 void ApplyBufferRanges(const ShaderInfo& info, std::span<const DescriptorValue> stores, std::span<const DescriptorValue> loads, bool memory, ShaderInvocation& result) {

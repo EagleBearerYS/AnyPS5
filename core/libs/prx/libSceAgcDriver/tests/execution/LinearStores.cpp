@@ -24,9 +24,13 @@ constexpr std::uint32_t StoreFormatX = 0xe0102000u;
 constexpr std::uint32_t AtomicAdd = 0xe0c82000u;
 constexpr std::uint32_t StoreOperands = 0x80000004u;
 constexpr std::uint32_t Raw = 0x0004bfacu;
+constexpr std::array<std::uint32_t, 2> ShiftAddIndex{0xd7460004u, 0x04010c08u};
+constexpr std::array<std::uint32_t, 2> Mad24Index{0xd5430004u, 0x04018008u};
+constexpr std::array<std::uint32_t, 2> MadSigned24Index{0xd5420004u, 0x04018008u};
+constexpr std::array<std::uint32_t, 2> Mad24WrongSizeIndex{0xd5430004u, 0x04017e08u};
 
-std::vector<std::uint32_t> Fill(std::initializer_list<std::uint32_t> store, bool branch = false, bool memoryDescriptor = false) {
-    std::vector<std::uint32_t> code{0xd7460004u, 0x04010c08u, 0xf4280302u, 0xfa000000u};
+std::vector<std::uint32_t> Fill(std::initializer_list<std::uint32_t> store, bool branch = false, bool memoryDescriptor = false, const std::array<std::uint32_t, 2>& index = ShiftAddIndex) {
+    std::vector<std::uint32_t> code{index[0], index[1], 0xf4280302u, 0xfa000000u};
     if (memoryDescriptor) code.insert(code.end(), {0xf4080002u, 0xfa000000u});
     code.insert(code.end(), {0xbf8cc07fu, 0x7e00020cu, 0x7e02020du, 0x7e04020eu, 0x7e06020fu});
     if (branch) code.push_back(0xbf880000u | static_cast<std::uint32_t>(store.size()));
@@ -92,6 +96,12 @@ int main() {
         refuse("a swizzled descriptor", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw, true), cb));
         refuse("a descriptor that adds the thread id", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw | 1u << 23u), cb));
         refuse("a two-dimensional workgroup", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw), cb, 2u));
+        const auto mad24 = Fill({Store, StoreOperands}, false, false, Mad24Index);
+        expect("a fill indexed by v_mad_u32_u24 of the group id", Recognized(*device, mad24, Descriptor(target.data(), 16u, 768u, Raw), cb), 16u, 768u, 16u);
+        expect("a v_mad_u32_u24 fill whose records exceed the threads of 2^24 groups", Recognized(*device, mad24, Descriptor(target.data(), 16u, 0xffffffffu, Raw), cb), 16u, 1u << 30u, 16u);
+        expect("a v_lshl_add_u32 fill whose records exceed the threads of 2^24 groups", Recognized(*device, fill, Descriptor(target.data(), 16u, 0xffffffffu, Raw), cb), 16u, 0xffffffffu, 16u);
+        refuse("a fill indexed by v_mad_i32_i24 of the group id", Recognized(*device, Fill({Store, StoreOperands}, false, false, MadSigned24Index), Descriptor(target.data(), 16u, 768u, Raw), cb));
+        refuse("a v_mad_u32_u24 fill whose group stride is not the workgroup size", Recognized(*device, Fill({Store, StoreOperands}, false, false, Mad24WrongSizeIndex), Descriptor(target.data(), 16u, 768u, Raw), cb));
         std::puts("linear store tests passed");
         return 0;
     } catch (const std::exception& error) {

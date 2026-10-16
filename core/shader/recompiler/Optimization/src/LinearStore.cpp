@@ -33,22 +33,33 @@ bool Builtin(const IrValue* value, StageInputKind kind) {
     return resolved->Opcode() == IrOpcode::GetBuiltin && resolved->ArgumentCount() == 2u && Constant(resolved->Argument(0), static_cast<std::uint32_t>(kind)) && Constant(resolved->Argument(1), 0u);
 }
 
-bool GroupBase(const IrValue* value, std::uint32_t threads) {
+std::optional<std::uint32_t> GroupIdBits(const IrValue* value) {
     const auto* resolved = value->Resolve();
-    if (resolved->ArgumentCount() != 2u) return false;
-    const auto* left = resolved->Argument(0);
-    const auto* right = resolved->Argument(1);
-    if (resolved->Opcode() == IrOpcode::ShiftLeftLogical32) return std::has_single_bit(threads) && Builtin(left, StageInputKind::WorkgroupId) && Constant(right, static_cast<std::uint32_t>(std::countr_zero(threads)));
-    if (resolved->Opcode() == IrOpcode::IMul32) return (Builtin(left, StageInputKind::WorkgroupId) && Constant(right, threads)) || (Constant(left, threads) && Builtin(right, StageInputKind::WorkgroupId));
-    return false;
+    if (Builtin(resolved, StageInputKind::WorkgroupId)) return 32u;
+    if (resolved->Opcode() != IrOpcode::BitFieldUExtract || resolved->ArgumentCount() != 3u || !Builtin(resolved->Argument(0), StageInputKind::WorkgroupId) || !Constant(resolved->Argument(1), 0u)) return std::nullopt;
+    const auto* width = resolved->Argument(2)->Resolve();
+    if (!width->HasImmediate() || width->Type() != IrType::U32 || width->ImmediateU32() == 0u || width->ImmediateU32() >= 32u) return std::nullopt;
+    return width->ImmediateU32();
 }
 
-bool GlobalIndex(const IrValue* value, std::uint32_t threads) {
+std::optional<std::uint32_t> GroupBase(const IrValue* value, std::uint32_t threads) {
     const auto* resolved = value->Resolve();
-    if (resolved->Opcode() != IrOpcode::IAdd32 || resolved->ArgumentCount() != 2u) return false;
+    if (resolved->ArgumentCount() != 2u) return std::nullopt;
     const auto* left = resolved->Argument(0);
     const auto* right = resolved->Argument(1);
-    return (GroupBase(left, threads) && Builtin(right, StageInputKind::LocalInvocationId)) || (Builtin(left, StageInputKind::LocalInvocationId) && GroupBase(right, threads));
+    if (resolved->Opcode() == IrOpcode::ShiftLeftLogical32) return std::has_single_bit(threads) && Constant(right, static_cast<std::uint32_t>(std::countr_zero(threads))) ? GroupIdBits(left) : std::nullopt;
+    if (resolved->Opcode() != IrOpcode::IMul32) return std::nullopt;
+    if (Constant(right, threads)) return GroupIdBits(left);
+    return Constant(left, threads) ? GroupIdBits(right) : std::nullopt;
+}
+
+std::optional<std::uint32_t> GlobalIndex(const IrValue* value, std::uint32_t threads) {
+    const auto* resolved = value->Resolve();
+    if (resolved->Opcode() != IrOpcode::IAdd32 || resolved->ArgumentCount() != 2u) return std::nullopt;
+    const auto* left = resolved->Argument(0);
+    const auto* right = resolved->Argument(1);
+    if (Builtin(right, StageInputKind::LocalInvocationId)) return GroupBase(left, threads);
+    return Builtin(left, StageInputKind::LocalInvocationId) ? GroupBase(right, threads) : std::nullopt;
 }
 
 bool StraightLine(const IrProgram& program) {
@@ -97,12 +108,15 @@ std::optional<LinearStoreSite> FindLinearStore(const IrProgram& program, const s
         if (handle->Argument(word)->Resolve()->Opcode() != IrOpcode::GetUserData) return std::nullopt;
     }
     const auto* active = store->Argument(5)->Resolve();
-    if (!GlobalIndex(store->Argument(1), threads[0]) || !Constant(store->Argument(2), 0u) || !Constant(store->Argument(3), 0u) || !active->HasImmediate() || active->Type() != IrType::Bool || !active->ImmediateBool()) return std::nullopt;
+    const auto groupIdBits = GlobalIndex(store->Argument(1), threads[0]);
+    if (!groupIdBits || !Constant(store->Argument(2), 0u) || !Constant(store->Argument(3), 0u) || !active->HasImmediate() || active->Type() != IrType::Bool || !active->ImmediateBool()) return std::nullopt;
     const auto components = StoreComponents(store->Opcode());
     LinearStoreSite linear;
     linear.components = components;
     linear.descriptorFormat = site.formatted;
     linear.elementBytes = site.formatted ? 0u : components * site.dataBits / 8u;
+    linear.groupThreads = threads[0];
+    linear.groupIdBits = *groupIdBits;
     return linear;
 }
 

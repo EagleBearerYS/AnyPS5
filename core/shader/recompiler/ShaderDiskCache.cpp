@@ -138,7 +138,7 @@ constexpr std::size_t fieldCount() {
 }
 
 static_assert(fieldCount<ShaderInfo>() == 29, "ShaderInfo changed: update the info encoder");
-static_assert(fieldCount<LinearStoreSite>() == 3, "LinearStoreSite changed: update the info encoder");
+static_assert(fieldCount<LinearStoreSite>() == 5, "LinearStoreSite changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 36, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 9, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
@@ -785,6 +785,8 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         writer.Value(info.linearStore->components);
         writer.Value(info.linearStore->elementBytes);
         writer.Value(info.linearStore->descriptorFormat);
+        writer.Value(info.linearStore->groupThreads);
+        writer.Value(info.linearStore->groupIdBits);
     }
 }
 
@@ -905,6 +907,8 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         reader.Value(site.components);
         reader.Value(site.elementBytes);
         reader.Value(site.descriptorFormat);
+        reader.Value(site.groupThreads);
+        reader.Value(site.groupIdBits);
         info.linearStore = site;
     }
 }

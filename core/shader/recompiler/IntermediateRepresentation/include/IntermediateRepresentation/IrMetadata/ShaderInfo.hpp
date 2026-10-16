@@ -28,6 +28,8 @@ struct LinearStoreSite {
     std::uint32_t components = 0;
     std::uint32_t elementBytes = 0;
     bool descriptorFormat = false;
+    std::uint32_t groupThreads = 0;
+    std::uint32_t groupIdBits = 32;
 
     bool operator==(const LinearStoreSite& other) const = default;
 };
