@@ -75,6 +75,7 @@ void verifyNative() {
     const std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityFloat16, spv::CapabilityRoundingModeRTE, spv::CapabilityDenormPreserve};
     const auto usage = scan(recompile(capabilities));
     require(usage.floatConverts != 0 && usage.float16Capability, "a device that rounds 16-bit floats to nearest even did not get OpFConvert to f16");
+    require(usage.floatConverts == 1u, "v_cvt_f16_f32 converts " + std::to_string(usage.floatConverts) + " values to f16, expected only its source and no packed zero");
     require(usage.roundingModeRte16 && usage.denormPreserve16, "native f16 conversion without the 16-bit RoundingModeRTE and DenormPreserve execution modes");
 }
 
