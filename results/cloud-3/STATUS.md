@@ -1,4 +1,4 @@
-READY (PM-051 done: review/6682-shadow-publish-gaps 6ee5a91b2 pushed; result results/cloud-3/PM-051.md)
+BUSY BF-018 (claimed: remember an evicting import request's budget refusal, stacked on #6457's fork branch perf-agc-host-import-aligned-blocks 9c308c739b)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
