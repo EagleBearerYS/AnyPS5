@@ -1,4 +1,4 @@
-READY (last: BF-028 done, merge 86346318d3 builds and passes, no fix needed)
+BUSY PRM-021 (claimed: semantic check of nine capture-side PRs against main 3f171d03e0)
 RESULT:
 - Repo: /home/user/AnyPS5, HEAD main f74ec639c (= upstream main at setup), submodules recursive at depth 1. fork/main was f40b6930f. Setup committed and pushed nothing.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev ccache
