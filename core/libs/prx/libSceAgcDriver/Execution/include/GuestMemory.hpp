@@ -7,6 +7,7 @@
 #include <functional>
 #include <mutex>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -167,6 +168,13 @@ void TagGpuLockThread(std::uint32_t queue);
 // The presenter stays untagged (its tag is a queue id to the recorder) but takes its own column
 // of the [lock] holder matrix, apart from the game threads.
 void MarkPresenterThread();
+void MarkCommitterThread();
+struct GpuHoldTotal {
+    std::string holder;
+    std::string site;
+    std::uint64_t ns = 0;
+};
+std::vector<GpuHoldTotal> GpuHoldTotals();
 // The queue tag of the calling thread (0xffffffff when untagged), for reports that name the thread.
 std::uint32_t GpuLockThreadTag();
 // Lock sites (APS5_PROFILE_DRAW): a caller names the site of its next lock() so the [lock] line

@@ -12,6 +12,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#ifdef __linux__
+#include <pthread.h>
+#endif
 
 namespace AgcDriver::DriverDetail {
 
@@ -135,6 +138,11 @@ void Driver::run(std::uint32_t id) noexcept {
     char role[32];
     std::snprintf(role, sizeof role, "queue worker 0x%x", id);
     PinWorkerThread(role);
+#ifdef __linux__
+    char shortRole[16];
+    std::snprintf(shortRole, sizeof shortRole, "qworker 0x%x", id);
+    pthread_setname_np(pthread_self(), shortRole);
+#endif
 
     GuestMemory::TagGpuLockThread(id);
     if (id == 0) StartWorkerSampler();
