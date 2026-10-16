@@ -577,8 +577,217 @@ static void RunBdaWrittenPageTests(const Context& context) {
     }
 }
 
+static std::vector<BdaPageReference::Translation> TranslateThroughTable(const Context& context, std::uint64_t pageTable, std::span<const std::array<std::uint64_t, 3>> probes) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const auto root = MakeBinding(context, {}, {}, pageTable);
+    const auto count = static_cast<std::uint32_t>(probes.size());
+    Buffer io(context, std::size_t{count} * 8u * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    auto* words = reinterpret_cast<std::uint32_t*>(io.Bytes().data());
+    for (std::uint32_t index = 0; index < count; ++index) {
+        words[4u * index] = static_cast<std::uint32_t>(probes[index][0]);
+        words[4u * index + 1u] = static_cast<std::uint32_t>(probes[index][0] >> 32u);
+        words[4u * index + 2u] = static_cast<std::uint32_t>(probes[index][1]);
+        words[4u * index + 3u] = static_cast<std::uint32_t>(probes[index][2]);
+    }
+    std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+    Pipeline pipeline(context, MakeBdaTranslateTestShader(count), {root.get(), &fault, &io});
+    pipeline.Run((count + 63u) / 64u);
+    Abi::Fault report{};
+    std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+    Require(report.state == Abi::FaultState::Empty, "a BDA page table version: a translation published a fault");
+    std::vector<BdaPageReference::Translation> results(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto* result = words + 4u * count + 4u * index;
+        results[index] = {result[0] | (static_cast<std::uint64_t>(result[1]) << 32u), result[2]};
+    }
+    return results;
+}
+
+static void RunBdaPageTableVersionTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    namespace Ref = BdaPageReference;
+    using Ranges = std::vector<Abi::Range>;
+    using Windows = std::map<std::uint32_t, Ranges>;
+    constexpr std::uint64_t Page = std::uint64_t{1} << Abi::PageShift;
+    constexpr std::uint32_t Rw = Abi::Read | Abi::Write;
+    const auto hex = [](std::uint64_t value) {
+        char text[24];
+        std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(value));
+        return std::string(text);
+    };
+    const auto windowsOf = [](const Ranges& list) {
+        Windows windows;
+        for (const auto& range : list) {
+            for (auto window = static_cast<std::uint32_t>(range.begin >> Abi::WindowShift); window <= static_cast<std::uint32_t>((range.end - 1u) >> Abi::WindowShift); ++window) windows[window].push_back(range);
+        }
+        return windows;
+    };
+    const auto same = [](const Ranges& left, const Ranges& right) {
+        return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin(), [](const Abi::Range& a, const Abi::Range& b) { return a.begin == b.begin && a.end == b.end && a.deviceAddress == b.deviceAddress && a.permissions == b.permissions && a.reserved == b.reserved; });
+    };
+    struct Version {
+        std::string name;
+        Ranges list;
+        std::shared_ptr<const BdaPageTable> table;
+    };
+    const auto expectTranslations = [&](const Version& version, const std::string& when) {
+        std::vector<std::uint64_t> addresses;
+        for (const auto& range : version.list) {
+            for (const auto probe : Ref::Probes(std::span<const Abi::Range>(&range, 1))) addresses.push_back(probe);
+            for (auto page = range.begin & ~(Page - 1u); page < range.end; page += Page) {
+                addresses.push_back(std::max(page, range.begin));
+                addresses.push_back(std::min(page + Page / 2u, range.end - 1u));
+                addresses.push_back(std::min(page + Page, range.end) - 1u);
+            }
+        }
+        std::sort(addresses.begin(), addresses.end());
+        addresses.erase(std::unique(addresses.begin(), addresses.end()), addresses.end());
+        std::size_t cpuWrong = 0;
+        std::string firstCpu;
+        std::vector<std::array<std::uint64_t, 3>> probes;
+        for (const auto address : addresses) {
+            if (address >= Abi::PageTableEnd) continue;
+            const auto found = std::upper_bound(version.list.begin(), version.list.end(), address, [](std::uint64_t value, const Abi::Range& range) { return value < range.begin; });
+            const Abi::Range* holder = found != version.list.begin() && address < std::prev(found)->end ? &*std::prev(found) : nullptr;
+            const auto looked = version.table->Find(address);
+            const bool right = holder == nullptr ? !looked.has_value() : looked.has_value() && looked->begin == holder->begin && looked->end == holder->end && looked->deviceAddress == holder->deviceAddress && looked->permissions == holder->permissions;
+            if (!right && cpuWrong++ == 0u) firstCpu = hex(address) + " found " + (looked ? "[" + hex(looked->begin) + ", " + hex(looked->end) + ") at " + hex(looked->deviceAddress) : std::string("nothing"));
+            for (const auto bytes : {1u, 4u, 16u}) {
+                for (const auto permission : {Abi::Read, Abi::Write}) probes.push_back({address, bytes, permission});
+            }
+        }
+        Require(cpuWrong == 0u, version.name + ", " + when + ": " + std::to_string(cpuWrong) + " addresses were looked up in another range than the version's list holds them, first " + firstCpu);
+        const auto results = TranslateThroughTable(context, version.table->Address(), probes);
+        const Ref::Leaves none;
+        std::size_t gpuWrong = 0;
+        std::string firstGpu;
+        for (std::size_t index = 0; index < probes.size(); ++index) {
+            const auto& probe = probes[index];
+            const auto expected = Ref::Translate(none, version.list, probe[0], static_cast<std::uint32_t>(probe[1]), static_cast<std::uint32_t>(probe[2]));
+            if (results[index] == expected || gpuWrong++ != 0u) continue;
+            firstGpu = hex(probe[0]) + " (" + std::to_string(probe[1]) + " bytes, permission " + std::to_string(probe[2]) + ") to " + hex(results[index].device) + " reason " + std::to_string(results[index].reason) + ", expected " + hex(expected.device) + " reason " + std::to_string(expected.reason);
+        }
+        Require(gpuWrong == 0u, version.name + ", " + when + ": the GPU translated " + std::to_string(gpuWrong) + " of " + std::to_string(probes.size()) + " probes unlike the version's ranges, first " + firstGpu);
+    };
+    const auto build = [&](std::string name, Ranges list, const std::vector<const Version*>& shares, const std::set<std::uint32_t>& changed) {
+        std::vector<std::shared_ptr<const BdaPageTable>> tables;
+        for (const auto* share : shares) tables.push_back(share != nullptr ? share->table : nullptr);
+        Version version;
+        version.name = std::move(name);
+        version.list = std::move(list);
+        version.table = BdaPageTable::Build(context, version.list, tables);
+        Require(version.table != nullptr, version.name + ": no table was built");
+        const auto windows = windowsOf(version.list);
+        std::set<std::uint32_t> encoded;
+        for (const auto& [window, held] : windows) {
+            const Version* source = nullptr;
+            for (const auto* share : shares) {
+                if (share == nullptr) continue;
+                const auto theirs = windowsOf(share->list);
+                if (const auto found = theirs.find(window); found != theirs.end() && same(found->second, held)) {
+                    source = share;
+                    break;
+                }
+            }
+            const auto leaf = version.table->LeafAddress(window);
+            Require(leaf != 0u, version.name + ": window " + std::to_string(window) + " has no leaf");
+            if (source != nullptr) {
+                Require(leaf == source->table->LeafAddress(window), version.name + ": window " + std::to_string(window) + ", whose ranges " + source->name + " holds unchanged, did not share its leaf");
+                continue;
+            }
+            encoded.insert(window);
+            for (const auto* share : shares) {
+                if (share != nullptr) Require(leaf != share->table->LeafAddress(window), version.name + ": window " + std::to_string(window) + ", whose ranges changed, kept the leaf of " + share->name);
+            }
+        }
+        for (const auto* share : shares) {
+            if (share == nullptr) continue;
+            for (const auto& [window, held] : windowsOf(share->list)) {
+                if (!windows.contains(window)) Require(version.table->LeafAddress(window) == 0u, version.name + ": window " + std::to_string(window) + ", which holds none of its ranges, has a leaf");
+            }
+        }
+        std::string named;
+        for (const auto window : encoded) named += " " + std::to_string(window);
+        Require(encoded == changed, version.name + ": the windows encoded anew are" + named + ", not the windows the change touches");
+        expectTranslations(version, "when built");
+        return version;
+    };
+    const auto splice = [](const Ranges& resident, const Ranges& overrides) {
+        Ranges spliced;
+        for (const auto& range : resident) {
+            auto cursor = range.begin;
+            for (const auto& cut : overrides) {
+                if (cut.end <= cursor || cut.begin >= range.end) continue;
+                if (cut.begin > cursor) {
+                    auto part = range;
+                    part.begin = cursor;
+                    part.end = cut.begin;
+                    part.deviceAddress = range.deviceAddress + (cursor - range.begin);
+                    spliced.push_back(part);
+                }
+                cursor = std::max(cursor, std::min(cut.end, range.end));
+            }
+            if (cursor < range.end) {
+                auto part = range;
+                part.begin = cursor;
+                part.deviceAddress = range.deviceAddress + (cursor - range.begin);
+                spliced.push_back(part);
+            }
+        }
+        spliced.insert(spliced.end(), overrides.begin(), overrides.end());
+        std::sort(spliced.begin(), spliced.end(), [](const Abi::Range& left, const Abi::Range& right) { return left.begin < right.begin; });
+        return spliced;
+    };
+    constexpr std::uint64_t First = 0x200000000ull;
+    constexpr std::uint64_t Second = 0x300000000ull;
+    constexpr std::uint64_t Third = 0x600000000ull;
+    constexpr std::uint32_t FirstWindow = static_cast<std::uint32_t>(First >> Abi::WindowShift);
+    constexpr std::uint32_t SecondWindow = static_cast<std::uint32_t>(Second >> Abi::WindowShift);
+    constexpr std::uint32_t ThirdWindow = static_cast<std::uint32_t>(Third >> Abi::WindowShift);
+    std::uint64_t device = 0x1000000000ull;
+    const auto at = [&](std::uint64_t begin, std::uint64_t end, std::uint32_t permissions) {
+        const Abi::Range range{begin, end, device, permissions, 0u};
+        device += 0x1000000ull;
+        return range;
+    };
+    const Ranges baseList{
+        at(First + 0x10000u, First + 0x50000u, Abi::Read),
+        at(First + 0x60000u, First + 0x60100u, Rw),
+        at(First + 0x60100u, First + 0x63000u, Rw),
+        at(First + 0x63010u, First + 0x72000u, Abi::Read),
+        at(First + 0x80000u, First + 0xa0000u, Rw),
+        at(Second, Second + 0x30000u, Abi::Read),
+        at(Second + 0x40000u, Second + 0x40800u, Rw),
+        at(Second + (std::uint64_t{1} << Abi::WindowShift) - 0x20000u, Second + (std::uint64_t{1} << Abi::WindowShift) + 0x30000u, Rw),
+        at(Second + (std::uint64_t{1} << Abi::WindowShift) + 0x40000u, Second + (std::uint64_t{1} << Abi::WindowShift) + 0x41000u, Abi::Read),
+        at(Third + 0x100000u, Third + 0x100010u, Abi::Read),
+        at(Third + 0x100020u, Third + 0x108000u, Rw),
+        at(Third + 0x200000u, Third + 0x240000u, Abi::Read),
+    };
+    const auto base = build("the base table", baseList, {}, {FirstWindow, SecondWindow, SecondWindow + 1u, ThirdWindow});
+    auto moved = base.list;
+    moved[0].deviceAddress += 0x10000u;
+    const auto first = build("the version after one range's device address changed", moved, {&base}, {FirstWindow});
+    auto added = first.list;
+    added.insert(added.begin() + 10, Abi::Range{Third + 0x100010u, Third + 0x100018u, 0x2000000000ull, Rw, 0u});
+    const auto second = build("the version after a range was added inside a split page", added, {&first}, {ThirdWindow});
+    auto removed = second.list;
+    removed.erase(removed.begin() + 6);
+    const auto third = build("the version after a range was removed", removed, {&second}, {SecondWindow});
+    auto narrowed = third.list;
+    narrowed[6].permissions = Abi::Read;
+    const auto fourth = build("the version after the permissions of the range across a window boundary changed", narrowed, {&third}, {SecondWindow, SecondWindow + 1u});
+    const Ranges overrides{{First + 0x20800u, First + 0x21000u, 0x3000000000ull, Rw, 0u}, {Third + 0x200000u, Third + 0x240000u, 0x3100000000ull, Rw, 0u}};
+    const auto overridden = build("the override list spliced over the last version", splice(fourth.list, overrides), {nullptr, &fourth}, {FirstWindow, ThirdWindow});
+    const Ranges moreOverrides{overrides[0], {Third + 0x210000u, Third + 0x220000u, 0x3200000000ull, Rw, 0u}};
+    const auto reoverridden = build("another override list spliced over the last version", splice(fourth.list, moreOverrides), {&overridden, &fourth}, {ThirdWindow});
+    for (const auto* version : {&base, &first, &second, &third, &fourth, &overridden, &reoverridden}) expectTranslations(*version, "after every later version was built");
+}
+
 void RunBdaExecutionTests(const Context& context) {
     RunBdaPageTableTests(context);
+    RunBdaPageTableVersionTests(context);
     for (const bool paged : {false, true}) RunBdaReadTests(context, paged);
     RunBdaWrittenPageTests(context);
 }
