@@ -94,6 +94,7 @@ void DestroyContext(int context);
 std::optional<ContextOwner> FindContext(int context);
 std::optional<std::uint64_t> ContextUnlockTick(int context, std::int32_t trophyId);
 std::size_t ContextUnlockCount(int context);
+bool RecordUnlock(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId);
 
 }
 

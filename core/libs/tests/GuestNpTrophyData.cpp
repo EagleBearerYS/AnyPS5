@@ -193,7 +193,7 @@ static void ReportTrophyData(int context) {
             "the group list does not hold the base game and group 1");
 }
 
-static void UnlockPlatinum(int context) {
+static void PostUnlocks(int context) {
     Unlocks unlocks;
     const auto listener = NpTrophy2AddUnlockListener_nid_no_patch(Remember, &unlocks);
     for (const int trophyId : {1, 2, 3, 6}) PostUnlock(trophyId);
@@ -203,12 +203,13 @@ static void UnlockPlatinum(int context) {
             "the game does not count the unlocks by grade");
     PostUnlock(4);
     Require(!Trophy(context, 0).unlocked, "the platinum unlocked before every trophy that names it");
-    PostUnlock(5);
-    const auto progressive = Trophy(context, 5);
-    Require(progressive.unlocked && progressive.progress.value == 5, "an unlocked progressive trophy does not report its target as progress");
-    Require(Trophy(context, 0).unlocked && Game(context).unlocked_platinum == 1, "the platinum did not unlock with the last trophy that names it");
+    for (const int trophyId : {5, 0, 42}) PostUnlock(trophyId);
+    const auto refused = Game(context);
+    Require(!Trophy(context, 5).unlocked && !Trophy(context, 0).unlocked && refused.unlocked_trophies == 5 && refused.unlocked_platinum == 0 && refused.unlocked_bronze == 3 &&
+                refused.progress_percentage == (6 + 2 + 3) * 100 / (6 + 2 + 5),
+            "a progressive, platinum or unknown trophy posted through UDS unlocked, or changed the counts");
     NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
-    Require(unlocks.trophies == (std::vector<std::int32_t>{1, 2, 3, 6, 4, 5, 0}), "the listener did not see each unlock and the platinum once, in order");
+    Require(unlocks.trophies == (std::vector<std::int32_t>{1, 2, 3, 6, 4}), "the listener did not see each posted unlock once, in order, or saw a refused one");
 }
 
 static void ReportPlaceholders() {
@@ -237,7 +238,7 @@ int main() {
 
     const auto context = TrophyContext(0);
     ReportTrophyData(context);
-    UnlockPlatinum(context);
+    PostUnlocks(context);
     ReportPlaceholders();
 
     std::filesystem::current_path(previous);

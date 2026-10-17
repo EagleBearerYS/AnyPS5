@@ -53,6 +53,7 @@ struct StatChanges {
 StatChanges ApplyStatRules(const StatRules& rules, const NpTrophy2Event& event, StatStore& stats, std::int32_t userId, std::uint32_t serviceLabel);
 std::vector<std::int32_t> ReachedTrophies(const TrophyPackage& package, const std::map<std::uint64_t, std::uint64_t>& stats, const UnlockedQuery& unlocked);
 std::optional<std::int32_t> PlatinumToUnlock(const TrophyPackage& package, std::int32_t trophyId, const UnlockedQuery& unlocked);
+std::optional<std::string> PostedUnlockRefusal(const TrophyPackage& package, std::int32_t trophyId);
 std::optional<std::uint64_t> ProgressTarget(const TrophyDefinition& trophy);
 std::uint64_t TrophyProgress(const TrophyDefinition& trophy, std::optional<std::uint64_t> stat, bool unlocked);
 
