@@ -473,6 +473,13 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
 
 namespace {
 
+bool LazyShaderPreparation() {
+    static const bool lazy = std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr;
+    return lazy;
+}
+
+void PrepareDeferredAbis(const ShaderSnapshot& snapshot);
+
 void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::RecompileRequest& request) {
     if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
@@ -504,6 +511,11 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     ShaderRecompiler::BuildPreparedShaderKey(request, key);
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
+    if (!snapshot.prepared->deferredAbis.empty()) {
+        lock.unlock();
+        PrepareDeferredAbis(snapshot);
+        lock.lock();
+    }
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
     }
@@ -656,6 +668,11 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     ShaderRecompiler::BuildPreparedShaderKey(source, key);
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
+    if (!snapshot.prepared->deferredAbis.empty()) {
+        lock.unlock();
+        PrepareDeferredAbis(snapshot);
+        lock.lock();
+    }
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset) continue;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
@@ -918,6 +935,39 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
 std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snapshot, const VulkanDevice& device, const QueueState& state, bool registration, bool* deferred = nullptr) {
     const auto plan = PlanRegistered(snapshot, device, state, registration, deferred);
     return plan != nullptr ? PrepareRegistered(*plan) : std::vector<PreparedShaders::Entry>{};
+}
+
+void PrepareDeferredAbis(const ShaderSnapshot& snapshot) {
+    std::vector<PreparedShaders::DeferredAbi> deferred;
+    {
+        std::lock_guard lock(snapshot.prepared->mutex);
+        deferred.swap(snapshot.prepared->deferredAbis);
+    }
+    for (const auto& abi : deferred) {
+        const auto device = abi.device.lock();
+        if (device == nullptr || snapshot.registeredState == nullptr) continue;
+        QueueState state{};
+        state.shader = snapshot.registeredState->shader;
+        state.context = snapshot.registeredState->context;
+        state.userConfig = snapshot.registeredState->userConfig;
+        for (const auto& [offset, value] : abi.context) state.context[offset] = value;
+        for (const auto& [offset, value] : abi.primitive) state.userConfig[offset] = value;
+        std::vector<PreparedShaders::Entry> entries;
+        try {
+            const auto plan = PlanRegistered(snapshot, *device, state, false);
+            if (plan == nullptr) continue;
+            plan->prebuildDevice = device;
+            entries = PrepareRegistered(*plan);
+        } catch (const std::exception& error) {
+            APS5_LOG_ERR("Shader 0x%llx could not be prepared at its first use for its resolved ABI (%s); preparing it for the use instead", static_cast<unsigned long long>(snapshot.codeAddress), error.what());
+            continue;
+        }
+        std::lock_guard lock(snapshot.prepared->mutex);
+        for (auto& entry : entries) {
+            const auto duplicate = std::ranges::any_of(snapshot.prepared->entries, [&](const auto& existing) { return existing.codeOffset == entry.codeOffset && existing.handle->artifact == entry.handle->artifact; });
+            if (!duplicate) snapshot.prepared->entries.push_back(std::move(entry));
+        }
+    }
 }
 
 void DeferPipelineStage(PreparedShaderState& prepared, const ShaderSnapshot& snapshot, const char* reason) {
@@ -1376,6 +1426,31 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     struct RegisteredAbiKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, RegisteredAbiKeyStorage>();
     BuildRegisteredAbiKey(state, *localDevice, key);
+    if (LazyShaderPreparation()) {
+        const auto& resolved = transaction.Read(*snapshot).registeredAbis;
+        if (std::ranges::find(resolved, key) != resolved.end()) {
+            transaction.Commit();
+            return;
+        }
+        std::optional<std::string> invalid;
+        try {
+            static_cast<void>(PlanRegistered(*snapshot, *localDevice, state, false));
+        } catch (const std::exception& error) {
+            invalid = error.what();
+        }
+        auto& prepared = transaction.Edit(*snapshot);
+        if (invalid) DeferPipelineStage(prepared, *snapshot, invalid->c_str());
+        prepared.registeredAbis.push_back(key);
+        prepared.deferred = true;
+        transaction.Commit();
+        if (invalid) return;
+        PreparedShaders::DeferredAbi deferred{key, {}, {}, localDevice};
+        for (const auto reg : context) deferred.context.emplace_back(reg.offset, reg.value);
+        for (const auto reg : primitive) deferred.primitive.emplace_back(reg.offset, reg.value);
+        std::lock_guard lock(snapshot->prepared->mutex);
+        snapshot->prepared->deferredAbis.push_back(std::move(deferred));
+        return;
+    }
     std::optional<std::string> deferral;
     const auto prepare = [&] {
         try {
@@ -1614,8 +1689,7 @@ void Driver::RegisterShader(const Shader* shader) {
     registered.context = snapshot.registeredState->context;
     registered.userConfig = snapshot.registeredState->userConfig;
     std::shared_ptr<RegisteredPreparation> preparation;
-    static const bool lazy = std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr;
-    if (lazy) {
+    if (LazyShaderPreparation()) {
         static_cast<void>(PlanRegistered(snapshot, *localDevice, registered, true, &snapshot.prepared->deferred));
         snapshot.prepared->deferred = true;
     } else if (AsyncRegistrationPrepare()) {
