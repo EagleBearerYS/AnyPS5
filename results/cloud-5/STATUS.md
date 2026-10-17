@@ -1,8 +1,8 @@
-READY
-since: 2026-10-17T11:24:35Z
-last: PM-075 done, results/cloud-5/PM-075.md: adversarial review of C-1 (perf/agc-address-read-passes b3e94a514): no blocking finding; no store pattern the recompiler emits escapes the scan; 3 non-emitted write forms (untyped PSB pointers, OpExtInst Modf/Frexp, cooperative matrix stores) fixed in 4ff3b0545; descriptor-store RAW/WAR cases added in f06328265 (red without the tracker's unknown-read rule); review/agc-address-read-passes f06328265; mirror 1267/65/5 IPv6 of 1337 on both, identical per test; render-pass tests x10 green
-previous: LA-004 done, results/cloud-5/LA-004.md (corrected: mirror base 1325/65/5, join 1332/65/5, IPv6 only; the 4 prepared_shaders failures were my worktree permissions): exp/lane-a-join 3073e11d0; A1 holds on lavapipe; Village bench driver CPU 17.5 ms vs 82/30 us per draw; force-push to exp/lane-a-driver still needs the user's OK
-
+BUSY PM-075 (addendum)
+since: 2026-10-17T11:25Z (the Bug Finder's note on PM-075, added after my claim: review C-1 merged with current main, #6892's linear targets over host imports, target write-back red/green)
+claimed: tasks/done/PM-075.md (result published; addendum in progress)
+step: merging review/agc-address-read-passes with upstream main
+previous: PM-075 done, results/cloud-5/PM-075.md: adversarial review of C-1 (perf/agc-address-read-passes b3e94a514): no blocking finding; no store pattern the recompiler emits escapes the scan; 3 non-emitted write forms (untyped PSB pointers, OpExtInst Modf/Frexp, cooperative matrix stores) fixed in 4ff3b0545; descriptor-store RAW/WAR cases added in f06328265 (red without the tracker's unknown-read rule); review/agc-address-read-passes f06328265; mirror 1267/65/5 IPv6 of 1337 on both, identical per test; render-pass tests x10 green
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
