@@ -110,6 +110,7 @@ public:
         return value;
     }
     [[nodiscard]] std::size_t Size() const { return count; }
+    [[nodiscard]] std::size_t Capacity() const { return capacity; }
     [[nodiscard]] IrValue& operator[](std::size_t index) { return values[index]; }
     [[nodiscard]] const IrValue& operator[](std::size_t index) const { return values[index]; }
     [[nodiscard]] IrValue* begin() { return values; }

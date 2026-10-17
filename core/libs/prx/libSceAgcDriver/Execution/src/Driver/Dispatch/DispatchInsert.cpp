@@ -91,6 +91,7 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
                 dispatchOrder.push_front(key);
                 created->order = dispatchOrder.begin();
                 dispatchCache.emplace(key, std::move(created));
+                chargeDispatchEntries(1);
             } else if (found->second != missedEntry && !found->second->variants.empty() && found->second->variants.front()->runs == fresh->runs && found->second->variants.front()->words == fresh->words) {
 
                 attachVariant = found->second->variants.front();
@@ -126,6 +127,8 @@ void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDis
                     }
                 } else {
                     dispatchCacheEvictions += dispatchCache.size();
+                    chargeDispatchEntries(-static_cast<std::int64_t>(dispatchCache.size()));
+                    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DispatchCache, 0, -static_cast<std::int64_t>(dispatchCacheVariantBytes));
                     dispatchCache.clear();
                     dispatchOrder.clear();
                     dispatchCacheVariants = 0;

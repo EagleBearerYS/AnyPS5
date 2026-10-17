@@ -65,6 +65,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
         GuestMemory::MarkPresenterThread();
     }
     CheckFailure();
+    ShaderRecompiler::HeapHolders::MaybeReport();
     require(gpuReady != nullptr && context != nullptr, "missing GPU completion callback");
     require(window.getDrawableSize != nullptr, "missing window drawable size query");
 
