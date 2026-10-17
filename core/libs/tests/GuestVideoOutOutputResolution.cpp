@@ -29,6 +29,7 @@ static constexpr std::uint64_t PIXEL_FORMAT_B8G8R8A8_SRGB = 0x8000000000000000ul
 static constexpr std::uint32_t RESOLUTION_HD = 1;
 static constexpr std::uint32_t RESOLUTION_ULTRA_HD = 2;
 static constexpr std::size_t TILE_BLOCK_BYTES = 65536;
+static constexpr int VIDEO_OUT_ERROR_INVALID_RESOLUTION = static_cast<int>(0x80290005u);
 
 static void Require(bool value, const char* reason) {
     if (!value) {
@@ -53,13 +54,17 @@ static void RequireReports(int handle, std::uint32_t width, std::uint32_t height
     Require(std::memcmp(vrr.data(), &output, sizeof(output)) == 0, "the VRR output status differs from sceVideoOutGetOutputStatus");
 }
 
-static void Register(int handle, std::vector<std::byte>& allocation, std::uint32_t width, std::uint32_t height) {
+static int TryRegister(int handle, std::vector<std::byte>& allocation, std::uint32_t width, std::uint32_t height) {
     const auto address = reinterpret_cast<std::uintptr_t>(allocation.data());
     const auto offset = (TILE_BLOCK_BYTES - (address % TILE_BLOCK_BYTES)) % TILE_BLOCK_BYTES;
     VideoOutBuffers buffer{allocation.data() + offset, nullptr, {nullptr, nullptr}};
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, PIXEL_FORMAT_B8G8R8A8_SRGB, 0, width, height, 0, 0, 0);
-    Require(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
+    return sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+}
+
+static void Register(int handle, std::vector<std::byte>& allocation, std::uint32_t width, std::uint32_t height) {
+    Require(TryRegister(handle, allocation, width, height) == 0, "buffer registration failed");
 }
 
 static int RequireInvalidValueStopsOpen() {
@@ -99,8 +104,10 @@ int main(int argc, char** argv) {
         RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported after a 1280x720 registration");
     } else if (mode == "2560x1440") {
         RequireReports(handle, 2560, 1440, RESOLUTION_HD, "2560x1440 was not reported before registration");
-        Register(handle, allocation, 3840, 64);
-        RequireReports(handle, 2560, 1440, RESOLUTION_HD, "2560x1440 was not reported after a 3840x64 registration");
+        Require(TryRegister(handle, allocation, 3840, 64) == VIDEO_OUT_ERROR_INVALID_RESOLUTION, "3840x64 buffers were not refused with INVALID_RESOLUTION on a 2560x1440 output");
+        RequireReports(handle, 2560, 1440, RESOLUTION_HD, "2560x1440 was not reported after a refused 3840x64 registration");
+        Register(handle, allocation, 2560, 64);
+        RequireReports(handle, 2560, 1440, RESOLUTION_HD, "2560x1440 was not reported after a 2560x64 registration");
     } else if (mode == "3840x2160") {
         RequireReports(handle, 3840, 2160, RESOLUTION_ULTRA_HD, "3840x2160 was not reported before registration");
         Register(handle, allocation, 259, 137);

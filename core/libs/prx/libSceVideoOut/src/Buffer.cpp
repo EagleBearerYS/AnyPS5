@@ -23,6 +23,19 @@ static void reportRegisteredSize(const VideoOutConfig& cfg, std::uint32_t width,
     else std::fprintf(stderr, "[videoout] display buffers registered at %ux%u although ANYPS5_OUTPUT_RESOLUTION reports %ux%u; they are presented and scaled to the window as before\n", width, height, reported->width, reported->height);
 }
 
+static bool exceedsConfiguredOutput(const VideoOutConfig& cfg, std::uint32_t width, std::uint32_t height) {
+    const auto reported = ConfiguredVideoOutOutputResolution_nid_no_patch();
+    if (!reported || cfg.busType != VIDEO_OUT_BUS_TYPE_MAIN) return false;
+    if (width == 1920 && height == 1080) return false;
+    return width > reported->width || height > reported->height;
+}
+
+static void refuseUnknownResize(const char* function, const VideoOutConfig& cfg, std::uint32_t width, std::uint32_t height) {
+    if (!exceedsConfiguredOutput(cfg, width, height)) return;
+    const auto reported = *ConfiguredVideoOutOutputResolution_nid_no_patch();
+    throw std::runtime_error(std::string(function) + ": " + std::to_string(width) + "x" + std::to_string(height) + " display buffers while ANYPS5_OUTPUT_RESOLUTION reports " + std::to_string(reported.width) + "x" + std::to_string(reported.height) + " are not implemented here: the console's answer is not known");
+}
+
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group) {
     const auto& attribute = group.attribute;
     if (attribute.reserved0 != 0 || attribute.pad0 != 0 || attribute.reserved1[0] != 0 || attribute.reserved1[1] != 0 || attribute.reserved1[2] != 0) throw std::runtime_error("VideoOut: reserved buffer attribute bits are set");
@@ -157,6 +170,15 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
     }
     AgcDriverCheckGuestMemory_nid_postfix(attribute, sizeof(*attribute), alignof(VideoOutBufferAttribute2));
     AgcDriverCheckGuestMemory_nid_postfix(buffers, static_cast<std::size_t>(bufferNum) * sizeof(*buffers), alignof(VideoOutBuffers));
+    if (exceedsConfiguredOutput(*cfg, attribute->width, attribute->height)) {
+        static std::atomic<std::uint64_t> refusals{0};
+        const auto count = refusals.fetch_add(1) + 1;
+        if ((count & (count - 1)) == 0) {
+            const auto reported = *ConfiguredVideoOutOutputResolution_nid_no_patch();
+            std::fprintf(stderr, "[videoout] refused %ux%u display buffers with VIDEO_OUT_ERROR_INVALID_RESOLUTION (refusal %llu): ANYPS5_OUTPUT_RESOLUTION reports %ux%u, and that output takes 1920x1080 and buffers no larger than itself\n", attribute->width, attribute->height, static_cast<unsigned long long>(count), reported.width, reported.height);
+        }
+        return VIDEO_OUT_ERROR_INVALID_RESOLUTION;
+    }
     BufferAttributeGroup group{};
     group.attribute = *attribute;
     group.category = category;
@@ -199,6 +221,7 @@ int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void*
     if (attribute->tiling_mode != 1) {
         throw std::runtime_error(std::string(__func__) + ": PS4 tiled display buffers are not implemented");
     }
+    refuseUnknownResize(__func__, *cfg, attribute->width, attribute->height);
     BufferAttributeGroup group{};
     group.attribute.pixel_format = Ps5PixelFormat(attribute->pixel_format);
     group.attribute.tiling_mode = attribute->tiling_mode;
@@ -236,6 +259,7 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, 
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
     }
     AgcDriverCheckGuestMemory_nid_postfix(attribute, sizeof(*attribute), alignof(VideoOutBufferAttribute2));
+    refuseUnknownResize(__func__, *cfg, attribute->width, attribute->height);
     auto group = cfg->groups[setIndex];
     group.attribute = *attribute;
     for (int i = 0; i < VIDEO_OUT_BUFFER_NUM_MAX; ++i) {
