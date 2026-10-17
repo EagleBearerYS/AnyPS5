@@ -98,6 +98,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         drawKey = drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), &shapeKey, traceDrawCache() ? &drawKeyComponents : nullptr, aliasFirst ? relocation.get() : nullptr, aliasFirst ? &drawAlias : nullptr);
         std::unique_lock cacheLock(drawCacheMutex);
         ++drawEntryCounters.lookups;
+        ++drawLookupSerial;
         ++drawEntryCounters.registerKeyLookups;
         if (profile) drawEntryCounters.keyUs += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - keyStart).count();
         const auto found = drawCache.find(drawKey);
@@ -418,7 +419,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         drawEntryCounters.dataVerified += dataVerified;
     }
     const bool keepCpuIndirect = drawParameters.indirect && indirectCpu && cacheCpuIndirect() && !graphics.stages.tessellation && !graphics.stages.mesh && !graphics.rectList;
-    cacheDrawStages(stageEntries, drawHit, drawParameters, keepCpuIndirect ? std::nullopt : indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey);
+    cacheDrawStages(stageEntries, drawHit, drawParameters, keepCpuIndirect ? std::nullopt : indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey, keepCpuIndirect);
     timing.Mark("shader_compile_and_link");
 
     for (const auto& reads : decodeReads) {
