@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <future>
 #include <initializer_list>
 #include <iostream>
@@ -96,6 +97,10 @@ constexpr std::array<std::uint8_t, 4> WrittenTexel{0x55u, 0x66u, 0x77u, 0x88u};
 
 alignas(256) constexpr std::array<std::uint32_t, 18> ComputeCode{
     0x7e0002f0u, 0x7e0202f0u, 0xf4080200u, 0xfa000000u, 0xf4080300u, 0xfa000010u, 0xbf8cc07fu, 0x8f108502u, 0xf42c0504u, 0x20000000u,
+    0xbf8cc07fu, 0xf09c0f08u, 0x00650000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 18> OtherComputeCode{
+    0x7e0002f2u, 0x7e0202f0u, 0xf4080200u, 0xfa000000u, 0xf4080300u, 0xfa000010u, 0xbf8cc07fu, 0x8f108502u, 0xf42c0504u, 0x20000000u,
     0xbf8cc07fu, 0xf09c0f08u, 0x00650000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u, 0xbf810000u,
 };
 alignas(256) constexpr std::array<std::uint32_t, 18> ExecClearCode{
@@ -335,6 +340,7 @@ struct Header {
 };
 
 alignas(8) Header ComputeHeader{};
+alignas(8) Header OtherComputeHeader{};
 alignas(8) Header ExecClearHeader{};
 alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
@@ -508,11 +514,15 @@ struct Harness {
 
 constexpr std::array<std::uint32_t, 10> ComputeKeys{3u, 1764u, 37u, 54u, 1495u, 72u, 1657u, 1600u, 33u, 1810u};
 
-void RunComputeKeys(const Harness& harness, std::span<const std::uint32_t> keys) {
+void RunComputeKeys(const Harness& harness, std::span<const std::uint32_t> keys, const std::uint32_t* code = ComputeCode.data()) {
     for (std::size_t index = 0; index < keys.size(); ++index) Outputs[index].fill(-1.0f);
     std::vector<std::uint32_t> words;
-    for (std::size_t index = 0; index < keys.size(); ++index) Dispatch(words, harness.block, ComputeCode.data(), keys[index], Outputs[index]);
+    for (std::size_t index = 0; index < keys.size(); ++index) Dispatch(words, harness.block, code, keys[index], Outputs[index]);
     SubmitCompute(words);
+}
+
+void RequireComputeTexels(std::span<const std::uint32_t> keys, const std::string& what) {
+    for (std::size_t index = 0; index < keys.size(); ++index) RequireTexel(Outputs[index], TexelOf(TextureOf(keys[index])).value, what + ", key " + std::to_string(keys[index]));
 }
 
 void ComputeTable(const Harness& harness) {
@@ -861,6 +871,55 @@ void FallsBackFromWarmCache(const Harness& harness) {
     }
 }
 
+constexpr std::array<std::uint32_t, 2> FillingKeys{32u, 33u};
+constexpr std::array<std::uint32_t, 3> MeetingKeys{34u, 35u, 36u};
+
+void Captured(std::string& errors, const std::function<void()>& submit) {
+    StderrCapture capture;
+    try {
+        submit();
+    } catch (...) {
+        errors += capture.Finish();
+        throw;
+    }
+    errors += capture.Finish();
+}
+
+void ComputeMeetsFullHeap(const Harness& harness) {
+    Require(harness.device, "(l) needs the device image path");
+    std::string errors;
+    auto before = Read();
+    Captured(errors, [&] { RunComputeKeys(harness, FillingKeys); });
+    Captured(errors, [&] { RunComputeKeys(harness, FillingKeys); });
+    auto after = Read();
+    RequireComputeTexels(FillingKeys, "(l) the program that fills the heap");
+    Require(after.device.inserted == before.device.inserted + FillingKeys.size() && after.device.heapFull == before.device.heapFull && after.device.fallbacks == before.device.fallbacks, "(l) the first program's two textures did not take the heap's two slots" + Describe(before, after));
+    std::printf("(l) a compute program fills the heap's two slots: the texels%s\n", Describe(before, after).c_str());
+    before = after;
+    Captured(errors, [&] { RunComputeKeys(harness, MeetingKeys, OtherComputeCode.data()); });
+    after = Read();
+    RequireMisses(before, after, MeetingKeys.size(), "(l) a second compute program, first batch");
+    const auto missed = after;
+    Captured(errors, [&] { RunComputeKeys(harness, MeetingKeys, OtherComputeCode.data()); });
+    after = Read();
+    Require(after.device.inserted == missed.device.inserted, "(l) a compute program meeting the full heap took a slot" + Describe(missed, after));
+    Require(after.device.heapFull >= missed.device.heapFull + 1u && after.device.fallbacks == missed.device.fallbacks + 1u, "(l) a compute program meeting the full heap was not sent back to the CPU table path (heap full " + std::to_string(after.device.heapFull - missed.device.heapFull) + ", fallbacks " + std::to_string(after.device.fallbacks - missed.device.fallbacks) + ")");
+    std::printf("(l) a second compute program meets the full heap: %llu keys without a slot, %llu fallback, no slot taken%s\n", static_cast<unsigned long long>(after.device.heapFull - missed.device.heapFull), static_cast<unsigned long long>(after.device.fallbacks - missed.device.fallbacks), Describe(missed, after).c_str());
+    before = after;
+    Captured(errors, [&] { RunComputeKeys(harness, MeetingKeys, OtherComputeCode.data()); });
+    after = Read();
+    RequireCpuTable(before, after, "(l) the second program after its fallback");
+    RequireComputeTexels(MeetingKeys, "(l) the second program after its fallback");
+    std::printf("(l) the second program after its fallback: the texels through the CPU table%s\n", Describe(before, after).c_str());
+    before = after;
+    Captured(errors, [&] { RunComputeKeys(harness, FillingKeys); });
+    after = Read();
+    RequireHits(before, after, "(l) the first program after the second fell back");
+    RequireComputeTexels(FillingKeys, "(l) the first program after the second fell back");
+    std::printf("(l) the first program still reads the device table: the texels%s\n", Describe(before, after).c_str());
+    Require(errors.find("heap is full") == std::string::npos, "(l) the full heap raised an error");
+}
+
 AgcDriver::Graphics::ColorTargetLayout LargeLayout() {
     return AgcDriver::Graphics::ColorTargetLayout(LargeSide, LargeSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
 }
@@ -1127,6 +1186,7 @@ int main(int argc, char** argv) {
             Harness harness{block, requested || mode == "--expect-device-path"};
             std::printf("device image path %s, %s\n", requested ? "on" : "off", harness.device ? "expecting the device table" : "expecting the CPU table");
             Registered(ComputeHeader, ComputeCode.data(), sizeof(ComputeCode), 0);
+            Registered(OtherComputeHeader, OtherComputeCode.data(), sizeof(OtherComputeCode), 0);
             Registered(ExecClearHeader, ExecClearCode.data(), sizeof(ExecClearCode), 0);
             Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
             Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
@@ -1136,6 +1196,7 @@ int main(int argc, char** argv) {
             if (mode == "--heap-cap") {
                 if (parts.find('f') != std::string::npos) FallsBackFromWarmCache(harness);
                 if (parts.find('j') != std::string::npos) Deduplicates(harness, true);
+                if (parts.find('l') != std::string::npos) ComputeMeetsFullHeap(harness);
             } else {
                 if (parts.find('a') != std::string::npos) ComputeTable(harness);
                 if (parts.find('b') != std::string::npos) Draws(harness);
