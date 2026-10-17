@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <atomic>
@@ -22,25 +23,47 @@ std::atomic<std::uint64_t>& heapStages() {
     return count;
 }
 
+const char* resultDifference(const ShaderRecompiler::RecompileResult& left, const ShaderRecompiler::RecompileResult& right, std::size_t& index) {
+    index = 0;
+    if (left.PipelineVariantId() != right.PipelineVariantId()) return "variant";
+    if (left.pushConstants != right.pushConstants) return "push constants";
+    if (left.bindings.size() != right.bindings.size()) return "binding count";
+    if (left.specialization.size() != right.specialization.size()) return "specialization count";
+    for (index = 0; index < left.bindings.size(); ++index) {
+        const auto& a = left.bindings[index];
+        const auto& b = right.bindings[index];
+        if (a.role != b.role || a.kind != b.kind || a.binding != b.binding || a.count != b.count) return "binding layout";
+        if (a.guestDescriptor != b.guestDescriptor) return "binding words";
+    }
+    for (index = 0; index < left.specialization.size(); ++index) {
+        if (left.specialization[index].id != right.specialization[index].id || left.specialization[index].value != right.specialization[index].value) return "specialization";
+    }
+    index = 0;
+    if (left.vertexAttributes.size() != right.vertexAttributes.size()) return "attribute count";
+    for (index = 0; index < left.vertexAttributes.size(); ++index) {
+        const auto& a = left.vertexAttributes[index];
+        const auto& b = right.vertexAttributes[index];
+        if (a.location != b.location || a.components != b.components || a.resource.fields != b.resource.fields || a.fetchIndex != b.fetchIndex || a.formatComponents != b.formatComponents) return "attribute";
+    }
+    return nullptr;
+}
+
 bool sameResult(const ShaderRecompiler::RecompileResult& left, const ShaderRecompiler::RecompileResult& right) {
-    bool equal = left.PipelineVariantId() == right.PipelineVariantId() && left.pushConstants == right.pushConstants && left.bindings.size() == right.bindings.size() && left.specialization.size() == right.specialization.size();
-    for (std::size_t binding = 0; equal && binding < left.bindings.size(); ++binding) {
-        const auto& a = left.bindings[binding];
-        const auto& b = right.bindings[binding];
-        equal = a.role == b.role && a.kind == b.kind && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor;
-    }
-    for (std::size_t constant = 0; equal && constant < left.specialization.size(); ++constant) equal = left.specialization[constant].id == right.specialization[constant].id && left.specialization[constant].value == right.specialization[constant].value;
-    equal = equal && left.vertexAttributes.size() == right.vertexAttributes.size();
-    for (std::size_t attribute = 0; equal && attribute < left.vertexAttributes.size(); ++attribute) {
-        const auto& a = left.vertexAttributes[attribute];
-        const auto& b = right.vertexAttributes[attribute];
-        equal = a.location == b.location && a.components == b.components && a.resource.fields == b.resource.fields && a.fetchIndex == b.fetchIndex && a.formatComponents == b.formatComponents;
-    }
-    return equal;
+    std::size_t index = 0;
+    return resultDifference(left, right, index) == nullptr;
+}
+
+void reportHeapMismatch(const char* check, const char* what, const ShaderRecompiler::RecompileResult& result, std::size_t index) {
+    static std::atomic<std::uint32_t> printed{0};
+    if (printed.fetch_add(1, std::memory_order_relaxed) >= 64u) return;
+    const int role = index < result.bindings.size() ? static_cast<int>(result.bindings[index].role) : -1;
+    const int kind = index < result.bindings.size() ? static_cast<int>(result.bindings[index].kind) : -1;
+    std::fprintf(stderr, "[heap-verify] %s: %s differ at %zu (role %d kind %d, template %llu, variant 0x%llx)\n", check, what, index, role, kind, static_cast<unsigned long long>(result.heapTemplateId), static_cast<unsigned long long>(result.PipelineVariantId()));
+    std::fflush(stderr);
 }
 
 struct VerifyCounts {
-    std::atomic<std::uint64_t> verified{0}, differ{0};
+    std::atomic<std::uint64_t> verified{0}, differ{0}, notComparable{0}, accessor{0}, accessorDiffer{0}, ring{0}, ringDiffer{0};
 };
 
 VerifyCounts& verifyCounts() {
@@ -49,7 +72,8 @@ VerifyCounts& verifyCounts() {
     std::call_once(registered, [] {
         std::atexit([] {
             auto& c = verifyCounts();
-            if (c.verified.load() != 0u) std::fprintf(stderr, "[heap-verify] %llu heap stages compared with a full capture, %llu differed\n", static_cast<unsigned long long>(c.verified.load()), static_cast<unsigned long long>(c.differ.load()));
+            if (c.verified.load() != 0u || c.notComparable.load() != 0u) std::fprintf(stderr, "[heap-verify] %llu heap stages compared with a full capture, %llu differed, %llu not comparable (the full capture could not read every descriptor)\n", static_cast<unsigned long long>(c.verified.load()), static_cast<unsigned long long>(c.differ.load()), static_cast<unsigned long long>(c.notComparable.load()));
+            if (c.accessor.load() != 0u || c.ring.load() != 0u) std::fprintf(stderr, "[heap-verify] %llu accessor checks, %llu differed; %llu ring hits checked, %llu differed\n", static_cast<unsigned long long>(c.accessor.load()), static_cast<unsigned long long>(c.accessorDiffer.load()), static_cast<unsigned long long>(c.ring.load()), static_cast<unsigned long long>(c.ringDiffer.load()));
         });
     });
     return counts;
@@ -289,10 +313,55 @@ void NoteHeapDirect() {
     heapStages().fetch_add(1, std::memory_order_relaxed);
 }
 
-void NoteHeapDirectVerify(const ShaderRecompiler::RecompileResult& direct, const ShaderRecompiler::RecompileResult& expected) {
+void NoteHeapDirectVerify(const ShaderRecompiler::RecompileResult& direct, const ShaderRecompiler::RecompileResult& expected, const ShaderRecompiler::ResourceCapture* expectedCapture) {
     auto& counts = verifyCounts();
+    if (expectedCapture != nullptr) {
+        const auto partial = [](const std::vector<ShaderRecompiler::DescriptorValue>& values) {
+            return std::ranges::any_of(values, [](const ShaderRecompiler::DescriptorValue& value) { return value.availableDwordMask != static_cast<std::uint8_t>((1u << value.dwordCount) - 1u); });
+        };
+        const auto& snapshot = expectedCapture->snapshot;
+        if (partial(snapshot.buffers) || partial(snapshot.images) || partial(snapshot.samplers)) {
+            counts.notComparable.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
     counts.verified.fetch_add(1, std::memory_order_relaxed);
-    if (!sameResult(direct, expected)) counts.differ.fetch_add(1, std::memory_order_relaxed);
+    std::size_t index = 0;
+    if (const auto* what = resultDifference(direct, expected, index)) {
+        counts.differ.fetch_add(1, std::memory_order_relaxed);
+        reportHeapMismatch("heap stage vs full capture", what, expected, index);
+    }
+}
+
+void VerifyHeapAccessor(const Graphics::CompiledShader& stage) {
+    if (stage.heap == nullptr || stage.program == nullptr) return;
+    const auto patched = PatchedHeapResult(*stage.program, *stage.heap);
+    auto& counts = verifyCounts();
+    counts.accessor.fetch_add(1, std::memory_order_relaxed);
+    for (std::size_t index = 0; index < stage.program->bindings.size(); ++index) {
+        if (Graphics::DrawGuestWords(stage, stage.program->bindings[index]) == patched->bindings[index].guestDescriptor) continue;
+        counts.accessorDiffer.fetch_add(1, std::memory_order_relaxed);
+        reportHeapMismatch("accessor vs patched result", "binding words", *patched, index);
+    }
+    const auto& attributes = Graphics::DrawVertexAttributes(stage);
+    bool sameAttributes = attributes.size() == patched->vertexAttributes.size();
+    for (std::size_t index = 0; sameAttributes && index < attributes.size(); ++index) sameAttributes = attributes[index].resource.fields == patched->vertexAttributes[index].resource.fields && attributes[index].fetchIndex == patched->vertexAttributes[index].fetchIndex;
+    if (!sameAttributes) {
+        counts.accessorDiffer.fetch_add(1, std::memory_order_relaxed);
+        reportHeapMismatch("accessor vs patched result", "vertex attributes", *patched, 0);
+    }
+}
+
+void VerifyRingWords(const ShaderRecompiler::RecompileResult& kept, const ShaderRecompiler::HeapStageWords& ring, const ShaderRecompiler::RecompileResult& fresh, const ShaderRecompiler::HeapStageWords* freshWords) {
+    const auto reused = PatchedHeapResult(kept, ring);
+    const auto expected = freshWords != nullptr ? PatchedHeapResult(fresh, *freshWords) : std::make_shared<const ShaderRecompiler::RecompileResult>(fresh);
+    auto& counts = verifyCounts();
+    counts.ring.fetch_add(1, std::memory_order_relaxed);
+    std::size_t index = 0;
+    if (const auto* what = resultDifference(*reused, *expected, index)) {
+        counts.ringDiffer.fetch_add(1, std::memory_order_relaxed);
+        reportHeapMismatch("ring hit vs fresh build", what, *expected, index);
+    }
 }
 
 }
