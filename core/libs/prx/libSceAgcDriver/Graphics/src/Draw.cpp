@@ -1942,7 +1942,7 @@ void censusLine(const Context& context, std::uint64_t draws) {
                  static_cast<long long>(ShaderResources::LiveObjects()), SharedResourceCache().Size());
     if (auto* recorder = Recorder::Active()) {
         const auto kept = recorder->KeptCensus();
-        std::fprintf(stderr, "[bf055r] draws=%llu openKept=%zu inFlight=%zu inFlightKept=%zu holdKept=%zu finishing=%zu unsignaled=%zu front=%llu submitted=%d signaled=%d newest=%llu completed=%llu frontAgeMs=%.0f\n", static_cast<unsigned long long>(draws), kept.openKept, kept.inFlight, kept.inFlightKept, kept.holdKept, kept.finishing, kept.unsignaled, static_cast<unsigned long long>(kept.frontSerial), kept.frontSubmitted ? 1 : 0, kept.frontSignaled ? 1 : 0, static_cast<unsigned long long>(kept.newestSerial), static_cast<unsigned long long>(kept.completedSerial), kept.frontAgeMs);
+        std::fprintf(stderr, "[bf055r] draws=%llu openKept=%zu inFlight=%zu inFlightKept=%zu holdKept=%zu finishing=%zu unsignaled=%zu front=%llu submitted=%d signaled=%d newest=%llu completed=%llu frontAgeMs=%.0f openKeptBytes=%zu inFlightKeptBytes=%zu\n", static_cast<unsigned long long>(draws), kept.openKept, kept.inFlight, kept.inFlightKept, kept.holdKept, kept.finishing, kept.unsignaled, static_cast<unsigned long long>(kept.frontSerial), kept.frontSubmitted ? 1 : 0, kept.frontSignaled ? 1 : 0, static_cast<unsigned long long>(kept.newestSerial), static_cast<unsigned long long>(kept.completedSerial), kept.frontAgeMs, kept.openKeptBytes, kept.inFlightKeptBytes);
     }
 }
 }
