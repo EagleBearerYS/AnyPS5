@@ -1587,16 +1587,16 @@ std::vector<ReusedTable>& ReusedTables() {
     return ShaderRecompiler::ThreadOwned(slot);
 }
 
-bool SameTable(const ReusedTable& table, VkDevice device, const ShaderRecompiler::DescriptorBinding& binding) {
-    return table.device == device && table.words == binding.guestDescriptor && table.shapes == binding.imageShapes && table.depthCompare == binding.imageDepthCompare;
+bool SameTable(const ReusedTable& table, VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> words) {
+    return table.device == device && std::ranges::equal(table.words, words) && table.shapes == binding.imageShapes && table.depthCompare == binding.imageDepthCompare;
 }
 
-ReusedTable* FindReusedTable(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, const TableState& state) {
+ReusedTable* FindReusedTable(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> words, const TableState& state) {
     if (state.epoch == 0) return nullptr;
     auto& tables = ReusedTables();
     std::erase_if(tables, [&](const ReusedTable& table) { return table.state != state; });
     for (auto& table : tables) {
-        if (SameTable(table, device, binding)) return &table;
+        if (SameTable(table, device, binding, words)) return &table;
     }
     return nullptr;
 }
@@ -1629,10 +1629,10 @@ bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<T
     return true;
 }
 
-void RememberTable(ReusedTable&& table, const ShaderRecompiler::DescriptorBinding& binding) {
+void RememberTable(ReusedTable&& table, const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> words) {
     auto& tables = ReusedTables();
-    std::erase_if(tables, [&](const ReusedTable& entry) { return SameTable(entry, table.device, binding); });
-    table.words = binding.guestDescriptor;
+    std::erase_if(tables, [&](const ReusedTable& entry) { return SameTable(entry, table.device, binding, words); });
+    table.words.assign(words.begin(), words.end());
     table.shapes = binding.imageShapes;
     table.depthCompare = binding.imageDepthCompare;
     tables.insert(tables.begin(), std::move(table));
@@ -1747,18 +1747,21 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     Require(table.images == nullptr || table.images->count == binding.count, "a stage's image tables disagree on their elements");
                     (storage ? table.storage : table.sampled) = true;
                     table.images = &binding;
+                    table.imageWords = DrawGuestWords(shader, binding);
+                    Require(table.imageWords.size() == static_cast<std::size_t>(binding.count) * 8u, "a draw's image table words differ in size from its binding");
                     table.firstSampler = firstSampler;
                     continue;
                 }
                 const bool sharedHeapArray = heapShader && (binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers || (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::SampledImage));
                 Require(occupied.insert(binding.binding).second || sharedHeapArray, "duplicate shader binding");
                 if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) {
-                    addSamplerTable(binding, flags, tableStage(shader));
+                    addSamplerTable(binding, DrawGuestWords(shader, binding), flags, tableStage(shader));
                     continue;
                 }
                 if (binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap) {
-                    Require(binding.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && binding.count == 1 && binding.guestDescriptor.size() >= ShaderRecompiler::ImageTableAbi::HeaderWords && !binding.readOnly && binding.guestDescriptor[ShaderRecompiler::ImageTableAbi::HeaderVersion] == ShaderRecompiler::ImageTableAbi::Version, "image table map binding is malformed");
-                    const auto size = binding.guestDescriptor.size() * sizeof(std::uint32_t);
+                    const auto& mapWords = DrawGuestWords(shader, binding);
+                    Require(binding.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && binding.count == 1 && mapWords.size() >= ShaderRecompiler::ImageTableAbi::HeaderWords && !binding.readOnly && mapWords[ShaderRecompiler::ImageTableAbi::HeaderVersion] == ShaderRecompiler::ImageTableAbi::Version, "image table map binding is malformed");
+                    const auto size = mapWords.size() * sizeof(std::uint32_t);
                     Require(size <= context.limits.maxStorageBufferRange, "image table map exceeds the storage buffer range limit");
                     stageStorageBuffers += 1;
                     stageResources += 1;
@@ -1766,7 +1769,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     requireStageLimits();
                     auto& table = tableStage(shader);
                     Require(table.mapAllocation == std::numeric_limits<std::size_t>::max(), "a stage binds two image table maps");
-                    table.map = binding.guestDescriptor;
+                    table.map = mapWords;
                     allocations.push_back({0, size, false, std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT), ShaderRecompiler::DescriptorRole::ImageTableMap});
                     table.mapAllocation = allocations.size() - 1u;
                     bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {allocations.size() - 1u}});
@@ -3090,11 +3093,13 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     return false;
 }
 
-const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage) {
+const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage, std::span<const std::uint32_t>& words) {
     for (const auto& shader : shaders) {
         if (shader.stage != stage || shader.program == nullptr) continue;
         for (const auto& binding : shader.program->bindings) {
-            if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) return &binding;
+            if (binding.role != ShaderRecompiler::DescriptorRole::ImageTable) continue;
+            words = DrawGuestWords(shader, binding);
+            return &binding;
         }
     }
     return nullptr;
@@ -3209,10 +3214,11 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
         for (const auto& table : tableStages) {
             if (table.elementTextures.empty()) continue;
-            const auto* images = tableImages(shaders, table.stage);
-            if (images == nullptr || images->count != table.elementTextures.size()) return false;
+            std::span<const std::uint32_t> imageWords;
+            const auto* images = tableImages(shaders, table.stage, imageWords);
+            if (images == nullptr || images->count != table.elementTextures.size() || imageWords.size() != static_cast<std::size_t>(images->count) * 8u) return false;
             std::vector<std::shared_ptr<Texture>> cached;
-            if (auto* reused = FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+            if (auto* reused = FindReusedTable(context.device, *images, imageWords, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
                 auto next = cached.begin();
                 bool same = true;
                 for (std::uint32_t element = 0; same && element < images->count; ++element) {
@@ -3233,7 +3239,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             }
             for (std::uint32_t element = 0; element < images->count; ++element) {
                 if (table.elementTextures[element] == std::numeric_limits<std::size_t>::max()) continue;
-                const auto words = std::span<const std::uint32_t>(images->guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                const auto words = imageWords.subspan(static_cast<std::size_t>(element) * 8u, 8u);
                 const auto resource = DecodeTextureResource(words);
                 if (textureIndex >= textures.size() || table.elementTextures[element] != textureIndex || cachedTexture(context, words, resource, ViewComponents(resource), 0, images->imageDepthCompare.at(element)) != textures[textureIndex]) return false;
                 ++textureIndex;
@@ -4585,20 +4591,20 @@ std::uint32_t ShaderResources::rejectTableElement(TableStage& table, std::span<c
     return ShaderRecompiler::ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(table.poison.size() - 1u));
 }
 
-void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags, TableStage& table) {
+void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> guest, VkShaderStageFlags flags, TableStage& table) {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
-    Require(binding.kind == ShaderRecompiler::DescriptorKind::Sampler && binding.guestDescriptor.size() == static_cast<std::size_t>(binding.count) * 4u && binding.samplerDepthCompare.size() == binding.count && binding.count % Abi::SamplerEntryElements == 0u, "sampler table binding is malformed");
+    Require(binding.kind == ShaderRecompiler::DescriptorKind::Sampler && guest.size() == static_cast<std::size_t>(binding.count) * 4u && binding.samplerDepthCompare.size() == binding.count && binding.count % Abi::SamplerEntryElements == 0u, "sampler table binding is malformed");
     Require(context.samplerTableCapacity != 0, "sampler tables need runtimeDescriptorArray and descriptorBindingPartiallyBound, which the device lacks");
     Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_SAMPLER, context.samplerTableCapacity, flags, nullptr}, {}, {}, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     static const bool noSamplerCache = std::getenv("APS5_NO_SAMPLER_CACHE") != nullptr;
     for (std::uint32_t entry = 0; entry < binding.count / Abi::SamplerEntryElements; ++entry) {
         const auto first = entry * Abi::SamplerEntryElements;
-        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(first) * 4u, 4u);
+        const auto words = guest.subspan(static_cast<std::size_t>(first) * 4u, 4u);
         std::string rejected;
         if (first + Abi::SamplerEntryElements > context.samplerTableCapacity) rejected = "the sampler table exceeds the device's capacity of " + std::to_string(context.samplerTableCapacity) + " samplers";
         for (std::uint32_t element = first; rejected.empty() && element < first + Abi::SamplerEntryElements; ++element) {
             try {
-                const auto elementWords = std::span<const std::uint32_t, 4>(binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u, 4u);
+                const auto elementWords = std::span<const std::uint32_t, 4>(guest.data() + static_cast<std::size_t>(element) * 4u, 4u);
                 auto resource = DecodeSamplerResource(elementWords);
                 resource.compareEnable = binding.samplerDepthCompare.at(element);
                 Sampler::Validate(context, resource);
@@ -4616,7 +4622,7 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
             continue;
         }
         for (std::uint32_t element = first; element < first + Abi::SamplerEntryElements; ++element) {
-            const auto elementWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4u, 4u);
+            const auto elementWords = guest.subspan(static_cast<std::size_t>(element) * 4u, 4u);
             const bool compareEnable = binding.samplerDepthCompare.at(element);
             if (context.samplerCache != nullptr && !noSamplerCache) {
                 samplers.push_back(context.samplerCache->Get(context, elementWords, compareEnable, false));
@@ -4677,10 +4683,10 @@ void ShaderResources::resolveImageTables() {
         const auto state = CurrentTableState();
         std::vector<std::shared_ptr<Texture>> cached;
         const bool storageTable = std::find(binding.imageWritten.begin(), binding.imageWritten.end(), true) != binding.imageWritten.end();
-        if (auto* reused = storageTable ? nullptr : FindReusedTable(context.device, binding, state); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+        if (auto* reused = storageTable ? nullptr : FindReusedTable(context.device, binding, table.imageWords, state); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
             auto next = cached.begin();
             for (std::uint32_t element = 0; element < binding.count; ++element) {
-                const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                const auto words = table.imageWords.subspan(static_cast<std::size_t>(element) * 8u, 8u);
                 const auto& entry = reused->elements[element];
                 if (static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) {
                     if (!entry.rejected) ++next;
@@ -4698,7 +4704,7 @@ void ShaderResources::resolveImageTables() {
         ReusedTable fresh;
         bool reusable = state.epoch != 0;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+            const auto words = table.imageWords.subspan(static_cast<std::size_t>(element) * 8u, 8u);
             const auto absolute = static_cast<std::uint64_t>(table.elementBase) + element;
             if (absolute >= context.imageTableCapacity) {
                 table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
@@ -4791,10 +4797,11 @@ void ShaderResources::resolveImageTables() {
                 fresh.device = context.device;
                 fresh.state = state;
                 fresh.pendingSerial = serial;
-                RememberTable(std::move(fresh), binding);
+                RememberTable(std::move(fresh), binding, table.imageWords);
             }
         }
     }
+    for (auto& table : tableStages) table.imageWords = {};
     reportTextureCounters();
 }
 
