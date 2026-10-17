@@ -34,6 +34,7 @@ static constexpr std::size_t TILE_BLOCK_BYTES = 65536;
 static constexpr int INVALID_RESOLUTION = static_cast<int>(0x80290005u);
 static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001Eu);
 static constexpr std::uint32_t RESOLUTION_DETECTION = 0x4u;
+static constexpr std::uint32_t UNDECLARED_ATTRIBUTE3 = 0x8460440u;
 
 struct Size {
     std::uint32_t width;
@@ -191,13 +192,14 @@ static void AttributeChange(const Expectation& expect) {
 }
 
 int main(int argc, char** argv) {
-    VideoOutTestEnvironment environment(RESOLUTION_DETECTION);
     const std::string_view mode = argc >= 2 ? argv[1] : "";
+    VideoOutTestEnvironment environment(mode.find("undeclared") == std::string_view::npos ? RESOLUTION_DETECTION : UNDECLARED_ATTRIBUTE3);
     const bool check = !(argc == 3 && std::string_view(argv[2]) == "print");
     Expectation expect{check, FullHd, true};
     if (mode == "unset") Require(std::getenv("ANYPS5_OUTPUT_RESOLUTION") == nullptr, "ANYPS5_OUTPUT_RESOLUTION is set for the unset case");
     else if (mode == "1280x720") expect = {check, {1280, 720}, false};
     else if (mode == "1920x1080") expect = {check, FullHd, false};
+    else if (mode == "undeclared_1920x1080") expect = {check, FullHd, true};
     else if (mode == "2560x1440") expect = {check, {2560, 1440}, false};
     else if (mode == "3840x2160") expect = {check, UltraHd, true};
     else Require(false, "unknown test mode");

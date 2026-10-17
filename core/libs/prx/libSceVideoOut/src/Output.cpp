@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -19,6 +20,7 @@
 
 static constexpr std::uint32_t VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD = 0x00FF0000;
 static constexpr std::size_t VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD = 3;
+static constexpr std::uint32_t VIDEO_OUT_ATTRIBUTE3_RESOLUTION_DETECTION = 0x4u;
 
 std::optional<VideoOutOutputResolution> ParseVideoOutOutputResolution_nid_no_patch(const char* value) {
     if (value == nullptr || *value == '\0') return std::nullopt;
@@ -31,7 +33,12 @@ std::optional<VideoOutOutputResolution> ParseVideoOutOutputResolution_nid_no_pat
 }
 
 std::optional<VideoOutOutputResolution> ConfiguredVideoOutOutputResolution_nid_no_patch() {
-    static const auto configured = ParseVideoOutOutputResolution_nid_no_patch(std::getenv("ANYPS5_OUTPUT_RESOLUTION"));
+    static const auto configured = [] {
+        const auto parsed = ParseVideoOutOutputResolution_nid_no_patch(std::getenv("ANYPS5_OUTPUT_RESOLUTION"));
+        if (!parsed || (GetAppAttribute3_nid_no_patch() & VIDEO_OUT_ATTRIBUTE3_RESOLUTION_DETECTION) != 0) return parsed;
+        std::fprintf(stderr, "[videoout] ANYPS5_OUTPUT_RESOLUTION=%ux%u does not apply: the title's param.json attribute3 does not set bit 2 (0x4), which declares resolution detection, so its output is reported and its display buffers are taken as without the setting\n", parsed->width, parsed->height);
+        return std::optional<VideoOutOutputResolution>{};
+    }();
     return configured;
 }
 
