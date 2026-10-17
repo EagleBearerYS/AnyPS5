@@ -1,6 +1,6 @@
-BUSY PRM-032 (PR 8/8: #5967; #6443 broke guest_memory_lifetime, fix on followup/6443-main-e1ac3300d3; the other 6 clean)
-since: 2026-10-17T05:39:46Z
-last: BF-044 done, results/cloud-1/BF-044.md: 3a1faef0a5 mirror 1208/1279 (9 failed: 5 IPv6, 1 root-only, 3 old-base pthread segfaults that pass on the merge), reuse tests 20/20 each, reuse-off skip as expected, merge with main 2083bc700f clean and ^agc 636/636; before that BF-043
+READY
+since: 2026-10-17T05:43:45Z
+last: PRM-032 done, results/cloud-1/PRM-032.md: 8 PRs on main e1ac3300d3, 7 clean; #6443 breaks guest_memory_lifetime (16-byte thread_local + wild TLS layout, dlopen), fix pushed on followup/6443-main-e1ac3300d3 1af0fa3e4c; before that BF-044, BF-043
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
