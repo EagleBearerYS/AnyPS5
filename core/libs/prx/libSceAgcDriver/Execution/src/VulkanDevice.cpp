@@ -3257,7 +3257,6 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             if (drawn) {
                 state->presentation->Bind(slotIndex, resident->Image(), width, height, display->pixelFormat, whiteNits, residentLayer);
                 state->presentation->RecordStage(commands, slotIndex, stage, state->surfaceFormat, state->surfaceColorSpace, stageExtent, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                state->upscaler->RecordStageWritten(commands, slotIndex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
             } else {
                 const AspectFitRect whole{0, 0, stageExtent.width, stageExtent.height};
                 state->upscaler->RecordStageTransferDestination(commands, slotIndex);

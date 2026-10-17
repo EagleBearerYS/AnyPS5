@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentationUpscaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/FsrEasuFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FsrRcasFrag_spv.h"
@@ -254,18 +255,9 @@ const PresentationUpscaler::Target& PresentationUpscaler::target(VkFormat format
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &reference;
-        VkPipelineStageFlags afterStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-        VkAccessFlags afterAccess = 0;
-        if (finalLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-            afterStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-            afterAccess = VK_ACCESS_SHADER_READ_BIT;
-        } else if (finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
-            afterStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-            afterAccess = VK_ACCESS_TRANSFER_READ_BIT;
-        }
         const VkSubpassDependency dependencies[2] = {
             {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0},
-            {0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, afterStage, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, afterAccess, 0},
+            PresentationPass::ExitDependency(finalLayout),
         };
         VkRenderPassCreateInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
         renderPassInfo.attachmentCount = 1;

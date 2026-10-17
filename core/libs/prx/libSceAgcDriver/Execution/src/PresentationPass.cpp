@@ -121,6 +121,18 @@ VkExtent2D PresentationPass::DumpExtent(std::uint32_t width, std::uint32_t heigh
     return {(width + stride - 1) / stride, (height + stride - 1) / stride};
 }
 
+VkSubpassDependency PresentationPass::ExitDependency(VkImageLayout finalLayout) {
+    VkSubpassDependency dependency{0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0, 0};
+    if (finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        dependency.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dependency.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    } else if (finalLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        dependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    }
+    return dependency;
+}
+
 void PresentationPass::Release(std::size_t index) noexcept {
     if (index >= slots.size()) return;
     auto& slot = slots[index];
@@ -183,10 +195,9 @@ const PresentationPass::Target& PresentationPass::target(VkFormat format, VkImag
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &reference;
-        const bool transfer = finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         const VkSubpassDependency dependencies[2] = {
             {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0},
-            {0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, transfer ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, transfer ? VK_ACCESS_TRANSFER_READ_BIT : VkAccessFlags{0}, 0},
+            ExitDependency(finalLayout),
         };
         VkRenderPassCreateInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
         renderPassInfo.attachmentCount = 1;

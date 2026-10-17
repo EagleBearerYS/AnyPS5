@@ -31,6 +31,7 @@ public:
     void Release(std::size_t slot) noexcept;
     static bool TenBitFormat(VkFormat format);
     static VkExtent2D DumpExtent(std::uint32_t width, std::uint32_t height, std::uint32_t stride);
+    static VkSubpassDependency ExitDependency(VkImageLayout finalLayout);
 
 private:
     struct Target {

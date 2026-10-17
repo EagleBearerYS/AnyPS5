@@ -601,6 +601,16 @@ void stageExtentTests() {
     Require(!PresentationUpscaler::Upscales(1920, 1080, {1280, 720}) && same(PresentationUpscaler::StageExtent(1920, 1080, {1280, 720}), {1280, 720}), "a downscale does not stage today's scaled image");
 }
 
+void exitDependencyTests() {
+    const auto renderedBy = [](const VkSubpassDependency& dependency) { return dependency.srcSubpass == 0 && dependency.dstSubpass == VK_SUBPASS_EXTERNAL && dependency.srcStageMask == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT && dependency.srcAccessMask == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT && dependency.dependencyFlags == 0; };
+    const auto sampled = PresentationPass::ExitDependency(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    Require(renderedBy(sampled) && sampled.dstStageMask == VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT && sampled.dstAccessMask == VK_ACCESS_SHADER_READ_BIT, "a presentation render pass ending in SHADER_READ_ONLY_OPTIMAL does not order its writes and final layout transition before EASU and RCAS sample the image");
+    const auto copied = PresentationPass::ExitDependency(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    Require(renderedBy(copied) && copied.dstStageMask == VK_PIPELINE_STAGE_TRANSFER_BIT && copied.dstAccessMask == VK_ACCESS_TRANSFER_READ_BIT, "a presentation render pass ending in TRANSFER_SRC_OPTIMAL does not order its writes before the dump copy");
+    const auto presented = PresentationPass::ExitDependency(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    Require(renderedBy(presented) && presented.dstStageMask == VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT && presented.dstAccessMask == 0, "the presentation render pass's dependency into the presentation engine changed");
+}
+
 struct FloatImage {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
@@ -831,7 +841,6 @@ std::vector<std::byte> fsrPresent(const Context& context, PresentationPass& pass
         const auto commands = batch.Handle();
         const auto stage = upscaler.Stage(0, format, stageExtent);
         pass.RecordStage(commands, 0, stage, format, colorSpace, stageExtent, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        upscaler.RecordStageWritten(commands, 0, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
         upscaler.RecordPresent(commands, 0, source.width, source.height, destination.Handle(), extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         readImage(context, commands, destination, readback);
         batch.SubmitAndWait();
@@ -946,6 +955,7 @@ int main(int argc, char** argv) {
         if (fsr) {
             upscaleModeTests();
             stageExtentTests();
+            exitDependencyTests();
         } else {
             letterboxBandTests();
         }
