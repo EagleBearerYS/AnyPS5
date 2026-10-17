@@ -1051,8 +1051,12 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "the frame submission failed");
         AgcDriverWaitIdle_nid_postfix();
     };
-    for (std::uint32_t warm = 0; warm < VillageWarmup; ++warm) frame();
+    const auto cold = Read();
+    frame();
+    const auto first = Read();
+    for (std::uint32_t warm = 1; warm < VillageWarmup; ++warm) frame();
     const auto before = Read();
+    std::printf("village: the cold frame drained %llu miss records and dropped %llu; the %u warm-up frames drained %llu and dropped %llu, found %llu distinct misses, inserted %llu and fell back %llu times\n", static_cast<unsigned long long>(first.device.drained - cold.device.drained), static_cast<unsigned long long>(first.device.dropped - cold.device.dropped), VillageWarmup, static_cast<unsigned long long>(before.device.drained - cold.device.drained), static_cast<unsigned long long>(before.device.dropped - cold.device.dropped), static_cast<unsigned long long>(before.device.distinct - cold.device.distinct), static_cast<unsigned long long>(before.device.inserted - cold.device.inserted), static_cast<unsigned long long>(before.device.fallbacks - cold.device.fallbacks));
     const auto started = std::chrono::steady_clock::now();
     for (std::uint32_t measured = 0; measured < VillageFrames; ++measured) frame();
     const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
