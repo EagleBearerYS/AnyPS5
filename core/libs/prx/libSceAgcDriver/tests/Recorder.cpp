@@ -1663,6 +1663,72 @@ bool deferredSettleTests(const Device& device) {
     return true;
 }
 
+bool settleBatchingTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t imports = 16;
+    if (context.hostImportAlignment == 0 || context.hostImportAlignment > unit || context.settleQueue == VK_NULL_HANDLE || !WriteWatched()) {
+        std::cout << "host imports within 64 KiB, a settle queue or write watching unavailable: settle batching not tested\n";
+        return false;
+    }
+    const auto registerRange = [](std::uint64_t address) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(reinterpret_cast<void*>(address), unit, true, true, true);
+    };
+    const auto unregisterRange = [](std::uint64_t address) {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(reinterpret_cast<void*>(address));
+    };
+    std::unique_lock gpu(GpuMutex());
+    PrepareImportWatch(context);
+    std::vector<void*> blocks;
+    for (std::size_t index = 0; index < imports * 2; ++index) blocks.push_back(AllocateWatched(unit, unit));
+    struct Release {
+        std::vector<void*>& blocks;
+        ~Release() {
+            for (auto* block : blocks) ReleaseWatched(block, unit);
+        }
+    } release{blocks};
+    std::sort(blocks.begin(), blocks.end());
+    std::vector<std::uint64_t> addresses;
+    for (std::size_t index = 0; index < blocks.size(); index += 2) {
+        std::memset(blocks[index], 0x33, unit);
+        addresses.push_back(reinterpret_cast<std::uint64_t>(blocks[index]));
+    }
+    const auto before = HostImportSettles();
+    const auto started = std::chrono::steady_clock::now();
+    std::size_t registered = 0;
+    for (const auto address : addresses) {
+        registerRange(address);
+        ++registered;
+        const auto* import = HostImportFor(context, address, unit);
+        if (import == nullptr || !import->unwatched) {
+            std::cout << "this device keeps 64 KiB imports watched: settle batching not tested\n";
+            for (std::size_t index = 0; index < registered; ++index) unregisterRange(addresses[index]);
+            HostImportFor(context, address, unit);
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+        HostImportFor(context, address, unit);
+    }
+    const auto spread = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    const auto allWatched = [&] { return std::all_of(addresses.begin(), addresses.end(), [&](std::uint64_t address) { return Watched(address, unit); }); };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!allWatched() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        HostImportFor(context, addresses.front(), unit);
+    }
+    const bool watched = allWatched();
+    const auto batches = HostImportSettles().batches - before.batches;
+    for (const auto address : addresses) unregisterRange(address);
+    HostImportFor(context, addresses.front(), unit);
+    Require(watched, "(b) " + std::to_string(addresses.size()) + " small imports did not all return to the write watch");
+    Require(batches <= 2, "(b) " + std::to_string(addresses.size()) + " small imports made over " + std::to_string(spread) + " ms took " + std::to_string(batches) + " settle submissions, expected at most 2");
+    std::cout << "settle batching tests passed: " << addresses.size() << " small imports made over " << spread << " ms settled in " << batches << " submissions\n";
+    return true;
+}
+
 bool settledImportsWatchPrivate(const Context& context) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t settledBytes = std::size_t{1} << 20;
@@ -8434,6 +8500,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--settle-first-use-only") return settleFirstUseTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--settle-earlier-import-only") return settleEarlierImportTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--settle-retire-only") return settleRetireTests(device) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--settle-batching-only") return settleBatchingTests(device) ? 0 : 77;
 #endif
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-retirement-only") {
             const auto alignment = device.GetContext().hostImportAlignment;

@@ -222,6 +222,7 @@ struct HostImports {
     std::vector<std::uint64_t> settleWanted;
     std::vector<std::uint64_t> settleReady;
     std::chrono::steady_clock::time_point settlePolled{};
+    std::chrono::steady_clock::time_point settleWantedSince{};
     std::chrono::steady_clock::time_point settleReported{};
     std::uint64_t settleBatchesSubmitted = 0;
     std::uint64_t settlesSubmitted = 0;
@@ -778,6 +779,7 @@ constexpr std::uint64_t settleFloorBytes = 0x100000;
 #ifdef _WIN32
 constexpr std::uint64_t settleBlockBytes = 0x10000;
 constexpr auto settlePollPeriod = std::chrono::microseconds(100);
+constexpr auto settleBatchDelay = std::chrono::milliseconds(100);
 std::atomic<bool> deferredSettles{std::getenv("APS5_NO_DEFERRED_SETTLES") == nullptr};
 #endif
 
@@ -934,8 +936,9 @@ void dropWantedSettles(HostImports& state) {
     state.settleWanted.clear();
 }
 
-void submitSettleBatch(const Context& context, HostImports& state) {
+void submitSettleBatch(const Context& context, HostImports& state, std::chrono::steady_clock::time_point now) {
     if (state.settleWanted.empty()) return;
+    if (state.settleWanted.size() < settleBatchCopies && now - state.settleWantedSince < settleBatchDelay) return;
     const auto free = std::find_if(state.settleBatches.begin(), state.settleBatches.end(), [](const SettleBatch& batch) { return !batch.busy; });
     if (free == state.settleBatches.end()) return;
     const auto index = static_cast<std::size_t>(free - state.settleBatches.begin());
@@ -1072,7 +1075,7 @@ void settleUnwatchedImports(const Context& context, HostImports& state) {
     state.settlePolled = now;
     if (state.settleDevice == context.device) reapSettleBatches(context, state);
     rewatchSettledImports(state);
-    submitSettleBatch(context, state);
+    submitSettleBatch(context, state, now);
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile || now - state.settleReported < std::chrono::seconds(10)) return;
     state.settleReported = now;
@@ -1571,6 +1574,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     if (deferredSettles.load(std::memory_order_relaxed) && entry.alias == nullptr && state.watchPrivateImports && writable && base % settleBlockBytes == 0 && bytes % settleBlockBytes == 0) {
         if (entry.unwatched) {
             state.settles.insert_or_assign(base, PendingSettle{});
+            if (state.settleWanted.empty()) state.settleWantedSince = std::chrono::steady_clock::now();
             state.settleWanted.push_back(base);
         } else if (settled && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) {
             entry.unwatched = true;
