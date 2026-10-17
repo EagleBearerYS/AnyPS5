@@ -2069,6 +2069,24 @@ void verifyDeviceImageTables() {
         require(!off.result->deviceImageTables && !offScan.lookup && !offScan.buckets && !offScan.ring && offScan.heapBindings.empty(), "device image tables: the option off still emitted the device lookup");
         require(TableBinding(*off.result, DescriptorRole::ImageTable) != nullptr && TableBinding(*off.result, DescriptorRole::ImageTableMap) != nullptr, "device image tables: the option off does not bind the CPU table");
     }
+    for (const auto stage : {ShaderStage::Vertex, ShaderStage::TessellationEvaluation}) {
+        auto code = DeviceTablePixelCode;
+        *std::find(code.begin(), code.end(), 0x7e020300u) = 0xbf800000u;
+        *std::find(code.begin(), code.end(), 0x00450000u) = 0x00450401u;
+        *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
+        *std::find(code.begin(), code.end(), 0x03020100u) = 0x07060504u;
+        auto request = DeviceTableRequest(code, userData, false, true);
+        request.shader.stage = stage;
+        request.shader.codeAddress += 0x10u * static_cast<std::uint32_t>(stage);
+        request.context.compute.reset();
+        request.context.vertex = ShaderVertexStageInfo{};
+        if (stage == ShaderStage::TessellationEvaluation) request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {}};
+        const bool device = stage == ShaderStage::Vertex;
+        const auto plan = GetResourcePlan(request);
+        const std::string name = stage == ShaderStage::Vertex ? "vertex" : "domain";
+        require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable == device, ("device image tables: the " + name + " stage's table column " + (device ? "is not read at run time" : "left the CPU path, but the heap and table sets are visible to vertex, pixel and compute stages only")).c_str());
+        require(device != plan->requiresSpecializationMemory, ("device image tables: the " + name + " stage's CPU table path does not match its column").c_str());
+    }
 
     alignas(4096) static TableGuest guest;
     std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
