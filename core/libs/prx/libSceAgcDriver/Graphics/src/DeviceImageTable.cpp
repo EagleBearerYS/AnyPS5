@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace AgcDriver::Graphics {
@@ -52,6 +53,16 @@ std::string hexWords(std::span<const std::uint32_t> words) {
     text << std::hex << std::setfill('0');
     for (std::size_t index = 0; index < words.size(); ++index) text << (index == 0 ? "" : " ") << std::setw(8) << words[index];
     return text.str();
+}
+
+struct Tables {
+    std::mutex mutex;
+    std::unordered_map<VkDevice, std::unique_ptr<DeviceImageTable>> tables;
+};
+
+Tables& tables() {
+    static auto& registry = *new Tables();
+    return registry;
 }
 
 std::string hexText(std::uint64_t value) {
@@ -114,6 +125,8 @@ DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup looku
         layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
         layoutInfo.pBindings = bindings.data();
         check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &layout), "vkCreateDescriptorSetLayout");
+        const VkDescriptorSetLayoutCreateInfo emptyInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &emptyInfo, nullptr, &emptyLayout), "vkCreateDescriptorSetLayout (empty)");
         const std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1}}};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.maxSets = 1;
@@ -140,14 +153,43 @@ DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup looku
         context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     } catch (...) {
         if (pool != VK_NULL_HANDLE) destroyPool(context.device, pool, nullptr);
+        if (emptyLayout != VK_NULL_HANDLE) destroyLayout(context.device, emptyLayout, nullptr);
         if (layout != VK_NULL_HANDLE) destroyLayout(context.device, layout, nullptr);
         throw;
     }
 }
 
 DeviceImageTable::~DeviceImageTable() {
+    const auto destroyLayout = context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout");
     if (pool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
-    if (layout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, layout, nullptr);
+    if (emptyLayout != VK_NULL_HANDLE) destroyLayout(context.device, emptyLayout, nullptr);
+    if (layout != VK_NULL_HANDLE) destroyLayout(context.device, layout, nullptr);
+}
+
+DeviceImageTable& DeviceImageTable::Create(const Context& context, InterfaceLookup lookup) {
+    auto& registry = tables();
+    std::lock_guard lock(registry.mutex);
+    auto& table = registry.tables[context.device];
+    if (table != nullptr) throw std::runtime_error("AGC device image table: the device already has one");
+    table = std::make_unique<DeviceImageTable>(context, std::move(lookup));
+    return *table;
+}
+
+DeviceImageTable* DeviceImageTable::Existing(const Context& context) {
+    auto& registry = tables();
+    std::lock_guard lock(registry.mutex);
+    const auto found = registry.tables.find(context.device);
+    return found != registry.tables.end() ? found->second.get() : nullptr;
+}
+
+void DeviceImageTable::Release(VkDevice device) {
+    std::unique_ptr<DeviceImageTable> released;
+    auto& registry = tables();
+    std::lock_guard lock(registry.mutex);
+    const auto found = registry.tables.find(device);
+    if (found == registry.tables.end()) return;
+    released = std::move(found->second);
+    registry.tables.erase(found);
 }
 
 void DeviceImageTable::Prepare(const Context& build, Recorder& recorder) {

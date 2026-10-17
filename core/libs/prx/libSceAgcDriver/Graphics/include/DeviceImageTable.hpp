@@ -86,7 +86,12 @@ public:
     DeviceImageTable(const DeviceImageTable&) = delete;
     DeviceImageTable& operator=(const DeviceImageTable&) = delete;
 
+    static DeviceImageTable& Create(const Context& context, InterfaceLookup lookup);
+    static DeviceImageTable* Existing(const Context& context);
+    static void Release(VkDevice device);
+
     VkDescriptorSetLayout Layout() const { return layout; }
+    VkDescriptorSetLayout EmptyLayout() const { return emptyLayout; }
     void Prepare(const Context& build, Recorder& recorder);
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder);
     std::span<std::uint32_t> RingChunk(Recorder& recorder);
@@ -174,6 +179,7 @@ private:
     std::map<Key, Rejection> rejections;
     std::vector<DeviceImageMiss> pending;
     VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout emptyLayout = VK_NULL_HANDLE;
     VkDescriptorPool pool = VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::unique_ptr<Buffer> table;
