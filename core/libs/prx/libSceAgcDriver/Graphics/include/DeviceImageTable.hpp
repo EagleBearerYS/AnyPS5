@@ -56,9 +56,12 @@ struct DeviceTableTexture {
     std::uint64_t guestBytes = 0;
     std::uint64_t generation = 0;
     std::string unservable;
+    std::array<std::uint32_t, 8> words{};
+    bool depthCompare = false;
 };
 
 DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass);
+bool DeviceTableTextureCurrent(const Context& context, const std::array<std::uint32_t, 8>& words, bool depthCompare, const Texture& texture);
 
 void NoteDeviceImagePacket(bool dispatch, bool deviceImages, double milliseconds);
 
@@ -161,6 +164,8 @@ private:
         std::uint64_t stamp = 0;
         std::uint64_t used = 0;
         std::uint64_t usedPresent = 0;
+        std::array<std::uint32_t, 8> words{};
+        bool depthCompare = false;
     };
     struct ValidationState {
         std::uint64_t epoch = 0;

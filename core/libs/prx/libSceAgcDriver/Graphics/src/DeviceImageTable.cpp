@@ -475,7 +475,7 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
         if (failure != nullptr) *failure = "the image heap has no free slot of kind " + std::to_string(kind);
         return std::nullopt;
     }
-    entry = {std::move(texture.texture), kind, texture.address, texture.guestBytes, texture.generation, stamp, 0u, 0u};
+    entry = {std::move(texture.texture), kind, texture.address, texture.guestBytes, texture.generation, stamp, 0u, 0u, texture.words, texture.depthCompare};
     return DeviceImageValue{*slot, *match.mode, 0u, 0u};
 }
 
@@ -592,7 +592,7 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
                     if (everything || (image != nullptr && !image->Cached())) fresh = false;
                     else if (image != nullptr && entry.generation != 0u) fresh = cpu[index] == 0u || GuestMemory::UnchangedSinceCollected(entry.address, range, entry.generation);
                     else if (entry.generation != 0u) fresh = GuestMemory::UnchangedSince(entry.address, range, entry.generation);
-                    else fresh = !epochMoved && GuestMemory::NewestStamp(entry.address, range) <= entry.stamp;
+                    else fresh = GuestMemory::NewestStamp(entry.address, range) <= entry.stamp && (!epochMoved || (image != nullptr ? image->UntrackedUnchanged() : entry.texture != nullptr && DeviceTableTextureCurrent(build, entry.words, entry.depthCompare, *entry.texture)));
                     if (fresh && runQuery.overlaps) {
                         StorageTexture::PendingQuery query{entry.address, entry.address + entry.guestBytes, image, nullptr, false};
                         static_cast<void>(StorageTexture::ScanPending(std::span(&query, 1)));
