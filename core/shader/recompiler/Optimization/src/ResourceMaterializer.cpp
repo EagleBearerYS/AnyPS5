@@ -1687,6 +1687,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.descriptorSources = source.descriptorSources;
     plan.controlFlow = source.controlFlow;
     plan.srtReads = source.srtReads;
+    plan.gpuConstants = program.Metadata().gpuConstants;
     plan.gpuConstantCheckSlots = static_cast<std::uint32_t>(program.Metadata().gpuConstantChecks.empty() ? 0u : source.srtReads.size() - std::min_element(program.Metadata().gpuConstantChecks.begin(), program.Metadata().gpuConstantChecks.end(), [](const auto& left, const auto& right) { return left.second < right.second; })->second);
     plan.cleanFlatSlots = source.cleanFlatSlots;
     plan.requiresSpecializationMemory = source.requiresSpecializationMemory;
