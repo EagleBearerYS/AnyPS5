@@ -111,6 +111,18 @@ std::optional<std::string> DeviceImagePathRefusal(const VkPhysicalDeviceLimits& 
     return std::nullopt;
 }
 
+VkDescriptorSetLayout DeviceImageHeap::Layout(const Context& context) {
+    return BindlessHeap::For(context).HeapLayout();
+}
+
+VkDescriptorSet DeviceImageHeap::Set(const Context& context) {
+    return BindlessHeap::For(context).HeapSet();
+}
+
+std::optional<std::uint32_t> DeviceImageHeap::Slot(const Context& context, std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout) {
+    return BindlessHeap::For(context).TextureSlot(kind, texture, view, layout);
+}
+
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup) : DeviceImageTable(context, std::move(lookup), Budget{}) {}
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Budget budget) : context(context), lookup(std::move(lookup)), keys(std::min(DeviceImageKeys::InitialBuckets, budget.maxBuckets), budget.maxBuckets), budget(budget) {
@@ -246,7 +258,7 @@ void DeviceImageTable::fallBack(const std::set<ShaderRecompiler::PipelineIdentit
 void DeviceImageTable::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder) {
     std::lock_guard lock(mutex);
     const auto chunk = chunkFor(recorder, false);
-    const std::array<VkDescriptorSet, 2> sets{BindlessHeap::For(context).HeapSet(), set};
+    const std::array<VkDescriptorSet, 2> sets{DeviceImageHeap::Set(context), set};
     const auto offset = static_cast<std::uint32_t>(static_cast<VkDeviceSize>(chunk) * chunkStride);
     context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, pipelineLayout, Runtime::DeviceHeapSet, static_cast<std::uint32_t>(sets.size()), sets.data(), 1, &offset);
 }
@@ -344,7 +356,7 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
         if (failure != nullptr) *failure = texture.unservable;
         return std::nullopt;
     }
-    const auto slot = BindlessHeap::For(build).TextureSlot(kind, texture.texture, texture.view, texture.layout);
+    const auto slot = DeviceImageHeap::Slot(build, kind, texture.texture, texture.view, texture.layout);
     if (!slot.has_value()) {
         heapFull(key, kind);
         if (failure != nullptr) *failure = "the image heap has no free slot of kind " + std::to_string(kind);
