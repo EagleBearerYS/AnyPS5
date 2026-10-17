@@ -4871,8 +4871,11 @@ void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bin
     }
     if (!heapStage) return;
     auto& heap = BindlessHeap::For(context);
-    const std::array<VkDescriptorSet, 2> sets{heap.HeapSet(), heap.DataSet()};
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 2, sets.data(), static_cast<std::uint32_t>(heapOffsets.size()), heapOffsets.data());
+    const auto heapSet = heap.HeapSet();
+    const auto dataSet = heap.DataSet();
+    const auto bind = context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
+    bind(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &heapSet, 0, nullptr);
+    bind(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::GpuDataSet, 1, &dataSet, static_cast<std::uint32_t>(heapOffsets.size()), heapOffsets.data());
 }
 
 PipelineSetLayouts ShaderResources::SetLayouts() const {
