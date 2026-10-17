@@ -181,6 +181,12 @@ void testJson() {
     }
     const auto deeper = "[" + deep + "]";
     check(contains(failure([&deeper] { NpTrophy2::ParseJson(deeper); }), "deeper than 64"), "deep nesting was not refused");
+    std::string most = "[";
+    for (std::size_t value = 2; value < 1048576; ++value) most += "0,";
+    most += "0]";
+    check(NpTrophy2::ParseJson(most).items.size() == 1048575, "a document of 1048576 values was refused");
+    const auto more = "[0," + most.substr(1);
+    check(contains(failure([&more] { NpTrophy2::ParseJson(more); }), "holds more than 1048576 values"), "a document of more than 1048576 values was parsed");
 }
 
 void testPackage() {
@@ -239,6 +245,13 @@ void testPackage() {
     groups += "]}";
     const auto manyGroups = ucp({{"tropconf.json", groups}, {"tropmeta_en-US.json", TropMetaEnglish}});
     check(contains(failure([&manyGroups] { NpTrophy2::ParseTrophyPackage(manyGroups, "en-US"); }), "more than 50 groups"), "more than 50 groups were accepted");
+    std::string padded = TropConf;
+    std::string padding = "\"padding\":[";
+    for (std::size_t value = 0; value < 1048576; ++value) padding += "0,";
+    padded.insert(1, padding + "0],");
+    const auto oversized = ucp({{"tropconf.json", padded}, {"tropmeta_en-US.json", TropMetaEnglish}});
+    check(contains(failure([&oversized] { NpTrophy2::ParseTrophyPackage(oversized, "en-US"); }), "tropconf.json is not JSON: the document holds more than 1048576 values"),
+          "a tropconf.json of more than 1048576 values was read");
     check(contains(failure([] { NpTrophy2::ParseTrophyPackage("not a package", "en-US"); }), "fewer than the 64-byte header"), "a package that is not a container was read");
     check(NpTrophy2::LanguageTag(1) == "en-US" && NpTrophy2::LanguageTag(0) == "ja-JP" && NpTrophy2::LanguageTag(2) == "fr-FR" && NpTrophy2::LanguageTag(29) == "id-ID", "language tags are wrong");
     bool thrown = false;

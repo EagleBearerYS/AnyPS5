@@ -11,6 +11,7 @@ namespace NpTrophy2 {
 namespace {
 
 constexpr int MaxJsonDepth = 64;
+constexpr std::size_t MaxJsonValues = std::size_t{1} << 20u;
 
 std::uint64_t bigEndian(std::string_view data, std::uint64_t offset, std::size_t size) {
     std::uint64_t value = 0;
@@ -76,6 +77,7 @@ private:
 
     Json readValue(int depth) {
         if (depth >= MaxJsonDepth) fail("values nest deeper than " + std::to_string(MaxJsonDepth) + " levels");
+        if (++values > MaxJsonValues) fail("the document holds more than " + std::to_string(MaxJsonValues) + " values");
         skipSpace();
         if (position >= text.size()) fail("the document ends before a value");
         Json result;
@@ -212,6 +214,7 @@ private:
 
     std::string_view text;
     std::size_t position = 0;
+    std::size_t values = 0;
 };
 
 std::string describe(const Json& value) {
