@@ -253,6 +253,10 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::EvaluateNanoseconds
             ResourceMaterializer::MaterializeNanoseconds
             ResourceMaterializer::SpecializationNanoseconds
+            ResourceMaterializer::FindDeviceImageInterface
+            ResourceMaterializer::TryRuntimeImageMode
+            ImageShapeForResource
+            ReducesBetweenTexels
             RuntimeAbi::RequireVersion
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
