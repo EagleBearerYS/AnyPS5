@@ -1746,7 +1746,22 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         // For every build, locked ones included: their stage B then takes the fast path too, and the
         // collects cost the same wherever they run.
         if (precollectImages()) phase(BuildPhase::Precollect);
-        if (drawBuild && !usesBda && std::all_of(allocations.begin(), allocations.end(), [&](const Allocation& allocation) { return !allocation.guest || allocation.pushByte >= 0 || (allocation.dataAllocation >= 0 && allocation.dataByte < allocations[static_cast<std::size_t>(allocation.dataAllocation)].size); })) guestMemory.AllowAdjustedRegions();
+        const auto heapDataBytes = [&](std::int64_t ring) -> std::uint64_t {
+            const auto stage = ring == HeapRingDataFragment ? ShaderRecompiler::ShaderStage::Fragment : ShaderRecompiler::ShaderStage::Vertex;
+            for (const auto& shader : shaders) {
+                if (shader.stage != stage || shader.program == nullptr || !shader.program->gpuResolvedImages) continue;
+                for (const auto& binding : shader.program->bindings) {
+                    if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) return binding.guestDescriptor.size() * sizeof(std::uint32_t);
+                }
+            }
+            return 0;
+        };
+        const auto patchable = [&](const Allocation& allocation) {
+            if (!allocation.guest || allocation.pushByte >= 0) return true;
+            if (allocation.dataAllocation == HeapRingDataVertex || allocation.dataAllocation == HeapRingDataFragment) return allocation.dataByte < heapDataBytes(allocation.dataAllocation);
+            return allocation.dataAllocation >= 0 && allocation.dataByte < allocations[static_cast<std::size_t>(allocation.dataAllocation)].size;
+        };
+        if (drawBuild && !usesBda && std::all_of(allocations.begin(), allocations.end(), patchable)) guestMemory.AllowAdjustedRegions();
         guestMemory.UploadPrepare(usesBda);
         timing.uploadMs = phase(BuildPhase::Upload);
         splitSets = SplitsSets(context, shaders);
