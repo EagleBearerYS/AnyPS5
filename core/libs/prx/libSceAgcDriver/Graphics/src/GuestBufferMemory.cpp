@@ -222,6 +222,8 @@ struct HostImports {
     std::vector<std::uint64_t> settleWanted;
     std::vector<std::uint64_t> settleReady;
     std::chrono::steady_clock::time_point settlePolled{};
+    std::chrono::steady_clock::time_point settleReported{};
+    std::uint64_t settleBatchesSubmitted = 0;
     std::uint64_t settlesSubmitted = 0;
     std::uint64_t settlesWaited = 0;
     std::uint64_t settlesRewatched = 0;
@@ -1003,6 +1005,7 @@ void submitSettleBatch(const Context& context, HostImports& state) {
     submit.pCommandBuffers = &batch.commands;
     if ((result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.settleQueue, 1, &submit, batch.fence)) != VK_SUCCESS) return fail("vkQueueSubmit (settle batch)");
     batch.busy = true;
+    ++state.settleBatchesSubmitted;
     state.settlesSubmitted += batch.bases.size();
 }
 
@@ -1070,6 +1073,10 @@ void settleUnwatchedImports(const Context& context, HostImports& state) {
     if (state.settleDevice == context.device) reapSettleBatches(context, state);
     rewatchSettledImports(state);
     submitSettleBatch(context, state);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile || now - state.settleReported < std::chrono::seconds(10)) return;
+    state.settleReported = now;
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] host imports under %llu KiB: %llu settle reads submitted in %llu batches, %llu back in the write watch, %llu retired during their read (%llu unmaps waited for it), %zu pending; %llu larger imports settled inside their window\n", static_cast<unsigned long long>(settleFloorBytes >> 10u), static_cast<unsigned long long>(state.settlesSubmitted), static_cast<unsigned long long>(state.settleBatchesSubmitted), static_cast<unsigned long long>(state.settlesRewatched), static_cast<unsigned long long>(state.settlesParked), static_cast<unsigned long long>(state.settleUnmapWaits), state.settles.size(), static_cast<unsigned long long>(state.settlesWaited));
 }
 #endif
 
@@ -2360,11 +2367,6 @@ void reportMirrors() {
         heapBytes = state.heapBytes;
     }
     AgcDriver::ProfilePrint_nid_no_patch("[buffers] image mirrors: %zu ranges (%.1f MiB, %zu writable, %zu heap %.1f MiB), %llu address-based builds served, %llu descriptor sub-ranges bound, %llu sparse heaps bound, %llu rebuilds, %llu refreshes: %llu blocks compared, %llu copied, %llu refresh syncs; heap refills %llu, unwatched heaps %llu, %llu heap mirrors released for imports (%.1f MiB)\n", count, bytes / 1048576.0, writable, heaps, heapBytes / 1048576.0, static_cast<unsigned long long>(state.builds), static_cast<unsigned long long>(state.subranges), static_cast<unsigned long long>(state.sparseBinds), static_cast<unsigned long long>(state.rebuilds), static_cast<unsigned long long>(state.refreshes), static_cast<unsigned long long>(state.blocksCompared), static_cast<unsigned long long>(state.blocksCopied), static_cast<unsigned long long>(state.syncs), static_cast<unsigned long long>(state.heapRefills), static_cast<unsigned long long>(state.heapUnwatched), static_cast<unsigned long long>(state.heapImported), state.heapImportedBytes / 1048576.0);
-#ifdef _WIN32
-    auto& imports = Imports();
-    std::lock_guard importsLock(imports.mutex);
-    if (imports.settlesSubmitted != 0 || imports.settlesWaited != 0 || !imports.settles.empty()) AgcDriver::ProfilePrint_nid_no_patch("[buffers] host imports under %llu KiB: %llu settle reads submitted, %llu back in the write watch, %llu retired during their read (%llu unmaps waited for it), %zu pending; %llu larger imports settled inside their window\n", static_cast<unsigned long long>(settleFloorBytes >> 10u), static_cast<unsigned long long>(imports.settlesSubmitted), static_cast<unsigned long long>(imports.settlesRewatched), static_cast<unsigned long long>(imports.settlesParked), static_cast<unsigned long long>(imports.settleUnmapWaits), imports.settles.size(), static_cast<unsigned long long>(imports.settlesWaited));
-#endif
 }
 
 // Deferred lease release. The lease an address-based build takes (AcquireRegistered) is dropped by its
@@ -2956,7 +2958,7 @@ HostImportSettleCounts HostImportSettles() {
 #ifdef _WIN32
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    return {state.settlesSubmitted, state.settlesWaited, state.settlesRewatched, state.settlesParked, state.settleUnmapWaits};
+    return {state.settlesSubmitted, state.settlesWaited, state.settlesRewatched, state.settlesParked, state.settleUnmapWaits, state.settleBatchesSubmitted};
 #else
     return {};
 #endif

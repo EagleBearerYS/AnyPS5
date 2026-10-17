@@ -1591,9 +1591,11 @@ bool deferredSettleTests(const Device& device) {
         }
         return done();
     };
+    const auto beforeFirst = HostImportSettles();
     const auto* import = HostImportFor(context, address, unit);
     Require(import != nullptr && import->unwatched && !Watched(address, unit), "(d) a 64 KiB import was not compared at first");
     Require(poll([&] { return Watched(address, unit); }), "(d) a 64 KiB import did not return to the write watch after its settle");
+    Require(HostImportSettles().batches > beforeFirst.batches, "(d) a 64 KiB import returned to the write watch with no settle batch counted");
     const auto* back = HostImportFor(context, address, unit);
     Require(back == import && !back->unwatched, "(d) the import back in the write watch is still marked compared");
     BumpCollectEpoch();
