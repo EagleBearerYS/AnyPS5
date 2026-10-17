@@ -49,6 +49,7 @@ struct DispatchVariant {
     bool ring = false;
     std::shared_ptr<const std::vector<ShaderRecompiler::VertexAttribute>> ringAttributes;
     std::shared_ptr<const std::vector<std::uint32_t>> ringFlat;
+    std::shared_ptr<const std::vector<std::vector<std::uint32_t>>> ringBindings;
 
     std::shared_ptr<ShaderMemory> memory;
     std::vector<ShaderRecompiler::MemoryRegion> captured;

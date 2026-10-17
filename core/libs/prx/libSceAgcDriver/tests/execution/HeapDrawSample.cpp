@@ -85,7 +85,7 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-enum class Mode { Texture, Buffer, Storage, Vertex, Bda, Table, VertexTable };
+enum class Mode { Texture, Buffer, Storage, Vertex, Bda, Table, VertexTable, MovedBuffer, MovedTexture };
 
 std::vector<std::uint32_t> Draw(const std::uint32_t* pixelCode, Mode mode) {
     const bool vertexSampling = mode == Mode::Vertex || mode == Mode::VertexTable;
@@ -100,7 +100,7 @@ std::vector<std::uint32_t> Draw(const std::uint32_t* pixelCode, Mode mode) {
         0u, 0u, 0u, 0u,
         static_cast<std::uint32_t>(bufferAddress), static_cast<std::uint32_t>((bufferAddress >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(BufferMemory) - sizeof(float)), 0xfacu,
         static_cast<std::uint32_t>(storage >> 8u), static_cast<std::uint32_t>((storage >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
-    const auto userWords = mode == Mode::Storage ? 24u : mode == Mode::Buffer ? 16u : mode == Mode::Bda ? 14u : vertexSampling ? 0u : 12u;
+    const auto userWords = mode == Mode::Storage ? 24u : mode == Mode::Buffer || mode == Mode::MovedBuffer ? 16u : mode == Mode::Bda ? 14u : vertexSampling ? 0u : 12u;
     const auto bufferWords = [](const void* pointer, std::uint32_t bytes) {
         const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
         return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0xfacu};
@@ -162,17 +162,25 @@ std::vector<std::uint32_t> Draw(const std::uint32_t* pixelCode, Mode mode) {
         Append(commands, 0x76, {0x00cu + 12u, static_cast<std::uint32_t>(second)});
         Append(commands, 0x76, {0x00cu + 13u, static_cast<std::uint32_t>(second >> 32u)});
     }
+    if (mode == Mode::MovedBuffer) {
+        const auto moved = bufferWords(BufferMemory.data() + 3, static_cast<std::uint32_t>(sizeof(BufferMemory) - 3 * sizeof(float)));
+        for (std::uint32_t index = 0; index < 4u; ++index) Append(commands, 0x76, {0x00cu + 12u + index, moved[index]});
+    }
+    if (mode == Mode::MovedTexture) {
+        for (std::uint32_t index = 0; index < 8u; ++index) Append(commands, 0x76, {0x00cu + index, otherImage[index]});
+    }
     Append(commands, 0x2d, {3, 2});
     return commands;
 }
 
 void DrawSamplesTheTexture(bool heap, Mode mode) {
-    const bool buffer = mode == Mode::Buffer || mode == Mode::Bda;
+    const bool buffer = mode == Mode::Buffer || mode == Mode::Bda || mode == Mode::MovedBuffer;
     ColorMemory.fill(Kept);
     StorageMemory.fill(0u);
     BufferMemory.fill(0.0f);
     BufferMemory[1] = BufferAlpha;
     BufferMemory[2] = SecondAlpha;
+    BufferMemory[3] = SecondAlpha;
     for (std::size_t offset = 0; offset < TextureMemory.size(); offset += Texel.size()) std::memcpy(TextureMemory.data() + offset, Texel.data(), Texel.size());
     Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
     for (std::size_t offset = 0; offset < OtherTextureMemory.size(); offset += 4) OtherTextureMemory[offset] = OtherTextureMemory[offset + 1] = OtherTextureMemory[offset + 2] = OtherTextureMemory[offset + 3] = 0x33u;
@@ -193,8 +201,8 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
         if (std::all_of(ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset), ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte value) { return value == Kept; })) continue;
         for (std::size_t channel = 0; channel < 4; ++channel) {
             const auto value = static_cast<unsigned>(ColorMemory[offset + channel]);
-            const unsigned expected = mode == Mode::Bda && channel == 3 ? SecondAlphaByte : buffer && channel == 3 ? BufferAlphaByte : Texel[channel];
-            Require(value == expected, "pixel " + std::to_string(offset / 4) + " channel " + std::to_string(channel) + " is " + std::to_string(value) + ", expected " + std::to_string(expected) + (mode == Mode::Bda ? " (texture and BDA)" : buffer ? " (texture and buffer)" : mode == Mode::Table ? " (image table)" : " (texture)") + (heap ? " through the heap" : ""));
+            const unsigned expected = mode == Mode::MovedTexture ? 0x33u : (mode == Mode::Bda || mode == Mode::MovedBuffer) && channel == 3 ? SecondAlphaByte : buffer && channel == 3 ? BufferAlphaByte : Texel[channel];
+            Require(value == expected, "pixel " + std::to_string(offset / 4) + " channel " + std::to_string(channel) + " is " + std::to_string(value) + ", expected " + std::to_string(expected) + (mode == Mode::Bda ? " (texture and BDA)" : mode == Mode::MovedBuffer ? " (texture and a buffer moved between two draws)" : mode == Mode::MovedTexture ? " (a texture changed between two draws)" : buffer ? " (texture and buffer)" : mode == Mode::Table ? " (image table)" : " (texture)") + (heap ? " through the heap" : ""));
         }
         ++drawn;
     }
@@ -229,6 +237,8 @@ int main() {
         DrawSamplesTheTexture(heap, Mode::Bda);
         DrawSamplesTheTexture(heap, Mode::Table);
         DrawSamplesTheTexture(heap, Mode::VertexTable);
+        DrawSamplesTheTexture(heap, Mode::MovedBuffer);
+        DrawSamplesTheTexture(heap, Mode::MovedTexture);
         AgcDriverShutdown_nid_postfix();
         std::cout << "A sampled texture reached the drawn pixels" << (heap ? " through the heap" : "") << '\n';
         return 0;

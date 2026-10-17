@@ -249,6 +249,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
                 variant->ring = true;
                 variant->ringAttributes = std::make_shared<const std::vector<ShaderRecompiler::VertexAttribute>>(stageCapture.heapWords->vertexAttributes);
                 if (checkedRing) variant->ringFlat = std::make_shared<const std::vector<std::uint32_t>>(stageCapture.heapWords->flattenedSrt);
+                if (!stageCapture.heapWords->bindings.empty()) variant->ringBindings = std::make_shared<const std::vector<std::vector<std::uint32_t>>>(stageCapture.heapWords->bindings);
             }
             if (vertexInfos[i]) variant->vertexInfo = std::make_shared<const ShaderRecompiler::ShaderVertexStageInfo>(*vertexInfos[i]);
 
