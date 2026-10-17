@@ -2278,6 +2278,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         else outcome.recorded = false;
     }
     const bool recorded = outcome.recorded;
+    if (!recorded && resources->UsesDeviceImages()) throw UnrecordedDeviceImageDraw("AGC graphics: a draw outside the recorder reading images through the device image table is not implemented");
     // A build this recorded draw can share with later identical ones goes into the cache (a cache
     // hit is reusable by construction, so `recorded` holds for it; one with completion work is
     // never reusable).
@@ -2411,7 +2412,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     if (resources->UsesDeviceImages()) {
         auto* table = DeviceImageTable::Existing(context);
-        Require(recorded && table != nullptr, "a draw outside the recorder reading images through the device image table is not implemented");
+        Require(table != nullptr, "a draw reading images through the device image table needs the device's table");
         table->Prepare(context, *recorder, deviceImagePrograms(shaders));
     }
     const auto commands = recorded ? recorder->Commands() : batch->Handle();

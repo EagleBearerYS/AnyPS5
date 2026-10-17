@@ -22,7 +22,7 @@
 
 namespace AgcDriver::DriverDetail {
 
-struct DrawTail {
+struct DrawTail : std::enable_shared_from_this<DrawTail> {
     using GpuLock = std::unique_lock<std::remove_reference_t<decltype(GuestMemory::GpuMutex())>>;
     bool profile = false;
     std::array<double, DrawDriverPhaseCount> phaseMs{};
@@ -53,6 +53,8 @@ struct DrawTail {
     std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> compiledStages;
     std::vector<Graphics::CompiledShader> stages;
     std::uint32_t pushCursorBytes = 0;
+    std::vector<std::uint32_t> pushOffsets;
+    bool cpuImageTables = false;
     std::vector<const ShaderRecompiler::RecompileResult*> programResults;
     std::vector<StageCapture> stageCaptures;
     std::vector<std::shared_ptr<DispatchVariant>> matched;
@@ -730,7 +732,8 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         stageCaptures[i].ringVertex = true;
     };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
-    std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
+    auto& pushOffsets = tail.pushOffsets;
+    pushOffsets.assign(programs.size(), 0);
     std::vector<std::size_t> resultIndex(programs.size(), 0);
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::GeometryBack) continue;
@@ -933,7 +936,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 auto& result = results[resultIndex[programIndex]];
                 const auto pushBytes = result.pushConstants.size();
                 decodeVertexInfo(programIndex);
-                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
+                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, tail.cpuImageTables);
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
             }
@@ -947,7 +950,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             lockForDraw();
             noteDrawWriters(stages, submission.queue);
             phaseTiming.Phase(DrawRowVectors);
-            localDevice->Draw(graphics, direct, stages, snapshots);
+            drawStages(tail, localDevice, direct, snapshots, nullptr);
             phaseTiming.Phase(DrawRowGraphics);
         }
         timing.Mark("draw_and_resource_release");
@@ -977,10 +980,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto commitQueue = submission.queue;
         const auto commitPacket = tail.packetOpcode;
         const auto epoch = DrawFinisher::OnFinisherThread() ? tail.epoch : DrawPipeline::EpochToken().load(std::memory_order_relaxed);
-        auto commit = [this, localDevice = std::move(localDevice), decode = std::move(decode), drawParameters, stages = std::move(stages), snapshots = std::move(snapshots), recipe = std::move(recipe), recipeStages = std::move(recipeStages), drawKey, commitQueue, commitPacket, epoch, programs = std::move(programs), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)]() mutable {
+        auto commit = [this, owner = tail.shared_from_this(), snapshots = std::move(snapshots), recipe = std::move(recipe), recipeStages = std::move(recipeStages), commitQueue, commitPacket, epoch]() mutable {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
-            commitDraw(localDevice, commitQueue, decode->state, drawParameters, stages, snapshots, recipe, recipeStages, drawKey);
+            commitDraw(*owner, commitQueue, snapshots, recipe, recipeStages);
         };
         auto held = std::make_shared<decltype(commit)>(std::move(commit));
         DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, true);
@@ -1001,17 +1004,21 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
     }
     std::shared_ptr<const DrawRecipe> built;
-    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built);
+    drawStages(tail, localDevice, drawParameters, snapshots, recipeStages.empty() ? nullptr : &built);
     phaseTiming.Phase(DrawRowGraphics);
     if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built));
     timing.Mark("draw_and_resource_release");
     return drawn();
 }
 
-void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey) {
+void Driver::commitDraw(DrawTail& tail, std::uint32_t queue, std::vector<Graphics::GuestMemorySnapshot>& snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages) {
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    auto localDevice = tail.localDevice;
     if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
+    const auto& graphics = tail.decode->state;
+    const auto& drawParameters = tail.drawParameters;
+    const auto& stages = tail.stages;
     struct SubmitDue {
         Driver& driver;
         const std::shared_ptr<VulkanDevice>& device;
@@ -1026,8 +1033,68 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
     }
     std::shared_ptr<const DrawRecipe> built;
-    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built);
-    if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built));
+    drawStages(tail, localDevice, drawParameters, snapshots, recipeStages.empty() ? nullptr : &built);
+    if (built != nullptr) attachDrawRecipe(tail.drawKey, recipeStages, std::move(built));
+}
+
+void Driver::drawStages(DrawTail& tail, const std::shared_ptr<VulkanDevice>& localDevice, const Pm4::DrawParameters& parameters, std::vector<Graphics::GuestMemorySnapshot>& snapshots, std::shared_ptr<const DrawRecipe>* built) {
+    using Stage = ShaderRecompiler::ShaderStage;
+    const auto& graphics = tail.decode->state;
+    try {
+        localDevice->Draw(graphics, parameters, tail.stages, snapshots, built);
+        return;
+    } catch (const Graphics::UnrecordedDeviceImageDraw&) {
+        tail.cpuImageTables = true;
+    }
+    static const QueueState noQueue{};
+    Submission submission{};
+    submission.queue = tail.submissionQueue;
+    std::array<double, DrawDriverPhaseCount> phaseMs{};
+    std::chrono::steady_clock::time_point phaseLap{};
+    DrawPhaseTiming phaseTiming{false, phaseMs, phaseLap};
+    std::uint64_t captures = 0;
+    std::string rejected;
+    std::uint32_t pushCursor = 0;
+    for (std::size_t i = 0; i < tail.programs.size(); ++i) {
+        const auto* current = tail.programResults[i];
+        if (current == nullptr) continue;
+        const auto stage = tail.programs[i].binary.stage;
+        pushCursor = Graphics::StagePushOffset(pushCursor, stage, localDevice->GraphicsPipelineLibraries());
+        if (!current->deviceImageTables && pushCursor == tail.pushOffsets[i]) {
+            pushCursor += static_cast<std::uint32_t>(current->pushConstants.size());
+            continue;
+        }
+        tail.pushOffsets[i] = pushCursor;
+        auto pixel = tail.pixel;
+        for (auto previous = i; stage == Stage::Fragment && previous-- > 0;) {
+            if (tail.programResults[previous] == nullptr) continue;
+            pixel = Graphics::DefaultUnexportedInputs(tail.decode->pixel, tail.programResults[previous]->parameterExports);
+            break;
+        }
+        const bool tessellation = stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation;
+        auto compiled = materializeDrawStage(i, pushCursor, noQueue, submission, tail.programs, graphics, pixel, tail.vertexInfos, tail.memory, tail.linked, tessellation ? parameters : tail.drawParameters, localDevice, *tail.shaderMemory, tail.stageCaptures, tail.recompiled, true, tail.matched, tail.matchedRegions, false, 0, 0, captures, phaseTiming, phaseMs, rejected, true);
+        const auto slotEnd = (pushCursor / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
+        require(!compiled->deviceImageTables, "a stage's CPU image table variant reads the device image table");
+        require(compiled->pushConstants.size() <= slotEnd - pushCursor, "stage push constants exceed the pipeline push constant block");
+        const ShaderRecompiler::RecompileResult* replacement = nullptr;
+        if (const auto kept = std::find_if(tail.results.begin(), tail.results.end(), [&](const ShaderRecompiler::RecompileResult& result) { return &result == current; }); kept != tail.results.end()) {
+            *kept = *compiled;
+            replacement = &*kept;
+        } else {
+            tail.compiledStages.push_back(std::move(compiled));
+            replacement = tail.compiledStages.back().get();
+        }
+        for (auto& shader : tail.stages) {
+            if (shader.program == current) shader = {shader.stage, replacement, replacement->pushConstants.empty() ? 0u : pushCursor, tail.stageCaptures[i].heapWords.get()};
+        }
+        pushCursor += static_cast<std::uint32_t>(replacement->pushConstants.size());
+    }
+    for (const auto& reads : tail.decodeReads) {
+        for (const auto& read : reads) tail.memory.push_back({read.address, std::as_bytes(std::span(read.bytes))});
+    }
+    snapshots.clear();
+    for (const auto& region : tail.memory) snapshots.push_back({region.guestAddress, region.bytes});
+    localDevice->Draw(graphics, parameters, tail.stages, snapshots, built);
 }
 
 }

@@ -8,11 +8,16 @@
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace AgcDriver::Graphics {
 
 struct HostImport;
+
+struct UnrecordedDeviceImageDraw : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
