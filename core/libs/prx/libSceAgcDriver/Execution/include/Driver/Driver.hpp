@@ -127,6 +127,7 @@ private:
     void verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffset, ShaderRecompiler::RecompileRequest request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const DispatchVariant& variant, std::span<const std::uint32_t> liveWords, const ShaderRecompiler::RecompileResult& patched);
     static bool drawEntries();
     static bool drawDataHits();
+    static bool cacheCpuIndirect();
     static bool verifyDrawDataHits();
     static bool drawStageDataHits();
     static bool verifyDrawEntries();
@@ -151,6 +152,7 @@ private:
     static std::uint64_t relocatedContentKey(const RelocatableUserWord& word, std::uint32_t value, bool& readable);
     static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords);
     static void applyShaderDataPatches(DispatchVariant& variant);
+    static void patchPushedUserWord(ShaderRecompiler::RecompileResult& result, std::uint32_t index, std::uint32_t value);
     void learnPendingRelocation();
     void relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
     void reportDrawRelocation();
