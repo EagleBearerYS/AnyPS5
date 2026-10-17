@@ -227,6 +227,7 @@ std::list<CachedTexture>::iterator findTexture(TextureCache& cache, const Textur
 }
 
 void eraseTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
+    if (it->texture != nullptr && it->texture->HeapHolds() != 0u) BindlessHeap::NoteSweepDue();
     cache.bytes -= it->accounted;
     if (it->source != nullptr) {
         for (auto [view, last] = cache.views.equal_range(it->source.get()); view != last; ++view) {
@@ -285,7 +286,8 @@ bool admitTexture(TextureCache& cache, const TextureKey& key, std::uint64_t inco
             return false;
         }
         const bool over = cache.bytes + incoming > ceiling;
-        const bool keep = back->accounted == 0 || (!over && back->texture.use_count() > 1);
+        const auto heapHolds = back->texture != nullptr ? back->texture->HeapHolds() : 0u;
+        const bool keep = back->accounted == 0 || (!over && back->texture.use_count() > 1 + static_cast<long>(heapHolds));
         if (keep && cache.passed < cache.entries.size()) {
             cache.entries.splice(cache.entries.begin(), cache.entries, back);
             ++cache.passed;

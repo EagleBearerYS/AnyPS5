@@ -247,6 +247,7 @@ std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const
     if (kindOwners.size() <= *slot) kindOwners.resize(*slot + 1u);
     kindOwners[*slot].texture = texture;
     kindOwners[*slot].key = key;
+    texture->AddHeapHold();
     ++counts.textures;
     noteTakenLocked(kind, dropped);
     return slot;
@@ -267,12 +268,13 @@ std::optional<std::uint32_t> BindlessHeap::takeSlotLocked(std::uint32_t kind) {
 
 void BindlessHeap::sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped) {
     ++counts.sweeps;
+    const auto firstDropped = dropped.size();
     auto* table = reinterpret_cast<std::uint32_t*>(lookup->Bytes().data());
     for (std::uint32_t kind = 0; kind < owners.size(); ++kind) {
         auto& kindOwners = owners[kind];
         for (std::uint32_t slot = 0; slot < kindOwners.size(); ++slot) {
             auto& owner = kindOwners[slot];
-            if (owner.texture == nullptr || owner.texture.use_count() != 1) continue;
+            if (owner.texture == nullptr || owner.texture.use_count() > static_cast<long>(owner.texture->HeapHolds())) continue;
             textureSlots.erase(owner.key);
             if (const auto entries = lookupBySlot.find(kind << 16u | slot); entries != lookupBySlot.end()) {
                 for (const auto at : entries->second) {
@@ -289,6 +291,7 @@ void BindlessHeap::sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped) {
             ++counts.slotsFreed;
         }
     }
+    for (auto index = firstDropped; index < dropped.size(); ++index) dropped[index]->DropHeapHold();
 }
 
 void BindlessHeap::sweepSamplersLocked(std::vector<std::shared_ptr<Sampler>>& dropped) {
@@ -326,6 +329,27 @@ void noteNearlyFull(const char* what, std::uint32_t margin) {
 
 bool BindlessHeap::NearlyFull() {
     return nearlyFull.load(std::memory_order_relaxed);
+}
+
+namespace {
+
+std::atomic<bool> sweepDue{false};
+
+}
+
+void BindlessHeap::NoteSweepDue() {
+    sweepDue.store(true, std::memory_order_relaxed);
+}
+
+void BindlessHeap::SweepIfDue() {
+    if (!sweepDue.load(std::memory_order_relaxed) || !sweepDue.exchange(false, std::memory_order_relaxed)) return;
+    std::vector<std::shared_ptr<Texture>> dropped;
+    std::lock_guard heapsLock(heapsMutex());
+    for (auto& [device, heap] : heaps()) {
+        if (heap == nullptr) continue;
+        std::lock_guard lock(heap->mutex);
+        heap->sweepLocked(dropped);
+    }
 }
 
 void BindlessHeap::noteTakenLocked(std::uint32_t kind, std::vector<std::shared_ptr<Texture>>& dropped) {
