@@ -112,6 +112,11 @@ void Pad::Initialize() {
     initialized = true;
 }
 
+bool Pad::IsInitialized() {
+    std::lock_guard lock(stateMutex);
+    return initialized;
+}
+
 namespace {
 PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, const Pad::InputCommandFile::Input& injected) {
     PadData data{};
@@ -186,7 +191,14 @@ PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uin
 }
 
 Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
-    static Pad::InputCommandFile commands(std::getenv("APS5_PAD_INPUT_FILE"));
+    static Pad::InputCommandFile commands([] {
+#ifdef _WIN32
+        const auto* path = _wgetenv(L"APS5_PAD_INPUT_FILE");
+#else
+        const auto* path = std::getenv("APS5_PAD_INPUT_FILE");
+#endif
+        return path ? std::filesystem::path(path) : std::filesystem::path{};
+    }());
     static Pad::InputCommandFile::Input lastInjected;
     const auto injected = commands.Poll(now);
     if (injected != lastInjected) {

@@ -1,5 +1,6 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
@@ -139,12 +140,6 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
 
 namespace File {
 
-std::filesystem::path PathOrRelinkedModule(const std::filesystem::path& nativePath) {
-    std::error_code error;
-    if (std::filesystem::exists(std::filesystem::symlink_status(nativePath, error))) return nativePath;
-    return RelinkedModulePath_nid_no_patch(nativePath);
-}
-
 void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
     NativeStat st{};
     if (DoStat(nativePath, &st) != 0) {
@@ -162,6 +157,7 @@ void FillFileStat(int nativeDescriptor, FileStat* sb) {
 }
 
 bool FillFileStatFromDescriptor(int fd, FileStat* sb) {
+    if (FillArchivedStatFromDescriptor(fd, sb)) return true;
     NativeStat st{};
     if (DoFstat(fd, &st) != 0) return false;
     CopyNativeStat(st, sb);

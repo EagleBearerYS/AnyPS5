@@ -249,6 +249,8 @@ struct Sock {
     int rcv_timeout_us = 0;
     int snd_timeout_us = 0;
     int reported_error = 0;
+    int snd_buffer = 0;
+    int rcv_buffer = 0;
 };
 
 #ifdef _WIN32
@@ -501,7 +503,6 @@ int* APS5_VABI sceNetErrnoLoc(void) {
 }
 
 int APS5_VABI sceNetShowNetstat(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -857,6 +858,10 @@ static int disconnect_datagram(const Sock& socket) {
     return 0;
 }
 
+#ifdef _WIN32
+extern "C" void RefuseClosedLoopbackAtOnce_nid_no_patch(SOCKET socket, const sockaddr* address);
+#endif
+
 int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     Sock socket;
     {
@@ -873,6 +878,9 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     sockaddr_storage native{};
     NativeLength native_length = 0;
     if (!guest_to_native_address(addr, addrlen, native, native_length)) return fail(NET_EINVAL);
+#ifdef _WIN32
+    if (socket.type == NET_SOCK_STREAM) RefuseClosedLoopbackAtOnce_nid_no_patch(socket.native->value, reinterpret_cast<const sockaddr*>(&native));
+#endif
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) return 0;
 #ifdef _WIN32
@@ -1084,6 +1092,8 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (optname == NET_SO_NBIO) it->second.nonblock = value != 0;
         if (optname == NET_SO_RCVTIMEO) it->second.rcv_timeout_us = value;
         if (optname == NET_SO_SNDTIMEO) it->second.snd_timeout_us = value;
+        if (optname == NET_SO_SNDBUF) it->second.snd_buffer = value;
+        if (optname == NET_SO_RCVBUF) it->second.rcv_buffer = value;
     }
     return 0;
 }
@@ -1118,6 +1128,16 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
             else if (pending != 0) it->second.reported_error = pending;
 #endif
             value = pending == 0 ? 0 : net_error(pending);
+            break;
+        }
+        case NET_SO_SNDBUF:
+        case NET_SO_RCVBUF: {
+            const bool send = optname == NET_SO_SNDBUF;
+            value = send ? socket.snd_buffer : socket.rcv_buffer;
+            if (value != 0) break;
+            NativeLength size = sizeof(value);
+            if (::getsockopt(socket.native->value, SOL_SOCKET, send ? SO_SNDBUF : SO_RCVBUF, reinterpret_cast<char*>(&value), &size) != 0)
+                return fail(native_error());
             break;
         }
         default: return fail(NET_EOPNOTSUPP);
@@ -1593,7 +1613,6 @@ int APS5_VABI sceNetResolverAbort(int rid, int flags) {
 }
 
 int APS5_VABI sceNetShowIfconfig() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
