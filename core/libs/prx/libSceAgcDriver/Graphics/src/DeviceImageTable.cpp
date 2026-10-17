@@ -33,7 +33,6 @@ using Reason = ShaderRecompiler::ImageTableAbi::PoisonReason;
 
 constexpr std::uint32_t RequiredSets = Runtime::DeviceTableSet + 1u;
 constexpr std::uint32_t HeapImageKinds = Runtime::FirstStorageImageBinding - Runtime::FirstImageBinding;
-constexpr VkShaderStageFlags TableStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 constexpr VkDeviceSize UpdateBytes = 65536u;
 constexpr VkDeviceSize TableBytes = static_cast<VkDeviceSize>(DeviceImageTable::TableWords) * sizeof(std::uint32_t);
 constexpr VkDeviceSize RingBytes = static_cast<VkDeviceSize>(DeviceImageTable::RingWords) * sizeof(std::uint32_t);
@@ -158,8 +157,8 @@ DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup looku
     const auto destroyPool = context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool");
     try {
         const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
-            {Runtime::DeviceTableBucketsBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, TableStages, nullptr},
-            {Runtime::DeviceTableRingBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, TableStages, nullptr},
+            {Runtime::DeviceTableBucketsBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, ImageHeapStages(context), nullptr},
+            {Runtime::DeviceTableRingBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, ImageHeapStages(context), nullptr},
         }};
         VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
