@@ -277,7 +277,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const
         if (words.bindings.size() != result->bindings.size()) throw std::runtime_error("a heap stage's per-draw bindings differ in number from its template");
         for (std::size_t index = 0; index < words.bindings.size(); ++index) {
             if (words.bindings[index].empty()) continue;
-            if (words.bindings[index].size() != result->bindings[index].guestDescriptor.size()) throw std::runtime_error("a heap stage's per-draw descriptor words differ in size from its template");
+            if (result->bindings[index].role != ShaderRecompiler::DescriptorRole::FlattenedSrt && words.bindings[index].size() != result->bindings[index].guestDescriptor.size()) throw std::runtime_error("a heap stage's per-draw descriptor words differ in size from its template");
             result->bindings[index].guestDescriptor = words.bindings[index];
         }
     }
