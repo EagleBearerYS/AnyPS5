@@ -49,7 +49,7 @@ public:
             reserved = std::calloc(bytes, 1);
         } else {
 #ifdef _WIN32
-            reserved = VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_READWRITE);
+            reserved = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
             reserved = mmap(nullptr, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
             if (reserved == MAP_FAILED) reserved = nullptr;
