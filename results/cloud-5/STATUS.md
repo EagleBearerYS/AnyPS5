@@ -1,7 +1,8 @@
-READY
-since: 2026-10-17T13:02:45Z
-last: BF-056 done, results/cloud-5/BF-056.md: K4 GPU half synced (VILLAGE_GPU_SYNC=1): Village shape B 11,925 vs A 10,050 ms GPU per frame (+18.7%, under 30%; BF-046's -50% was saturation); same-texture variants B 51-73x A (5,417/7,499 vs 106/103 ms); run-time T# read ~1 ms GPU per sample on B; driver CPU outside the GPU wait A 223.0, B 163.3 us per draw; exp/bf056-main 4126b1fa2, exp/bf056-fable 7d6d5ee54
-previous: PM-075 done with addendum, results/cloud-5/PM-075.md: no blocking finding in C-1; scan hardened (4ff3b0545), descriptor RAW/WAR cases (f06328265), and per the Bug Finder's note the write-back claim holds on current main 984e5d720 (#6892): tiled 0/0 (pass continued), linear over import 255/255, pinned by 4796eac2d's _targets_split pair (red on a scratch write-back at the pass break); review/agc-address-read-passes 4796eac2d; mirrors: head 1268/65/5 of 1338, main 1280/66/5 of 1351, merge 1282/66/5 of 1353, IPv6 only, no existing test changes
+BUSY LA-010
+since: 2026-10-17T13:03Z (LA-010, lane A rebased onto PR 6947's new head, compute on the heap set under lane A's switch, bind-split offer on the new head)
+claimed: tasks/claimed/LA-010.md
+step: fetching PR 6947's head and lane A's branches
+previous: BF-056 done, results/cloud-5/BF-056.md: K4 GPU half synced (VILLAGE_GPU_SYNC=1): Village shape B 11,925 vs A 10,050 ms GPU per frame (+18.7%, under 30%; BF-046's -50% was saturation); same-texture variants B 51-73x A (5,417/7,499 vs 106/103 ms); run-time T# read ~1 ms GPU per sample on B; driver CPU outside the GPU wait A 223.0, B 163.3 us per draw; exp/bf056-main 4126b1fa2, exp/bf056-fable 7d6d5ee54
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
