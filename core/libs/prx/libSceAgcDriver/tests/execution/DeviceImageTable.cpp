@@ -482,6 +482,27 @@ void HeapCapFallsBack(AgcDriver::VulkanDevice& device) {
     recorder->Sync();
 }
 
+alignas(4096) std::array<std::uint8_t, 65536> CubeTexels{};
+
+void NonSeamlessCube(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint32_t TypeCube = 11;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto context = device.GraphicsContext();
+    auto cube = TextureDescriptor(CubeTexels.data(), Formats[4]);
+    cube[3] = 0xfacu | (TypeCube << 28u);
+    cube[4] = 5u;
+    const DeviceTableView view{ShaderRecompiler::DescriptorImageShape::Image2DArray, false, false};
+    const auto seamless = LookupDeviceTableTexture(context, cube, view, 0u);
+    Require(seamless.texture != nullptr && seamless.unservable.empty(), "a cube T# resolves through the texture cache");
+    try {
+        const auto resolved = LookupDeviceTableTexture(context, cube, view, Abi::SamplerNonSeamlessCube);
+        Require(context.nonSeamlessCubeMap && resolved.texture != nullptr, "a non-seamless cube sampler is served only by a device with VK_EXT_non_seamless_cube_map");
+    } catch (const std::runtime_error& error) {
+        Require(!context.nonSeamlessCubeMap && std::string(error.what()).find("needs VK_EXT_non_seamless_cube_map") != std::string::npos, std::string("a non-seamless cube sampler is rejected only without VK_EXT_non_seamless_cube_map: ") + error.what());
+    }
+    std::printf("non-seamless cube sampler: %s (VK_EXT_non_seamless_cube_map %s)\n", context.nonSeamlessCubeMap ? "served" : "rejected", context.nonSeamlessCubeMap ? "on" : "off");
+}
+
 void GraphicsLayouts(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     const auto deviceContext = device.GraphicsContext();
@@ -636,6 +657,7 @@ int main(int argc, char** argv) {
         EvictsLeastRecentlyUsed(*device);
         FullTableFallsBack(*device);
         OverflowFallsBack(*device);
+        NonSeamlessCube(*device);
         ComputeLayout(*device);
         GraphicsLayouts(*device);
         device->WaitIdle();
