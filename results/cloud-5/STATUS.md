@@ -1,6 +1,8 @@
-READY
-since: 2026-10-17T05:59Z
-last: setup done (no task yet)
+BUSY LA-002
+since: 2026-10-17T06:02Z (LA-002, lane A recompiler half)
+claimed: tasks/claimed/LA-002.md
+step: reading fable-void's d35b01a5b8 / 1ffc203905 against exp/lane-a-base fe07e21141
+previous: setup done, READY at 2026-10-17T05:59Z
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
