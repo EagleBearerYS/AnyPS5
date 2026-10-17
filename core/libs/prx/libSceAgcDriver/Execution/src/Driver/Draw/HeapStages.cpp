@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -73,7 +74,8 @@ struct HeapFragmentKeyHash {
 };
 
 std::unordered_map<HeapFragmentKey, bool, HeapFragmentKeyHash>& heapFragments() {
-    thread_local std::unordered_map<HeapFragmentKey, bool, HeapFragmentKeyHash> value;
+    struct FragmentsStorage {};
+    auto& value = HostThreadLocal<std::unordered_map<HeapFragmentKey, bool, HeapFragmentKeyHash>, FragmentsStorage>();
     return value;
 }
 
@@ -117,7 +119,8 @@ struct HeapWalkEntry {
 constexpr std::size_t HeapWalkWays = 4;
 
 std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>>& heapWalkMemo() {
-    thread_local std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>> memo;
+    struct WalkMemoStorage {};
+    auto& memo = HostThreadLocal<std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>>, WalkMemoStorage>();
     return memo;
 }
 
@@ -137,8 +140,10 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeHeapStage(co
             std::vector<std::pair<std::uint64_t, std::uint64_t>> accessible;
             bool failed = false;
         };
-        thread_local Reads reads;
-        thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+        struct ReadsStorage {};
+        struct RangesStorage {};
+        auto& reads = HostThreadLocal<Reads, ReadsStorage>();
+        auto& ranges = HostThreadLocal<std::vector<std::pair<std::uint64_t, std::uint64_t>>, RangesStorage>();
         reads.words.clear();
         reads.accessible.clear();
         reads.failed = false;
@@ -215,7 +220,8 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeHeapStage(co
             }
             ranges.emplace_back(address, address + 4u);
         }
-        thread_local std::vector<std::uint32_t> values;
+        struct ValuesStorage {};
+        auto& values = HostThreadLocal<std::vector<std::uint32_t>, ValuesStorage>();
         if (memoOn && !reads.failed) {
             values.clear();
             for (const auto& [begin, end] : ranges) {
