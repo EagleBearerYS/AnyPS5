@@ -211,6 +211,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
     if (mode == Mode::Storage) {
         for (std::size_t channel = 0; channel < 4; ++channel) Require(StorageMemory[channel] == Texel[channel], "storage texel (0, 0) channel " + std::to_string(channel) + " is " + std::to_string(StorageMemory[channel]) + ", expected the sampled " + std::to_string(Texel[channel]) + (heap ? " through the heap" : ""));
     }
+    if (heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr) return;
     if (heap && (mode == Mode::Vertex || mode == Mode::VertexTable)) Require(AgcDriver::DriverDetail::HeapStagesTaken() == takenBefore, "the heap took a vertex stage whose constants are read on the CPU");
     else if (heap) Require(AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore, std::string("the heap did not take the fragment stage") + (buffer ? " reading a buffer" : mode == Mode::Storage ? " writing a storage image" : mode == Mode::Vertex ? " (vertex stage)" : mode == Mode::Bda ? " loading through BDA" : mode == Mode::Table ? " reading an image table" : mode == Mode::VertexTable ? " (vertex stage reading an image table)" : ""));
 }
@@ -239,6 +240,7 @@ int main() {
         DrawSamplesTheTexture(heap, Mode::VertexTable);
         DrawSamplesTheTexture(heap, Mode::MovedBuffer);
         DrawSamplesTheTexture(heap, Mode::MovedTexture);
+        if (heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr) Require(AgcDriver::DriverDetail::HeapRefused(), "a draw found the capped heap full and the heap was not refused");
         AgcDriverShutdown_nid_postfix();
         std::cout << "A sampled texture reached the drawn pixels" << (heap ? " through the heap" : "") << '\n';
         return 0;

@@ -81,8 +81,12 @@ VerifyCounts& verifyCounts() {
 
 }
 
+bool HeapRefused() {
+    return Graphics::BindlessHeap::NearlyFull();
+}
+
 bool HeapFragmentsEnabled() {
-    return Graphics::GpuHeapEnabled();
+    return Graphics::GpuHeapEnabled() && !HeapRefused();
 }
 
 bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan, bool gpuConstantsVertex) {

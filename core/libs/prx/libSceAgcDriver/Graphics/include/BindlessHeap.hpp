@@ -43,6 +43,7 @@ public:
     std::uint64_t SlotSerial() const { return slotSerial.load(std::memory_order_acquire); }
     bool GenerationsCurrent(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> slotGenerations, std::span<const std::uint32_t> samplerSlots, std::span<const std::uint32_t> samplerGenerations) const;
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
+    static bool NearlyFull();
 
     struct DataSpan {
         std::uint32_t offset = 0;
@@ -131,6 +132,9 @@ private:
     std::vector<std::shared_ptr<Sampler>> heldSamplers;
     std::vector<std::uint32_t> samplerGenerations;
     std::vector<std::uint32_t> freeSamplerSlots;
+    void sweepSamplersLocked(std::vector<std::shared_ptr<Sampler>>& dropped);
+    void noteTakenLocked(std::uint32_t kind, std::vector<std::shared_ptr<Texture>>& dropped);
+    void noteSamplerTakenLocked(std::vector<std::shared_ptr<Sampler>>& dropped);
     Counts counts;
     void reportLookup();
     void createLookupResolve();
