@@ -224,6 +224,7 @@ function(add_shader_recompiler target runtimeTarget)
             BuildBarycentricGeometryShader
             RunGpuSrtProgram
             HeapFragmentEligible
+            CompleteHeapDataWords
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources
