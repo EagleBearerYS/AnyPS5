@@ -36,6 +36,7 @@ using ImageTableAbi::PoisonReason;
 std::atomic<std::uint64_t> specializationNanoseconds{0};
 std::atomic<std::uint64_t> evaluateNanoseconds{0};
 std::atomic<std::uint64_t> materializeNanoseconds{0};
+std::atomic<std::uint64_t> tableSnapshotColumns{0};
 
 bool MaterializeProfiled() {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -575,12 +576,18 @@ public:
         const auto started = std::chrono::steady_clock::now();
         tables.shader = plan.shaderHash;
         tables.tables.resize(count);
+        std::uint64_t columns = 0;
         for (const auto& image : plan.info.images) {
-            if (image.table != NoTable && !image.deviceTable) Snapshot(image.source, image.table);
+            if (image.table == NoTable || image.deviceTable) continue;
+            Snapshot(image.source, image.table);
+            ++columns;
         }
         for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
+            if (sampler.table == NoTable) continue;
+            Snapshot(sampler.source, sampler.table);
+            ++columns;
         }
+        tableSnapshotColumns.fetch_add(columns, std::memory_order_relaxed);
         auto& counters = tableCounters();
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
         counters.tables.fetch_add(count, std::memory_order_relaxed);
@@ -2078,6 +2085,10 @@ std::uint64_t ResourceMaterializer::EvaluateNanoseconds() {
 
 std::uint64_t ResourceMaterializer::MaterializeNanoseconds() {
     return materializeNanoseconds.load(std::memory_order_relaxed);
+}
+
+std::uint64_t ResourceMaterializer::TableSnapshotColumns() {
+    return tableSnapshotColumns.load(std::memory_order_relaxed);
 }
 
 }
