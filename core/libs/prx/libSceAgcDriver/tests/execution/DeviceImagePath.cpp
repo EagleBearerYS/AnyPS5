@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
@@ -115,6 +116,7 @@ alignas(256) constexpr std::array<std::uint32_t, 14> PixelCode{
     0x8f108508u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 12> DirectPixelCode{0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 14> LargePixelCode{
     0x8f108508u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f2u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
 };
@@ -344,6 +346,7 @@ alignas(8) Header OtherComputeHeader{};
 alignas(8) Header ExecClearHeader{};
 alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
+alignas(8) Header DirectPixelHeader{};
 alignas(8) Header LargePixelHeader{};
 alignas(8) Header VillagePixelHeader{};
 alignas(8) Header ProducerHeader{};
@@ -399,9 +402,9 @@ const char* DrawName(DrawKind kind) {
     return kind == DrawKind::Direct ? "direct draw" : kind == DrawKind::Indirect ? "DRAW_INDIRECT" : "DRAW_INDEX_INDIRECT";
 }
 
-std::vector<std::uint32_t> DrawCommands(const GuestBlock& block, std::uint32_t key, DrawKind kind) {
+std::vector<std::uint32_t> DrawCommands(const GuestBlock& block, DrawKind kind, const std::uint32_t* pixelCode, std::span<const std::uint32_t> userData) {
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
-    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
+    const auto pixel = reinterpret_cast<std::uintptr_t>(pixelCode);
     const auto color = reinterpret_cast<std::uintptr_t>(block.Color());
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000},
@@ -425,10 +428,6 @@ std::vector<std::uint32_t> DrawCommands(const GuestBlock& block, std::uint32_t k
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
         {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)}, {0x292, 2},
     };
-    std::array<std::uint32_t, 9> userData{};
-    const auto table = BufferDescriptor(block.Table(), Entries * RecordBytes);
-    std::copy(table.begin(), table.end(), userData.begin());
-    userData[8] = key;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
         {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 1u << 1u}, {0x8c, 0},
         {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, static_cast<std::uint32_t>(userData.size()) << 1u},
@@ -454,6 +453,14 @@ std::vector<std::uint32_t> DrawCommands(const GuestBlock& block, std::uint32_t k
     Append(commands, 0x13, {3});
     Append(commands, 0x25, {0, 0, 0, 0});
     return commands;
+}
+
+std::vector<std::uint32_t> DrawCommands(const GuestBlock& block, std::uint32_t key, DrawKind kind) {
+    std::array<std::uint32_t, 9> userData{};
+    const auto table = BufferDescriptor(block.Table(), Entries * RecordBytes);
+    std::copy(table.begin(), table.end(), userData.begin());
+    userData[8] = key;
+    return DrawCommands(block, kind, PixelCode.data(), userData);
 }
 
 struct Counters {
@@ -885,17 +892,46 @@ void Captured(std::string& errors, const std::function<void()>& submit) {
     errors += capture.Finish();
 }
 
+void GpuModeDraw(const Harness& harness, std::uint32_t texture, bool heapStage, const std::string& what, std::string& errors) {
+    const auto taken = AgcDriver::DriverDetail::HeapStagesTaken();
+    const auto before = Read();
+    std::array<std::uint32_t, 12> userData{};
+    const auto descriptor = TextureDescriptor(harness.block.Texture(texture), TexelOf(texture).format);
+    std::copy(descriptor.begin(), descriptor.end(), userData.begin());
+    Captured(errors, [&] {
+        std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+        auto commands = DrawCommands(harness.block, DrawKind::Direct, DirectPixelCode.data(), userData);
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the GPU-mode draw submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+    });
+    RequireDrawn(ReadColor(harness), TexelOf(texture).value, what);
+    const auto after = Read();
+    Require((AgcDriver::DriverDetail::HeapStagesTaken() > taken) == heapStage && after.device.prepares == before.device.prepares, what + (heapStage ? ": the draw did not take GPU mode's heap stage path" : ": the draw took GPU mode's heap stage path on a refused heap") + Describe(before, after));
+    std::printf("%s: the texel through %s%s\n", what.c_str(), heapStage ? "a GPU-mode heap stage" : "the per-draw path", Describe(before, after).c_str());
+}
+
 void ComputeMeetsFullHeap(const Harness& harness) {
     Require(harness.device, "(l) needs the device image path");
+    const bool gpuHeap = AgcDriver::Graphics::GpuHeapEnabled();
     std::string errors;
     auto before = Read();
     Captured(errors, [&] { RunComputeKeys(harness, FillingKeys); });
     Captured(errors, [&] { RunComputeKeys(harness, FillingKeys); });
     auto after = Read();
-    RequireComputeTexels(FillingKeys, "(l) the program that fills the heap");
-    Require(after.device.inserted == before.device.inserted + FillingKeys.size() && after.device.heapFull == before.device.heapFull && after.device.fallbacks == before.device.fallbacks, "(l) the first program's two textures did not take the heap's two slots" + Describe(before, after));
-    std::printf("(l) a compute program fills the heap's two slots: the texels%s\n", Describe(before, after).c_str());
+    Require(after.device.inserted == before.device.inserted + 1u && after.device.heapFull == before.device.heapFull + 1u && after.device.fallbacks == before.device.fallbacks + 1u, "(l) the first program's two textures did not take one of the heap's two slots and fall back (heap full " + std::to_string(after.device.heapFull - before.device.heapFull) + ")" + Describe(before, after));
+    Require(!AgcDriver::Graphics::BindlessHeap::NearlyFull(), "(l) the table's slot refused the heap to GPU mode");
     before = after;
+    Captured(errors, [&] { RunComputeKeys(harness, FillingKeys); });
+    after = Read();
+    RequireCpuTable(before, after, "(l) the first program after its fallback");
+    RequireComputeTexels(FillingKeys, "(l) the first program after its fallback");
+    std::printf("(l) a compute program asks for both of the heap's two slots, takes 1 and leaves the heap's margin of 1 free: the texels through the CPU table%s\n", Describe(before, after).c_str());
+    if (gpuHeap) {
+        GpuModeDraw(harness, 5u, true, "(l) a GPU-mode draw of a texture in its user data takes the other slot", errors);
+        Require(AgcDriver::Graphics::BindlessHeap::NearlyFull(), "(l) GPU mode's take of the margin's slot did not refuse the heap");
+    }
+    before = Read();
     Captured(errors, [&] { RunComputeKeys(harness, MeetingKeys, OtherComputeCode.data()); });
     after = Read();
     RequireMisses(before, after, MeetingKeys.size(), "(l) a second compute program, first batch");
@@ -904,19 +940,15 @@ void ComputeMeetsFullHeap(const Harness& harness) {
     after = Read();
     Require(after.device.inserted == missed.device.inserted, "(l) a compute program meeting the full heap took a slot" + Describe(missed, after));
     Require(after.device.heapFull >= missed.device.heapFull + 1u && after.device.fallbacks == missed.device.fallbacks + 1u, "(l) a compute program meeting the full heap was not sent back to the CPU table path (heap full " + std::to_string(after.device.heapFull - missed.device.heapFull) + ", fallbacks " + std::to_string(after.device.fallbacks - missed.device.fallbacks) + ")");
-    std::printf("(l) a second compute program meets the full heap: %llu keys without a slot, %llu fallback, no slot taken%s\n", static_cast<unsigned long long>(after.device.heapFull - missed.device.heapFull), static_cast<unsigned long long>(after.device.fallbacks - missed.device.fallbacks), Describe(missed, after).c_str());
+    std::printf("(l) a second compute program meets the %s heap: %llu keys without a slot, %llu fallback, no slot taken%s\n", gpuHeap ? "full and refused" : "kept", static_cast<unsigned long long>(after.device.heapFull - missed.device.heapFull), static_cast<unsigned long long>(after.device.fallbacks - missed.device.fallbacks), Describe(missed, after).c_str());
     before = after;
     Captured(errors, [&] { RunComputeKeys(harness, MeetingKeys, OtherComputeCode.data()); });
     after = Read();
     RequireCpuTable(before, after, "(l) the second program after its fallback");
     RequireComputeTexels(MeetingKeys, "(l) the second program after its fallback");
     std::printf("(l) the second program after its fallback: the texels through the CPU table%s\n", Describe(before, after).c_str());
-    before = after;
-    Captured(errors, [&] { RunComputeKeys(harness, FillingKeys); });
-    after = Read();
-    RequireHits(before, after, "(l) the first program after the second fell back");
-    RequireComputeTexels(FillingKeys, "(l) the first program after the second fell back");
-    std::printf("(l) the first program still reads the device table: the texels%s\n", Describe(before, after).c_str());
+    if (gpuHeap) GpuModeDraw(harness, 6u, false, "(l) a GPU-mode draw of another texture on the refused heap", errors);
+    else Require(!AgcDriver::Graphics::BindlessHeap::NearlyFull(), "(l) the table's programs refused the heap to GPU mode");
     Require(errors.find("heap is full") == std::string::npos, "(l) the full heap raised an error");
 }
 
@@ -1190,6 +1222,7 @@ int main(int argc, char** argv) {
             Registered(ExecClearHeader, ExecClearCode.data(), sizeof(ExecClearCode), 0);
             Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
             Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+            Registered(DirectPixelHeader, DirectPixelCode.data(), sizeof(DirectPixelCode), 1);
             Registered(LargePixelHeader, LargePixelCode.data(), sizeof(LargePixelCode), 1);
             Registered(ProducerHeader, ProducerPixelCode.data(), sizeof(ProducerPixelCode), 1);
             Registered(OtherProducerHeader, OtherProducerPixelCode.data(), sizeof(OtherProducerPixelCode), 1);
