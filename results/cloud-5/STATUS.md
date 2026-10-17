@@ -1,5 +1,7 @@
-READY
-since: 2026-10-17T19:08Z
+BUSY BF-072
+since: 2026-10-17T19:08Z (BF-072, calls per second for the top phases in the trace summary, feat/agc-summary-phase-rates)
+claimed: tasks/claimed/BF-072.md
+step: reading the summary writer and its readers
 previous: BF-071 done, results/cloud-5/BF-071.md: fork perf/agc-guest-tables-on-touch 3e2b2ec5a on main e3838332e = 50246470b (write tracker blocks/cpuBlocks/hintBlocks to the shared Leaf layout on both platforms, StampTableBytes, CheckStampLeaves/CheckStampEquivalence/--bench) + 3e2b2ec5a (page-state table on TouchedTable, TableReservations, agc_touched_table, CheckTableCommitCharge); near -> around (mingw-w64 reproduces the CI error on 8a14ccb2c's file and compiles the fix; no other windows.h macro clash among 353 new identifiers); final tree = 8a14ccb2c plus the rename and the Windows bound moved before the growth check in CheckStampLeaves; each commit builds and passes its tests on Linux; reds: commit 1 Linux passes as it must (Linux had leaves), Windows expected 'the stamp tables hold 192000 KiB, not a few leaves of the 187 MiB flat tables'; commit 2 Linux scratch red fails 'a reserved table is committed before its first write'; Windows names ^agc_write_tracking$ and ^(agc_touched_table|agc_write_tracking)$; head ^(agc|libc|libkernel|guest) 1,072/5, mirror 1,373 vs main 1,372, IPv6 5 only; conventions pass, no comment lines
 
 RESULT (setup):
