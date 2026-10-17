@@ -363,6 +363,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
             fallBack(programs, "the key table is full at " + std::to_string(keys.Entries()) + " entries in " + std::to_string(keys.Buckets()) + " buckets, even after its budget evicted");
             continue;
         }
+        for (const auto& identity : programs) overflowStreaks.erase(identity);
         if (entry.texture == nullptr) continue;
         hold(key, std::move(entry));
         ++totals.inserted;

@@ -463,13 +463,13 @@ void OverflowFallsBack(AgcDriver::VulkanDevice& device) {
     Require(device.DeviceImagesServe(ProgramAddress), "a noted program is served by the device path");
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
     const auto keys = FormatKeys();
-    for (std::uint32_t batch = 1; batch <= DeviceImageTable::OverflowBatches; ++batch) {
-        Require(table.ServesProgram(ProgramAddress), "the program keeps the device path before " + std::to_string(DeviceImageTable::OverflowBatches) + " overflowing batches");
+    for (std::uint32_t batch = 0; batch <= DeviceImageTable::OverflowBatches; ++batch) {
+        Require(table.ServesProgram(ProgramAddress), "the program keeps the device path before " + std::to_string(DeviceImageTable::OverflowBatches) + " overflowing batches that resolve nothing new");
         table.Prepare(context, *recorder, programs);
         WriteRecords(table.RingChunk(*recorder), keys, DeviceImageTable::RingCapacity + 1u);
         recorder->Sync();
     }
-    Require(!table.ServesProgram(ProgramAddress) && !table.ServesIdentity(programs[0]) && table.Totals().fallbacks == 1u, "a program whose misses overflow the ring in three batches in a row falls back to the CPU path");
+    Require(!table.ServesProgram(ProgramAddress) && !table.ServesIdentity(programs[0]) && table.Totals().fallbacks == 1u, "a program whose misses overflow the ring in three batches in a row, after its keys are in the table, falls back to the CPU path");
     Require(!device.DeviceImagesServe(ProgramAddress) && device.DeviceImagesServe(ProgramAddress + 0x100u), "the device's next recompile request for that program, and only for it, asks for the CPU table path");
     Require(device.Target().deviceImageTables, "the device still serves the path to other programs");
     DeviceImageTable other(context, Lookup());
@@ -504,6 +504,29 @@ void OverflowsBeforeAResolveCountOnce(AgcDriver::VulkanDevice& device) {
     Require(table.ServesProgram(ProgramAddress) && drained.fallbacks == 0u, "batches that overflow before the table resolved the misses of the first count as one overflow");
     table.Prepare(context, *recorder, programs);
     Require(table.Totals().inserted == keys.size(), "the records that fit are resolved");
+    recorder->Sync();
+}
+
+void OverflowsThatResolveKeepThePath(AgcDriver::VulkanDevice& device) {
+    const auto program = DeviceTableProgram(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    table.NoteProgram(program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
+    const auto keys = FormatKeys();
+    Require(keys.size() > DeviceImageTable::OverflowBatches, "the test has a new key for every overflowing batch");
+    for (std::uint32_t batch = 0; batch <= DeviceImageTable::OverflowBatches; ++batch) {
+        table.Prepare(context, *recorder, programs);
+        WriteRecords(table.RingChunk(*recorder), std::span<const Key>(keys).subspan(batch, 1), DeviceImageTable::RingCapacity + 1u);
+        recorder->Sync();
+    }
+    const auto counts = table.Totals();
+    Require(counts.dropped == DeviceImageTable::OverflowBatches + 1u, "every batch overflowed the ring (dropped " + std::to_string(counts.dropped) + ")");
+    Require(table.ServesProgram(ProgramAddress) && counts.fallbacks == 0u, "overflowing batches whose misses the table resolved into new entries count as progress, not as a program stuck missing (" + std::to_string(counts.inserted) + " inserted)");
+    table.Prepare(context, *recorder, programs);
+    Require(table.Totals().inserted == DeviceImageTable::OverflowBatches + 1u, "each overflowing batch's key is resolved");
     recorder->Sync();
 }
 
@@ -748,6 +771,7 @@ int main(int argc, char** argv) {
         FullTableFallsBack(*device);
         OverflowFallsBack(*device);
         OverflowsBeforeAResolveCountOnce(*device);
+        OverflowsThatResolveKeepThePath(*device);
         NonSeamlessCube(*device);
         ComputeLayout(*device);
         GraphicsLayouts(*device);
