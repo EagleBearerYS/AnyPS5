@@ -4623,7 +4623,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
         auto* table = Graphics::DeviceImageTable::Existing(context);
         require(table != nullptr, "a compute stage reading images through the device image table needs the device's table");
         if (shader.workgroupMemoryDwords == 0) setLayouts[ShaderRecompiler::WorkgroupMemoryDescriptorSet] = table->EmptyLayout();
-        setLayouts[ShaderRecompiler::RuntimeAbi::DeviceHeapSet] = Graphics::BindlessHeap::For(context).HeapLayout();
+        setLayouts[ShaderRecompiler::RuntimeAbi::DeviceHeapSet] = Graphics::DeviceImageHeap::Layout(context);
         setLayouts[ShaderRecompiler::RuntimeAbi::DeviceTableSet] = table->Layout();
     }
     const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes};
