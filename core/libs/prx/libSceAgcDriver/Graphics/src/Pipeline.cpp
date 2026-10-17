@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <list>
+#include <map>
 #include <mutex>
 #include <string_view>
 #include <type_traits>
@@ -348,7 +349,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             specializations.emplace_back(shader);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
-        for (const auto& shader : shaders) shader.program->spirv.Release();
+        for (const auto& shader : shaders) RetireSpirv(shader.program->spirv);
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
             for (std::size_t i = 0; i < shaders.size(); ++i) {
                 if (shaders[i].stage != ShaderRecompiler::ShaderStage::Vertex) continue;
@@ -969,11 +970,75 @@ void reportPipelines(PipelineStore& store) {
 
 }
 
+namespace {
+
+struct SpirvRetirement {
+    std::mutex mutex;
+    std::list<std::pair<const std::uint32_t*, ShaderRecompiler::SharedSpirv>> order;
+    std::map<const std::uint32_t*, decltype(order)::iterator> index;
+    std::uint64_t words = 0;
+};
+
+SpirvRetirement& spirvRetirement() {
+    static SpirvRetirement retirement;
+    return retirement;
+}
+
+std::uint64_t spirvBudgetWords() {
+    static const std::uint64_t words = [] {
+        const char* value = std::getenv("APS5_RELEASE_SPIRV_BUDGET_MIB");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) * 1024u * 1024u / sizeof(std::uint32_t) : 0u;
+    }();
+    return words;
+}
+
+}
+
+void RetireSpirv(const ShaderRecompiler::SharedSpirv& spirv) {
+    if (!spirv.IsReleasable()) return;
+    const auto budget = spirvBudgetWords();
+    if (budget == 0) {
+        spirv.Release();
+        return;
+    }
+    if (!spirv.IsResident()) return;
+    const auto key = spirv.Hold().Words().data();
+    std::vector<ShaderRecompiler::SharedSpirv> evicted;
+    {
+        auto& retirement = spirvRetirement();
+        std::lock_guard lock(retirement.mutex);
+        if (const auto found = retirement.index.find(key); found != retirement.index.end()) {
+            retirement.words -= found->second->second.size();
+            retirement.order.erase(found->second);
+            retirement.index.erase(found);
+        }
+        retirement.order.emplace_back(key, spirv);
+        retirement.index[key] = std::prev(retirement.order.end());
+        retirement.words += spirv.size();
+        while (retirement.words > budget && retirement.order.size() > 1) {
+            auto& oldest = retirement.order.front();
+            retirement.words -= oldest.second.size();
+            retirement.index.erase(oldest.first);
+            evicted.push_back(std::move(oldest.second));
+            retirement.order.pop_front();
+        }
+    }
+    for (const auto& module : evicted) module.Release();
+}
+
+RetiredSpirv RetiredSpirvTotals() {
+    auto& retirement = spirvRetirement();
+    std::lock_guard lock(retirement.mutex);
+    return {retirement.order.size(), retirement.words, spirvBudgetWords()};
+}
+
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
     return CachedPipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout);
 }
 
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created) {
+namespace {
+
+std::shared_ptr<Pipeline> storedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (created != nullptr) *created = false;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
@@ -1068,6 +1133,16 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     }
     if (created != nullptr) *created = true;
     if (PipelineJournalEnabled() && !PipelineJournalReplaying()) RecordGraphicsPipeline(MakeGraphicsPipelineRecipe(state, vertexInput, resources, shaders, attachmentLayout), shaders);
+    return pipeline;
+}
+
+}
+
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created) {
+    auto pipeline = storedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, created);
+    for (const auto& shader : shaders) {
+        if (shader.program != nullptr) RetireSpirv(shader.program->spirv);
+    }
     return pipeline;
 }
 

@@ -3699,11 +3699,12 @@ void reportSpirvResidency() {
     }
     if (nowMs - last < 10000 || !lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto held = ShaderRecompiler::HeldSpirv();
+    const auto retired = Graphics::RetiredSpirvTotals();
     const auto recent = held.reloads - lastReloads.exchange(held.reloads, std::memory_order_relaxed);
     constexpr double Mib = 1024.0 * 1024.0;
     const auto heap = static_cast<double>(held.heapWords) * sizeof(std::uint32_t) / Mib;
     const auto mapped = static_cast<double>(held.mappedWords) * sizeof(std::uint32_t) / Mib;
-    AgcDriver::ProfilePrint_nid_no_patch("[spirv] %.1f MiB held (heap %.1f, mapped %.1f) by %llu modules; releasable %llu, resident %llu, pinned %llu; released %llu, reloaded %llu (%llu in the last %.0f s, %.1f ms reloading in all)\n", heap + mapped, heap, mapped, static_cast<unsigned long long>(held.holders), static_cast<unsigned long long>(held.releasable), static_cast<unsigned long long>(held.resident), static_cast<unsigned long long>(held.pinned), static_cast<unsigned long long>(held.releases), static_cast<unsigned long long>(held.reloads), static_cast<unsigned long long>(recent), static_cast<double>(nowMs - last) / 1000.0, static_cast<double>(held.reloadNanoseconds) / 1e6);
+    AgcDriver::ProfilePrint_nid_no_patch("[spirv] %.1f MiB held (heap %.1f, mapped %.1f) by %llu modules; releasable %llu, resident %llu, pinned %llu; released %llu, reloaded %llu (%llu in the last %.0f s, %.1f ms reloading in all); %llu kept under the %.0f MiB budget (%.1f MiB)\n", heap + mapped, heap, mapped, static_cast<unsigned long long>(held.holders), static_cast<unsigned long long>(held.releasable), static_cast<unsigned long long>(held.resident), static_cast<unsigned long long>(held.pinned), static_cast<unsigned long long>(held.releases), static_cast<unsigned long long>(held.reloads), static_cast<unsigned long long>(recent), static_cast<double>(nowMs - last) / 1000.0, static_cast<double>(held.reloadNanoseconds) / 1e6, static_cast<unsigned long long>(retired.modules), static_cast<double>(retired.budgetWords) * sizeof(std::uint32_t) / Mib, static_cast<double>(retired.words) * sizeof(std::uint32_t) / Mib);
 }
 
 }
@@ -4632,7 +4633,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), context.pipelineCache, objects->module, objects->layout, pipelineFlags, stageFlags, specialization.Info(), subgroupSize, &objects->pipeline, context.pipelineCacheSynchronization);
     objects->destroyModule(objects->device, objects->module, nullptr);
     objects->module = VK_NULL_HANDLE;
-    shader.spirv.Release();
+    Graphics::RetireSpirv(shader.spirv);
     computePipelinesCreated.fetch_add(1, std::memory_order_relaxed);
     state->computePipelinesCreated.fetch_add(1, std::memory_order_relaxed);
     if (GuestMemory::GpuMutex().HeldByThisThread()) computePipelinesCreatedLocked.fetch_add(1, std::memory_order_relaxed);
@@ -4648,11 +4649,18 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
         std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
         {
             std::lock_guard pipelines(state->computePipelinesMutex);
-            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
+            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) {
+                Graphics::RetireSpirv(shader.spirv);
+                return found->second;
+            }
             if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
             else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
         }
-        if (other.valid()) return other.get();
+        if (other.valid()) {
+            auto built = other.get();
+            Graphics::RetireSpirv(shader.spirv);
+            return built;
+        }
     }
     const auto finish = [&](std::shared_ptr<ComputePipelineObjects> built, std::exception_ptr error) {
         if (pipelineKey.identity.Empty()) return built;
