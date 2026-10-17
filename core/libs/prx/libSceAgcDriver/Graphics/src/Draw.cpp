@@ -1410,6 +1410,31 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
+struct FloorBinding {
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t batch = 0;
+    std::shared_ptr<ShaderResources> resources;
+    std::shared_ptr<Pipeline> pipeline;
+};
+
+bool FloorReuse() {
+    static const bool enabled = std::getenv("APS5_FLOOR_REUSE") != nullptr;
+    return enabled;
+}
+
+std::map<std::vector<std::uintptr_t>, FloorBinding>& FloorBindings() {
+    static auto* bindings = new std::map<std::vector<std::uintptr_t>, FloorBinding>();
+    return *bindings;
+}
+
+std::vector<std::uintptr_t> FloorBindingKey(std::span<const CompiledShader> shaders, const State& state) {
+    std::vector<std::uintptr_t> key;
+    for (const auto& shader : shaders) key.push_back(reinterpret_cast<std::uintptr_t>(shader.program));
+    for (const auto& color : state.colors) key.push_back(static_cast<std::uintptr_t>(color.format));
+    key.push_back(state.depth ? 1u : 0u);
+    return key;
+}
+
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
@@ -2293,7 +2318,15 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     const bool recordDraws = RecordDraws();
     auto* recorder = Recorder::Active();
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
-    auto resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    FloorBinding* floor = nullptr;
+    std::vector<std::uintptr_t> floorKey;
+    const auto floorBatch = recorder != nullptr ? recorder->Submissions() : 0;
+    if (FloorReuse() && recordable && args == nullptr && stencilReferences.empty()) {
+        floorKey = FloorBindingKey(shaders, state);
+        const auto found = FloorBindings().find(floorKey);
+        if (found != FloorBindings().end() && found->second.device == context.device && found->second.batch == floorBatch && found->second.resources != nullptr) floor = &found->second;
+    }
+    auto resolved = floor != nullptr ? ResolvedResources{floor->resources, {}, {}, false, nullptr} : resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
     auto& resources = resolved.resources;
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
@@ -2466,7 +2499,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(!selectedPipeline->SplitsFaces() && !selectedPipeline->SplitsSecondChannel(), "stencil replay refuses pipeline face or channel splits");
         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
     }
-    auto pipeline = stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
+    auto pipeline = floor != nullptr ? floor->pipeline : stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
     std::vector<std::shared_ptr<StorageTexture>> owners;
@@ -2503,6 +2536,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         record.waited = outcome.waited;
         record.stencilReplay = stencilReplay;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs);
+        if (floor == nullptr && !floorKey.empty() && recorded && !outcome.waited && resolved.moved.empty() && !multisampled) FloorBindings()[floorKey] = FloorBinding{context.device, floorBatch, resources, pipeline};
         // The recipe for the caller's draw-cache entry (design_cpu_final M8, rule R3 for draws):
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a

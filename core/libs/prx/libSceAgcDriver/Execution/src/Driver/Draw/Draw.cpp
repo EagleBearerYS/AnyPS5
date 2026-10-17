@@ -13,8 +13,43 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <mutex>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+struct FloorDraw {
+    std::shared_ptr<void> held;
+    std::vector<Graphics::CompiledShader> stages;
+    std::vector<Graphics::GuestMemorySnapshot> snapshots;
+    std::vector<std::shared_ptr<DispatchVariant>> recipeStages;
+    std::uint64_t drawKey = 0;
+};
+
+bool FloorReuse() {
+    static const bool enabled = std::getenv("APS5_FLOOR_REUSE") != nullptr;
+    return enabled;
+}
+
+std::mutex& FloorMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::map<std::vector<std::uint64_t>, std::shared_ptr<const FloorDraw>>& FloorDraws() {
+    static auto* draws = new std::map<std::vector<std::uint64_t>, std::shared_ptr<const FloorDraw>>();
+    return *draws;
+}
+
+std::vector<std::uint64_t> FloorKey(const DrawDecode& decode, std::uint64_t serial) {
+    std::vector<std::uint64_t> key{serial, static_cast<std::uint64_t>(decode.state.stages.path)};
+    for (const auto& program : decode.programs) key.push_back(program.binary.codeAddress);
+    return key;
+}
+
+}
 
 DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::string& rejected) {
     PerformanceTimer timing("Driver.Draw");
@@ -79,6 +114,32 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     timing.Mark("device_setup");
     phaseTiming.Phase(DrawRowVectors);
+
+    if (FloorReuse() && pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
+        auto current = decodeDraw(queue, submission, localDevice->graphicsContext());
+        phaseTiming.Phase(DrawRowDecode);
+        std::shared_ptr<const FloorDraw> floor;
+        {
+            std::lock_guard floorLock(FloorMutex());
+            const auto found = FloorDraws().find(FloorKey(*current, localDevice->Serial()));
+            if (found != FloorDraws().end()) floor = found->second;
+        }
+        if (floor != nullptr && !current->state.stages.mesh) {
+            auto recipe = floor->recipeStages.empty() ? nullptr : findDrawRecipe(floor->drawKey, floor->recipeStages);
+            auto writes = drawWriteRanges(current->state, floor->stages);
+            auto reads = QueuedDrawReadRanges(drawParameters, floor->stages);
+            const auto commitQueue = submission.queue;
+            const auto commitPacket = (packet[0] >> 8u) & 0xffu;
+            const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
+            DrawPipeline::Queue0().Enqueue([this, localDevice, current, drawParameters, floor, recipe, commitQueue, commitPacket, epoch] {
+                DrawPipeline::FollowEpoch(epoch);
+                GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
+                commitDraw(localDevice, commitQueue, current->state, drawParameters, floor->stages, floor->snapshots, recipe, floor->recipeStages, floor->drawKey);
+            }, std::move(writes), 0, {}, std::move(reads));
+            phaseTiming.Phase(DrawRowLockWait);
+            return drawn();
+        }
+    }
 
     const bool useDrawEntries = drawEntries() && !ShaderRecompiler::DebugProbeActive() && dumpTarget == 0 && dumpSlot1 == 0;
     const bool registerKey = useDrawEntries && registerKeyEnabled();
@@ -646,12 +707,27 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto commitPacket = (packet[0] >> 8u) & 0xffu;
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         auto reads = QueuedDrawReadRanges(drawParameters, stages);
+        std::shared_ptr<FloorDraw> floorFill;
+        std::vector<std::uint64_t> floorKey;
+        if (FloorReuse() && !graphics.stages.mesh) {
+            floorFill = std::make_shared<FloorDraw>();
+            floorFill->stages = stages;
+            floorFill->snapshots = snapshots;
+            floorFill->recipeStages = recipeStages;
+            floorFill->drawKey = drawKey;
+            floorKey = FloorKey(*decode, localDevice->Serial());
+        }
         auto commit = [this, localDevice = std::move(localDevice), decode = std::move(decode), drawParameters, stages = std::move(stages), snapshots = std::move(snapshots), recipe = std::move(recipe), recipeStages = std::move(recipeStages), drawKey, commitQueue, commitPacket, epoch, programs = std::move(programs), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
             commitDraw(localDevice, commitQueue, decode->state, drawParameters, stages, snapshots, recipe, recipeStages, drawKey);
         };
         auto held = std::make_shared<decltype(commit)>(std::move(commit));
+        if (floorFill != nullptr) {
+            floorFill->held = held;
+            std::lock_guard floorLock(FloorMutex());
+            FloorDraws().try_emplace(std::move(floorKey), std::move(floorFill));
+        }
         DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads));
         phaseTiming.Phase(DrawRowLockWait);
         timing.Mark("draw_enqueued");
