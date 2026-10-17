@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T10:48:40Z
+BUSY PM-076 (adversarial review of BF-052, CPU-path indirect draws in the draw cache)
+since: 2026-10-17T10:53:56Z
 last: LA-005 done, results/cloud-1/LA-005.md: exp/lane-a-mesh 480d3fc3b on exp/lane-a-join 3073e11d0; heap set and set 3 gain MESH when VK_EXT_mesh_shader (no task bit), tracker takes mesh stages, binding unchanged; tests (a) compile half, (b), (c), (d) pass, no bug in PR 6947 space reuse; (a) words 9,891->12,301 (host 64), llvmpipe aborts compiling mesh modules so no compile time; mirror 1399/1405 vs base 1396/1402, GPU_PATH scope 701/709 vs 698/706, same failures; before that BF-053, BF-051
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
