@@ -39,7 +39,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     };
     if (request.target.deviceImageTables) request.target.deviceImageTables = localDevice->DeviceImagesServe(program.binary.codeAddress);
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
-    const bool heapCandidate = (program.binary.stage == Stage::Fragment || program.binary.stage == Stage::Vertex) && !drawParameters.indirect && HeapFragmentsEnabled();
+    const bool heapCandidate = (program.binary.stage == Stage::Fragment || program.binary.stage == Stage::Vertex) && HeapFragmentsEnabled();
     const auto fragmentOnHeap = [&] {
         const auto fragment = std::find_if(programs.begin(), programs.end(), [](const DrawProgram& candidate) { return candidate.binary.stage == Stage::Fragment; });
         return fragment == programs.end() || HeapFragmentKnown(fragment->snapshot.get(), fragment->codeOffset).value_or(false);

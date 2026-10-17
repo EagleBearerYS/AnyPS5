@@ -759,7 +759,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         const auto& result = *programResults[i];
         if (i == 0 && drawParameters.indirect) {
-            indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
+            indirectCpu = ClassifyIndirectDraw(result, stageCaptures[i].heapWords.get(), graphics, programs.front(), localDevice, drawParameters, traceIndirect);
         } else if (i == 0) {
             fold(result, drawParameters);
         }
@@ -921,6 +921,9 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 decodeVertexInfo(programIndex);
                 result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
                 if (!rejected.empty()) return DrawVerdict::Rejected;
+                for (auto& stage : stages) {
+                    if (stage.program == &result) stage.heap = stageCaptures[programIndex].heapWords.get();
+                }
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
             }
             fold(*programResults[0], direct);

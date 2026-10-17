@@ -348,7 +348,7 @@ std::string PathName(const std::optional<Path>& path) {
 }
 
 std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule, bool rectList = false) {
-    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(rectList), Program(userData), fixture.device, draw, false);
+    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, nullptr, fixture.State(rectList), Program(userData), fixture.device, draw, false);
     const auto& indirect = *draw.indirect;
     const bool rules = expectedPath || (indirect.vertexRule == expectedRule && indirect.instanceRule == expectedRule);
     std::cout << what << ": classified to " << PathName(path) << '\n';

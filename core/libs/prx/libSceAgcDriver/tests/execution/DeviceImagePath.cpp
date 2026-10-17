@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -115,6 +116,7 @@ alignas(256) constexpr std::array<std::uint32_t, 8> OtherProducerPixelCode{0x7e0
 alignas(4096) std::array<std::array<float, 4>, 64> Outputs{};
 alignas(16) std::array<std::uint32_t, 4> DrawArguments{3u, 1u, 0u, 0u};
 alignas(16) std::array<std::uint32_t, 5> IndexedArguments{3u, 1u, 0u, 0u, 0u};
+alignas(16) std::array<std::uint32_t, 8> InstancedArguments{3u, 1u, 0u, 1u, 3u, 1u, 0u, 2u};
 alignas(256) std::array<std::uint16_t, 4> Indices{0u, 1u, 2u, 0u};
 constexpr std::byte Kept{0x40};
 
@@ -574,7 +576,7 @@ void Draws(const Harness& harness) {
         RequireDrawn(ReadColor(harness), TexelOf(texture).value, name + ", second draw");
         after = Read();
         if (harness.device) RequireHits(before, after, name + ", second draw");
-        if (harness.device && AgcDriver::Graphics::GpuHeapEnabled() && kind == DrawKind::Direct) Require(after.device.gpuModeDraws > before.device.gpuModeDraws, name + ", second draw: the draw did not read the device image table in GPU mode" + Describe(before, after));
+        if (harness.device && AgcDriver::Graphics::GpuHeapEnabled()) Require(after.device.gpuModeDraws > before.device.gpuModeDraws, name + ", second draw: the draw did not read the device image table in GPU mode" + Describe(before, after));
         std::printf("%s, second draw: the texel%s\n", name.c_str(), Describe(before, after).c_str());
     }
 }
@@ -665,6 +667,35 @@ void Rechecks(const Harness& harness) {
     const auto after = Read();
     if (harness.device) Require(after.device.checked - before.device.checked <= after.device.entries, "(g) four draws in one submission re-checked " + std::to_string(after.device.checked - before.device.checked) + " entries of " + std::to_string(after.device.entries));
     std::printf("(g) four draws in one submission: %llu entries re-checked of %u%s\n", static_cast<unsigned long long>(after.device.checked - before.device.checked), after.device.entries, Describe(before, after).c_str());
+}
+
+void PatchedRecords(const Harness& harness) {
+    constexpr std::uint32_t StartInstanceLocation = 0x8c;
+    constexpr std::uint32_t key = 1867u;
+    auto commands = DrawCommands(harness.block, key, DrawKind::Direct);
+    commands.resize(commands.size() - 3u);
+    const auto arguments = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(InstancedArguments.data()));
+    Append(commands, 0x11, {1, static_cast<std::uint32_t>(arguments), static_cast<std::uint32_t>(arguments >> 32u)});
+    Append(commands, 0x24, {0, 0, StartInstanceLocation, 2});
+    Append(commands, 0x24, {16, 0, StartInstanceLocation, 2});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the patched-record submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    static_cast<void>(ReadColor(harness));
+    const auto paths = AgcDriver::Graphics::IndirectDrawCounts();
+    const auto before = Read();
+    std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the patched-record submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto what = std::string("(k) two DRAW_INDIRECT records patching their start instance (1, 2) into the vertex stage's user data, key ") + std::to_string(key);
+    RequireDrawn(ReadColor(harness), TexelOf(TextureOf(key)).value, what);
+    const auto after = Read();
+    const auto pathsAfter = AgcDriver::Graphics::IndirectDrawCounts();
+    const auto notFolded = pathsAfter[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::NotFolded)] - paths[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::NotFolded)];
+    Require(std::getenv("APS5_PROFILE_DRAW") == nullptr || notFolded == 2u, what + ": the records did not take the CPU path for a patched user data word (" + std::to_string(notFolded) + " not folded)");
+    if (harness.device) RequireHits(before, after, what);
+    if (harness.device && AgcDriver::Graphics::GpuHeapEnabled()) Require(after.device.gpuModeDraws - before.device.gpuModeDraws == 2u, what + ": the CPU-path records did not read the device image table in GPU mode" + Describe(before, after));
+    std::printf("%s: the texel on the CPU path, %llu records not folded%s\n", what.c_str(), static_cast<unsigned long long>(notFolded), Describe(before, after).c_str());
 }
 
 void BindsOnce(const Harness& harness) {
@@ -975,9 +1006,11 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     if (mode != "--village-bench" && mode != "--binds") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
+    if (parts == "k") _putenv_s("APS5_PROFILE_DRAW", "1");
 #else
     if (mode != "--village-bench" && mode != "--binds") setenv("APS5_EAGER_WRITEBACK", "1", 1);
     if (mode == "--heap-cap") setenv("APS5_HEAP_SLOT_CAP", "2", 1);
+    if (parts == "k") setenv("APS5_PROFILE_DRAW", "1", 1);
 #endif
     try {
         bool served = false;
@@ -1019,6 +1052,7 @@ int main(int argc, char** argv) {
                 if (parts.find('e') != std::string::npos) Faults(harness);
                 if (parts.find('g') != std::string::npos) Rechecks(harness);
                 if (parts.find('h') != std::string::npos) GpuWrittenTexture(harness);
+                if (parts.find('k') != std::string::npos) PatchedRecords(harness);
                 if (parts.find('i') != std::string::npos) StaleRecord(harness);
             }
         } catch (const std::exception& error) {
