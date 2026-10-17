@@ -1,5 +1,6 @@
-READY
-since: 2026-10-17T19:11:51Z (PRM-043 withdrawn)
+BUSY PRM-044
+since: 2026-10-17T23:18:30Z (claimed)
+claimed: tasks/claimed/PRM-044.md
 last: PRM-043 stopped (withdrawn 18:18Z; no new failure found, nothing pushed); BF-061 done, results/cloud-4/BF-061.md (exp/shader-heap-counters 8ccb8aef7, -base3a aaf03e9b1: [heap] counters within 10 % of heaptrack, no cost unset); before it BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
