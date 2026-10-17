@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -36,6 +37,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -412,11 +414,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void ComputeLayout(AgcDriver::VulkanDevice& device) {
-    auto* table = DeviceImageTable::Existing(device.GraphicsContext());
-    Require(table != nullptr, "a device serving the path owns a device image table");
-    for (std::uint32_t index = 0; index < CopyInput.size(); ++index) CopyInput[index] = 0x5a000000u + index * 0x10203u;
-    CopyOutput.fill(0xdeadbeefu);
+ShaderRecompiler::RecompileResult CopyProgram(AgcDriver::VulkanDevice& device, bool deviceTables) {
     std::array<std::uint32_t, 8> userData{};
     auto input = BufferDescriptor(CopyInput.data(), static_cast<std::uint32_t>(CopyInput.size()));
     input[1] |= 4u << 16u;
@@ -428,11 +426,24 @@ void ComputeLayout(AgcDriver::VulkanDevice& device) {
     ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(CopyCode.data()), CopyCode, 0, {}}, {64u, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.ComputeTarget(64u), {0u, 0u, 0u, 128u}};
     request.useCache = false;
     auto result = ShaderRecompiler::Recompile(request);
-    result.deviceImageTables = true;
-    const auto before = table->Totals();
+    result.deviceImageTables = deviceTables;
+    return result;
+}
+
+void RunCopy(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, const std::string& what) {
+    for (std::uint32_t index = 0; index < CopyInput.size(); ++index) CopyInput[index] = 0x5a000000u + index * 0x10203u;
+    CopyOutput.fill(0xdeadbeefu);
     device.Dispatch(result, 1, 1, 1);
     device.WaitIdle();
-    for (std::uint32_t index = 0; index < CopyOutput.size(); ++index) Require(CopyOutput[index] == CopyInput[index], "a dispatch whose pipeline layout carries sets 2 and 3 copies its buffer (lane " + std::to_string(index) + ")");
+    for (std::uint32_t index = 0; index < CopyOutput.size(); ++index) Require(CopyOutput[index] == CopyInput[index], what + " copies its buffer (lane " + std::to_string(index) + ")");
+}
+
+void ComputeLayout(AgcDriver::VulkanDevice& device) {
+    auto* table = DeviceImageTable::Existing(device.GraphicsContext());
+    Require(table != nullptr, "a device serving the path owns a device image table");
+    const auto result = CopyProgram(device, true);
+    const auto before = table->Totals();
+    RunCopy(device, result, "a dispatch whose pipeline layout carries sets 2 and 3");
     const auto counts = table->Totals();
     Require(counts.prepares == before.prepares + 1u, "the dispatch prepared the device image table once");
     Require(counts.drained == before.drained && counts.faults == before.faults, "a dispatch that records nothing drains nothing");
@@ -787,6 +798,111 @@ void DeviceTarget(AgcDriver::VulkanDevice& device) {
     if (limits.maxBoundDescriptorSets < Runtime::DeviceTableSet + 1u) Require(!device.DeviceImagePath(), "a device binding fewer than four sets keeps the device path off");
 }
 
+void SetEnvironment(const char* name, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+void ClearEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
+bool TrianglePipeline(AgcDriver::VulkanDevice& device, bool deviceTables) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto context = device.GraphicsContext();
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 0xd5u;
+    fragment.variantId = 0xd6u;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    fragment.deviceImageTables = deviceTables;
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    const auto described = DescribeSetLayouts(context, shaders);
+    bool created = false;
+    const auto pipeline = CachedPipeline(context, state, VertexInputLayout{}, described.View(), shaders, VK_IMAGE_LAYOUT_GENERAL, &created);
+    Require(pipeline != nullptr && pipeline->Layout() != VK_NULL_HANDLE, std::string("the triangle pipeline ") + (deviceTables ? "with" : "without") + " the device sets exists");
+    return created;
+}
+
+void JournalRecord(AgcDriver::VulkanDevice& device) {
+    Require(PipelineJournalEnabled(), "the pipeline journal is on");
+    RunCopy(device, CopyProgram(device, true), "the recorded dispatch through sets 2 and 3");
+    Require(TrianglePipeline(device, true), "the recorded graphics pipeline with sets 2 and 3 is created");
+    FlushPipelineJournal();
+    const auto totals = PipelineJournalTotals();
+    Require(totals.recordedCompute >= 1u && totals.recordedGraphics >= 1u, "the journal recorded the compute and the graphics pipeline with the device sets");
+    std::printf("journal recorded with APS5_GPU_PATH set: %llu compute and %llu graphics pipelines, %llu modules\n", static_cast<unsigned long long>(totals.recordedCompute), static_cast<unsigned long long>(totals.recordedGraphics), static_cast<unsigned long long>(totals.recordedModules));
+}
+
+void JournalReplay(AgcDriver::VulkanDevice& device, bool switchOn) {
+    Require(PipelineJournalEnabled(), "the pipeline journal is on");
+    device.WaitForPipelineJournalReplay();
+    const auto totals = PipelineJournalTotals();
+    std::printf("journal replayed with APS5_GPU_PATH %s: %llu pipelines loaded, %llu compute and %llu graphics built, %llu present, %llu rejected, %llu failed\n", switchOn ? "set" : "unset", static_cast<unsigned long long>(totals.loadedRecipes), static_cast<unsigned long long>(totals.replayedCompute), static_cast<unsigned long long>(totals.replayedGraphics), static_cast<unsigned long long>(totals.replayPresent), static_cast<unsigned long long>(totals.replayRejected), static_cast<unsigned long long>(totals.replayFailed));
+    Require(totals.loadedRecipes >= 1u, "the cold start loaded the recorded journal");
+    const auto created = device.ComputePipelinesCreated();
+    if (switchOn) {
+        Require(totals.replayedCompute >= 1u && totals.replayFailed == 0u, "with APS5_GPU_PATH set the replay builds the compute pipeline with the device sets");
+        RunCopy(device, CopyProgram(device, true), "the dispatch after the replay, through sets 2 and 3");
+        Require(device.ComputePipelinesCreated() == created, "the dispatch after the replay builds no pipeline: it uses the one the replay built");
+        Require(totals.replayedGraphics >= 1u && !TrianglePipeline(device, true), "with APS5_GPU_PATH set the replay builds the graphics pipeline with the device sets, and a later use finds it");
+        std::printf("the dispatch and the draw pipeline used the replayed pipelines\n");
+        return;
+    }
+    Require(DeviceImageTable::Existing(device.GraphicsContext()) == nullptr && !device.ComputeTarget(64u).deviceImageTables, "with APS5_GPU_PATH unset the device has no device image table");
+    RunCopy(device, CopyProgram(device, false), "the dispatch with APS5_GPU_PATH unset");
+    Require(device.ComputePipelinesCreated() == created + 1u, "the dispatch with APS5_GPU_PATH unset builds its pipeline when it first needs it");
+    Require(TrianglePipeline(device, false), "the graphics pipeline with APS5_GPU_PATH unset is built when it is first needed");
+    std::printf("the dispatch and the draw pipeline were built when first needed\n");
+}
+
+int JournalMode(const std::string& mode, const std::filesystem::path& directory) {
+    const bool switchOn = mode != "--journal-replay-off";
+    if (mode == "--journal-record") {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+    }
+    std::filesystem::create_directories(directory);
+    SetEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
+    SetEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    SetEnvironment("APS5_NO_PIPELINE_JOURNAL", "0");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "2");
+    if (switchOn) SetEnvironment("APS5_GPU_PATH", "1");
+    else ClearEnvironment("APS5_GPU_PATH");
+    Require(GpuPathEnabled() == switchOn, "the journal run sets APS5_GPU_PATH as its mode asks");
+    auto device = OpenVulkanTestDevice();
+    if (device == nullptr) return VulkanTestSkipped;
+    if (switchOn && !device->DeviceImagePath()) {
+        std::printf("skipped, the device does not serve the device image path\n");
+        return VulkanTestSkipped;
+    }
+    if (mode == "--journal-record") JournalRecord(*device);
+    else if (mode == "--journal-replay" || mode == "--journal-replay-off") JournalReplay(*device, switchOn);
+    else throw std::runtime_error("unknown journal mode " + mode);
+    device->WaitIdle();
+    device.reset();
+    std::cout << "device image journal tests passed\n";
+    return 0;
+}
+
 void HeapStagesFollowTheSwitch(AgcDriver::VulkanDevice& device) {
     const auto stages = ImageHeapStages(device.GraphicsContext());
     constexpr VkShaderStageFlags graphics = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -801,7 +917,12 @@ void HeapStagesFollowTheSwitch(AgcDriver::VulkanDevice& device) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc > 1 && std::string(argv[1]) == "--switch-off") {
+        const std::string mode = argc > 1 ? argv[1] : "";
+        if (mode.rfind("--journal-", 0) == 0) {
+            Require(argc > 2, "a journal mode takes the journal's directory");
+            return JournalMode(mode, argv[2]);
+        }
+        if (mode == "--switch-off") {
 #ifdef _WIN32
             _putenv_s("APS5_GPU_PATH", "");
 #else
@@ -816,8 +937,8 @@ int main(int argc, char** argv) {
             std::cout << "device image table switch-off tests passed\n";
             return 0;
         }
-        const bool heapCap = argc > 1 && std::string(argv[1]) == "--heap-cap";
-        const bool heapMargin = argc > 2 && std::string(argv[1]) == "--heap-margin";
+        const bool heapCap = mode == "--heap-cap";
+        const bool heapMargin = argc > 2 && mode == "--heap-margin";
         const std::string cap = heapMargin ? argv[2] : "2";
 #ifdef _WIN32
         _putenv_s("APS5_GPU_PATH", "1");
