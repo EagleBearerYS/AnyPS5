@@ -1,6 +1,6 @@
-BUSY LA-008 (lane A: first use reads the texels, expected device images pre-pass)
-since: 2026-10-17T11:33:37Z
-last: PM-076 done, results/cloud-1/PM-076.md: review of BF-052 (exp/cpu-indirect-draw-cache fdb45156c); 1 blocking bug fixed on review/cpu-indirect-draw-cache 7db1dfca3 (a recaptured stage restored on a draw-cache hit drew without its own snapshots: SIGSEGV on lavapipe; fix + red/green); no patched word escapes the walk check (V# base case added); growth bounded (4096 entries LRU); harness commits change production code with the switch off; CI mirror 1337/1343 on head and base, switch unset and on, identical per test; before that LA-005, BF-053
+READY
+since: 2026-10-17T18:33:21Z
+last: LA-008 done, results/cloud-1/LA-008.md: lane A first use reads the texels; exp/lane-a-expect fa7bcb91b (4 commits on exp/lane-a-v2 b63fa365d, fable-void's expected device images ported); one-shot red on base, green on head; incomplete/unserved expectations fall back to the CPU table before recording; village-bench steady expectation 4.0-7.0 us per draw (memo), cold 148-198 us, 0 misses; CI mirror 1448/1454 (base 1444/1450, same 6 fails); APS5_GPU_PATH=1 scope 743/751 (base 737/747); LA-006 test-merge: 5 mechanical conflicts on the shared base, 45 against the head; before that PM-076, LA-005
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
