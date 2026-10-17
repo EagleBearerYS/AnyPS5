@@ -102,7 +102,8 @@ public:
     VkDescriptorSetLayout Layout() const { return layout; }
     VkDescriptorSetLayout EmptyLayout() const { return emptyLayout; }
     void Prepare(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::PipelineIdentity> programs = {});
-    void Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
+    std::optional<std::string> Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
+    void FallBackProgram(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t codeAddress, const std::string& reason);
     void SetInterfaceLookup(InterfaceLookup lookup);
     void NoteProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress);
     bool ServesProgram(std::uint64_t codeAddress) const;

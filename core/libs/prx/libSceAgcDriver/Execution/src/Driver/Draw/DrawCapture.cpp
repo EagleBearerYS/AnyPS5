@@ -203,21 +203,34 @@ bool readExpectedWord(void*, std::uint64_t address, std::uint32_t* value) {
 
 }
 
-void Driver::expectDeviceImages(const std::shared_ptr<VulkanDevice>& localDevice, std::span<const std::uint32_t> userData, std::uint64_t codeAddress, const ShaderRecompiler::RecompileResult& result, bool dispatch) {
+bool Driver::expectDeviceImages(const std::shared_ptr<VulkanDevice>& localDevice, std::span<const std::uint32_t> userData, std::uint64_t codeAddress, const ShaderRecompiler::RecompileResult& result, bool dispatch) {
     namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
-    if (!result.deviceImageTables || result.deviceImagePlan == nullptr || !Graphics::DeviceImageTable::ExpectsKeys()) return;
+    if (!result.deviceImageTables || !Graphics::DeviceImageTable::ExpectsKeys()) return true;
+    if (result.deviceImagePlan == nullptr) {
+        localDevice->FallBackDeviceImages(result, codeAddress, "its result carries no plan to expect its device images from, so it takes the CPU table path before its work is recorded");
+        return false;
+    }
     ShaderRecompiler::SrtRuntime runtime;
     runtime.userData = userData;
     runtime.shaderBase = codeAddress;
     runtime.readMemory = &readExpectedWord;
     bool complete = false;
     auto images = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*result.deviceImagePlan, runtime, complete);
-    if (!complete) return;
+    if (!complete) {
+        localDevice->FallBackDeviceImages(result, codeAddress, "a device image use whose T# cannot be evaluated before the work is recorded (a key from a lane, from memory the CPU cannot read, or more than " + std::to_string(ShaderRecompiler::ResourceMaterializer::MaxDeviceImageCandidates) + " candidates), so it takes the CPU table path from this draw or dispatch");
+        return false;
+    }
     Abi::NameInterfaces(images, result.deviceImageInterfaces);
     Abi::NameSamplerClasses(images, result.deviceSamplerClasses);
-    GuestMemory::TagGpuLockSite(dispatch ? GuestMemory::GpuLockSite::Dispatch : GuestMemory::GpuLockSite::Draw);
-    std::lock_guard gpuLock(GuestMemory::GpuMutex());
-    localDevice->ExpectDeviceImages(images);
+    std::optional<std::string> unserved;
+    {
+        GuestMemory::TagGpuLockSite(dispatch ? GuestMemory::GpuLockSite::Dispatch : GuestMemory::GpuLockSite::Draw);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        unserved = localDevice->ExpectDeviceImages(images);
+    }
+    if (!unserved.has_value()) return true;
+    localDevice->FallBackDeviceImages(result, codeAddress, *unserved + ", so it takes the CPU table path from this draw or dispatch");
+    return false;
 }
 
 void Driver::recordStageDataPositions(DispatchVariant& variant, const ShaderRecompiler::ResourceCapture& capture, const std::vector<Graphics::DecodeRead>& decodeReads) {

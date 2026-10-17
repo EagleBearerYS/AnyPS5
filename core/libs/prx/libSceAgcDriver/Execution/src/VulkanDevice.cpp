@@ -3604,10 +3604,16 @@ void VulkanDevice::NoteDeviceImageProgram(const ShaderRecompiler::RecompileResul
     if (auto* table = Graphics::DeviceImageTable::Existing(state->context)) table->NoteProgram(result, codeAddress);
 }
 
-void VulkanDevice::ExpectDeviceImages(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) const {
+std::optional<std::string> VulkanDevice::ExpectDeviceImages(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) const {
     auto* table = Graphics::DeviceImageTable::Existing(state->context);
     require(table != nullptr && state->recorder != nullptr, "expected device images need the device's table and its recorder");
-    table->Expect(graphicsContext(), *state->recorder, images);
+    return table->Expect(graphicsContext(), *state->recorder, images);
+}
+
+void VulkanDevice::FallBackDeviceImages(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress, const std::string& reason) const {
+    auto* table = Graphics::DeviceImageTable::Existing(state->context);
+    require(table != nullptr, "a device image fallback needs the device's table");
+    table->FallBackProgram(result.Identity(), codeAddress, reason);
 }
 
 Graphics::Context VulkanDevice::graphicsContext() const {
@@ -4610,7 +4616,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         auto* table = Graphics::DeviceImageTable::Existing(context);
         Graphics::Require(table != nullptr, "a dispatch reading images through the device image table needs the device's table");
         const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{record.shader->program->Identity()};
-        table->Expect(context, recorder, record.shader->program->deviceImages);
+        if (const auto unserved = table->Expect(context, recorder, record.shader->program->deviceImages)) Graphics::Require(false, "a dispatch recorded without the driver's expectation cannot take the CPU table path: " + *unserved);
         table->Prepare(context, recorder, programs);
     }
     VkAccessFlags covered = 0;
