@@ -295,6 +295,7 @@ public:
     static constexpr std::string_view WorkerWaitScope = "Driver.WorkerWait";
     static constexpr std::string_view WorkerPrefix = "queue worker ";
     static constexpr std::size_t TopPhases = 8;
+    static constexpr std::array<std::string_view, 2> RatedPhases{"Driver.Draw", "Driver.Packet"};
 
     static void AppendString(std::string& output, std::string_view text) {
         output += '"';
@@ -436,6 +437,7 @@ public:
         output += ",\"worker_busy_pct\":{";
         bool firstWorker = true;
         std::map<std::string, Clock::duration> phases;
+        std::map<std::string, std::uint64_t> calls;
         bool dropped = false;
         struct DroppedThread {
             std::string name;
@@ -457,7 +459,10 @@ public:
             for (const auto& total : thread.totals) {
                 const std::string_view scope = total.scope;
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
-                if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
+                if (scope == WorkerWaitScope) continue;
+                const auto phase = Name(total.scope, total.stage);
+                phases[phase] += total.length;
+                calls[phase] += total.count;
             }
             if (!thread.name.starts_with(WorkerPrefix)) continue;
             if (!firstWorker) output += ',';
@@ -472,6 +477,19 @@ public:
             if (index != 0) output += ',';
             AppendString(output, top[index].first);
             output += ':' + number(milliseconds(top[index].second) * perPresent);
+        }
+        output += "},\"top_phases_calls_per_s\":{";
+        std::vector<std::string> rated;
+        for (std::size_t index = 0; index < top.size() && index < TopPhases; ++index) rated.push_back(top[index].first);
+        for (const auto phase : RatedPhases) {
+            const auto found = calls.find(std::string(phase));
+            if (found != calls.end() && found->second != 0 && std::find(rated.begin(), rated.end(), found->first) == rated.end()) rated.push_back(found->first);
+        }
+        const double seconds = std::chrono::duration<double>(span).count();
+        for (std::size_t index = 0; index < rated.size(); ++index) {
+            if (index != 0) output += ',';
+            AppendString(output, rated[index]);
+            output += ':' + number(seconds > 0 ? static_cast<double>(calls[rated[index]]) / seconds : 0.0);
         }
         output += "},\"trace_dropped\":";
         output += dropped ? "true" : "false";
