@@ -842,10 +842,10 @@ int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     const std::string parts = argc > 2 ? argv[2] : "abcdegh";
 #ifdef _WIN32
-    _putenv_s("APS5_EAGER_WRITEBACK", "1");
+    if (mode != "--village-bench") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
 #else
-    setenv("APS5_EAGER_WRITEBACK", "1", 1);
+    if (mode != "--village-bench") setenv("APS5_EAGER_WRITEBACK", "1", 1);
     if (mode == "--heap-cap") setenv("APS5_HEAP_SLOT_CAP", "2", 1);
 #endif
     try {
