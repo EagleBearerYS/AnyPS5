@@ -666,37 +666,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             std::memcpy(words.data() + offset, region.bytes.data(), count * sizeof(std::uint32_t));
         }
     };
-    const auto verifyDataStage = [&](std::size_t i, const DispatchVariant& kept) {
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
-        std::vector<std::uint32_t> words;
-        freshRuns(i, runs, words);
-        const auto& compiled = *stageCaptures[i].compiled;
-        const char* what = runs != kept.runs ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
-        ++dataVerified;
-        if (what == nullptr) return;
-        char message[320];
-        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey));
-        throw std::runtime_error(message);
-    };
-    const auto verifyStageData = [&](std::size_t i) {
-        const auto& hit = stageData[i];
-        const auto& kept = *matched[i];
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
-        std::vector<std::uint32_t> words;
-        freshRuns(i, runs, words);
-        const auto& fresh = *stageCaptures[i].compiled;
-        const auto& patched = *hit.compiled;
-        const bool sameBindings = fresh.bindings.size() == patched.bindings.size() && std::equal(fresh.bindings.begin(), fresh.bindings.end(), patched.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
-        const char* what = runs != kept.runs ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patched.pushConstants ? "push constants" : !sameBindings ? "bindings" : nullptr;
-        ++stageDataVerified;
-        if (what == nullptr) return;
-        char message[256];
-        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a stage data hit differs from its full build in its %s (%zu data positions refreshed)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.dataPositions.size());
-        throw std::runtime_error(message);
-    };
-    const auto ringWords = [&](std::size_t i) {
-        const auto& variant = *matched[i];
-        if (!variant.ring) return;
+    const auto buildRingWords = [&](std::size_t i, const DispatchVariant& variant) {
         auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
         const auto& user = programs[i].userData;
         for (const auto index : variant.compiled->heapUserWords) {
@@ -722,7 +692,40 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             attribute.resource = vertex.resources[attribute.location];
             if (vertex.fetchEmbedded) attribute.fetchIndex = vertex.resourcesDst[attribute.location].fetchIndex;
         }
-        stageCaptures[i].heapWords = std::move(words);
+        return words;
+    };
+    const auto verifyDataStage = [&](std::size_t i, const DispatchVariant& kept) {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+        std::vector<std::uint32_t> words;
+        freshRuns(i, runs, words);
+        const auto& compiled = *stageCaptures[i].compiled;
+        if (kept.ring) VerifyRingWords(*kept.compiled, *buildRingWords(i, kept), *stageCaptures[i].compiled, stageCaptures[i].heapWords.get());
+        const char* what = runs != kept.runs ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
+        ++dataVerified;
+        if (what == nullptr) return;
+        char message[320];
+        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey));
+        throw std::runtime_error(message);
+    };
+    const auto verifyStageData = [&](std::size_t i) {
+        const auto& hit = stageData[i];
+        const auto& kept = *matched[i];
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+        std::vector<std::uint32_t> words;
+        freshRuns(i, runs, words);
+        const auto& fresh = *stageCaptures[i].compiled;
+        const auto& patched = *hit.compiled;
+        const bool sameBindings = fresh.bindings.size() == patched.bindings.size() && std::equal(fresh.bindings.begin(), fresh.bindings.end(), patched.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
+        const char* what = runs != kept.runs ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patched.pushConstants ? "push constants" : !sameBindings ? "bindings" : nullptr;
+        ++stageDataVerified;
+        if (what == nullptr) return;
+        char message[256];
+        std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a stage data hit differs from its full build in its %s (%zu data positions refreshed)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.dataPositions.size());
+        throw std::runtime_error(message);
+    };
+    const auto ringWords = [&](std::size_t i) {
+        if (!matched[i]->ring) return;
+        stageCaptures[i].heapWords = buildRingWords(i, *matched[i]);
         stageCaptures[i].direct = true;
         stageCaptures[i].ringVertex = true;
     };
@@ -760,6 +763,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 compiledStages.push_back(materializeDrawStage(i, pushCursorBytes, queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected));
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 programResults[i] = compiledStages.back().get();
+                if (verifyHit && matched[i] != nullptr && matched[i]->ring) VerifyRingWords(*matched[i]->compiled, *buildRingWords(i, *matched[i]), *programResults[i], stageCaptures[i].heapWords.get());
                 if (candidate != dataCandidates[i].end()) verifyDataStage(i, *candidate->first);
                 if (stageData[i].compiled != nullptr && verifyDrawDataHits()) verifyStageData(i);
             }
@@ -775,6 +779,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
         require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
         stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].heapWords.get()});
+        if (stages.back().heap != nullptr && SampleHeapStageVerify()) VerifyHeapAccessor(stages.back());
         pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
     }
 
