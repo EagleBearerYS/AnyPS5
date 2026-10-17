@@ -773,7 +773,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             if (dataEntry != nullptr && reused[i]) ++dataStagesReused;
             else if (dataEntry != nullptr) ++dataStagesCompiled;
         }
-        expectDeviceImages(localDevice, program.userData, program.binary.codeAddress, *programResults[i], false);
+        if (!tail.cpuImageTables && !expectDeviceImages(localDevice, program.userData, program.binary.codeAddress, *programResults[i], false)) tail.cpuImageTables = true;
         const auto& result = *programResults[i];
         if (i == 0 && drawParameters.indirect) {
             indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
@@ -939,7 +939,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 decodeVertexInfo(programIndex);
                 result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, tail.cpuImageTables);
                 if (!rejected.empty()) return DrawVerdict::Rejected;
-                expectDeviceImages(localDevice, programs[programIndex].userData, programs[programIndex].binary.codeAddress, result, false);
+                if (!tail.cpuImageTables && !expectDeviceImages(localDevice, programs[programIndex].userData, programs[programIndex].binary.codeAddress, result, false)) tail.cpuImageTables = true;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
             }
             fold(*programResults[0], direct);
@@ -960,7 +960,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     }
 
     std::vector<std::shared_ptr<DispatchVariant>> recipeStages;
-    if (registerKey && !drawParameters.indirect && !patchedStages && Graphics::DrawRecipes()) {
+    if (registerKey && !drawParameters.indirect && !patchedStages && !tail.cpuImageTables && Graphics::DrawRecipes()) {
         recipeStages.reserve(programs.size());
         for (std::size_t i = 0; i < programs.size(); ++i) recipeStages.push_back(drawHit ? matched[i] : fresh[i]);
         if (std::all_of(recipeStages.begin(), recipeStages.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant == nullptr; })) recipeStages.clear();
@@ -1042,11 +1042,14 @@ void Driver::commitDraw(DrawTail& tail, std::uint32_t queue, std::vector<Graphic
 void Driver::drawStages(DrawTail& tail, const std::shared_ptr<VulkanDevice>& localDevice, const Pm4::DrawParameters& parameters, std::vector<Graphics::GuestMemorySnapshot>& snapshots, std::shared_ptr<const DrawRecipe>* built) {
     using Stage = ShaderRecompiler::ShaderStage;
     const auto& graphics = tail.decode->state;
-    try {
-        localDevice->Draw(graphics, parameters, tail.stages, snapshots, built);
-        return;
-    } catch (const Graphics::UnrecordedDeviceImageDraw&) {
-        tail.cpuImageTables = true;
+    const bool deviceStages = std::any_of(tail.programResults.begin(), tail.programResults.end(), [](const ShaderRecompiler::RecompileResult* result) { return result != nullptr && result->deviceImageTables; });
+    if (!tail.cpuImageTables || !deviceStages) {
+        try {
+            localDevice->Draw(graphics, parameters, tail.stages, snapshots, built);
+            return;
+        } catch (const Graphics::UnrecordedDeviceImageDraw&) {
+            tail.cpuImageTables = true;
+        }
     }
     static const QueueState noQueue{};
     Submission submission{};
@@ -1096,7 +1099,7 @@ void Driver::drawStages(DrawTail& tail, const std::shared_ptr<VulkanDevice>& loc
     }
     snapshots.clear();
     for (const auto& region : tail.memory) snapshots.push_back({region.guestAddress, region.bytes});
-    localDevice->Draw(graphics, parameters, tail.stages, snapshots, built);
+    localDevice->Draw(graphics, parameters, tail.stages, snapshots, nullptr);
 }
 
 }

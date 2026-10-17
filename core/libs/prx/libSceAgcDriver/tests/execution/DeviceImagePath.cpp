@@ -110,6 +110,10 @@ alignas(256) constexpr std::array<std::uint32_t, 18> ExecClearCode{
     0x7e0002f0u, 0x7e0202f0u, 0xf4080200u, 0xfa000000u, 0xf4080300u, 0xfa000010u, 0xbf8cc07fu, 0x8f108502u, 0xf42c0504u, 0x20000000u,
     0xbf8cc07fu, 0xbefe0380u, 0xf09c0f08u, 0x00650000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 21> LaneKeyComputeCode{
+    0x7e220500u, 0x90119f11u, 0x7e0002f0u, 0x7e0202f0u, 0xf4080200u, 0xfa000000u, 0xf4080300u, 0xfa000010u, 0xbf8cc07fu, 0x80110211u, 0x8f108511u,
+    0xf42c0504u, 0x20000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00650000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
     0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
@@ -123,6 +127,10 @@ alignas(256) constexpr std::array<std::uint32_t, 14> LargePixelCode{
     0x8f108508u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f2u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 18> LaneKeyPixelCode{
+    0x7e040f00u, 0x7e220502u, 0x90118111u, 0x80110811u, 0x8f108511u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f0u,
+    0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 13> VillagePixelCode{
     0x9310b008u, 0xf42c0500u, 0x20000010u, 0xbf8cc07fu, 0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u,
 };
@@ -351,6 +359,8 @@ alignas(8) Header PixelHeader{};
 alignas(8) Header DirectPixelHeader{};
 alignas(8) Header LargePixelHeader{};
 alignas(8) Header VillagePixelHeader{};
+alignas(8) Header LaneKeyComputeHeader{};
+alignas(8) Header LaneKeyPixelHeader{};
 alignas(8) Header ProducerHeader{};
 alignas(8) Header OtherProducerHeader{};
 
@@ -370,13 +380,14 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-void Dispatch(std::vector<std::uint32_t>& words, const GuestBlock& block, const std::uint32_t* code, std::uint32_t key, std::array<float, 4>& output) {
+void Dispatch(std::vector<std::uint32_t>& words, const GuestBlock& block, const std::uint32_t* code, std::uint32_t key, std::array<float, 4>& output, std::uint32_t threads = 1) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code));
     const auto srt = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block.Srt()));
     const auto set = [&](std::uint32_t offset, std::uint32_t value) { Append(words, 0x76, {offset, value}); };
     set(0x20c, static_cast<std::uint32_t>(address >> 8u));
     set(0x20d, static_cast<std::uint32_t>(address >> 40u) & 0xffu);
-    for (const std::uint32_t offset : {0x207u, 0x208u, 0x209u}) set(offset, 1);
+    set(0x207, threads);
+    for (const std::uint32_t offset : {0x208u, 0x209u}) set(offset, 1);
     set(0x212, 0);
     set(0x213, 16u << 1u);
     std::array<std::uint32_t, 16> userData{};
@@ -897,6 +908,45 @@ void StaleRecord(const Harness& harness) {
     WriteRecord(harness.block, entry, textures[0]);
 }
 
+void Unexpected(const Harness& harness) {
+    constexpr std::uint32_t computeKey = 1775u;
+    constexpr std::uint32_t drawKey = 1789u;
+    const auto computeTexture = TextureOf(computeKey);
+    const auto computeWhat = "(n) compute, key " + std::to_string(computeKey) + " (" + FormatNames[computeTexture % Formats.size()] + ") offset by a lane value the pre-pass cannot evaluate";
+    auto before = Read();
+    Outputs[0].fill(-1.0f);
+    std::vector<std::uint32_t> words;
+    Dispatch(words, harness.block, LaneKeyComputeCode.data(), computeKey, Outputs[0], 64u);
+    SubmitCompute(words);
+    auto after = Read();
+    RequireTexel(Outputs[0], TexelOf(computeTexture).value, computeWhat);
+    RequireCpuTable(before, after, computeWhat);
+    if (harness.device) Require(after.device.fallbacks == before.device.fallbacks + 1u && after.device.drained == before.device.drained, computeWhat + ": the program did not fall back to the CPU table path before its batch (fallbacks " + std::to_string(after.device.fallbacks - before.device.fallbacks) + ")" + Describe(before, after));
+    std::printf("%s: the texel through the CPU table, %llu fallbacks%s\n", computeWhat.c_str(), static_cast<unsigned long long>(after.device.fallbacks - before.device.fallbacks), Describe(before, after).c_str());
+    const auto drawTexture = TextureOf(drawKey);
+    const auto drawWhat = "(n) direct draw, key " + std::to_string(drawKey) + " (" + FormatNames[drawTexture % Formats.size()] + ") offset by a lane value the pre-pass cannot evaluate";
+    std::array<std::uint32_t, 9> userData{};
+    const auto table = BufferDescriptor(harness.block.Table(), Entries * RecordBytes);
+    std::copy(table.begin(), table.end(), userData.begin());
+    userData[8] = drawKey;
+    auto commands = DrawCommands(harness.block, DrawKind::Direct, LaneKeyPixelCode.data(), userData);
+    commands.resize(commands.size() - 3u);
+    Append(commands, 0x69, {0x1b3, 1});
+    Append(commands, 0x69, {0x1b4, 1});
+    Append(commands, 0x2d, {3, 2});
+    before = Read();
+    std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the lane-key draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto stored = ReadColor(harness);
+    after = Read();
+    RequireDrawn(stored, TexelOf(drawTexture).value, drawWhat);
+    RequireCpuTable(before, after, drawWhat);
+    if (harness.device) Require(after.device.fallbacks == before.device.fallbacks + 1u && after.device.drained == before.device.drained, drawWhat + ": the program did not fall back to the CPU table path before its batch (fallbacks " + std::to_string(after.device.fallbacks - before.device.fallbacks) + ")" + Describe(before, after));
+    std::printf("%s: the texel through the CPU table, %llu fallbacks%s\n", drawWhat.c_str(), static_cast<unsigned long long>(after.device.fallbacks - before.device.fallbacks), Describe(before, after).c_str());
+}
+
 void FallsBackFromWarmCache(const Harness& harness) {
     const std::array<std::uint32_t, 4> keys{1546u, 1867u, 1772u, 1773u};
     auto before = Read();
@@ -1314,7 +1364,7 @@ int main(int argc, char** argv) {
             FillGuest(block);
             FillFresh(block);
             Harness harness{block, requested || mode == "--expect-device-path", expecting};
-            const std::string parts = argc > 2 ? argv[2] : mode == "--heap-cap" ? "f" : mode == "--misses" || (harness.device && !expecting) ? "jkm" : harness.device ? "abcdeghim" : "abcdeghijkm";
+            const std::string parts = argc > 2 ? argv[2] : mode == "--heap-cap" ? "f" : mode == "--misses" || (harness.device && !expecting) ? "jkm" : harness.device ? "abcdeghimn" : "abcdeghijkmn";
             std::printf("device image path %s, %s\n", requested ? "on" : "off", harness.device ? "expecting the device table" : "expecting the CPU table");
             Registered(ComputeHeader, ComputeCode.data(), sizeof(ComputeCode), 0);
             Registered(OtherComputeHeader, OtherComputeCode.data(), sizeof(OtherComputeCode), 0);
@@ -1325,6 +1375,8 @@ int main(int argc, char** argv) {
             Registered(LargePixelHeader, LargePixelCode.data(), sizeof(LargePixelCode), 1);
             Registered(ProducerHeader, ProducerPixelCode.data(), sizeof(ProducerPixelCode), 1);
             Registered(OtherProducerHeader, OtherProducerPixelCode.data(), sizeof(OtherProducerPixelCode), 1);
+            Registered(LaneKeyComputeHeader, LaneKeyComputeCode.data(), sizeof(LaneKeyComputeCode), 0);
+            Registered(LaneKeyPixelHeader, LaneKeyPixelCode.data(), sizeof(LaneKeyPixelCode), 1);
             if (mode == "--heap-cap") {
                 if (parts.find('f') != std::string::npos) FallsBackFromWarmCache(harness);
                 if (parts.find('j') != std::string::npos) Deduplicates(harness, true);
@@ -1343,6 +1395,7 @@ int main(int argc, char** argv) {
                 if (parts.find('j') != std::string::npos) Deduplicates(harness, false);
                 if (parts.find('k') != std::string::npos) Streams(harness);
                 if (parts.find('m') != std::string::npos) UnrecordedDraw(harness);
+                if (parts.find('n') != std::string::npos) Unexpected(harness);
             }
         } catch (const std::exception& error) {
             std::cerr << "device image path harness failed: " << error.what() << '\n';
