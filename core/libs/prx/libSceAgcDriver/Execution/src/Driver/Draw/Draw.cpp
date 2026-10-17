@@ -495,9 +495,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     if (drawParameters.indirect && indirectCpu) {
 
         const auto indirect = *drawParameters.indirect;
-        std::vector<std::optional<ShaderRecompiler::RecompileResult>> compiledWith(programs.size());
         std::vector<std::uint64_t> walkedWords(programs.size(), ~std::uint64_t{0});
-        std::vector<bool> stale(programs.size(), false);
+        std::vector<bool> recaptured(programs.size(), false);
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (programResults[i] == nullptr) continue;
             if (keepCpuIndirect) {
@@ -584,14 +583,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                         ++stagesPatched;
                         continue;
                     }
-                    if (compiledValuesOnly) {
-                        if (stale[programIndex]) result = *compiledWith[programIndex];
-                        stale[programIndex] = false;
+                    if (compiledValuesOnly && !recaptured[programIndex]) {
                         ++stagesReused;
                         continue;
                     }
-                    if (!compiledWith[programIndex]) compiledWith[programIndex] = result;
-                    stale[programIndex] = true;
+                    recaptured[programIndex] = true;
                     ++stagesCaptured;
                 }
                 const auto pushBytes = result.pushConstants.size();
