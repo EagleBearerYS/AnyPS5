@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageKeys.hpp"
 #include "Recompiler.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "IntermediateRepresentation/IrMetadata/Resources.hpp"
 #include "ImageTableAbi.hpp"
 #include "RuntimeAbi.hpp"
@@ -62,11 +63,7 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
 class DeviceImageTable {
 public:
     using Key = DeviceImageKeys::Key;
-    struct Interface {
-        std::uint64_t id = 0;
-        ShaderRecompiler::ImageResource image;
-        std::vector<ShaderRecompiler::ImageResource> modes;
-    };
+    using Interface = ShaderRecompiler::DeviceImageInterface;
     using InterfaceLookup = std::function<std::shared_ptr<const Interface>(std::uint64_t id)>;
     struct Budget {
         std::uint32_t entries = 16384u;
