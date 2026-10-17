@@ -3610,6 +3610,10 @@ std::optional<std::string> VulkanDevice::ExpectDeviceImages(std::span<const Shad
     return table->Expect(graphicsContext(), *state->recorder, images);
 }
 
+void VulkanDevice::NoteDeviceImageExpectation(bool memoHit, std::uint64_t nanoseconds) const {
+    if (auto* table = Graphics::DeviceImageTable::Existing(state->context)) table->NoteExpectation(memoHit, nanoseconds);
+}
+
 void VulkanDevice::FallBackDeviceImages(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress, const std::string& reason) const {
     auto* table = Graphics::DeviceImageTable::Existing(state->context);
     require(table != nullptr, "a device image fallback needs the device's table");
