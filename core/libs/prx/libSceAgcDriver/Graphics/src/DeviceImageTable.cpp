@@ -277,6 +277,13 @@ std::optional<std::string> DeviceImageTable::Expect(const Context& build, Record
     return unserved;
 }
 
+void DeviceImageTable::NoteExpectation(bool memoHit, std::uint64_t nanoseconds) {
+    std::lock_guard lock(mutex);
+    ++totals.expectations;
+    if (memoHit) ++totals.expectationHits;
+    totals.expectationNs += nanoseconds;
+}
+
 void DeviceImageTable::FallBackProgram(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t codeAddress, const std::string& reason) {
     std::lock_guard lock(mutex);
     identityPrograms[identity].insert(codeAddress);
@@ -816,8 +823,9 @@ void DeviceImageTable::report() {
     const auto packets = packetSnapshot();
     const auto count = [&](std::size_t index) { return static_cast<unsigned long long>(packets[index] - reportedPackets[index]); };
     const auto perPacket = [&](std::size_t index) { return count(index) != 0u ? static_cast<double>(packets[4u + index] - reportedPackets[4u + index]) / 1000.0 / static_cast<double>(count(index)) : 0.0; };
-    std::fprintf(stderr, "[device-images] (10 s): %llu keys expected (%llu inserted before their batch), %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %llu refreshed (%llu checked, %llu scans), %llu evicted, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s; draws on the device table %llu of %llu (driver CPU %.1f us per packet, %.1f us for the others), dispatches %llu of %llu (%.1f us, %.1f us for the others)\n",
-        delta(&Counts::expected), delta(&Counts::expectedInserted), delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), delta(&Counts::refreshed), delta(&Counts::checked), delta(&Counts::scans), delta(&Counts::evicted), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str(), count(1), count(0) + count(1), perPacket(1), perPacket(0), count(3), count(2) + count(3), perPacket(3), perPacket(2));
+    const auto expectations = delta(&Counts::expectations);
+    std::fprintf(stderr, "[device-images] (10 s): %llu expectations (%llu from the memo, %.2f us each), %llu keys expected (%llu inserted before their batch), %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %llu refreshed (%llu checked, %llu scans), %llu evicted, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s; draws on the device table %llu of %llu (driver CPU %.1f us per packet, %.1f us for the others), dispatches %llu of %llu (%.1f us, %.1f us for the others)\n",
+        expectations, delta(&Counts::expectationHits), expectations != 0u ? static_cast<double>(delta(&Counts::expectationNs)) / 1000.0 / static_cast<double>(expectations) : 0.0, delta(&Counts::expected), delta(&Counts::expectedInserted), delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), delta(&Counts::refreshed), delta(&Counts::checked), delta(&Counts::scans), delta(&Counts::evicted), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str(), count(1), count(0) + count(1), perPacket(1), perPacket(0), count(3), count(2) + count(3), perPacket(3), perPacket(2));
     reported = totals;
     reportedPackets = packets;
     lastReport = now;

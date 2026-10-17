@@ -18,11 +18,14 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace AgcDriver::DriverDetail {
 
@@ -191,14 +194,94 @@ heapCapture:
 
 namespace {
 
-bool readExpectedWord(void*, std::uint64_t address, std::uint32_t* value) {
+using ExpectedWords = std::vector<std::pair<std::uint64_t, std::uint32_t>>;
+
+void syncPipelinedWrites(std::uint64_t address, std::size_t bytes) {
+    if (!DrawPipeline::Active()) return;
+    auto& pipeline = DrawPipeline::Queue0();
+    if (pipeline.Busy() && pipeline.Overlaps(address, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
+}
+
+bool readExpectedWord(void* context, std::uint64_t address, std::uint32_t* value) {
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(*value))) return false;
-    if (DrawPipeline::Active()) {
-        auto& pipeline = DrawPipeline::Queue0();
-        if (pipeline.Busy() && pipeline.Overlaps(address, sizeof(*value))) pipeline.Drain(DrawPipeline::DrainReason::Capture);
-    }
+    syncPipelinedWrites(address, sizeof(*value));
     GuestMemory::Read(address, std::as_writable_bytes(std::span(value, 1)), sizeof(*value));
+    static_cast<ExpectedWords*>(context)->emplace_back(address, *value);
     return true;
+}
+
+struct ExpectationState {
+    std::uint64_t epoch = 0;
+    std::uint64_t unwatch = 0;
+    std::uint64_t ownWrites = 0;
+    std::uint64_t pending = 0;
+    std::uint64_t published = 0;
+    std::uint64_t forgotten = 0;
+    std::uint64_t allocations = 0;
+
+    bool operator==(const ExpectationState& other) const = default;
+};
+
+ExpectationState expectationState() {
+    return {GuestMemory::ThreadCollectEpoch(), GuestMemory::UnwatchSerial(), GuestMemory::OwnWriteSerial(), Graphics::StorageTexture::PendingSerial(), Graphics::Recorder::PublishGeneration(), GuestMemory::ForgetSerial(), GuestAllocations::GuestAllocationsGeneration_nid_postfix()};
+}
+
+struct ExpectationMemo {
+    std::shared_ptr<const ShaderRecompiler::IrResourcePlan> plan;
+    std::uint64_t codeAddress = 0;
+    std::vector<std::uint32_t> userData;
+    std::vector<ShaderRecompiler::DeviceImageTableAbi::Expectation> images;
+    ExpectedWords words;
+    ExpectationState state;
+};
+
+constexpr std::size_t ExpectationMemoEntries = 16384;
+constexpr std::size_t ExpectedRunWords = 64;
+
+std::unordered_map<std::uint64_t, ExpectationMemo>& expectationMemos() {
+    thread_local std::unordered_map<std::uint64_t, ExpectationMemo> memos;
+    return memos;
+}
+
+std::uint64_t expectationKey(const ShaderRecompiler::IrResourcePlan* plan, std::uint64_t codeAddress, std::span<const std::uint32_t> userData) {
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    const auto mix = [&](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
+    mix(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(plan)));
+    mix(codeAddress);
+    for (const auto word : userData) mix(word);
+    return hash;
+}
+
+template <typename Visit>
+bool forEachExpectedRun(const ExpectedWords& words, Visit visit) {
+    for (std::size_t first = 0; first < words.size();) {
+        auto last = first + 1u;
+        while (last < words.size() && last - first < ExpectedRunWords && words[last].first == words[last - 1u].first + sizeof(std::uint32_t)) ++last;
+        if (!visit(first, last)) return false;
+        first = last;
+    }
+    return true;
+}
+
+bool pipelineWritesExpectedWords(const ExpectedWords& words) {
+    if (!DrawPipeline::Active() || !DrawPipeline::Queue0().Busy()) return false;
+    auto& pipeline = DrawPipeline::Queue0();
+    return !forEachExpectedRun(words, [&](std::size_t first, std::size_t last) { return !pipeline.Overlaps(words[first].first, (last - first) * sizeof(std::uint32_t)); });
+}
+
+bool expectedWordsUnchanged(const ExpectedWords& words) {
+    std::array<std::uint32_t, ExpectedRunWords> current{};
+    return forEachExpectedRun(words, [&](std::size_t first, std::size_t last) {
+        const auto address = words[first].first;
+        const auto bytes = (last - first) * sizeof(std::uint32_t);
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return false;
+        syncPipelinedWrites(address, bytes);
+        GuestMemory::Read(address, std::as_writable_bytes(std::span(current.data(), last - first)), sizeof(std::uint32_t));
+        for (auto index = first; index < last; ++index) {
+            if (current[index - first] != words[index].second) return false;
+        }
+        return true;
+    });
 }
 
 }
@@ -210,15 +293,37 @@ bool Driver::expectDeviceImages(const std::shared_ptr<VulkanDevice>& localDevice
         localDevice->FallBackDeviceImages(result, codeAddress, "its result carries no plan to expect its device images from, so it takes the CPU table path before its work is recorded");
         return false;
     }
-    ShaderRecompiler::SrtRuntime runtime;
-    runtime.userData = userData;
-    runtime.shaderBase = codeAddress;
-    runtime.readMemory = &readExpectedWord;
-    bool complete = false;
-    auto images = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*result.deviceImagePlan, runtime, complete);
-    if (!complete) {
-        localDevice->FallBackDeviceImages(result, codeAddress, "a device image use whose T# cannot be evaluated before the work is recorded (a key from a lane, from memory the CPU cannot read, or more than " + std::to_string(ShaderRecompiler::ResourceMaterializer::MaxDeviceImageCandidates) + " candidates), so it takes the CPU table path from this draw or dispatch");
-        return false;
+    const auto started = std::chrono::steady_clock::now();
+    auto& memos = expectationMemos();
+    const auto key = expectationKey(result.deviceImagePlan.get(), codeAddress, userData);
+    const auto state = expectationState();
+    std::vector<Abi::Expectation> images;
+    bool memoHit = false;
+    if (const auto found = memos.find(key); found != memos.end() && found->second.plan == result.deviceImagePlan && found->second.codeAddress == codeAddress && std::ranges::equal(found->second.userData, userData)) {
+        auto& memo = found->second;
+        if ((state.epoch != 0u && memo.state == state && !pipelineWritesExpectedWords(memo.words)) || expectedWordsUnchanged(memo.words)) {
+            memo.state = state;
+            images = memo.images;
+            memoHit = true;
+        }
+    }
+    if (!memoHit) {
+        ExpectedWords words;
+        ShaderRecompiler::SrtRuntime runtime;
+        runtime.userData = userData;
+        runtime.shaderBase = codeAddress;
+        runtime.readMemory = &readExpectedWord;
+        runtime.userContext = &words;
+        bool complete = false;
+        images = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*result.deviceImagePlan, runtime, complete);
+        if (!complete) {
+            localDevice->FallBackDeviceImages(result, codeAddress, "a device image use whose T# cannot be evaluated before the work is recorded (a key from a lane, from memory the CPU cannot read, or more than " + std::to_string(ShaderRecompiler::ResourceMaterializer::MaxDeviceImageCandidates) + " candidates), so it takes the CPU table path from this draw or dispatch");
+            return false;
+        }
+        std::ranges::sort(words);
+        words.erase(std::unique(words.begin(), words.end()), words.end());
+        if (memos.size() >= ExpectationMemoEntries) memos.clear();
+        memos.insert_or_assign(key, ExpectationMemo{result.deviceImagePlan, codeAddress, {userData.begin(), userData.end()}, images, std::move(words), state});
     }
     Abi::NameInterfaces(images, result.deviceImageInterfaces);
     Abi::NameSamplerClasses(images, result.deviceSamplerClasses);
@@ -228,6 +333,7 @@ bool Driver::expectDeviceImages(const std::shared_ptr<VulkanDevice>& localDevice
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         unserved = localDevice->ExpectDeviceImages(images);
     }
+    localDevice->NoteDeviceImageExpectation(memoHit, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()));
     if (!unserved.has_value()) return true;
     localDevice->FallBackDeviceImages(result, codeAddress, *unserved + ", so it takes the CPU table path from this draw or dispatch");
     return false;
