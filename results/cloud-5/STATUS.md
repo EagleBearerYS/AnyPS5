@@ -1,8 +1,6 @@
-BUSY BF-068
-since: 2026-10-17T17:33Z (BF-068, Windows write-stamp tables per leaf on first stamp, second commit on BF-063's branch)
-claimed: tasks/claimed/BF-068.md
-step: reading the tracker's leaf layout, readers and writers
-previous: BF-063 done, results/cloud-5/BF-063.md: fork perf/agc-commit-page-tables-on-touch 3a361ed79 on main 66702f1cf; Windows page-state table (250 MiB) and the write tracker's blocks/cpuBlocks/hintBlocks (62.5 MiB each, all in GuestMemory.cpp) now reserve and commit 64 KiB table pages on first write (TouchedTable, bitmap of committed pages, zero reads, scans treat untouched pages as zeros); Linux unchanged; bench: under 1 ns per op cache-resident, noise memory-bound; agc_touched_table new (commit charge 64 regions -> 4,096 KiB of 250 MiB, equivalence, racing first writes), agc_write_tracking Windows commit-charge check; Windows red = MEM_RESERVE|MEM_COMMIT in TouchedTable::Allocate, for the Bug Finder's sweep (not built on Windows here); Linux scope 1,072/5 IPv6, mirror 1,372 vs main 1,371, IPv6 5 only
+READY
+since: 2026-10-17T17:49Z
+previous: BF-068 done, results/cloud-5/BF-068.md: perf/agc-commit-page-tables-on-touch 8a14ccb2c (BF-063 3a361ed79 + 1): blocks/cpuBlocks share the Linux Leaf layout on both platforms (no #ifdef split), allocated on first stamp, zero for a missing leaf; Windows hint leaves; StampTableBytes() accessor; agc_write_tracking: 16 scattered regions -> +8,704 KiB (17 leaves) on Linux, 400-step equivalence around a leaf boundary (and the arena's last block on Windows); Linux red = green (Linux had leaves); Windows red patch in the result (expected 192192 KiB failure); note: vs BF-063's TouchedTable the leaves are equal dense, up to 8x more for scattered stamps, separate commit so it can be dropped; bench equal within noise on Linux; scope 1,072/5 and mirror 1,372 vs main 1,371, IPv6 5 only
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
