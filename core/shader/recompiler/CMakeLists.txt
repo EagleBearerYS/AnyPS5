@@ -255,6 +255,7 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::MaterializeNanoseconds
             ResourceMaterializer::SpecializationNanoseconds
             ResourceMaterializer::FindDeviceImageInterface
+            ResourceMaterializer::ExpectedDeviceImages
             ResourceMaterializer::TryRuntimeImageMode
             ImageShapeForResource
             ReducesBetweenTexels

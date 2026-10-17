@@ -146,9 +146,10 @@ VkDescriptorSet DeviceImageHeap::Set(const Context& context) {
     return BindlessHeap::For(context).HeapSet();
 }
 
-std::optional<std::uint32_t> DeviceImageHeap::Slot(const Context& context, std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout) {
+std::optional<std::uint32_t> DeviceImageHeap::Slot(const Context& context, std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout, bool replacing) {
     auto& heap = BindlessHeap::For(context);
-    return heap.TextureSlot(kind, texture, view, layout, std::max(heap.TextureSlotMargin(), GpuHeapEnabled() ? heap.TextureSlotCap() - heap.TextureSlotCap() / 2u : 0u));
+    const auto keepFree = std::max(heap.TextureSlotMargin(), GpuHeapEnabled() ? heap.TextureSlotCap() - heap.TextureSlotCap() / 2u : 0u);
+    return heap.TextureSlot(kind, texture, view, layout, replacing && keepFree != 0u ? keepFree - 1u : keepFree);
 }
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup) : DeviceImageTable(context, std::move(lookup), Budget{}) {}
@@ -215,6 +216,11 @@ DeviceImageTable& DeviceImageTable::Create(const Context& context, InterfaceLook
     return *table;
 }
 
+bool DeviceImageTable::ExpectsKeys() {
+    static const bool expects = std::getenv("APS5_NO_DEVICE_IMAGE_EXPECT") == nullptr;
+    return expects;
+}
+
 DeviceImageTable* DeviceImageTable::Existing(const Context& context) {
     auto& registry = tables();
     std::lock_guard lock(registry.mutex);
@@ -242,6 +248,26 @@ void DeviceImageTable::Prepare(const Context& build, Recorder& recorder, std::sp
     auto& chunk = chunks[chunkFor(recorder, true)];
     chunk.programs.insert(programs.begin(), programs.end());
     report();
+}
+
+void DeviceImageTable::Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) {
+    if (!ExpectsKeys()) return;
+    std::lock_guard lock(mutex);
+    for (const auto& image : images) {
+        ++totals.expected;
+        if (keys.Find(image.key).has_value()) continue;
+        Entry entry;
+        const auto value = lookupKey(build, image.key, entry);
+        if (!value.has_value()) continue;
+        if (!insert(image.key, *value)) {
+            if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
+            continue;
+        }
+        if (entry.texture == nullptr) continue;
+        hold(image.key, std::move(entry));
+        ++totals.inserted;
+        ++totals.expectedInserted;
+    }
 }
 
 void DeviceImageTable::SetInterfaceLookup(InterfaceLookup interfaces) {
@@ -388,7 +414,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     }
 }
 
-std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build, const Key& key, Entry& entry, std::string* failure) {
+std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build, const Key& key, Entry& entry, std::string* failure, bool replacing) {
     const auto id = static_cast<std::uint64_t>(key[Abi::InterfaceWord]) | (static_cast<std::uint64_t>(key[Abi::InterfaceWord + 1u]) << 32u);
     const auto interface = lookup ? lookup(id) : nullptr;
     if (interface == nullptr) throw std::runtime_error("AGC device image table: a missed key names the image interface 0x" + hexText(id) + ", which no compiled program registered");
@@ -419,7 +445,7 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
         if (failure != nullptr) *failure = texture.unservable;
         return std::nullopt;
     }
-    const auto slot = DeviceImageHeap::Slot(build, kind, texture.texture, texture.view, texture.layout);
+    const auto slot = DeviceImageHeap::Slot(build, kind, texture.texture, texture.view, texture.layout, replacing);
     if (!slot.has_value()) {
         heapFull(key, kind);
         if (failure != nullptr) *failure = "the image heap has no free slot of kind " + std::to_string(kind);
@@ -559,7 +585,7 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
         ++totals.checked;
         auto& held = entries.at(key);
         Entry fresh;
-        const auto value = lookupKey(build, key, fresh);
+        const auto value = lookupKey(build, key, fresh, nullptr, held.texture != nullptr);
         const auto previous = keys.Find(key);
         if (!value.has_value() || fresh.texture == nullptr) {
             ++totals.refreshed;
@@ -773,8 +799,8 @@ void DeviceImageTable::report() {
     const auto packets = packetSnapshot();
     const auto count = [&](std::size_t index) { return static_cast<unsigned long long>(packets[index] - reportedPackets[index]); };
     const auto perPacket = [&](std::size_t index) { return count(index) != 0u ? static_cast<double>(packets[4u + index] - reportedPackets[4u + index]) / 1000.0 / static_cast<double>(count(index)) : 0.0; };
-    std::fprintf(stderr, "[device-images] (10 s): %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %llu refreshed (%llu checked, %llu scans), %llu evicted, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s; draws on the device table %llu of %llu (driver CPU %.1f us per packet, %.1f us for the others), dispatches %llu of %llu (%.1f us, %.1f us for the others)\n",
-        delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), delta(&Counts::refreshed), delta(&Counts::checked), delta(&Counts::scans), delta(&Counts::evicted), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str(), count(1), count(0) + count(1), perPacket(1), perPacket(0), count(3), count(2) + count(3), perPacket(3), perPacket(2));
+    std::fprintf(stderr, "[device-images] (10 s): %llu keys expected (%llu inserted before their batch), %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %llu refreshed (%llu checked, %llu scans), %llu evicted, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s; draws on the device table %llu of %llu (driver CPU %.1f us per packet, %.1f us for the others), dispatches %llu of %llu (%.1f us, %.1f us for the others)\n",
+        delta(&Counts::expected), delta(&Counts::expectedInserted), delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), delta(&Counts::refreshed), delta(&Counts::checked), delta(&Counts::scans), delta(&Counts::evicted), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str(), count(1), count(0) + count(1), perPacket(1), perPacket(0), count(3), count(2) + count(3), perPacket(3), perPacket(2));
     reported = totals;
     reportedPackets = packets;
     lastReport = now;

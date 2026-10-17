@@ -13,6 +13,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -185,6 +187,37 @@ heapCapture:
     stageCapture.userDataMask = mask;
     phaseTiming.Phase(DrawRowRecompile);
     return stageCapture.compiled;
+}
+
+namespace {
+
+bool readExpectedWord(void*, std::uint64_t address, std::uint32_t* value) {
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(*value))) return false;
+    if (DrawPipeline::Active()) {
+        auto& pipeline = DrawPipeline::Queue0();
+        if (pipeline.Busy() && pipeline.Overlaps(address, sizeof(*value))) pipeline.Drain(DrawPipeline::DrainReason::Capture);
+    }
+    GuestMemory::Read(address, std::as_writable_bytes(std::span(value, 1)), sizeof(*value));
+    return true;
+}
+
+}
+
+void Driver::expectDeviceImages(const std::shared_ptr<VulkanDevice>& localDevice, std::span<const std::uint32_t> userData, std::uint64_t codeAddress, const ShaderRecompiler::RecompileResult& result, bool dispatch) {
+    namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
+    if (!result.deviceImageTables || result.deviceImagePlan == nullptr || !Graphics::DeviceImageTable::ExpectsKeys()) return;
+    ShaderRecompiler::SrtRuntime runtime;
+    runtime.userData = userData;
+    runtime.shaderBase = codeAddress;
+    runtime.readMemory = &readExpectedWord;
+    bool complete = false;
+    auto images = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*result.deviceImagePlan, runtime, complete);
+    if (!complete) return;
+    Abi::NameInterfaces(images, result.deviceImageInterfaces);
+    Abi::NameSamplerClasses(images, result.deviceSamplerClasses);
+    GuestMemory::TagGpuLockSite(dispatch ? GuestMemory::GpuLockSite::Dispatch : GuestMemory::GpuLockSite::Draw);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    localDevice->ExpectDeviceImages(images);
 }
 
 void Driver::recordStageDataPositions(DispatchVariant& variant, const ShaderRecompiler::ResourceCapture& capture, const std::vector<Graphics::DecodeRead>& decodeReads) {
