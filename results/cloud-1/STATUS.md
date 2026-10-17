@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T03:21:17Z
+BUSY BF-044 (CI Linux mirror for perf/agc-reuse-address-dispatch-builds-v2 3a1faef0a5)
+since: 2026-10-17T03:21:49Z
 last: BF-043 done, results/cloud-1/BF-043.md: on 24a11c115f the fix changes no reachable count (a bind's read reaps the listed write through the flush hook; fix = red in every case, 20/20); on lavapipe the HTILE memo is dead after any GPU write (imports compared, generation 0), every bind reads, ~0.55-0.68 ms at 640 KiB; nothing pushed to the fix branch; CI mirror 1257/1329, only known baselines
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
