@@ -373,9 +373,11 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
     const auto kind = static_cast<std::uint32_t>(ShaderRecompiler::DescriptorBindingForImage(mode));
     if (kind < Runtime::FirstImageBinding || kind >= Runtime::FirstStorageImageBinding) return reject(key, Reason::UnsupportedOperation, "the device image table serves sampled images only");
     DeviceTableTexture texture;
+    std::uint64_t stamp = 0;
     try {
         const DeviceTableView view{shapeOf(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits};
         texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, Abi::DescriptorWords>(key.data(), Abi::DescriptorWords), view, samplerClass);
+        stamp = GuestMemory::TrackerGeneration();
     } catch (const std::runtime_error& error) {
         return reject(key, Reason::DriverRejected, error.what());
     }
@@ -390,7 +392,7 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
         if (failure != nullptr) *failure = "the image heap has no free slot of kind " + std::to_string(kind);
         return std::nullopt;
     }
-    entry = {std::move(texture.texture), kind, texture.address, texture.guestBytes, texture.generation, 0u, 0u};
+    entry = {std::move(texture.texture), kind, texture.address, texture.guestBytes, texture.generation, stamp, 0u, 0u};
     return DeviceImageValue{*slot, *match.mode, 0u, 0u};
 }
 
@@ -466,8 +468,10 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
     if (state.epoch != 0u && *validated == state) return;
     const bool everything = validated->unwatch != state.unwatch || validated->depthSurfaces != state.depthSurfaces;
     const bool pending = validated->pending != state.pending;
+    const bool epochMoved = state.epoch == 0u || validated->epoch != state.epoch;
     validated = state;
     ++totals.scans;
+    const auto scanned = std::exchange(scannedStamp, GuestMemory::TrackerGeneration());
     std::set<Key> stale;
     std::vector<std::uint64_t> generations;
     std::vector<std::uint8_t> changed;
@@ -478,6 +482,10 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
         const auto count = static_cast<std::size_t>(std::prev(end)->first - run->first + 1u);
         const auto bytes = static_cast<std::size_t>(count) << BlockShift;
         static_cast<void>(GuestMemory::CollectWrites(begin, bytes));
+        if (!everything && !epochMoved && !pending && scanned != 0u && GuestMemory::NewestStamp(begin, bytes) <= scanned) {
+            run = end;
+            continue;
+        }
         generations.clear();
         for (auto block = run; block != end; ++block) generations.push_back(everything ? 0u : block->second.generation);
         changed.assign(count, GuestMemory::BlockWritten);
@@ -491,7 +499,11 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
                 for (const auto& key : block->second.keys) {
                     if (stale.contains(key)) continue;
                     const auto& entry = entries.at(key);
-                    bool fresh = !everything && GuestMemory::UnchangedSince(entry.address, static_cast<std::size_t>(entry.guestBytes), entry.generation);
+                    const auto range = static_cast<std::size_t>(entry.guestBytes);
+                    bool fresh = false;
+                    if (everything) fresh = false;
+                    else if (entry.generation != 0u) fresh = GuestMemory::UnchangedSince(entry.address, range, entry.generation);
+                    else fresh = !epochMoved && GuestMemory::NewestStamp(entry.address, range) <= entry.stamp;
                     if (fresh && runQuery.overlaps) {
                         StorageTexture::PendingQuery query{entry.address, entry.address + entry.guestBytes, nullptr, nullptr, false};
                         static_cast<void>(StorageTexture::ScanPending(std::span(&query, 1)));
@@ -521,6 +533,7 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
         if (!previous.has_value() || *previous != *value) static_cast<void>(insert(key, *value));
         if (!replaced) {
             held.generation = fresh.generation;
+            held.stamp = fresh.stamp;
             held.used = ++useSerial;
             held.usedPresent = Recorder::Presents();
             continue;

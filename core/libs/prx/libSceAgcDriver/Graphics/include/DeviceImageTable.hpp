@@ -146,6 +146,7 @@ private:
         std::uint64_t address = 0;
         std::uint64_t guestBytes = 0;
         std::uint64_t generation = 0;
+        std::uint64_t stamp = 0;
         std::uint64_t used = 0;
         std::uint64_t usedPresent = 0;
     };
@@ -216,6 +217,7 @@ private:
     Budget budget;
     std::map<std::uint64_t, Block> blocks;
     std::optional<ValidationState> validated;
+    std::uint64_t scannedStamp = 0;
     std::uint64_t useSerial = 0;
     std::uint64_t evictionCheck = 0;
     std::map<ShaderRecompiler::PipelineIdentity, std::set<std::uint64_t>> identityPrograms;
