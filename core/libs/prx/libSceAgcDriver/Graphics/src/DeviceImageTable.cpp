@@ -113,7 +113,7 @@ std::optional<std::string> DeviceImagePathRefusal(const VkPhysicalDeviceLimits& 
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup) : DeviceImageTable(context, std::move(lookup), Budget{}) {}
 
-DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Budget budget) : context(context), lookup(std::move(lookup)), budget(budget) {
+DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Budget budget) : context(context), lookup(std::move(lookup)), keys(std::min(DeviceImageKeys::InitialBuckets, budget.maxBuckets), budget.maxBuckets), budget(budget) {
     const auto destroyLayout = context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout");
     const auto destroyPool = context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool");
     try {
@@ -192,14 +192,55 @@ void DeviceImageTable::Release(VkDevice device) {
     registry.tables.erase(found);
 }
 
-void DeviceImageTable::Prepare(const Context& build, Recorder& recorder) {
+void DeviceImageTable::Prepare(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::PipelineIdentity> programs) {
     std::lock_guard lock(mutex);
+    ++totals.prepares;
     resolve(build, recorder);
     refresh(build, recorder);
     evict(build, recorder);
     upload(recorder);
-    static_cast<void>(chunkFor(recorder, true));
+    auto& chunk = chunks[chunkFor(recorder, true)];
+    chunk.programs.insert(programs.begin(), programs.end());
     report();
+}
+
+void DeviceImageTable::SetInterfaceLookup(InterfaceLookup interfaces) {
+    std::lock_guard lock(mutex);
+    lookup = std::move(interfaces);
+}
+
+void DeviceImageTable::NoteProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress) {
+    if (!result.deviceImageTables) return;
+    const auto identity = result.Identity();
+    std::lock_guard lock(mutex);
+    auto& addresses = identityPrograms[identity];
+    addresses.insert(codeAddress);
+    if (failedPrograms.contains(identity)) fallbackPrograms.insert(codeAddress);
+}
+
+bool DeviceImageTable::ServesProgram(std::uint64_t codeAddress) const {
+    std::lock_guard lock(mutex);
+    return !fallbackPrograms.contains(codeAddress);
+}
+
+bool DeviceImageTable::ServesIdentity(const ShaderRecompiler::PipelineIdentity& identity) const {
+    std::lock_guard lock(mutex);
+    return !failedPrograms.contains(identity);
+}
+
+void DeviceImageTable::fallBack(const std::set<ShaderRecompiler::PipelineIdentity>& programs, const std::string& reason) {
+    for (const auto& identity : programs) {
+        if (!failedPrograms.insert(identity).second) continue;
+        ++totals.fallbacks;
+        std::string addresses;
+        if (const auto found = identityPrograms.find(identity); found != identityPrograms.end()) {
+            for (const auto address : found->second) {
+                fallbackPrograms.insert(address);
+                addresses += (addresses.empty() ? "0x" : ", 0x") + hexText(address);
+            }
+        }
+        std::fprintf(stderr, "[device-images] the program %s (identity %016llx%016llx) takes the CPU table path from its next recompile: %s\n", addresses.empty() ? "of no noted address" : addresses.c_str(), static_cast<unsigned long long>(identity.high), static_cast<unsigned long long>(identity.low), reason.c_str());
+    }
 }
 
 void DeviceImageTable::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder) {
@@ -245,24 +286,36 @@ std::shared_ptr<Texture> DeviceImageTable::EntryTexture(const Key& key) const {
 
 void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     if (pending.empty()) return;
-    const auto misses = DistinctDeviceImageMisses(std::exchange(pending, {}));
-    for (const auto& miss : misses) {
-        if (keys.Find(miss.key).has_value()) continue;
+    std::vector<Key> order;
+    std::map<Key, std::set<ShaderRecompiler::PipelineIdentity>> missed;
+    for (const auto& [miss, programs] : std::exchange(pending, {})) {
+        const auto [found, inserted] = missed.try_emplace(miss.key);
+        if (inserted) order.push_back(miss.key);
+        if (programs != nullptr) found->second.insert(programs->begin(), programs->end());
+    }
+    for (const auto& key : order) {
+        const auto& programs = missed.at(key);
+        if (keys.Find(key).has_value()) continue;
         ++totals.distinct;
         Entry entry;
-        const auto value = lookupKey(build, miss.key, entry);
-        if (!value.has_value()) continue;
-        if (!insert(miss.key, *value)) {
+        std::string failure;
+        const auto value = lookupKey(build, key, entry, &failure);
+        if (!value.has_value()) {
+            if (!failure.empty()) fallBack(programs, failure);
+            continue;
+        }
+        if (!insert(key, *value)) {
             if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
+            fallBack(programs, "the key table is full at " + std::to_string(keys.Entries()) + " entries in " + std::to_string(keys.Buckets()) + " buckets, even after its budget evicted");
             continue;
         }
         if (entry.texture == nullptr) continue;
-        hold(miss.key, std::move(entry));
+        hold(key, std::move(entry));
         ++totals.inserted;
     }
 }
 
-std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build, const Key& key, Entry& entry) {
+std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build, const Key& key, Entry& entry, std::string* failure) {
     const auto id = static_cast<std::uint64_t>(key[Abi::InterfaceWord]) | (static_cast<std::uint64_t>(key[Abi::InterfaceWord + 1u]) << 32u);
     const auto interface = lookup ? lookup(id) : nullptr;
     if (interface == nullptr) throw std::runtime_error("AGC device image table: a missed key names the image interface 0x" + hexText(id) + ", which no compiled program registered");
@@ -288,11 +341,13 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
     }
     if (!texture.unservable.empty()) {
         unserved(key, texture.unservable);
+        if (failure != nullptr) *failure = texture.unservable;
         return std::nullopt;
     }
     const auto slot = BindlessHeap::For(build).TextureSlot(kind, texture.texture, texture.view, texture.layout);
     if (!slot.has_value()) {
         heapFull(key, kind);
+        if (failure != nullptr) *failure = "the image heap has no free slot of kind " + std::to_string(kind);
         return std::nullopt;
     }
     entry = {std::move(texture.texture), kind, texture.address, texture.guestBytes, texture.generation, 0u, 0u};
@@ -543,13 +598,25 @@ void DeviceImageTable::drain(std::uint32_t index) {
     std::lock_guard lock(mutex);
     const auto bytes = ring->Bytes().subspan(static_cast<std::size_t>(index * chunkStride), static_cast<std::size_t>(RingBytes));
     const auto decoded = DecodeDeviceImageRing(std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(bytes.data()), RingWords), RingCapacity);
-    chunks[index].busy = false;
+    auto& chunk = chunks[index];
+    chunk.busy = false;
+    const auto programs = std::make_shared<const std::set<ShaderRecompiler::PipelineIdentity>>(std::move(chunk.programs));
+    chunk.programs.clear();
     totals.drained += decoded.misses.size();
     totals.dropped += decoded.dropped;
+    if (decoded.dropped != 0u) {
+        std::set<ShaderRecompiler::PipelineIdentity> overflowing;
+        for (const auto& identity : *programs) {
+            if (++overflowStreaks[identity] >= OverflowBatches) overflowing.insert(identity);
+        }
+        if (!overflowing.empty()) fallBack(overflowing, "its misses overflowed the ring of " + std::to_string(RingCapacity) + " records in " + std::to_string(OverflowBatches) + " batches in a row");
+    } else {
+        for (const auto& identity : *programs) overflowStreaks.erase(identity);
+    }
     std::optional<std::string> fault;
     for (const auto& miss : decoded.misses) {
         if ((miss.pc & Abi::FaultFlag) == 0u) {
-            pending.push_back(miss);
+            pending.push_back({miss, programs});
             continue;
         }
         ++totals.faults;
