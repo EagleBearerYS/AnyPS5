@@ -3574,6 +3574,17 @@ bool VulkanDevice::DeviceImagePath() const {
     return state->deviceImagePath;
 }
 
+bool VulkanDevice::DeviceImagesServe(std::uint64_t codeAddress) const {
+    if (!state->deviceImagePath) return false;
+    const auto* table = Graphics::DeviceImageTable::Existing(state->context);
+    return table != nullptr && table->ServesProgram(codeAddress);
+}
+
+void VulkanDevice::NoteDeviceImageProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress) const {
+    if (!result.deviceImageTables) return;
+    if (auto* table = Graphics::DeviceImageTable::Existing(state->context)) table->NoteProgram(result, codeAddress);
+}
+
 Graphics::Context VulkanDevice::graphicsContext() const {
     static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
     if (state->contextReady && !noCache) return state->context;
@@ -4461,7 +4472,8 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (resources.UsesDeviceImages()) {
         auto* table = Graphics::DeviceImageTable::Existing(context);
         Graphics::Require(table != nullptr, "a dispatch reading images through the device image table needs the device's table");
-        table->Prepare(context, recorder);
+        const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{record.shader->program->Identity()};
+        table->Prepare(context, recorder, programs);
     }
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);

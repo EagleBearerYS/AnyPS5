@@ -388,13 +388,98 @@ void ComputeLayout(AgcDriver::VulkanDevice& device) {
     request.useCache = false;
     auto result = ShaderRecompiler::Recompile(request);
     result.deviceImageTables = true;
-    const auto uploads = table->Totals().uploads;
+    const auto before = table->Totals();
     device.Dispatch(result, 1, 1, 1);
     device.WaitIdle();
     for (std::uint32_t index = 0; index < CopyOutput.size(); ++index) Require(CopyOutput[index] == CopyInput[index], "a dispatch whose pipeline layout carries sets 2 and 3 copies its buffer (lane " + std::to_string(index) + ")");
     const auto counts = table->Totals();
-    Require(counts.uploads > uploads, "the dispatch prepared the device image table (its header was uploaded)");
-    Require(counts.drained == 0u && counts.faults == 0u, "a dispatch that records nothing drains nothing");
+    Require(counts.prepares == before.prepares + 1u, "the dispatch prepared the device image table once");
+    Require(counts.drained == before.drained && counts.faults == before.faults, "a dispatch that records nothing drains nothing");
+}
+
+ShaderRecompiler::RecompileResult DeviceTableProgram(AgcDriver::VulkanDevice& device) {
+    std::array<std::uint32_t, 8> userData{};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(CopyCode.data()), CopyCode, 0, {}}, {64u, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.ComputeTarget(64u), {0u, 0u, 0u, 128u}};
+    request.useCache = false;
+    auto result = ShaderRecompiler::Recompile(request);
+    result.deviceImageTables = true;
+    return result;
+}
+
+constexpr std::uint64_t ProgramAddress = 0x7700'0000ull;
+
+void OverflowFallsBack(AgcDriver::VulkanDevice& device) {
+    const auto program = DeviceTableProgram(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    auto* owned = DeviceImageTable::Existing(context);
+    Require(owned != nullptr, "a device serving the path owns a device image table");
+    auto& table = *owned;
+    table.SetInterfaceLookup(Lookup());
+    device.NoteDeviceImageProgram(program, ProgramAddress);
+    Require(device.DeviceImagesServe(ProgramAddress), "a noted program is served by the device path");
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
+    const auto keys = FormatKeys();
+    for (std::uint32_t batch = 1; batch <= DeviceImageTable::OverflowBatches; ++batch) {
+        Require(table.ServesProgram(ProgramAddress), "the program keeps the device path before " + std::to_string(DeviceImageTable::OverflowBatches) + " overflowing batches");
+        table.Prepare(context, *recorder, programs);
+        WriteRecords(table.RingChunk(*recorder), keys, DeviceImageTable::RingCapacity + 1u);
+        recorder->Sync();
+    }
+    Require(!table.ServesProgram(ProgramAddress) && !table.ServesIdentity(programs[0]) && table.Totals().fallbacks == 1u, "a program whose misses overflow the ring in three batches in a row falls back to the CPU path");
+    Require(!device.DeviceImagesServe(ProgramAddress) && device.DeviceImagesServe(ProgramAddress + 0x100u), "the device's next recompile request for that program, and only for it, asks for the CPU table path");
+    Require(device.Target().deviceImageTables, "the device still serves the path to other programs");
+    DeviceImageTable other(context, Lookup());
+    other.NoteProgram(program, ProgramAddress);
+    for (std::uint32_t batch = 0; batch < DeviceImageTable::OverflowBatches + 1u; ++batch) {
+        other.Prepare(context, *recorder, programs);
+        WriteRecords(other.RingChunk(*recorder), keys, batch == 1u ? 1u : DeviceImageTable::RingCapacity + 1u);
+        recorder->Sync();
+    }
+    Require(other.ServesProgram(ProgramAddress), "a batch without overflow between them resets the count");
+}
+
+void FullTableFallsBack(AgcDriver::VulkanDevice& device) {
+    const auto program = DeviceTableProgram(device);
+    GuestBlock block;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup(), DeviceImageTable::Budget{1u << 20u, std::uint64_t{1} << 40u, 0u, 0u, 16u});
+    table.NoteProgram(program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
+    std::vector<Key> keys;
+    for (std::uint32_t index = 0; index < 12u; ++index) keys.push_back(KeyFor(TextureDescriptor(block.Texture(index), Formats[4])));
+    table.Prepare(context, *recorder, programs);
+    WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+    recorder->Sync();
+    table.Prepare(context, *recorder, programs);
+    const auto counts = table.Totals();
+    Require(counts.buckets == 16u && counts.entries < keys.size() && counts.tableFull != 0u, "a table of at most 16 buckets fills (" + std::to_string(counts.entries) + " entries)");
+    Require(!table.ServesProgram(ProgramAddress) && counts.fallbacks == 1u, "a program whose key finds the table full falls back to the CPU path");
+    recorder->Sync();
+}
+
+void HeapCapFallsBack(AgcDriver::VulkanDevice& device) {
+    const auto program = DeviceTableProgram(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    table.NoteProgram(program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
+    const auto keys = FormatKeys();
+    table.Prepare(context, *recorder, programs);
+    WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+    recorder->Sync();
+    table.Prepare(context, *recorder, programs);
+    const auto counts = table.Totals();
+    Require(counts.inserted == 2u && counts.heapFull == 3u, "a heap capped at two slots per kind takes two of the five textures (" + std::to_string(counts.inserted) + " inserted, " + std::to_string(counts.heapFull) + " without a slot)");
+    Require(!table.ServesProgram(ProgramAddress) && counts.fallbacks == 1u, "the program whose keys found the heap full falls back to the CPU path instead of stopping");
+    Require(device.Target().deviceImageTables, "the device still serves the path to other programs");
+    recorder->Sync();
 }
 
 void GraphicsLayouts(AgcDriver::VulkanDevice& device) {
@@ -515,10 +600,13 @@ int main(int argc, char** argv) {
             std::cout << "device image table switch-off tests passed\n";
             return 0;
         }
+        const bool heapCap = argc > 1 && std::string(argv[1]) == "--heap-cap";
 #ifdef _WIN32
         _putenv_s("APS5_GPU_PATH", "1");
+        if (heapCap) _putenv_s("APS5_HEAP_SLOT_CAP", "2");
 #else
         setenv("APS5_GPU_PATH", "1", 1);
+        if (heapCap) setenv("APS5_HEAP_SLOT_CAP", "2", 1);
 #endif
         Require(GpuPathEnabled(), "APS5_GPU_PATH turns the device path on");
         DevicePathLimits();
@@ -534,11 +622,20 @@ int main(int argc, char** argv) {
             std::printf("skipped, the device does not serve the device image path\n");
             return VulkanTestSkipped;
         }
+        if (heapCap) {
+            HeapCapFallsBack(*device);
+            device->WaitIdle();
+            device.reset();
+            std::cout << "device image table heap cap tests passed\n";
+            return 0;
+        }
         ResolvesAndUploads(*device);
         RejectsAndFaults(*device);
         CountsOverflow(*device);
         RefreshesWrittenEntries(*device);
         EvictsLeastRecentlyUsed(*device);
+        FullTableFallsBack(*device);
+        OverflowFallsBack(*device);
         ComputeLayout(*device);
         GraphicsLayouts(*device);
         device->WaitIdle();
