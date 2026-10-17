@@ -51,6 +51,7 @@ struct PreparedGraphicsStage {
     ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Vertex;
     std::uint32_t pushOffset = 0;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
+    bool heapVariant = false;
 };
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target);
