@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -30,6 +31,10 @@ std::uint32_t fragmentBinding(std::uint32_t kind) {
     return Abi::BindingNumber(Abi::Stage::Fragment, static_cast<Abi::Binding>(kind));
 }
 
+}
+
+VkShaderStageFlags ImageHeapStages(const Context&) {
+    return VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | (GpuPathEnabled() ? VK_SHADER_STAGE_COMPUTE_BIT : 0u);
 }
 
 bool GpuHeapEnabled() {
@@ -64,7 +69,7 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     const auto updateSets = context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets");
 
     std::vector<VkDescriptorSetLayoutBinding> heapBindings;
-    constexpr VkShaderStageFlags heapStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    const VkShaderStageFlags heapStages = ImageHeapStages(context);
     for (std::uint32_t kind = Abi::FirstImageBinding; kind < Abi::FirstStorageImageBinding; ++kind) heapBindings.push_back({fragmentBinding(kind), VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, Abi::GpuImageHeapSlots, heapStages, nullptr});
     heapBindings.push_back({fragmentBinding(static_cast<std::uint32_t>(Abi::Binding::Samplers)), VK_DESCRIPTOR_TYPE_SAMPLER, Abi::GpuSamplerHeapSlots, heapStages, nullptr});
     const std::vector<VkDescriptorBindingFlags> heapFlags(heapBindings.size(), VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT);
