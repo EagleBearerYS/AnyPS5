@@ -3,11 +3,35 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <charconv>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include "prx/libSceUserService/UserService.hpp"
 
 static std::atomic<bool> initialized{false};
 static std::atomic<bool> loginReported{false};
+static std::atomic<bool> gamePresetsReported{false};
+
+static std::uint32_t GamePresetsPriority() {
+ const char* configured = std::getenv("ANYPS5_GAME_PRESETS_PRIORITY");
+ if (configured == nullptr || configured[0] == '\0') {
+  return 0;
+ }
+ const std::string_view text(configured);
+ constexpr std::uint32_t HighestPriority = 2;
+ std::uint32_t priority = HighestPriority + 1;
+ const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), priority);
+ if (error != std::errc{} || end != text.data() + text.size() || priority > HighestPriority) {
+  throw std::runtime_error("sceUserServiceGetGamePresets: ANYPS5_GAME_PRESETS_PRIORITY must be a game preset priority from 0 to " +
+   std::to_string(HighestPriority) + ", not \"" + std::string(text) + "\"");
+ }
+ return priority;
+}
 
 static int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
  if (user_id != USER_SERVICE_INITIAL_USER_ID) {
@@ -76,20 +100,25 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
 }
 
 int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
- // System-wide game presets (difficulty, view inversion, subtitles, audio language) of the user's
- // profile. A fresh console has none set: every field is 0, "not specified", and the title falls
- // back to its own defaults. this_size is the caller's.
  if (presets == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
+ const std::uint32_t priority = GamePresetsPriority();
  presets->difficulty = 0;
- presets->priority = 0;
+ presets->priority = priority;
  presets->invert_vertical_view_for_1st_person_view = 0;
  presets->invert_horizontal_view_for_1st_person_view = 0;
  presets->invert_vertical_view_for_3rd_person_view = 0;
  presets->invert_horizontal_view_for_3rd_person_view = 0;
  presets->display_sub_titles = 0;
  presets->audio_language = 0;
+ if (!gamePresetsReported.exchange(true)) {
+  std::fprintf(stderr, "[userservice] sceUserServiceGetGamePresets: this_size %zu, difficulty %u, priority %u, invert_vertical_view_for_1st_person_view %u, invert_horizontal_view_for_1st_person_view %u, invert_vertical_view_for_3rd_person_view %u, invert_horizontal_view_for_3rd_person_view %u, display_sub_titles %u, audio_language %u\n",
+   presets->this_size, static_cast<unsigned>(presets->difficulty), static_cast<unsigned>(presets->priority),
+   static_cast<unsigned>(presets->invert_vertical_view_for_1st_person_view), static_cast<unsigned>(presets->invert_horizontal_view_for_1st_person_view),
+   static_cast<unsigned>(presets->invert_vertical_view_for_3rd_person_view), static_cast<unsigned>(presets->invert_horizontal_view_for_3rd_person_view),
+   static_cast<unsigned>(presets->display_sub_titles), static_cast<unsigned>(presets->audio_language));
+ }
  return USER_SERVICE_OK;
 }
 
