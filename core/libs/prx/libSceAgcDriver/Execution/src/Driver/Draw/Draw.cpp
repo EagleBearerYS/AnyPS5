@@ -419,7 +419,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         drawEntryCounters.dataStagesCompiled += dataStagesCompiled;
         drawEntryCounters.dataVerified += dataVerified;
     }
-    cacheDrawStages(stageEntries, drawHit, drawParameters, indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey);
+    const bool keepCpuIndirect = drawParameters.indirect && indirectCpu && cacheCpuIndirect() && !graphics.stages.tessellation && !graphics.stages.mesh && !graphics.rectList;
+    cacheDrawStages(stageEntries, drawHit, drawParameters, keepCpuIndirect ? std::nullopt : indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey);
     timing.Mark("shader_compile_and_link");
 
     for (const auto& reads : decodeReads) {
@@ -494,8 +495,21 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     if (drawParameters.indirect && indirectCpu) {
 
         const auto indirect = *drawParameters.indirect;
+        std::vector<std::optional<ShaderRecompiler::RecompileResult>> compiledWith(programs.size());
+        std::vector<std::uint64_t> walkedWords(programs.size(), ~std::uint64_t{0});
+        std::vector<bool> stale(programs.size(), false);
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (programResults[i] == nullptr) continue;
+            if (keepCpuIndirect) {
+                const auto& use = stageCaptures[i].userDataUse;
+                walkedWords[i] = matched[i] != nullptr && (drawHit || reused[i]) ? matched[i]->walkedWords : stageCaptures[i].capture != nullptr ? use.asBase | use.asValue : ~std::uint64_t{0};
+                if (vertexInfos[i] && vertexInfos[i]->fetchEmbedded) {
+                    for (const auto reg : {vertexInfos[i]->fetchBufferReg, vertexInfos[i]->fetchAttribReg}) {
+                        const auto word = reg + 8u - programs[i].firstUserSgpr;
+                        walkedWords[i] |= word + 1u < 64u ? std::uint64_t{3} << word : ~std::uint64_t{0};
+                    }
+                }
+            }
             resultIndex[i] = results.size();
             results.push_back(ShaderRecompiler::RecompileResult(*programResults[i]));
             for (auto& stage : stages) {
@@ -512,19 +526,29 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto baseVertexWord = locate(indirect.baseVertexLocation);
         const auto startInstanceWord = locate(indirect.startInstanceLocation);
         const auto drawIndexWord = indirect.drawIndexEnabled ? locate(indirect.drawIndexLocation) : std::nullopt;
+        const auto valueAt = [&](const std::optional<std::pair<std::size_t, std::size_t>>& word) { return word ? programs[word->first].userData[word->second] : 0u; };
+        const std::array<std::uint32_t, 3> compiledValues{valueAt(baseVertexWord), valueAt(startInstanceWord), valueAt(drawIndexWord)};
+        struct UserWordWrite {
+            std::size_t program = 0, index = 0;
+            std::uint32_t value = 0, compiled = 0;
+        };
+        std::uint64_t stagesPatched = 0, stagesReused = 0, stagesCaptured = 0;
         for (std::uint32_t record = 0; record < records.size(); ++record) {
             const auto& arguments = records[record];
             if (traceIndirect) std::fprintf(stderr, "[draw]   record %u: count %u instances %u first %u vertexOffset %u startInstance %u\n", record, arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance);
             if (arguments.count == 0 || arguments.instances == 0) continue;
             std::set<std::size_t> patched;
-            const auto patch = [&](const std::optional<std::pair<std::size_t, std::size_t>>& word, std::uint32_t value) {
+            std::array<UserWordWrite, 3> writes{};
+            std::size_t written = 0;
+            const auto patch = [&](const std::optional<std::pair<std::size_t, std::size_t>>& word, std::uint32_t value, std::uint32_t compiled) {
                 if (!word) return;
                 programs[word->first].userData[word->second] = value;
                 patched.insert(word->first);
+                writes[written++] = {word->first, word->second, value, compiled};
             };
-            patch(baseVertexWord, indirect.recordBytes == 20 ? arguments.vertexOffset : arguments.firstVertexOrIndex);
-            patch(startInstanceWord, arguments.firstInstance);
-            patch(drawIndexWord, record);
+            patch(baseVertexWord, indirect.recordBytes == 20 ? arguments.vertexOffset : arguments.firstVertexOrIndex, compiledValues[0]);
+            patch(startInstanceWord, arguments.firstInstance, compiledValues[1]);
+            patch(drawIndexWord, record, compiledValues[2]);
             if (graphics.stages.tessellation) {
                 for (std::size_t i = 0; i < programs.size(); ++i) {
                     if (programs[i].binary.stage == Stage::TessellationControl || programs[i].binary.stage == Stage::TessellationEvaluation) patched.insert(i);
@@ -546,6 +570,30 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
             for (const auto programIndex : patched) {
                 auto& result = results[resultIndex[programIndex]];
+                if (keepCpuIndirect) {
+                    bool pushedOnly = true, compiledValuesOnly = true;
+                    for (std::size_t w = 0; w < written; ++w) {
+                        if (writes[w].program != programIndex) continue;
+                        pushedOnly = pushedOnly && writes[w].index < 64 && (walkedWords[programIndex] >> writes[w].index & 1u) == 0;
+                        compiledValuesOnly = compiledValuesOnly && writes[w].value == writes[w].compiled;
+                    }
+                    if (pushedOnly) {
+                        for (std::size_t w = 0; w < written; ++w) {
+                            if (writes[w].program == programIndex) patchPushedUserWord(result, static_cast<std::uint32_t>(writes[w].index), writes[w].value);
+                        }
+                        ++stagesPatched;
+                        continue;
+                    }
+                    if (compiledValuesOnly) {
+                        if (stale[programIndex]) result = *compiledWith[programIndex];
+                        stale[programIndex] = false;
+                        ++stagesReused;
+                        continue;
+                    }
+                    if (!compiledWith[programIndex]) compiledWith[programIndex] = result;
+                    stale[programIndex] = true;
+                    ++stagesCaptured;
+                }
                 const auto pushBytes = result.pushConstants.size();
                 decodeVertexInfo(programIndex);
                 result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
@@ -564,6 +612,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             phaseTiming.Phase(DrawRowVectors);
             localDevice->Draw(graphics, direct, stages, snapshots);
             phaseTiming.Phase(DrawRowGraphics);
+        }
+        if (keepCpuIndirect) {
+            std::lock_guard cacheLock(drawCacheMutex);
+            drawEntryCounters.cpuIndirectPatched += stagesPatched;
+            drawEntryCounters.cpuIndirectReused += stagesReused;
+            drawEntryCounters.cpuIndirectCaptured += stagesCaptured;
         }
         timing.Mark("draw_and_resource_release");
         return drawn();

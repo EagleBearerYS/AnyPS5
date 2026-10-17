@@ -31,6 +31,14 @@ bool Driver::drawDataHits() {
     return hits;
 }
 
+bool Driver::cacheCpuIndirect() {
+    static const bool keep = [] {
+        const char* text = std::getenv("APS5_CACHE_CPU_INDIRECT");
+        return text != nullptr && text[0] == '1';
+    }();
+    return keep;
+}
+
 bool Driver::drawStageDataHits() {
     static const bool hits = std::getenv("APS5_NO_DRAW_STAGE_DATA_HITS") == nullptr && !stampValidate();
     return hits;
