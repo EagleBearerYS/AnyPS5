@@ -481,6 +481,31 @@ void OverflowFallsBack(AgcDriver::VulkanDevice& device) {
     Require(other.ServesProgram(ProgramAddress), "a batch without overflow between them resets the count");
 }
 
+void OverflowsBeforeAResolveCountOnce(AgcDriver::VulkanDevice& device) {
+    const auto program = DeviceTableProgram(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    table.NoteProgram(program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
+    const auto keys = FormatKeys();
+    for (std::uint32_t batch = 0; batch < DeviceImageTable::OverflowBatches + 1u; ++batch) {
+        static_cast<void>(recorder->Commands());
+        table.Prepare(context, *recorder, programs);
+        WriteRecords(table.RingChunk(*recorder), keys, DeviceImageTable::RingCapacity + 1u);
+        recorder->Submit();
+    }
+    Require(table.Totals().drained == 0u, "the overflowing batches are still in flight");
+    recorder->Sync();
+    const auto drained = table.Totals();
+    Require(drained.dropped == DeviceImageTable::OverflowBatches + 1u, "every batch overflowed the ring (dropped " + std::to_string(drained.dropped) + ")");
+    Require(table.ServesProgram(ProgramAddress) && drained.fallbacks == 0u, "batches that overflow before the table resolved the misses of the first count as one overflow");
+    table.Prepare(context, *recorder, programs);
+    Require(table.Totals().inserted == keys.size(), "the records that fit are resolved");
+    recorder->Sync();
+}
+
 void FullTableFallsBack(AgcDriver::VulkanDevice& device) {
     const auto program = DeviceTableProgram(device);
     GuestBlock block;
@@ -698,6 +723,7 @@ int main(int argc, char** argv) {
         EvictsLeastRecentlyUsed(*device);
         FullTableFallsBack(*device);
         OverflowFallsBack(*device);
+        OverflowsBeforeAResolveCountOnce(*device);
         NonSeamlessCube(*device);
         ComputeLayout(*device);
         GraphicsLayouts(*device);
