@@ -1,7 +1,8 @@
-READY
-since: 2026-10-17T07:37:55Z
-last: PRM-035 done, results/cloud-5/PRM-035.md: main 0906c64501 1262/65/5 IPv6 of 1332; trophies 1 0e1891f70f, trophies 2 9b17080b06, output resolution 35f4fe60a0, FSR on it 776316a77e all clean (only IPv6 failures + one settle flake, 5/5 alone on both trees); own tests x10 pass (display ones also under Xvfb); both resolutions right; nothing pushed
-previous: BF-050 done, results/cloud-5/BF-050.md: perf/agc-address-read-passes fast-forwarded a939efe1a0 -> b3e94a514 (counters 2d4512e5c, test b3e94a514); --readers red with the switch off and at 0300bb0e79, green at the head; guards green; mirror 1267/65/5 IPv6 of 1337; ^agc 638 passed
+BUSY LA-004
+since: 2026-10-17T07:39Z (LA-004, lane A join and checkpoint A1)
+claimed: tasks/claimed/LA-004.md
+step: reading LA-003 and merging the halves on exp/lane-a-base d059cea2b4
+previous: PRM-035 done, results/cloud-5/PRM-035.md: main 0906c64501 1262/65/5 IPv6 of 1332; trophies 1 0e1891f70f, trophies 2 9b17080b06, output resolution 35f4fe60a0, FSR on it 776316a77e all clean (only IPv6 failures + one settle flake, 5/5 alone on both trees); own tests x10 pass (display ones also under Xvfb); both resolutions right; nothing pushed
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
