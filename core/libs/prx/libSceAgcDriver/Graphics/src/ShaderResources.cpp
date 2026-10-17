@@ -4531,7 +4531,20 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
     result.view = firstLayer ? texture->FirstLayerView() : texture->View();
     result.layout = texture->Layout();
     result.texture = std::move(texture);
+    result.words = words;
+    result.depthCompare = view.depthCompare;
     return result;
+}
+
+bool DeviceTableTextureCurrent(const Context& context, const std::array<std::uint32_t, 8>& words, bool depthCompare, const Texture& texture) {
+    const auto key = MakeTextureKey(context.device, words, ViewComponents(DecodeTextureResource(words)), depthCompare);
+    auto& cache = Textures();
+    std::lock_guard lock(cache.mutex);
+    const auto it = findTexture(cache, key);
+    if (it == cache.entries.end() || it->texture.get() != &texture || it->source != nullptr || it->keys != DccKeys::Uncompressed || it->committed.has_value()) return false;
+    if (Recorder::SnapshotWriteOverlaps(it->address, it->bytes.size())) return false;
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureCompare);
+    return GuestMemory::EqualsCommitted(it->address, it->bytes);
 }
 
 ImageTableReuseCounts ImageTableReuses() {
