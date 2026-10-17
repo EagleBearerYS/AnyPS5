@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include <cstdlib>
+#include <set>
 
 namespace AgcDriver::DriverDetail {
 
@@ -49,6 +51,68 @@ DrawEntryCounters Driver::DrawCacheCounters() {
 Driver::DispatchCacheFootprint Driver::DrawCacheSize() {
     std::lock_guard cacheLock(drawCacheMutex);
     return {drawCache.size(), drawCacheVariantBytes};
+}
+
+namespace {
+
+template<typename T>
+std::uint64_t VectorBytes(const std::vector<T>& values) {
+    return static_cast<std::uint64_t>(values.capacity()) * sizeof(T);
+}
+
+std::uint64_t BoolVectorBytes(const std::vector<bool>& values) {
+    return (static_cast<std::uint64_t>(values.capacity()) + 7u) / 8u;
+}
+
+std::uint64_t ResultBytes(const ShaderRecompiler::RecompileResult& result) {
+    std::uint64_t bytes = sizeof(ShaderRecompiler::RecompileResult);
+    bytes += VectorBytes(result.vertexInputPatches) + VectorBytes(result.runtimeImageResources) + VectorBytes(result.vertexInputs) + VectorBytes(result.parameterExports) + VectorBytes(result.fragmentParameters) + VectorBytes(result.stencilReferences) + VectorBytes(result.specialization) + VectorBytes(result.bindings) + VectorBytes(result.pushConstants) + VectorBytes(result.vertexAttributes) + VectorBytes(result.imageTablePoison) + VectorBytes(result.imageTableRanges) + VectorBytes(result.imageTableReadRanges) + VectorBytes(result.shaderDataUserWords);
+    for (const auto& ranges : result.imageTableReadRanges) bytes += VectorBytes(ranges);
+    for (const auto& binding : result.bindings) {
+        bytes += VectorBytes(binding.guestDescriptor) + BoolVectorBytes(binding.samplerDepthCompare) + BoolVectorBytes(binding.imageWritten) + BoolVectorBytes(binding.imageDepthCompare) + BoolVectorBytes(binding.imageAtomic) + BoolVectorBytes(binding.imageAtomic64) + VectorBytes(binding.imageShapes) + BoolVectorBytes(binding.bufferAtomic) + BoolVectorBytes(binding.bufferWritten);
+    }
+    return bytes;
+}
+
+}
+
+Driver::DrawCacheParts Driver::DrawCacheBreakdown() {
+    std::lock_guard cacheLock(drawCacheMutex);
+    DrawCacheParts parts;
+    std::set<const void*> decodes, results, spirv, memories;
+    parts.entries = drawCache.size();
+    parts.accountedBytes = drawCacheVariantBytes;
+    for (const auto& [key, entry] : drawCache) {
+        if (entry->decode != nullptr && decodes.insert(entry->decode.get()).second) {
+            const auto& decode = *entry->decode;
+            parts.decodeBytes += sizeof(DrawDecode) + VectorBytes(decode.programs) + VectorBytes(decode.roles);
+            for (const auto& program : decode.programs) parts.decodeBytes += VectorBytes(program.userData);
+        }
+        if (const auto records = entry->recipes.load(); records != nullptr) parts.recipes += records->size();
+        for (const auto& variants : entry->stages) {
+            ++parts.stages;
+            ++parts.variantsPerStage[std::min(variants.size(), parts.variantsPerStage.size() - 1u)];
+            for (const auto& variant : variants) {
+                ++parts.variants;
+                parts.variantBytes += variantBytes(*variant) + VectorBytes(variant->dataPositions) + VectorBytes(variant->dataSlots) + VectorBytes(variant->runBases) + VectorBytes(variant->shaderDataPatches) + VectorBytes(variant->spans);
+                for (const auto& region : variant->captured) parts.capturedBytes += region.bytes.size();
+                if (variant->compiled != nullptr && results.insert(variant->compiled.get()).second) {
+                    parts.resultBytes += ResultBytes(*variant->compiled);
+                    const auto words = variant->compiled->spirv.Words();
+                    if (!words.empty() && spirv.insert(words.data()).second) parts.spirvBytes += words.size_bytes();
+                }
+                if (variant->memory != nullptr && memories.insert(variant->memory.get()).second) {
+                    parts.pages += variant->memory->PageCount();
+                    parts.memoryBytes += variant->memory->HeldBytes();
+                }
+            }
+        }
+    }
+    parts.decodes = decodes.size();
+    parts.results = results.size();
+    parts.spirvModules = spirv.size();
+    parts.memories = memories.size();
+    return parts;
 }
 
 std::string Driver::profileDrawCacheLines(const DrawEntryCounters& counters) {

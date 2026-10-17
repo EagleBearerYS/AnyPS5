@@ -537,12 +537,65 @@ double Median(std::vector<double> values) {
     return values[values.size() / 2];
 }
 
+std::string ProcessMemory() {
+#ifdef __linux__
+    std::ifstream status("/proc/self/status");
+    std::string line, text;
+    while (std::getline(status, line)) {
+        if (line.rfind("VmRSS:", 0) == 0 || line.rfind("RssAnon:", 0) == 0 || line.rfind("RssFile:", 0) == 0 || line.rfind("RssShmem:", 0) == 0) {
+            std::string compact;
+            bool space = false;
+            for (const char c : line) {
+                if (c == ' ' || c == '\t') space = !compact.empty() && compact.back() != ':';
+                else {
+                    if (space) compact += ' ';
+                    compact += c;
+                    space = false;
+                }
+            }
+            text += (text.empty() ? "" : ", ") + compact;
+        }
+    }
+    return text;
+#else
+    return "n/a";
+#endif
+}
+
+std::vector<std::uint32_t> IndirectSizes() {
+    const char* count = std::getenv("DRAW_RECORD_COST_DRAWS");
+    if (count != nullptr) return {static_cast<std::uint32_t>(std::clamp<unsigned long>(std::strtoul(count, nullptr, 10), 1ul, MaxDraws))};
+    const char* sizes = std::getenv("DRAW_RECORD_COST_SIZES");
+    std::vector<std::uint32_t> chosen;
+    for (const auto draws : {64u, 512u, 2048u}) {
+        if (sizes == nullptr || std::string(sizes).find(std::to_string(draws)) != std::string::npos) chosen.push_back(draws);
+    }
+    return chosen;
+}
+
+void SyncFrame(const Layout& layout) {
+    if (std::getenv("DRAW_RECORD_COST_GPU_SYNC") != nullptr) AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(ColorOffset)), ColorBytes);
+}
+
+void PrintBreakdown(const char* when) {
+    const auto parts = AgcDriver::DriverDetail::Driver::Get().DrawCacheBreakdown();
+    const auto bounded = AgcDriver::DriverDetail::Driver::Get().CpuIndirectCacheSize();
+    const auto counters = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    const auto mib = [](std::uint64_t bytes) { return static_cast<double>(bytes) / (1024.0 * 1024.0); };
+    std::string ranks;
+    for (std::size_t count = 0; count < parts.variantsPerStage.size(); ++count) {
+        if (parts.variantsPerStage[count] != 0) ranks += " " + std::to_string(count) + ":" + std::to_string(parts.variantsPerStage[count]);
+    }
+    const auto total = parts.resultBytes + parts.spirvBytes + parts.memoryBytes + parts.variantBytes + parts.decodeBytes;
+    std::printf("draw cache parts (%s): %zu entries, %zu stages, %zu variants (stages by variant count:%s), %zu recipes; pinned results %zu distinct %.2f MiB plus SPIR-V %zu modules %.2f MiB; captured memory %zu ShaderMemory objects, %zu pages, %.2f MiB (captured regions %.2f MiB of it); variants %.2f MiB; decode and state %zu decodes %.2f MiB; total %.2f MiB, %.1f KiB per entry; the cache's own ~%.2f MiB; CPU-path indirect budget: %zu entries counted at %.2f of %.2f MiB, %llu refused, %llu swept; %s\n", when, parts.entries, parts.stages, parts.variants, ranks.c_str(), parts.recipes, parts.results, mib(parts.resultBytes), parts.spirvModules, mib(parts.spirvBytes), parts.memories, parts.pages, mib(parts.memoryBytes), mib(parts.capturedBytes), mib(parts.variantBytes), parts.decodes, mib(parts.decodeBytes), mib(total), parts.entries != 0 ? static_cast<double>(total) / 1024.0 / static_cast<double>(parts.entries) : 0.0, mib(parts.accountedBytes), bounded.entries, mib(bounded.bytes), mib(bounded.budget), static_cast<unsigned long long>(counters.cpuIndirectRefused), static_cast<unsigned long long>(counters.cpuIndirectSwept), ProcessMemory().c_str());
+    std::fflush(stdout);
+}
+
 void IndirectCost(const Layout& layout, std::uint32_t windows) {
     auto& driver = AgcDriver::DriverDetail::Driver::Get();
-    const char* sizes = std::getenv("DRAW_RECORD_COST_SIZES");
     std::uint32_t frame = 1;
-    for (const auto draws : {64u, 512u, 2048u}) {
-        if (sizes != nullptr && std::string(sizes).find(std::to_string(draws)) == std::string::npos) continue;
+    std::printf("before any indirect frame: %s; sizeof(RecompileResult) %zu, sizeof(DispatchVariant) %zu, sizeof(DrawDecode) %zu\n", ProcessMemory().c_str(), sizeof(ShaderRecompiler::RecompileResult), sizeof(AgcDriver::DriverDetail::DispatchVariant), sizeof(AgcDriver::DriverDetail::DrawDecode));
+    for (const auto draws : IndirectSizes()) {
         std::vector<std::vector<std::uint32_t>> commandSets;
         for (std::uint32_t slot = 0; slot < RingSlots; ++slot) commandSets.push_back(Commands(layout, draws, slot));
         const auto cold = driver.DrawCacheCounters();
@@ -550,12 +603,15 @@ void IndirectCost(const Layout& layout, std::uint32_t windows) {
         for (std::uint32_t window = 0; window < 2 * RingSlots; ++window, ++frame) {
             WriteRecords(layout.data, draws, frame);
             warm.push_back(Submit(commandSets[frame % RingSlots]) / draws);
+            SyncFrame(layout);
         }
+        PrintBreakdown("after the warm-up frames");
         const auto before = driver.DrawCacheCounters();
         std::vector<double> perDraw;
         for (std::uint32_t window = 0; window < windows; ++window, ++frame) {
             WriteRecords(layout.data, draws, frame);
             perDraw.push_back(Submit(commandSets[frame % RingSlots]) / draws);
+            SyncFrame(layout);
         }
         const auto after = driver.DrawCacheCounters();
         const auto footprint = driver.DrawCacheSize();
@@ -567,6 +623,7 @@ void IndirectCost(const Layout& layout, std::uint32_t windows) {
         const auto validateUs = after.validateUs - before.validateUs;
         std::printf("indirect cost: %u draws per frame, %u records per packet, %u frames after %u warm-up frames (ring of %u): median %.2f us per draw packet (min %.2f, max %.2f), %.2f us per record; warm-up frames median %.2f us per draw packet (%llu lookups, %llu hits)\n", draws, IndirectRecords(), windows, 2 * RingSlots, RingSlots, Median(perDraw), *std::min_element(perDraw.begin(), perDraw.end()), *std::max_element(perDraw.begin(), perDraw.end()), Median(perDraw) / IndirectRecords(), Median(warm), count(before.lookups - cold.lookups), count(before.hits - cold.hits));
         std::printf("indirect draw cache: %llu lookups, %llu no entry (%.3f per lookup), %llu hits (%.1f%% reuse), %llu inserts, validation %.1f us per validated lookup and %.1f us per hit (APS5_PROFILE_DRAW only); %zu entries holding %.2f MiB (%.1f KiB each)\n", count(lookups), count(absent), lookups != 0 ? static_cast<double>(absent) / static_cast<double>(lookups) : 0.0, count(hits), lookups != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(lookups) : 0.0, count(after.inserts - before.inserts), validated != 0 ? validateUs / static_cast<double>(validated) : 0.0, hits != 0 ? validateUs / static_cast<double>(hits) : 0.0, footprint.entries, static_cast<double>(footprint.variantBytes) / (1024.0 * 1024.0), footprint.entries != 0 ? static_cast<double>(footprint.variantBytes) / 1024.0 / static_cast<double>(footprint.entries) : 0.0);
+        PrintBreakdown("after the measured frames");
         Check(layout, frame % RingSlots, frame);
         ++frame;
     }

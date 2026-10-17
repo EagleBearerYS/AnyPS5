@@ -81,6 +81,12 @@ public:
     };
     CpuIndirectFootprint CpuIndirectCacheSize();
     DispatchCacheFootprint DrawCacheSize();
+    struct DrawCacheParts {
+        std::size_t entries = 0, stages = 0, variants = 0, decodes = 0, results = 0, spirvModules = 0, memories = 0, pages = 0, recipes = 0;
+        std::array<std::size_t, MaxDispatchVariants + 1> variantsPerStage{};
+        std::uint64_t resultBytes = 0, spirvBytes = 0, memoryBytes = 0, capturedBytes = 0, variantBytes = 0, decodeBytes = 0, accountedBytes = 0;
+    };
+    DrawCacheParts DrawCacheBreakdown();
     static std::uint64_t DispatchCacheBytes();
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 
