@@ -418,7 +418,10 @@ void Cost(const Layout& layout, std::uint32_t frames) {
     std::vector<std::vector<std::uint32_t>> commandSets;
     for (std::uint32_t set = 0; set < ObjectSets(); ++set) commandSets.push_back(Commands(layout, Frame(), set));
     std::vector<double> warmMs;
-    for (auto& commands : commandSets) warmMs.push_back(Submit(commands) / 1e3);
+    for (auto& commands : commandSets) {
+        warmMs.push_back(Submit(commands) / 1e3);
+        if (std::getenv("VILLAGE_GPU_SYNC") != nullptr) AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
+    }
     std::vector<double> perDraw;
 #ifdef __linux__
     const auto threads = DriverThreads();
@@ -435,6 +438,7 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         const auto heldBefore = HeldNs();
 #endif
         perDraw.push_back(Submit(commandSets[frame % commandSets.size()]) / draws);
+        if (std::getenv("VILLAGE_GPU_SYNC") != nullptr) AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
 #ifdef __linux__
         double sum = 0.0;
         double raster = 0.0;
