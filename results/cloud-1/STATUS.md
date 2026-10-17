@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T07:52:21Z
+BUSY BF-053 (mesh-path programs ~1M SPIR-V words, shrink prototype)
+since: 2026-10-17T07:53:02Z
 last: BF-051 done, results/cloud-1/BF-051.md: red on main f8b22edfb 20/20 x3 (open, submitted, held): a CPU-path DRAW_INDIRECT reads its record before a store through the BDA table recorded ahead of it lands, because address-based draws run free and their stores are never pending writes; PR 6931 a00773731c also red, reader does not drain; fix sketch (not pushed) finishes lease batches at indirect-argument reads, +B on 6931, costs a full batch wait per read; test on test/bda-store-cpu-read 9a87fa97c; runs as root (unprivileged user creation refused here); before that PRM-036, LA-001
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
