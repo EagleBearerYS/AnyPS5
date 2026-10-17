@@ -326,19 +326,10 @@ struct UsedBindingPlan {
 struct HeapTemplate {
     std::shared_ptr<const RecompileResult> result;
     UsedBindingPlan plan;
-    std::vector<std::uint32_t> buffers;
-    std::vector<std::uint32_t> images;
-    std::vector<std::uint32_t> samplers;
+    std::vector<DescriptorValue> buffers;
+    std::vector<DescriptorValue> images;
+    std::vector<DescriptorValue> samplers;
 };
-
-void flattenDescriptors(std::vector<std::uint32_t>& out, const std::vector<DescriptorValue>& values) {
-    out.clear();
-    for (const auto& value : values) {
-        out.push_back(value.dwordCount);
-        out.push_back(value.availableDwordMask);
-        for (std::uint32_t i = 0; i < value.dwordCount && i < value.dwords.size(); ++i) out.push_back(value.dwords[i]);
-    }
-}
 
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::mutex mutex;
@@ -815,31 +806,36 @@ std::shared_ptr<const SpecializedModule> registrationModule(std::uint64_t varian
     return entry->module;
 }
 
-void bindingPlanKey(std::vector<std::uint64_t>& key, const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports) {
-    key.clear();
-    key.push_back(variant.artifact.variantId);
+template<typename TVisit>
+void visitBindingPlanKey(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, TVisit&& visit) {
+    visit(variant.artifact.variantId);
     for (std::size_t index = 0; index < variant.info.info.buffers.size(); ++index) {
         const auto& descriptor = snapshot.buffers.at(index);
-        key.push_back(descriptor.dwordCount);
-        key.push_back(descriptor.dwords[1] & 0xffff0000u);
-        key.push_back(descriptor.dwords[3]);
+        visit(descriptor.dwordCount);
+        visit(descriptor.dwords[1] & 0xffff0000u);
+        visit(descriptor.dwords[3]);
         const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
-        key.push_back(present ? 4u | (descriptor.dwords[0] & 3u) : 0u);
+        visit(present ? 4u | (descriptor.dwords[0] & 3u) : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
-        key.push_back(descriptor.dwordCount);
-        key.push_back(descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffu) != 0u);
-        key.push_back(descriptor.dwords[1] & ~0xffu);
-        for (std::size_t word = 2; word < 8; ++word) key.push_back(descriptor.dwords[word]);
+        visit(descriptor.dwordCount);
+        visit(descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffu) != 0u);
+        visit(descriptor.dwords[1] & ~0xffu);
+        for (std::size_t word = 2; word < 8; ++word) visit(descriptor.dwords[word]);
     }
     for (std::size_t index = 0; index < variant.info.info.samplers.size(); ++index) {
         const auto& descriptor = snapshot.samplers.at(index);
-        key.push_back(descriptor.dwordCount);
-        for (std::size_t word = 0; word < 4; ++word) key.push_back(descriptor.dwords[word]);
+        visit(descriptor.dwordCount);
+        for (std::size_t word = 0; word < 4; ++word) visit(descriptor.dwords[word]);
     }
-    key.push_back(exports.size());
-    for (const auto mapping : exports) key.push_back(mapping);
+    visit(exports.size());
+    for (const auto mapping : exports) visit(mapping);
+}
+
+void bindingPlanKey(std::vector<std::uint64_t>& key, const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports) {
+    key.clear();
+    visitBindingPlanKey(variant, snapshot, exports, [&](std::uint64_t word) { key.push_back(word); });
 }
 
 std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet) {
@@ -1532,14 +1528,12 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     }
     words.flattenedSrt.assign(snapshot.flattenedSrt.begin(), snapshot.flattenedSrt.end());
     words.bindings.clear();
-    const bool perDrawBindings = request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex;
+    const bool tables = std::ranges::any_of(layout.descriptors, [](const IrDescriptorBinding& descriptor) { return descriptor.kind == DescriptorBindingKind::ImageTable || descriptor.kind == DescriptorBindingKind::SamplerTable || descriptor.kind == DescriptorBindingKind::ImageTableMap; });
+    const bool perDrawBindings = (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex) && !tables;
     auto& source = *handle->source;
     std::uint64_t key = snapshotHash(request, snapshot, false, !perDrawBindings) ^ variant->artifact.variantId * 0x9e3779b97f4a7c15ull;
     if (perDrawBindings) {
-        struct TemplateKeyStorage {};
-        auto& shape = HostThreadLocal<std::vector<std::uint64_t>, TemplateKeyStorage>();
-        bindingPlanKey(shape, *variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{});
-        for (const auto word : shape) key = (key ^ word) * 0x100000001b3ull;
+        visitBindingPlanKey(*variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, [&](std::uint64_t word) { key = (key ^ word) * 0x100000001b3ull; });
     }
     const auto useAttributes = [&](const std::shared_ptr<const RecompileResult>& result) {
         words.vertexAttributes.clear();
@@ -1552,18 +1546,11 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
             if (vertex.fetchEmbedded) attribute.fetchIndex = vertex.resourcesDst[attribute.location].fetchIndex;
         }
     };
-    struct DescriptorStorage {};
-    auto& drawDescriptors = HostThreadLocal<std::array<std::vector<std::uint32_t>, 3>, DescriptorStorage>();
-    if (perDrawBindings) {
-        flattenDescriptors(drawDescriptors[0], snapshot.buffers);
-        flattenDescriptors(drawDescriptors[1], snapshot.images);
-        flattenDescriptors(drawDescriptors[2], snapshot.samplers);
-    }
     const auto useBindings = [&](const HeapTemplate& shared) {
         if (!perDrawBindings) return;
         if (shared.plan.plan == nullptr) throw std::runtime_error("ShaderRecompiler: a heap template has no binding plan");
-        const bool sameBuffers = drawDescriptors[0] == shared.buffers;
-        const bool sameImages = drawDescriptors[1] == shared.images && drawDescriptors[2] == shared.samplers;
+        const bool sameBuffers = snapshot.buffers == shared.buffers;
+        const bool sameImages = snapshot.images == shared.images && snapshot.samplers == shared.samplers;
         if (sameBuffers && sameImages) return;
         const auto count = shared.result->bindings.size();
         if (shared.plan.plan->bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap template's binding plan differs from its bindings");
@@ -1598,6 +1585,10 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
                 std::copy_n(kept.begin() + first, layout.runtimeStateDwords, words.bindings[index].begin() + first);
             }
         }
+        for (std::size_t index = 0; index < count; ++index) {
+            if (words.bindings[index] == shared.result->bindings[index].guestDescriptor) words.bindings[index].clear();
+        }
+        if (std::all_of(words.bindings.begin(), words.bindings.end(), [](const std::vector<std::uint32_t>& descriptor) { return descriptor.empty(); })) words.bindings.clear();
     };
     {
         std::lock_guard lock(source.mutex);
@@ -1615,7 +1606,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     for (const auto reg : layout.userDataRegisters) built->heapUserWords.push_back(reg - userDataBase);
     static std::atomic<std::uint64_t> templateIds{0};
     built->heapTemplateId = templateIds.fetch_add(1, std::memory_order_relaxed) + 1u;
-    HeapTemplate shared{std::move(built), std::move(usedPlan), perDrawBindings ? drawDescriptors[0] : std::vector<std::uint32_t>{}, perDrawBindings ? drawDescriptors[1] : std::vector<std::uint32_t>{}, perDrawBindings ? drawDescriptors[2] : std::vector<std::uint32_t>{}};
+    HeapTemplate shared{std::move(built), std::move(usedPlan), perDrawBindings ? snapshot.buffers : std::vector<DescriptorValue>{}, perDrawBindings ? snapshot.images : std::vector<DescriptorValue>{}, perDrawBindings ? snapshot.samplers : std::vector<DescriptorValue>{}};
     {
         std::lock_guard lock(source.mutex);
         if (source.heapTemplates.size() >= 4096) source.heapTemplates.clear();

@@ -758,10 +758,6 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             if (dataEntry != nullptr && reused[i]) ++dataStagesReused;
             else if (dataEntry != nullptr) ++dataStagesCompiled;
         }
-        if (stageCaptures[i].heapWords != nullptr && !stageCaptures[i].heapWords->bindings.empty()) {
-            compiledStages.push_back(PatchedHeapResult(*programResults[i], *stageCaptures[i].heapWords));
-            programResults[i] = compiledStages.back().get();
-        }
         const auto& result = *programResults[i];
         if (i == 0 && drawParameters.indirect) {
             indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
