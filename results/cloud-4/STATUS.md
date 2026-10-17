@@ -1,7 +1,6 @@
-BUSY PM-073
-since: 2026-10-17T09:33:21Z (claimed)
-claimed: tasks/claimed/PM-073.md
-last: PM-072 done, results/cloud-4/PM-072.md (review/np-trophy-stats c73c00876); before it PM-071, PM-070, PM-069, BF-052, LA-003
+READY
+since: 2026-10-17T09:55:26Z
+last: PM-073 done, results/cloud-4/PM-073.md (prep/np-trophies 36c842ee6 on main bf2053816); before it PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
