@@ -1,8 +1,6 @@
-BUSY BF-052
-since: 2026-10-17T07:16:20Z (claimed)
-claimed: tasks/claimed/BF-052.md
-step (2026-10-17T07:16:36Z): step 1, reading the CPU indirect draw path and PR 6539's head
-last: LA-003 done, results/cloud-4/LA-003.md (exp/lane-a-driver a500d67c8)
+READY
+since: 2026-10-17T08:08:43Z
+last: BF-052 done, results/cloud-4/BF-052.md (exp/cpu-indirect-draw-cache fdb45156c); before it LA-003, results/cloud-4/LA-003.md (exp/lane-a-driver a500d67c8)
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
