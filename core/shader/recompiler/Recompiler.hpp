@@ -274,6 +274,7 @@ struct SpirvTarget {
     bool gpuResolvedImages = false;
     bool gpuConstants = false;
     bool gpuConstantsVerify = false;
+    bool deviceImageTables = false;
 };
 
 struct BindingLayout {
@@ -612,6 +613,7 @@ struct CompiledShaderArtifact {
     bool registrationModule = false;
     bool gpuResolvedImages = false;
     std::uint32_t samplerSlotDword = 0;
+    bool deviceImageTables = false;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
     std::vector<VertexInput> vertexInputs;

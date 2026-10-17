@@ -47,6 +47,10 @@ inline constexpr std::uint32_t SamplerHeapCapacity = 64u;
 inline constexpr std::uint32_t GpuImageHeapSlots = 4096u;
 inline constexpr std::uint32_t GpuSamplerHeapSlots = 256u;
 inline constexpr std::uint32_t GpuDataSet = 2u;
+inline constexpr std::uint32_t DeviceHeapSet = 2u;
+inline constexpr std::uint32_t DeviceTableSet = 3u;
+inline constexpr std::uint32_t DeviceTableBucketsBinding = 0u;
+inline constexpr std::uint32_t DeviceTableRingBinding = 1u;
 struct HeapSlotWord {
     std::uint32_t dword = 0;
     std::uint32_t kind = 0;

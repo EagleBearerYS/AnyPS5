@@ -288,6 +288,7 @@ private:
         append(key, value.spannedWaves);
         append(key, value.robustBufferAccess2);
         append(key, value.gpuResolvedImages);
+        append(key, value.deviceImageTables);
         append(key, value.gpuConstants);
         append(key, value.gpuConstantsVerify);
     }

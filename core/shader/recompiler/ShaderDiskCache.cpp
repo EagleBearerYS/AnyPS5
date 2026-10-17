@@ -84,9 +84,9 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 240, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 248, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 232, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -140,7 +140,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 38, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 39, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -470,6 +470,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.registrationModule);
     writer.Value(result.gpuResolvedImages);
     writer.Value(result.samplerSlotDword);
+    writer.Value(result.deviceImageTables);
     writer.List(result.vertexInputPatches, [](Writer& out, const VertexInputPatch& patch) {
         out.Value(patch.location);
         out.Value(patch.word);
@@ -519,6 +520,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.registrationModule);
     reader.Value(result.gpuResolvedImages);
     reader.Value(result.samplerSlotDword);
+    reader.Value(result.deviceImageTables);
     reader.List(result.vertexInputPatches, 20, [](Reader& in, VertexInputPatch& patch) {
         in.Value(patch.location);
         in.Value(patch.word);
@@ -738,6 +740,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.emulatedCompare);
         out.Value(image.table);
         out.Value(image.tableOperation);
+        out.Value(image.deviceTable);
     });
     writer.Value(!info.runtimeImageModes.empty());
     writer.List(info.samplers, [](Writer& out, const SamplerResource& sampler) {
@@ -801,7 +804,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
     });
-    reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
+    reader.List(info.images, 78, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
         in.Value(image.firstUsePc);
         in.Value(image.resourceClass);
@@ -840,6 +843,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.emulatedCompare);
         in.Value(image.table);
         in.Value(image.tableOperation);
+        in.Value(image.deviceTable);
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);

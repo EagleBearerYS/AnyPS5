@@ -581,6 +581,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
     result.gpuResolvedImages = targetOptions.gpuResolvedImages;
     result.samplerSlotDword = result.gpuResolvedImages ? bindings.layout.SamplerSlotDword() : 0u;
+    result.deviceImageTables = std::ranges::any_of(program.Info().images, [](const ImageResource& image) { return image.deviceTable; });
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
@@ -906,6 +907,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .registrationModule = artifact.registrationModule,
         .gpuResolvedImages = artifact.gpuResolvedImages,
         .samplerSlotDword = artifact.samplerSlotDword,
+        .deviceImageTables = artifact.deviceImageTables,
         .bdaAbiVersion = artifact.bdaAbiVersion,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
