@@ -1,8 +1,6 @@
-BUSY BF-070
-since: 2026-10-17T18:07Z (BF-070, BF-052 + BF-058 rebased on current main as perf/agc-cpu-indirect-draw-cache-v2)
-claimed: tasks/claimed/BF-070.md
-step: fetching the source branch and rebasing
-previous: BF-069 done, results/cloud-5/BF-069.md: fork exp/heap-trim 52357f05a on main 66702f1cf; APS5_HEAP_REPORT=<s> ([heap] busy/free bytes+blocks, uncommitted, regions, sampled zero pages per kind ~2048 reads each via ReadProcessMemory, PrivateUsage, walk ms under HeapLock) and APS5_HEAP_TRIM=<s> ([heap-trim] HeapOptimizeResources then _heapmin, PrivateUsage before/after, ms); one jthread started beside StartWorkerSampler (queue worker 0), joined beside StopWorkerSampler; full walk under the lock, expected ~1 s for ~10M blocks (unmeasured), not sliced; agc_heap_watch (formats on all platforms; Windows trim/report pattern) for the Bug Finder's Windows run; Linux ctest '^(agc|libc)' 663/0, mirror 1,372 vs main 1,371, IPv6 5 only; not built on Windows here
+READY
+since: 2026-10-17T18:52Z
+previous: BF-070 done, results/cloud-5/BF-070.md: fork perf/agc-cpu-indirect-draw-cache-v2 54bdd57ec = the five BF-052/BF-058 commits on main e1041f6a5, no conflicts, patch-ids equal; each commit builds and passes its tests (7/9/9/9/10); x20 60/60; ^agc 665/0; mirror 1,375 vs main 1,372, IPv6 5 only; conventions pass, no comment lines; main since moved to e3838332e (CI-only, merges clean); overlap: 43 open PRs share files, 6946/6947 conflict in 4 files (resolution routes their shape-replacement erase through dropDrawEntry; trials 15/15 and 25/25), 6931 1 hunk (trial 11/11; counters skip on its early return), 1896 clean (its APS5_PIPELINE_INDIRECT path bypasses the per-record patch; trial 11/11 both ways), 6612/6679 2 hunks (resolution given, not built), 5656 1 line, 25 clean, 12 already conflict with main
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
