@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -376,6 +377,7 @@ struct PathCounts {
     std::uint64_t snapshots = 0;
     std::uint64_t tableBuilds = 0;
     AgcDriver::Graphics::DeviceImageTable::Counts device;
+    AgcDriver::Graphics::GraphicsBindCounts binds;
 };
 
 PathCounts ReadPath() {
@@ -390,12 +392,15 @@ PathCounts ReadPath() {
         counts.device.dropped += totals.dropped;
         counts.device.rejected += totals.rejected;
         counts.device.fallbacks += totals.fallbacks;
+        counts.device.gpuModeDraws += totals.gpuModeDraws;
     }
+    counts.binds = AgcDriver::Graphics::GraphicsDescriptorBinds();
     return counts;
 }
 
 void ReportPath(const char* what, const PathCounts& before, const PathCounts& after) {
     std::printf("village path, %s: CPU table snapshots %llu, CPU table bindings %llu, device table prepares %llu, miss records %llu, inserted %llu, rejected %llu, fallbacks %llu\n", what, static_cast<unsigned long long>(after.snapshots - before.snapshots), static_cast<unsigned long long>(after.tableBuilds - before.tableBuilds), static_cast<unsigned long long>(after.device.prepares - before.device.prepares), static_cast<unsigned long long>(after.device.drained - before.device.drained), static_cast<unsigned long long>(after.device.inserted - before.device.inserted), static_cast<unsigned long long>(after.device.rejected - before.device.rejected), static_cast<unsigned long long>(after.device.fallbacks - before.device.fallbacks));
+    std::printf("village binds, %s: %llu descriptor set binds (%llu with dynamic offsets); image heap bound %llu, kept %llu; device table bound %llu, kept %llu; %llu GPU-mode draws on the device table\n", what, static_cast<unsigned long long>(after.binds.binds - before.binds.binds), static_cast<unsigned long long>(after.binds.dynamicBinds - before.binds.dynamicBinds), static_cast<unsigned long long>(after.binds.heapBinds - before.binds.heapBinds), static_cast<unsigned long long>(after.binds.heapKept - before.binds.heapKept), static_cast<unsigned long long>(after.binds.tableBinds - before.binds.tableBinds), static_cast<unsigned long long>(after.binds.tableKept - before.binds.tableKept), static_cast<unsigned long long>(after.device.gpuModeDraws - before.device.gpuModeDraws));
 }
 
 void Check(const Layout& layout) {
