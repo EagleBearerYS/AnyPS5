@@ -191,6 +191,14 @@ Sampled textures and storage images stay in device memory in two caches that evi
 
 A fixed budget above the automatic one can exceed what the card holds next to the rest of the frame. Allocations then go to host memory (`[gpu] ... placed in host memory` lines), where the GPU reads them over PCIe. PPSA16064 on an RTX 4060 8 GB, whose automatic storage image budget is 1797 MiB, placed 868 and 878 MiB in host memory with `APS5_TEXTURE_CACHE_MIB=3072` and walked through its first level at 4.46 and 4.83 FPS; with the variable unset it placed none and ran the same walk at 6.48 and 6.07 FPS. Leave it unset unless a measurement on the card shows otherwise.
 
+### Draw pipeline
+
+`APS5_DRAW_PIPELINE=1` (off by default) moves more of each draw off the thread that reads the title's command buffers: a second thread finishes each draw while the next one is read, the thread that records draws skips work whose inputs did not change, and checks that a draw's resources are still current are reused until the title or the GPU writes memory. It is meant with `APS5_PIPELINED_DRAWS=32 APS5_PIPELINE_DISPATCH=1`. The picture does not change; if it does, that is a bug, and a run without the switch shows whether it is the cause. `APS5_VERIFY_DRAW_PIPELINE=1` runs the full checks next to the reused ones, at a cost in speed, and prints `[fast-srt]` and `[epoch-proofs]` lines with how many differed (any nonzero count is a bug).
+
+### GPU descriptor heap
+
+`APS5_GPU_HEAP=1` (off by default) binds the textures and samplers of most draws through one table the GPU indexes, instead of building them again for each draw, and lets vertex shaders read their constants on the GPU. Use it with `APS5_DRAW_PIPELINE=1` and the switches listed there. The first run with the switch compiles its own variant of each shader, so expect the same stutter as with an empty shader cache once. Wrong or missing textures or flicker that go away without the switch are bugs. `APS5_VERIFY_GPU_HEAP=1` checks the table against the bound textures, builds some draws the old way and compares them, and compares the constants the GPU read; it prints `[heap-slots]` and `[gpu-heap]` lines (a slot holding another texture or a differing constant is a bug).
+
 ### Storing GPU results at each flip
 
 GPU results in storage images and render targets stay on the GPU until something reads their memory. A title that frees such an image after waiting for its GPU work and reuses the memory can have its new data overwritten when the results are stored later ([TechnicalDebt](../dev/TechnicalDebt.md)). `APS5_STORE_AT_FLIP=1` stores every pending result when a display buffer is flipped, at the cost of one write-back per pending image and frame. Any other value stops the title at its first flip.

@@ -1,0 +1,28 @@
+#ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DRAW_HEAPSTAGES_HPP
+#define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DRAW_HEAPSTAGES_HPP
+
+#include "Optimization/ResourceProgram.hpp"
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <utility>
+#include <vector>
+
+namespace AgcDriver::DriverDetail {
+
+bool HeapFragmentsEnabled();
+std::optional<bool> HeapFragmentKnown(const void* snapshot, std::size_t codeOffset);
+void NoteHeapFragment(const void* snapshot, std::size_t codeOffset, bool eligible);
+
+bool SampleHeapStageVerify();
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData, std::uint64_t shaderBase, ShaderRecompiler::HeapStageWords* words = nullptr, std::shared_ptr<const ShaderRecompiler::HeapStageWords>* sharedWords = nullptr);
+void NoteHeapDirect();
+void NoteHeapDirectVerify(const ShaderRecompiler::RecompileResult& direct, const ShaderRecompiler::RecompileResult& expected);
+std::uint64_t HeapStagesTaken();
+std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const ShaderRecompiler::RecompileResult& shared, const ShaderRecompiler::HeapStageWords& words);
+
+}
+
+#endif

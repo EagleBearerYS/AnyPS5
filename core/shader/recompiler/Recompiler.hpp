@@ -268,6 +268,9 @@ struct SpirvTarget {
     bool vertexSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
+    bool gpuResolvedImages = false;
+    bool gpuConstants = false;
+    bool gpuConstantsVerify = false;
 };
 
 struct BindingLayout {
@@ -333,6 +336,7 @@ inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
+inline constexpr std::uint32_t GpuWorkgroupMemoryDescriptorSet = 3;
 
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
@@ -347,6 +351,14 @@ struct GraphicsCompileContext {
     std::optional<MeshConfiguration> mesh;
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
+};
+
+struct VertexAttribute;
+
+struct HeapStageWords {
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> flattenedSrt;
+    std::vector<VertexAttribute> vertexAttributes;
 };
 
 struct RecompileRequest {
@@ -594,6 +606,8 @@ struct CompiledShaderArtifact {
     std::uint32_t runtimeImageCount = 0;
     std::vector<std::uint32_t> runtimeImageResources;
     bool registrationModule = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t samplerSlotDword = 0;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
     std::vector<VertexInput> vertexInputs;
@@ -616,10 +630,12 @@ struct CompiledShaderArtifact {
 
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
+    std::vector<RuntimeAbi::HeapSlotWord> heapSlotWords;
     std::uint64_t specializationId = 0;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
     std::vector<VertexAttribute> vertexAttributes;
+    std::uint64_t userDataRegisterReads = 0;
     std::uint32_t poisonedSrtReads = 0;
     std::vector<ImageTableEntryPoison> imageTablePoison;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
@@ -642,7 +658,21 @@ struct PipelineIdentity {
     auto operator<=>(const PipelineIdentity&) const = default;
 };
 
+struct ResultKeyMemo {
+    mutable std::atomic<std::shared_ptr<const std::vector<std::uint32_t>>> words;
+    ResultKeyMemo() = default;
+    ResultKeyMemo(const ResultKeyMemo&) {}
+    ResultKeyMemo& operator=(const ResultKeyMemo&) {
+        words.store(nullptr, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    std::uint64_t heapTemplateId = 0;
+    std::vector<std::uint32_t> heapUserWords;
+    bool bdaReadOnly = false;
+    ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;
