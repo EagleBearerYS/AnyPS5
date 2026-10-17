@@ -20,7 +20,7 @@ RULES = {
     "system-dependency": ("error", "CONTRIBUTING.md#code", "Third-party code is a submodule under 3rdparty/ built from source, not found on the system"),
     "title-specific": ("error", "CONTRIBUTING.md#code", "Implement the general behaviour, not what one title needs; title-specific code belongs in its sce_module"),
     "extension": ("error", "CONTRIBUTING.md#code", "Avoid non-standard extensions where standard C++ is enough"),
-    "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository"),
+    "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository; only the root AGENTS.md is allowed"),
     "binary": ("error", "docs/dev/CONVENTIONS.md", "Only UTF-8 text files in the repository; images go in the gist comments"),
     "ci-gate": ("error", "CONTRIBUTING.md#build-and-test", "A job that runs for pull requests needs a file filter: paths on the pull_request trigger, or needs eligibility and an if on its outputs"),
     "doc-link": ("error", "CONTRIBUTING.md#documentation", "Relative link to a file that does not exist"),
@@ -50,7 +50,7 @@ SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
 EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
 LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")
-FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
+FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
@@ -191,6 +191,16 @@ class Check:
             if match and not match.group(1).startswith("3rdparty/"):
                 self.report("system-dependency", ".gitmodules", number, match.group(1))
 
+    def shaders(self):
+        if any(is_debt(path) for path in self.status):
+            return
+        for path, lines in self.files(lambda p: p.suffix in (".comp", ".frag", ".vert", ".glsl")):
+            masked = cpp_text(self.show(path), preserve_comments=True).split("\n")
+            for number, _ in lines:
+                bare = masked[number - 1]
+                if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
+                    self.report("comment", path, number)
+
     def submodules(self):
         result = subprocess.run(["git", "config", "--no-includes", "-z", "--blob", f"{self.head}:.gitmodules", "--list"],
                                 capture_output=True, encoding="utf-8", errors="replace")
@@ -265,7 +275,7 @@ class Check:
             self.report("pr-template", "", 0, f"unchecked: {item.strip()}")
         if checklist and not re.search(r"AI-assisted:\s*(yes|no)\b", checklist, re.I):
             self.report("pr-template", "", 0, "answer AI-assisted with yes or no")
-        if checklist and not re.search(r"Depends on:\s*(#\d+|none)\b", checklist, re.I):
+        if checklist and not re.search(r"Depends on:\s*(?:[-*+]\s+)?(#\d+|none)\b", checklist, re.I):
             self.report("pr-template", "", 0, "fill Depends on with #N or none")
 
 
@@ -383,7 +393,7 @@ def library(path):
 def allowed_notes(path):
     p = PurePosixPath(path)
     if p.name.lower() in AGENT_FILES:
-        return False
+        return path == "AGENTS.md"
     if p.suffix.lower() not in NOTES:
         return None
     return path in ("README.md", "CONTRIBUTING.md") or p.parts[0] == ".github" or p.parts[:2] in (("docs", "dev"), ("docs", "user"))
@@ -456,6 +466,7 @@ if __name__ == "__main__":
     check = Check(args.base, args.head)
     check.code()
     check.build()
+    check.shaders()
     check.repository()
     check.docs()
     check.workflows()

@@ -35,6 +35,7 @@ static constexpr std::size_t FIBER_OPT_PARAM_SIZE = 0x80;
 static constexpr std::size_t FIBER_MIN_CONTEXT_SIZE = 512;
 static constexpr std::uint64_t FIBER_CONTEXT_FILL = 0xdeadbeefdeadbeefull;
 static constexpr std::size_t FIBER_HOST_STACK_MARGIN = 1u << 20;
+static constexpr std::size_t FIBER_GUEST_STACK_MIN = 64u << 10;
 
 using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
 
@@ -297,7 +298,11 @@ static void ReleaseHostStack(Fiber* fiber) {
 static void AllocateHostStack(Fiber* fiber) {
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     const auto bytes = (fiber->contextSize + FIBER_HOST_STACK_MARGIN + page - 1) / page * page + page;
-    void* mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+#ifdef MAP_STACK
+    flags |= MAP_STACK;
+#endif
+    void* mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, flags, -1, 0);
     if (mapping == MAP_FAILED) throw std::runtime_error(std::string("sceFiberInitialize: no host stack of ") + std::to_string(bytes) + " bytes for fiber '" + fiber->name + "' (errno " + std::to_string(errno) + ")");
     if (mprotect(mapping, page, PROT_NONE) != 0) {
         const int error = errno;
@@ -327,6 +332,7 @@ static std::uint64_t* SizedWindow(const Fiber* fiber) {
 #ifdef _WIN32
 
 static StackBounds FiberBounds(const Fiber* fiber) {
+    if (!fiber->hostStack) return {fiber->context + fiber->contextSize, fiber->context, fiber->context};
     return {fiber->hostStack + fiber->hostStackBytes, fiber->hostStack + HostStackGuardBytes(), fiber->hostStack};
 }
 
@@ -417,7 +423,7 @@ int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const
     fiber->context = static_cast<std::uint8_t*>(addr_context);
     fiber->contextSize = size_context;
     std::strncpy(fiber->name, name, FIBER_MAX_NAME_LENGTH);
-    AllocateHostStack(fiber);
+    if (size_context < FIBER_GUEST_STACK_MIN) AllocateHostStack(fiber);
     fiber->contextSizeCheck = g_contextSizeCheck.load(std::memory_order_relaxed);
     if (fiber->contextSizeCheck) {
         auto* words = SizedWindow(fiber);

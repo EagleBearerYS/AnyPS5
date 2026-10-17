@@ -256,7 +256,7 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
 }
 
 void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValExport, State& result) {
-    zero(cx, 0x000, 0x00001f9cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
+    zero(cx, 0x000, 0x0000101cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
     const bool depthClear = (read(cx, 0x000) & 1u) != 0;
     const bool stencilClear = (read(cx, 0x000) & 2u) != 0;
     const auto view = read(cx, 0x002);
@@ -279,10 +279,23 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     Require(!depthClear || (zFormat != 0 && !depthReadOnly), "depth clear requires a writable depth plane");
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
+    depth.depthSwizzle = (read(cx, 0x010) >> 4u) & 31u;
+    depth.iterate256 = (read(cx, 0x010) & (1u << 20u)) != 0;
+    depth.firstSlice = view & 0x1fffu;
+    depth.lastSlice = (view >> 13u) & 0x7ffu;
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
     depth.stencilAddress = stencil ? base(0x013, 0x01b) : 0;
     Require(zFormat == 0 || depthReadOnly || base(0x014, 0x01c) == depth.address, "depth read and written at different addresses is unsupported");
     Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == depth.stencilAddress, "stencil read and written at different addresses is unsupported");
+    if (depth.samples != 1u) {
+        depth.pipeBankXor = static_cast<std::uint32_t>(depth.address & 65535u);
+        depth.address &= ~std::uint64_t{65535u};
+        depth.stencilAddress &= ~std::uint64_t{65535u};
+        if (const auto surface = find(cx, 0x2af); surface != cx.end()) {
+            depth.htilePipeAligned = (surface->second & (1u << 18u)) != 0;
+            depth.htileVrsEncoding = (surface->second >> 19u) & 3u;
+        }
+    }
     const auto size = read(cx, 0x007);
     depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
     if (const auto slice = view & 0x1fffu; slice != 0) {
@@ -292,9 +305,10 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
     depth.clearDepth = readFloat(cx, 0x00b);
     depth.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
+    depth.htileDepthOnly = (read(cx, 0x011) & (1u << 29u)) != 0u;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
         depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
-        depth.htileStencil = stencil && (read(cx, 0x011) & (1u << 29u)) == 0;
+        depth.htileStencil = stencil && !depth.htileDepthOnly;
     }
     result.depth = depth;
     result.depthTest = (depthControl & 2u) != 0;
@@ -401,6 +415,8 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
 }
 
 constexpr std::uint32_t CoveredCentroidIsCenter = 1u << 29u;
+constexpr std::uint32_t SampleZeroRefusedInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+constexpr std::uint32_t PixelCenterPositionInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
 constexpr std::uint32_t CentroidInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid);
 
 bool coveredCentroidSupported(const QueueState& queue) {
@@ -475,6 +491,24 @@ void decodeSampleLocations(const Registers& cx, State& state) {
     }
 }
 
+bool rasterizesSampleZeroOnly(const Registers& cx, const State& state) {
+    if (state.samples <= 1 || state.alphaToCoverage || (read(cx, 0x292) & 1u) == 0) return false;
+    const auto inputs = read(cx, 0x1b3) & read(cx, 0x1b4);
+    const auto refused = state.perSampleShading ? ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage) : SampleZeroRefusedInputs;
+    const bool sampleIndexMovesPosition = (inputs & ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary)) != 0 && (inputs & PixelCenterPositionInputs) != 0;
+    return (inputs & refused) == 0 && !sampleIndexMovesPosition;
+}
+
+void rasterizeSampleZero(State& state) {
+    std::array<std::uint8_t, 32> sampleZero{};
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) sampleZero[pixel * 8u] = state.sampleLocations[pixel * 8u];
+    state.samples = 1;
+    state.perSampleShading = false;
+    state.sampleLocations = sampleZero;
+    state.customSampleLocations = std::any_of(sampleZero.begin(), sampleZero.end(), [](std::uint8_t bits) { return bits != 0; });
+    state.sampleLocationGrid = sampleZero[8] != sampleZero[0] || sampleZero[16] != sampleZero[0] || sampleZero[24] != sampleZero[0];
+}
+
 bool colorControlSupported(std::uint32_t colorControl, bool hasColorTarget) {
     colorControl &= ~1u;
     return colorControl == 0xcc0010u || ((colorControl >> 4u) & 7u) == 0u || (!hasColorTarget && (colorControl & ~0x70u) == 0xcc0000u);
@@ -542,6 +576,142 @@ VkBlendOp blendOp(std::uint32_t value) {
         case 4: return VK_BLEND_OP_REVERSE_SUBTRACT;
         default: throw std::runtime_error("AGC graphics: unsupported blend operation " + std::to_string(value));
     }
+}
+
+constexpr std::uint8_t TermComplement = 0x80u;
+constexpr std::uint8_t TermUnsupported = 0xffu;
+
+std::uint8_t exportTerm(std::uint32_t component) {
+    return static_cast<std::uint8_t>(1u + component);
+}
+
+std::uint8_t destinationTerm(std::uint32_t component) {
+    return static_cast<std::uint8_t>(5u + component);
+}
+
+std::uint8_t guestBlendTerm(VkBlendFactor factor, std::uint32_t component) {
+    switch (factor) {
+        case VK_BLEND_FACTOR_ZERO: return 0u;
+        case VK_BLEND_FACTOR_ONE: return TermComplement;
+        case VK_BLEND_FACTOR_SRC_COLOR: return exportTerm(component);
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR: return TermComplement | exportTerm(component);
+        case VK_BLEND_FACTOR_SRC_ALPHA: return exportTerm(0u);
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA: return TermComplement | exportTerm(0u);
+        case VK_BLEND_FACTOR_DST_COLOR: return destinationTerm(component);
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR: return TermComplement | destinationTerm(component);
+        case VK_BLEND_FACTOR_DST_ALPHA: return destinationTerm(0u);
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA: return TermComplement | destinationTerm(0u);
+        case VK_BLEND_FACTOR_SRC_ALPHA_SATURATE: return component == 0u ? TermComplement : TermUnsupported;
+        default: return TermUnsupported;
+    }
+}
+
+std::uint8_t routedTerm(std::uint32_t route, std::uint32_t component) {
+    namespace Code = ShaderRecompiler::ReversedBlendCode;
+    switch (route) {
+        case Code::Own: return exportTerm(component);
+        case Code::Component0: return exportTerm(0u);
+        case Code::Zero: return 0u;
+        default: return TermComplement;
+    }
+}
+
+std::uint8_t hostBlendTerm(VkBlendFactor factor, std::uint32_t component, const std::array<std::uint32_t, 4>& color, const std::array<std::uint32_t, 4>& second) {
+    switch (factor) {
+        case VK_BLEND_FACTOR_ZERO: return 0u;
+        case VK_BLEND_FACTOR_ONE: return TermComplement;
+        case VK_BLEND_FACTOR_SRC_COLOR: return routedTerm(color[component], component);
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR: return TermComplement ^ routedTerm(color[component], component);
+        case VK_BLEND_FACTOR_SRC_ALPHA: return routedTerm(color[3], 3u);
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA: return TermComplement ^ routedTerm(color[3], 3u);
+        case VK_BLEND_FACTOR_DST_COLOR: return destinationTerm(component);
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR: return TermComplement | destinationTerm(component);
+        case VK_BLEND_FACTOR_DST_ALPHA: return destinationTerm(3u);
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA: return TermComplement | destinationTerm(3u);
+        case VK_BLEND_FACTOR_SRC1_COLOR: return routedTerm(second[component], component);
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR: return TermComplement ^ routedTerm(second[component], component);
+        case VK_BLEND_FACTOR_SRC1_ALPHA: return routedTerm(second[3], 3u);
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA: return TermComplement ^ routedTerm(second[3], 3u);
+        default: return TermUnsupported;
+    }
+}
+
+struct BlendRouting {
+    std::array<VkBlendFactor, 4> factors;
+    std::uint32_t code;
+};
+
+std::optional<BlendRouting> routeReversedBlend(const std::array<VkBlendFactor, 2>& color, const std::array<VkBlendFactor, 2>& alpha) {
+    namespace Code = ShaderRecompiler::ReversedBlendCode;
+    static constexpr std::array<VkBlendFactor, 14> colorFactors{
+        VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC_COLOR, VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK_BLEND_FACTOR_DST_COLOR,
+        VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR, VK_BLEND_FACTOR_DST_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR, VK_BLEND_FACTOR_SRC1_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA};
+    static constexpr std::array<VkBlendFactor, 8> alphaFactors{
+        VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK_BLEND_FACTOR_DST_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA, VK_BLEND_FACTOR_SRC1_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA};
+    std::array<std::array<std::uint8_t, 2>, 4> wanted{};
+    std::uint32_t replaceable = 0;
+    for (std::uint32_t component = 0; component < 4; ++component) {
+        for (std::size_t position = 0; position < 2; ++position) {
+            wanted[component][position] = guestBlendTerm(component == 0u ? alpha[position] : color[position], component);
+            if (wanted[component][position] == TermUnsupported) return std::nullopt;
+        }
+        if (wanted[component][0] == TermComplement) replaceable |= 1u << component;
+    }
+    const auto search = [&](bool routed) -> std::optional<BlendRouting> {
+        const auto usable = [&](VkBlendFactor factor) { return routed || !secondSource(factor); };
+        const std::uint32_t routeCount = routed ? 4u : 1u;
+        std::uint32_t ones = 0;
+        do {
+            std::array<std::uint32_t, 4> colorRoutes{};
+            for (std::uint32_t component = 0; component < 4; ++component) colorRoutes[component] = ((ones >> component) & 1u) != 0 ? Code::One : Code::Own;
+            const auto matches = [&](VkBlendFactor factor, std::size_t position, std::uint32_t component, const std::array<std::uint32_t, 4>& second) {
+                const auto term = hostBlendTerm(factor, component, colorRoutes, second);
+                if (position == 1 || colorRoutes[component] == Code::Own) return term == wanted[component][position];
+                return term == exportTerm(component);
+            };
+            for (std::uint32_t secondAlpha = 0; secondAlpha < routeCount; ++secondAlpha) {
+                const std::array<std::uint32_t, 4> second{Code::Own, Code::Own, Code::Own, secondAlpha};
+                std::array<std::optional<VkBlendFactor>, 2> alphaFactor{};
+                for (std::size_t position = 0; position < 2; ++position) {
+                    const auto found = std::find_if(alphaFactors.begin(), alphaFactors.end(), [&](VkBlendFactor factor) { return usable(factor) && matches(factor, position, 3u, second); });
+                    if (found != alphaFactors.end()) alphaFactor[position] = *found;
+                }
+                if (!alphaFactor[0] || !alphaFactor[1]) continue;
+                std::array<std::array<std::array<std::uint8_t, 3>, colorFactors.size()>, 2> masks{};
+                for (std::size_t position = 0; position < 2; ++position) {
+                    for (std::size_t index = 0; index < colorFactors.size(); ++index) {
+                        if (!usable(colorFactors[index])) continue;
+                        for (std::uint32_t component = 0; component < 3; ++component) {
+                            auto routes = second;
+                            for (std::uint32_t route = 0; route < routeCount; ++route) {
+                                routes[component] = route;
+                                if (matches(colorFactors[index], position, component, routes)) masks[position][index][component] |= static_cast<std::uint8_t>(1u << route);
+                            }
+                        }
+                    }
+                }
+                for (std::size_t source = 0; source < colorFactors.size(); ++source) {
+                    for (std::size_t destination = 0; destination < colorFactors.size(); ++destination) {
+                        std::uint32_t code = Code::Enable;
+                        for (std::uint32_t component = 0; component < 4; ++component) {
+                            const auto shared = component == 3u ? 1u << secondAlpha : static_cast<std::uint32_t>(masks[0][source][component] & masks[1][destination][component]);
+                            if (shared == 0u) {
+                                code = 0u;
+                                break;
+                            }
+                            const auto route = static_cast<std::uint32_t>(std::countr_zero(shared));
+                            code |= (colorRoutes[component] << (Code::ColorShift + Code::RouteBits * component)) | (route << (Code::SecondShift + Code::RouteBits * component));
+                        }
+                        if (code != 0u) return BlendRouting{{colorFactors[source], colorFactors[destination], *alphaFactor[0], *alphaFactor[1]}, routed ? code : 0u};
+                    }
+                }
+            }
+            ones = (ones - replaceable) & replaceable;
+        } while (routed && ones != 0u);
+        return std::nullopt;
+    };
+    if (auto native = search(false)) return native;
+    return search(true);
 }
 
 struct DecodedColorFormat {
@@ -726,7 +896,10 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         validate(!fastLaunch || (!vertexWorkgroup && primitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
-        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && read(queue.context, 0x29b) == 2 && verticesPerPrimitive >= 3, "unsupported geometry input or output assembly");
+        const auto outputType = read(queue.context, 0x29b);
+        validate(outputType == 2 || (outputType == 1 && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a line strip from a geometry program, is unsupported");
+        const auto outputSize = outputType == 1 ? 2u : 3u;
+        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
         const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
         validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
         const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
@@ -734,14 +907,13 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
         const auto resources = read(queue.shader, 0x8b, RegisterBank::Shader);
-        validate(vertexWorkgroup || fastLaunch || (((read(queue.shader, 0x8a, RegisterBank::Shader) >> 29u) & 3u) == 3 && ((resources >> 16u) & 3u) == 3), "unsupported geometry VGPR allocation");
         const auto esgsItemSize = read(queue.context, 0x2ab);
         validate(esgsItemSize != 0 && esgsItemSize * vertices <= 0xffffu, "invalid VGT_ESGS_RING_ITEMSIZE");
-        const auto amplification = fastLaunch ? read(queue.context, 0x2d3) & 0x1ffu : verticesPerPrimitive - 2u;
+        const auto amplification = fastLaunch ? read(queue.context, 0x2d3) & 0x1ffu : verticesPerPrimitive - outputSize + 1u;
         validate(amplification != 0, "fast launch subgroup amplifies to no primitives");
-        const auto maxPrimitives = primitives * amplification;
+        const auto maxPrimitives = outputSize == 2u && !fastLaunch ? std::max(primitives * amplification, maxVertices) : primitives * amplification;
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
-        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, 0, esgsItemSize};
+        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, 0, esgsItemSize, outputSize};
     }
     return result;
 }
@@ -763,11 +935,56 @@ bool DepthResummarizeDrawsNothing(const QueueState& queue) {
 std::string DepthMaintenanceRejection(const QueueState& queue) {
     if (DepthResummarizeDrawsNothing(queue)) return {};
     const auto control = find(queue.context, 0x000);
-    if (control == queue.context.end() || (control->second & ~0x2063u) == 0) return {};
+    if (control == queue.context.end() || (control->second & ~0x2fe3u) == 0) return {};
     const auto depthControl = find(queue.context, 0x200);
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
-    if ((control->second & ~0x2063u) == 0x10u && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
+    if ((control->second & ~0x2fe3u) == 0x10u && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
+}
+
+ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne) {
+    const auto refuse = [&](const char* reason) {
+        char text[320];
+        std::snprintf(text, sizeof(text), "AGC graphics: blending into a color target with a reversed component order %s (CB_BLEND_CONTROL 0x%08x, component mapping 0x%02x, VkFormat %d)", reason, blendControl, componentMapping, static_cast<int>(format));
+        throw std::runtime_error(text);
+    };
+    Require(componentMapping == 0x1bu || componentMapping == 0x93u, "a reversed-order blend needs the component mapping 0x1b or 0x93");
+    if (format == VK_FORMAT_R8G8B8A8_SRGB) refuse("is not implemented for sRGB targets");
+    if (format == VK_FORMAT_R8G8B8A8_SNORM || format == VK_FORMAT_R16G16B16A16_SNORM) refuse("is not implemented for signed normalized targets");
+    if (format != VK_FORMAT_R8G8B8A8_UNORM && format != VK_FORMAT_R16G16B16A16_UNORM && format != VK_FORMAT_R16G16B16A16_SFLOAT) refuse("is not implemented for integer targets");
+    const auto alphaControl = (blendControl & 0x20000000u) != 0 ? blendControl >> 16u : blendControl;
+    std::array<VkBlendFactor, 2> color{blendFactor(blendControl & 0x1fu), blendFactor((blendControl >> 8u) & 0x1fu)};
+    std::array<VkBlendFactor, 2> alpha{blendFactor(alphaControl & 0x1fu), blendFactor((alphaControl >> 8u) & 0x1fu)};
+    const auto operation = blendOp((blendControl >> 5u) & 7u);
+    const auto alphaOperation = blendOp((alphaControl >> 5u) & 7u);
+    const auto any = [&](auto predicate) { return predicate(color[0]) || predicate(color[1]) || predicate(alpha[0]) || predicate(alpha[1]); };
+    const auto constant = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_CONSTANT_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA; };
+    if (any(secondSource)) refuse("with a second-source factor is not implemented, as dual-source blending into a component-swapped color target is unsupported");
+    if (any(constant)) refuse("with a constant blend factor is not implemented");
+    if (operation != alphaOperation) refuse("with different color and alpha operations is not implemented");
+    if (forceDestinationAlphaOne) {
+        for (auto& factor : color) factor = colorFactorWithOpaqueDestination(factor);
+        for (auto& factor : alpha) factor = alphaFactorWithOpaqueDestination(factor);
+    }
+    VkPipelineColorBlendAttachmentState blend{};
+    blend.blendEnable = VK_TRUE;
+    blend.colorBlendOp = operation;
+    blend.alphaBlendOp = operation;
+    if (operation == VK_BLEND_OP_MIN || operation == VK_BLEND_OP_MAX) {
+        if (any([](VkBlendFactor factor) { return factor != VK_BLEND_FACTOR_ONE; })) refuse("with a MIN or MAX operation whose factors are not ONE is not implemented");
+        blend.srcColorBlendFactor = blend.dstColorBlendFactor = blend.srcAlphaBlendFactor = blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        return {blend, 0u};
+    }
+    for (const auto factor : color) {
+        if (factor == VK_BLEND_FACTOR_DST_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA || factor == VK_BLEND_FACTOR_SRC_ALPHA_SATURATE) refuse("with a factor of the destination alpha in the color equation, which the target keeps in its first channel, is not implemented");
+    }
+    const auto routing = routeReversedBlend(color, alpha);
+    if (!routing) refuse("with factors the host blend cannot form from copies of the export is not implemented");
+    blend.srcColorBlendFactor = routing->factors[0];
+    blend.dstColorBlendFactor = routing->factors[1];
+    blend.srcAlphaBlendFactor = routing->factors[2];
+    blend.dstAlphaBlendFactor = routing->factors[3];
+    return {blend, routing->code};
 }
 
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
@@ -807,7 +1024,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const auto renderControl = find(cx, 0x000);
         const bool clear = renderControl != cx.end() && (renderControl->second & 3u) != 0;
         const auto tests = planeTests(cx, depthControl);
-        if (clear || (tests != 0 && depthSurfaceBound(cx))) {
+        if ((clear || tests != 0) && depthSurfaceBound(cx)) {
             decodeDepth(cx, depthControl, (read(cx, 0x203) & 2u) != 0 && !PixelProgramSkipped(queue), result);
         } else if (depthPassThrough(depthControl) || ((depthControl & 0xbu) != 0 && (tests == 0 || depthPlanesAbsent(cx)))) {
             static bool reported = false;
@@ -837,15 +1054,26 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(ditheredAlphaSamplesSupported(cx), "dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration");
         Require(!result.customSampleLocations, "dithered alpha-to-coverage with custom sample locations is unsupported");
     }
-    Require(!result.depth || result.depth->samples == result.samples, "the depth target's sample count differs from the rasterizer's");
+    const bool depthKeepsSampleZero = result.depth && result.depth->samples == 1 && result.samples > 1;
+    Require(!result.depth || depthKeepsSampleZero || result.depth->samples == result.samples, "the depth target's sample count differs from the rasterizer's");
     zero(cx, 0x292, ScanModeMask & ~1u, "scan conversion mode");
-    Require(result.samples == 1 || (read(cx, 0x292) & 1u) != 0, "multisampled targets rasterized without MSAA_ENABLE are unsupported");
+    if (result.samples > 1 && (read(cx, 0x292) & 1u) == 0) {
+        const bool filled = result.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+        Require(filled && !result.depth && !result.alphaToCoverage, "multisampled targets rasterized without MSAA_ENABLE are unsupported for points, lines, a depth target or alpha-to-coverage");
+        result.customSampleLocations = true;
+        result.sampleLocations.fill(0);
+        result.sampleLocationGrid = false;
+    }
     if (result.samples == 1 && (read(cx, 0x292) & 1u) != 0) {
         for (std::uint32_t pixel = 0; pixel < 4; ++pixel) static_cast<void>(read(cx, 0x2feu + pixel * 4u));
         if (auto reason = singleSampleMsaaRejection(queue); !reason.empty()) throw std::runtime_error(reason);
     }
     zero(cx, 0x293, ScanControlMask, "primitive discard or out-of-order rasterization");
     result.perSampleShading = result.samples > 1 && (read(cx, 0x293) & PixelShaderIteratesSamples) != 0;
+    if (depthKeepsSampleZero) {
+        Require(rasterizesSampleZeroOnly(cx, result), "the depth target's sample count differs from the rasterizer's");
+        rasterizeSampleZero(result);
+    }
     zero(cx, 0x80, ~0u, "window offset");
     zero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits");
     Require(read(cx, 0x83) == 0xffffu, "clip rectangles are unsupported");
@@ -860,7 +1088,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     const auto raster = read(cx, 0x205);
     // Bits 5-10 give the front/back polygon type (2 = filled triangles), which POLY_MODE (bit 3) turns on
     // explicitly; KEEP_TOGETHER_ENABLE (bit 24) only affects primitive distribution across the chip.
-    const bool pointsOrLines = result.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+    const bool pointsOrLines = result.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || (result.stages.mesh.has_value() && result.stages.mesh->outputPrimitiveSize == 2u);
     const auto lineOffset = (raster & 0x1800u) != 0 && !pointsOrLines ? 0x2000u : 0u;
     const auto rasterMode = raster & ~0x7u & ~(1u << 24u) & ~0x1800u & ~lineOffset & ~(1u << 19u) & ~(1u << 16u);
     if (rasterMode != 0 && rasterMode != 0x240u && rasterMode != 0x248u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "polygon mode, depth bias or nonstandard rasterization"));
@@ -911,6 +1139,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.customSampleLocations = true;
             result.sampleLocations.fill(0);
         }
+        if (color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
         Require(color.samples == result.samples, "a color target's sample count differs from the rasterizer's");
         APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
         if (result.colors.empty()) {
@@ -993,26 +1222,38 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             if (((exportedMask >> ((mapping >> (2u * component)) & 3u)) & 1u) != 0) state.colorWriteMask |= 1u << component;
         }
         state.blendEnable = ((blend >> 30u) & 1u) != 0 && (read(cx, 0x31c + slot * 0xfu) & 0x10000u) == 0;
-        if (state.blendEnable && (mapping == 0x1bu || mapping == 0x93u)) throw std::runtime_error("AGC graphics: blending into a color target with a reversed component order is not implemented");
         Require(!state.blendEnable || !color.uintExport, "blending into an unsigned integer target is unsupported");
+        const bool reversed = mapping == 0x1bu || mapping == 0x93u;
         if (state.blendEnable) {
-            state.srcColorBlendFactor = blendFactor(blend & 0x1fu);
-            state.dstColorBlendFactor = blendFactor((blend >> 8u) & 0x1fu);
-            state.colorBlendOp = blendOp((blend >> 5u) & 7u);
-            const auto alpha = (blend & 0x20000000u) != 0 ? blend >> 16u : blend;
-            state.srcAlphaBlendFactor = blendFactor(alpha & 0x1fu);
-            state.dstAlphaBlendFactor = blendFactor((alpha >> 8u) & 0x1fu);
-            state.alphaBlendOp = blendOp((alpha >> 5u) & 7u);
-            if ((mapping & 3u) == 3u) {
-                state.srcColorBlendFactor = state.srcAlphaBlendFactor;
-                state.dstColorBlendFactor = state.dstAlphaBlendFactor;
-                state.colorBlendOp = state.alphaBlendOp;
-            }
-            if ((read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0) {
-                state.srcColorBlendFactor = colorFactorWithOpaqueDestination(state.srcColorBlendFactor);
-                state.dstColorBlendFactor = colorFactorWithOpaqueDestination(state.dstColorBlendFactor);
-                state.srcAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.srcAlphaBlendFactor);
-                state.dstAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.dstAlphaBlendFactor);
+            const bool opaqueDestination = (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
+            if (reversed) {
+                const auto translated = TranslateReversedBlend(blend, mapping, color.format, opaqueDestination);
+                state.srcColorBlendFactor = translated.blend.srcColorBlendFactor;
+                state.dstColorBlendFactor = translated.blend.dstColorBlendFactor;
+                state.colorBlendOp = translated.blend.colorBlendOp;
+                state.srcAlphaBlendFactor = translated.blend.srcAlphaBlendFactor;
+                state.dstAlphaBlendFactor = translated.blend.dstAlphaBlendFactor;
+                state.alphaBlendOp = translated.blend.alphaBlendOp;
+                if (translated.shaderCode != 0u) result.reversedBlend = translated.shaderCode;
+            } else {
+                state.srcColorBlendFactor = blendFactor(blend & 0x1fu);
+                state.dstColorBlendFactor = blendFactor((blend >> 8u) & 0x1fu);
+                state.colorBlendOp = blendOp((blend >> 5u) & 7u);
+                const auto alpha = (blend & 0x20000000u) != 0 ? blend >> 16u : blend;
+                state.srcAlphaBlendFactor = blendFactor(alpha & 0x1fu);
+                state.dstAlphaBlendFactor = blendFactor((alpha >> 8u) & 0x1fu);
+                state.alphaBlendOp = blendOp((alpha >> 5u) & 7u);
+                if ((mapping & 3u) == 3u) {
+                    state.srcColorBlendFactor = state.srcAlphaBlendFactor;
+                    state.dstColorBlendFactor = state.dstAlphaBlendFactor;
+                    state.colorBlendOp = state.alphaBlendOp;
+                }
+                if (opaqueDestination) {
+                    state.srcColorBlendFactor = colorFactorWithOpaqueDestination(state.srcColorBlendFactor);
+                    state.dstColorBlendFactor = colorFactorWithOpaqueDestination(state.dstColorBlendFactor);
+                    state.srcAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.srcAlphaBlendFactor);
+                    state.dstAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.dstAlphaBlendFactor);
+                }
             }
             for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
             const auto constantColor = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
@@ -1038,7 +1279,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             Require(!state.blendEnable, "blending into a 10_11_11 unorm color target is unsupported");
             Require((exportedMask & 7u) == 7u, "partial writes of a 10_11_11 unorm color target are unsupported");
         }
-        if (state.blendEnable && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
+        if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
             const auto addition = [](VkBlendOp op) { return op == VK_BLEND_OP_ADD || op == VK_BLEND_OP_SUBTRACT || op == VK_BLEND_OP_REVERSE_SUBTRACT; };
             Require(addition(state.colorBlendOp) && addition(state.alphaBlendOp), "dual-source blending with a MIN or MAX operation is unsupported");
             result.dualSourceBlend = true;
@@ -1049,6 +1290,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if ((requiredBlendMask & (1u << i)) != 0) result.blendConstants[i] = requiredBlendConstants[i];
     }
     if (!result.colors.empty()) result.blend = result.blends[result.colors.front().exportIndex];
+    Require(result.reversedBlend == 0 || (exportSlots.size() == 1 && exportCount == 1), "blending into a color target with a reversed component order through a second source color needs that target to be the shader's only color export");
     if (result.dualSourceBlend) {
         Require(exportSlots.size() == 2 && exportSlots[0] == 0 && exportSlots[1] == 1 && exportCount == 1, "dual-source blending needs pixel exports to MRT slots 0 and 1 and color writes to slot 0 alone");
         Require(result.colors.front().componentMapping == 0xe4u, "dual-source blending into a component-swapped color target is unsupported");
@@ -1113,6 +1355,7 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state) {
 
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state) {
     if (state.rectList) return ShaderRecompiler::RasterPrimitive::Rectangle;
+    if (state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 2u) return ShaderRecompiler::RasterPrimitive::Line;
     if (state.stages.mesh.has_value() || state.stages.tessellation.has_value()) return ShaderRecompiler::RasterPrimitive::Triangle;
     switch (state.topology) {
         case VK_PRIMITIVE_TOPOLOGY_POINT_LIST: return ShaderRecompiler::RasterPrimitive::Point;
@@ -1197,7 +1440,6 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     Require(color.samples <= 8u, "color targets with more than eight samples are unsupported");
     Require((1u << ((attrib >> 15u) & 3u)) == color.samples, "color targets with fewer fragments than samples (EQAA) are unsupported");
     const auto multisampleInfo = color.samples > 1 ? 0x0c006000u : 0u;
-    Require(allowMultisampleDcc || color.samples == 1 || (info & 0x10000000u) == 0, "DCC over a multisampled color target is unsupported");
     // ROUND_MODE (bit 18) only affects unorm rounding. With DCC_ENABLE (bit 28) the target is written
     if ((info & ~(0x00039f7cu | 0x00040000u | 0x10000000u | 0x00002000u | multisampleInfo)) != 0) throw std::runtime_error("AGC graphics: color compression, DCC, endian conversion, nonstandard rounding or color optimization is unsupported (CB_COLOR_INFO 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%08x", info); return std::string(text); }() + ")");
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
@@ -1297,6 +1539,11 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.dccAddress = ((dccHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(dccHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x325 + stride)) << 8u);
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (color.samples > 1) {
+                if (!allowMultisampleDcc) Require(color.tileMode == ColorTileMode::RenderTarget && color.dccAddress != 0 && color.dccPipeAligned && !volume && color.arrayLastSlice == 0 && slice == 0, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
+                color.dccControl = read(cx, 0x31e + stride);
+                if (!allowMultisampleDcc) Require((color.dccControl & 0x3ff80u) == 0, "multisampled DCC color transforms or lossy modes are not implemented");
+            }
         } else {
             static bool reported = false;
             if (!reported) {
@@ -1417,11 +1664,11 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
         const auto renderControl = find(cx, 0x000);
         const bool depthClear = renderControl != cx.end() && (renderControl->second & 1u) != 0;
         const bool stencilClear = renderControl != cx.end() && (renderControl->second & 2u) != 0;
-        if (stencilClear) {
+        if (stencilClear && !depthPlanesAbsent(cx)) {
             std::uint32_t stencil = 0, view = 0;
             if ((value(cx, 0x011, stencil) && (stencil & 1u) == 0) || (value(cx, 0x002, view) && (view & 0x02000000u) != 0)) return require(false, "stencil clear requires a writable stencil plane");
         }
-        if (depthClear) {
+        if (depthClear && !depthPlanesAbsent(cx)) {
             std::uint32_t z = 0, view = 0;
             if ((value(cx, 0x010, z) && (z & 3u) == 0) || (value(cx, 0x002, view) && (view & 0x01000000u) != 0)) return require(false, "depth clear requires a writable depth plane");
         }
@@ -1510,6 +1757,11 @@ std::vector<RegisterRead>*& RegisterReadLog() {
     return log;
 }
 
+std::atomic<std::uint32_t>& RegisterReadLogsOpen() {
+    static std::atomic<std::uint32_t> open{0};
+    return open;
+}
+
 bool SplitsAlternateAlpha(const State& state) {
     for (std::size_t index = 0; index < state.colors.size() && index < state.blends.size(); ++index) {
         const auto& blend = state.blends[index];
@@ -1517,6 +1769,26 @@ bool SplitsAlternateAlpha(const State& state) {
         if (blend.srcColorBlendFactor != blend.srcAlphaBlendFactor || blend.dstColorBlendFactor != blend.dstAlphaBlendFactor || blend.colorBlendOp != blend.alphaBlendOp) return true;
     }
     return false;
+}
+
+bool StencilReferenceUnused(const State& state) {
+    if (!state.depth || !state.stencilTest) return true;
+    if (state.depthTest && (state.depthCompare < VK_COMPARE_OP_NEVER || state.depthCompare > VK_COMPARE_OP_ALWAYS)) return false;
+    const auto faceUnused = [&](const VkStencilOpState& face) {
+        if (face.compareOp < VK_COMPARE_OP_NEVER || face.compareOp > VK_COMPARE_OP_ALWAYS) return false;
+        for (const auto op : {face.failOp, face.passOp, face.depthFailOp}) {
+            if (op < VK_STENCIL_OP_KEEP || op > VK_STENCIL_OP_DECREMENT_AND_WRAP) return false;
+        }
+        if (face.compareOp != VK_COMPARE_OP_ALWAYS && face.compareOp != VK_COMPARE_OP_NEVER && (face.compareMask & 0xffu) != 0) return false;
+        if ((face.writeMask & 0xffu) == 0) return true;
+        if (state.depthBoundsTest) return face.failOp != VK_STENCIL_OP_REPLACE && face.passOp != VK_STENCIL_OP_REPLACE && face.depthFailOp != VK_STENCIL_OP_REPLACE;
+        const bool passes = face.compareOp == VK_COMPARE_OP_ALWAYS || face.compareOp == VK_COMPARE_OP_EQUAL || face.compareOp == VK_COMPARE_OP_LESS_OR_EQUAL || face.compareOp == VK_COMPARE_OP_GREATER_OR_EQUAL;
+        if (!passes) return face.failOp != VK_STENCIL_OP_REPLACE;
+        const bool depthPass = !state.depthTest || state.depthCompare != VK_COMPARE_OP_NEVER;
+        const bool depthFail = state.depthTest && state.depthCompare != VK_COMPARE_OP_ALWAYS;
+        return (!depthPass || face.passOp != VK_STENCIL_OP_REPLACE) && (!depthFail || face.depthFailOp != VK_STENCIL_OP_REPLACE);
+    };
+    return faceUnused(state.stencilFront) && faceUnused(state.stencilBack);
 }
 
 bool DrawKeyCovers(RegisterRead read) {

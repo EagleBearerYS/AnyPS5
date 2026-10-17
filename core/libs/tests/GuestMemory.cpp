@@ -203,6 +203,16 @@ static void CheckAudioCoprocessorProtection() {
     Require(rejected && undefined == nullptr);
 }
 
+static void CheckMprotectIgnoresUndefinedBits() {
+    constexpr std::size_t length = 0x4000;
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, length, 3, 0) == 0);
+    Require(sceKernelMprotect(mapping, length, static_cast<int>(0xfffffff2u)) == 0);
+    static_cast<volatile unsigned char*>(mapping)[length - 1] = 5;
+    Require(static_cast<volatile unsigned char*>(mapping)[length - 1] == 5);
+    Require(sceKernelMunmap(mapping, length) == 0);
+}
+
 static void CheckInternalNamedFlexibleMapping() {
     constexpr std::size_t length = 0x10000;
     std::size_t before = 0;
@@ -912,6 +922,7 @@ static DWORD ImageProtection(const void* pointer) {
     Require(VirtualQuery(pointer, &memory, sizeof(memory)) == sizeof(memory));
     return memory.Protect & 0xffu;
 }
+#endif
 
 static unsigned char* GuestModulePage(void* module, std::size_t page) {
     auto* data = static_cast<unsigned char*>(dlsym_nid_postfix(module, "guestMemoryModuleData"));
@@ -926,6 +937,7 @@ static bool RegisteredGuestRange(const void* pointer, std::size_t bytes) {
     return mutation.Overlaps(pointer, bytes);
 }
 
+#ifdef _WIN32
 static void CheckGuestModuleImageProtection() {
     constexpr std::size_t page = 0x4000;
     const auto path = std::filesystem::relative(GUEST_MEMORY_ELF0_MODULE).generic_string();
@@ -1031,6 +1043,54 @@ static void CheckGuestModuleImageProtection() {
     Require(rejected);
     Require(!RegisteredGuestRange(plainTarget, page));
     Require(dlclose_nid_postfix(plainModule) == 0);
+}
+#elif defined(__linux__)
+static std::string MappingPermissions(const void* pointer) {
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line)) {
+        unsigned long begin = 0;
+        unsigned long end = 0;
+        char permissions[5]{};
+        if (std::sscanf(line.c_str(), "%lx-%lx %4s", &begin, &end, permissions) == 3 && address >= begin && address < end) return permissions;
+    }
+    return {};
+}
+
+static void CheckGuestModuleImageProtection() {
+    constexpr std::size_t page = 0x4000;
+    const auto path = std::filesystem::relative(GUEST_MEMORY_MODULE).generic_string();
+    void* module = dlopen_nid_postfix(path.c_str(), 2);
+    Require(module != nullptr);
+    auto* target = GuestModulePage(module, page);
+    Require(!RegisteredGuestRange(target, page));
+    Require(sceKernelMprotect(target, page, 1) == 0);
+    Require(RegisteredGuestRange(target, page));
+    Require(MappingPermissions(target).starts_with("r--"));
+    Require(sceKernelMprotect(target, page, 3) == 0);
+    Require(MappingPermissions(target).starts_with("rw-"));
+    target[1] = 7;
+    Require(target[1] == 7);
+    Require(dlclose_nid_postfix(module) == 0);
+    Require(!RegisteredGuestRange(target, page));
+
+    module = dlopen_nid_postfix(path.c_str(), 2);
+    Require(module != nullptr);
+    target = GuestModulePage(module, page);
+    Require(!RegisteredGuestRange(target, page));
+    Require(sceKernelMprotect(target, page, 1) == 0);
+    Require(RegisteredGuestRange(target, page));
+    Require(dlclose_nid_postfix(module) == 0);
+    Require(!RegisteredGuestRange(target, page));
+
+    bool rejected = false;
+    try {
+        sceKernelMprotect(reinterpret_cast<const void*>(&::getpid), page, 1);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
 }
 #endif
 
@@ -2362,6 +2422,36 @@ static void CheckVirtualQuerySplitFlexibleRanges() {
     Require(sceKernelMunmap(bytes + page * 2, page) == 0);
 }
 
+static void CheckVirtualQueryWireLayout() {
+    constexpr std::size_t page = 0x4000;
+    constexpr char name[] = "query wire layout";
+    void* mapped = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&mapped, page, 3, 0, name) == 0);
+    struct {
+        std::array<unsigned char, 16> before;
+        VirtualQueryInfo info;
+        std::array<unsigned char, 16> after;
+    } result{};
+    result.before.fill(0xa5);
+    result.after.fill(0x5a);
+    Require(sceKernelVirtualQuery(mapped, 0, &result.info, 72) == 0);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&result.info);
+    std::uintptr_t start = 0, end = 0;
+    std::int32_t protection = 0;
+    std::memcpy(&start, bytes, sizeof(start));
+    std::memcpy(&end, bytes + 8, sizeof(end));
+    std::memcpy(&protection, bytes + 24, sizeof(protection));
+    Require(start == reinterpret_cast<std::uintptr_t>(mapped) && end == start + page);
+    Require(protection == 3 && bytes[32] == 0x11); // flexible and committed
+    Require(std::memcmp(bytes + 33, name, sizeof(name)) == 0);
+    Require(bytes[65] == 0 && bytes[66] == 0);
+    Require(std::all_of(bytes + 67, bytes + 72, [](auto byte) { return byte == 0; }));
+    Require(std::all_of(result.before.begin(), result.before.end(), [](auto byte) { return byte == 0xa5; }));
+    Require(std::all_of(result.after.begin(), result.after.end(), [](auto byte) { return byte == 0x5a; }));
+    Require(sceKernelClearVirtualRangeName(mapped, page) == 0);
+    Require(sceKernelMunmap(mapped, page) == 0);
+}
+
 static void CheckVirtualQueryForNonReadableGuestRange() {
     constexpr std::size_t page = 0x4000;
     auto* mapped = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1002, -1, 0));
@@ -2557,12 +2647,14 @@ int main(int argc, char** argv) {
     CheckVirtualQueryPartialMunmap();
     CheckMunmapOverUnmappedPages();
     CheckPageTableStats();
+    CheckVirtualQueryWireLayout();
     CheckNamedAndHintedMappings();
     CheckInternalNamedFlexibleMapping();
     CheckGuestModuleUsesFlexibleMemory();
     CheckBatchMapStopsAtInvalidEntry();
     CheckCheckedReleaseDirectMemory();
     CheckAudioCoprocessorProtection();
+    CheckMprotectIgnoresUndefinedBits();
     CheckDirectMemoryFollowsPhysicalPages();
     CheckSparseDirectMemoryBacking();
     CheckReleaseDirectMemoryClearsMappings();
@@ -2588,8 +2680,10 @@ int main(int argc, char** argv) {
     CheckHeapAfterMappingReuse();
     CheckNoOverwriteRejectsHostOccupiedMapping();
     CheckFixedMappingsReachTheApplicationAreaEnd();
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     CheckGuestModuleImageProtection();
+#endif
+#ifdef _WIN32
     CheckAliasAcrossDirectAllocations();
     CheckAliasOfReorderedSharedPages();
     CheckAliasRefusesPagesThatAreNotSharedViews();

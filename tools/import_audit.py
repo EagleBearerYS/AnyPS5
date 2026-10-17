@@ -153,7 +153,7 @@ def elf_program_dynamic_symbols(path, data):
 
 def elf_exports(path, data):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
-    if not header[6]:
+    if not header[6] or header[6] >= len(data):
         return elf_program_dynamic_symbols(path, data)[1]
     sections = elf_sections(path, data)
     names = set()
@@ -182,13 +182,13 @@ def elf_exports(path, data):
             binding, visibility = info >> 4, other & 3
             if name == 0 or index == 0 or binding not in (1, 2, 10) or visibility not in (0, 3):
                 continue
-            names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name"))
+            names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name").split(MODULE_SUFFIX, 1)[0])
     return names
 
 
 def elf_imports(path, data):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
-    if not header[6]:
+    if not header[6] or header[6] >= len(data):
         imports, _, needed = elf_program_dynamic_symbols(path, data)
         return imports, needed
     sections = elf_sections(path, data)
@@ -529,9 +529,12 @@ def write_json(path, result):
 def git_stamp(source=ROOT):
     try:
         commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "-C", str(source), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip())
     except (OSError, subprocess.CalledProcessError):
         return None, None
+    try:
+        dirty = bool(subprocess.run(["git", "-C", str(source), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip())
+    except (OSError, subprocess.CalledProcessError):
+        dirty = None
     return commit, dirty
 
 

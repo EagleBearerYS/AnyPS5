@@ -95,6 +95,10 @@ static Ngs2Port& PortAt(Ngs2Voice& voice, std::uint32_t port) {
 }
 
 static void SetMatrixLevels(Ngs2Voice& voice, std::uint32_t matrixId, const float* levels, std::uint32_t numLevels) {
+    if (numLevels == 0 && voice.channels == 0 && matrixId < voice.matrices.size()) {
+        voice.matrices[matrixId].clear();
+        return;
+    }
     if (matrixId >= voice.matrices.size() || numLevels == 0 || numLevels > NGS2_MAX_CHANNELS * NGS2_MAX_CHANNELS || levels == nullptr) {
         APS5_INVALID_ARG_EX;
     }
@@ -208,7 +212,7 @@ static void AppendStreamData(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlo
 static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlocksParam& param) {
     constexpr std::uint32_t knownFlags = SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_SILENCE;
     if ((param.flags & ~knownFlags) != 0) throw std::runtime_error("NGS2: waveform block flags " + Ngs2Hex(param.flags) + " are not implemented");
-    if (voice.channels == 0 || (param.num_blocks != 0 && (param.blocks == nullptr || param.data == nullptr))) APS5_INVALID_ARG_EX;
+    if ((param.num_blocks != 0 && (voice.channels == 0 || param.blocks == nullptr || param.data == nullptr)) || (voice.channels == 0 && (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0)) APS5_INVALID_ARG_EX;
     const bool reset = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET) != 0;
     if (!voice.acceptsBlocks && !reset) throw std::invalid_argument("NGS2: the voice waveform was already closed");
     if (reset) {
@@ -508,6 +512,10 @@ int APS5_VABI sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, flo
 
 int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
     return Ngs2PanGetVolumeMatrix(work, params, num_params, matrix_format, out_volume_matrix);
+}
+
+int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* out_attrib, std::uint32_t flags) {
+    return Ngs2GeomApply(listener, source, out_attrib, flags);
 }
 
 int APS5_VABI sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param) {
