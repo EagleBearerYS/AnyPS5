@@ -1,8 +1,6 @@
-BUSY BF-069
-since: 2026-10-17T17:51Z (BF-069, Windows heap report and heap trim behind switches)
-claimed: tasks/claimed/BF-069.md
-step: finding where helper threads start and stop
-previous: BF-068 done, results/cloud-5/BF-068.md: perf/agc-commit-page-tables-on-touch 8a14ccb2c (BF-063 3a361ed79 + 1): blocks/cpuBlocks share the Linux Leaf layout on both platforms (no #ifdef split), allocated on first stamp, zero for a missing leaf; Windows hint leaves; StampTableBytes() accessor; agc_write_tracking: 16 scattered regions -> +8,704 KiB (17 leaves) on Linux, 400-step equivalence around a leaf boundary (and the arena's last block on Windows); Linux red = green (Linux had leaves); Windows red patch in the result (expected 192192 KiB failure); note: vs BF-063's TouchedTable the leaves are equal dense, up to 8x more for scattered stamps, separate commit so it can be dropped; bench equal within noise on Linux; scope 1,072/5 and mirror 1,372 vs main 1,371, IPv6 5 only
+READY
+since: 2026-10-17T18:02Z
+previous: BF-069 done, results/cloud-5/BF-069.md: fork exp/heap-trim 52357f05a on main 66702f1cf; APS5_HEAP_REPORT=<s> ([heap] busy/free bytes+blocks, uncommitted, regions, sampled zero pages per kind ~2048 reads each via ReadProcessMemory, PrivateUsage, walk ms under HeapLock) and APS5_HEAP_TRIM=<s> ([heap-trim] HeapOptimizeResources then _heapmin, PrivateUsage before/after, ms); one jthread started beside StartWorkerSampler (queue worker 0), joined beside StopWorkerSampler; full walk under the lock, expected ~1 s for ~10M blocks (unmeasured), not sliced; agc_heap_watch (formats on all platforms; Windows trim/report pattern) for the Bug Finder's Windows run; Linux ctest '^(agc|libc)' 663/0, mirror 1,372 vs main 1,371, IPv6 5 only; not built on Windows here
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
