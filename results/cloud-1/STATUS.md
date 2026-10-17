@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T06:58:41Z
+BUSY BF-051 (CPU read vs BDA-table store, red/green on main)
+since: 2026-10-17T06:59:06Z
 last: PRM-036 done, results/cloud-1/PRM-036.md: titles ignore the setting because registration takes any size; fix on followup/videoout-output-resolution-prm036 bfc348462a refuses buffers larger than the setting (except 1920x1080) with INVALID_RESOLUTION, per SharpProspero; CI 1262/1342 vs main 1260/1332 (same 6 baseline); runs as root (unprivileged user creation refused here); before that LA-001, PRM-032
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
