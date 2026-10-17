@@ -202,6 +202,7 @@ public:
     VkShaderStageFlags SubgroupStages() const;
     bool ProvokingVertexLast() const;
     bool GraphicsPipelineLibraries() const;
+    bool DeviceImagePath() const;
     // A presentation is a few steps so the presenter holds GuestMemory::GpuMutex only while it
     // touches the queue. Presentations are slots (FlipInFlight() + 1, each with its own command
     // buffer, fence, kept resident image and dump buffer): RetirePresents(keep) (no mutex) retires
