@@ -11,6 +11,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -23,7 +24,7 @@ void require(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error(what);
 }
 
-alignas(Texture) std::array<std::array<std::byte, sizeof(Texture)>, 3> fakeTextures{};
+alignas(Texture) std::array<std::array<std::byte, sizeof(Texture)>, 8> fakeTextures{};
 
 std::shared_ptr<Texture> fakeTexture(std::size_t index) {
     return std::shared_ptr<Texture>(reinterpret_cast<Texture*>(fakeTextures[index].data()), [](Texture*) {});
@@ -88,7 +89,29 @@ void samplerSlots(const Context& context) {
 
 }
 
-int main() {
+void heapComesBack(const Context& context, VkImageView view) {
+    auto& heap = BindlessHeap::For(context);
+    const auto kind = Abi::FirstImageBinding;
+    std::vector<std::shared_ptr<Texture>> held;
+    for (std::size_t index = 0; index < 7u; ++index) {
+        held.push_back(fakeTexture(index));
+        require(heap.TextureSlot(kind, held.back(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "a texture takes one of the eight capped slots");
+    }
+    require(BindlessHeap::NearlyFull(), "one free slot of eight refuses the heap");
+    BindlessHeap::SweepIfDue();
+    require(BindlessHeap::NearlyFull(), "a sweep that is not due leaves the heap refused");
+    BindlessHeap::NoteSweepDue();
+    BindlessHeap::SweepIfDue();
+    require(BindlessHeap::NearlyFull(), "a sweep that frees nothing leaves the heap refused");
+    held.clear();
+    BindlessHeap::NoteSweepDue();
+    BindlessHeap::SweepIfDue();
+    require(!BindlessHeap::NearlyFull(), "a sweep that frees the slots of textures only the heap held takes the heap again");
+    BindlessHeap::Release(context.device);
+}
+
+int main(int argc, char** argv) {
+    const bool comesBack = argc > 1 && std::string(argv[1]) == "comes-back";
     try {
         std::unique_ptr<AgcDriver::VulkanDevice> device;
         try {
@@ -99,10 +122,21 @@ int main() {
             return VulkanTestSkipped;
         }
 #ifdef _WIN32
-        _putenv_s("APS5_HEAP_SLOT_CAP", "1");
+        _putenv_s("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
 #else
-        setenv("APS5_HEAP_SLOT_CAP", "1", 1);
+        setenv("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1", 1);
 #endif
+        if (comesBack) {
+            {
+                const auto context = device->GraphicsContext();
+                const PlaceholderImages placeholders(context);
+                heapComesBack(context, placeholders.View(Abi::FirstImageBinding));
+                device->WaitIdle();
+            }
+            device.reset();
+            std::cout << "the refused heap comes back after a sweep\n";
+            return 0;
+        }
         {
             const auto context = device->GraphicsContext();
             const PlaceholderImages placeholders(context);

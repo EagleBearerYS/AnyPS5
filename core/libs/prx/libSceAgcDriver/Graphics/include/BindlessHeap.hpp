@@ -137,6 +137,9 @@ private:
     void sweepSamplersLocked(std::vector<std::shared_ptr<Sampler>>& dropped);
     void noteTakenLocked(std::uint32_t kind, std::vector<std::shared_ptr<Texture>>& dropped);
     void noteSamplerTakenLocked(std::vector<std::shared_ptr<Sampler>>& dropped);
+    std::uint32_t imageMargin() const;
+    std::size_t unusedLocked(std::uint32_t kind) const;
+    bool roomLocked() const;
     Counts counts;
     void reportLookup();
     void createLookupResolve();
