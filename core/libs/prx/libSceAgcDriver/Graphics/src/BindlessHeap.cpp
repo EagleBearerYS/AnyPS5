@@ -228,17 +228,17 @@ BindlessHeap* BindlessHeap::Existing(const Context& context) {
     return found == heaps().end() ? nullptr : found->second.get();
 }
 
-std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout) {
+std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout, std::uint32_t keepFree) {
     if (kind < Abi::FirstImageBinding || kind >= Abi::FirstStorageImageBinding || texture == nullptr || view == VK_NULL_HANDLE) throw std::runtime_error("AGC bindless heap: invalid texture slot request");
     std::vector<std::shared_ptr<Texture>> dropped;
     std::lock_guard lock(mutex);
     const TextureKey key{kind, texture.get(), view, layout};
     if (const auto found = textureSlots.find(key); found != textureSlots.end()) return found->second;
     if (++slotRequests % 1024u == 0u) NoteSweepDue();
-    auto slot = takeSlotLocked(kind);
+    auto slot = takeSlotLocked(kind, keepFree);
     if (!slot) {
         sweepLocked(dropped);
-        slot = takeSlotLocked(kind);
+        slot = takeSlotLocked(kind, keepFree);
     }
     if (!slot) {
         ++counts.full;
@@ -258,7 +258,8 @@ std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const
     return slot;
 }
 
-std::optional<std::uint32_t> BindlessHeap::takeSlotLocked(std::uint32_t kind) {
+std::optional<std::uint32_t> BindlessHeap::takeSlotLocked(std::uint32_t kind, std::uint32_t keepFree) {
+    if (unusedLocked(kind) <= keepFree) return std::nullopt;
     auto& free = freeSlots[kind];
     if (!free.empty()) {
         const auto slot = free.back();
@@ -428,7 +429,7 @@ std::uint32_t BindlessHeap::AbsentSlot(std::uint32_t kind, VkImageView view) {
     if (kind < Abi::FirstImageBinding || kind >= Abi::FirstStorageImageBinding) throw std::runtime_error("AGC bindless heap: invalid absent slot request");
     std::lock_guard lock(mutex);
     if (const auto found = absentSlots.find(kind); found != absentSlots.end()) return found->second;
-    const auto taken = takeSlotLocked(kind);
+    const auto taken = takeSlotLocked(kind, 0u);
     if (!taken) throw std::runtime_error("AGC bindless heap: the image heap is full");
     const auto slot = *taken;
     const VkDescriptorImageInfo image{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};

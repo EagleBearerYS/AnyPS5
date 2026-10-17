@@ -35,7 +35,9 @@ public:
     VkDescriptorSet HeapSet() const { return heapSet; }
     VkDescriptorSet DataSet() const { return dataSet; }
 
-    std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout);
+    std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout, std::uint32_t keepFree = 0u);
+    std::uint32_t TextureSlotCap() const { return slotCap; }
+    std::uint32_t TextureSlotMargin() const { return imageMargin(); }
     std::uint32_t SlotGeneration(std::uint32_t kind, std::uint32_t slot) const;
     const Texture* SlotTexture(std::uint32_t kind, std::uint32_t slot) const;
     std::optional<std::uint32_t> SamplerSlot(const std::shared_ptr<Sampler>& sampler);
@@ -128,7 +130,7 @@ private:
     std::uint32_t slotCap = 0;
     std::uint64_t slotRequests = 0;
     void sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped);
-    std::optional<std::uint32_t> takeSlotLocked(std::uint32_t kind);
+    std::optional<std::uint32_t> takeSlotLocked(std::uint32_t kind, std::uint32_t keepFree);
     std::unordered_map<const Sampler*, std::uint32_t> samplerSlots;
     std::unordered_map<std::uint32_t, std::uint32_t> absentSlots;
     std::vector<std::shared_ptr<Sampler>> heldSamplers;
