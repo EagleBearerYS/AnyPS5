@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T05:43:45Z
+BUSY LA-001 (lane A base exp/lane-a-base: build, switches off and on)
+since: 2026-10-17T05:44:16Z
 last: PRM-032 done, results/cloud-1/PRM-032.md: 8 PRs on main e1ac3300d3, 7 clean; #6443 breaks guest_memory_lifetime (16-byte thread_local + wild TLS layout, dlopen), fix pushed on followup/6443-main-e1ac3300d3 1af0fa3e4c; before that BF-044, BF-043
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
