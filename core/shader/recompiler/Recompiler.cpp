@@ -296,8 +296,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     const bool heapStage = request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Compute;
     const bool gpuModeStage = request.target.gpuResolvedImages && heapStage;
+    const bool deviceTableStage = heapStage || request.shader.stage == ShaderStage::Mesh;
     constexpr ResourceTracker resourceTracker;
-    resourceTracker.Track(program, request.target.deviceImageTables && supports(spv::CapabilityInt64) && heapStage && !gpuModeStage);
+    resourceTracker.Track(program, request.target.deviceImageTables && supports(spv::CapabilityInt64) && deviceTableStage && !gpuModeStage);
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
