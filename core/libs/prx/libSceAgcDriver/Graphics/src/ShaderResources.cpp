@@ -1187,9 +1187,9 @@ bool StorageDedupeEnabled() {
 }
 
 // Whether storage element `element` of `binding` repeats the previous element's eight words.
-bool SameAsPreviousStorageElement(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element) {
+bool SameAsPreviousStorageElement(std::span<const std::uint32_t> guest, std::uint32_t element) {
     if (element == 0) return false;
-    const auto words = binding.guestDescriptor.begin() + static_cast<std::size_t>(element) * 8u;
+    const auto words = guest.begin() + static_cast<std::size_t>(element) * 8u;
     return std::equal(words, words + 8, words - 8);
 }
 
@@ -1627,7 +1627,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) goto perDrawBinding;
                     if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) {
                         Require(binding.kind == ShaderRecompiler::DescriptorKind::SampledImage || binding.kind == ShaderRecompiler::DescriptorKind::Sampler, "a GPU-mode stage binds sampled images and samplers only");
-                        addImageBinding(binding, flags);
+                        addImageBinding(binding, DrawGuestWords(shader, binding), flags);
                         bindings.back().heap = true;
                         continue;
                     }
@@ -1636,8 +1636,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         goto perDrawBinding;
                     }
                     Require(binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt, std::string("a GPU-mode fragment stage has an unsupported ") + roleName(binding.role) + " binding");
-                    Require(binding.count == 1 && !binding.guestDescriptor.empty(), "invalid GPU-mode shader data binding");
-                    if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, binding.guestDescriptor);
+                    Require(binding.count == 1 && !DrawGuestWords(shader, binding).empty(), "invalid GPU-mode shader data binding");
+                    if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, DrawGuestWords(shader, binding));
                     Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {}, {}};
                     item.heap = true;
                     item.role = binding.role;
@@ -1651,7 +1651,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 if (imageRole) {
                     if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage || binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) stageResources += binding.count;
                     requireStageLimits();
-                    addImageBinding(binding, flags);
+                    addImageBinding(binding, DrawGuestWords(shader, binding), flags);
                     continue;
                 }
                 if (!bufferRole) Require(false, std::string("unsupported descriptor role ") + roleName(binding.role));
@@ -1664,14 +1664,15 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 requireStageLimits();
                 Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, binding.count, flags, nullptr}, {}};
                 if (binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
-                    Require(binding.guestDescriptor.size() == static_cast<std::uint64_t>(binding.count) * 4, "guest buffer descriptor must contain four DWORDs per array element");
+                    const auto& guestWords = DrawGuestWords(shader, binding);
+                    Require(guestWords.size() == static_cast<std::uint64_t>(binding.count) * 4, "guest buffer descriptor must contain four DWORDs per array element");
                     for (std::uint32_t element = 0; element < binding.count; ++element) {
                         // An element the recompiler did not classify (a producer without the
                         // vector) counts as written, like imageWritten below.
                         const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                         const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
                         const bool read = element < binding.bufferRead.size() && binding.bufferRead[element];
-                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read);
+                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(guestWords).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read);
                         const auto& push = shader.program->pushConstants;
                         if (!push.empty()) {
                             const auto position = shader.program->memoryOffsetDword * 4u + element;
@@ -1694,11 +1695,12 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     allocations.push_back({gds, Pm4::GdsBytes, true, nullptr, ShaderRecompiler::DescriptorRole::ShaderData, true});
                 } else {
                     Require(binding.count == 1, "shader data and flattened SRT descriptors must not be arrays");
-                    Require(!binding.guestDescriptor.empty(), "empty shader data descriptor");
+                    const auto& guestWords = DrawGuestWords(shader, binding);
+                    Require(!guestWords.empty(), "empty shader data descriptor");
                     if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) {
-                        ValidateRuntimeResources(shader, binding.guestDescriptor);
+                        ValidateRuntimeResources(shader, guestWords);
                     }
-                    item.allocations.push_back(addDataBuffer(binding.guestDescriptor));
+                    item.allocations.push_back(addDataBuffer(guestWords));
                     if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) shaderData = static_cast<std::int64_t>(item.allocations.back());
                 }
                 bindings.push_back(std::move(item));
@@ -1976,7 +1978,7 @@ void ShaderResources::buildComplete() {
         // storage elements of one mip chain share the previous element's image.
         previousSampled = {};
         for (auto& source : samplerSources) source.singleLevelImage = source.mipmappedImage = false;
-        for (const auto& deferred : deferredImages) resolveImageBinding(*deferred.binding, bindings[deferred.index], std::span<const std::shared_ptr<Sampler>>(samplers).subspan(deferred.firstSampler, deferred.samplerCount));
+        for (const auto& deferred : deferredImages) resolveImageBinding(*deferred.binding, deferred.words, bindings[deferred.index], std::span<const std::shared_ptr<Sampler>>(samplers).subspan(deferred.firstSampler, deferred.samplerCount));
         previousSampled = {};
         deferredImages.clear();
         applyAnisoOverride();
@@ -2232,9 +2234,9 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         visit(static_cast<std::uint32_t>(program.heapTemplateId));
         visit(static_cast<std::uint32_t>(program.heapTemplateId >> 32u));
         for (const auto& binding : program.bindings) {
-            if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages) continue;
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers) continue;
             visit(binding.binding);
-            for (const auto word : binding.guestDescriptor) visit(word);
+            for (const auto word : DrawGuestWords(shader, binding)) visit(word);
         }
         return;
     }
@@ -2251,17 +2253,17 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         }
     };
     for (const auto& binding : program.bindings) {
-        for (const auto word : {static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count, binding.readOnly ? 1u : 0u, binding.imageShape.has_value() ? static_cast<std::uint32_t>(*binding.imageShape) + 1u : 0u, static_cast<std::uint32_t>(binding.guestDescriptor.size())}) visit(word);
-        if (movableBuffers && binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers && binding.guestDescriptor.size() == static_cast<std::size_t>(binding.count) * 4u) {
+        for (const auto word : {static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count, binding.readOnly ? 1u : 0u, binding.imageShape.has_value() ? static_cast<std::uint32_t>(*binding.imageShape) + 1u : 0u, static_cast<std::uint32_t>(DrawGuestWords(shader, binding).size())}) visit(word);
+        if (movableBuffers && binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers && DrawGuestWords(shader, binding).size() == static_cast<std::size_t>(binding.count) * 4u) {
             for (std::uint32_t element = 0; element < binding.count; ++element) {
-                const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+                const auto* words = DrawGuestWords(shader, binding).data() + static_cast<std::size_t>(element) * 4u;
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                 const bool empty = words[2] == 0 || (words[0] == 0 && (words[1] & 0xffffu) == 0);
                 if (written || empty) { for (std::uint32_t index = 0; index < 4u; ++index) visit(words[index]); }
                 else { for (const auto word : {0u, words[1] & 0xffff0000u, 0u, words[3]}) visit(word); }
             }
         } else if ((dataWords && !movableBuffers) || !DataRole(binding.role)) {
-            for (const auto word : binding.guestDescriptor) visit(word);
+            for (const auto word : DrawGuestWords(shader, binding)) visit(word);
         }
         packBits(binding.imageWritten);
         packBits(binding.samplerDepthCompare);
@@ -2856,7 +2858,7 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages) continue;
             if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage) {
                 for (std::uint32_t element = 0; element < binding.count; ++element) {
-                    const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                    const auto words = std::span<const std::uint32_t>(DrawGuestWords(shader, binding)).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                     if (IsNullTextureResource(words)) continue;
                     if (textureIndex >= textures.size()) return OwnRefreshFallback::Uncached;
                     const auto index = textureIndex++;
@@ -2866,7 +2868,7 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
                 }
             } else if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
                 for (std::uint32_t element = 0; element < binding.count; ++element) {
-                    const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                    const auto words = std::span<const std::uint32_t>(DrawGuestWords(shader, binding)).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                     if (IsNullTextureResource(words)) continue;
                     if (storageIndex >= storageTextures.size()) return OwnRefreshFallback::Uncached;
                     const auto index = storageIndex++;
@@ -3001,9 +3003,9 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             for (const auto& binding : shader.program->bindings) {
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages) continue;
                 if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage) {
-                    const auto elementWords = binding.count != 0 ? binding.guestDescriptor.size() / binding.count : 0;
+                    const auto elementWords = binding.count != 0 ? DrawGuestWords(shader, binding).size() / binding.count : 0;
                     for (std::uint32_t element = 0; element < binding.count; ++element) {
-                        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
+                        const auto words = std::span<const std::uint32_t>(DrawGuestWords(shader, binding)).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
                         if (IsNullTextureResource(words)) continue;
                         const auto resource = DecodeTextureResource(words);
                         const VkComponentMapping components = ViewComponents(resource);
@@ -3012,11 +3014,11 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                     }
                 } else if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
                     for (std::uint32_t element = 0; element < binding.count; ++element) {
-                        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                        const auto words = std::span<const std::uint32_t>(DrawGuestWords(shader, binding)).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                         if (IsNullTextureResource(words)) continue;
                         if (storageIndex >= storageTextures.size()) return false;
                         std::shared_ptr<StorageTexture> expected;
-                        if (SameAsPreviousStorageElement(binding, element) && StorageDedupeEnabled()) expected = storageTextures[storageIndex - 1];
+                        if (SameAsPreviousStorageElement(DrawGuestWords(shader, binding), element) && StorageDedupeEnabled()) expected = storageTextures[storageIndex - 1];
                         else expected = cachedStorageTexture(context, words, DecodeTextureResource(words), storageMips[storageIndex], 0, storageWritten[storageIndex]);
                         if (expected != storageTextures[storageIndex]) return false;
                         ++storageIndex;
@@ -3826,7 +3828,7 @@ std::uint64_t ShaderResources::DataWordsHash(const CompiledShader& shader) {
     Require(shader.program != nullptr, "missing compiled shader");
     std::uint64_t hash = FnvOffset;
     for (const auto& binding : shader.program->bindings) {
-        if (DataRole(binding.role)) mixDataWords(hash, binding.guestDescriptor);
+        if (DataRole(binding.role)) mixDataWords(hash, DrawGuestWords(shader, binding));
     }
     return hash;
 }
@@ -3841,7 +3843,7 @@ bool ShaderResources::DataWordsDiffer(const CompiledShader& shader) const {
         if (!DataRole(binding.role)) continue;
         if (bindings[index].allocations.size() != 1) return true;
         const auto& allocation = allocations[bindings[index].allocations.front()];
-        if (allocation.dataWords.size() != binding.guestDescriptor.size() || !std::equal(allocation.dataWords.begin(), allocation.dataWords.end(), binding.guestDescriptor.begin())) return true;
+        if (allocation.dataWords.size() != DrawGuestWords(shader, binding).size() || !std::equal(allocation.dataWords.begin(), allocation.dataWords.end(), DrawGuestWords(shader, binding).begin())) return true;
     }
     return false;
 }
@@ -3867,13 +3869,13 @@ bool ShaderResources::refreshData(VkCommandBuffer commands, const CompiledShader
         if (!DataRole(binding.role)) continue;
         Require(bindings[index].allocations.size() == 1, "data binding without its buffer");
         auto& allocation = allocations[bindings[index].allocations.front()];
-        const auto size = binding.guestDescriptor.size() * sizeof(std::uint32_t);
+        const auto size = DrawGuestWords(shader, binding).size() * sizeof(std::uint32_t);
         Require(allocation.buffer != nullptr && !allocation.guest && allocation.size == size && size <= MaxRefreshBytes, "template data buffer cannot take the dispatch's words");
-        if (allocation.dataWords.size() == binding.guestDescriptor.size() && std::equal(allocation.dataWords.begin(), allocation.dataWords.end(), binding.guestDescriptor.begin())) continue;
-        if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, binding.guestDescriptor);
+        if (allocation.dataWords.size() == DrawGuestWords(shader, binding).size() && std::equal(allocation.dataWords.begin(), allocation.dataWords.end(), DrawGuestWords(shader, binding).begin())) continue;
+        if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, DrawGuestWords(shader, binding));
         if (recorder != nullptr && timing == Recorder::NoTiming) timing = recorder->BeginGpuTiming(Recorder::CommandClass::TemplateDataRefresh);
-        writeDataWords(commands, bindings[index].allocations.front(), binding.guestDescriptor);
-        allocation.dataWords.assign(binding.guestDescriptor.begin(), binding.guestDescriptor.end());
+        writeDataWords(commands, bindings[index].allocations.front(), DrawGuestWords(shader, binding));
+        allocation.dataWords.assign(DrawGuestWords(shader, binding).begin(), DrawGuestWords(shader, binding).end());
         refreshedBytes += size;
         recorded = true;
     }
@@ -3901,7 +3903,7 @@ void ShaderResources::PrecollectSurfaces() const {
     for (const auto& range : describedRanges) GuestMemory::CollectWrites(range.address, static_cast<std::size_t>(range.bytes));
 }
 
-void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags) {
+void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> guest, VkShaderStageFlags flags) {
     Require(binding.count != 0, "empty descriptor binding");
     const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding.binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
     const auto capacity = binding.count;
@@ -3914,20 +3916,20 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
     if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
         // Storage images are guest textures the shader writes (looked up in stage B).
         Require(binding.role == ShaderRecompiler::DescriptorRole::GuestImages, "storage image binding has a non-image role");
-        Require(binding.guestDescriptor.size() == static_cast<std::size_t>(binding.count) * 8u, "guest storage image descriptors must contain 8 dwords each");
+        Require(guest.size() == static_cast<std::size_t>(binding.count) * 8u, "guest storage image descriptors must contain 8 dwords each");
         Require(context.detiler != nullptr, "device texture detiler is unavailable");
         Require(capacity <= context.limits.maxPerStageDescriptorStorageImages, "shader storage-image descriptors exceed per-stage limits");
         bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, capacity, flags, nullptr}, {}, {}});
         plannedStorageImages += binding.count;
-        deferredImages.push_back({&binding, bindings.size() - 1});
+        deferredImages.push_back({&binding, guest, bindings.size() - 1});
         return;
     }
     const bool sampledImage = binding.kind == ShaderRecompiler::DescriptorKind::SampledImage;
     const bool samplerKind = binding.kind == ShaderRecompiler::DescriptorKind::Sampler;
     if (!(sampledImage || samplerKind)) Require(false, std::string("unsupported descriptor kind ") + kindName(binding.kind) + " for role " + roleName(binding.role));
     Require((sampledImage && binding.role == ShaderRecompiler::DescriptorRole::GuestImages) || (samplerKind && binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers), "guest image descriptor role disagrees with its kind");
-    Require(binding.guestDescriptor.size() % binding.count == 0, "guest image descriptor size is not a multiple of the binding count");
-    const auto elementWords = binding.guestDescriptor.size() / binding.count;
+    Require(guest.size() % binding.count == 0, "guest image descriptor size is not a multiple of the binding count");
+    const auto elementWords = guest.size() / binding.count;
 
     Binding item{{binding.binding, sampledImage ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLER, capacity, flags, nullptr}, {}, {}};
 
@@ -3945,7 +3947,7 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
         Require(binding.samplerDepthCompare.size() == binding.count, "guest sampler binding is missing depth comparison metadata");
         Require(binding.samplerUnnormalized.empty() || binding.samplerUnnormalized.size() == binding.count, "guest sampler binding has unnormalized coordinate metadata of another size");
         for (std::uint32_t element = 0; element < binding.count; ++element) {
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
+            const auto words = std::span<const std::uint32_t>(guest).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
             const bool compareEnable = binding.samplerDepthCompare.at(element);
             const bool unnormalized = element < binding.samplerUnnormalized.size() && binding.samplerUnnormalized[element];
             const bool integerBorder = element < binding.samplerIntegerBorder.size() && binding.samplerIntegerBorder[element];
@@ -3963,7 +3965,7 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
     }
 
     bindings.push_back(std::move(item));
-    if (sampledImage) deferredImages.push_back({&binding, bindings.size() - 1});
+    if (sampledImage) deferredImages.push_back({&binding, guest, bindings.size() - 1});
 }
 
 namespace {
@@ -4004,9 +4006,9 @@ bool ShaderResources::precollectImages() {
     auto& counters = TextureCounts();
     for (const auto& deferred : deferredImages) {
         const auto& binding = *deferred.binding;
-        const auto elementWords = binding.guestDescriptor.size() / binding.count;
+        const auto elementWords = deferred.words.size() / binding.count;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
+            const auto words = std::span<const std::uint32_t>(deferred.words).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
             const bool sampled = binding.kind == ShaderRecompiler::DescriptorKind::SampledImage;
             if (sampled && !imageRecords.empty()) {
                 const auto& previous = imageRecords.back();
@@ -4123,15 +4125,15 @@ void ShaderResources::applyAnisoOverride() {
     }
 }
 
-void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers) {
+void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> guest, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers) {
     auto& counters = TextureCounts();
     // The element's stage-A record, when the pass ran (records follow the plan order exactly).
     const auto nextRecord = [&]() -> const ImageRecord* { return nextImageRecord < imageRecords.size() ? &imageRecords[nextImageRecord++] : nullptr; };
     if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage) {
         Require(binding.imageSamplers.size() == binding.count, "guest sampled image binding is missing its image-sampler pairs");
-        const auto elementWords = binding.guestDescriptor.size() / binding.count;
+        const auto elementWords = guest.size() / binding.count;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
+            const auto words = std::span<const std::uint32_t>(guest).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
             const auto* record = nextRecord();
             if (IsNullTextureResource(words)) {
                 item.imageAllocations.push_back(std::numeric_limits<std::size_t>::max());
@@ -4198,8 +4200,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
     // storage writes).
     std::uint32_t mipOffset = 0;
     for (std::uint32_t element = 0; element < binding.count; ++element) {
-        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-        const bool sameAsPrevious = SameAsPreviousStorageElement(binding, element);
+        const auto words = std::span<const std::uint32_t>(guest).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+        const bool sameAsPrevious = SameAsPreviousStorageElement(guest, element);
         if (sameAsPrevious) ++mipOffset;
         else mipOffset = 0;
         const auto* record = nextRecord();
@@ -4635,19 +4637,21 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 if (kept == bindings.end() || kept->allocations.size() != 1) return std::nullopt;
                 const auto index = kept->allocations.front();
                 const auto& item = allocations[index];
-                if (item.guest || item.buffer == nullptr || item.size != binding.guestDescriptor.size() * sizeof(std::uint32_t)) return std::nullopt;
+                const auto& guestWords = DrawGuestWords(shader, binding);
+                if (item.guest || item.buffer == nullptr || item.size != guestWords.size() * sizeof(std::uint32_t)) return std::nullopt;
                 const bool patched = std::any_of(dataPatches.begin(), dataPatches.end(), [&](const DataPatch& patch) { return patch.allocation == index; });
-                const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : !patched && std::memcmp(item.buffer->Bytes().data(), binding.guestDescriptor.data(), item.size) == 0;
+                const bool same = !item.dataWords.empty() ? item.dataWords == guestWords : !patched && std::memcmp(item.buffer->Bytes().data(), guestWords.data(), item.size) == 0;
                 if (same) continue;
                 if (item.dataWords.empty() && patched) return std::nullopt;
-                moved.push_back({index, 0, item.size, binding.guestDescriptor});
+                moved.push_back({index, 0, item.size, guestWords});
                 continue;
             }
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+            const auto& guestWords = DrawGuestWords(shader, binding);
             const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
-            if (kept == bindings.end() || kept->allocations.size() != binding.count || binding.guestDescriptor.size() != static_cast<std::size_t>(binding.count) * 4u) return std::nullopt;
+            if (kept == bindings.end() || kept->allocations.size() != binding.count || guestWords.size() != static_cast<std::size_t>(binding.count) * 4u) return std::nullopt;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
-                const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+                const auto* words = guestWords.data() + static_cast<std::size_t>(element) * 4u;
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
                 const auto address = descriptor.Base48();
                 const auto size = descriptor.GetSize();
@@ -4958,7 +4962,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     const auto& program = *shader.program;
     for (const auto& binding : program.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::ShaderData && binding.role != ShaderRecompiler::DescriptorRole::FlattenedSrt) continue;
-        const auto& words = binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt && shader.heap != nullptr && !shader.heap->flattenedSrt.empty() ? shader.heap->flattenedSrt : binding.guestDescriptor;
+        const auto& words = binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt && shader.heap != nullptr && !shader.heap->flattenedSrt.empty() ? shader.heap->flattenedSrt : DrawGuestWords(shader, binding);
         if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, words);
         auto span = heap.Allocate(words.size());
         if (binding.role != ShaderRecompiler::DescriptorRole::ShaderData) {
