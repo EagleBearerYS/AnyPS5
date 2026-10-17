@@ -868,6 +868,7 @@ void JournalReplay(AgcDriver::VulkanDevice& device, bool switchOn) {
         return;
     }
     Require(DeviceImageTable::Existing(device.GraphicsContext()) == nullptr && !device.ComputeTarget(64u).deviceImageTables, "with APS5_GPU_PATH unset the device has no device image table");
+    Require(totals.replayFailed == 0u && totals.replayRejected >= 2u, "with APS5_GPU_PATH unset the replay rejects the pipelines whose stages read the device image table instead of failing them");
     RunCopy(device, CopyProgram(device, false), "the dispatch with APS5_GPU_PATH unset");
     Require(device.ComputePipelinesCreated() == created + 1u, "the dispatch with APS5_GPU_PATH unset builds its pipeline when it first needs it");
     Require(TrianglePipeline(device, false), "the graphics pipeline with APS5_GPU_PATH unset is built when it is first needed");
