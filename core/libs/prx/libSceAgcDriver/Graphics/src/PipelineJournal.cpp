@@ -744,6 +744,7 @@ private:
             writer.U64(identity.high);
             writer.U32(static_cast<std::uint32_t>(module->stage));
             ShaderRecompiler::ShaderDiskCache::EncodeResult(*module->result, payload);
+            module->result->spirv.Release();
             appendRecord(ModuleRecord, payload);
         }
         appendRecord(pending.kind, pending.payload);

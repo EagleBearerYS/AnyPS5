@@ -172,7 +172,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         Require(binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer && binding.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && binding.descriptorSet == 0 && binding.count == 1 && binding.guestDescriptor.empty() && !binding.readOnly, "invalid rect-list fault buffer contract");
     }
     const auto model = mesh ? spv::ExecutionModelMeshEXT : control ? spv::ExecutionModelTessellationControl : evaluation ? spv::ExecutionModelTessellationEvaluation : geometry ? spv::ExecutionModelGeometry : vertex ? spv::ExecutionModelVertex : spv::ExecutionModelFragment;
-    const auto& words = shader.spirv;
+    const auto lease = shader.spirv.Hold();
+    const auto words = lease.Words();
 
     Require(words.size() >= 5, "SPIR-V header is truncated: " + std::to_string(words.size()) + " words");
     Require(words[0] == spv::MagicNumber, "invalid SPIR-V magic number: " + std::to_string(words[0]));
@@ -615,7 +616,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
 }
 
 bool DeclaresEarlyFragmentTests(const ShaderRecompiler::RecompileResult& program) {
-    const auto words = program.spirv.Words();
+    const auto lease = program.spirv.Hold();
+    const auto words = lease.Words();
     Require(words.size() >= 5 && words[0] == spv::MagicNumber, "the fragment shader is not a SPIR-V module");
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;

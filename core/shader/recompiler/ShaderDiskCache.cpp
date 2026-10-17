@@ -460,7 +460,8 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
 
 void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.runtimeAbiVersion);
-    writer.Values(std::span<const std::uint32_t>(result.spirv.Words()));
+    const auto spirv = result.spirv.Hold();
+    writer.Values(spirv.Words());
     writer.Value(result.bdaAbiVersion);
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.shaderDataDwords);
@@ -1258,6 +1259,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_PERF_ITERATION_SELECTION",
     "APS5_NO_PERF_LAYOUT_PAIR",
     "APS5_NO_RESULT_MEMO",
+    "APS5_RELEASE_SPIRV",
 };
 
 const std::vector<std::byte>& switchKey() {
@@ -1330,6 +1332,11 @@ public:
         return load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void> owner) { return DecodeEntry(file, key, variant, std::move(owner)); }, hits, misses, loadFailures);
     }
 
+    bool Reload(std::span<const std::byte> key, CompiledVariant& variant) {
+        if (load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void> owner) { return DecodeEntry(file, key, variant, std::move(owner)); }, reloads, reloadMisses, loadFailures)) return true;
+        return loadPrebuilt(key, variant);
+    }
+
     bool LoadPlan(std::span<const std::byte> key, IrResourcePlan& plan) {
         return load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void>) { return DecodePlanEntry(file, key, plan); }, planHits, planMisses, planLoadFailures);
     }
@@ -1367,6 +1374,8 @@ public:
         Counters counters;
         counters.hits = hits.load(std::memory_order_relaxed);
         counters.misses = misses.load(std::memory_order_relaxed);
+        counters.reloads = reloads.load(std::memory_order_relaxed);
+        counters.reloadMisses = reloadMisses.load(std::memory_order_relaxed);
         counters.writes = writes.load(std::memory_order_relaxed);
         counters.loadFailures = loadFailures.load(std::memory_order_relaxed);
         counters.writeFailures = writeFailures.load(std::memory_order_relaxed);
@@ -1629,6 +1638,7 @@ private:
     std::deque<Job> jobs;
     bool writing = false;
     std::atomic<std::uint64_t> hits{0}, misses{0}, writes{0}, loadFailures{0}, writeFailures{0}, bytesRead{0}, bytesWritten{0}, loadNanoseconds{0};
+    std::atomic<std::uint64_t> reloads{0}, reloadMisses{0};
     std::atomic<std::uint64_t> planHits{0}, planMisses{0}, planWrites{0}, planLoadFailures{0};
     std::atomic<std::uint64_t> prebuiltHits{0}, prebuiltMisses{0}, prebuiltRejected{0}, lookupNanoseconds{0}, readNanoseconds{0}, decodeNanoseconds{0}, maxLoadNanoseconds{0}, prebuiltBytesRead{0}, prebuiltLoadNanoseconds{0};
     std::atomic<std::int64_t> lastReport{0};
@@ -1770,6 +1780,11 @@ std::filesystem::path EntryDirectory() {
 bool Load(std::span<const std::byte> key, CompiledVariant& variant) {
     auto& instance = store();
     return instance.Enabled() && instance.Load(key, variant);
+}
+
+bool Reload(std::span<const std::byte> key, CompiledVariant& variant) {
+    auto& instance = store();
+    return instance.Enabled() && instance.Reload(key, variant);
 }
 
 void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> variant) {

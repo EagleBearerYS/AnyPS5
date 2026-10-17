@@ -996,6 +996,9 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
             if (entry.handle != nullptr) ShaderRecompiler::ReleaseUndrawnResourcePlan(*entry.handle);
         }
     }
+    for (const auto& entry : entries) {
+        if (entry.handle != nullptr && entry.handle->artifact != nullptr) entry.handle->artifact->artifact.spirv.Release();
+    }
     return entries;
 }
 

@@ -25,6 +25,8 @@ enum class LoadStatus {
 struct Counters {
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
+    std::uint64_t reloads = 0;
+    std::uint64_t reloadMisses = 0;
     std::uint64_t writes = 0;
     std::uint64_t loadFailures = 0;
     std::uint64_t writeFailures = 0;
@@ -68,6 +70,7 @@ void BuildPlanKey(const RecompileRequest& request, std::uint32_t hostSubgroupSiz
 [[nodiscard]] std::filesystem::path EntryDirectory();
 
 [[nodiscard]] bool Load(std::span<const std::byte> key, CompiledVariant& variant);
+[[nodiscard]] bool Reload(std::span<const std::byte> key, CompiledVariant& variant);
 void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> variant);
 [[nodiscard]] std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant);
 [[nodiscard]] bool LoadPlan(std::span<const std::byte> key, IrResourcePlan& plan);
