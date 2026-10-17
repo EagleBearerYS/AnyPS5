@@ -18,10 +18,21 @@ namespace AgcDriver::Graphics {
 
 void ShutdownGuestBufferWorkers();
 
+enum class SnapshotReader : std::uint8_t {
+    Unknown,
+    Draw,
+    Dispatch,
+};
+
 struct GuestMemorySnapshot {
     std::uint64_t address;
     std::span<const std::byte> bytes;
+    SnapshotReader reader = SnapshotReader::Unknown;
+    std::uint32_t queue = 0;
+    std::uint64_t program = 0;
 };
+
+std::string SnapshotMismatchDetail(const GuestMemorySnapshot& snapshot, const std::byte* live, std::size_t first);
 
 // A guest allocation imported with VK_EXT_external_memory_host, usable by the GPU in place.
 struct HostImport {

@@ -3154,6 +3154,42 @@ void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
     addDescriptorRegion(address, bytes, false, false, true);
 }
 
+std::string SnapshotMismatchDetail(const GuestMemorySnapshot& snapshot, const std::byte* live, std::size_t first) {
+    const auto size = snapshot.bytes.size();
+    const auto start = first & ~std::size_t{15};
+    const auto end = std::min(size, start + std::size_t{0x20});
+    const auto words = [&](const std::byte* bytes) {
+        std::string text;
+        char item[16];
+        for (auto offset = start; offset < end;) {
+            if (end - offset >= sizeof(std::uint32_t)) {
+                std::uint32_t word = 0;
+                std::memcpy(&word, bytes + offset, sizeof(word));
+                std::snprintf(item, sizeof(item), " %08x", word);
+                offset += sizeof(word);
+            } else {
+                std::snprintf(item, sizeof(item), " %02x", std::to_integer<unsigned>(bytes[offset]));
+                ++offset;
+            }
+            text += item;
+        }
+        return text;
+    };
+    char head[128];
+    std::snprintf(head, sizeof(head), "snapshot 0x%llx+0x%zx from +0x%zx, words: snapshot", static_cast<unsigned long long>(snapshot.address), size, start);
+    std::string reader = "an unknown reader";
+    if (snapshot.reader != SnapshotReader::Unknown) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "a %s on queue %u", snapshot.reader == SnapshotReader::Draw ? "draw" : "dispatch", static_cast<unsigned>(snapshot.queue));
+        reader = text;
+        if (snapshot.program != 0) {
+            std::snprintf(text, sizeof(text), ", program 0x%llx", static_cast<unsigned long long>(snapshot.program));
+            reader += text;
+        }
+    }
+    return head + words(snapshot.bytes.data()) + " | live" + words(live) + "; read by " + reader;
+}
+
 void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
     validate(snapshot.address, snapshot.bytes.size());
     const auto end = snapshot.address + snapshot.bytes.size();
@@ -3209,13 +3245,19 @@ void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
             if (!live || fatal) throw std::runtime_error(text);
             static std::mutex reportMutex;
             static std::uint64_t mismatches = 0;
+            static std::uint64_t detailed = 0;
             static auto lastReport = std::chrono::steady_clock::now() - std::chrono::seconds(60);
+            constexpr std::uint64_t DetailedMismatches = 8;
             std::lock_guard lock(reportMutex);
             ++mismatches;
             const auto now = std::chrono::steady_clock::now();
             if (now - lastReport >= std::chrono::seconds(10)) {
                 lastReport = now;
                 std::fprintf(stderr, "[gpu] %s; the live region serves the GPU (%llu mismatches so far; APS5_SNAPSHOT_CHECK_FATAL=1 fails the dispatch instead)\n", text, static_cast<unsigned long long>(mismatches));
+            }
+            if (detailed < DetailedMismatches) {
+                ++detailed;
+                std::fprintf(stderr, "[gpu]   %s\n", SnapshotMismatchDetail(snapshot, source, first).c_str());
             }
             return;
         }

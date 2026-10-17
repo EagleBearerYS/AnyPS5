@@ -12,14 +12,29 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <io.h>
+#define APS5_DUP _dup
+#define APS5_DUP2 _dup2
+#define APS5_CLOSE _close
+#define APS5_FILENO _fileno
+#else
+#include <unistd.h>
+#define APS5_DUP dup
+#define APS5_DUP2 dup2
+#define APS5_CLOSE close
+#define APS5_FILENO fileno
 #endif
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <initializer_list>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <new>
@@ -154,6 +169,52 @@ void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
     ClearSnapshotCopies(importing.device);
     change(false);
     ::operator delete(block, std::align_val_t{piece});
+}
+
+void snapshotMismatchDetailTests(const Context& context) {
+    alignas(256) static std::array<std::uint32_t, 64> live{};
+    for (std::size_t index = 0; index < live.size(); ++index) live[index] = 0x1000u + static_cast<std::uint32_t>(index);
+    const auto base = reinterpret_cast<std::uint64_t>(live.data());
+    std::array<std::byte, 0x30> captured{};
+    std::memcpy(captured.data(), live.data() + 4, captured.size());
+    live[9] = 0xdeadbeefu;
+    const GuestMemorySnapshot snapshot{base + 0x10, captured, SnapshotReader::Draw, 2, 0x123400};
+    char address[32];
+    std::snprintf(address, sizeof(address), "0x%llx", static_cast<unsigned long long>(base + 0x10));
+    const auto detail = std::string("snapshot ") + address + "+0x30 from +0x10, words: snapshot 00001008 00001009 0000100a 0000100b 0000100c 0000100d 0000100e 0000100f | live 00001008 deadbeef 0000100a 0000100b 0000100c 0000100d 0000100e 0000100f; read by a draw on queue 2, program 0x123400";
+    const auto shown = SnapshotMismatchDetail(snapshot, reinterpret_cast<const std::byte*>(base + 0x10), 0x14);
+    Require(shown == detail, "the mismatch detail does not show the snapshot's and the live words around the first difference with its reader: " + shown);
+    const GuestMemorySnapshot dispatched{base + 0x10, std::span(captured).first(0x16), SnapshotReader::Dispatch, 5, 0};
+    Require(SnapshotMismatchDetail(dispatched, reinterpret_cast<const std::byte*>(base + 0x10), 0x14) == std::string("snapshot ") + address + "+0x16 from +0x10, words: snapshot 00001008 09 10 | live 00001008 ef be; read by a dispatch on queue 5", "a short snapshot's detail does not end in its last bytes, or a dispatch without a program was not named");
+    Require(SnapshotMismatchDetail({base + 0x10, captured}, reinterpret_cast<const std::byte*>(base + 0x10), 0x24).ends_with("from +0x20, words: snapshot 0000100c 0000100d 0000100e 0000100f | live 0000100c 0000100d 0000100e 0000100f; read by an unknown reader"), "a snapshot without a reader was not reported as such");
+    const auto path = std::filesystem::temp_directory_path() / ("aps5_snapshot_mismatch_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
+    std::fflush(stderr);
+    const int saved = APS5_DUP(APS5_FILENO(stderr));
+    Require(saved >= 0, "stderr could not be saved");
+    Require(std::freopen(path.string().c_str(), "wb", stderr) != nullptr, "stderr could not be redirected");
+    std::string error;
+    try {
+        GuestBufferMemory memory(context);
+        memory.AddWritable(base, sizeof(live));
+        memory.AddSnapshot(snapshot);
+    } catch (const std::exception& caught) {
+        error = caught.what();
+    }
+    std::fflush(stderr);
+    APS5_DUP2(saved, APS5_FILENO(stderr));
+    APS5_CLOSE(saved);
+    std::string printed;
+    {
+        std::ifstream file(path, std::ios::binary);
+        printed.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+    std::filesystem::remove(path);
+    Require(error.empty(), "a live-backed snapshot mismatch failed the build: " + error);
+    const auto warning = printed.find(std::string("[gpu] guest snapshot differs from registered memory: snapshot ") + address + "+0x30 (live region ");
+    const auto words = printed.find("[gpu]   " + detail + "\n");
+    Require(warning != std::string::npos && printed.find("differs first at +0x14", warning) != std::string::npos, "a live-backed snapshot mismatch printed no warning: " + printed);
+    Require(words != std::string::npos && words > warning, "a live-backed snapshot mismatch did not print its words and reader after the warning: " + printed);
+    std::cout << "live snapshot mismatch printed:\n" << printed;
 }
 
 void importCrossingTests(const Context& context, const BdaTestAccess& access) {
@@ -2053,6 +2114,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importCrossingTests(context, access);
     addressTableKeyTests();
     snapshotTableTests(context, access);
+    snapshotMismatchDetailTests(context);
     importSpanTests(context);
     failedImportRemapTests(context, access);
     spaceImportRunTests(context);

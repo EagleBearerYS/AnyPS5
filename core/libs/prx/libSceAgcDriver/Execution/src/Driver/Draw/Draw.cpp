@@ -460,7 +460,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     std::vector<Graphics::GuestMemorySnapshot> snapshots;
     const auto snapshot = [&] {
         snapshots.clear();
-        for (const auto& region : memory) snapshots.push_back({region.guestAddress, region.bytes});
+        const auto program = programs.empty() ? std::uint64_t{0} : programs.back().binary.codeAddress;
+        for (const auto& region : memory) snapshots.push_back({region.guestAddress, region.bytes, Graphics::SnapshotReader::Draw, submission.queue, program});
     };
     snapshot();
     timing.Mark("post_compile_prepare");

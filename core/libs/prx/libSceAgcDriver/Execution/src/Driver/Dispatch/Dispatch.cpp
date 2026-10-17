@@ -403,7 +403,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     phaseTiming.Phase(PhaseQueuedLabels);
     const auto& compiled = *compiledResult;
     std::vector<Graphics::GuestMemorySnapshot> snapshots;
-    for (const auto& region : captured) snapshots.push_back({region.guestAddress, region.bytes});
+    for (const auto& region : captured) snapshots.push_back({region.guestAddress, region.bytes, Graphics::SnapshotReader::Dispatch, submission.queue, address});
     std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
     if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {
 
