@@ -74,6 +74,7 @@ public:
         std::uint64_t variantBytes = 0;
     };
     DispatchCacheFootprint DispatchCacheSize();
+    DispatchCacheFootprint DrawCacheSize();
     static std::uint64_t DispatchCacheBytes();
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 

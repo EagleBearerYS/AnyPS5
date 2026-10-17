@@ -46,6 +46,11 @@ DrawEntryCounters Driver::DrawCacheCounters() {
     return drawEntryCounters;
 }
 
+Driver::DispatchCacheFootprint Driver::DrawCacheSize() {
+    std::lock_guard cacheLock(drawCacheMutex);
+    return {drawCache.size(), drawCacheVariantBytes};
+}
+
 std::string Driver::profileDrawCacheLines(const DrawEntryCounters& counters) {
     std::string text;
     const auto append = [&](const char* format, auto... values) {

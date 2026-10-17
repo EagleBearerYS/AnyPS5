@@ -69,7 +69,16 @@ constexpr std::uint32_t MaxObjectSets = 8;
 constexpr std::size_t ColorOffset = (ObjectOffset + MaxObjectSets * MaxDraws * ObjectBytes + 65535) & ~static_cast<std::size_t>(65535);
 constexpr std::size_t ColorBytes = 65536;
 constexpr std::uint32_t RenderTargetTileMode = 0x1b;
-constexpr std::size_t BlockBytes = (ColorOffset + ColorBytes + 65535) & ~static_cast<std::size_t>(65535);
+constexpr std::uint32_t MaxRecords = 4;
+constexpr std::uint32_t RecordBytes = 16;
+constexpr std::size_t RecordOffset = ColorOffset + ColorBytes;
+constexpr std::uint32_t RingSlots = 3;
+constexpr std::size_t RingOffset = RecordOffset + MaxDraws * MaxRecords * RecordBytes;
+constexpr std::size_t RingStride = 0x400;
+constexpr std::size_t RingFrameDataOffset = 0x300;
+constexpr std::uint32_t BaseVertexLocation = 0x8e;
+constexpr std::uint32_t StartInstanceLocation = 0x8f;
+constexpr std::size_t BlockBytes = (RingOffset + RingSlots * RingStride + 65535) & ~static_cast<std::size_t>(65535);
 
 alignas(256) constexpr std::array<std::uint32_t, 40> VertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
@@ -97,6 +106,29 @@ const std::array<std::uint32_t, 40>& VertexProgram() {
         return text != nullptr && std::string(text) == "8";
     }();
     return userAtEight ? VertexCodeUser8 : VertexCode;
+}
+
+alignas(256) constexpr std::array<std::uint32_t, 41> VertexIndirectCode = [] {
+    std::array<std::uint32_t, 41> code{};
+    std::size_t n = 0;
+    for (std::size_t word = 0; word < VertexCodeUser8.size(); ++word) {
+        code[n++] = word == 8 ? 0x7e06020au : VertexCodeUser8[word];
+        if (word == 9) code[n++] = 0x0606060bu;
+    }
+    return code;
+}();
+
+std::uint32_t IndirectRecords() {
+    static const std::uint32_t records = [] {
+        const char* text = std::getenv("DRAW_RECORD_COST_INDIRECT");
+        const auto parsed = text != nullptr ? std::strtoul(text, nullptr, 10) : 0ul;
+        return static_cast<std::uint32_t>(std::min<unsigned long>(parsed, MaxRecords));
+    }();
+    return records;
+}
+
+std::uintptr_t VertexAddress() {
+    return IndirectRecords() != 0 ? reinterpret_cast<std::uintptr_t>(VertexIndirectCode.data()) : reinterpret_cast<std::uintptr_t>(VertexProgram().data());
 }
 
 constexpr std::size_t PixelWords = 10 + Textures * 10 + 5 + 8 + 3;
@@ -219,6 +251,23 @@ void Prepare(const Layout& layout) {
         std::memcpy(block.Bytes(VertexTableOffset + buffer * 16u), vertices.data(), sizeof(vertices));
     }
     for (std::uint32_t object = 0; object < MaxObjectSets * MaxDraws; ++object) std::memcpy(block.Bytes(ObjectOffset + object * ObjectBytes), &one, sizeof(one));
+    for (std::uint32_t slot = 0; slot < RingSlots; ++slot) {
+        const auto ring = RingOffset + slot * RingStride;
+        std::memcpy(block.Bytes(ring), block.Bytes(SrtOffset), FrameConstantsOffset);
+        const auto constants = BufferDescriptor(block.At(ring + RingFrameDataOffset), 0, 256, 0x31016facu);
+        std::memcpy(block.Bytes(ring + FrameConstantsOffset), constants.data(), sizeof(constants));
+        std::memcpy(block.Bytes(ring + RingFrameDataOffset), &one, sizeof(one));
+    }
+}
+
+void WriteRecords(const GuestBlock& block, std::uint32_t draws, std::uint32_t frame) {
+    for (std::uint32_t draw = 0; draw < draws; ++draw) {
+        for (std::uint32_t record = 0; record < IndirectRecords(); ++record) {
+            const auto serial = (frame * MaxDraws + draw) * MaxRecords + record;
+            const std::array<std::uint32_t, 4> words{3u, 1u, serial * 3u, serial + 1u};
+            std::memcpy(block.Bytes(RecordOffset + (static_cast<std::size_t>(draw) * MaxRecords + record) * RecordBytes), words.data(), sizeof(words));
+        }
+    }
 }
 
 void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
@@ -238,9 +287,10 @@ std::uint32_t ObjectSets() {
 std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, std::uint32_t set = 0) {
     const auto& block = layout.data;
     const auto color = layout.target.At(ColorOffset);
-    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexProgram().data());
+    const auto indirect = IndirectRecords();
+    const auto vertex = VertexAddress();
     const auto pixel = PixelProgram();
-    const auto srt = block.At(SrtOffset);
+    const auto srt = block.At(indirect != 0 ? RingOffset + (set % RingSlots) * RingStride : SrtOffset);
     const auto table = block.At(VertexTableOffset);
     const float scale = 32.0f;
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -265,14 +315,20 @@ std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, s
         {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
     };
-    const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
-        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 2u << 1u},
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
+        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, (indirect != 0 ? 4u : 2u) << 1u},
         {0x8c, static_cast<std::uint32_t>(table)}, {0x8d, static_cast<std::uint32_t>(table >> 32u)},
         {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 8u << 1u},
         {0x00c, static_cast<std::uint32_t>(srt)}, {0x00d, static_cast<std::uint32_t>(srt >> 32u)}, {0x00e, 0}, {0x00f, 0},
     };
+    if (indirect != 0) shader.insert(shader.begin() + 5, {{BaseVertexLocation, 0}, {StartInstanceLocation, 0}});
     std::vector<std::uint32_t> commands;
     Append(commands, 0x79, {0x242, 4});
+    if (indirect != 0) {
+        const auto records = block.At(RecordOffset);
+        Append(commands, 0x79, {0x24a, 0});
+        Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+    }
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
     for (std::uint32_t draw = 0; draw < draws; ++draw) {
@@ -280,7 +336,10 @@ std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, s
         const auto object = BufferDescriptor(block.At(ObjectOffset + objectIndex * ObjectBytes), 0, 16, 0x31016facu);
         Append(commands, 0x76, {0x010, object[0], object[1], object[2], object[3]});
         if (ObjectValues()) Append(commands, 0x76, {0x00e, set * MaxDraws + draw + 1u});
-        Append(commands, 0x2d, {3, 2});
+        const auto offset = draw * MaxRecords * RecordBytes;
+        if (indirect == 1) Append(commands, 0x24, {offset, BaseVertexLocation, StartInstanceLocation, 2});
+        else if (indirect != 0) Append(commands, 0x2c, {offset, BaseVertexLocation, StartInstanceLocation, 0, indirect, 0, 0, RecordBytes, 2});
+        else Append(commands, 0x2d, {3, 2});
     }
     return commands;
 }
@@ -300,9 +359,10 @@ unsigned ColorByte(const GuestBlock& block) {
     return brightest;
 }
 
-void Check(const Layout& layout) {
+void Check(const Layout& layout, std::uint32_t set = 0, std::uint32_t frame = 0) {
     std::memset(layout.target.Bytes(ColorOffset), 0, ColorBytes);
-    auto commands = Commands(layout, 16);
+    if (IndirectRecords() != 0) WriteRecords(layout.data, 16, frame);
+    auto commands = Commands(layout, 16, set);
     Submit(commands);
     const auto byte = ColorByte(layout.target);
     Require(byte == Textures * TexelByte, "draw record cost: 16 draws sampling 16 textures of byte " + std::to_string(TexelByte) + " wrote " + std::to_string(byte) + ", expected " + std::to_string(Textures * TexelByte));
@@ -477,6 +537,41 @@ double Median(std::vector<double> values) {
     return values[values.size() / 2];
 }
 
+void IndirectCost(const Layout& layout, std::uint32_t windows) {
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    const char* sizes = std::getenv("DRAW_RECORD_COST_SIZES");
+    std::uint32_t frame = 1;
+    for (const auto draws : {64u, 512u, 2048u}) {
+        if (sizes != nullptr && std::string(sizes).find(std::to_string(draws)) == std::string::npos) continue;
+        std::vector<std::vector<std::uint32_t>> commandSets;
+        for (std::uint32_t slot = 0; slot < RingSlots; ++slot) commandSets.push_back(Commands(layout, draws, slot));
+        const auto cold = driver.DrawCacheCounters();
+        std::vector<double> warm;
+        for (std::uint32_t window = 0; window < 2 * RingSlots; ++window, ++frame) {
+            WriteRecords(layout.data, draws, frame);
+            warm.push_back(Submit(commandSets[frame % RingSlots]) / draws);
+        }
+        const auto before = driver.DrawCacheCounters();
+        std::vector<double> perDraw;
+        for (std::uint32_t window = 0; window < windows; ++window, ++frame) {
+            WriteRecords(layout.data, draws, frame);
+            perDraw.push_back(Submit(commandSets[frame % RingSlots]) / draws);
+        }
+        const auto after = driver.DrawCacheCounters();
+        const auto footprint = driver.DrawCacheSize();
+        const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
+        const auto lookups = after.lookups - before.lookups;
+        const auto absent = after.absent - before.absent;
+        const auto hits = after.hits - before.hits;
+        const auto validated = lookups - absent;
+        const auto validateUs = after.validateUs - before.validateUs;
+        std::printf("indirect cost: %u draws per frame, %u records per packet, %u frames after %u warm-up frames (ring of %u): median %.2f us per draw packet (min %.2f, max %.2f), %.2f us per record; warm-up frames median %.2f us per draw packet (%llu lookups, %llu hits)\n", draws, IndirectRecords(), windows, 2 * RingSlots, RingSlots, Median(perDraw), *std::min_element(perDraw.begin(), perDraw.end()), *std::max_element(perDraw.begin(), perDraw.end()), Median(perDraw) / IndirectRecords(), Median(warm), count(before.lookups - cold.lookups), count(before.hits - cold.hits));
+        std::printf("indirect draw cache: %llu lookups, %llu no entry (%.3f per lookup), %llu hits (%.1f%% reuse), %llu inserts, validation %.1f us per validated lookup and %.1f us per hit (APS5_PROFILE_DRAW only); %zu entries holding %.2f MiB (%.1f KiB each)\n", count(lookups), count(absent), lookups != 0 ? static_cast<double>(absent) / static_cast<double>(lookups) : 0.0, count(hits), lookups != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(lookups) : 0.0, count(after.inserts - before.inserts), validated != 0 ? validateUs / static_cast<double>(validated) : 0.0, hits != 0 ? validateUs / static_cast<double>(hits) : 0.0, footprint.entries, static_cast<double>(footprint.variantBytes) / (1024.0 * 1024.0), footprint.entries != 0 ? static_cast<double>(footprint.variantBytes) / 1024.0 / static_cast<double>(footprint.entries) : 0.0);
+        Check(layout, frame % RingSlots, frame);
+        ++frame;
+    }
+}
+
 void Cost(const Layout& layout, std::uint32_t windows) {
     const auto texture = layout.textures.At(TextureOffset);
     std::printf("write watch (%s layout): available %d, data block covered %d, watched %d, covers the textures %d, CollectWrites %llu\n", &layout.data == &layout.textures ? "shared" : "split", GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() ? 1 : 0, GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(static_cast<std::uintptr_t>(layout.data.At(0)), 4096) ? 1 : 0, AgcDriver::GuestMemory::WriteWatched() ? 1 : 0, GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(static_cast<std::uintptr_t>(texture), Textures * TextureBytes) ? 1 : 0, static_cast<unsigned long long>(AgcDriver::GuestMemory::CollectWrites(texture, TextureBytes)));
@@ -553,7 +648,8 @@ int main(int argc, char** argv) {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        Register(VertexHeader, VertexProgram().data(), sizeof(VertexCode), 2);
+        if (IndirectRecords() != 0) Register(VertexHeader, VertexIndirectCode.data(), sizeof(VertexIndirectCode), 2);
+        else Register(VertexHeader, VertexProgram().data(), sizeof(VertexCode), 2);
         if (ObjectValues()) Register(PixelHeader, PixelValueCode.data(), sizeof(PixelValueCode), 1);
         else Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         const char* layoutName = std::getenv("DRAW_RECORD_COST_LAYOUT");
@@ -564,7 +660,8 @@ int main(int argc, char** argv) {
         const Layout layout{data, shared ? data : *textures, shared ? data : *target};
         Prepare(layout);
         Check(layout);
-        if (argc > 2 && std::string(argv[1]) == "--cost") Cost(layout, static_cast<std::uint32_t>(std::stoul(argv[2])));
+        if (argc > 2 && std::string(argv[1]) == "--cost" && IndirectRecords() != 0) IndirectCost(layout, static_cast<std::uint32_t>(std::stoul(argv[2])));
+        else if (argc > 2 && std::string(argv[1]) == "--cost") Cost(layout, static_cast<std::uint32_t>(std::stoul(argv[2])));
         AgcDriverShutdown_nid_postfix();
         std::puts("draw record cost: 16 draws sampled 16 textures, 3 vertex buffers and 2 constant buffers");
         return 0;
