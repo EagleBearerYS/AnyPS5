@@ -1791,10 +1791,13 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (target != nullptr) passAttachments.emplace_back(target->Image(), true);
     }
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
-    static const bool addressReadPasses = std::getenv("APS5_NO_ADDRESS_READ_PASSES") == nullptr;
-    const bool readsOnlyThroughAddresses = addressReadPasses && resources.UsesAddressTable() && !resources.StoresThroughAddresses() && !resources.HasCopiedWrites();
-    const bool unknownWrites = unknownMemory && !readsOnlyThroughAddresses;
-    const PassAccess passAccess{passReads, resources.GpuWrites(), passImages, passAttachments, unknownMemory, unknownWrites};
+    static const bool boundedAddressPasses = std::getenv("APS5_NO_BOUNDED_ADDRESS_PASSES") == nullptr;
+    static const bool addressReadPasses = boundedAddressPasses && std::getenv("APS5_NO_ADDRESS_READ_PASSES") == nullptr;
+    const bool throughTableOnly = resources.UsesAddressTable() && !resources.HasCopiedWrites();
+    const bool readsOnlyThroughAddresses = addressReadPasses && throughTableOnly && !resources.StoresThroughAddresses();
+    const bool boundedAddressWrites = boundedAddressPasses && throughTableOnly && resources.StoresThroughAddresses();
+    const bool unknownWrites = unknownMemory && !readsOnlyThroughAddresses && !boundedAddressWrites;
+    const PassAccess passAccess{passReads, boundedAddressWrites ? GuestRangeList(resources.AddressWrites()) : GuestRangeList(resources.GpuWrites()), passImages, passAttachments, unknownMemory, unknownWrites};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect, fenced, passAccess);
     const bool continued = start.continued;
