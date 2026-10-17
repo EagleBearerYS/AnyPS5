@@ -1,8 +1,8 @@
-READY
-since: 2026-10-17T10:38:11Z
-last: LA-004 done, results/cloud-5/LA-004.md: exp/lane-a-join 3073e11d0 on exp/lane-a-base d059cea2b4 (2 merges + 12 commits); checkpoint A1 holds on lavapipe: switch-off mirror equals the base's on this machine (join 1328/65/9 of 1402, base 1321/65/9 of 1395, same 9: 5 IPv6 + 4 agc_driver_prepared_shaders* also on the base; 7 new tests pass); harness (a)-(h) green in 8 configurations with the reds; spirv-val 21/21; Village-shaped bench driver CPU per draw 17.5 ms CPU path (first window, then OOM) vs 82 us (imports) / 30 us (copies); 6b(i) +647 words per added column, not near; overflow fix a8b93dc86; force-push to exp/lane-a-driver refused by the session's permission layer (still a500d67c8, needs the user's OK)
-previous: PRM-035 done, results/cloud-5/PRM-035.md: main 0906c64501 1262/65/5 IPv6 of 1332; trophies 1 0e1891f70f, trophies 2 9b17080b06, output resolution 35f4fe60a0, FSR on it 776316a77e all clean; nothing pushed
-
+BUSY PM-075
+since: 2026-10-17T10:53Z (PM-075, adversarial review of lane C's C-1, perf/agc-address-read-passes b3e94a514)
+claimed: tasks/claimed/PM-075.md
+step: building b3e94a514 and reading the four commits
+previous: LA-004 done, results/cloud-5/LA-004.md: exp/lane-a-join 3073e11d0 on exp/lane-a-base d059cea2b4 (2 merges + 12 commits); checkpoint A1 holds on lavapipe: switch-off mirror equals the base's on this machine (join 1328/65/9 of 1402, base 1321/65/9 of 1395, same 9: 5 IPv6 + 4 agc_driver_prepared_shaders* also on the base; 7 new tests pass); harness (a)-(h) green in 8 configurations with the reds; spirv-val 21/21; Village-shaped bench driver CPU per draw 17.5 ms CPU path (first window, then OOM) vs 82 us (imports) / 30 us (copies); 6b(i) +647 words per added column, not near; overflow fix a8b93dc86; force-push to exp/lane-a-driver refused by the session's permission layer (still a500d67c8, needs the user's OK)
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
