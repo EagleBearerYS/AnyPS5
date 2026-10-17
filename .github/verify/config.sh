@@ -1,0 +1,4 @@
+BASE=55f82fee838c9895dd19ae8a997cbc935ef566e1
+REPEAT=3
+EXTRA_TESTS='agc_driver_address_draw_reuse|agc_driver_graphics|agc_driver_address_space_teardown|agc_sparse_buffer_holes|agc_compute_descriptor_layout_flags|agc_descriptor_pool_reset_failure|^agc'
+NO_BEFORE=1
