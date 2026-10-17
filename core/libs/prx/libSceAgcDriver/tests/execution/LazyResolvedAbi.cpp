@@ -179,14 +179,12 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, std::uintptr_t pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::uint32_t blend = 0) {
-    const auto& block = layout.data;
+constexpr std::pair<std::uint32_t, std::uint32_t> PrimitiveType{0x242, 4};
+
+std::vector<std::pair<std::uint32_t, std::uint32_t>> DrawContext(const Layout& layout, std::uint32_t blend = 0) {
     const auto color = layout.target.At(ColorOffset);
-    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
-    const auto srt = block.At(SrtOffset);
-    const auto table = block.At(VertexTableOffset);
     const float scale = 32.0f;
-    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
+    return {
         {0x2d5, 0x2000},
         {0x1b6, 0}, {0x207, 0}, {0x200, 0}, {0x203, 0x800},
         {0x2dc, 0xaa00}, {0x2f8, 0}, {0x292, 2}, {0x293, 0},
@@ -208,6 +206,14 @@ std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, s
         {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
     };
+}
+
+std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, std::uintptr_t pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::uint32_t blend = 0) {
+    const auto& block = layout.data;
+    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
+    const auto srt = block.At(SrtOffset);
+    const auto table = block.At(VertexTableOffset);
+    const auto context = DrawContext(layout, blend);
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
         {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 2u << 1u},
         {0x8c, static_cast<std::uint32_t>(table)}, {0x8d, static_cast<std::uint32_t>(table >> 32u)},
@@ -215,7 +221,7 @@ std::vector<std::uint32_t> Commands(const Layout& layout, std::uint32_t draws, s
         {0x00c, static_cast<std::uint32_t>(srt)}, {0x00d, static_cast<std::uint32_t>(srt >> 32u)}, {0x00e, 0}, {0x00f, 0},
     };
     std::vector<std::uint32_t> commands;
-    Append(commands, 0x79, {0x242, 4});
+    Append(commands, 0x79, {PrimitiveType.first, PrimitiveType.second});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
     for (std::uint32_t draw = 0; draw < draws; ++draw) {
@@ -357,6 +363,28 @@ std::size_t Entries(const Synthetic& program) {
     return AgcDriver::DriverDetail::Driver::Get().PreparedEntries(&program.header.shader);
 }
 
+std::string Uses(const AgcDriver::DriverDetail::Driver::DeferredAbiUseCounts& uses) {
+    return std::to_string(uses.firstUses) + " first uses, " + std::to_string(uses.found) + " found, " + std::to_string(uses.own) + " own, " + std::to_string(uses.unmatchedEntries) + " of " + std::to_string(uses.entries) + " entries unmatched";
+}
+
+void MatchingResolution(const Layout& layout, ProgramArena& arena) {
+    const auto before = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
+    std::vector<Synthetic> programs(1);
+    RegisterSynthetic(programs.front(), arena, SyntheticPixelCode(Programs + 1, 0));
+    std::vector<ShaderRegister> context;
+    for (const auto& [offset, value] : DrawContext(layout)) context.push_back({offset, value});
+    const std::array<ShaderRegister, 1> primitive{{{PrimitiveType.first, PrimitiveType.second}}};
+    AgcDriverResolveShaderAbi_nid_postfix(&programs.front().header.shader, context, primitive);
+    Settle(programs);
+    Require(Entries(programs.front()) == 0, "lazy resolved ABI: ResolveShaderAbi prepared entries for the shader resolved with its draw's state");
+    const auto bytes = Draw(layout, programs.front());
+    Require(std::ranges::any_of(bytes, [](std::uint8_t byte) { return byte != 0; }), "lazy resolved ABI: the shader resolved with its draw's state wrote nothing");
+    const auto after = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
+    Require(after.firstUses == before.firstUses + 1 && after.found == before.found + 1 && after.own == before.own, "lazy resolved ABI: a draw whose state matches the resolved ABI did not count as finding its artifact (before: " + Uses(before) + "; after: " + Uses(after) + ")");
+    Require(after.entries > before.entries && after.unmatchedEntries == before.unmatchedEntries + (after.entries - before.entries) - 1, "lazy resolved ABI: the entry a matching draw used still counts as unmatched (before: " + Uses(before) + "; after: " + Uses(after) + ")");
+    std::printf("lazy resolved ABI: a draw with the resolved ABI's state found its artifact among the %llu entries prepared at its first use (%s)\n", static_cast<unsigned long long>(after.entries - before.entries), Uses(after).c_str());
+}
+
 void EagerReference(const Layout& layout, const std::filesystem::path& output) {
     ProgramArena arena(1u << 20u);
     std::vector<Synthetic> programs(1);
@@ -398,6 +426,10 @@ void LazyResolution(const Layout& layout, const std::filesystem::path& reference
         const auto entries = Entries(programs[index]);
         Require(entries == 0, "lazy resolved ABI: shader " + std::to_string(index) + ", which never drew, holds " + std::to_string(entries) + " prepared entries");
     }
+    const auto uses = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
+    Require(uses.firstUses == Drawn && uses.own == Drawn && uses.found == 0, "lazy resolved ABI: draws whose state differs from the resolved ABI did not count as preparing their own artifact (" + Uses(uses) + ")");
+    Require(uses.entries != 0 && uses.unmatchedEntries == uses.entries, "lazy resolved ABI: entries prepared for an ABI no draw used do not count as unmatched (" + Uses(uses) + ")");
+    MatchingResolution(layout, arena);
     Require(std::ranges::any_of(first, [](std::uint8_t byte) { return byte != 0; }), "lazy resolved ABI: the drawn shader wrote nothing");
     Require(first == expected, "lazy resolved ABI: the shader prepared at its first draw drew other bytes than with eager preparation");
     std::printf("lazy resolved ABI: %u of %u ABI-resolved shaders drew; the %u that never drew hold no prepared entries, and a drawn one drew the same %zu bytes as with eager preparation\n", Drawn, Programs, Programs - Drawn, first.size());
