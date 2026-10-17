@@ -36,6 +36,50 @@ std::uint64_t RecapturedStageKeepsItsMemory() {
     const auto both = Submit(two, {{3, 1, low(clipped), 0}, {3, 1, low(visible), 0}});
     hits += both.Hits();
     Require(both.covered != 0, "the indirect draw of a record loading depth 1.0 through its address, then one loading 0.0 at the address the stage was compiled for, covered nothing (" + std::to_string(both.Hits()) + " draw-cache hits)");
+    VisibleDepth.fill(1.0f);
+    const auto rewritten = Submit(draw, {{3, 1, low(visible), 0}});
+    hits += rewritten.Hits();
+    Require(rewritten.covered == 0, "the indirect draw at the compiled address after the CPU rewrote its depth to 1.0 covered " + std::to_string(rewritten.covered) + " bytes, expected none (" + std::to_string(rewritten.Hits()) + " draw-cache hits)");
+    VisibleDepth.fill(0.0f);
+    const auto restored = Submit(draw, {{3, 1, low(visible), 0}});
+    hits += restored.Hits();
+    Require(restored.covered != 0, "the indirect draw at the compiled address after the CPU wrote its depth back to 0.0 covered nothing");
+    return hits;
+}
+
+alignas(256) constexpr std::array<std::uint32_t, 24> DescriptorVertexCode{
+    0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
+    0x7e0c0280u, 0xe0301000u, 0x80020306u, 0xbf8c3f70u,
+    0x7e0802f2u, 0x7e0a02ffu, 0x44800000u, 0xf80000d1u, 0x00000005u, 0xf80008cfu, 0x04030201u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
+};
+alignas(8) Header DescriptorVertexHeader{};
+alignas(4096) std::array<float, 1024> DescriptorVisible{};
+alignas(4096) std::array<float, 1024> DescriptorClipped{};
+
+std::uint64_t DescriptorWordsAreNotPushed() {
+    Registered(DescriptorVertexHeader, DescriptorVertexCode.data(), sizeof(DescriptorVertexCode), 2);
+    DescriptorVisible.fill(0.0f);
+    DescriptorClipped.fill(2.0f);
+    const auto visible = reinterpret_cast<std::uintptr_t>(DescriptorVisible.data());
+    const auto clipped = reinterpret_cast<std::uintptr_t>(DescriptorClipped.data());
+    Require(visible >> 32u == clipped >> 32u, "the two descriptor pages do not share their high address word");
+    const auto low = [](std::uintptr_t address) { return static_cast<std::uint32_t>(address); };
+    const IndirectPacket draw{DescriptorVertexCode.data(), {low(visible), static_cast<std::uint32_t>(visible >> 32u), 4096u, 0x31016facu}, 0, 1, 4};
+    std::uint64_t hits = 0;
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        const auto drawn = Submit(draw, {{3, 1, low(visible), 0}});
+        hits += drawn.Hits();
+        Require(drawn.covered != 0, "the indirect draw whose record sets the base of the vertex shader's V# to depth 0.0 (" + Hex(low(visible)) + ") covered nothing, repeat " + std::to_string(repeat));
+    }
+    const auto moved = Submit(draw, {{3, 1, low(clipped), 0}});
+    hits += moved.Hits();
+    Require(moved.covered == 0, "the indirect draw whose record sets the base of the vertex shader's V# to depth 2.0 (" + Hex(low(clipped)) + ") covered " + std::to_string(moved.covered) + " bytes, expected none: the stage compiled for the V# at " + Hex(low(visible)) + " was reused (" + std::to_string(moved.Hits()) + " draw-cache hits)");
+    auto two = draw;
+    two.records = 2;
+    const auto both = Submit(two, {{3, 1, low(visible), 0}, {3, 1, low(clipped), 0}});
+    hits += both.Hits();
+    const auto first = Submit(draw, {{3, 1, low(visible), 0}});
+    RequireSamePixels(both, first, "the indirect draw of a record whose V# reads depth 0.0, then one whose V# reads 2.0");
     return hits;
 }
 
@@ -110,8 +154,10 @@ int main() {
         const auto pushed = RecordsDrawPerRecord(reference);
         const auto walked = WalkedWordsAreNotReusedAcrossValues();
         const auto addressed = RecapturedStageKeepsItsMemory();
+        const auto described = DescriptorWordsAreNotPushed();
         AgcDriverShutdown_nid_postfix();
-        std::printf("a stage recaptured for one record and drawn at its compiled address for the next read that address (%llu of 4 hits)\n", static_cast<unsigned long long>(addressed));
+        std::printf("a stage recaptured for one record and drawn at its compiled address for the next read that address, and saw the CPU rewrite it (%llu of 6 hits)\n", static_cast<unsigned long long>(addressed));
+        std::printf("a record that moves the base of a V# in user data drew from the moved buffer (%llu of 6 hits)\n", static_cast<unsigned long long>(described));
         std::printf("CPU-path indirect draws drew each record's base vertex and start instance (%llu of 7 draws were draw-cache hits) and a stage whose patched word is a load address was not reused across values (%llu of 5 hits)\n", static_cast<unsigned long long>(pushed), static_cast<unsigned long long>(walked));
         return 0;
     } catch (const std::exception& error) {

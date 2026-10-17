@@ -71,9 +71,10 @@ inline void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, s
 
 struct IndirectPacket {
     const std::uint32_t* vertex = nullptr;
-    std::array<std::uint32_t, 2> userWords{};
+    std::array<std::uint32_t, 4> userWords{};
     std::uint32_t startInstanceLocation = 0;
     std::uint32_t records = 1;
+    std::uint32_t userWordCount = 2;
 };
 
 inline const IndirectPacket PushedOne{PushedVertexCode.data(), {Clipped, Clipped}, StartInstanceLocation, 1};
@@ -106,11 +107,9 @@ inline std::vector<std::uint32_t> Commands(const IndirectPacket& draw) {
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
         {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)},
     };
-    const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
-        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 2u << 1u},
-        {BaseVertexLocation, draw.userWords[0]}, {StartInstanceLocation, draw.userWords[1]},
-        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 1u << 1u}, {0x00c, std::bit_cast<std::uint32_t>(1.0f)},
-    };
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{{0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, draw.userWordCount << 1u}};
+    for (std::uint32_t word = 0; word < draw.userWordCount; ++word) shader.emplace_back(BaseVertexLocation + word, draw.userWords[word]);
+    shader.insert(shader.end(), {{0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 1u << 1u}, {0x00c, std::bit_cast<std::uint32_t>(1.0f)}});
     std::vector<std::uint32_t> commands;
     Append(commands, 0x79, {0x242, 4});
     Append(commands, 0x79, {0x24a, 0});
