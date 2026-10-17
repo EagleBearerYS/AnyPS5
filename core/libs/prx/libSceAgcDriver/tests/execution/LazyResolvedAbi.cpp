@@ -318,15 +318,15 @@ private:
     std::uint8_t* base = nullptr;
 };
 
-void RegisterSynthetic(Synthetic& program, ProgramArena& arena, const std::vector<std::uint32_t>& code) {
-    program.code = arena.Place(code);
+void RegisterHeader(Synthetic& program, std::uint32_t* code, std::size_t words) {
+    program.code = code;
     const auto address = reinterpret_cast<std::uintptr_t>(program.code);
     auto& header = program.header;
     header.registers = {{{0x008, static_cast<std::uint32_t>(address >> 8u)}, {0x009, static_cast<std::uint32_t>(address >> 40u)}, {0x00b, 8u << 1u}, {0x00a, 0}}};
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18u;
     header.shader.header_size = sizeof(SyntheticHeader);
-    header.shader.shader_size = static_cast<std::uint32_t>(code.size() * sizeof(std::uint32_t));
+    header.shader.shader_size = static_cast<std::uint32_t>(words * sizeof(std::uint32_t));
     header.shader.code = program.code;
     header.shader.type = 1;
     header.shader.user_data = &header.userData;
@@ -335,6 +335,10 @@ void RegisterSynthetic(Synthetic& program, ProgramArena& arena, const std::vecto
     header.shader.cx_registers = header.context.data();
     header.shader.num_cx_registers = static_cast<std::uint32_t>(header.context.size());
     AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+void RegisterSynthetic(Synthetic& program, ProgramArena& arena, const std::vector<std::uint32_t>& code) {
+    RegisterHeader(program, arena.Place(code), code.size());
 }
 
 constexpr std::uint32_t Programs = 4;
@@ -376,7 +380,14 @@ std::size_t Entries(const Synthetic& program) {
 }
 
 constexpr std::uint32_t Matching = Programs;
-constexpr std::array<std::uint32_t, 3> DrawnPrograms{0, 1, Matching};
+constexpr std::uint32_t Twice = Programs + 1;
+constexpr std::uint32_t Replaced = Programs + 2;
+constexpr std::uint32_t Replacement = Programs + 3;
+constexpr std::array<std::uint32_t, 6> DrawnPrograms{0, 1, Matching, Twice, Replaced, Replacement};
+
+bool RegistrationAbi(std::uint32_t index) {
+    return index < Programs || index == Twice;
+}
 
 using Report = std::map<std::string, std::string>;
 
@@ -420,7 +431,7 @@ std::vector<std::string> EagerResolutionEntries(const Report& eager, std::uint32
     const auto id = std::to_string(index);
     const auto registered = Prints(eager.at("registered " + id));
     const auto drawn = Prints(eager.at("drawn " + id));
-    if (Count(eager.at("resolved " + id)) == registered.size()) return drawn;
+    if (RegistrationAbi(index)) return drawn;
     std::vector<std::string> made;
     std::ranges::set_difference(drawn, registered, std::back_inserter(made));
     return made;
@@ -431,24 +442,40 @@ Report Scenario(const Layout& layout, std::vector<std::uint8_t>& first) {
     Report report;
     report["libraries before"] = Text(driver.PrebuiltLibraries());
     ProgramArena arena(1u << 20u);
-    std::vector<Synthetic> programs(Matching + 1);
-    for (std::uint32_t index = 0; index <= Matching; ++index) RegisterSynthetic(programs[index], arena, SyntheticPixelCode(index + 1, 0));
-    Settle(programs);
-    for (std::uint32_t index = 0; index <= Matching; ++index) report["registered " + std::to_string(index)] = Text(driver.PreparedEntryHashes(&programs[index].header.shader));
-    for (std::uint32_t index = 0; index < Programs; ++index) AgcDriverResolveShaderAbi_nid_postfix(&programs[index].header.shader, {}, {});
+    std::vector<Synthetic> programs(Replacement + 1);
+    const auto record = [&](const char* phase, std::uint32_t index) {
+        report[std::string(phase) + " " + std::to_string(index)] = Text(driver.PreparedEntryHashes(&programs[index].header.shader));
+    };
+    const auto resolved = std::span(programs).first(Replaced + 1);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) RegisterSynthetic(programs[index], arena, SyntheticPixelCode(index + 1, 0));
+    Settle(resolved);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) record("registered", index);
     std::vector<ShaderRegister> context;
     for (const auto& [offset, value] : DrawContext(layout)) context.push_back({offset, value});
-    const std::array<ShaderRegister, 1> primitive{{{PrimitiveType.first, PrimitiveType.second}}};
+    std::array<ShaderRegister, 1> primitive{{{PrimitiveType.first, PrimitiveType.second}}};
+    for (std::uint32_t index = 0; index < Programs; ++index) AgcDriverResolveShaderAbi_nid_postfix(&programs[index].header.shader, {}, {});
     AgcDriverResolveShaderAbi_nid_postfix(&programs[Matching].header.shader, context, primitive);
-    Settle(programs);
-    for (std::uint32_t index = 0; index <= Matching; ++index) report["resolved " + std::to_string(index)] = Text(driver.PreparedEntryHashes(&programs[index].header.shader));
+    AgcDriverResolveShaderAbi_nid_postfix(&programs[Twice].header.shader, {}, {});
+    AgcDriverResolveShaderAbi_nid_postfix(&programs[Twice].header.shader, context, primitive);
+    AgcDriverResolveShaderAbi_nid_postfix(&programs[Replaced].header.shader, context, primitive);
+    for (auto& reg : context) reg.value = ~reg.value;
+    primitive.front().value = ~primitive.front().value;
+    Settle(resolved);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) record("resolved", index);
     report["libraries resolved"] = Text(driver.PrebuiltLibraries());
-    for (const auto index : DrawnPrograms) {
-        auto bytes = Draw(layout, programs[index]);
+    RegisterHeader(programs[Replacement], programs[Replaced].code, programs[Replaced].header.shader.shader_size / sizeof(std::uint32_t));
+    Settle(std::span(programs).subspan(Replacement, 1));
+    record("registered", Replacement);
+    const auto draw = [&](std::uint32_t index, const Synthetic& program) {
+        auto bytes = Draw(layout, program);
         Require(std::ranges::any_of(bytes, [](std::uint8_t byte) { return byte != 0; }), "lazy resolved ABI: drawn shader " + std::to_string(index) + " wrote nothing");
         if (index == 0) first = std::move(bytes);
-    }
-    for (std::uint32_t index = 0; index <= Matching; ++index) report["drawn " + std::to_string(index)] = Text(driver.PreparedEntryHashes(&programs[index].header.shader));
+    };
+    for (const auto index : {0u, 1u, Matching, Twice}) draw(index, programs[index]);
+    draw(Replacement, programs[Replacement]);
+    AgcDriverRegisterShader_nid_postfix(&programs[Replaced].header.shader);
+    draw(Replaced, programs[Replaced]);
+    for (std::uint32_t index = 0; index <= Replacement; ++index) record("drawn", index);
     report["libraries drawn"] = Text(driver.PrebuiltLibraries());
     return report;
 }
@@ -470,7 +497,7 @@ std::set<std::string> CacheFiles(const std::filesystem::path& cache) {
 void EagerReference(const Layout& layout, const std::filesystem::path& output) {
     std::vector<std::uint8_t> bytes;
     const auto report = Scenario(layout, bytes);
-    for (std::uint32_t index = 0; index <= Matching; ++index) Require(Count(report.at("resolved " + std::to_string(index))) != 0, "lazy resolved ABI: eager preparation left resolved shader " + std::to_string(index) + " unprepared");
+    for (std::uint32_t index = 0; index <= Replaced; ++index) Require(Count(report.at("resolved " + std::to_string(index))) != 0, "lazy resolved ABI: eager preparation left resolved shader " + std::to_string(index) + " unprepared");
     std::ofstream file(output, std::ios::binary | std::ios::trunc);
     file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     Require(file.good(), "lazy resolved ABI: cannot write the eager reference");
@@ -497,12 +524,12 @@ void LazyResolution(const Layout& layout, const std::filesystem::path& reference
     }
     std::vector<std::uint8_t> first;
     const auto lazy = Scenario(layout, first);
-    for (std::uint32_t index = 0; index <= Matching; ++index) {
+    for (std::uint32_t index = 0; index <= Replaced; ++index) {
         const auto key = "resolved " + std::to_string(index);
         Require(Count(lazy.at(key)) == 0, "lazy resolved ABI: ResolveShaderAbi prepared " + std::to_string(Count(lazy.at(key))) + " entries for shader " + std::to_string(index) + " under APS5_LAZY_SHADER_PREPARE");
     }
     Require(lazy.at("libraries resolved") == lazy.at("libraries before"), "lazy resolved ABI: ResolveShaderAbi built pipeline libraries under APS5_LAZY_SHADER_PREPARE (" + lazy.at("libraries before") + " before, " + lazy.at("libraries resolved") + " after)");
-    for (std::uint32_t index = 0; index <= Matching; ++index) Require(Count(lazy.at("registered " + std::to_string(index))) == 0, "lazy resolved ABI: registration prepared shader " + std::to_string(index) + " under APS5_LAZY_SHADER_PREPARE");
+    for (std::uint32_t index = 0; index <= Replacement; ++index) Require(Count(lazy.at("registered " + std::to_string(index))) == 0, "lazy resolved ABI: registration prepared shader " + std::to_string(index) + " under APS5_LAZY_SHADER_PREPARE");
     for (const auto index : DrawnPrograms) {
         const auto expected = EagerResolutionEntries(eager, index);
         const auto held = Prints(lazy.at("drawn " + std::to_string(index)));
@@ -512,8 +539,9 @@ void LazyResolution(const Layout& layout, const std::filesystem::path& reference
         const auto key = "drawn " + std::to_string(index);
         Require(Count(lazy.at(key)) == 0, "lazy resolved ABI: shader " + std::to_string(index) + ", which never drew, holds " + std::to_string(Count(lazy.at(key))) + " prepared entries");
     }
-    Require(eager.at("drawn " + std::to_string(Matching)) == eager.at("resolved " + std::to_string(Matching)), "lazy resolved ABI: the draw whose state is its resolved ABI's did not find the ABI's entries with eager preparation");
+    for (const auto index : {Matching, Twice, Replaced}) Require(eager.at("drawn " + std::to_string(index)) == eager.at("resolved " + std::to_string(index)), "lazy resolved ABI: shader " + std::to_string(index) + ", drawn with its resolved ABI's state, did not find the ABI's entries with eager preparation");
     for (std::uint32_t index = 0; index < Drawn; ++index) Require(Count(eager.at("drawn " + std::to_string(index))) == Count(eager.at("resolved " + std::to_string(index))) + 1, "lazy resolved ABI: a draw whose state differs from its resolved ABI did not prepare its own entry with eager preparation");
+    Require(Count(eager.at("drawn " + std::to_string(Replacement))) == Count(eager.at("registered " + std::to_string(Replacement))) + 1, "lazy resolved ABI: the header registered over a resolved one did not prepare its own entry at its draw with eager preparation");
     Require(lazy.at("libraries drawn") == eager.at("libraries drawn"), "lazy resolved ABI: the pipeline libraries built differ from eager preparation (eager " + eager.at("libraries drawn") + "; lazy " + lazy.at("libraries drawn") + ")");
     Require(first == expected, "lazy resolved ABI: the shader prepared at its first draw drew other bytes than with eager preparation");
     AgcDriverWaitIdle_nid_postfix();
@@ -521,7 +549,7 @@ void LazyResolution(const Layout& layout, const std::filesystem::path& reference
     std::vector<std::string> added;
     std::ranges::set_difference(files, cached, std::back_inserter(added));
     Require(added.empty(), "lazy resolved ABI: preparation at first use wrote " + std::to_string(added.size()) + " shader cache files eager preparation had not, the first " + (added.empty() ? std::string() : added.front()));
-    std::printf("lazy resolved ABI: %u of %u ABI-resolved shaders drew; the %u that never drew hold no prepared entries; the drawn ones hold eager resolution's entries (the one drawn with its ABI's state found them, the others prepared their own), the pipeline libraries built match eager's (%s), a drawn one drew the same %zu bytes, and the lazy run wrote none of the %zu shader cache files eager wrote again\n", static_cast<unsigned>(DrawnPrograms.size()), Matching + 1, Programs - Drawn, lazy.at("libraries drawn").c_str(), first.size(), cached.size());
+    std::printf("lazy resolved ABI: %u shaders drew, %u of them ABI-resolved; the %u resolved ones that never drew hold no prepared entries; the drawn ones hold the entries eager resolution and their draws made: drawn with their ABI's state they found them, with the ABI register arrays overwritten after resolution (one resolved with two ABIs, one whose header was registered over and again before its draw), drawn with another state they prepared their own; the pipeline libraries built match eager's (%s), a drawn one drew the same %zu bytes, and the lazy run wrote none of the %zu shader cache files eager wrote again\n", static_cast<unsigned>(DrawnPrograms.size()), static_cast<unsigned>(DrawnPrograms.size() - 1), Programs - Drawn, lazy.at("libraries drawn").c_str(), first.size(), cached.size());
 }
 
 }
