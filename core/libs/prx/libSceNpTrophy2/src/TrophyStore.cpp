@@ -85,9 +85,15 @@ struct Listener {
 
 struct Listeners {
     std::mutex mutex;
+    std::recursive_mutex dispatch;
     std::vector<Listener> entries;
     std::uint64_t next = 1;
 };
+
+bool registered(Listeners& registry, std::uint64_t id) {
+    std::lock_guard lock(registry.mutex);
+    return std::any_of(registry.entries.begin(), registry.entries.end(), [id](const Listener& entry) { return entry.id == id; });
+}
 
 Listeners& listeners() {
     static Listeners registry;
@@ -206,13 +212,16 @@ bool RecordUnlock(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t 
     const NpTrophy2Unlock unlock{std::string(titleId), userId, serviceLabel, trophyId, CurrentTick()};
     if (!TitleStore().Unlock(userId, serviceLabel, trophyId, unlock.tick)) return false;
     std::fprintf(stderr, "[trophy] %s unlocked trophy %d for user %d\n", unlock.titleId.c_str(), trophyId, userId);
+    auto& registry = listeners();
+    std::lock_guard dispatching(registry.dispatch);
     std::vector<Listener> current;
     {
-        auto& registry = listeners();
         std::lock_guard lock(registry.mutex);
         current = registry.entries;
     }
-    for (const auto& entry : current) entry.callback(entry.context, unlock);
+    for (const auto& entry : current) {
+        if (registered(registry, entry.id)) entry.callback(entry.context, unlock);
+    }
     const auto* package = Package(serviceLabel);
     if (package == nullptr) return true;
     if (const auto platinum = PlatinumToUnlock(*package, trophyId, UnlockedBy(userId, serviceLabel))) RecordUnlock(userId, serviceLabel, *platinum);
@@ -244,6 +253,7 @@ extern "C" std::uint64_t NpTrophy2AddUnlockListener_nid_no_patch(NpTrophy2Unlock
 
 extern "C" void NpTrophy2RemoveUnlockListener_nid_no_patch(std::uint64_t id) {
     auto& registry = NpTrophy2::listeners();
+    std::lock_guard dispatching(registry.dispatch);
     std::lock_guard lock(registry.mutex);
     const auto removed = std::erase_if(registry.entries, [id](const NpTrophy2::Listener& entry) { return entry.id == id; });
     if (removed == 0) throw std::invalid_argument("no trophy unlock listener has id " + std::to_string(id));

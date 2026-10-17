@@ -3,6 +3,8 @@
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +14,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -152,7 +155,7 @@ void testPersistence() {
 
 void testDamagedRecords() {
     const std::filesystem::path directory("damaged");
-    for (const char* text : {"12\n", "12 x\n", "x 5\n", "-1 5\n", "12 5\n12 6\n", "12 5 7\n", "\n"}) {
+    for (const char* text : {"12\n", "12 x\n", "x 5\n", "-1 5\n", "12 5\n12 6\n", "12 5 7\n", "\n", "12 5\r\n"}) {
         std::filesystem::remove_all(directory);
         std::filesystem::create_directories(directory);
         write("damaged/268435456_0.txt", text);
@@ -180,6 +183,29 @@ std::uint32_t unlockedTrophies(int context) {
     NpTrophy2GameData data{};
     check(sceNpTrophy2GetGameInfo(context, 1, nullptr, &data) == 0, "GetGameInfo failed");
     return data.unlocked_trophies;
+}
+
+struct SlowListener {
+    std::atomic<bool> running{false};
+    std::atomic<bool> finished{false};
+};
+
+void slowly(void* context, const NpTrophy2Unlock&) {
+    auto* state = static_cast<SlowListener*>(context);
+    state->running = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    state->finished = true;
+}
+
+void testListenerRemovalWaitsForItsCallback() {
+    SlowListener state;
+    const auto listener = NpTrophy2AddUnlockListener_nid_no_patch(slowly, &state);
+    std::thread unlocking([] { NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 2, 1); });
+    while (!state.running) std::this_thread::yield();
+    NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
+    const bool finished = state.finished;
+    unlocking.join();
+    check(finished, "a listener was removed while its callback was still running, so its context could be freed under it");
 }
 
 void testQueries() {
@@ -270,6 +296,7 @@ int main() {
     testDamagedRecords();
     testQueries();
     testPostedUnlockRules();
+    testListenerRemovalWaitsForItsCallback();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     std::puts("Trophy store tests passed");
