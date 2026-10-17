@@ -1,4 +1,4 @@
-BUSY BF-062 (claimed 15:15Z; pushed: step 1 b883c9d58, arm 3 test/three-title-base3a-6178-bf059 0cf5cdcbf, arm 4 test/three-title-base3a-6178-bf059-spirv d81d8ca0b; ctest running)
+READY (last: BF-062 done 16:19Z, results/cloud-3/BF-062.md)
 RESULT:
 - Repo: /home/user/AnyPS5, detached at upstream main e1ac3300d (Merge pull request #6224), submodules recursive at depth 1. fork/main was 92e50418f. Setup committed nothing to the code.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev ccache vulkan-tools (release.yml's list, plus ccache and vulkan-tools). apt reaches the Ubuntu mirrors only over HTTPS through the agent proxy: /etc/apt/sources.list.d/ubuntu.sources uses https:// URIs and /etc/apt/apt.conf.d/99agentproxy sets the proxy (original in /root/ubuntu.sources.orig).
