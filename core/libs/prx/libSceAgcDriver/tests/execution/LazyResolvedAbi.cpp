@@ -338,6 +338,14 @@ void SetEnvironment(const char* name, const std::string& value) {
 #endif
 }
 
+void ClearEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
 void Settle(std::span<const Synthetic> programs) {
     std::vector<const Shader*> registered;
     for (const auto& program : programs) registered.push_back(&program.header.shader);
@@ -420,6 +428,7 @@ int main(int argc, char** argv) {
         } else {
             reference = std::filesystem::temp_directory_path() / ("aps5-lazy-resolved-abi-" + std::to_string(std::random_device{}()) + ".bin");
             SetEnvironment("LAZY_RESOLVED_ABI_REFERENCE", reference.string());
+            ClearEnvironment("APS5_LAZY_SHADER_PREPARE");
             const std::string command = "\"" + std::string(argv[0]) + "\" --eager-reference";
             Require(std::system(command.c_str()) == 0, "lazy resolved ABI: the eager reference process failed");
             SetEnvironment("APS5_LAZY_SHADER_PREPARE", "1");
