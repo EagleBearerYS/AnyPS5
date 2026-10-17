@@ -1,4 +1,4 @@
-BUSY BF-045 (blocked: building fable-void's fork was refused by this session's safety check; asked the user for permission; running the control on main 16c607a93; partial result in results/cloud-3/BF-045.md)
+BUSY BF-045 (user approved building fable-void's fork; control on main 16c607a93 done; building his ed8f2d7a2e)
 RESULT:
 - Repo: /home/user/AnyPS5, detached at upstream main e1ac3300d (Merge pull request #6224), submodules recursive at depth 1. fork/main was 92e50418f. Setup committed nothing to the code.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev ccache vulkan-tools (release.yml's list, plus ccache and vulkan-tools). apt reaches the Ubuntu mirrors only over HTTPS through the agent proxy: /etc/apt/sources.list.d/ubuntu.sources uses https:// URIs and /etc/apt/apt.conf.d/99agentproxy sets the proxy (original in /root/ubuntu.sources.orig).
