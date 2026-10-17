@@ -416,6 +416,58 @@ void CheckNewestStamp() {
 }
 
 #ifdef _WIN32
+std::size_t CommittedBytes(const TableReservation& table) {
+    const auto begin = reinterpret_cast<std::uintptr_t>(table.base);
+    const auto end = begin + table.bytes;
+    std::size_t committed = 0;
+    for (auto cursor = begin; cursor < end;) {
+        MEMORY_BASIC_INFORMATION memory{};
+        Require(VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) == sizeof(memory) && memory.RegionSize != 0, "cannot query a guest memory table");
+        const auto regionEnd = std::min<std::uintptr_t>(reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize, end);
+        if (memory.State == MEM_COMMIT) committed += regionEnd - cursor;
+        cursor = regionEnd;
+    }
+    return committed;
+}
+
+void CheckTableCommitCharge() {
+    constexpr std::size_t Regions = 32;
+    constexpr std::size_t TablePage = 65536;
+    std::uintptr_t arenaBase = 0;
+    std::size_t arenaBytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
+    Require(arenaBytes >= Regions * 1024 * Block, "the arena is too small for scattered regions");
+    std::vector<void*> regions;
+    for (std::size_t region = 0; region < Regions; ++region) {
+        void* memory = GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(arenaBase + region * (arenaBytes / Regions), Block, Block);
+        Require(memory != nullptr, "cannot allocate a scattered region");
+        GuestArena::GuestArenaCommit_nid_postfix(memory, Block, PAGE_READWRITE, Block);
+        regions.push_back(memory);
+    }
+    for (void* memory : regions) {
+        const auto address = reinterpret_cast<std::uint64_t>(memory);
+        Require(Accessible(memory, Block, true), "a scattered region is not accessible");
+        std::memset(memory, 0x5a, Block);
+        MarkWritten(address + 16, 4);
+        static_cast<void>(CollectWritesUncached(address, Block));
+    }
+    const auto tables = TableReservations();
+    Require(!tables.empty(), "the page-state table is missing");
+    std::size_t checked = 0;
+    for (const auto& table : tables) {
+        if (table.bytes <= 8 * Regions * TablePage) continue;
+        const auto committed = CommittedBytes(table);
+        Require(committed <= 4 * Regions * TablePage, "a guest memory table of " + std::to_string(table.bytes >> 20) + " MiB has " + std::to_string(committed >> 10) + " KiB committed after " + std::to_string(Regions) + " scattered regions");
+        std::cout << "a guest memory table of " << (table.bytes >> 20) << " MiB has " << (committed >> 10) << " KiB committed after " << Regions << " scattered regions\n";
+        ++checked;
+    }
+    Require(checked != 0, "no guest memory table is large enough to check");
+    for (void* memory : regions) {
+        GuestArena::GuestArenaReset_nid_postfix(memory, Block);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, Block);
+    }
+}
+
 void CheckDeferredSharedImports() {
     constexpr std::size_t bytes = 4 * Block;
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, bytes, nullptr);
@@ -1068,6 +1120,9 @@ int main(int argc, char** argv) {
 #endif
         CheckStampLeaves();
         CheckStampEquivalence();
+#ifdef _WIN32
+        CheckTableCommitCharge();
+#endif
         CheckSharedBlock();
         CheckStoredAllSince();
         CheckOwnStore();

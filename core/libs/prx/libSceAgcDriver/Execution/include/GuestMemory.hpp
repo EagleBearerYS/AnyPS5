@@ -26,6 +26,11 @@ struct Commitment {
     bool whole = false;
 };
 Commitment DescribeCommitted(std::uint64_t address, std::size_t bytes, bool writable = false);
+struct TableReservation {
+    const void* base = nullptr;
+    std::size_t bytes = 0;
+};
+std::vector<TableReservation> TableReservations();
 std::size_t StampTableBytes();
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment = 1);
 // Variants for resources in heaps the guest commits on demand (partially resident textures, GPU

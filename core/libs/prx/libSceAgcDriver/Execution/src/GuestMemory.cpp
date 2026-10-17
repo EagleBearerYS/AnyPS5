@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TouchedTable.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WriteWatchCoverage.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -365,19 +366,17 @@ struct PageSpan {
     std::uintptr_t base = 0;
     std::size_t size = 0;
     // Per page: access flags, zero while unknown.
-    std::uint8_t* pages = nullptr;
+    TouchedTable<std::uint8_t> pages;
 
-    // Reserves and commits the table; untouched table pages cost nothing until a guest page is recorded.
     bool allocate() {
         if (size == 0) return false;
-        const auto count = (size / PageBytes + 8) & ~static_cast<std::size_t>(7);
 #ifdef _WIN32
-        pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        constexpr auto backing = TableBacking::Reserved;
 #else
-        pages = static_cast<std::uint8_t*>(std::calloc(count, 1));
+        constexpr auto backing = TableBacking::Heap;
 #endif
-        if (pages == nullptr) size = 0;
-        return pages != nullptr;
+        if (!pages.Allocate(size / PageBytes + 8, backing)) size = 0;
+        return size != 0;
     }
 
     bool covers(std::uintptr_t address) const {
@@ -385,34 +384,24 @@ struct PageSpan {
     }
 
     std::uint8_t load(std::uintptr_t address) const {
-        return std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[(address - base) / PageBytes])).load(std::memory_order_relaxed);
+        return pages.Load((address - base) / PageBytes);
     }
 
     void store(std::uintptr_t address, std::uint8_t value) {
-        std::atomic_ref<std::uint8_t>(pages[(address - base) / PageBytes]).store(value, std::memory_order_relaxed);
+        pages.Store((address - base) / PageBytes, value);
     }
 
     // End of the run of pages equal to `value` that starts at `address`, at most `limit`.
     std::uintptr_t runEnd(std::uintptr_t address, std::uint8_t value, std::uintptr_t limit) const {
-        auto index = (address - base) / PageBytes;
         const auto stop = std::min<std::uintptr_t>((std::min(limit, base + size) - base + PageBytes - 1) / PageBytes, size / PageBytes);
-        const std::uint64_t wide = 0x0101010101010101ull * value;
-        while (index < stop) {
-            if (index % 8 == 0 && index + 8 <= stop && std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(const_cast<std::uint8_t*>(pages + index))).load(std::memory_order_relaxed) == wide) {
-                index += 8;
-                continue;
-            }
-            if (std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[index])).load(std::memory_order_relaxed) != value) break;
-            ++index;
-        }
-        return std::min(limit, base + index * PageBytes);
+        return std::min(limit, base + pages.RunEnd((address - base) / PageBytes, value, stop) * PageBytes);
     }
 
     void forget(std::uintptr_t address, std::size_t bytes) {
         if (size == 0 || bytes == 0 || address >= base + size || address + bytes <= base) return;
         const auto first = (std::max(address, base) - base) / PageBytes;
         const auto last = (std::min(address + bytes, base + size) - 1 - base) / PageBytes;
-        for (auto page = first; page <= last; ++page) std::atomic_ref<std::uint8_t>(pages[page]).store(0, std::memory_order_relaxed);
+        pages.Clear(first, last + 1);
     }
 };
 
@@ -447,8 +436,8 @@ struct PageStates {
 };
 
 PageStates& Pages() {
-    static PageStates pages;
-    return pages;
+    static auto* pages = new PageStates;
+    return *pages;
 }
 
 std::uintptr_t PagesBase() {
@@ -1378,6 +1367,16 @@ bool WriteWatched() {
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     return tracker.watched;
+}
+
+std::vector<TableReservation> TableReservations() {
+    auto& pages = Pages();
+    pages.initialize();
+    std::vector<TableReservation> tables;
+    for (const auto* span : {&pages.arena, &pages.image}) {
+        if (span->size != 0) tables.push_back({span->pages.Reservation(), span->pages.ReservedBytes()});
+    }
+    return tables;
 }
 
 std::size_t StampTableBytes() {
