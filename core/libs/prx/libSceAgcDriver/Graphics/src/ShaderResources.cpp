@@ -5157,6 +5157,12 @@ std::vector<std::pair<VkImage, bool>> ShaderResources::StorageImages() const {
     for (const auto& texture : textures) {
         if (texture != nullptr && texture->StorageSource() != nullptr) images.emplace_back(texture->StorageSource()->Image(), false);
     }
+    if (deviceImages) {
+        if (const auto* table = DeviceImageTable::Existing(context)) {
+            const auto held = table->StorageImages();
+            images.insert(images.end(), held.begin(), held.end());
+        }
+    }
     return images;
 }
 
