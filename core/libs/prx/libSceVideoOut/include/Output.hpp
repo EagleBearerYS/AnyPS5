@@ -2,10 +2,18 @@
 #define CORE_LIBS_PRX_LIBSCEVIDEOUOUT_INCLUDE_OUTPUT_HPP
 
 #include <cstdint>
+#include <optional>
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 
+struct VideoOutOutputResolution {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+};
+
 int ValidateVideoOutOutputMode_nid_no_patch(uint64_t mode, const VideoOutOutputOptions* options, int displayRefreshRate);
+std::optional<VideoOutOutputResolution> ParseVideoOutOutputResolution_nid_no_patch(const char* value);
+std::optional<VideoOutOutputResolution> ConfiguredVideoOutOutputResolution_nid_no_patch();
 
 extern "C" {
 
