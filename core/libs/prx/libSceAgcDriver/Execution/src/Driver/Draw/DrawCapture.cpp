@@ -90,9 +90,10 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         if (reusedWords != nullptr) words = std::const_pointer_cast<ShaderRecompiler::HeapStageWords>(std::move(reusedWords));
         stageCapture.heapWords = stageCapture.compiled->heapTemplateId != 0 ? std::move(words) : nullptr;
         if (SampleHeapStageVerify()) {
-            const auto expected = invocation.Materialize(*shaderMemory.Capture(invocation));
+            const auto fullCapture = shaderMemory.Capture(invocation);
+            const auto expected = invocation.Materialize(*fullCapture);
             static_cast<void>(shaderMemory.TakeRecentRegions());
-            NoteHeapDirectVerify(stageCapture.heapWords != nullptr ? *PatchedHeapResult(*stageCapture.compiled, *stageCapture.heapWords) : *stageCapture.compiled, *expected);
+            NoteHeapDirectVerify(stageCapture.heapWords != nullptr ? *PatchedHeapResult(*stageCapture.compiled, *stageCapture.heapWords) : *stageCapture.compiled, *expected, fullCapture.get());
         }
         stageCapture.regions.clear();
         stageCapture.direct = true;
