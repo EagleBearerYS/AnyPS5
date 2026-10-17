@@ -1,8 +1,6 @@
-BUSY LA-011
-since: 2026-10-17T16:06Z (LA-011, lane A device tables only in recorded draws; rebase onto PR 6947's newest head as exp/lane-a-v3)
-claimed: tasks/claimed/LA-011.md
-step: interim v3 pushed (exp/lane-a-v3 2f051fa1f on 424db208d, mirror 1,450/1,428 IPv6 5 only); now step 2 on exp/lane-a-recorded
-previous: LA-010 done, results/cloud-5/LA-010.md: lane A on PR 6947 cae12b7d5 as exp/lane-a-v2 b63fa365d (39 commits, 16 built and tested, FormatVersion 42/43); compute on the heap set kept under APS5_GPU_PATH (c6ac527a9, no VUID-07988); lane A keeps his heap-full margin free (max(margin, half with APS5_GPU_HEAP)): cap 1100 -> 550, 1030 -> 515, never refuses his heap; journal entries without the table rejected, not failed; his full_heap tests pass switch off, abort switch on (draw outside the recorder, open); mirror 1,450/1,428 IPv6 5 only; scope 10 = LA-005's 8 + his 2 full_heap; bench no fallback; exp/pr6947-bind-split-v2 9259bcdfc: 2,000 GPU-mode draws 8,838 -> 936 us wall, lavapipe 8,145 -> 675 us; PR since moved to f2a7557cd (39 commits pick clean, not built)
+READY
+since: 2026-10-17T16:56Z
+previous: LA-011 done, results/cloud-5/LA-011.md: exp/lane-a-v3 2f051fa1f (39 lane A commits on PR 6947 424db208d, all clean, mirror 1,450/1,428 IPv6 5 only); exp/lane-a-recorded 9673cb568 (option (b): a draw outside the recorder re-prepares its device-table stages with the CPU target and draws again, no fallback, draw cache keeps the device variants; 68d3fd6bd lane A only + 9673cb568 harness part (m)); his six heap_draw_sample pass switch on and off (red on v3: 6 abort); part (m) red aborts with today's message, green shows device prepares 1, miss records 1 on the next recorded draw; scope 747: 10 -> 4 (bindless_images, image_sint8, image_table, image_table_cache_bounds); mirror 1,450/1,428 IPv6 5 only; each commit 85 tests 0 failed; cost +0.22 ms on 7.64 ms per unrecorded draw; journal switch-off test passes on v3 (2 rejected, 0 failed)
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
