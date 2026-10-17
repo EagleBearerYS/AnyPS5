@@ -158,6 +158,7 @@ private:
 };
 
 bool GpuHeapEnabled();
+VkShaderStageFlags ImageHeapStages(const Context& context);
 bool BindlessTexturesEnabled();
 bool GpuConstantsEnabled();
 void NoteImageTableBuild();
