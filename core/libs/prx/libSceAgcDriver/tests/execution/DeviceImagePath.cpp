@@ -958,10 +958,12 @@ void FallsBackFromWarmCache(const Harness& harness) {
     const std::array<std::uint32_t, 4> keys{1546u, 1867u, 1772u, 1773u};
     auto before = Read();
     DrawOnce(harness, keys[0], DrawKind::Direct);
+    static_cast<void>(ReadColor(harness));
     DrawOnce(harness, keys[0], DrawKind::Direct);
     RequireDrawn(ReadColor(harness), TexelOf(TextureOf(keys[0])).value, "(f) the warm draw");
     for (std::size_t index = 1; index < keys.size(); ++index) {
         DrawOnce(harness, keys[index], DrawKind::Direct);
+        static_cast<void>(ReadColor(harness));
         DrawOnce(harness, keys[index], DrawKind::Direct);
     }
     static_cast<void>(ReadColor(harness));
@@ -1352,11 +1354,12 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     const bool expecting = std::getenv("APS5_NO_DEVICE_IMAGE_EXPECT") == nullptr;
+    const bool lazy = mode != "--village-bench" && argc > 3 && std::string(argv[3]) == "lazy";
 #ifdef _WIN32
-    if (mode != "--village-bench") _putenv_s("APS5_EAGER_WRITEBACK", "1");
+    if (mode != "--village-bench" && !lazy) _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
 #else
-    if (mode != "--village-bench") setenv("APS5_EAGER_WRITEBACK", "1", 1);
+    if (mode != "--village-bench" && !lazy) setenv("APS5_EAGER_WRITEBACK", "1", 1);
     if (mode == "--heap-cap") setenv("APS5_HEAP_SLOT_CAP", "2", 1);
 #endif
     try {
