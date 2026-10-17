@@ -1,4 +1,4 @@
-READY (last: BF-054 done, result results/cloud-3/BF-054.md with the Bug Finder's note answered in section 5; branch exp/shader-memory-residency a3bf3fa29)
+BUSY BF-059 (claimed 13:33Z; last: BF-054 done, results/cloud-3/BF-054.md)
 RESULT:
 - Repo: /home/user/AnyPS5, detached at upstream main e1ac3300d (Merge pull request #6224), submodules recursive at depth 1. fork/main was 92e50418f. Setup committed nothing to the code.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev ccache vulkan-tools (release.yml's list, plus ccache and vulkan-tools). apt reaches the Ubuntu mirrors only over HTTPS through the agent proxy: /etc/apt/sources.list.d/ubuntu.sources uses https:// URIs and /etc/apt/apt.conf.d/99agentproxy sets the proxy (original in /root/ubuntu.sources.orig).
