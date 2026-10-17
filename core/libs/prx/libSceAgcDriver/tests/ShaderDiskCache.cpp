@@ -2042,6 +2042,7 @@ std::filesystem::path planEntryPath(PlanFixture& fixture) {
 int runPlanLoadingProcess(std::string_view mode) {
     if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_IMAGE_TABLE", "1");
     if (mode == "--load-plan-off") setEnvironment("APS5_NO_PERF_DISK_PLANS", "1");
+    if (mode == "--load-plan-profile-heap") setEnvironment("APS5_PROFILE_HEAP", "1");
     auto fixtures = planFixtures();
     const auto count = fixtures.size();
     std::vector<std::shared_ptr<const IrResourcePlan>> plans;
@@ -2053,6 +2054,11 @@ int runPlanLoadingProcess(std::string_view mode) {
     if (mode == "--load-plan-switch") {
         require(builds == count && totals.planHits == 0u && totals.planMisses == count && totals.misses == count, "another switch value reused stored plans or variants" + counts);
         std::cout << "a process with another switch value rebuilt all " << count << " plans\n";
+        return 0;
+    }
+    if (mode == "--load-plan-profile-heap") {
+        require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.hits == count && totals.misses == 0u, "APS5_PROFILE_HEAP=1 missed the stored plans or variants" + counts);
+        std::cout << "a process with APS5_PROFILE_HEAP=1 loaded all " << count << " stored plans and variants\n";
         return 0;
     }
     if (mode == "--load-plan") {
@@ -2119,6 +2125,7 @@ void verifyPlanAcrossProcesses(const char* self) {
     };
     run("--load-plan");
     run("--load-plan-off");
+    run("--load-plan-profile-heap");
     std::vector<std::byte> entry;
     const auto damaged = planEntryPath(fixtures.front());
     require(ReadWholeFile(damaged, entry), "cannot read a stored plan entry");

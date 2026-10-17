@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "HeapHolders.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -560,7 +561,14 @@ public:
 
 private:
     struct Holder {
-        Holder(std::vector<std::uint32_t> words, std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : words(std::move(words)), owner(std::move(owner)), view(view) {}
+        Holder(std::vector<std::uint32_t> words, std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : words(std::move(words)), owner(std::move(owner)), view(view), counted(this->owner == nullptr && HeapHolders::Profiled() ? static_cast<std::int64_t>(this->words.capacity() * sizeof(std::uint32_t)) : 0) {
+            if (counted != 0) HeapHolders::Add(HeapHolders::Holder::Modules, 1, counted);
+        }
+        Holder(const Holder&) = delete;
+        Holder& operator=(const Holder&) = delete;
+        ~Holder() {
+            if (counted != 0) HeapHolders::Add(HeapHolders::Holder::Modules, -1, -counted);
+        }
         [[nodiscard]] std::span<const std::uint32_t> Words() const { return owner ? view : std::span<const std::uint32_t>(words); }
         std::vector<std::uint32_t> words;
         std::shared_ptr<const void> owner;
@@ -568,6 +576,7 @@ private:
         mutable std::atomic<std::uint64_t> hashLow{0};
         mutable std::atomic<std::uint64_t> hashHigh{0};
         mutable std::atomic<bool> hashed{false};
+        std::int64_t counted = 0;
     };
 
     std::vector<std::uint32_t>& Mutable() {

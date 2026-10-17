@@ -88,6 +88,10 @@ Driver& Driver::Get() {
 Driver::~Driver() {
     GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix(nullptr);
     stop();
+    for (const auto& entry : drawCache) releaseDrawEntry(*entry.second);
+    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DrawCache, 0, -static_cast<std::int64_t>(drawCacheVariantBytes));
+    chargeDispatchEntries(-static_cast<std::int64_t>(dispatchCache.size()));
+    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DispatchCache, 0, -static_cast<std::int64_t>(dispatchCacheVariantBytes));
 }
 
 void Driver::Shutdown() {
