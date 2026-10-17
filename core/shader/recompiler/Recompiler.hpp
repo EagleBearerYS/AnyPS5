@@ -339,7 +339,6 @@ inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
-inline constexpr std::uint32_t GpuWorkgroupMemoryDescriptorSet = 3;
 
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;

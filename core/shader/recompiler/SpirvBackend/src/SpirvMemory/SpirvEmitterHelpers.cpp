@@ -520,7 +520,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
     if (LdsInDeviceMemory(state)) {
         state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
         state.module.AddName(state.ldsBufferVariable, "workgroup_memory");
-        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationDescriptorSet, state.gpuResolvedImages ? GpuWorkgroupMemoryDescriptorSet : WorkgroupMemoryDescriptorSet);
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationDescriptorSet, WorkgroupMemoryDescriptorSet);
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationBinding, 0u);
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationCoherent);
         if (state.requirements.ldsBufferInt64Atomics) {

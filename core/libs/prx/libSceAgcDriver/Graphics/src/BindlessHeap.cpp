@@ -42,7 +42,6 @@ bool BindlessTexturesEnabled() {
 }
 
 namespace {
-std::atomic<std::uint64_t> heapComputeStages{0};
 std::atomic<std::uint64_t> imageTableBuilds{0};
 }
 
@@ -54,19 +53,7 @@ std::uint64_t ImageTableBuilds() {
     return imageTableBuilds.load(std::memory_order_relaxed);
 }
 
-void NoteHeapComputeStage() {
-    heapComputeStages.fetch_add(1, std::memory_order_relaxed);
-}
-
-std::uint64_t HeapComputeStages() {
-    return heapComputeStages.load(std::memory_order_relaxed);
-}
-
 bool GpuConstantsEnabled() {
-    return GpuHeapEnabled();
-}
-
-bool HeapComputeEnabled() {
     return GpuHeapEnabled();
 }
 
@@ -77,7 +64,7 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     const auto updateSets = context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets");
 
     std::vector<VkDescriptorSetLayoutBinding> heapBindings;
-    constexpr VkShaderStageFlags heapStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    constexpr VkShaderStageFlags heapStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     for (std::uint32_t kind = Abi::FirstImageBinding; kind < Abi::FirstStorageImageBinding; ++kind) heapBindings.push_back({fragmentBinding(kind), VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, Abi::GpuImageHeapSlots, heapStages, nullptr});
     heapBindings.push_back({fragmentBinding(static_cast<std::uint32_t>(Abi::Binding::Samplers)), VK_DESCRIPTOR_TYPE_SAMPLER, Abi::GpuSamplerHeapSlots, heapStages, nullptr});
     const std::vector<VkDescriptorBindingFlags> heapFlags(heapBindings.size(), VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT);
@@ -95,8 +82,8 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     const std::array<VkDescriptorSetLayoutBinding, 4> dataBindings{{
         {fragmentBinding(static_cast<std::uint32_t>(Abi::Binding::ShaderData)), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {fragmentBinding(static_cast<std::uint32_t>(Abi::Binding::FlattenedSrt)), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {mainBinding(Abi::Binding::ShaderData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-        {mainBinding(Abi::Binding::FlattenedSrt), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {mainBinding(Abi::Binding::ShaderData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
+        {mainBinding(Abi::Binding::FlattenedSrt), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
     }};
     VkDescriptorSetLayoutCreateInfo dataInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     dataInfo.bindingCount = static_cast<std::uint32_t>(dataBindings.size());

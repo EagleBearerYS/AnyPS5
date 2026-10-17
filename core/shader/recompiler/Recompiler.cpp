@@ -539,10 +539,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     program.Metadata().bindingLayoutComplete = false;
     const bool stencilReplay = request.shader.stage == ShaderStage::Fragment && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; }) && std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == request.target.supportedCapabilities.end();
     const auto gpuStage = [&] {
-        if (!request.target.gpuResolvedImages) return false;
-        if (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex) return true;
-        const auto& info = program.Info();
-        return request.shader.stage == ShaderStage::Compute && (!info.samplers.empty() || std::ranges::any_of(info.images, [](const ImageResource& image) { return image.resourceClass == ImageResourceClass::Sampled; }));
+        return request.target.gpuResolvedImages && (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex);
     };
     const bool gpuResolved = gpuStage();
     auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay, gpuResolved);
