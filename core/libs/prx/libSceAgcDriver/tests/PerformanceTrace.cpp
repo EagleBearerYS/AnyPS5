@@ -217,6 +217,7 @@ void SummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
+        "\"top_phases_calls_per_s\":{\"Driver.Packet\":100.000,\"Driver.Packet.draw\":50.000,\"Driver.Present\":50.000,\"Driver.Present.inflight_wait\":50.000,\"Driver.Completion\":100.000},"
         "\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
     auto dropped = threads;
@@ -240,6 +241,20 @@ void SummaryFields() {
     const auto merged = TraceFormat::Summary(summary, shared, presents);
     Check(merged.find("\"trace_dropped_threads\":{\"shader prepare\":{\"events_full_after_s\":0.010,\"events_lost\":12,\"totals_full\":true}},\"trace\":") != std::string::npos, "threads with one name were not merged into one entry");
     Check(merged.find("shader prepare") == merged.rfind("shader prepare"), "threads with one name were listed twice");
+}
+
+void SummaryCallRates() {
+    const auto origin = Clock::now();
+    AgcDriver::TraceSummary summary;
+    const std::vector<TraceThread::Snapshot> threads{
+        {"queue worker 0x0", {}, {{"Phase.A", nullptr, milliseconds(90), 9}, {"Phase.B", nullptr, milliseconds(80), 8}, {"Phase.C", nullptr, milliseconds(70), 7}, {"Phase.D", nullptr, milliseconds(60), 6}, {"Phase.E", nullptr, milliseconds(50), 5}, {"Phase.F", nullptr, milliseconds(40), 4}, {"Phase.G", nullptr, milliseconds(30), 3}, {"Phase.H", nullptr, milliseconds(20), 2}, {"Driver.Draw", nullptr, milliseconds(10), 2}}, false},
+    };
+    const std::vector<Clock::time_point> presents{origin, origin + milliseconds(250)};
+    const auto line = TraceFormat::Summary(summary, threads, presents);
+    Check(line.find("\"top_phases_ms_per_frame\":{\"Phase.A\":90.000,\"Phase.B\":80.000,\"Phase.C\":70.000,\"Phase.D\":60.000,\"Phase.E\":50.000,\"Phase.F\":40.000,\"Phase.G\":30.000,\"Phase.H\":20.000},") != std::string::npos, "a phase outside the top eight was listed with its time");
+    Check(line.find("\"top_phases_calls_per_s\":{\"Phase.A\":36.000,\"Phase.B\":32.000,\"Phase.C\":28.000,\"Phase.D\":24.000,\"Phase.E\":20.000,\"Phase.F\":16.000,\"Phase.G\":12.000,\"Phase.H\":8.000,\"Driver.Draw\":8.000},\"trace_dropped\":") != std::string::npos, "two calls of Driver.Draw in 250 ms are not 8 per second after the top phases' rates");
+    const std::vector<Clock::time_point> single{origin};
+    Check(TraceFormat::Summary(summary, threads, single).find("\"top_phases_calls_per_s\":{\"Phase.A\":0.000,") != std::string::npos, "a summary without a span of presents printed a call rate");
 }
 
 void GpuClock() {
@@ -323,6 +338,7 @@ void IntervalSummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
+        "\"top_phases_calls_per_s\":{\"Driver.Packet\":100.000},"
         "\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
 }
@@ -406,6 +422,7 @@ int main() {
         EscapeStrings();
         EventsShape();
         BatchIds();
+        SummaryCallRates();
         SummaryFields();
         GpuClock();
         IntervalDue();
