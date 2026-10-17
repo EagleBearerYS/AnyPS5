@@ -68,6 +68,18 @@ void textureSlots(const Context& context, VkImageView view) {
     require(heap.Statistics().slotsFreed == freedBefore + 2u, "one sweep frees every slot whose texture only the heap holds");
 }
 
+void keptSlots(const Context& context, VkImageView view) {
+    BindlessHeap heap(context);
+    const auto kind = Abi::FirstImageBinding;
+    require(heap.TextureSlotCap() == 1u && heap.TextureSlotMargin() == 1u, "APS5_HEAP_SLOT_CAP caps each kind at one slot, with a margin of one");
+    auto first = fakeTexture(0);
+    require(!heap.TextureSlot(kind, first, view, VK_IMAGE_LAYOUT_GENERAL, 1u).has_value(), "a request that keeps one slot free does not take the kind's only free slot");
+    require(heap.Statistics().full == 1u, "the refused request is counted");
+    const auto slot = heap.TextureSlot(kind, first, view, VK_IMAGE_LAYOUT_GENERAL);
+    require(slot.has_value(), "a request that keeps no slot free takes it");
+    require(heap.TextureSlot(kind, first, view, VK_IMAGE_LAYOUT_GENERAL, 1u) == slot, "a texture that holds a slot keeps it whatever a later request keeps free");
+}
+
 void samplerSlots(const Context& context) {
     BindlessHeap heap(context);
     auto cache = std::make_unique<SamplerCache>();
@@ -141,6 +153,7 @@ int main(int argc, char** argv) {
             const auto context = device->GraphicsContext();
             const PlaceholderImages placeholders(context);
             textureSlots(context, placeholders.View(Abi::FirstImageBinding));
+            keptSlots(context, placeholders.View(Abi::FirstImageBinding));
             samplerSlots(context);
             device->WaitIdle();
         }
