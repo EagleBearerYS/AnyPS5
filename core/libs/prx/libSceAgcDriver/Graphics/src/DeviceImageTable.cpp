@@ -285,9 +285,11 @@ void DeviceImageTable::fallBack(const std::set<ShaderRecompiler::PipelineIdentit
 void DeviceImageTable::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder) {
     std::lock_guard lock(mutex);
     const auto chunk = chunkFor(recorder, false);
-    const std::array<VkDescriptorSet, 2> sets{DeviceImageHeap::Set(context), set};
+    const auto heap = DeviceImageHeap::Set(context);
     const auto offset = static_cast<std::uint32_t>(static_cast<VkDeviceSize>(chunk) * chunkStride);
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, pipelineLayout, Runtime::DeviceHeapSet, static_cast<std::uint32_t>(sets.size()), sets.data(), 1, &offset);
+    const auto bind = context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
+    bind(commands, bindPoint, pipelineLayout, Runtime::DeviceHeapSet, 1, &heap, 0, nullptr);
+    bind(commands, bindPoint, pipelineLayout, Runtime::DeviceTableSet, 1, &set, 1, &offset);
 }
 
 std::span<std::uint32_t> DeviceImageTable::RingChunk(Recorder& recorder) {
