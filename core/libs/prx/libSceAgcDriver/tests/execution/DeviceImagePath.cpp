@@ -519,7 +519,12 @@ void RequireTexel(const std::array<float, 4>& output, const std::array<float, 4>
 struct Harness {
     const GuestBlock& block;
     bool device = false;
+    bool expecting = true;
 };
+
+void RequireMissRing(const Harness& harness, const std::string& part) {
+    Require(!harness.device || !harness.expecting, part + " reads the miss ring, which a draw whose keys the driver expects before its batch does not write: run it with APS5_NO_DEVICE_IMAGE_EXPECT=1");
+}
 
 constexpr std::array<std::uint32_t, 10> ComputeKeys{3u, 1764u, 37u, 54u, 1495u, 72u, 1657u, 1600u, 33u, 1810u};
 
@@ -544,14 +549,18 @@ void ComputeTable(const Harness& harness) {
     auto before = Read();
     RunComputeKeys(harness, ComputeKeys);
     auto after = Read();
-    if (harness.device) RequireMisses(before, after, ComputeKeys.size(), "(a) compute, first batch");
-    else RequireCpuTable(before, after, "(a) compute, first batch");
     for (std::size_t index = 0; index < ComputeKeys.size(); ++index) {
         const auto texture = TextureOf(ComputeKeys[index]);
         const auto what = "(a) compute, first batch, key " + std::to_string(ComputeKeys[index]) + " (" + FormatNames[texture % Formats.size()] + ")";
-        RequireTexel(Outputs[index], harness.device ? std::array<float, 4>{} : TexelOf(texture).value, what);
+        RequireTexel(Outputs[index], TexelOf(texture).value, what);
     }
-    std::printf("(a) compute, first batch of %zu dispatches: %s%s\n", ComputeKeys.size(), harness.device ? "zeros, keys recorded" : "texels through the CPU table", Describe(before, after).c_str());
+    if (harness.device) {
+        RequireHits(before, after, "(a) compute, first batch");
+        Require(after.device.inserted == before.device.inserted + ComputeKeys.size(), "(a) compute, first batch: the device path did not insert the ten keys before the batch" + Describe(before, after));
+    } else {
+        RequireCpuTable(before, after, "(a) compute, first batch");
+    }
+    std::printf("(a) compute, first batch of %zu dispatches: %s%s\n", ComputeKeys.size(), harness.device ? "texels, keys inserted before the batch" : "texels through the CPU table", Describe(before, after).c_str());
     before = after;
     RunComputeKeys(harness, ComputeKeys);
     after = Read();
@@ -561,7 +570,7 @@ void ComputeTable(const Harness& harness) {
     }
     if (harness.device) {
         RequireHits(before, after, "(a) compute, second batch");
-        Require(after.device.inserted == before.device.inserted + ComputeKeys.size(), "(a) compute, second batch: the device path did not insert the ten missed keys" + Describe(before, after));
+        Require(after.device.inserted == before.device.inserted, "(a) compute, second batch: the device path inserted keys it already held" + Describe(before, after));
     }
     std::printf("(a) compute, second batch: the texels of %zu formats%s\n", formats.size(), Describe(before, after).c_str());
 }
@@ -615,10 +624,14 @@ void Draws(const Harness& harness) {
         DrawOnce(harness, key, kind);
         auto stored = ReadColor(harness);
         auto after = Read();
-        if (harness.device) RequireMisses(before, after, 1u, name + ", first draw");
-        else RequireCpuTable(before, after, name + ", first draw");
-        RequireDrawn(stored, harness.device ? std::array<float, 4>{} : TexelOf(texture).value, name + ", first draw");
-        std::printf("%s, first draw: %s%s\n", name.c_str(), harness.device ? "zeros, key recorded" : "the texel through the CPU table", Describe(before, after).c_str());
+        RequireDrawn(stored, TexelOf(texture).value, name + ", first draw");
+        if (harness.device) {
+            RequireHits(before, after, name + ", first draw");
+            Require(after.device.inserted > before.device.inserted, name + ", first draw: the device path inserted no key before the batch" + Describe(before, after));
+        } else {
+            RequireCpuTable(before, after, name + ", first draw");
+        }
+        std::printf("%s, first draw: %s%s\n", name.c_str(), harness.device ? "the texel, key inserted before the batch" : "the texel through the CPU table", Describe(before, after).c_str());
         before = after;
         DrawOnce(harness, key, kind);
         RequireDrawn(ReadColor(harness), TexelOf(texture).value, name + ", second draw");
@@ -626,6 +639,39 @@ void Draws(const Harness& harness) {
         if (harness.device) RequireHits(before, after, name + ", second draw");
         std::printf("%s, second draw: the texel%s\n", name.c_str(), Describe(before, after).c_str());
     }
+}
+
+void OneShot(const Harness& harness) {
+    constexpr std::uint32_t computeKey = 1766u;
+    constexpr std::uint32_t drawKey = 1774u;
+    Require(TextureOf(computeKey) != TextureOf(drawKey), "the one-shot keys share a texture");
+    const auto computeTexture = TextureOf(computeKey);
+    const auto computeWhat = "(one-shot) compute, key " + std::to_string(computeKey) + " (" + FormatNames[computeTexture % Formats.size()] + ") sampled once";
+    auto before = Read();
+    RunComputeKeys(harness, std::span(&computeKey, 1));
+    auto after = Read();
+    RequireTexel(Outputs[0], TexelOf(computeTexture).value, computeWhat);
+    if (harness.device) {
+        RequireHits(before, after, computeWhat);
+        Require(after.device.inserted > before.device.inserted, computeWhat + ": the device path inserted no key before the batch" + Describe(before, after));
+    } else {
+        RequireCpuTable(before, after, computeWhat);
+    }
+    std::printf("%s: the texel%s\n", computeWhat.c_str(), Describe(before, after).c_str());
+    const auto drawTexture = TextureOf(drawKey);
+    const auto drawWhat = "(one-shot) direct draw, key " + std::to_string(drawKey) + " (" + FormatNames[drawTexture % Formats.size()] + ") in one render pass";
+    before = Read();
+    DrawOnce(harness, drawKey, DrawKind::Direct);
+    const auto stored = ReadColor(harness);
+    after = Read();
+    RequireDrawn(stored, TexelOf(drawTexture).value, drawWhat);
+    if (harness.device) {
+        RequireHits(before, after, drawWhat);
+        Require(after.device.inserted > before.device.inserted, drawWhat + ": the device path inserted no key before the batch" + Describe(before, after));
+    } else {
+        RequireCpuTable(before, after, drawWhat);
+    }
+    std::printf("%s: the texel%s\n", drawWhat.c_str(), Describe(before, after).c_str());
 }
 
 void Freshness(const Harness& harness) {
@@ -678,23 +724,18 @@ void Lanes(const Harness& harness) {
 }
 
 void Faults(const Harness& harness) {
-    std::string log;
-    for (int batch = 1; batch <= 2; ++batch) {
-        const auto before = Read();
-        Outputs[0].fill(-1.0f);
-        std::vector<std::uint32_t> words;
-        Dispatch(words, harness.block, ComputeCode.data(), InvalidEntry, Outputs[0]);
-        StderrCapture capture;
-        SubmitCompute(words);
-        log = capture.Finish();
-        const auto after = Read();
-        const bool reported = log.find("selected the descriptor") != std::string::npos;
-        std::printf("(e) batch %d selecting an invalid descriptor: %s%s\n", batch, reported ? "error reported" : "no error", Describe(before, after).c_str());
-        if (reported) break;
-        Require(harness.device && batch == 1, "(e) the CPU path did not raise the poisoned entry's error after its first batch");
-        Require(after.device.drained > before.device.drained, "(e) the device path did not record the invalid descriptor's key" + Describe(before, after));
-    }
-    Require(log.find("selected the descriptor") != std::string::npos, "(e) the device path did not raise the rejected descriptor's error after the batch that sampled its entry");
+    const auto before = Read();
+    Outputs[0].fill(-1.0f);
+    std::vector<std::uint32_t> commands;
+    Dispatch(commands, harness.block, ComputeCode.data(), InvalidEntry, Outputs[0]);
+    StderrCapture capture;
+    SubmitCompute(commands);
+    const auto log = capture.Finish();
+    const auto after = Read();
+    const bool reported = log.find("selected the descriptor") != std::string::npos;
+    std::printf("(e) the batch selecting an invalid descriptor: %s%s\n", reported ? "error reported" : "no error", Describe(before, after).c_str());
+    Require(reported, std::string("(e) the ") + (harness.device ? "device" : "CPU") + " path did not raise the rejected descriptor's error in the batch that sampled its entry");
+    if (harness.device) Require(after.device.faults > before.device.faults && after.device.inserted == before.device.inserted, "(e) the device path did not resolve the rejected descriptor before the batch that sampled it" + Describe(before, after));
     Require(log.find("invalid format") != std::string::npos, "(e) the error does not name the CPU path's reason: " + log);
     const auto words = TextureDescriptor(harness.block.Texture(0), 0u);
     char first[16];
@@ -751,12 +792,12 @@ void GpuWrittenTexture(const Harness& harness) {
         AgcDriverWaitIdle_nid_postfix();
         const auto stored = ReadColor(harness);
         const auto after = Read();
-        const auto expected = frame == 0 && harness.device ? std::array<float, 4>{} : colors[frame == 2 ? 1 : 0];
+        const auto expected = colors[frame == 2 ? 1 : 0];
         const auto what = "(h) frame " + std::to_string(frame + 1) + ": a render target drawn, then sampled through the table";
         RequireDrawn(stored, expected, what);
-        if (harness.device && frame != 0) Require(after.device.drained == before.device.drained, what + ": the entry missed" + Describe(before, after));
+        if (harness.device) Require(after.device.drained == before.device.drained, what + ": the entry missed" + Describe(before, after));
         if (harness.device && frame == 2) Require(after.device.inserted == before.device.inserted, what + ": the GPU-written entry was inserted again" + Describe(before, after));
-        std::printf("%s: %s, %llu entries given a new texture%s\n", what.c_str(), frame == 0 && harness.device ? "zeros, key recorded" : "the producer's texels", static_cast<unsigned long long>(after.device.refreshed - before.device.refreshed), Describe(before, after).c_str());
+        std::printf("%s: %s, %llu entries given a new texture%s\n", what.c_str(), "the producer's texels", static_cast<unsigned long long>(after.device.refreshed - before.device.refreshed), Describe(before, after).c_str());
     }
 }
 
@@ -805,10 +846,10 @@ bool SameTexel(const std::array<float, 4>& drawn, const std::array<float, 4>& va
     return true;
 }
 
-void RequireNewRecord(const Harness& harness, const std::vector<std::byte>& stored, std::uint32_t old, std::uint32_t written, const std::string& what) {
+void RequireNewRecord(const Harness& harness, const std::vector<std::byte>& stored, std::uint32_t old, std::uint32_t written, bool expected, const std::string& what) {
     const auto drawn = DrawnValue(stored);
     Require(!SameTexel(drawn, TexelOf(old).value), what + ": the draw after the write sampled the texture the record named before it");
-    if (harness.device) Require(SameTexel(drawn, {}) || SameTexel(drawn, TexelOf(written).value), what + ": the draw after the write sampled neither zeros (a miss on the new key) nor the texture the record names now");
+    if (harness.device && !expected) Require(SameTexel(drawn, {}) || SameTexel(drawn, TexelOf(written).value), what + ": the draw after the write sampled neither zeros (a miss on the new key) nor the texture the record names now");
     else RequireDrawn(stored, TexelOf(written).value, what);
 }
 
@@ -824,7 +865,8 @@ void StaleRecord(const Harness& harness) {
     DrawOnce(harness, entry, DrawKind::Direct);
     auto stored = ReadColor(harness);
     auto after = Read();
-    RequireNewRecord(harness, stored, textures[0], textures[1], "(i) a CPU write to the record in the previous submission");
+    RequireNewRecord(harness, stored, textures[0], textures[1], true, "(i) a CPU write to the record in the previous submission");
+    if (harness.device) Require(after.device.drained == before.device.drained, "(i) a CPU write to the record in the previous submission: the new key missed" + Describe(before, after));
     const auto nextFirst = DrawnValue(stored);
     DrawOnce(harness, entry, DrawKind::Direct);
     RequireDrawn(ReadColor(harness), TexelOf(textures[1]).value, "(i) the second draw after a write in the previous submission");
@@ -847,7 +889,7 @@ void StaleRecord(const Harness& harness) {
     stored = ReadColor(harness);
     after = Read();
     const auto sameFirst = DrawnValue(stored);
-    if (harness.device) RequireNewRecord(harness, stored, textures[1], textures[2], "(i) a CPU write to the record after the draw was decoded, in its own submission");
+    if (harness.device) RequireNewRecord(harness, stored, textures[1], textures[2], false, "(i) a CPU write to the record after the draw was decoded, in its own submission");
     DrawOnce(harness, entry, DrawKind::Direct);
     RequireDrawn(ReadColor(harness), TexelOf(textures[2]).value, "(i) the draw after a write inside the previous submission");
     const char* sampled = SameTexel(sameFirst, {}) ? "zeros, the new key missed" : SameTexel(sameFirst, TexelOf(textures[2]).value) ? "the new texture" : SameTexel(sameFirst, TexelOf(textures[1]).value) ? "the old texture (the CPU table was taken when the draw was decoded)" : "another value";
@@ -915,6 +957,7 @@ void GpuModeDraw(const Harness& harness, std::uint32_t texture, bool heapStage, 
 
 void ComputeMeetsFullHeap(const Harness& harness) {
     Require(harness.device, "(l) needs the device image path");
+    RequireMissRing(harness, "(l)");
     const bool gpuHeap = AgcDriver::Graphics::GpuHeapEnabled();
     std::string errors;
     auto before = Read();
@@ -989,11 +1032,13 @@ void UnrecordedDraw(const Harness& harness) {
     std::printf("%s: the texel on %zu pixels through the CPU table%s\n", outside.c_str(), pixels, Describe(before, after).c_str());
     before = after;
     DrawOnce(harness, UnrecordedKey, DrawKind::Direct);
-    RequireDrawn(ReadColor(harness), harness.device ? std::array<float, 4>{} : value, "(m) the next recorded draw of the same program");
+    const bool missed = harness.device && !harness.expecting;
+    RequireDrawn(ReadColor(harness), missed ? std::array<float, 4>{} : value, "(m) the next recorded draw of the same program");
     after = Read();
-    if (harness.device) RequireMisses(before, after, 1u, "(m) the next recorded draw of the same program");
+    if (missed) RequireMisses(before, after, 1u, "(m) the next recorded draw of the same program");
+    else if (harness.device) RequireHits(before, after, "(m) the next recorded draw of the same program");
     else RequireCpuTable(before, after, "(m) the next recorded draw of the same program");
-    std::printf("(m) the next recorded draw of the same program: %s%s\n", harness.device ? "zeros, key recorded" : "the texel through the CPU table", Describe(before, after).c_str());
+    std::printf("(m) the next recorded draw of the same program: %s%s\n", missed ? "zeros, key recorded" : harness.device ? "the texel through the device table, key expected" : "the texel through the CPU table", Describe(before, after).c_str());
     before = after;
     DrawOnce(harness, UnrecordedKey, DrawKind::Direct);
     RequireDrawn(ReadColor(harness), value, "(m) the recorded draw after it");
@@ -1058,6 +1103,7 @@ void RequireDeduplicated(const Counters& before, const Counters& after, std::siz
 }
 
 void Deduplicates(const Harness& harness, bool heapCap) {
+    RequireMissRing(harness, "(j)");
     const std::array<std::uint32_t, 1> one{FreshEntry};
     std::array<std::uint32_t, 8> eight{};
     for (std::uint32_t index = 0; index < eight.size(); ++index) eight[index] = FreshEntry + 1u + index;
@@ -1099,6 +1145,7 @@ void Deduplicates(const Harness& harness, bool heapCap) {
 }
 
 void Streams(const Harness& harness) {
+    RequireMissRing(harness, "(k)");
     constexpr std::uint32_t first = FreshEntry + 9u;
     for (std::uint32_t batch = 0; batch <= StreamedKeys; ++batch) {
         std::vector<std::uint32_t> keys;
@@ -1237,7 +1284,7 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const std::string parts = argc > 2 ? argv[2] : mode == "--heap-cap" ? "f" : "abcdeghijkm";
+    const bool expecting = std::getenv("APS5_NO_DEVICE_IMAGE_EXPECT") == nullptr;
 #ifdef _WIN32
     if (mode != "--village-bench") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
@@ -1266,7 +1313,8 @@ int main(int argc, char** argv) {
             }
             FillGuest(block);
             FillFresh(block);
-            Harness harness{block, requested || mode == "--expect-device-path"};
+            Harness harness{block, requested || mode == "--expect-device-path", expecting};
+            const std::string parts = argc > 2 ? argv[2] : mode == "--heap-cap" ? "f" : mode == "--misses" || (harness.device && !expecting) ? "jkm" : harness.device ? "abcdeghim" : "abcdeghijkm";
             std::printf("device image path %s, %s\n", requested ? "on" : "off", harness.device ? "expecting the device table" : "expecting the CPU table");
             Registered(ComputeHeader, ComputeCode.data(), sizeof(ComputeCode), 0);
             Registered(OtherComputeHeader, OtherComputeCode.data(), sizeof(OtherComputeCode), 0);
@@ -1281,6 +1329,8 @@ int main(int argc, char** argv) {
                 if (parts.find('f') != std::string::npos) FallsBackFromWarmCache(harness);
                 if (parts.find('j') != std::string::npos) Deduplicates(harness, true);
                 if (parts.find('l') != std::string::npos) ComputeMeetsFullHeap(harness);
+            } else if (mode == "--one-shot") {
+                OneShot(harness);
             } else {
                 if (parts.find('a') != std::string::npos) ComputeTable(harness);
                 if (parts.find('b') != std::string::npos) Draws(harness);
