@@ -400,10 +400,35 @@ void DeviceTarget(AgcDriver::VulkanDevice& device) {
     if (limits.maxBoundDescriptorSets < Runtime::DeviceTableSet + 1u) Require(!device.DeviceImagePath(), "a device binding fewer than four sets keeps the device path off");
 }
 
+void HeapStagesFollowTheSwitch(AgcDriver::VulkanDevice& device) {
+    const auto stages = ImageHeapStages(device.GraphicsContext());
+    constexpr VkShaderStageFlags graphics = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    if (!GpuPathEnabled()) {
+        Require(stages == graphics, "with APS5_GPU_PATH unset the image heap set keeps the vertex and fragment stages alone");
+        return;
+    }
+    Require((stages & graphics) == graphics && (stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0, "with APS5_GPU_PATH set the image heap set is visible to compute stages, which read device-table images through it");
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string(argv[1]) == "--switch-off") {
+#ifdef _WIN32
+            _putenv_s("APS5_GPU_PATH", "");
+#else
+            unsetenv("APS5_GPU_PATH");
+#endif
+            Require(!GpuPathEnabled(), "the switch-off run keeps APS5_GPU_PATH unset");
+            auto device = OpenVulkanTestDevice();
+            if (device == nullptr) return VulkanTestSkipped;
+            HeapStagesFollowTheSwitch(*device);
+            device->WaitIdle();
+            device.reset();
+            std::cout << "device image table switch-off tests passed\n";
+            return 0;
+        }
 #ifdef _WIN32
         _putenv_s("APS5_GPU_PATH", "1");
 #else
@@ -417,6 +442,7 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (device == nullptr) return VulkanTestSkipped;
         DeviceTarget(*device);
+        HeapStagesFollowTheSwitch(*device);
         std::printf("device path on %s: %s\n", device->DeviceName().c_str(), device->DeviceImagePath() ? "on" : "off");
         if (!device->DeviceImagePath()) {
             std::printf("skipped, the device does not serve the device image path\n");
