@@ -1,8 +1,6 @@
-BUSY LA-010
-since: 2026-10-17T13:03Z (LA-010, lane A rebased onto PR 6947's new head, compute on the heap set under lane A's switch, bind-split offer on the new head)
-claimed: tasks/claimed/LA-010.md
-step: fetching PR 6947's head and lane A's branches
-previous: BF-056 done, results/cloud-5/BF-056.md: K4 GPU half synced (VILLAGE_GPU_SYNC=1): Village shape B 11,925 vs A 10,050 ms GPU per frame (+18.7%, under 30%; BF-046's -50% was saturation); same-texture variants B 51-73x A (5,417/7,499 vs 106/103 ms); run-time T# read ~1 ms GPU per sample on B; driver CPU outside the GPU wait A 223.0, B 163.3 us per draw; exp/bf056-main 4126b1fa2, exp/bf056-fable 7d6d5ee54
+READY
+since: 2026-10-17T14:36Z
+previous: LA-010 done, results/cloud-5/LA-010.md: lane A rebased onto PR 6947 6456ee664 as exp/lane-a-v2 1b8b9dfef (39 commits, 7 conflicts resolved, 16 commits built and tested, FormatVersion 42/43); compute on the heap set kept under APS5_GPU_PATH (5031a28e7, no VUID-07988); heap-full and journal compute cases meet the bar (lane A leaves GPU mode half of each heap kind with APS5_GPU_HEAP; journal entries without the table rejected, not failed); mirror vs PR head 1,431/1,412 tests, IPv6 5 only; switch-on scope LA-005's 8; bench no fallback; exp/pr6947-bind-split-v2 1621fede6: 2,000 GPU-mode draws 8,944 -> 958 us wall, lavapipe CPU 8,250 -> 675 us per draw
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
