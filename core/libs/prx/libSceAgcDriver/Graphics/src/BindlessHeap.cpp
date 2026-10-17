@@ -33,8 +33,8 @@ std::uint32_t fragmentBinding(std::uint32_t kind) {
 
 }
 
-VkShaderStageFlags ImageHeapStages(const Context&) {
-    return VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | (GpuPathEnabled() ? VK_SHADER_STAGE_COMPUTE_BIT : 0u);
+VkShaderStageFlags ImageHeapStages(const Context& context) {
+    return VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | (GpuPathEnabled() ? VK_SHADER_STAGE_COMPUTE_BIT | (context.meshShader ? VK_SHADER_STAGE_MESH_BIT_EXT : 0u) : 0u);
 }
 
 bool GpuHeapEnabled() {

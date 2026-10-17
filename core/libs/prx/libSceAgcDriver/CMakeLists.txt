@@ -1019,6 +1019,19 @@ foreach(agcTriangleStage IN ITEMS vert frag)
     list(APPEND agcTriangleHeaders "${agcTriangleHeader}")
 endforeach()
 
+set(agcTriangleMeshSpv ${agcTestShaderGeneratedRoot}/Triangle_mesh.spv)
+set(agcTriangleMeshHeader ${agcTestShaderGeneratedRoot}/Triangle_mesh_spv.h)
+add_custom_command(
+        OUTPUT "${agcTriangleMeshHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env spirv1.4 -o "${agcTriangleMeshSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/Triangle.mesh"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTriangleMeshSpv} -DOUTPUT=${agcTriangleMeshHeader}
+        -DSYMBOL=TRIANGLE_mesh_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/Triangle.mesh" glslang-standalone
+        VERBATIM
+)
+list(APPEND agcTriangleHeaders "${agcTriangleMeshHeader}")
+
 foreach(agcCoverStage IN ITEMS vert frag)
     string(TOUPPER "${agcCoverStage}" agcCoverSymbol)
     set(agcCoverShaderSpv ${agcTestShaderGeneratedRoot}/Cover_${agcCoverStage}.spv)
