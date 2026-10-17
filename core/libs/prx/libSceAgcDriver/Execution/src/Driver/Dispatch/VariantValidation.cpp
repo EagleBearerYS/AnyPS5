@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -80,6 +81,10 @@ bool Driver::syncPendingRuns(std::uint64_t program, std::uint32_t queue, const S
 
 EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live) {
     if (live != nullptr) live->clear();
+    if (variant.compiled->deviceImageTables) {
+        const auto localDevice = device.Load();
+        if (localDevice == nullptr || !localDevice->DeviceImagesServe(program)) return EntryOutcome::DeviceImageFallback;
+    }
     if (DrawPipeline::Active()) {
         auto& pipeline = DrawPipeline::Queue0();
         if (pipeline.Busy() && pipeline.OverlapsAny(variant.runs)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
