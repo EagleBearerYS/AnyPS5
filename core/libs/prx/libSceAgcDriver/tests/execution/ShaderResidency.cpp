@@ -1,7 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -358,6 +360,64 @@ private:
     std::uint8_t* base = nullptr;
 };
 
+void RegisterSynthetic(Synthetic& program, ProgramArena& arena, const std::vector<std::uint32_t>& code) {
+    program.code = arena.Place(code);
+    const auto address = reinterpret_cast<std::uintptr_t>(program.code);
+    auto& header = program.header;
+    header.registers = {{{0x008, static_cast<std::uint32_t>(address >> 8u)}, {0x009, static_cast<std::uint32_t>(address >> 40u)}, {0x00b, 8u << 1u}, {0x00a, 0}}};
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(SyntheticHeader);
+    header.shader.shader_size = static_cast<std::uint32_t>(code.size() * sizeof(std::uint32_t));
+    header.shader.code = program.code;
+    header.shader.type = 1;
+    header.shader.user_data = &header.userData;
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = static_cast<std::uint32_t>(header.registers.size());
+    header.shader.cx_registers = header.context.data();
+    header.shader.num_cx_registers = static_cast<std::uint32_t>(header.context.size());
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+void Settle(std::span<const Synthetic> programs) {
+    std::vector<const Shader*> registered;
+    for (const auto& program : programs) registered.push_back(&program.header.shader);
+    AgcDriverEndShaderPreparation_nid_postfix(AgcDriverBeginShaderPreparation_nid_postfix(registered.data(), registered.size()));
+    AgcDriver::DriverDetail::AwaitLibraryPrebuilds();
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void DrawnProgramKeepsNoSpirv(const Layout& layout) {
+    ProgramArena arena(1u << 20u);
+    std::vector<Synthetic> programs(1);
+    RegisterSynthetic(programs.front(), arena, SyntheticPixelCode(1, 0));
+    Settle(programs);
+    auto commands = Commands(layout, 1, reinterpret_cast<std::uintptr_t>(programs.front().code));
+    Submit(commands);
+    const auto held = ShaderRecompiler::HeldSpirv();
+    Require(held.resident == 0 && held.pinned == 0, "shader residency: a drawn program left " + std::to_string(held.resident) + " modules resident and " + std::to_string(held.pinned) + " pinned once its pipeline existed");
+    std::printf("shader residency: a registered and drawn program left no SPIR-V resident (%llu releasable modules)\n", static_cast<unsigned long long>(held.releasable));
+}
+
+void BudgetKeepsSharedModules(const Layout& layout) {
+    ProgramArena arena(1u << 20u);
+    std::vector<Synthetic> programs(2);
+    RegisterSynthetic(programs[0], arena, SyntheticPixelCode(1, 0));
+    RegisterSynthetic(programs[1], arena, SyntheticPixelCode(2, 0));
+    Settle(programs);
+    auto first = Commands(layout, 1, reinterpret_cast<std::uintptr_t>(programs[0].code));
+    Submit(first);
+    const auto before = ShaderRecompiler::HeldSpirv();
+    auto second = Commands(layout, 1, reinterpret_cast<std::uintptr_t>(programs[1].code));
+    Submit(second);
+    const auto after = ShaderRecompiler::HeldSpirv();
+    const auto retired = AgcDriver::Graphics::RetiredSpirvTotals();
+    Require(retired.budgetWords != 0, "shader residency: APS5_RELEASE_SPIRV_BUDGET_MIB did not set a budget");
+    Require(after.reloads == before.reloads, "shader residency: a draw sharing the vertex shader reloaded " + std::to_string(after.reloads - before.reloads) + " modules under the budget");
+    Require(after.resident == retired.modules && retired.words <= retired.budgetWords && after.pinned == 0, "shader residency: " + std::to_string(after.resident) + " modules resident, " + std::to_string(retired.modules) + " retired under the budget");
+    std::printf("shader residency: under a %.0f MiB budget the second program drew without a reload; %llu modules (%.1f MiB) kept\n", static_cast<double>(retired.budgetWords) * 4.0 / 1048576.0, static_cast<unsigned long long>(retired.modules), static_cast<double>(retired.words) * 4.0 / 1048576.0);
+}
+
 void Measure(const Layout& layout, std::uint32_t count, std::uint32_t blocks, std::uint32_t percent) {
     const auto programWords = SyntheticPixelCode(0, blocks).size();
     ProgramArena arena((programWords * 4 + 256) * count + (1u << 20u));
@@ -369,40 +429,19 @@ void Measure(const Layout& layout, std::uint32_t count, std::uint32_t blocks, st
             return found != memory.end() ? static_cast<double>(found->second) / 1024.0 : 0.0;
         };
         const auto spirv = ShaderRecompiler::HeldSpirv();
+        const auto retired = AgcDriver::Graphics::RetiredSpirvTotals();
         const auto sources = ShaderRecompiler::HeldSources();
-        std::printf("residency %s: %u programs of %zu words (%u blocks), %.1f s: Rss %.0f MiB, Anonymous %.0f MiB, file-backed %.0f MiB (Pss_File), Private_Dirty %.0f MiB; SPIR-V held: %llu holders, %.1f MiB on the heap, %.1f MiB mapped; releasable %llu, resident %llu, pinned %llu, released %llu, reloaded %llu (%.1f ms); recompiler: %llu sources (%.1f MiB of code), %llu IR programs, %llu variants, %llu memoized results\n", phase, count, programWords, blocks, seconds, field("Rss"), field("Anonymous"), field("Pss_File"), field("Private_Dirty"), static_cast<unsigned long long>(spirv.holders), static_cast<double>(spirv.heapWords) * 4.0 / 1048576.0, static_cast<double>(spirv.mappedWords) * 4.0 / 1048576.0, static_cast<unsigned long long>(spirv.releasable), static_cast<unsigned long long>(spirv.resident), static_cast<unsigned long long>(spirv.pinned), static_cast<unsigned long long>(spirv.releases), static_cast<unsigned long long>(spirv.reloads), static_cast<double>(spirv.reloadNanoseconds) / 1e6, static_cast<unsigned long long>(sources.sources), static_cast<double>(sources.codeWords) * 4.0 / 1048576.0, static_cast<unsigned long long>(sources.programs), static_cast<unsigned long long>(sources.variants), static_cast<unsigned long long>(sources.results));
+        std::printf("residency %s: %u programs of %zu words (%u blocks), %.1f s: Rss %.0f MiB, Anonymous %.0f MiB, file-backed %.0f MiB (Pss_File), Private_Dirty %.0f MiB; SPIR-V held: %llu holders, %.1f MiB on the heap, %.1f MiB mapped; releasable %llu, resident %llu, pinned %llu, released %llu, reloaded %llu (%.1f ms), %llu kept under the budget (%.1f MiB); recompiler: %llu sources (%.1f MiB of code), %llu IR programs, %llu variants, %llu memoized results\n", phase, count, programWords, blocks, seconds, field("Rss"), field("Anonymous"), field("Pss_File"), field("Private_Dirty"), static_cast<unsigned long long>(spirv.holders), static_cast<double>(spirv.heapWords) * 4.0 / 1048576.0, static_cast<double>(spirv.mappedWords) * 4.0 / 1048576.0, static_cast<unsigned long long>(spirv.releasable), static_cast<unsigned long long>(spirv.resident), static_cast<unsigned long long>(spirv.pinned), static_cast<unsigned long long>(spirv.releases), static_cast<unsigned long long>(spirv.reloads), static_cast<double>(spirv.reloadNanoseconds) / 1e6, static_cast<unsigned long long>(retired.modules), static_cast<double>(retired.words) * 4.0 / 1048576.0, static_cast<unsigned long long>(sources.sources), static_cast<double>(sources.codeWords) * 4.0 / 1048576.0, static_cast<unsigned long long>(sources.programs), static_cast<unsigned long long>(sources.variants), static_cast<unsigned long long>(sources.results));
         std::fflush(stdout);
     };
     report("start", 0.0);
     auto started = std::chrono::steady_clock::now();
     const bool resolveAbi = std::getenv("RESIDENCY_RESOLVE_ABI") != nullptr;
     for (std::uint32_t index = 0; index < count; ++index) {
-        auto& program = programs[index];
-        const auto code = SyntheticPixelCode(index + 1, blocks);
-        program.code = arena.Place(code);
-        const auto address = reinterpret_cast<std::uintptr_t>(program.code);
-        auto& header = program.header;
-        header.registers = {{{0x008, static_cast<std::uint32_t>(address >> 8u)}, {0x009, static_cast<std::uint32_t>(address >> 40u)}, {0x00b, 8u << 1u}, {0x00a, 0}}};
-        header.shader.file_header = 0x34333231u;
-        header.shader.version = 0x18u;
-        header.shader.header_size = sizeof(SyntheticHeader);
-        header.shader.shader_size = static_cast<std::uint32_t>(code.size() * sizeof(std::uint32_t));
-        header.shader.code = program.code;
-        header.shader.type = 1;
-        header.shader.user_data = &header.userData;
-        header.shader.sh_registers = header.registers.data();
-        header.shader.num_sh_registers = static_cast<std::uint32_t>(header.registers.size());
-        header.shader.cx_registers = header.context.data();
-        header.shader.num_cx_registers = static_cast<std::uint32_t>(header.context.size());
-        AgcDriverRegisterShader_nid_postfix(&header.shader);
-        if (resolveAbi) AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, {});
+        RegisterSynthetic(programs[index], arena, SyntheticPixelCode(index + 1, blocks));
+        if (resolveAbi) AgcDriverResolveShaderAbi_nid_postfix(&programs[index].header.shader, {}, {});
     }
-    {
-        std::vector<const Shader*> registered;
-        for (const auto& program : programs) registered.push_back(&program.header.shader);
-        AgcDriverEndShaderPreparation_nid_postfix(AgcDriverBeginShaderPreparation_nid_postfix(registered.data(), registered.size()));
-    }
-    AgcDriverWaitIdle_nid_postfix();
+    Settle(programs);
     report("registered", std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
     started = std::chrono::steady_clock::now();
     const auto drawn = std::max<std::uint32_t>(1u, count * percent / 100u);
@@ -428,7 +467,9 @@ void Measure(const Layout& layout, std::uint32_t count, std::uint32_t blocks, st
 
 int main(int argc, char** argv) {
     const bool measure = argc == 5 && std::string(argv[1]) == "--measure";
+    const bool budget = argc == 2 && std::string(argv[1]) == "--budget";
     std::filesystem::path cache;
+    if (budget) SetEnvironment("APS5_RELEASE_SPIRV_BUDGET_MIB", "64");
     if (!measure) {
         cache = std::filesystem::temp_directory_path() / ("aps5-shader-residency-test-" + std::to_string(std::random_device{}()));
         std::filesystem::create_directories(cache);
@@ -454,7 +495,11 @@ int main(int argc, char** argv) {
             Prepare(layout);
             Check(layout);
             if (measure) Measure(layout, static_cast<std::uint32_t>(std::stoul(argv[2])), static_cast<std::uint32_t>(std::stoul(argv[3])), static_cast<std::uint32_t>(std::stoul(argv[4])));
-            else ReleasedProgramDrawsTheSamePixels(layout);
+            else if (budget) BudgetKeepsSharedModules(layout);
+            else {
+                ReleasedProgramDrawsTheSamePixels(layout);
+                DrawnProgramKeepsNoSpirv(layout);
+            }
             AgcDriverShutdown_nid_postfix();
         } else {
             status = VulkanTestSkipped;
