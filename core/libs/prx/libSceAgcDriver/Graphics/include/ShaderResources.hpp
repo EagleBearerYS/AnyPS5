@@ -92,6 +92,21 @@ public:
         std::uint64_t dedicatedPools = 0;
     };
     Stats Counters() const;
+    struct Census {
+        std::size_t chainPools = 0;
+        std::size_t chainPoolsLive = 0;
+        std::size_t chainPoolsExhausted = 0;
+        std::size_t liveChainSets = 0;
+        std::size_t allocatedChainSets = 0;
+        std::array<std::size_t, 6> liveHistogram{};
+        std::size_t updateAfterBindPools = 0;
+        std::size_t updateAfterBindLiveSets = 0;
+        std::size_t updateAfterBindAllocatedSets = 0;
+        std::size_t dedicatedPools = 0;
+        std::size_t recycledSets = 0;
+        std::size_t recycledLayouts = 0;
+    };
+    Census Snapshot() const;
 
 private:
     Context context;
@@ -103,6 +118,7 @@ private:
     struct Pool {
         VkDescriptorPool handle = VK_NULL_HANDLE;
         std::size_t liveSets = 0;
+        std::size_t allocated = 0;
         bool exhausted = false;
     };
     std::vector<Pool> pools;
@@ -136,8 +152,16 @@ public:
     void Complete();
     bool Completed() const { return completed; }
     ~ShaderResources();
+    static std::int64_t LiveObjects();
     ShaderResources(const ShaderResources&) = delete;
     ShaderResources& operator=(const ShaderResources&) = delete;
+    struct LiveCount {
+        LiveCount();
+        ~LiveCount();
+        LiveCount(const LiveCount&) = delete;
+        LiveCount& operator=(const LiveCount&) = delete;
+    };
+    LiveCount liveCount;
     VkDescriptorSetLayout Layout() const;
     std::vector<VkDescriptorSetLayoutBinding> LayoutBindings() const;
     bool LayoutUpdateAfterBind() const;

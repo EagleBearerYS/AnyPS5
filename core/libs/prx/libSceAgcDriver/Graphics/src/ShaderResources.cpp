@@ -3469,6 +3469,7 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
         if (result == VK_SUCCESS) {
             ++stats.sets;
             ++pool.liveSets;
+            ++pool.allocated;
             return {set, pool.handle, index - 1, updateAfterBind};
         }
         if (result != VK_ERROR_OUT_OF_POOL_MEMORY && result != VK_ERROR_FRAGMENTED_POOL) Check(result, "vkAllocateDescriptorSets");
@@ -3487,6 +3488,7 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     VkDescriptorSet set = VK_NULL_HANDLE;
     Check(allocate(context.device, &allocation, &set), "vkAllocateDescriptorSets");
     chain.back().liveSets = 1;
+    chain.back().allocated = 1;
     ++stats.sets;
     return {set, pool, chain.size() - 1, updateAfterBind};
 }
@@ -3534,11 +3536,52 @@ void DescriptorCache::Free(const SetAllocation& allocation) noexcept {
     if (--pool.liveSets != 0) return;
     if (resetPool(context.device, pool.handle, 0) != VK_SUCCESS) std::terminate();
     pool.exhausted = false;
+    pool.allocated = 0;
 }
 
 DescriptorCache::Stats DescriptorCache::Counters() const {
     std::lock_guard lock(mutex);
     return stats;
+}
+
+DescriptorCache::Census DescriptorCache::Snapshot() const {
+    std::lock_guard lock(mutex);
+    Census census;
+    census.chainPools = pools.size();
+    for (const auto& pool : pools) {
+        census.liveChainSets += pool.liveSets;
+        census.allocatedChainSets += pool.allocated;
+        if (pool.exhausted) ++census.chainPoolsExhausted;
+        if (pool.liveSets == 0) continue;
+        ++census.chainPoolsLive;
+        const auto bucket = pool.liveSets == 1 ? 0u : pool.liveSets <= 8 ? 1u : pool.liveSets <= 64 ? 2u : pool.liveSets <= 256 ? 3u : pool.liveSets < ChainPoolSets ? 4u : 5u;
+        ++census.liveHistogram[bucket];
+    }
+    census.updateAfterBindPools = updateAfterBindPools.size();
+    for (const auto& pool : updateAfterBindPools) {
+        census.updateAfterBindLiveSets += pool.liveSets;
+        census.updateAfterBindAllocatedSets += pool.allocated;
+    }
+    census.dedicatedPools = dedicated.size();
+    census.recycledLayouts = recycled.size();
+    for (const auto& [layout, list] : recycled) census.recycledSets += list.size();
+    return census;
+}
+
+namespace {
+std::atomic<std::int64_t> liveShaderResources{0};
+}
+
+ShaderResources::LiveCount::LiveCount() {
+    liveShaderResources.fetch_add(1, std::memory_order_relaxed);
+}
+
+ShaderResources::LiveCount::~LiveCount() {
+    liveShaderResources.fetch_sub(1, std::memory_order_relaxed);
+}
+
+std::int64_t ShaderResources::LiveObjects() {
+    return liveShaderResources.load(std::memory_order_relaxed);
 }
 
 std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read) {
