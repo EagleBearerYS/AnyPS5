@@ -171,10 +171,11 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
     AgcDriverCheckGuestMemory_nid_postfix(attribute, sizeof(*attribute), alignof(VideoOutBufferAttribute2));
     AgcDriverCheckGuestMemory_nid_postfix(buffers, static_cast<std::size_t>(bufferNum) * sizeof(*buffers), alignof(VideoOutBuffers));
     if (exceedsConfiguredOutput(*cfg, attribute->width, attribute->height)) {
-        static std::atomic<bool> refused{false};
-        if (!refused.exchange(true)) {
+        static std::atomic<std::uint64_t> refusals{0};
+        const auto count = refusals.fetch_add(1) + 1;
+        if ((count & (count - 1)) == 0) {
             const auto reported = *ConfiguredVideoOutOutputResolution_nid_no_patch();
-            std::fprintf(stderr, "[videoout] refused %ux%u display buffers with VIDEO_OUT_ERROR_INVALID_RESOLUTION: ANYPS5_OUTPUT_RESOLUTION reports %ux%u, and that output takes 1920x1080 and buffers no larger than itself\n", attribute->width, attribute->height, reported.width, reported.height);
+            std::fprintf(stderr, "[videoout] refused %ux%u display buffers with VIDEO_OUT_ERROR_INVALID_RESOLUTION (refusal %llu): ANYPS5_OUTPUT_RESOLUTION reports %ux%u, and that output takes 1920x1080 and buffers no larger than itself\n", attribute->width, attribute->height, static_cast<unsigned long long>(count), reported.width, reported.height);
         }
         return VIDEO_OUT_ERROR_INVALID_RESOLUTION;
     }
