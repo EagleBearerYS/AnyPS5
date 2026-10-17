@@ -1,6 +1,6 @@
-BUSY BF-053 (mesh-path programs ~1M SPIR-V words, shrink prototype)
-since: 2026-10-17T07:53:02Z
-last: BF-051 done, results/cloud-1/BF-051.md: red on main f8b22edfb 20/20 x3 (open, submitted, held): a CPU-path DRAW_INDIRECT reads its record before a store through the BDA table recorded ahead of it lands, because address-based draws run free and their stores are never pending writes; PR 6931 a00773731c also red, reader does not drain; fix sketch (not pushed) finishes lease batches at indirect-argument reads, +B on 6931, costs a full batch wait per read; test on test/bda-store-cpu-read 9a87fa97c; runs as root (unprivileged user creation refused here); before that PRM-036, LA-001
+READY
+since: 2026-10-17T08:53:50Z
+last: BF-053 done, results/cloud-1/BF-053.md: gate not met, cut under 5x, stopped; the only mesh-path multiplier is the wave64-on-32-wide lane halves (2.0x, SpirvFlowEmitter.cpp:769); nothing per vertex slot or output (words identical at 3/6/16 output vertices); same program as mesh costs 1.00x vertex at host 64; 77-way switch = runtime buffer formatSwitch; measurement test on exp/mesh-module-size fe2aaded8; runs as root (unprivileged user creation refused here); before that BF-051, PRM-036
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
