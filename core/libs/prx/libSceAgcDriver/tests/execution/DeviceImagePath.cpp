@@ -1,0 +1,701 @@
+#include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
+#include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <io.h>
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <initializer_list>
+#include <iostream>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using AgcDriver::Graphics::DeviceImageTable;
+
+void Require(bool condition, const std::string& message) {
+    if (!condition) throw std::runtime_error(message);
+}
+
+constexpr std::uint32_t Entries = 2000;
+constexpr std::uint32_t RecordBytes = 32;
+constexpr std::uint32_t Side = 4;
+constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t Textures = 16;
+constexpr std::size_t BlockBytes = std::size_t{4} << 20u;
+constexpr std::size_t TextureStride = 0x1000;
+constexpr std::size_t TableOffset = 0x100000;
+constexpr std::size_t SrtOffset = 0x180000;
+constexpr std::size_t ColorOffset = 0x200000;
+constexpr std::uint32_t ColorWidth = 64;
+constexpr std::uint32_t ColorHeight = 4;
+constexpr std::uint32_t RenderTargetAttrib3 = (static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::RenderTarget) << 14u) | (1u << 24u) | (1u << 27u);
+constexpr std::uint32_t NullEntry = 1000;
+constexpr std::uint32_t InvalidEntry = 1001;
+constexpr std::array<std::uint32_t, 5> Formats{1u, 13u, 14u, 22u, 56u};
+constexpr std::array<const char*, 5> FormatNames{"8 unorm", "16 float", "8_8 unorm", "32 float", "8_8_8_8 unorm"};
+constexpr std::array<std::uint16_t, 4> HalfValues{0x3266u, 0x38cdu, 0x3666u, 0x3a66u};
+constexpr std::array<float, 4> FloatValues{0.2f, 0.6f, 0.4f, 0.8f};
+constexpr std::array<std::uint8_t, 4> WrittenTexel{0x55u, 0x66u, 0x77u, 0x88u};
+
+alignas(256) constexpr std::array<std::uint32_t, 18> ComputeCode{
+    0x7e0002f0u, 0x7e0202f0u, 0xf4080200u, 0xfa000000u, 0xf4080300u, 0xfa000010u, 0xbf8cc07fu, 0x8f108502u, 0xf42c0504u, 0x20000000u,
+    0xbf8cc07fu, 0xf09c0f08u, 0x00650000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 18> ExecClearCode{
+    0x7e0002f0u, 0x7e0202f0u, 0xf4080200u, 0xfa000000u, 0xf4080300u, 0xfa000010u, 0xbf8cc07fu, 0x8f108502u, 0xf42c0504u, 0x20000000u,
+    0xbf8cc07fu, 0xbefe0380u, 0xf09c0f08u, 0x00650000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
+    0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
+    0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 14> PixelCode{
+    0x8f108508u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
+};
+
+alignas(4096) std::array<std::array<float, 4>, 64> Outputs{};
+alignas(16) std::array<std::uint32_t, 4> DrawArguments{3u, 1u, 0u, 0u};
+alignas(16) std::array<std::uint32_t, 5> IndexedArguments{3u, 1u, 0u, 0u, 0u};
+alignas(256) std::array<std::uint16_t, 4> Indices{0u, 1u, 2u, 0u};
+constexpr std::byte Kept{0x40};
+
+class GuestBlock {
+public:
+    GuestBlock() {
+#ifdef _WIN32
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+#else
+        constexpr std::uintptr_t alignment = 65536;
+        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapped != MAP_FAILED) {
+            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
+            const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
+            if (aligned != begin) munmap(mapped, aligned - begin);
+            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+            block = reinterpret_cast<std::uint8_t*>(aligned);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+        }
+#endif
+        Require(block != nullptr, "cannot allocate the guest block");
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+    }
+
+    ~GuestBlock() {
+        GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+#else
+        munmap(block, BlockBytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+#endif
+    }
+
+    GuestBlock(const GuestBlock&) = delete;
+    GuestBlock& operator=(const GuestBlock&) = delete;
+
+    std::uint8_t* Texture(std::uint32_t index) const { return block + static_cast<std::size_t>(index) * TextureStride; }
+    std::uint32_t* Table() const { return reinterpret_cast<std::uint32_t*>(block + TableOffset); }
+    std::uint32_t* Srt() const { return reinterpret_cast<std::uint32_t*>(block + SrtOffset); }
+    std::uint8_t* Color() const { return block + ColorOffset; }
+
+private:
+    std::uint8_t* block = nullptr;
+};
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+
+    std::string Finish() {
+        AgcDriver::FlushAsyncLog_nid_no_patch();
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
+
+float HalfToFloat(std::uint16_t half) {
+    const auto exponent = static_cast<int>((half >> 10u) & 0x1fu);
+    const auto mantissa = static_cast<float>(half & 0x3ffu);
+    return std::ldexp(1.0f + mantissa / 1024.0f, exponent - 15);
+}
+
+struct Texel {
+    std::uint32_t format = 0;
+    std::vector<std::uint8_t> bytes;
+    std::array<float, 4> value{};
+};
+
+Texel TexelOf(std::uint32_t texture) {
+    const auto kind = texture % static_cast<std::uint32_t>(Formats.size());
+    const auto variant = texture / static_cast<std::uint32_t>(Formats.size());
+    Texel texel;
+    texel.format = Formats[kind];
+    const auto unorm = [](std::uint8_t byte) { return static_cast<float>(byte) / 255.0f; };
+    switch (kind) {
+        case 0: {
+            const auto red = static_cast<std::uint8_t>(0x40u + 0x30u * variant);
+            texel.bytes = {red};
+            texel.value = {unorm(red), 0.0f, 0.0f, 1.0f};
+            break;
+        }
+        case 1: {
+            const auto half = HalfValues[variant];
+            texel.bytes = {static_cast<std::uint8_t>(half), static_cast<std::uint8_t>(half >> 8u)};
+            texel.value = {HalfToFloat(half), 0.0f, 0.0f, 1.0f};
+            break;
+        }
+        case 2: {
+            const auto red = static_cast<std::uint8_t>(0x11u + 0x22u * variant);
+            const auto green = static_cast<std::uint8_t>(0x99u - 0x11u * variant);
+            texel.bytes = {red, green};
+            texel.value = {unorm(red), unorm(green), 0.0f, 1.0f};
+            break;
+        }
+        case 3: {
+            const auto bits = std::bit_cast<std::uint32_t>(FloatValues[variant]);
+            texel.bytes = {static_cast<std::uint8_t>(bits), static_cast<std::uint8_t>(bits >> 8u), static_cast<std::uint8_t>(bits >> 16u), static_cast<std::uint8_t>(bits >> 24u)};
+            texel.value = {FloatValues[variant], 0.0f, 0.0f, 1.0f};
+            break;
+        }
+        default: {
+            const std::array<std::uint8_t, 4> rgba{static_cast<std::uint8_t>(0x10u + 0x30u * variant), static_cast<std::uint8_t>(0x80u - 0x20u * variant), static_cast<std::uint8_t>(0xc0u - 0x30u * variant), static_cast<std::uint8_t>(0xffu - 0x40u * variant)};
+            texel.bytes.assign(rgba.begin(), rgba.end());
+            texel.value = {unorm(rgba[0]), unorm(rgba[1]), unorm(rgba[2]), unorm(rgba[3])};
+            break;
+        }
+    }
+    return texel;
+}
+
+void FillTexture(std::uint8_t* memory, std::span<const std::uint8_t> bytes) {
+    for (std::size_t offset = 0; offset + bytes.size() <= TextureStride; offset += bytes.size()) std::memcpy(memory + offset, bytes.data(), bytes.size());
+}
+
+std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
+    return {
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
+        ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
+        0xfacu | (Type2D << 28u),
+        0u, 0u, 0u, 0u,
+    };
+}
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
+}
+
+std::uint32_t TextureOf(std::uint32_t entry) {
+    return entry % Textures;
+}
+
+void FillGuest(const GuestBlock& block) {
+    for (std::uint32_t texture = 0; texture < Textures; ++texture) FillTexture(block.Texture(texture), TexelOf(texture).bytes);
+    auto* table = block.Table();
+    for (std::uint32_t entry = 0; entry < Entries; ++entry) {
+        const auto texture = TextureOf(entry);
+        const auto descriptor = TextureDescriptor(block.Texture(texture), TexelOf(texture).format);
+        std::copy(descriptor.begin(), descriptor.end(), table + static_cast<std::size_t>(entry) * (RecordBytes / 4u));
+    }
+    std::fill_n(table + static_cast<std::size_t>(NullEntry) * (RecordBytes / 4u), RecordBytes / 4u, 0u);
+    auto invalid = TextureDescriptor(block.Texture(0), 0u);
+    std::copy(invalid.begin(), invalid.end(), table + static_cast<std::size_t>(InvalidEntry) * (RecordBytes / 4u));
+    auto* srt = block.Srt();
+    const auto tableWords = BufferDescriptor(table, Entries * RecordBytes);
+    std::copy(tableWords.begin(), tableWords.end(), srt);
+    std::fill_n(srt + 4, 4, 0u);
+}
+
+struct Header {
+    Shader shader{};
+    ShaderUserData userData{};
+};
+
+alignas(8) Header ComputeHeader{};
+alignas(8) Header ExecClearHeader{};
+alignas(8) Header VertexHeader{};
+alignas(8) Header PixelHeader{};
+
+void Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(Header);
+    header.shader.shader_size = static_cast<std::uint32_t>(bytes);
+    header.shader.code = code;
+    header.shader.type = type;
+    header.shader.user_data = &header.userData;
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
+    commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u));
+    commands.insert(commands.end(), payload);
+}
+
+void Dispatch(std::vector<std::uint32_t>& words, const GuestBlock& block, const std::uint32_t* code, std::uint32_t key, std::array<float, 4>& output) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code));
+    const auto srt = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block.Srt()));
+    const auto set = [&](std::uint32_t offset, std::uint32_t value) { Append(words, 0x76, {offset, value}); };
+    set(0x20c, static_cast<std::uint32_t>(address >> 8u));
+    set(0x20d, static_cast<std::uint32_t>(address >> 40u) & 0xffu);
+    for (const std::uint32_t offset : {0x207u, 0x208u, 0x209u}) set(offset, 1);
+    set(0x212, 0);
+    set(0x213, 16u << 1u);
+    std::array<std::uint32_t, 16> userData{};
+    userData[0] = static_cast<std::uint32_t>(srt);
+    userData[1] = static_cast<std::uint32_t>(srt >> 32u);
+    userData[2] = key;
+    const auto outputWords = BufferDescriptor(output.data(), sizeof(output));
+    std::copy(outputWords.begin(), outputWords.end(), userData.begin() + 4);
+    for (std::uint32_t index = 0; index < userData.size(); ++index) set(0x240u + index, userData[index]);
+    Append(words, 0x15, {1, 1, 1, 0x8041u});
+}
+
+void SubmitCompute(std::vector<std::uint32_t>& words) {
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "the compute submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    std::vector<std::byte> stored(sizeof(Outputs));
+    AgcDriver::GuestMemory::Read(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Outputs.data())), stored, 4);
+    std::memcpy(Outputs.data(), stored.data(), stored.size());
+}
+
+enum class DrawKind { Direct, Indirect, IndexedIndirect };
+
+const char* DrawName(DrawKind kind) {
+    return kind == DrawKind::Direct ? "direct draw" : kind == DrawKind::Indirect ? "DRAW_INDIRECT" : "DRAW_INDEX_INDIRECT";
+}
+
+std::vector<std::uint32_t> DrawCommands(const GuestBlock& block, std::uint32_t key, DrawKind kind) {
+    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
+    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
+    const auto color = reinterpret_cast<std::uintptr_t>(block.Color());
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
+        {0x2d5, 0x2000},
+        {0x1b6, 0}, {0x207, 0}, {0x200, 0}, {0x203, 0x800},
+        {0x2dc, 0xaa00}, {0x2f8, 0}, {0x293, 0},
+        {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa},
+        {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
+        {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240},
+        {0x8e, 0xf}, {0x8f, 0xf}, {0x202, 0xcc0010},
+        {0x1c4, 0}, {0x1c5, 9}, {0x1c3, 4}, {0x31c, 0x28028},
+        {0x31b, 0}, {0x31d, 0}, {0x3b0, (63u << 14u) | 3u},
+        {0x3b8, RenderTargetAttrib3}, {0x1e0, 0},
+        {0xc, 0}, {0xd, 0x40040},
+        {0x81, 0x80000000}, {0x82, 0x40040},
+        {0x90, 0x80000000}, {0x91, 0x40040},
+        {0x94, 0x80000000}, {0x95, 0x40040},
+        {0x10f, std::bit_cast<std::uint32_t>(32.0f)}, {0x110, std::bit_cast<std::uint32_t>(32.0f)},
+        {0x111, std::bit_cast<std::uint32_t>(-2.0f)}, {0x112, std::bit_cast<std::uint32_t>(2.0f)},
+        {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0},
+        {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
+        {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
+        {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)}, {0x292, 2},
+    };
+    std::array<std::uint32_t, 9> userData{};
+    const auto table = BufferDescriptor(block.Table(), Entries * RecordBytes);
+    std::copy(table.begin(), table.end(), userData.begin());
+    userData[8] = key;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
+        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 1u << 1u}, {0x8c, 0},
+        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, static_cast<std::uint32_t>(userData.size()) << 1u},
+    };
+    for (std::uint32_t index = 0; index < userData.size(); ++index) shader.emplace_back(0x00cu + index, userData[index]);
+    std::vector<std::uint32_t> commands;
+    Append(commands, 0x79, {0x242, 4});
+    for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
+    for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
+    if (kind == DrawKind::Direct) {
+        Append(commands, 0x2d, {3, 2});
+        return commands;
+    }
+    const auto arguments = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(kind == DrawKind::Indirect ? static_cast<const void*>(DrawArguments.data()) : static_cast<const void*>(IndexedArguments.data())));
+    Append(commands, 0x11, {1, static_cast<std::uint32_t>(arguments), static_cast<std::uint32_t>(arguments >> 32u)});
+    if (kind == DrawKind::Indirect) {
+        Append(commands, 0x24, {0, 0, 0, 2});
+        return commands;
+    }
+    const auto indices = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Indices.data()));
+    Append(commands, 0x2a, {0});
+    Append(commands, 0x26, {static_cast<std::uint32_t>(indices), static_cast<std::uint32_t>(indices >> 32u)});
+    Append(commands, 0x13, {3});
+    Append(commands, 0x25, {0, 0, 0, 0});
+    return commands;
+}
+
+struct Counters {
+    std::uint64_t snapshots = 0;
+    std::uint64_t tableBuilds = 0;
+    DeviceImageTable::Counts device;
+};
+
+Counters Read() {
+    Counters counters;
+    counters.snapshots = ShaderRecompiler::ResourceMaterializer::TableSnapshotColumns();
+    counters.tableBuilds = AgcDriver::Graphics::ImageTableBuilds();
+    for (const auto& totals : DeviceImageTable::DeviceTotals()) {
+        counters.device.prepares += totals.prepares;
+        counters.device.drained += totals.drained;
+        counters.device.distinct += totals.distinct;
+        counters.device.inserted += totals.inserted;
+        counters.device.faults += totals.faults;
+        counters.device.rejected += totals.rejected;
+        counters.device.refreshed += totals.refreshed;
+        counters.device.checked += totals.checked;
+        counters.device.heapFull += totals.heapFull;
+        counters.device.fallbacks += totals.fallbacks;
+    }
+    return counters;
+}
+
+std::string Describe(const Counters& before, const Counters& after) {
+    return " (CPU table snapshots " + std::to_string(after.snapshots - before.snapshots) + ", CPU table bindings " + std::to_string(after.tableBuilds - before.tableBuilds) + ", device table prepares " + std::to_string(after.device.prepares - before.device.prepares) + ", miss records " + std::to_string(after.device.drained - before.device.drained) + ", inserted " + std::to_string(after.device.inserted - before.device.inserted) + ")";
+}
+
+void RequireCpuTable(const Counters& before, const Counters& after, const std::string& what) {
+    Require(after.snapshots > before.snapshots && after.device.prepares == before.device.prepares, what + ": the CPU table path did not snapshot the table" + Describe(before, after));
+}
+
+void RequireMisses(const Counters& before, const Counters& after, std::uint64_t keys, const std::string& what) {
+    Require(after.snapshots == before.snapshots && after.tableBuilds == before.tableBuilds && after.device.prepares > before.device.prepares, what + ": the device path snapshotted or bound the CPU table, or did not use the device table" + Describe(before, after));
+    Require(after.device.drained >= before.device.drained + keys, what + ": the device path did not record its " + std::to_string(keys) + " missed keys" + Describe(before, after));
+}
+
+void RequireHits(const Counters& before, const Counters& after, const std::string& what) {
+    Require(after.snapshots == before.snapshots && after.tableBuilds == before.tableBuilds && after.device.prepares > before.device.prepares, what + ": the device path snapshotted or bound the CPU table, or did not use the device table" + Describe(before, after));
+    Require(after.device.drained == before.device.drained, what + ": the device path recorded misses for keys it had inserted" + Describe(before, after));
+}
+
+void RequireTexel(const std::array<float, 4>& output, const std::array<float, 4>& expected, const std::string& what) {
+    for (std::size_t channel = 0; channel < 4; ++channel) {
+        Require(std::fabs(output[channel] - expected[channel]) < 1e-6f, what + ": channel " + std::to_string(channel) + " is " + std::to_string(output[channel]) + ", expected " + std::to_string(expected[channel]));
+    }
+}
+
+struct Harness {
+    const GuestBlock& block;
+    bool device = false;
+};
+
+constexpr std::array<std::uint32_t, 10> ComputeKeys{3u, 1764u, 37u, 54u, 1495u, 72u, 1657u, 1600u, 33u, 1810u};
+
+void RunComputeKeys(const Harness& harness, std::span<const std::uint32_t> keys) {
+    for (std::size_t index = 0; index < keys.size(); ++index) Outputs[index].fill(-1.0f);
+    std::vector<std::uint32_t> words;
+    for (std::size_t index = 0; index < keys.size(); ++index) Dispatch(words, harness.block, ComputeCode.data(), keys[index], Outputs[index]);
+    SubmitCompute(words);
+}
+
+void ComputeTable(const Harness& harness) {
+    std::vector<std::uint32_t> formats;
+    for (const auto key : ComputeKeys) {
+        const auto format = TexelOf(TextureOf(key)).format;
+        if (std::find(formats.begin(), formats.end(), format) == formats.end()) formats.push_back(format);
+    }
+    Require(formats.size() >= 5u, "the compute keys sample fewer than five formats");
+    auto before = Read();
+    RunComputeKeys(harness, ComputeKeys);
+    auto after = Read();
+    if (harness.device) RequireMisses(before, after, ComputeKeys.size(), "(a) compute, first batch");
+    else RequireCpuTable(before, after, "(a) compute, first batch");
+    for (std::size_t index = 0; index < ComputeKeys.size(); ++index) {
+        const auto texture = TextureOf(ComputeKeys[index]);
+        const auto what = "(a) compute, first batch, key " + std::to_string(ComputeKeys[index]) + " (" + FormatNames[texture % Formats.size()] + ")";
+        RequireTexel(Outputs[index], harness.device ? std::array<float, 4>{} : TexelOf(texture).value, what);
+    }
+    std::printf("(a) compute, first batch of %zu dispatches: %s%s\n", ComputeKeys.size(), harness.device ? "zeros, keys recorded" : "texels through the CPU table", Describe(before, after).c_str());
+    before = after;
+    RunComputeKeys(harness, ComputeKeys);
+    after = Read();
+    for (std::size_t index = 0; index < ComputeKeys.size(); ++index) {
+        const auto texture = TextureOf(ComputeKeys[index]);
+        RequireTexel(Outputs[index], TexelOf(texture).value, "(a) compute, second batch, key " + std::to_string(ComputeKeys[index]) + " (" + FormatNames[texture % Formats.size()] + ")");
+    }
+    if (harness.device) {
+        RequireHits(before, after, "(a) compute, second batch");
+        Require(after.device.inserted == before.device.inserted + ComputeKeys.size(), "(a) compute, second batch: the device path did not insert the ten missed keys" + Describe(before, after));
+    }
+    std::printf("(a) compute, second batch: the texels of %zu formats%s\n", formats.size(), Describe(before, after).c_str());
+}
+
+AgcDriver::Graphics::ColorTargetLayout ColorLayout() {
+    return AgcDriver::Graphics::ColorTargetLayout(ColorWidth, ColorHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+}
+
+void DrawOnce(const Harness& harness, std::uint32_t key, DrawKind kind) {
+    std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+    auto commands = DrawCommands(harness.block, key, kind);
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, std::string("the ") + DrawName(kind) + " submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+std::vector<std::byte> ReadColor(const Harness& harness) {
+    std::vector<std::byte> stored(ColorLayout().Bytes());
+    AgcDriver::GuestMemory::Read(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(harness.block.Color())), stored);
+    return stored;
+}
+
+void RequireDrawn(const std::vector<std::byte>& stored, const std::array<float, 4>& value, const std::string& what) {
+    const auto layout = ColorLayout();
+    std::size_t drawn = 0;
+    for (std::uint32_t y = 0; y < ColorHeight; ++y) {
+        for (std::uint32_t x = 0; x < ColorWidth; ++x) {
+            const auto offset = layout.Offset(x, y);
+            if (std::all_of(stored.begin() + static_cast<std::ptrdiff_t>(offset), stored.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte byte) { return byte == Kept; })) continue;
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                const auto texel = static_cast<long>(stored[offset + channel]);
+                const auto expected = std::lround(value[channel] * 255.0f);
+                Require(texel == expected, what + ": pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") channel " + std::to_string(channel) + " is " + std::to_string(texel) + ", expected " + std::to_string(expected));
+            }
+            ++drawn;
+        }
+    }
+    Require(drawn != 0, what + ": the draw covered no pixel");
+}
+
+void Draws(const Harness& harness) {
+    const std::array<std::pair<DrawKind, std::uint32_t>, 3> draws{{{DrawKind::Direct, 1546u}, {DrawKind::Indirect, 1867u}, {DrawKind::IndexedIndirect, 1772u}}};
+    for (const auto& [kind, key] : draws) {
+        const auto texture = TextureOf(key);
+        const auto name = std::string("(b) ") + DrawName(kind) + ", key " + std::to_string(key) + " (" + FormatNames[texture % Formats.size()] + ")";
+        auto before = Read();
+        DrawOnce(harness, key, kind);
+        auto stored = ReadColor(harness);
+        auto after = Read();
+        if (harness.device) RequireMisses(before, after, 1u, name + ", first draw");
+        else RequireCpuTable(before, after, name + ", first draw");
+        RequireDrawn(stored, harness.device ? std::array<float, 4>{} : TexelOf(texture).value, name + ", first draw");
+        std::printf("%s, first draw: %s%s\n", name.c_str(), harness.device ? "zeros, key recorded" : "the texel through the CPU table", Describe(before, after).c_str());
+        before = after;
+        DrawOnce(harness, key, kind);
+        RequireDrawn(ReadColor(harness), TexelOf(texture).value, name + ", second draw");
+        after = Read();
+        if (harness.device) RequireHits(before, after, name + ", second draw");
+        std::printf("%s, second draw: the texel%s\n", name.c_str(), Describe(before, after).c_str());
+    }
+}
+
+void Freshness(const Harness& harness) {
+    RunComputeKeys(harness, ComputeKeys);
+    RunComputeKeys(harness, ComputeKeys);
+    std::array<std::array<float, 4>, ComputeKeys.size()> previous{};
+    std::copy_n(Outputs.begin(), ComputeKeys.size(), previous.begin());
+    const auto written = TextureOf(ComputeKeys[1]);
+    Require(written % Formats.size() == 4u, "the written texture is not 8_8_8_8 unorm");
+    FillTexture(harness.block.Texture(written), WrittenTexel);
+    const auto before = Read();
+    RunComputeKeys(harness, ComputeKeys);
+    const auto after = Read();
+    for (std::size_t index = 0; index < ComputeKeys.size(); ++index) {
+        const auto what = "(c) freshness, key " + std::to_string(ComputeKeys[index]);
+        if (TextureOf(ComputeKeys[index]) == written) {
+            RequireTexel(Outputs[index], {WrittenTexel[0] / 255.0f, WrittenTexel[1] / 255.0f, WrittenTexel[2] / 255.0f, WrittenTexel[3] / 255.0f}, what + " (the written texture)");
+        } else {
+            RequireTexel(Outputs[index], previous[index], what + " (an unwritten texture)");
+        }
+    }
+    if (harness.device) {
+        RequireHits(before, after, "(c) freshness");
+        Require(after.device.checked > before.device.checked, "(c) freshness: the device path re-checked no entry for a written texture");
+    }
+    std::printf("(c) freshness: a CPU write to texture %u changed only its texels%s, %llu entries re-checked, %llu given a new texture\n", written, Describe(before, after).c_str(), static_cast<unsigned long long>(after.device.checked - before.device.checked), static_cast<unsigned long long>(after.device.refreshed - before.device.refreshed));
+}
+
+void Lanes(const Harness& harness) {
+    auto before = Read();
+    Outputs[0].fill(-1.0f);
+    std::vector<std::uint32_t> words;
+    Dispatch(words, harness.block, ComputeCode.data(), NullEntry, Outputs[0]);
+    SubmitCompute(words);
+    auto after = Read();
+    RequireTexel(Outputs[0], {}, "(d) a null T#");
+    if (harness.device) Require(after.device.drained == before.device.drained, "(d) a null T# recorded a miss" + Describe(before, after));
+    std::printf("(d) a null T# reads zeros%s\n", Describe(before, after).c_str());
+    const auto fresh = 13u;
+    Require(TextureOf(1773u) == fresh, "the EXEC test key does not select its unused texture");
+    before = Read();
+    Outputs[1].fill(-1.0f);
+    words.clear();
+    Dispatch(words, harness.block, ExecClearCode.data(), 1773u, Outputs[1]);
+    SubmitCompute(words);
+    after = Read();
+    RequireTexel(Outputs[1], {-1.0f, -1.0f, -1.0f, -1.0f}, "(d) a lane with EXEC clear stored");
+    if (harness.device) Require(after.device.drained == before.device.drained, "(d) a lane with EXEC clear recorded a miss" + Describe(before, after));
+    std::printf("(d) a lane with EXEC clear records nothing%s\n", Describe(before, after).c_str());
+}
+
+void Faults(const Harness& harness) {
+    std::string log;
+    for (int batch = 1; batch <= 2; ++batch) {
+        const auto before = Read();
+        Outputs[0].fill(-1.0f);
+        std::vector<std::uint32_t> words;
+        Dispatch(words, harness.block, ComputeCode.data(), InvalidEntry, Outputs[0]);
+        StderrCapture capture;
+        SubmitCompute(words);
+        log = capture.Finish();
+        const auto after = Read();
+        const bool reported = log.find("selected the descriptor") != std::string::npos;
+        std::printf("(e) batch %d selecting an invalid descriptor: %s%s\n", batch, reported ? "error reported" : "no error", Describe(before, after).c_str());
+        if (reported) break;
+        Require(harness.device && batch == 1, "(e) the CPU path did not raise the poisoned entry's error after its first batch");
+        Require(after.device.drained > before.device.drained, "(e) the device path did not record the invalid descriptor's key" + Describe(before, after));
+    }
+    Require(log.find("selected the descriptor") != std::string::npos, "(e) the device path did not raise the rejected descriptor's error after the batch that sampled its entry");
+    Require(log.find("invalid format") != std::string::npos, "(e) the error does not name the CPU path's reason: " + log);
+    const auto words = TextureDescriptor(harness.block.Texture(0), 0u);
+    char first[16];
+    std::snprintf(first, sizeof(first), "%08x", words[0]);
+    Require(log.find(first) != std::string::npos, std::string("(e) the error does not name the descriptor's words: ") + log);
+}
+
+void FallsBackFromWarmCache(const Harness& harness) {
+    const std::array<std::uint32_t, 4> keys{1546u, 1867u, 1772u, 1773u};
+    auto before = Read();
+    DrawOnce(harness, keys[0], DrawKind::Direct);
+    DrawOnce(harness, keys[0], DrawKind::Direct);
+    RequireDrawn(ReadColor(harness), TexelOf(TextureOf(keys[0])).value, "(f) the warm draw");
+    for (std::size_t index = 1; index < keys.size(); ++index) {
+        DrawOnce(harness, keys[index], DrawKind::Direct);
+        DrawOnce(harness, keys[index], DrawKind::Direct);
+    }
+    static_cast<void>(ReadColor(harness));
+    auto after = Read();
+    if (harness.device) Require(after.device.heapFull != before.device.heapFull && after.device.fallbacks == before.device.fallbacks + 1u, "(f) a heap capped at two slots per kind did not send the program back to the CPU table path (heap full " + std::to_string(after.device.heapFull - before.device.heapFull) + ", fallbacks " + std::to_string(after.device.fallbacks - before.device.fallbacks) + ")");
+    std::printf("(f) %zu keys on a heap of two slots per kind: %llu without a slot, %llu fallbacks%s\n", keys.size(), static_cast<unsigned long long>(after.device.heapFull - before.device.heapFull), static_cast<unsigned long long>(after.device.fallbacks - before.device.fallbacks), Describe(before, after).c_str());
+    for (const auto key : keys) {
+        before = Read();
+        DrawOnce(harness, key, DrawKind::Direct);
+        const auto what = "(f) after the fallback, key " + std::to_string(key) + " from a warm draw cache";
+        RequireDrawn(ReadColor(harness), TexelOf(TextureOf(key)).value, what);
+        after = Read();
+        if (harness.device) Require(after.device.prepares == before.device.prepares && after.device.drained == before.device.drained, what + ": the draw still read the device image table" + Describe(before, after));
+        std::printf("%s: the texel%s\n", what.c_str(), Describe(before, after).c_str());
+    }
+}
+
+}
+
+int main(int argc, char** argv) {
+    const std::string mode = argc > 1 ? argv[1] : "";
+    const std::string parts = argc > 2 ? argv[2] : "abcde";
+#ifdef _WIN32
+    _putenv_s("APS5_EAGER_WRITEBACK", "1");
+    if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
+#else
+    setenv("APS5_EAGER_WRITEBACK", "1", 1);
+    if (mode == "--heap-cap") setenv("APS5_HEAP_SLOT_CAP", "2", 1);
+#endif
+    try {
+        bool served = false;
+        {
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            served = device->DeviceImagePath();
+        }
+        const bool requested = AgcDriver::Graphics::GpuPathEnabled();
+        if (requested && !served) {
+            std::printf("skipped, the device does not serve the device image path\n");
+            return VulkanTestSkipped;
+        }
+        GuestBlock block;
+        try {
+            FillGuest(block);
+            Harness harness{block, requested || mode == "--expect-device-path"};
+            std::printf("device image path %s, %s\n", requested ? "on" : "off", harness.device ? "expecting the device table" : "expecting the CPU table");
+            Registered(ComputeHeader, ComputeCode.data(), sizeof(ComputeCode), 0);
+            Registered(ExecClearHeader, ExecClearCode.data(), sizeof(ExecClearCode), 0);
+            Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+            Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+            if (mode == "--heap-cap") {
+                FallsBackFromWarmCache(harness);
+            } else {
+                if (parts.find('a') != std::string::npos) ComputeTable(harness);
+                if (parts.find('b') != std::string::npos) Draws(harness);
+                if (parts.find('c') != std::string::npos) Freshness(harness);
+                if (parts.find('d') != std::string::npos) Lanes(harness);
+                if (parts.find('e') != std::string::npos) Faults(harness);
+            }
+        } catch (const std::exception& error) {
+            std::cerr << "device image path harness failed: " << error.what() << '\n';
+            AgcDriverShutdown_nid_postfix();
+            return 1;
+        }
+        AgcDriverShutdown_nid_postfix();
+        std::cout << "device image path harness passed\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "device image path harness failed: " << error.what() << '\n';
+        try {
+            AgcDriverShutdown_nid_postfix();
+        } catch (const std::exception& shutdownError) {
+            std::cerr << shutdownError.what() << '\n';
+        }
+        return 1;
+    }
+}
