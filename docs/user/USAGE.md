@@ -201,6 +201,16 @@ GPU results in storage images and render targets stay on the GPU until something
 
 A title's own CPU reads of that memory are not seen, so a title that waits for a GPU label and then reads the results reads stale memory. `APS5_STORE_AT_LABEL=1` stores every pending result before each label the GPU writes (`RELEASE_MEM`, `WRITE_DATA`, `DMA_DATA`), at the cost of a write-back of every pending image per label. Any other value stops the title at its first label.
 
+### Upscaling
+
+The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. EASU is designed for up to twice the display buffer's size on each axis: larger factors, such as a 1280x720 buffer in a 3840x2160 window, still work but look softer. When it is the same size or smaller, FSR stays off for that frame, which is presented exactly as without `ANYPS5_UPSCALE`: RCAS alone would cost frame rate there without adding detail.
+
+`ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`. RCAS runs only on frames FSR upscales, and there it always sharpens: `2.0` is its weakest setting, not off. Its approximate reciprocal also darkens flat areas by a fixed fraction of their value: 0.17% at the default `0.2` (a flat 0.5 becomes 0.4992), 0.32% at `0.0` and 0.07% at `2.0`. That is at most one 8-bit level for SDR, and at most three 10-bit code values for HDR10.
+
+FSR works on SDR and HDR10 output alike, on the values the display receives: sRGB-encoded for SDR, PQ code values for HDR10. Sharpening never takes them out of the signal range. While EASU runs, each presentation in flight keeps two more images, one of the display buffer's size and one of the fitted image's size, and each frame takes two full-window passes.
+
+An empty value of either variable is the same as an unset one. The start fails on any other value of `ANYPS5_UPSCALE` than `fsr`, and on an `ANYPS5_FSR_SHARPNESS` that is not a number from 0.0 to 2.0.
+
 ### Tracing system library calls
 
 Windows only. An executable converted with `--trace-imports` records the calls it makes to the libraries named in `APS5_TRACE_CALLS`, a comma-separated list such as `libkernel,libSceSaveData`, or `all`. Without the variable nothing is recorded. The crash and abort reports then end with the last 64 calls: sequence number, thread, library, import name as the executable imports it (a NID) and the caller's address. They are followed by the 32 most called imports since start-up, with their number of calls.
