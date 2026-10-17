@@ -1,5 +1,8 @@
-READY
-since: 2026-10-17T05:59:34Z
+BUSY LA-003
+since: 2026-10-17T05:59:49Z
+claimed: tasks/claimed/LA-003.md
+step: reading the task; baseline ctest of main 2bfe0045d running
+setup: READY report in git history (3bdd1ca42)
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15 GiB RAM, no swap, 30 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, binutils 2.42, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1, Python 3.13.16, git 2.43.0, wild 0.10.0 (CI's release tarball, sha256 641265506a...283 checked, readelf probe "Linker: Wild 0.10.0", in /opt/wild/0.10.0/bin, used through -B as in CI). Vulkan: libvulkan1 1.3.275, lavapipe from mesa-vulkan-drivers 25.2.8-0ubuntu0.24.04.4 (llvmpipe, LLVM 20.1.2, 256 bits), API 1.4.318.
