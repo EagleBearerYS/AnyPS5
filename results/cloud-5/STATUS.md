@@ -1,5 +1,7 @@
-READY
-since: 2026-10-17T16:56Z
+BUSY BF-063
+since: 2026-10-17T16:57Z (BF-063, commit the guest page-state and write-watch tables on first touch on Windows)
+claimed: tasks/claimed/BF-063.md
+step: finding the tables' allocations, readers and writers
 previous: LA-011 done, results/cloud-5/LA-011.md: exp/lane-a-v3 2f051fa1f (39 lane A commits on PR 6947 424db208d, all clean, mirror 1,450/1,428 IPv6 5 only); exp/lane-a-recorded 9673cb568 (option (b): a draw outside the recorder re-prepares its device-table stages with the CPU target and draws again, no fallback, draw cache keeps the device variants; 68d3fd6bd lane A only + 9673cb568 harness part (m)); his six heap_draw_sample pass switch on and off (red on v3: 6 abort); part (m) red aborts with today's message, green shows device prepares 1, miss records 1 on the next recorded draw; scope 747: 10 -> 4 (bindless_images, image_sint8, image_table, image_table_cache_bounds); mirror 1,450/1,428 IPv6 5 only; each commit 85 tests 0 failed; cost +0.22 ms on 7.64 ms per unrecorded draw; journal switch-off test passes on v3 (2 rejected, 0 failed)
 
 RESULT (setup):
