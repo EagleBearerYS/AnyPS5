@@ -196,6 +196,7 @@ int main(int argc, char** argv) {
     Expectation expect{check, FullHd, true};
     if (mode == "unset") Require(std::getenv("ANYPS5_OUTPUT_RESOLUTION") == nullptr, "ANYPS5_OUTPUT_RESOLUTION is set for the unset case");
     else if (mode == "1280x720") expect = {check, {1280, 720}, false};
+    else if (mode == "1920x1080") expect = {check, FullHd, false};
     else if (mode == "2560x1440") expect = {check, {2560, 1440}, false};
     else if (mode == "3840x2160") expect = {check, UltraHd, true};
     else Require(false, "unknown test mode");

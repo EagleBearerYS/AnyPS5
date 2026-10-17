@@ -137,6 +137,11 @@ int main(int argc, char** argv) {
         RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported after a 1280x720 registration");
     } else if (mode == "ps4_1280x720") {
         RequirePs4BuffersFollowTheSetting(handle, allocation);
+    } else if (mode == "1920x1080") {
+        RequireReports(handle, 1920, 1080, RESOLUTION_HD, "1920x1080 was not reported before registration");
+        Require(TryRegister(handle, allocation, 3840, 64) == VIDEO_OUT_ERROR_INVALID_RESOLUTION, "3840x64 buffers were not refused with INVALID_RESOLUTION on a 1920x1080 output");
+        Register(handle, allocation, 1920, 64);
+        RequireReports(handle, 1920, 1080, RESOLUTION_HD, "1920x1080 was not reported after a 1920x64 registration");
     } else if (mode == "2560x1440") {
         RequireReports(handle, 2560, 1440, RESOLUTION_HD, "2560x1440 was not reported before registration");
         Require(TryRegister(handle, allocation, 3840, 64) == VIDEO_OUT_ERROR_INVALID_RESOLUTION, "3840x64 buffers were not refused with INVALID_RESOLUTION on a 2560x1440 output");
