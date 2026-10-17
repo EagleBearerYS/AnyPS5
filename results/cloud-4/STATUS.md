@@ -1,7 +1,6 @@
-BUSY PM-071
-since: 2026-10-17T08:51:50Z (claimed)
-claimed: tasks/claimed/PM-071.md
-last: PM-070 done, results/cloud-4/PM-070.md (review/videoout-output-resolution-declared 55b538c94); before it PM-069 (review/videoout-output-resolution ec4a01c07), BF-052, LA-003
+READY
+since: 2026-10-17T09:02:48Z
+last: PM-071 done, results/cloud-4/PM-071.md (review/np-trophy-unlocks 68125962b); before it PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
