@@ -172,6 +172,7 @@ heapCapture:
         }
     }
     localDevice->NoteDeviceImageProgram(*stageCapture.compiled, program.binary.codeAddress);
+    NoteDeviceImageModule(*program.snapshot, program.codeOffset, request, *stageCapture.compiled);
     stageCapture.capture = capture;
     timing.Mark("materialize");
     const auto walked = capture->userDataUse.asValue | capture->userDataUse.asBase;

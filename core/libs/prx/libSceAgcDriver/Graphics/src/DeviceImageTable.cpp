@@ -12,6 +12,7 @@
 #include "ImageTableAbi.hpp"
 #include "RuntimeAbi.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -65,6 +66,26 @@ Tables& tables() {
     return registry;
 }
 
+struct PacketTotals {
+    std::array<std::atomic<std::uint64_t>, 4> packets{};
+    std::array<std::atomic<std::uint64_t>, 4> nanoseconds{};
+};
+
+PacketTotals& packetTotals() {
+    static PacketTotals totals;
+    return totals;
+}
+
+std::array<std::uint64_t, 8> packetSnapshot() {
+    auto& totals = packetTotals();
+    std::array<std::uint64_t, 8> snapshot{};
+    for (std::size_t index = 0; index < 4u; ++index) {
+        snapshot[index] = totals.packets[index].load(std::memory_order_relaxed);
+        snapshot[4u + index] = totals.nanoseconds[index].load(std::memory_order_relaxed);
+    }
+    return snapshot;
+}
+
 std::string hexText(std::uint64_t value) {
     std::ostringstream text;
     text << std::hex << value;
@@ -109,6 +130,13 @@ std::optional<std::string> DeviceImagePathRefusal(const VkPhysicalDeviceLimits& 
     if (features.samplers < Runtime::GpuSamplerHeapSlots) return "the device binds " + std::to_string(features.samplers) + " update-after-bind samplers per stage, and the image heap holds " + std::to_string(Runtime::GpuSamplerHeapSlots);
     if (limits.maxStorageBufferRange < TableBytes) return "the device's storage buffer range of " + std::to_string(limits.maxStorageBufferRange) + " bytes is smaller than the device image table's " + std::to_string(TableBytes);
     return std::nullopt;
+}
+
+void NoteDeviceImagePacket(bool dispatch, bool deviceImages, double milliseconds) {
+    auto& totals = packetTotals();
+    const auto index = (dispatch ? 2u : 0u) + (deviceImages ? 1u : 0u);
+    totals.packets[index].fetch_add(1u, std::memory_order_relaxed);
+    totals.nanoseconds[index].fetch_add(static_cast<std::uint64_t>(std::max(milliseconds, 0.0) * 1e6), std::memory_order_relaxed);
 }
 
 VkDescriptorSetLayout DeviceImageHeap::Layout(const Context& context) {
@@ -653,6 +681,16 @@ std::string DeviceImageTable::faultText(const Key& key, std::uint32_t pc) const 
     return message.str();
 }
 
+std::vector<DeviceImageTable::Counts> DeviceImageTable::DeviceTotals() {
+    auto& registry = tables();
+    std::lock_guard lock(registry.mutex);
+    std::vector<Counts> totals;
+    for (const auto& [device, table] : registry.tables) {
+        if (table != nullptr) totals.push_back(table->Totals());
+    }
+    return totals;
+}
+
 DeviceImageTable::Counts DeviceImageTable::Totals() const {
     std::lock_guard lock(mutex);
     auto counts = totals;
@@ -667,6 +705,7 @@ void DeviceImageTable::report() {
     if (lastReport == 0) {
         lastReport = now;
         reported = totals;
+        reportedPackets = packetSnapshot();
         return;
     }
     if (now - lastReport < 10'000'000'000ll) return;
@@ -675,9 +714,13 @@ void DeviceImageTable::report() {
         if (totals.peakTextures[kind] != 0u) peaks += (peaks.empty() ? "" : " ") + std::to_string(kind) + ":" + std::to_string(totals.peakTextures[kind]);
     }
     const auto delta = [&](std::uint64_t Counts::* field) { return static_cast<unsigned long long>(totals.*field - reported.*field); };
-    std::fprintf(stderr, "[device-images] (10 s): %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %llu refreshed (%llu checked, %llu scans), %llu evicted, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s\n",
-        delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), delta(&Counts::refreshed), delta(&Counts::checked), delta(&Counts::scans), delta(&Counts::evicted), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str());
+    const auto packets = packetSnapshot();
+    const auto count = [&](std::size_t index) { return static_cast<unsigned long long>(packets[index] - reportedPackets[index]); };
+    const auto perPacket = [&](std::size_t index) { return count(index) != 0u ? static_cast<double>(packets[4u + index] - reportedPackets[4u + index]) / 1000.0 / static_cast<double>(count(index)) : 0.0; };
+    std::fprintf(stderr, "[device-images] (10 s): %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %llu refreshed (%llu checked, %llu scans), %llu evicted, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s; draws on the device table %llu of %llu (driver CPU %.1f us per packet, %.1f us for the others), dispatches %llu of %llu (%.1f us, %.1f us for the others)\n",
+        delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), delta(&Counts::refreshed), delta(&Counts::checked), delta(&Counts::scans), delta(&Counts::evicted), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str(), count(1), count(0) + count(1), perPacket(1), perPacket(0), count(3), count(2) + count(3), perPacket(3), perPacket(2));
     reported = totals;
+    reportedPackets = packets;
     lastReport = now;
 }
 
