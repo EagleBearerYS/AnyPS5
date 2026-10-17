@@ -79,6 +79,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             for (const auto mask : pixel.quadSampleMask) mix(mask);
             std::lock_guard cacheLock(drawCacheMutex);
             ++drawEntryCounters.lookups;
+            ++drawLookupSerial;
             const auto found = drawCache.find(drawKey);
             if (found != drawCache.end()) entry = found->second;
             else ++drawEntryCounters.absent;
@@ -180,8 +181,13 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         rotated->touched = entry->touched;
                         rotated->order = entry->order;
                         moveDrawAliases(again->second, rotated);
+                        rotated->cpuIndirect = entry->cpuIndirect;
+                        rotated->lastUse = entry->lastUse;
+                        rotated->ownBytes = entry->ownBytes;
+                        rotated->pinned = entry->pinned;
                         again->second = std::move(rotated);
                     }
+                    if (again->second->cpuIndirect) again->second->lastUse = drawLookupSerial;
                     if (drawCacheHits - again->second->touched > drawCacheEntries() / 8) {
                         drawOrder.splice(drawOrder.begin(), drawOrder, again->second->order);
                         again->second->touched = drawCacheHits;
