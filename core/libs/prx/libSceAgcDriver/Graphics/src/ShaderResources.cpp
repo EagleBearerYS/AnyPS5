@@ -2218,6 +2218,11 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         visit(0x48454150u);
         visit(static_cast<std::uint32_t>(program.heapTemplateId));
         visit(static_cast<std::uint32_t>(program.heapTemplateId >> 32u));
+        for (const auto& binding : program.bindings) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages) continue;
+            visit(binding.binding);
+            for (const auto word : binding.guestDescriptor) visit(word);
+        }
         return;
     }
     visit(static_cast<std::uint32_t>(program.bindings.size()));

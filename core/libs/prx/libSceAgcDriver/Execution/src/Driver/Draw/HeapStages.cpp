@@ -267,6 +267,14 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const
         if (binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt && !words.flattenedSrt.empty()) binding.guestDescriptor = words.flattenedSrt;
         if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) std::copy_n(words.userData.begin(), std::min(words.userData.size(), binding.guestDescriptor.size()), binding.guestDescriptor.begin());
     }
+    if (!words.bindings.empty()) {
+        if (words.bindings.size() != result->bindings.size()) throw std::runtime_error("a heap stage's per-draw bindings differ in number from its template");
+        for (std::size_t index = 0; index < words.bindings.size(); ++index) {
+            if (words.bindings[index].empty()) continue;
+            if (words.bindings[index].size() != result->bindings[index].guestDescriptor.size()) throw std::runtime_error("a heap stage's per-draw descriptor words differ in size from its template");
+            result->bindings[index].guestDescriptor = words.bindings[index];
+        }
+    }
     if (!words.vertexAttributes.empty()) result->vertexAttributes = words.vertexAttributes;
     return result;
 }
