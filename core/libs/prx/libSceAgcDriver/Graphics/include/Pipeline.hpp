@@ -121,7 +121,7 @@ struct DescribedSetLayouts {
     PipelineSetLayouts layouts;
     std::vector<std::uint32_t> mainKey;
     std::vector<std::uint32_t> fragmentKey;
-    PipelineSetLayouts View() const { return {layouts.main, layouts.fragment, layouts.split, mainKey, fragmentKey, layouts.data}; }
+    PipelineSetLayouts View() const { return {layouts.main, layouts.fragment, layouts.split, mainKey, fragmentKey, layouts.data, layouts.deviceGap, layouts.deviceHeap, layouts.deviceTable}; }
 };
 DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const CompiledShader> shaders);
 bool SplitsSets(const Context& context, std::span<const CompiledShader> shaders);
