@@ -589,23 +589,42 @@ void FullTableFallsBack(AgcDriver::VulkanDevice& device) {
     recorder->Sync();
 }
 
-void HeapCapFallsBack(AgcDriver::VulkanDevice& device) {
+void HeapKeptFree(AgcDriver::VulkanDevice& device, std::uint32_t textures) {
     const auto program = DeviceTableProgram(device);
+    GuestBlock block;
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
     const auto context = device.GraphicsContext();
+    auto& heap = BindlessHeap::For(context);
+    const auto cap = heap.TextureSlotCap();
+    const auto margin = heap.TextureSlotMargin();
+    const auto keep = std::max(margin, GpuHeapEnabled() ? cap - cap / 2u : 0u);
+    const std::uint64_t room = cap - keep;
     DeviceImageTable table(context, Lookup());
     table.NoteProgram(program, ProgramAddress);
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
-    const auto keys = FormatKeys();
+    std::vector<Key> keys;
+    for (std::uint32_t index = 0; index < textures; ++index) keys.push_back(KeyFor(TextureDescriptor(block.Texture(index), Formats[4])));
+    Require(!BindlessHeap::NearlyFull(), "the heap starts open to GPU mode");
     table.Prepare(context, *recorder, programs);
     WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
     recorder->Sync();
     table.Prepare(context, *recorder, programs);
     const auto counts = table.Totals();
-    Require(counts.inserted == 2u && counts.heapFull == 3u, "a heap capped at two slots per kind takes two of the five textures (" + std::to_string(counts.inserted) + " inserted, " + std::to_string(counts.heapFull) + " without a slot)");
-    Require(!table.ServesProgram(ProgramAddress) && counts.fallbacks == 1u, "the program whose keys found the heap full falls back to the CPU path instead of stopping");
+    Require(counts.inserted == room && counts.heapFull == keys.size() - room, "a heap of " + std::to_string(cap) + " slots per kind with a margin of " + std::to_string(margin) + " gives the table " + std::to_string(room) + " of " + std::to_string(keys.size()) + " textures (" + std::to_string(counts.inserted) + " inserted, " + std::to_string(counts.heapFull) + " without a slot)");
+    Require(!BindlessHeap::NearlyFull(), "the table's slots leave the heap's margin free, so GPU mode is not refused");
+    Require(!table.ServesProgram(ProgramAddress) && counts.fallbacks == 1u, "the program whose keys found no slot the table may take falls back to the CPU path instead of stopping");
     Require(device.Target().deviceImageTables, "the device still serves the path to other programs");
+    std::printf("heap of %u slots per kind, margin %u%s: the table took %llu and left %u unused, %u above the margin; %llu keys found no slot it may take, 1 fallback; GPU mode not refused\n", cap, margin, GpuHeapEnabled() ? ", APS5_GPU_HEAP set" : "", static_cast<unsigned long long>(room), keep, keep - margin, static_cast<unsigned long long>(keys.size() - room));
+    const auto refused = std::find_if(keys.begin(), keys.end(), [&](const Key& key) { return !table.Find(key).has_value(); });
+    Require(refused != keys.end(), "a key the heap refused stays out of the table");
+    const auto mode = ExpectedMode(*refused).mode;
+    Require(mode.has_value(), "the refused key has a runtime image mode");
+    const auto kind = static_cast<std::uint32_t>(ShaderRecompiler::DescriptorBindingForImage(SampledInterface()->modes.at(*mode)));
+    const auto texture = LookupDeviceTableTexture(context, std::span<const std::uint32_t, Abi::DescriptorWords>(refused->data(), Abi::DescriptorWords), DeviceTableView{}, 0u);
+    Require(texture.texture != nullptr && texture.unservable.empty(), "the refused key's texture is in the cache");
+    Require(heap.TextureSlot(kind, texture.texture, texture.view, texture.layout).has_value(), "GPU mode's own request for a refused key's texture still finds a slot");
+    std::printf("GPU mode's request for that texture takes a slot; the heap is %s\n", BindlessHeap::NearlyFull() ? "now refused by GPU mode's own take" : "still open");
     recorder->Sync();
 }
 
@@ -798,12 +817,14 @@ int main(int argc, char** argv) {
             return 0;
         }
         const bool heapCap = argc > 1 && std::string(argv[1]) == "--heap-cap";
+        const bool heapMargin = argc > 2 && std::string(argv[1]) == "--heap-margin";
+        const std::string cap = heapMargin ? argv[2] : "2";
 #ifdef _WIN32
         _putenv_s("APS5_GPU_PATH", "1");
-        if (heapCap) _putenv_s("APS5_HEAP_SLOT_CAP", "2");
+        if (heapCap || heapMargin) _putenv_s("APS5_HEAP_SLOT_CAP", cap.c_str());
 #else
         setenv("APS5_GPU_PATH", "1", 1);
-        if (heapCap) setenv("APS5_HEAP_SLOT_CAP", "2", 1);
+        if (heapCap || heapMargin) setenv("APS5_HEAP_SLOT_CAP", cap.c_str(), 1);
 #endif
         Require(GpuPathEnabled(), "APS5_GPU_PATH turns the device path on");
         DevicePathLimits();
@@ -819,8 +840,8 @@ int main(int argc, char** argv) {
             std::printf("skipped, the device does not serve the device image path\n");
             return VulkanTestSkipped;
         }
-        if (heapCap) {
-            HeapCapFallsBack(*device);
+        if (heapCap || heapMargin) {
+            HeapKeptFree(*device, heapCap ? static_cast<std::uint32_t>(Formats.size()) : static_cast<std::uint32_t>(std::stoul(cap)) + 32u);
             device->WaitIdle();
             device.reset();
             std::cout << "device image table heap cap tests passed\n";

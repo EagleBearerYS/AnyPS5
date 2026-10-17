@@ -147,7 +147,8 @@ VkDescriptorSet DeviceImageHeap::Set(const Context& context) {
 }
 
 std::optional<std::uint32_t> DeviceImageHeap::Slot(const Context& context, std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout) {
-    return BindlessHeap::For(context).TextureSlot(kind, texture, view, layout);
+    auto& heap = BindlessHeap::For(context);
+    return heap.TextureSlot(kind, texture, view, layout, std::max(heap.TextureSlotMargin(), GpuHeapEnabled() ? heap.TextureSlotCap() - heap.TextureSlotCap() / 2u : 0u));
 }
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup) : DeviceImageTable(context, std::move(lookup), Budget{}) {}
