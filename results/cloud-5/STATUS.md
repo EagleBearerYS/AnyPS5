@@ -1,8 +1,8 @@
-BUSY PM-075 (addendum)
-since: 2026-10-17T11:25Z (the Bug Finder's note on PM-075, added after my claim: review C-1 merged with current main, #6892's linear targets over host imports, target write-back red/green)
-claimed: tasks/done/PM-075.md (result published; addendum in progress)
-step: merging review/agc-address-read-passes with upstream main
-previous: PM-075 done, results/cloud-5/PM-075.md: adversarial review of C-1 (perf/agc-address-read-passes b3e94a514): no blocking finding; no store pattern the recompiler emits escapes the scan; 3 non-emitted write forms (untyped PSB pointers, OpExtInst Modf/Frexp, cooperative matrix stores) fixed in 4ff3b0545; descriptor-store RAW/WAR cases added in f06328265 (red without the tracker's unknown-read rule); review/agc-address-read-passes f06328265; mirror 1267/65/5 IPv6 of 1337 on both, identical per test; render-pass tests x10 green
+READY
+since: 2026-10-17T12:00:31Z
+last: PM-075 done with addendum, results/cloud-5/PM-075.md: no blocking finding in C-1; scan hardened (4ff3b0545), descriptor RAW/WAR cases (f06328265), and per the Bug Finder's note the write-back claim holds on current main 984e5d720 (#6892): tiled 0/0 (pass continued), linear over import 255/255, pinned by 4796eac2d's _targets_split pair (red on a scratch write-back at the pass break); review/agc-address-read-passes 4796eac2d; mirrors: head 1268/65/5 of 1338, main 1280/66/5 of 1351, merge 1282/66/5 of 1353, IPv6 only, no existing test changes
+previous: LA-004 done, results/cloud-5/LA-004.md (mirror corrected: base 1325/65/5, join 1332/65/5): exp/lane-a-join 3073e11d0; force-push to exp/lane-a-driver still needs the user's OK
+
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
