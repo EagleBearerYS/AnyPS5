@@ -5,9 +5,60 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WriteEvidence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+template<typename T>
+std::uint64_t VectorBytes(const std::vector<T>& values) {
+    return static_cast<std::uint64_t>(values.capacity()) * sizeof(T);
+}
+
+std::uint64_t BitBytes(std::initializer_list<const std::vector<bool>*> vectors) {
+    std::uint64_t bits = 0;
+    for (const auto* vector : vectors) bits += vector->capacity();
+    return (bits + 7u) / 8u;
+}
+
+std::uint64_t ResultBytes(const ShaderRecompiler::RecompileResult& result) {
+    std::uint64_t bytes = sizeof(ShaderRecompiler::RecompileResult) + VectorBytes(result.vertexInputPatches) + VectorBytes(result.runtimeImageResources) + VectorBytes(result.vertexInputs) + VectorBytes(result.parameterExports) + VectorBytes(result.fragmentParameters) + VectorBytes(result.stencilReferences) + VectorBytes(result.specialization) + VectorBytes(result.bindings) + VectorBytes(result.pushConstants) + VectorBytes(result.vertexAttributes) + VectorBytes(result.imageTablePoison) + VectorBytes(result.imageTableRanges) + VectorBytes(result.imageTableReadRanges) + VectorBytes(result.shaderDataUserWords);
+    for (const auto& ranges : result.imageTableReadRanges) bytes += VectorBytes(ranges);
+    for (const auto& binding : result.bindings) bytes += VectorBytes(binding.guestDescriptor) + VectorBytes(binding.imageShapes) + BitBytes({&binding.samplerDepthCompare, &binding.imageWritten, &binding.imageDepthCompare, &binding.imageAtomic, &binding.imageAtomic64, &binding.bufferAtomic, &binding.bufferWritten});
+    return bytes;
+}
+
+std::uint64_t DecodeBytes(const DrawDecode& decode) {
+    std::uint64_t bytes = sizeof(DrawDecode) + VectorBytes(decode.programs) + VectorBytes(decode.roles);
+    for (const auto& program : decode.programs) bytes += VectorBytes(program.userData);
+    return bytes;
+}
+
+std::vector<std::pair<const void*, std::uint64_t>> SharedParts(const DrawEntry& entry) {
+    std::vector<std::pair<const void*, std::uint64_t>> parts;
+    const auto add = [&](const void* pointer, const auto& bytes) {
+        if (pointer == nullptr || std::any_of(parts.begin(), parts.end(), [&](const auto& part) { return part.first == pointer; })) return;
+        parts.emplace_back(pointer, bytes());
+    };
+    if (entry.decode != nullptr) add(entry.decode.get(), [&] { return DecodeBytes(*entry.decode); });
+    for (const auto& variants : entry.stages) {
+        for (const auto& variant : variants) {
+            if (variant == nullptr) continue;
+            if (variant->compiled != nullptr) {
+                add(variant->compiled.get(), [&] { return ResultBytes(*variant->compiled); });
+                const auto words = variant->compiled->spirv.Words();
+                if (!words.empty()) add(words.data(), [&] { return static_cast<std::uint64_t>(words.size_bytes()); });
+            }
+            if (variant->memory != nullptr) add(variant->memory.get(), [&] { return static_cast<std::uint64_t>(variant->memory->HeldBytes()); });
+        }
+    }
+    return parts;
+}
+
+
+}
 
 bool DrawRecipeRecord::Matches(const std::vector<std::shared_ptr<DispatchVariant>>& variants) const {
     if (stages.size() != variants.size()) return false;
@@ -62,6 +113,81 @@ bool Driver::registerKeyEnabled() {
 bool Driver::verifyDrawRecipe() {
     static const bool verify = std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr;
     return verify;
+}
+
+std::uint64_t Driver::cpuIndirectBudget() {
+    static const std::uint64_t budget = [] {
+        const char* text = std::getenv("APS5_CPU_INDIRECT_CACHE_KIB");
+        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+        return (parsed != 0 ? parsed : 768ull * 1024ull) * 1024ull;
+    }();
+    return budget;
+}
+
+std::uint64_t Driver::cpuIndirectIdleLookups() {
+    return 4u * static_cast<std::uint64_t>(drawCacheEntries());
+}
+
+std::uint64_t Driver::cpuIndirectOwnBytes(const DrawEntry& entry) {
+    std::uint64_t bytes = 0;
+    for (const auto& variants : entry.stages) {
+        for (const auto& variant : variants) {
+            if (variant != nullptr) bytes += variantBytes(*variant);
+        }
+    }
+    return bytes;
+}
+
+std::uint64_t Driver::cpuIndirectCharge(const DrawEntry& entry) const {
+    std::uint64_t bytes = cpuIndirectOwnBytes(entry);
+    for (const auto& [pointer, partBytes] : SharedParts(entry)) {
+        if (!cpuIndirectPins.contains(pointer)) bytes += partBytes;
+    }
+    return bytes;
+}
+
+void Driver::pinCpuIndirect(DrawEntry& entry) {
+    entry.ownBytes = cpuIndirectOwnBytes(entry);
+    entry.pinned = SharedParts(entry);
+    cpuIndirectBytes += entry.ownBytes;
+    for (const auto& [pointer, bytes] : entry.pinned) {
+        auto& pin = cpuIndirectPins[pointer];
+        if (pin.first++ == 0) {
+            pin.second = bytes;
+            cpuIndirectBytes += bytes;
+        }
+    }
+    ++cpuIndirectEntries;
+}
+
+void Driver::unpinCpuIndirect(DrawEntry& entry) {
+    cpuIndirectBytes -= entry.ownBytes;
+    for (const auto& [pointer, bytes] : entry.pinned) {
+        const auto pin = cpuIndirectPins.find(pointer);
+        if (pin == cpuIndirectPins.end() || --pin->second.first != 0) continue;
+        cpuIndirectBytes -= pin->second.second;
+        cpuIndirectPins.erase(pin);
+    }
+    --cpuIndirectEntries;
+}
+
+void Driver::sweepCpuIndirect() {
+    const auto idle = cpuIndirectIdleLookups();
+    if (drawLookupSerial - cpuIndirectSweptAt < idle / 4u) return;
+    cpuIndirectSweptAt = drawLookupSerial;
+    for (auto found = drawCache.begin(); found != drawCache.end();) {
+        const auto next = std::next(found);
+        if (found->second->cpuIndirect && drawLookupSerial - found->second->lastUse > idle) {
+            dropDrawEntry(found);
+            ++drawEntryCounters.cpuIndirectSwept;
+        }
+        found = next;
+    }
+}
+
+Driver::CpuIndirectFootprint Driver::CpuIndirectCacheSize() {
+    std::lock_guard cacheLock(drawCacheMutex);
+    return {cpuIndirectEntries, cpuIndirectBytes, cpuIndirectBudget()};
 }
 
 std::size_t Driver::drawCacheEntries() {
@@ -131,10 +257,10 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     return drawShapeSightings->SeenBefore(shape);
 }
 
-void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape) {
+void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool cpuIndirect) {
     std::lock_guard cacheLock(drawCacheMutex);
     auto& counters = drawEntryCounters;
-    ++counters.inserts;
+    if (cpuIndirect) sweepCpuIndirect();
     const auto found = drawCache.find(key);
     auto replacement = std::make_shared<DrawEntry>();
     replacement->stages.resize(fresh.size());
@@ -145,6 +271,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         if (found->second->decode != nullptr) replacement->decode = found->second->decode;
         replacement->recipes.store(found->second->recipes.load());
     }
+    std::vector<std::shared_ptr<DispatchVariant>> added, evicted;
     for (std::size_t i = 0; i < fresh.size(); ++i) {
         if (fresh[i] == nullptr) continue;
         auto& variants = replacement->stages[i];
@@ -154,15 +281,33 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
             fresh[i] = *present;
             continue;
         }
-        accountDrawVariant(*fresh[i], true);
         variants.insert(variants.begin(), fresh[i]);
-        ++counters.variantsInserted;
+        added.push_back(fresh[i]);
         while (variants.size() > dispatchVariants()) {
-            accountDrawVariant(*variants.back(), false);
+            evicted.push_back(variants.back());
             variants.pop_back();
-            ++counters.variantsEvicted;
         }
     }
+    const bool replacesCpuIndirect = found != drawCache.end() && found->second->cpuIndirect;
+    if (cpuIndirect) {
+        replacement->cpuIndirect = true;
+        replacement->lastUse = drawLookupSerial;
+        pinCpuIndirect(*replacement);
+        if (replacesCpuIndirect) unpinCpuIndirect(*found->second);
+        if (cpuIndirectBytes > cpuIndirectBudget()) {
+            if (replacesCpuIndirect) pinCpuIndirect(*found->second);
+            unpinCpuIndirect(*replacement);
+            ++counters.cpuIndirectRefused;
+            return;
+        }
+    } else if (replacesCpuIndirect) {
+        unpinCpuIndirect(*found->second);
+    }
+    ++counters.inserts;
+    for (const auto& variant : added) accountDrawVariant(*variant, true);
+    for (const auto& variant : evicted) accountDrawVariant(*variant, false);
+    counters.variantsInserted += added.size();
+    counters.variantsEvicted += evicted.size();
     replacement->touched = drawCacheHits;
     if (replacement->decode != nullptr && shape != 0) drawShapes[shape] = key;
     if (found == drawCache.end()) {
@@ -176,27 +321,27 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     }
     while (drawCache.size() > drawCacheEntries()) {
         const auto last = drawCache.find(drawOrder.back());
-        for (const auto& variants : last->second->stages) {
-            for (const auto& variant : variants) accountDrawVariant(*variant, false);
-        }
         if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
-        if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
-        drawOrder.erase(last->second->order);
-        drawCache.erase(last);
+        dropDrawEntry(last);
         ++drawCacheEvictions;
         ++counters.evictions;
     }
 }
 
-void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>& expected) {
-    const auto found = drawCache.find(key);
-    if (found == drawCache.end() || found->second != expected) return;
+void Driver::dropDrawEntry(std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>>::iterator found) {
     for (const auto& variants : found->second->stages) {
         for (const auto& variant : variants) accountDrawVariant(*variant, false);
     }
-    if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == key) drawShapes.erase(shapeOf);
+    if (found->second->cpuIndirect) unpinCpuIndirect(*found->second);
+    if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == found->first) drawShapes.erase(shapeOf);
     drawOrder.erase(found->second->order);
     drawCache.erase(found);
+}
+
+void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>& expected) {
+    const auto found = drawCache.find(key);
+    if (found == drawCache.end() || found->second != expected) return;
+    dropDrawEntry(found);
 }
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry&) {
