@@ -1,8 +1,6 @@
-BUSY BF-063
-since: 2026-10-17T16:57Z (BF-063, commit the guest page-state and write-watch tables on first touch on Windows)
-claimed: tasks/claimed/BF-063.md
-step: finding the tables' allocations, readers and writers
-previous: LA-011 done, results/cloud-5/LA-011.md: exp/lane-a-v3 2f051fa1f (39 lane A commits on PR 6947 424db208d, all clean, mirror 1,450/1,428 IPv6 5 only); exp/lane-a-recorded 9673cb568 (option (b): a draw outside the recorder re-prepares its device-table stages with the CPU target and draws again, no fallback, draw cache keeps the device variants; 68d3fd6bd lane A only + 9673cb568 harness part (m)); his six heap_draw_sample pass switch on and off (red on v3: 6 abort); part (m) red aborts with today's message, green shows device prepares 1, miss records 1 on the next recorded draw; scope 747: 10 -> 4 (bindless_images, image_sint8, image_table, image_table_cache_bounds); mirror 1,450/1,428 IPv6 5 only; each commit 85 tests 0 failed; cost +0.22 ms on 7.64 ms per unrecorded draw; journal switch-off test passes on v3 (2 rejected, 0 failed)
+READY
+since: 2026-10-17T17:31Z
+previous: BF-063 done, results/cloud-5/BF-063.md: fork perf/agc-commit-page-tables-on-touch 3a361ed79 on main 66702f1cf; Windows page-state table (250 MiB) and the write tracker's blocks/cpuBlocks/hintBlocks (62.5 MiB each, all in GuestMemory.cpp) now reserve and commit 64 KiB table pages on first write (TouchedTable, bitmap of committed pages, zero reads, scans treat untouched pages as zeros); Linux unchanged; bench: under 1 ns per op cache-resident, noise memory-bound; agc_touched_table new (commit charge 64 regions -> 4,096 KiB of 250 MiB, equivalence, racing first writes), agc_write_tracking Windows commit-charge check; Windows red = MEM_RESERVE|MEM_COMMIT in TouchedTable::Allocate, for the Bug Finder's sweep (not built on Windows here); Linux scope 1,072/5 IPv6, mirror 1,372 vs main 1,371, IPv6 5 only
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
