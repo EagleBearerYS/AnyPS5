@@ -1,7 +1,6 @@
-BUSY BF-061
-since: 2026-10-17T15:17:11Z (claimed)
-claimed: tasks/claimed/BF-061.md
-last: BF-060 done, results/cloud-4/BF-060.md (followup/6678-settle-batching aaa1a3856 vs 5f822a500: no Linux change); before it BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
+READY
+since: 2026-10-17T18:16:07Z (BF-061 done)
+last: BF-061 done, results/cloud-4/BF-061.md (exp/shader-heap-counters 8ccb8aef7, -base3a aaf03e9b1: [heap] counters within 10 % of heaptrack, no cost unset); before it BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
