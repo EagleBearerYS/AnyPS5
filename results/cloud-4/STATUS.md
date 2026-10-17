@@ -1,5 +1,6 @@
-READY
-since: 2026-10-17T09:02:48Z
+BUSY PM-072
+since: 2026-10-17T09:03:07Z (claimed)
+claimed: tasks/claimed/PM-072.md
 last: PM-071 done, results/cloud-4/PM-071.md (review/np-trophy-unlocks 68125962b); before it PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
