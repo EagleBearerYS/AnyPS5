@@ -23,6 +23,7 @@
 
 #if defined(__linux__)
 #include <fcntl.h>
+#include <link.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fstream>
@@ -57,6 +58,7 @@ struct KernelArena {
         return arena;
     }
     bool Contains(const void* pointer, size_t len) const { return GuestArena::GuestArenaContains_nid_postfix(pointer, len); }
+    bool Owns(const void* pointer, size_t len) const { return Contains(pointer, len) && !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(reinterpret_cast<std::uintptr_t>(pointer), len); }
     void* Allocate(size_t len, size_t alignment) { return GuestArena::GuestArenaAllocate_nid_postfix(len, alignment); }
     void MarkUsed(const void* pointer, size_t len) { GuestArena::GuestArenaMarkUsed_nid_postfix(pointer, len); }
     void Release(const void* pointer, size_t len) { GuestArena::GuestArenaRelease_nid_postfix(pointer, len); }
@@ -117,9 +119,23 @@ static int munmap_release(void* addr) {
     return 0;
 }
 
+static void CommitReservedPages(void* addr, size_t len) {
+    auto cursor = reinterpret_cast<std::uintptr_t>(addr);
+    const auto end = cursor + len;
+    while (cursor < end) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualQuery failed");
+        const auto regionEnd = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+        if (memory.State == MEM_RESERVE && !VirtualAlloc(reinterpret_cast<void*>(cursor), regionEnd - cursor, MEM_COMMIT, PAGE_READWRITE))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualAlloc stack commit failed");
+        cursor = regionEnd;
+    }
+}
+
 static int mprotect(void* addr, size_t len, int prot) {
     GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(addr), len, WinProtFromPosix(prot));
-    if (prot != PROT_NONE && KernelArena::Get().Contains(addr, len)) CommitArenaRange(addr, len, WinProtFromPosix(prot));
+    if (prot != PROT_NONE && KernelArena::Get().Owns(addr, len)) CommitArenaRange(addr, len, WinProtFromPosix(prot));
     auto cursor = reinterpret_cast<std::uintptr_t>(addr);
     const auto end = cursor + len;
     while (cursor < end) {
@@ -1026,6 +1042,35 @@ static bool IsGuestModuleImage(const void* base) {
     }
     return false;
 }
+#else
+struct GuestImageSearch {
+    std::uintptr_t address = 0;
+    std::uintptr_t base = 0;
+    std::uintptr_t pageSize = 0;
+    bool guestModule = false;
+    bool first = true;
+    bool main = false;
+    bool found = false;
+};
+
+static int FindImageContaining(dl_phdr_info* image, std::size_t, void* data) {
+    auto& search = *static_cast<GuestImageSearch*>(data);
+    const bool main = search.first;
+    search.first = false;
+    for (int index = 0; index < image->dlpi_phnum; ++index) {
+        const auto& header = image->dlpi_phdr[index];
+        if (header.p_type != PT_LOAD) continue;
+        const auto start = (image->dlpi_addr + header.p_vaddr) & ~(search.pageSize - 1);
+        const auto end = (image->dlpi_addr + header.p_vaddr + header.p_memsz + search.pageSize - 1) & ~(search.pageSize - 1);
+        if (search.address < start || search.address >= end) continue;
+        search.base = image->dlpi_addr;
+        search.guestModule = image->dlpi_name != nullptr && std::string_view(image->dlpi_name).ends_with(".guest.prx");
+        search.main = main;
+        search.found = true;
+        return 1;
+    }
+    return 0;
+}
 #endif
 
 int DoMprotect(const void* addr, size_t len, int prot) {
@@ -1050,6 +1095,9 @@ int DoMprotect(const void* addr, size_t len, int prot) {
         if (inside >= insideEnd) return 0;
         auto* insidePointer = reinterpret_cast<void*>(inside);
         const auto insideBytes = static_cast<std::size_t>(insideEnd - inside);
+#ifdef _WIN32
+        if (nativeProtection != PROT_NONE && !KernelArena::Get().Owns(insidePointer, insideBytes)) CommitReservedPages(insidePointer, insideBytes);
+#endif
         if (mprotect(insidePointer, insideBytes, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "mprotect failed");
         NoteGuestStackProtection(inside, insideBytes, (prot & 3) == 3);
         RecordProtection(insidePointer, insideBytes, prot);
@@ -1066,6 +1114,12 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     }
 #else
     mutation.RegisterMainImage();
+    GuestImageSearch image{.address = address, .pageSize = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE))};
+    dl_iterate_phdr(FindImageContaining, &image);
+    if (image.found && !image.main) {
+        if (!image.guestModule) throw std::invalid_argument("Memory protection of a foreign image is not supported");
+        mutation.RegisterImage(reinterpret_cast<const void*>(image.base));
+    }
 #endif
     std::vector<std::pair<const void*, std::size_t>> spans;
     mutation.ForRegistered(pointer, bytes, [&](const void* span, std::size_t spanBytes) { spans.emplace_back(span, spanBytes); });

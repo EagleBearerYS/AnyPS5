@@ -53,6 +53,9 @@ constexpr std::uint32_t LoadResult = 12;
 constexpr std::array<float, 4> Drawn{0.25f, 0.5f, 0.125f, 1.0f};
 constexpr double EdgeMargin = 1.0 / 32.0;
 constexpr std::uint32_t FillOnes = 0x3c003c00u;
+constexpr std::array<float, 4> Ones{1.0f, 1.0f, 1.0f, 1.0f};
+constexpr std::array<float, 4> Written{0.75f, 0.25f, 0.5f, 1.0f};
+constexpr std::uint32_t StoredSample = 1;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -67,6 +70,18 @@ alignas(256) constexpr std::array<std::uint32_t, 26> LoadCode{
     0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xbf8c3f70, 0xf0001f30, 0x00011005,
     0xbf8c3f70, 0xe0701030, 0x80001001, 0xe0701034, 0x80001101, 0xe0701038, 0x80001201, 0xe070103c,
     0x80001301, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 19> StoreCode{
+    0x34020087, 0xe030100c, 0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xe0301018,
+    0x80001001, 0xe030101c, 0x80001101, 0xe0301020, 0x80001201, 0xe0301024, 0x80001301, 0xbf8c3f70,
+    0xf0201f30, 0x00011005, 0xbf810000,
+};
+
+struct SampleWrite {
+    std::uint32_t x;
+    std::uint32_t y;
+    std::uint32_t sample;
 };
 
 constexpr std::array<std::array<float, 4>, 3> Triangle{{
@@ -198,13 +213,12 @@ std::array<std::uint32_t, 8> TargetDescriptor(const Block& block, std::uint32_t 
     };
 }
 
-ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, std::vector<std::uint32_t>& userData) {
+ShaderRecompiler::RecompileResult CompileProgram(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture, std::vector<std::uint32_t>& userData) {
     const auto address = reinterpret_cast<std::uintptr_t>(Buffer.data());
     const std::array<std::uint32_t, 4> buffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(Buffer.size() * 4u), 0x31016facu};
     userData.assign(16, 0u);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(LoadCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -215,6 +229,63 @@ ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, c
     };
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
+}
+
+ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, std::vector<std::uint32_t>& userData) {
+    return CompileProgram(device, LoadCode, texture, userData);
+}
+
+void StoreSamples(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::vector<SampleWrite>& writes) {
+    std::vector<std::uint32_t> userData;
+    const auto program = CompileProgram(device, StoreCode, texture, userData);
+    for (std::size_t first = 0; first < writes.size(); first += Threads) {
+        Buffer.fill(0u);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            const auto& write = writes[std::min(first + tid, writes.size() - 1)];
+            const std::array<std::uint32_t, 10> words{0u, 0u, 0u, write.x, write.y, write.sample, std::bit_cast<std::uint32_t>(Written[0]), std::bit_cast<std::uint32_t>(Written[1]), std::bit_cast<std::uint32_t>(Written[2]), std::bit_cast<std::uint32_t>(Written[3])};
+            std::copy(words.begin(), words.end(), &Buffer[tid * Words]);
+        }
+        device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+        device.WaitIdle();
+    }
+}
+
+std::vector<SampleWrite> SampleWrites(bool (*selected)(std::uint32_t x, std::uint32_t y, std::uint32_t sample)) {
+    std::vector<SampleWrite> writes;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            for (std::uint32_t sample = 0; sample < Samples; ++sample) {
+                if (selected(x, y, sample)) writes.push_back({x, y, sample});
+            }
+        }
+    }
+    return writes;
+}
+
+void CheckWritten(const std::vector<std::array<float, 4>>& before, const std::vector<std::array<float, 4>>& after, bool (*selected)(std::uint32_t x, std::uint32_t y, std::uint32_t sample), const std::string& what) {
+    std::uint32_t written = 0;
+    for (std::uint32_t index = 0; index < after.size(); ++index) {
+        const auto pixel = index / Samples;
+        const auto x = pixel % Side;
+        const auto y = pixel / Side;
+        const auto sample = index % Samples;
+        const bool chosen = selected(x, y, sample);
+        char where[96];
+        std::snprintf(where, sizeof(where), "sample %u of pixel (%u, %u)", sample, x, y);
+        Require(after[index] == (chosen ? Written : before[index]), std::string(where) + (chosen ? " does not hold the stored color " : " changed although it was not stored to ") + what);
+        written += chosen ? 1u : 0u;
+    }
+    Require(written != 0 && written != after.size(), "the stores covered every sample or none " + what);
+}
+
+void RequireStoreRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::string& expected, const std::string& what) {
+    std::string refusal;
+    try {
+        StoreSamples(device, texture, {{0u, 0u, 0u}});
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
 }
 
 std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, const Block& block) {
@@ -250,7 +321,7 @@ double EdgeDistance(double x, double y, std::size_t from) {
     return side(c[0], c[1]) < 0 ? -side(x, y) : side(x, y);
 }
 
-void CheckSamples(const AgcDriver::Graphics::State& state, const std::vector<std::array<float, 4>>& loaded) {
+void CheckSamples(const AgcDriver::Graphics::State& state, const std::vector<std::array<float, 4>>& loaded, const std::array<float, 4>& background) {
     const auto locations = AgcDriver::Graphics::SampleLocations(state);
     std::array<std::uint32_t, Samples + 1u> pixelsByCoverage{};
     std::array<std::uint32_t, Samples> coveredBySample{};
@@ -261,7 +332,7 @@ void CheckSamples(const AgcDriver::Graphics::State& state, const std::vector<std
             for (std::uint32_t sample = 0; sample < Samples; ++sample) {
                 const auto& texel = loaded[(y * Side + x) * Samples + sample];
                 const bool drawn = texel == Drawn;
-                const bool empty = texel == std::array<float, 4>{};
+                const bool empty = texel == background;
                 char where[160];
                 std::snprintf(where, sizeof(where), "sample %u of pixel (%u, %u) loaded (%g, %g, %g, %g)", sample, x, y, texel[0], texel[1], texel[2], texel[3]);
                 Require(drawn || empty, std::string(where) + ", neither the drawn color nor the cleared target");
@@ -283,13 +354,17 @@ void CheckSamples(const AgcDriver::Graphics::State& state, const std::vector<std
     Require(std::adjacent_find(coveredBySample.begin(), coveredBySample.end(), std::not_equal_to<>()) != coveredBySample.end(), "every sample index has the same coverage, so the sample index was not told apart");
 }
 
-void CheckFilled(const std::vector<std::array<float, 4>>& loaded) {
+void CheckUniform(const std::vector<std::array<float, 4>>& loaded, const std::array<float, 4>& expected, const std::string& what) {
     for (std::size_t index = 0; index < loaded.size(); ++index) {
         const auto& texel = loaded[index];
         char where[160];
         std::snprintf(where, sizeof(where), "sample %zu of pixel (%zu, %zu) loaded (%g, %g, %g, %g)", index % Samples, index / Samples % Side, index / Samples / Side, texel[0], texel[1], texel[2], texel[3]);
-        Require(texel == std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, std::string(where) + " after a fill of the target's color memory with half-float ones");
+        Require(texel == expected, std::string(where) + " " + what);
     }
+}
+
+void StoreWords(const Block& block, std::uint64_t bytes, std::uint32_t word) {
+    for (std::uint64_t offset = 0; offset < bytes; offset += sizeof(word)) std::memcpy(block.data + offset, &word, sizeof(word));
 }
 
 void RequireRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::string& expected, const std::string& what) {
@@ -317,14 +392,39 @@ int main() {
         const auto color = DecodeTarget(block);
         const auto state = TargetState(color);
         Draw(*device, state);
-        CheckSamples(state, LoadSamples(*device, block));
+        CheckSamples(state, LoadSamples(*device, block), {});
         const auto colorBytes = AgcDriver::Graphics::MultisampledColorBytes(color);
         Require(colorBytes != 0 && colorBytes <= block.bytes, "the 4x target's color memory does not fit its block");
         AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), static_cast<std::size_t>(colorBytes), FillOnes);
-        CheckFilled(LoadSamples(*device, block));
+        CheckUniform(LoadSamples(*device, block), Ones, "after a fill of the target's color memory with half-float ones");
         RequireRefused(*device, TargetDescriptor(block, 3u), "texture of 8 samples", "loading a 4x target as an 8x texture");
-        RequireRefused(*device, TargetDescriptor(other, SampleShift), "which no draw rendered to", "loading a multisampled texture no draw rendered to");
-        std::puts("every sample of a 4x color target loaded through its multisampled texture descriptor matches the triangle drawn into it, then the fill of its color memory");
+        Require(colorBytes <= other.bytes, "the 4x target's color memory does not fit one block");
+        CheckUniform(LoadSamples(*device, other), {}, "from zeroed color memory no draw rendered to");
+        Block stored(BlockBytes);
+        StoreWords(stored, colorBytes, FillOnes);
+        CheckUniform(LoadSamples(*device, stored), Ones, "from color memory of half-float ones no draw rendered to");
+        const auto storedState = TargetState(DecodeTarget(stored));
+        Draw(*device, storedState);
+        CheckSamples(storedState, LoadSamples(*device, stored), Ones);
+        Block mixed(BlockBytes);
+        StoreWords(mixed, colorBytes, FillOnes);
+        const std::uint32_t odd = 0x3c000000u;
+        std::memcpy(mixed.data + colorBytes - sizeof(odd), &odd, sizeof(odd));
+        RequireRefused(*device, TargetDescriptor(mixed, SampleShift), "does not hold one repeated 32-bit value", "loading a multisampled texture no draw rendered to whose color memory is not uniform");
+        const auto oneSample = [](std::uint32_t, std::uint32_t, std::uint32_t sample) { return sample == StoredSample; };
+        const auto drawnBefore = LoadSamples(*device, block);
+        StoreSamples(*device, TargetDescriptor(block, SampleShift), SampleWrites(oneSample));
+        CheckWritten(drawnBefore, LoadSamples(*device, block), oneSample, "into one sample of each pixel of the drawn target");
+        const auto leftHalf = [](std::uint32_t x, std::uint32_t, std::uint32_t sample) { return x < Side / 2u && sample != 0u; };
+        Block undrawn(BlockBytes);
+        StoreSamples(*device, TargetDescriptor(undrawn, SampleShift), SampleWrites(leftHalf));
+        CheckWritten(std::vector<std::array<float, 4>>(Side * Side * Samples), LoadSamples(*device, undrawn), leftHalf, "into zeroed color memory no draw rendered to");
+        Block mixedStore(BlockBytes);
+        StoreWords(mixedStore, colorBytes, FillOnes);
+        std::memcpy(mixedStore.data + colorBytes - sizeof(odd), &odd, sizeof(odd));
+        RequireStoreRefused(*device, TargetDescriptor(mixedStore, SampleShift), "writing the 16x16 multisampled texture", "storing to a multisampled texture no draw rendered to whose color memory is not uniform");
+        std::puts("stores to one sample of each pixel of a drawn 4x target and to samples of zeroed color memory no draw rendered to reach exactly those samples, and a store to non-uniform color memory no draw rendered to is refused");
+        std::puts("every sample of a 4x color target loaded through its multisampled texture descriptor matches the triangle drawn into it, then the fill of its color memory; a surface no draw rendered to loads the value its color memory repeats and keeps it under a later draw");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
