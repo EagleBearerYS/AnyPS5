@@ -48,7 +48,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     const auto heapKnown = heapCandidate ? HeapFragmentKnown(program.snapshot.get(), heapKey) : std::nullopt;
     if (heapKnown.value_or(false)) request.target.gpuResolvedImages = true;
     auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request);
-    const auto heapEligible = [&](const std::shared_ptr<const ShaderRecompiler::IrResourcePlan>& plan) { return plan != nullptr && (program.binary.stage != Stage::Vertex || (gpuConstantsVertex && plan->gpuConstants)) && (!plan->info.images.empty() || (gpuConstantsVertex && plan->srtReads.size() == plan->gpuConstantCheckSlots)) && ShaderRecompiler::HeapFragmentEligible(*plan); };
+    const auto heapEligible = [&](const std::shared_ptr<const ShaderRecompiler::IrResourcePlan>& plan) { return HeapStageEligible(program.binary.stage, plan.get(), gpuConstantsVertex); };
     if (heapKnown.value_or(false) && !heapEligible(invocation.Plan())) {
         NoteHeapFragment(program.snapshot.get(), heapKey, false);
         request.target.gpuResolvedImages = false;
