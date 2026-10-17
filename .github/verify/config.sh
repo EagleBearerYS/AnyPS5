@@ -1,0 +1,4 @@
+BASE=93e54cedd3dd49eabf1c589f020b54758e0b6461
+REPEAT=3
+EXTRA_TESTS='agc_touched_table|agc_write_tracking'
+NO_BEFORE=1
