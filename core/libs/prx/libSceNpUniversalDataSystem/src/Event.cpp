@@ -38,6 +38,7 @@ void post(const NpUniversalDataSystemEvent& event, int context) {
     const auto trophy = Uds::RecognizeTrophyEvent(event);
     switch (trophy.kind) {
     case Uds::TrophyEventKind::None:
+        if (const auto owner = Uds::FindContext(context)) NpTrophy2ApplyEvent_nid_no_patch(owner->userId, owner->serviceLabel, Uds::StatEvent(event));
         return;
     case Uds::TrophyEventKind::Malformed:
         ignore(event, context, trophy.problem);

@@ -60,8 +60,9 @@ void fillData(const NpTrophy2::ContextOwner& owner, const NpTrophy2::TrophyDefin
     data->unlocked = tick.has_value();
     data->timestamp_tick = tick.value_or(0);
     if (!NpTrophy2::ProgressTarget(trophy)) return;
+    const auto stat = trophy.statId ? NpTrophy2::TitleStats().Value(owner.userId, owner.serviceLabel, *trophy.statId) : std::nullopt;
     data->progress.type = NP_TROPHY2_PROGRESS_TYPE_VALUE;
-    data->progress.value = NpTrophy2::TrophyProgress(trophy, std::nullopt, data->unlocked);
+    data->progress.value = NpTrophy2::TrophyProgress(trophy, stat, data->unlocked);
 }
 
 }
