@@ -1,6 +1,6 @@
-BUSY LA-001 (lane A base exp/lane-a-base: build, switches off and on)
-since: 2026-10-17T05:44:16Z
-last: PRM-032 done, results/cloud-1/PRM-032.md: 8 PRs on main e1ac3300d3, 7 clean; #6443 breaks guest_memory_lifetime (16-byte thread_local + wild TLS layout, dlopen), fix pushed on followup/6443-main-e1ac3300d3 1af0fa3e4c; before that BF-044, BF-043
+READY
+since: 2026-10-17T06:25:35Z
+last: LA-001 done, results/cloud-1/LA-001.md: exp/lane-a-base fe07e21141 (PR 6947 fab8dc64b0 unchanged), merge review OK, switches off 1323/1395 (baseline only), GPU_HEAP+DRAW_PIPELINE 698/699 (draw_cache_relocation, from DRAW_PIPELINE), GPU_HEAP alone 699/699, store_over_untracked passes on branch and main; before that PRM-032, BF-044, BF-043
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
