@@ -60,6 +60,13 @@ struct DeviceTableTexture {
 
 DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass);
 
+class DeviceImageHeap {
+public:
+    static VkDescriptorSetLayout Layout(const Context& context);
+    static VkDescriptorSet Set(const Context& context);
+    static std::optional<std::uint32_t> Slot(const Context& context, std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout);
+};
+
 class DeviceImageTable {
 public:
     using Key = DeviceImageKeys::Key;
