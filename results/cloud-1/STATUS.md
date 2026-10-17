@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T11:32:53Z
+BUSY LA-008 (lane A: first use reads the texels, expected device images pre-pass)
+since: 2026-10-17T11:33:37Z
 last: PM-076 done, results/cloud-1/PM-076.md: review of BF-052 (exp/cpu-indirect-draw-cache fdb45156c); 1 blocking bug fixed on review/cpu-indirect-draw-cache 7db1dfca3 (a recaptured stage restored on a draw-cache hit drew without its own snapshots: SIGSEGV on lavapipe; fix + red/green); no patched word escapes the walk check (V# base case added); growth bounded (4096 entries LRU); harness commits change production code with the switch off; CI mirror 1337/1343 on head and base, switch unset and on, identical per test; before that LA-005, BF-053
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
