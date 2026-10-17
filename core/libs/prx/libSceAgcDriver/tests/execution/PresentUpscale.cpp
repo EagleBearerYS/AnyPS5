@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include <SDL_loadso.h>
@@ -49,19 +50,35 @@ bool headlessSurfaces(PFN_vkGetInstanceProcAddr resolve) {
     return false;
 }
 
-void setUpscale(const char* value) {
+void setEnvironment(const char* name, const char* value) {
 #ifdef _WIN32
-    _putenv_s("ANYPS5_UPSCALE", value);
+    _putenv_s(name, value);
 #else
-    setenv("ANYPS5_UPSCALE", value, 1);
+    setenv(name, value, 1);
 #endif
 }
 
-void expectUpscaled(VulkanDevice& device, std::uint32_t width, std::uint32_t height, bool upscaled, const char* failure) {
+void setUpscale(const char* value) {
+    setEnvironment("ANYPS5_UPSCALE", value);
+}
+
+void expectUpscaled(VulkanDevice& device, std::uint32_t width, std::uint32_t height, bool upscaled, const std::string& failure) {
     const auto before = VulkanDevice::UpscaledPresents();
     const std::vector<std::byte> pixels(static_cast<std::size_t>(width) * height * 4, std::byte{0x40});
     device.PresentPixels(width, height, pixels);
     Require(VulkanDevice::UpscaledPresents() - before == (upscaled ? 1u : 0u), failure);
+}
+
+void presentWithOverlay(const AgcDriver::PresentationWindow& window, bool fsr, bool overlay) {
+    setUpscale(fsr ? "fsr" : "");
+    if (overlay) AgcDriver::PerformanceOverlay::Toggle();
+    Require(AgcDriver::PerformanceOverlay::Visible() == overlay, "the performance overlay did not toggle");
+    {
+        VulkanDevice device(&window);
+        const std::string combination = std::string(fsr ? "FSR" : "no FSR") + (overlay ? " with the overlay" : " without the overlay");
+        for (int frame = 0; frame < 3; ++frame) expectUpscaled(device, 960, 540, fsr, combination + ": a 960x540 display buffer in a 1084x610 window was " + (fsr ? "not upscaled" : "upscaled"));
+    }
+    if (overlay) AgcDriver::PerformanceOverlay::Toggle();
 }
 
 }
@@ -81,6 +98,11 @@ int main() {
         Headless headless{1084, 610, resolve};
         const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME};
         const AgcDriver::PresentationWindow window{&headless, extensions, createSurface, drawableSize, 3840, 2160, nullptr};
+        setEnvironment("ANYPS5_OVERLAY", "");
+        setEnvironment("ANYPS5_OVERLAY_POS", "");
+        for (const bool fsr : {false, true}) {
+            for (const bool overlay : {false, true}) presentWithOverlay(window, fsr, overlay);
+        }
         setUpscale("fsr");
         {
             VulkanDevice device(&window);
@@ -94,7 +116,7 @@ int main() {
             VulkanDevice device(&window);
             expectUpscaled(device, 960, 540, false, "FSR ran with ANYPS5_UPSCALE empty");
         }
-        std::cout << "FSR presents only where it upscales\n";
+        std::cout << "FSR presents only where it upscales, with and without the performance overlay\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
