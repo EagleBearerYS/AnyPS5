@@ -549,10 +549,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(decoration.set && decoration.binding, "unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
-            Require(descriptors.insert(key).second || (binding != shader.bindings.end() && binding->role == ShaderRecompiler::DescriptorRole::ImageTable), "duplicate SPIR-V resource binding");
+            Require(descriptors.insert(key).second || (binding != shader.bindings.end() && (binding->role == ShaderRecompiler::DescriptorRole::ImageTable || binding->role == ShaderRecompiler::DescriptorRole::ImageStorageTable)), "duplicate SPIR-V resource binding");
             Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
             Require(binding->kind == ShaderRecompiler::DescriptorKind::Sampler || binding->kind == ShaderRecompiler::DescriptorKind::SampledImage || binding->kind == ShaderRecompiler::DescriptorKind::StorageImage, "SPIR-V descriptor type disagrees with recompiler binding metadata");
-            if (binding->role == ShaderRecompiler::DescriptorRole::ImageTable || binding->role == ShaderRecompiler::DescriptorRole::SamplerTable) {
+            if (binding->role == ShaderRecompiler::DescriptorRole::ImageTable || binding->role == ShaderRecompiler::DescriptorRole::ImageStorageTable || binding->role == ShaderRecompiler::DescriptorRole::SamplerTable) {
                 Require(type.size() == 3 && (type[0] & 0xffffu) == spv::OpTypeRuntimeArray, "image table must be declared as a runtime descriptor array");
                 continue;
             }
@@ -675,7 +675,7 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         const auto color = std::find_if(state.colors.begin(), state.colors.end(), [&](const ColorTarget& target) { return target.exportIndex == location; });
         const bool uintExport = color != state.colors.end() && color->uintExport;
         const bool packed = color != state.colors.end() && color->packing != ShaderRecompiler::ColorExportPacking::None;
-        Require(signature == (uintExport || packed ? "vertex:u32x4" : "vertex:f32x4"), packed ? "fragment shader must export uint4 words to its packed 10_11_11 unorm attachments" : uintExport ? "fragment shader must export uint4 colors to its unsigned integer attachments" : "fragment shader must export float4 colors to its attachments");
+        Require(signature == (uintExport || packed ? "vertex:u32x4" : "vertex:f32x4"), packed ? "fragment shader must export uint4 words to its packed color attachments" : uintExport ? "fragment shader must export uint4 colors to its unsigned integer attachments" : "fragment shader must export float4 colors to its attachments");
         locations.insert(location);
     }
     Require((!state.dualSourceBlend && state.reversedBlend == 0) || previous.secondSource == "f32x4", "dual-source blending needs a float4 second color at location 0 index 1");

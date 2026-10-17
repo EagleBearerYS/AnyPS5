@@ -6,10 +6,21 @@ endif()
 project(Relinker CXX)
 
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+set(ANYPS5_WINDOWS_TEST_EXIT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsTestExit.cpp")
 
 function(add_test_executable target)
     add_executable(${target} ${ARGN})
     set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    if(MINGW)
+        target_sources(${target} PRIVATE "${ANYPS5_WINDOWS_TEST_EXIT}")
+        target_link_options(${target} PRIVATE LINKER:--wrap=main)
+    endif()
+endfunction()
+
+function(add_asan_test_options test options)
+    if(ANYPS5_ENABLE_ASAN)
+        set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "ASAN_OPTIONS=string_append::${options}")
+    endif()
 endfunction()
 
 option(BUILD_TESTING "Build and register relinker tests" OFF)
@@ -113,14 +124,14 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
-        foreach(shard RANGE 0 5)
+        foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
             else()
                 set(conventions_test_name conventions_function_bodies_shard_${shard})
             endif()
             add_test(NAME ${conventions_test_name} COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/6)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/12)
             set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 30)
         endforeach()
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}

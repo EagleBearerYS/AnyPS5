@@ -7,8 +7,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TOOL = Path(__file__).resolve().parents[1] / "select_tests.py"
+sys.path.insert(0, str(TOOL.parent))
+
+import select_tests
 
 PROJECT = {
     "CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(mini C)\nenable_testing()\n"
@@ -34,8 +38,14 @@ class SelectTests(unittest.TestCase):
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory()
         (Path(cls.directory.name) / "real").mkdir()
-        (Path(cls.directory.name) / "link").symlink_to("real", target_is_directory=True)
         root = Path(cls.directory.name) / "link"
+        try:
+            root.symlink_to("real", target_is_directory=True)
+        except OSError as error:
+            if getattr(error, "winerror", None) != 1314:
+                raise
+            import _winapi
+            _winapi.CreateJunction(str(Path(cls.directory.name) / "real"), str(root))
         cls.source, cls.build, cls.graph = root / "source", root / "build", root / "graph.json"
         for name, content in PROJECT.items():
             (cls.source / name).parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +118,32 @@ class SelectTests(unittest.TestCase):
         built = {p.stem for p in self.build.rglob("*_tests*") if p.is_file() and os.access(p, os.X_OK)}
         subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
         self.assertEqual(built, {"alpha_tests"})
+
+
+class CaseInsensitivePathTests(unittest.TestCase):
+    def build(self):
+        build = object.__new__(select_tests.Build)
+        build.path, build.source = os.path.join(os.sep, "Work", "Source", "build"), os.path.join(os.sep, "Work", "Source")
+        return build
+
+    def test_paths_keep_their_case_when_comparisons_ignore_it(self):
+        with mock.patch.object(select_tests.os.path, "normcase", str.lower):
+            build = self.build()
+            self.assertEqual(build.output(os.path.join(os.sep, "work", "source", "build", "tests", "MemoryPoolTest.exe")), "tests/MemoryPoolTest.exe")
+            self.assertEqual(build.output(os.path.join("tests", "MemoryPoolTest.exe")), "tests/MemoryPoolTest.exe")
+            self.assertEqual(build.repo(os.path.join(os.sep, "work", "source", "core", "libSceAgc", "Driver.cpp")), "core/libSceAgc/Driver.cpp")
+            self.assertIsNone(build.repo(os.path.join(os.sep, "WORK", "SOURCE", "BUILD", "Generated.h")))
+            self.assertEqual(build.key(os.path.join("tests", "MemoryPoolTest.exe")), build.key(os.path.join(os.sep, "WORK", "SOURCE", "BUILD", "TESTS", "memorypooltest.exe")))
+
+    def test_trailing_separator_in_root_is_handled(self):
+        with mock.patch.object(select_tests.os.path, "normcase", str.lower):
+            build = self.build()
+            build.source = build.source + os.sep
+            build.path = build.path + os.sep
+            self.assertEqual(build.output(os.path.join(os.sep, "work", "source", "build", "tests", "MemoryPoolTest.exe")), "tests/MemoryPoolTest.exe")
+            self.assertEqual(build.output(os.path.join("tests", "MemoryPoolTest.exe")), "tests/MemoryPoolTest.exe")
+            self.assertEqual(build.repo(os.path.join(os.sep, "work", "source", "core", "libSceAgc", "Driver.cpp")), "core/libSceAgc/Driver.cpp")
+            self.assertIsNone(build.repo(os.path.join(os.sep, "WORK", "SOURCE", "BUILD", "Generated.h")))
 
 
 if __name__ == "__main__":
