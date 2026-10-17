@@ -358,6 +358,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
             static double totalMs = 0;
             totalMs += elapsed;
+            NoteDeviceImageModule(snapshot, codeOffset, request, *compiledResult);
             if (profile && elapsed > 200) std::fprintf(stderr, "[gpu] compute shader 0x%llx recompile took %.0f ms (%zu SPIR-V words, %zu captured regions, total %.1f s)\n", static_cast<unsigned long long>(address), elapsed, compiledResult->spirv.size(), captured.size(), totalMs / 1000);
         } catch (const std::exception& error) {
             const auto dump = dumpShaders ? dumpRequest(address, request) : std::string{};
@@ -603,6 +604,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         pending.phases = true;
         pending.hit = cached;
         pending.validated = validated;
+        pending.deviceImages = compiled.deviceImageTables;
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
     }

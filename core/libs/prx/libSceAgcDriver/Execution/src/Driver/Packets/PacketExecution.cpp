@@ -9,9 +9,11 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include <cstdlib>
 #include <functional>
+#include <numeric>
 #include <shared_mutex>
 
 namespace AgcDriver::DriverDetail {
@@ -255,6 +257,7 @@ void Driver::execute(const Submission& submission) {
             if (pending.phases) {
                 pending.ms[PhaseEpilogue] = std::chrono::duration<double, std::milli>(now - pending.tailAt).count();
                 addDriverPhases(submission.queue != 0 ? OtherQueues : indirect ? Queue0Indirect : Queue0Direct, pending.ms, pending.hit, pending.validated);
+                Graphics::NoteDeviceImagePacket(true, pending.deviceImages, std::accumulate(pending.ms.begin(), pending.ms.end(), 0.0));
             }
             if (indirect) return;
             auto& row = packetProfile.dispatchOutcomes[static_cast<std::size_t>(pending.outcome)];
@@ -273,6 +276,7 @@ void Driver::execute(const Submission& submission) {
                 ms[DrawRowSkipped] = std::chrono::duration<double, std::milli>(now - packetTimer.start).count();
             }
             addDrawPhases(ms, drawn && pending.phases, pending.captures);
+            if (drawn && pending.phases) Graphics::NoteDeviceImagePacket(false, pending.deviceImages, std::accumulate(ms.begin(), ms.end(), 0.0));
         };
         if (profilePackets) packetProfile.flushMs += std::chrono::duration<double, std::milli>(packetTimer.start - flushStart).count();
 

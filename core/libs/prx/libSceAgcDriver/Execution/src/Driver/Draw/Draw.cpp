@@ -212,6 +212,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         pending.captures = captures;
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
+        pending.deviceImages = std::any_of(tail.programResults.begin(), tail.programResults.end(), [](const ShaderRecompiler::RecompileResult* result) { return result != nullptr && result->deviceImageTables; });
         return DrawVerdict::Drawn;
     };
     auto& drawParameters = tail.drawParameters;
@@ -627,6 +628,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         pending.captures = captures;
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
+        pending.deviceImages = std::any_of(tail.programResults.begin(), tail.programResults.end(), [](const ShaderRecompiler::RecompileResult* result) { return result != nullptr && result->deviceImageTables; });
         return DrawVerdict::Drawn;
     };
     const auto setMeshIndexBuffer = [&](const Pm4::DrawParameters& parameters) {
