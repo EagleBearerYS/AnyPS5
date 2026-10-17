@@ -205,6 +205,7 @@ private:
 
 // The [present] line's counters (see the header); mutated under State::presentMutex.
 VulkanDevice::PresentStatistics presentCounters{};
+std::atomic<std::uint64_t> upscaledPresents{0};
 
 }
 
@@ -1993,7 +1994,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         const auto upscale = SelectUpscaleMode(std::getenv("ANYPS5_UPSCALE"), std::getenv("ANYPS5_FSR_SHARPNESS"));
         if (upscale.fsr) {
             state->upscaler = std::make_unique<PresentationUpscaler>(graphicsContext(), state->presentSlots.size(), upscale.sharpness);
-            std::fprintf(stderr, "[present] ANYPS5_UPSCALE=fsr: FSR 1 EASU when the window is larger than the display buffer, RCAS sharpness %.2f\n", static_cast<double>(upscale.sharpness));
+            std::fprintf(stderr, "[present] ANYPS5_UPSCALE=fsr: FSR 1 EASU and RCAS when the window is larger than the display buffer, the normal scaler otherwise; RCAS sharpness %.2f\n", static_cast<double>(upscale.sharpness));
         }
     }
     // A device without a window is usually replaced by the window's device before the title draws
@@ -3156,7 +3157,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     // wait for every slot first. The game path did so before taking the mutex
     // (PresentWaitsForSlots); this is the fallback.
     const bool shared = !clearOnly && !direct && !drawn;
-    const bool upscaled = state->upscaler != nullptr && !clearOnly;
+    const bool upscaled = state->upscaler != nullptr && !clearOnly && PresentationUpscaler::Upscales(width, height, state->extent);
     if (shared && state->SharedSlotInFlight()) RetirePresents(0);
     // The next slot is the oldest; a caller that did not retire it first (PresentPixels) waits here.
     if (state->presentSlots[state->presentCursor].inFlight) RetirePresents(state->presentSlots.size() - 1);
@@ -3348,6 +3349,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         state->queuePending = true;
         state->queueIndex = index;
         ++presentCounters.presents;
+        if (upscaled) upscaledPresents.fetch_add(1, std::memory_order_relaxed);
         if (auto* frame = PerformanceContext::Current()) {
             frame->NoteBlit(batchesAtBlit, lastSubmittedAt, submittedAt);
             // The serials are cumulative: only their difference (the batches other queues put
@@ -3375,6 +3377,10 @@ std::size_t VulkanDevice::FlipInFlight() {
         return std::size_t{1};
     }();
     return count;
+}
+
+std::uint64_t VulkanDevice::UpscaledPresents() {
+    return upscaledPresents.load(std::memory_order_relaxed);
 }
 
 VulkanDevice::PresentStatistics VulkanDevice::PresentCounts() {

@@ -193,11 +193,11 @@ A title's own CPU reads of that memory are not seen, so a title that waits for a
 
 ### Upscaling
 
-The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. EASU is designed for up to twice the display buffer's size on each axis: larger factors, such as a 1280x720 buffer in a 3840x2160 window, still work but look softer. When it is the same size or smaller, the image is scaled as without FSR and only RCAS sharpens it.
+The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. EASU is designed for up to twice the display buffer's size on each axis: larger factors, such as a 1280x720 buffer in a 3840x2160 window, still work but look softer. When it is the same size or smaller, FSR stays off for that frame, which is presented exactly as without `ANYPS5_UPSCALE`: RCAS alone would cost frame rate there without adding detail.
 
 `ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`.
 
-FSR works on SDR and HDR10 output alike, on the values the display receives: sRGB-encoded for SDR, PQ code values for HDR10. Sharpening never takes them out of the signal range. Each presentation in flight keeps two more images, one of the display buffer's size and one of the fitted image's size, and each frame takes two full-window passes.
+FSR works on SDR and HDR10 output alike, on the values the display receives: sRGB-encoded for SDR, PQ code values for HDR10. Sharpening never takes them out of the signal range. While EASU runs, each presentation in flight keeps two more images, one of the display buffer's size and one of the fitted image's size, and each frame takes two full-window passes.
 
 An empty value of either variable is the same as an unset one. The start fails on any other value of `ANYPS5_UPSCALE` than `fsr`, and on an `ANYPS5_FSR_SHARPNESS` that is not a number from 0.0 to 2.0.
 
