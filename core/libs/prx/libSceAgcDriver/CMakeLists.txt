@@ -1716,6 +1716,8 @@ foreach(stage IN ITEMS vert frag)
     target_sources(agc_driver_provoking_vertex_tests PRIVATE ${agcProvokingShaderHeader})
 endforeach()
 target_include_directories(agc_driver_provoking_vertex_tests PRIVATE ${agcTestShaderGeneratedRoot})
+target_sources(agc_driver_device_image_table_tests PRIVATE ${agcTriangleHeaders})
+target_include_directories(agc_driver_device_image_table_tests PRIVATE ${agcTestShaderGeneratedRoot})
 
 target_include_directories(agc_driver_prepared_exports_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 

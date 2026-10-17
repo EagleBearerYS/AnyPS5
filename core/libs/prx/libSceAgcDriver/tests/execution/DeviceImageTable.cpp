@@ -1,5 +1,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -12,6 +16,9 @@
 #include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "RuntimeAbi.hpp"
+#include "Recompiler.hpp"
+#include "Triangle_frag_spv.h"
+#include "Triangle_vert_spv.h"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -355,6 +362,85 @@ void CountsOverflow(AgcDriver::VulkanDevice& device) {
     recorder->Sync();
 }
 
+alignas(256) std::array<std::uint32_t, 64> CopyInput{};
+alignas(256) std::array<std::uint32_t, 64> CopyOutput{};
+alignas(256) constexpr std::array<std::uint32_t, 6> CopyCode{0x34040082u, 0xe0000000u, 0x80000100u, 0xe0701000u, 0x80010102u, 0xbf810000u};
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
+}
+
+void ComputeLayout(AgcDriver::VulkanDevice& device) {
+    auto* table = DeviceImageTable::Existing(device.GraphicsContext());
+    Require(table != nullptr, "a device serving the path owns a device image table");
+    for (std::uint32_t index = 0; index < CopyInput.size(); ++index) CopyInput[index] = 0x5a000000u + index * 0x10203u;
+    CopyOutput.fill(0xdeadbeefu);
+    std::array<std::uint32_t, 8> userData{};
+    auto input = BufferDescriptor(CopyInput.data(), static_cast<std::uint32_t>(CopyInput.size()));
+    input[1] |= 4u << 16u;
+    input[3] = 0x11800000u | (20u << 12u) | 4u;
+    const auto output = BufferDescriptor(CopyOutput.data(), static_cast<std::uint32_t>(CopyOutput.size() * 4u));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(CopyCode.data()), CopyCode, 0, {}}, {64u, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.ComputeTarget(64u), {0u, 0u, 0u, 128u}};
+    request.useCache = false;
+    auto result = ShaderRecompiler::Recompile(request);
+    result.deviceImageTables = true;
+    const auto uploads = table->Totals().uploads;
+    device.Dispatch(result, 1, 1, 1);
+    device.WaitIdle();
+    for (std::uint32_t index = 0; index < CopyOutput.size(); ++index) Require(CopyOutput[index] == CopyInput[index], "a dispatch whose pipeline layout carries sets 2 and 3 copies its buffer (lane " + std::to_string(index) + ")");
+    const auto counts = table->Totals();
+    Require(counts.uploads > uploads, "the dispatch prepared the device image table (its header was uploaded)");
+    Require(counts.drained == 0u && counts.faults == 0u, "a dispatch that records nothing drains nothing");
+}
+
+void GraphicsLayouts(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto deviceContext = device.GraphicsContext();
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{deviceContext.device};
+    auto* table = DeviceImageTable::Existing(deviceContext);
+    Require(table != nullptr, "a device serving the path owns a device image table");
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 0xd1u;
+    fragment.variantId = 0xd2u;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    fragment.deviceImageTables = true;
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    std::vector<bool> librariesTried;
+    for (const bool libraries : {deviceContext.graphicsPipelineLibrary, false}) {
+        if (std::find(librariesTried.begin(), librariesTried.end(), libraries) != librariesTried.end()) continue;
+        librariesTried.push_back(libraries);
+        auto context = deviceContext;
+        context.graphicsPipelineLibrary = libraries;
+        const auto described = DescribeSetLayouts(context, shaders);
+        Require(described.layouts.deviceHeap == BindlessHeap::For(context).HeapLayout() && described.layouts.deviceTable == table->Layout() && described.layouts.deviceGap == table->EmptyLayout(), "a stage reading images through the device table describes sets 2 and 3");
+        const auto view = described.View();
+        Require(view.deviceTable == table->Layout() && view.deviceHeap == described.layouts.deviceHeap, "the described layouts' view carries the device sets");
+        bool created = false;
+        const auto pipeline = CachedPipeline(context, state, VertexInputLayout{}, view, shaders, VK_IMAGE_LAYOUT_GENERAL, &created);
+        Require(pipeline != nullptr && pipeline->Layout() != VK_NULL_HANDLE, std::string("a graphics pipeline with sets 2 and 3 is created ") + (libraries ? "from pipeline libraries" : "without pipeline libraries"));
+        std::printf("graphics pipeline with sets 2 and 3 %s pipeline libraries (split sets %d): created\n", libraries ? "from" : "without", described.layouts.split ? 1 : 0);
+    }
+    vertex.deviceImageTables = false;
+    fragment.deviceImageTables = false;
+    const auto plain = DescribeSetLayouts(deviceContext, shaders);
+    Require(plain.layouts.deviceTable == VK_NULL_HANDLE && plain.layouts.deviceHeap == VK_NULL_HANDLE, "stages without device tables describe no device sets");
+}
+
 VkPhysicalDeviceLimits UsableLimits() {
     VkPhysicalDeviceLimits limits{};
     limits.maxBoundDescriptorSets = 8;
@@ -453,6 +539,8 @@ int main(int argc, char** argv) {
         CountsOverflow(*device);
         RefreshesWrittenEntries(*device);
         EvictsLeastRecentlyUsed(*device);
+        ComputeLayout(*device);
+        GraphicsLayouts(*device);
         device->WaitIdle();
         device.reset();
         std::cout << "device image table tests passed\n";
