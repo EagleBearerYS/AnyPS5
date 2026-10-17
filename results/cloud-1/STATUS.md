@@ -1,5 +1,5 @@
-BUSY PRM-032 (PR 4/8: #6641; #6926, #6944, #6911 clean)
-since: 2026-10-17T04:46:15Z
+BUSY PRM-032 (PR 5/8: #6443; #6926, #6944, #6911, #6641 clean)
+since: 2026-10-17T05:03:31Z
 last: BF-044 done, results/cloud-1/BF-044.md: 3a1faef0a5 mirror 1208/1279 (9 failed: 5 IPv6, 1 root-only, 3 old-base pthread segfaults that pass on the merge), reuse tests 20/20 each, reuse-off skip as expected, merge with main 2083bc700f clean and ^agc 636/636; before that BF-043
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
