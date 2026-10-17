@@ -17,6 +17,11 @@ class StorageTexture;
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target);
 bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std::uint32_t samples);
 std::uint64_t DepthSurfacesSerial();
+struct HtileStoreBackReads {
+    std::uint64_t made = 0;
+    std::uint64_t skipped = 0;
+};
+HtileStoreBackReads HtileStoreBackReadCounts();
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel);
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes);

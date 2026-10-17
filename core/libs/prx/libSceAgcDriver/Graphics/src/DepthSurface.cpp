@@ -30,6 +30,8 @@ namespace AgcDriver::Graphics {
 namespace {
 
 std::uint64_t depthWrites = 0;
+std::atomic<std::uint64_t> htileReadsMade{0};
+std::atomic<std::uint64_t> htileReadsSkipped{0};
 
 Recorder* RecorderFor(const Context& context) {
     auto* recorder = Recorder::Active();
@@ -1023,8 +1025,14 @@ std::mutex& htileReadsMutex() {
     return mutex;
 }
 
-std::map<std::uint64_t, std::uint64_t>& htileReads() {
-    static auto* reads = new std::map<std::uint64_t, std::uint64_t>();
+struct HtileRead {
+    std::uint64_t generation = 0;
+    const Recorder* recorder = nullptr;
+    std::uint64_t note = 0;
+};
+
+std::map<std::uint64_t, HtileRead>& htileReads() {
+    static auto* reads = new std::map<std::uint64_t, HtileRead>();
     return *reads;
 }
 
@@ -1048,11 +1056,17 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(target.htileAddress), bytes, true)) return 0;
     const auto collected = GuestMemory::CollectWrites(target.htileAddress, bytes);
     auto* recorder = RecorderFor(context);
-    if (recorder == nullptr || !recorder->PendingWriteOverlaps(target.htileAddress, bytes)) {
+    const auto note = recorder != nullptr ? recorder->NewestWriteNote(target.htileAddress, bytes) : 0;
+    {
         std::lock_guard lock(htileReadsMutex());
         const auto found = htileReads().find(target.htileAddress);
-        if (found != htileReads().end() && found->second != 0 && GuestMemory::UnchangedSince(target.htileAddress, bytes, found->second)) return 0;
+        const bool readSinceNote = note == 0 || (found != htileReads().end() && found->second.recorder == recorder && found->second.note == note);
+        if (found != htileReads().end() && found->second.generation != 0 && readSinceNote && GuestMemory::UnchangedSince(target.htileAddress, bytes, found->second.generation)) {
+            htileReadsSkipped.fetch_add(1, std::memory_order_relaxed);
+            return 0;
+        }
     }
+    htileReadsMade.fetch_add(1, std::memory_order_relaxed);
     std::vector<std::uint32_t> words(bytes / 4u);
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(words)), 4);
     const bool uniform = std::all_of(words.begin(), words.end(), [&](std::uint32_t word) { return word == words.front(); });
@@ -1064,14 +1078,19 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
         GuestMemory::Write(target.htileAddress, std::as_bytes(std::span(words)), 4);
         generation = GuestMemory::CollectWrites(target.htileAddress, bytes);
     }
+    const auto settled = recorder == nullptr || recorder->PendingWriteSettled(target.htileAddress, bytes);
     std::lock_guard lock(htileReadsMutex());
-    htileReads()[target.htileAddress] = generation;
+    htileReads()[target.htileAddress] = {generation, recorder, settled ? note : 0};
     return cleared;
 }
 }
 
 std::uint64_t DepthSurfacesSerial() {
     return surfacesSerial.load(std::memory_order_acquire);
+}
+
+HtileStoreBackReads HtileStoreBackReadCounts() {
+    return {htileReadsMade.load(std::memory_order_relaxed), htileReadsSkipped.load(std::memory_order_relaxed)};
 }
 
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
