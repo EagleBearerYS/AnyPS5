@@ -1802,6 +1802,13 @@ std::vector<ShaderRecompiler::PipelineIdentity> deviceImagePrograms(std::span<co
     return programs;
 }
 
+void prepareDeviceImages(DeviceImageTable& table, const Context& context, Recorder& recorder, std::span<const CompiledShader> shaders) {
+    for (const auto& shader : shaders) {
+        if (shader.program != nullptr && shader.program->deviceImageTables) table.Expect(context, recorder, shader.program->deviceImages);
+    }
+    table.Prepare(context, recorder, deviceImagePrograms(shaders));
+}
+
 }
 
 void recordDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawInputs& inputs, RecordedDraw& record, DrawOutcome& outcome, DrawTimer& timer, double& ownWaitedMs) {
@@ -1838,7 +1845,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (resources.UsesDeviceImages()) {
         auto* table = DeviceImageTable::Existing(context);
         Require(table != nullptr, "a draw reading images through the device image table needs the device's table");
-        table->Prepare(context, *recorder, deviceImagePrograms(shaders));
+        prepareDeviceImages(*table, context, *recorder, shaders);
     }
     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
     const bool capture = CaptureInputsEnabled();
@@ -2440,7 +2447,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     if (resources->UsesDeviceImages()) {
         auto* table = DeviceImageTable::Existing(context);
         Require(table != nullptr, "a draw reading images through the device image table needs the device's table");
-        table->Prepare(context, *recorder, deviceImagePrograms(shaders));
+        prepareDeviceImages(*table, context, *recorder, shaders);
     }
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
     if (recorded) recorder->PrepareSampleSlot();

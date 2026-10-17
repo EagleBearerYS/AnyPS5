@@ -66,7 +66,7 @@ class DeviceImageHeap {
 public:
     static VkDescriptorSetLayout Layout(const Context& context);
     static VkDescriptorSet Set(const Context& context);
-    static std::optional<std::uint32_t> Slot(const Context& context, std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout);
+    static std::optional<std::uint32_t> Slot(const Context& context, std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view, VkImageLayout layout, bool replacing = false);
 };
 
 class DeviceImageTable {
@@ -96,11 +96,13 @@ public:
 
     static DeviceImageTable& Create(const Context& context, InterfaceLookup lookup);
     static DeviceImageTable* Existing(const Context& context);
+    static bool ExpectsKeys();
     static void Release(VkDevice device);
 
     VkDescriptorSetLayout Layout() const { return layout; }
     VkDescriptorSetLayout EmptyLayout() const { return emptyLayout; }
     void Prepare(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::PipelineIdentity> programs = {});
+    void Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
     void SetInterfaceLookup(InterfaceLookup lookup);
     void NoteProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress);
     bool ServesProgram(std::uint64_t codeAddress) const;
@@ -135,6 +137,8 @@ public:
         std::uint64_t refreshed = 0;
         std::uint64_t evicted = 0;
         std::uint64_t fallbacks = 0;
+        std::uint64_t expected = 0;
+        std::uint64_t expectedInserted = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
         std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding> peakTextures{};
@@ -182,7 +186,7 @@ private:
     };
 
     void resolve(const Context& build, Recorder& recorder);
-    std::optional<DeviceImageValue> lookupKey(const Context& build, const Key& key, Entry& entry, std::string* failure = nullptr);
+    std::optional<DeviceImageValue> lookupKey(const Context& build, const Key& key, Entry& entry, std::string* failure = nullptr, bool replacing = false);
     DeviceImageValue reject(const Key& key, ShaderRecompiler::ImageTableAbi::PoisonReason reason, const std::string& message);
     void unserved(const Key& key, const std::string& why);
     void heapFull(const Key& key, std::uint32_t kind);
