@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TouchedTable.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WriteWatchCoverage.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -365,19 +366,17 @@ struct PageSpan {
     std::uintptr_t base = 0;
     std::size_t size = 0;
     // Per page: access flags, zero while unknown.
-    std::uint8_t* pages = nullptr;
+    TouchedTable<std::uint8_t> pages;
 
-    // Reserves and commits the table; untouched table pages cost nothing until a guest page is recorded.
     bool allocate() {
         if (size == 0) return false;
-        const auto count = (size / PageBytes + 8) & ~static_cast<std::size_t>(7);
 #ifdef _WIN32
-        pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        constexpr auto backing = TableBacking::Reserved;
 #else
-        pages = static_cast<std::uint8_t*>(std::calloc(count, 1));
+        constexpr auto backing = TableBacking::Heap;
 #endif
-        if (pages == nullptr) size = 0;
-        return pages != nullptr;
+        if (!pages.Allocate(size / PageBytes + 8, backing)) size = 0;
+        return size != 0;
     }
 
     bool covers(std::uintptr_t address) const {
@@ -385,34 +384,24 @@ struct PageSpan {
     }
 
     std::uint8_t load(std::uintptr_t address) const {
-        return std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[(address - base) / PageBytes])).load(std::memory_order_relaxed);
+        return pages.Load((address - base) / PageBytes);
     }
 
     void store(std::uintptr_t address, std::uint8_t value) {
-        std::atomic_ref<std::uint8_t>(pages[(address - base) / PageBytes]).store(value, std::memory_order_relaxed);
+        pages.Store((address - base) / PageBytes, value);
     }
 
     // End of the run of pages equal to `value` that starts at `address`, at most `limit`.
     std::uintptr_t runEnd(std::uintptr_t address, std::uint8_t value, std::uintptr_t limit) const {
-        auto index = (address - base) / PageBytes;
         const auto stop = std::min<std::uintptr_t>((std::min(limit, base + size) - base + PageBytes - 1) / PageBytes, size / PageBytes);
-        const std::uint64_t wide = 0x0101010101010101ull * value;
-        while (index < stop) {
-            if (index % 8 == 0 && index + 8 <= stop && std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(const_cast<std::uint8_t*>(pages + index))).load(std::memory_order_relaxed) == wide) {
-                index += 8;
-                continue;
-            }
-            if (std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[index])).load(std::memory_order_relaxed) != value) break;
-            ++index;
-        }
-        return std::min(limit, base + index * PageBytes);
+        return std::min(limit, base + pages.RunEnd((address - base) / PageBytes, value, stop) * PageBytes);
     }
 
     void forget(std::uintptr_t address, std::size_t bytes) {
         if (size == 0 || bytes == 0 || address >= base + size || address + bytes <= base) return;
         const auto first = (std::max(address, base) - base) / PageBytes;
         const auto last = (std::min(address + bytes, base + size) - 1 - base) / PageBytes;
-        for (auto page = first; page <= last; ++page) std::atomic_ref<std::uint8_t>(pages[page]).store(0, std::memory_order_relaxed);
+        pages.Clear(first, last + 1);
     }
 };
 
@@ -447,8 +436,8 @@ struct PageStates {
 };
 
 PageStates& Pages() {
-    static PageStates pages;
-    return pages;
+    static auto* pages = new PageStates;
+    return *pages;
 }
 
 std::uintptr_t PagesBase() {
@@ -762,13 +751,13 @@ struct WriteTracker {
     std::uintptr_t base = 0;
     std::size_t size = 0;
     // Generation of the last collected write per 64 KiB block of the arena.
-    std::vector<std::uint32_t> blocks;
+    TouchedTable<std::uint32_t> blocks;
     // The same, stamped by collects only (dirty pages = CPU stores), never by MarkWritten: the
     // late label rule asks whether the CPU touched a label's block, and the driver's own GPU label
     // records in the same block (the title's per-job slots are 0x20 apart) must not count.
-    std::vector<std::uint32_t> cpuBlocks;
+    TouchedTable<std::uint32_t> cpuBlocks;
     WriteWatchCoverage coverage;
-    std::vector<std::uint32_t> hintBlocks;
+    TouchedTable<std::uint32_t> hintBlocks;
 #else
     static constexpr std::size_t LeafBlocks = std::size_t{1} << 16;
     static constexpr std::size_t LeafCount = std::size_t{1} << 15;
@@ -808,10 +797,9 @@ struct WriteTracker {
         GuestArena::GuestArenaRange_nid_postfix(&base, &size);
         watched = size != 0 && GuestArena::GuestArenaWriteWatched_nid_postfix();
         if (!watched) return;
-        blocks.assign(size / WriteBlockBytes + 1, 0);
-        cpuBlocks.assign(size / WriteBlockBytes + 1, 0);
+        const auto entries = size / WriteBlockBytes + 1;
+        require(blocks.Allocate(entries, TableBacking::Reserved) && cpuBlocks.Allocate(entries, TableBacking::Reserved) && hintBlocks.Allocate(entries, TableBacking::Reserved), "cannot reserve the write tracker's block tables");
         coverage.Initialize(base, size);
-        hintBlocks.assign(size / WriteBlockBytes + 1, 0);
         pages.resize(1u << 16);
         GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&watchPrivateMapping);
 #else
@@ -854,22 +842,20 @@ struct WriteTracker {
             if (!coverage.Covers(blockBegin(block), 1)) continue;
             if (!started) ++generation;
             started = true;
-            hintBlocks[block] = generation;
+            hintBlocks.Store(block, generation);
         }
     }
 
     bool hinted(std::uint64_t first, std::uint64_t stop) const {
         if (first >= stop || first < base || stop > base + size) return false;
         for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) {
-            if (hintBlocks[block] == 0 || coverage.Covers(blockBegin(block), 1)) return false;
+            if (hintBlocks.Load(block) == 0 || coverage.Covers(blockBegin(block), 1)) return false;
         }
         return !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first));
     }
 
     std::uint32_t newestHint(std::uint64_t first, std::uint64_t stop) const {
-        std::uint32_t newest = 0;
-        for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) newest = std::max(newest, hintBlocks[block]);
-        return newest;
+        return hintBlocks.Max(blockOf(first), blockOf(stop - 1) + 1);
     }
 #endif
 
@@ -936,7 +922,7 @@ struct WriteTracker {
 
     std::uint32_t stampOf(std::uint64_t block) const {
 #ifdef _WIN32
-        return blocks[block];
+        return blocks.Load(block);
 #else
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->blocks[block % LeafBlocks] : 0;
@@ -981,7 +967,7 @@ struct WriteTracker {
         if (first == last) return stampOf(first) <= since;
         const auto newer = [since](std::uint32_t stamp) { return stamp > since; };
 #ifdef _WIN32
-        return std::none_of(blocks.begin() + first, blocks.begin() + last + 1, newer);
+        return !blocks.AnyOf(first, last + 1, newer);
 #else
         while (first <= last) {
             const auto index = first / LeafBlocks;
@@ -998,7 +984,7 @@ struct WriteTracker {
 
     std::uint32_t cpuStampOf(std::uint64_t block) const {
 #ifdef _WIN32
-        return cpuBlocks[block];
+        return cpuBlocks.Load(block);
 #else
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->cpuBlocks[block % LeafBlocks] : 0;
@@ -1009,8 +995,8 @@ struct WriteTracker {
         const bool cpu = kind == StampKind::Cpu || kind == StampKind::ImportWindow;
         const bool stored = kind != StampKind::ImportWindow;
 #ifdef _WIN32
-        if (stored) blocks[block] = stampGeneration;
-        if (cpu) cpuBlocks[block] = stampGeneration;
+        if (stored) blocks.Store(block, stampGeneration);
+        if (cpu) cpuBlocks.Store(block, stampGeneration);
 #else
         auto& leaf = leaves[block / LeafBlocks];
         if (leaf == nullptr) leaf = std::make_unique<Leaf>();
@@ -1383,6 +1369,24 @@ bool WriteWatched() {
     return tracker.watched;
 }
 
+std::vector<TableReservation> TableReservations() {
+    auto& pages = Pages();
+    pages.initialize();
+    std::vector<TableReservation> tables;
+    for (const auto* span : {&pages.arena, &pages.image}) {
+        if (span->size != 0) tables.push_back({span->pages.Reservation(), span->pages.ReservedBytes()});
+    }
+#ifdef _WIN32
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (tracker.watched) {
+        for (const auto* table : {&tracker.blocks, &tracker.cpuBlocks, &tracker.hintBlocks}) tables.push_back({table->Reservation(), table->ReservedBytes()});
+    }
+#endif
+    return tables;
+}
+
 bool Watched(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
     auto& tracker = Tracker();
@@ -1611,7 +1615,7 @@ bool walkHints(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop) {
         if (!GuestArena::GuestArenaCollectWrites_nid_postfix(static_cast<std::uintptr_t>(cursor), static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, true)) return false;
         if (count != 0 && !marked) ++tracker.generation;
         marked = marked || count != 0;
-        for (std::size_t i = 0; i < count; ++i) tracker.hintBlocks[tracker.blockOf(reinterpret_cast<std::uintptr_t>(tracker.pages[i]))] = tracker.generation;
+        for (std::size_t i = 0; i < count; ++i) tracker.hintBlocks.Store(tracker.blockOf(reinterpret_cast<std::uintptr_t>(tracker.pages[i])), tracker.generation);
         if (count < tracker.pages.size()) break;
         cursor = reinterpret_cast<std::uintptr_t>(tracker.pages[count - 1]) + WritePageBytes;
     }
