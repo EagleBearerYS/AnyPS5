@@ -475,7 +475,7 @@ int main(int argc, char** argv) {
     const bool measure = argc == 5 && std::string(argv[1]) == "--measure";
     const bool budget = argc == 2 && std::string(argv[1]) == "--budget";
     std::filesystem::path cache;
-    if (budget) SetEnvironment("APS5_RELEASE_SPIRV_BUDGET_MIB", "64");
+    if (!measure) SetEnvironment("APS5_RELEASE_SPIRV_BUDGET_MIB", budget ? "64" : "0");
     if (!measure) {
         cache = std::filesystem::temp_directory_path() / ("aps5-shader-residency-test-" + std::to_string(std::random_device{}()));
         std::filesystem::create_directories(cache);
