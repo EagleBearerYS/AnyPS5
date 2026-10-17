@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 struct NpTrophy2Unlock {
     std::string titleId;
@@ -19,6 +20,17 @@ struct NpTrophy2Unlock {
 };
 
 using NpTrophy2UnlockListener = void (*)(void* context, const NpTrophy2Unlock& unlock);
+
+struct NpTrophy2EventProperty {
+    std::string path;
+    std::optional<std::uint64_t> value;
+    std::string text;
+};
+
+struct NpTrophy2Event {
+    std::string name;
+    std::vector<NpTrophy2EventProperty> properties;
+};
 
 namespace NpTrophy2 {
 
@@ -50,6 +62,28 @@ private:
 
 TrophyStore& TitleStore();
 
+class StatStore {
+public:
+    explicit StatStore(std::filesystem::path directory);
+
+    void Set(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId, std::uint64_t value);
+    std::optional<std::uint64_t> Value(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId);
+    std::map<std::uint64_t, std::uint64_t> Values(std::int32_t userId, std::uint32_t serviceLabel);
+    std::filesystem::path RecordPath(std::int32_t userId, std::uint32_t serviceLabel) const;
+
+private:
+    using Key = std::pair<std::int32_t, std::uint32_t>;
+    using Stats = std::map<std::uint64_t, std::uint64_t>;
+
+    Stats& record(const Key& key);
+
+    std::filesystem::path directory;
+    std::mutex mutex;
+    std::map<Key, Stats> records;
+};
+
+StatStore& TitleStats();
+
 struct ContextOwner {
     std::int32_t userId = 0;
     std::uint32_t serviceLabel = 0;
@@ -68,6 +102,7 @@ extern "C" {
 bool NpTrophy2RecordUnlock_nid_no_patch(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId);
 std::uint64_t NpTrophy2AddUnlockListener_nid_no_patch(NpTrophy2UnlockListener listener, void* context);
 void NpTrophy2RemoveUnlockListener_nid_no_patch(std::uint64_t id);
+void NpTrophy2ApplyEvent_nid_no_patch(std::int32_t userId, std::uint32_t serviceLabel, const NpTrophy2Event& event);
 
 }
 
