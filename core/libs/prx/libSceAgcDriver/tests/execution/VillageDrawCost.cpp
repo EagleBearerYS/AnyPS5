@@ -428,6 +428,7 @@ void Cost(const Layout& layout, std::uint32_t frames) {
     const auto threads = DriverThreads();
     const auto rasterizer = [](const std::string& name) { return name.rfind("llvmpipe-", 0) == 0; };
     std::vector<std::vector<double>> cpu(threads.size());
+    std::vector<std::vector<double>> waitCpu(threads.size());
     std::vector<double> totalCpu;
     std::vector<double> rasterCpu;
     std::map<std::string, std::vector<double>> held;
@@ -439,6 +440,10 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         const auto heldBefore = HeldNs();
 #endif
         perDraw.push_back(Submit(commandSets[frame % commandSets.size()]) / draws);
+#ifdef __linux__
+        std::vector<std::uint64_t> cpuSubmitted;
+        for (const auto& thread : threads) cpuSubmitted.push_back(ThreadCpuNs(thread.first));
+#endif
         if (std::getenv("VILLAGE_GPU_SYNC") != nullptr) {
             const auto syncStart = std::chrono::steady_clock::now();
             AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
@@ -448,8 +453,10 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         double sum = 0.0;
         double raster = 0.0;
         for (std::size_t t = 0; t < threads.size(); ++t) {
-            const auto value = static_cast<double>(ThreadCpuNs(threads[t].first) - cpuBefore[t]) / 1e3 / draws;
+            const auto now = ThreadCpuNs(threads[t].first);
+            const auto value = static_cast<double>(now - cpuBefore[t]) / 1e3 / draws;
             cpu[t].push_back(value);
+            waitCpu[t].push_back(static_cast<double>(now - cpuSubmitted[t]) / 1e3 / draws);
             (rasterizer(threads[t].second) ? raster : sum) += value;
         }
         totalCpu.push_back(sum);
@@ -494,6 +501,14 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         split += text;
     }
     std::printf("village split: us per draw, median of %u frames:%s\n", frames, split.c_str());
+    if (!syncMs.empty()) {
+        std::string waiting;
+        for (std::size_t t = 0; t < threads.size(); ++t) {
+            std::snprintf(text, sizeof(text), " %s cpu %.2f", threads[t].second.c_str(), Median(waitCpu[t]));
+            waiting += text;
+        }
+        std::printf("village gpu wait split: us per draw of each thread's CPU after the submission returned, inside the GPU wait, median of %u frames:%s\n", frames, waiting.c_str());
+    }
 #endif
 }
 
