@@ -1,7 +1,7 @@
 BUSY PRM-035
 since: 2026-10-17T07:07Z (PRM-035, CI Linux job for trophies 1+2, output resolution, FSR on it, merged with main 0906c64501)
 claimed: tasks/claimed/PRM-035.md
-step: main baseline 1262/65/5 of 1332 and head #1 clean (pushed in PRM-035.md); building head #2 9b17080b06
+step: main baseline, heads #1 and #2 clean (pushed in PRM-035.md); building head #3 35f4fe60a0
 previous: BF-050 done, results/cloud-5/BF-050.md: perf/agc-address-read-passes fast-forwarded a939efe1a0 -> b3e94a514 (counters 2d4512e5c, test b3e94a514); --readers red with the switch off and at 0300bb0e79, green at the head; guards green; mirror 1267/65/5 IPv6 of 1337; ^agc 638 passed
 
 RESULT (setup):
