@@ -84,6 +84,7 @@ struct SpirvTableAccess {
     std::uint32_t samplerElement = 0;
     bool active = false;
     bool uniform = false;
+    bool device = false;
 };
 
 struct SpirvEmitterState {
@@ -190,6 +191,10 @@ struct SpirvEmitterState {
     std::vector<SpirvTableImageVariable> tableImageVariables;
     std::uint32_t tableSamplerVariable = 0;
     std::uint32_t tableMapVariable = 0;
+    std::vector<SpirvTableImageVariable> deviceHeapVariables;
+    std::uint32_t deviceTableBucketsVariable = 0;
+    std::uint32_t deviceTableRingVariable = 0;
+    std::uint32_t deviceImageLookupFunction = 0;
     std::uint32_t mainFunc = 0;
     std::uint32_t meshGuestFunc = 0;
     std::uint32_t meshAllocation = 0;

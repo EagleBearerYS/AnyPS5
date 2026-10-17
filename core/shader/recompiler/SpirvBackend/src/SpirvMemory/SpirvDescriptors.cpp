@@ -187,8 +187,9 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
     const auto imageType = ImageType(state, imageResource);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageType);
     if (imageResource.table != NoTable) {
-        const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
-        if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image table array was not emitted for the mode");
+        const auto& variables = state.tableAccess.device ? state.deviceHeapVariables : state.tableImageVariables;
+        const auto found = std::find_if(variables.begin(), variables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
+        if (found == variables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image table array was not emitted for the mode");
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.element);
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, pointer);
