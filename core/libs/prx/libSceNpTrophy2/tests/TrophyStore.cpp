@@ -2,6 +2,8 @@
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +13,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern "C" {
@@ -112,6 +115,29 @@ std::uint32_t unlockedTrophies(int context) {
     return data.unlocked_trophies;
 }
 
+struct SlowListener {
+    std::atomic<bool> running{false};
+    std::atomic<bool> finished{false};
+};
+
+void slowly(void* context, const NpTrophy2Unlock&) {
+    auto* state = static_cast<SlowListener*>(context);
+    state->running = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    state->finished = true;
+}
+
+void testListenerRemovalWaitsForItsCallback() {
+    SlowListener state;
+    const auto listener = NpTrophy2AddUnlockListener_nid_no_patch(slowly, &state);
+    std::thread unlocking([] { NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 2, 1); });
+    while (!state.running) std::this_thread::yield();
+    NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
+    const bool finished = state.finished;
+    unlocking.join();
+    check(finished, "a listener was removed while its callback was still running, so its context could be freed under it");
+}
+
 void testQueries() {
     int context = 0;
     check(sceNpTrophy2CreateContext(&context, InitialUser, 0, 0) == 0, "context was not created");
@@ -161,6 +187,7 @@ int main() {
     testPersistence();
     testDamagedRecords();
     testQueries();
+    testListenerRemovalWaitsForItsCallback();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     std::puts("Trophy store tests passed");
