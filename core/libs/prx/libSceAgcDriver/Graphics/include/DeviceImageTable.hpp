@@ -73,7 +73,9 @@ public:
         std::uint64_t textureBytes = 0;
         std::uint64_t checkPresents = 60u;
         std::uint64_t idlePresents = 120u;
+        std::uint32_t maxBuckets = DeviceImageKeys::MaxBuckets;
     };
+    static constexpr std::uint32_t OverflowBatches = 3u;
 
     static constexpr std::uint32_t RingCapacity = 4096u;
     static constexpr std::uint32_t RingChunks = 16u;
@@ -92,7 +94,11 @@ public:
 
     VkDescriptorSetLayout Layout() const { return layout; }
     VkDescriptorSetLayout EmptyLayout() const { return emptyLayout; }
-    void Prepare(const Context& build, Recorder& recorder);
+    void Prepare(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::PipelineIdentity> programs = {});
+    void SetInterfaceLookup(InterfaceLookup lookup);
+    void NoteProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress);
+    bool ServesProgram(std::uint64_t codeAddress) const;
+    bool ServesIdentity(const ShaderRecompiler::PipelineIdentity& identity) const;
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder);
     std::span<std::uint32_t> RingChunk(Recorder& recorder);
     VkBuffer TableBuffer() const;
@@ -102,6 +108,7 @@ public:
     std::shared_ptr<Texture> EntryTexture(const Key& key) const;
 
     struct Counts {
+        std::uint64_t prepares = 0;
         std::uint64_t drained = 0;
         std::uint64_t distinct = 0;
         std::uint64_t dropped = 0;
@@ -118,6 +125,7 @@ public:
         std::uint64_t checked = 0;
         std::uint64_t refreshed = 0;
         std::uint64_t evicted = 0;
+        std::uint64_t fallbacks = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
         std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding> peakTextures{};
@@ -153,14 +161,21 @@ private:
     struct Chunk {
         std::uint64_t serial = 0;
         bool busy = false;
+        std::set<ShaderRecompiler::PipelineIdentity> programs;
+    };
+    using Programs = std::shared_ptr<const std::set<ShaderRecompiler::PipelineIdentity>>;
+    struct PendingMiss {
+        DeviceImageMiss miss;
+        Programs programs;
     };
 
     void resolve(const Context& build, Recorder& recorder);
-    std::optional<DeviceImageValue> lookupKey(const Context& build, const Key& key, Entry& entry);
+    std::optional<DeviceImageValue> lookupKey(const Context& build, const Key& key, Entry& entry, std::string* failure = nullptr);
     DeviceImageValue reject(const Key& key, ShaderRecompiler::ImageTableAbi::PoisonReason reason, const std::string& message);
     void unserved(const Key& key, const std::string& why);
     void heapFull(const Key& key, std::uint32_t kind);
     bool insert(const Key& key, const DeviceImageValue& value);
+    void fallBack(const std::set<ShaderRecompiler::PipelineIdentity>& programs, const std::string& reason);
     void hold(const Key& key, Entry entry);
     void release(const Key& key, Recorder& recorder);
     void refresh(const Context& build, Recorder& recorder);
@@ -177,7 +192,7 @@ private:
     DeviceImageKeys keys;
     std::map<Key, Entry> entries;
     std::map<Key, Rejection> rejections;
-    std::vector<DeviceImageMiss> pending;
+    std::vector<PendingMiss> pending;
     VkDescriptorSetLayout layout = VK_NULL_HANDLE;
     VkDescriptorSetLayout emptyLayout = VK_NULL_HANDLE;
     VkDescriptorPool pool = VK_NULL_HANDLE;
@@ -196,6 +211,10 @@ private:
     std::optional<ValidationState> validated;
     std::uint64_t useSerial = 0;
     std::uint64_t evictionCheck = 0;
+    std::map<ShaderRecompiler::PipelineIdentity, std::set<std::uint64_t>> identityPrograms;
+    std::set<ShaderRecompiler::PipelineIdentity> failedPrograms;
+    std::set<std::uint64_t> fallbackPrograms;
+    std::map<ShaderRecompiler::PipelineIdentity, std::uint32_t> overflowStreaks;
     bool tableFullReported = false;
     std::string lastFault;
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
