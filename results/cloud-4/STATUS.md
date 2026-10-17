@@ -1,8 +1,8 @@
 BUSY LA-003
 since: 2026-10-17T05:59:43Z (claimed)
 claimed: tasks/claimed/LA-003.md
-branch: exp/lane-a-driver (pushed 2026-10-17T06:30:40Z)
-step: commit 1 of 5 pushed (switch, shared ABI, device refusal; c6c2426e1); commit 2 next (the table: set 3, uploads, miss ring, resolution, faults)
+branch: exp/lane-a-driver at 7b111e645 (pushed): c6c2426e1 switch + shared ABI, c623ebed3 table + uploads + ring + resolution, 4b50855b2 freshness + eviction, merge of exp/lane-a-base 8edb13bb2
+step (2026-10-17T06:53:34Z): commit 4 (device ownership, pipeline layouts and libraries, binding) building; then the per-program fallback, the CI mirror and the result
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup: READY report below
 RESULT:
