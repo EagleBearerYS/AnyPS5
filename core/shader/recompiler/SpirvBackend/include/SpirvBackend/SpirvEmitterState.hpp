@@ -179,6 +179,7 @@ struct SpirvEmitterState {
     std::uint32_t tableSamplerVariable = 0;
     std::uint32_t tableMapVariable = 0;
     std::vector<SpirvTableImageVariable> deviceHeapVariables;
+    std::vector<std::uint32_t> deviceHeapBindings;
     std::uint32_t deviceTableBucketsVariable = 0;
     std::uint32_t deviceTableRingVariable = 0;
     std::uint32_t deviceImageLookupFunction = 0;

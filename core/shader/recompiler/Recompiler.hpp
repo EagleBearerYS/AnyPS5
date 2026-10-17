@@ -610,6 +610,7 @@ struct CompiledShaderArtifact {
     bool gpuResolvedImages = false;
     std::uint32_t samplerSlotDword = 0;
     bool deviceImageTables = false;
+    std::vector<std::uint32_t> deviceHeapBindings;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
     std::vector<VertexInput> vertexInputs;

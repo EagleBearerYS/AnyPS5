@@ -292,6 +292,14 @@ void DeviceImageTable::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPo
     bind(commands, bindPoint, pipelineLayout, Runtime::DeviceTableSet, 1, &set, 1, &offset);
 }
 
+void DeviceImageTable::BindTable(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder) {
+    std::lock_guard lock(mutex);
+    const auto chunk = chunkFor(recorder, false);
+    const auto offset = static_cast<std::uint32_t>(static_cast<VkDeviceSize>(chunk) * chunkStride);
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, pipelineLayout, Runtime::DeviceTableSet, 1, &set, 1, &offset);
+    if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) ++totals.gpuModeDraws;
+}
+
 std::span<std::uint32_t> DeviceImageTable::RingChunk(Recorder& recorder) {
     std::lock_guard lock(mutex);
     const auto chunk = chunkFor(recorder, true);

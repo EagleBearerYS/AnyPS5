@@ -370,7 +370,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
         const bool deviceSets = resources.deviceTable != VK_NULL_HANDLE;
-        const std::array<VkDescriptorSetLayout, 4> setLayouts{resources.main, deviceSets && resources.fragment == VK_NULL_HANDLE ? resources.deviceGap : resources.fragment, deviceSets ? resources.deviceHeap : resources.data, resources.deviceTable};
+        const std::array<VkDescriptorSetLayout, 4> setLayouts{resources.main, deviceSets && resources.fragment == VK_NULL_HANDLE ? resources.deviceGap : resources.fragment, resources.data != VK_NULL_HANDLE ? resources.data : resources.deviceHeap, resources.deviceTable};
         const VkPushConstantRange push{pushStages, 0, PipelinePushSlotBytes};
         const std::array<VkPushConstantRange, 2> slots{{{pushStagesOf(context), 0, PipelinePushSlotBytes}, {VK_SHADER_STAGE_FRAGMENT_BIT, PipelinePushSlotBytes, PipelinePushSlotBytes}}};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};

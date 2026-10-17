@@ -444,12 +444,13 @@ Counters Read() {
         counters.device.entries += totals.entries;
         counters.device.heapFull += totals.heapFull;
         counters.device.fallbacks += totals.fallbacks;
+        counters.device.gpuModeDraws += totals.gpuModeDraws;
     }
     return counters;
 }
 
 std::string Describe(const Counters& before, const Counters& after) {
-    return " (CPU table snapshots " + std::to_string(after.snapshots - before.snapshots) + ", CPU table bindings " + std::to_string(after.tableBuilds - before.tableBuilds) + ", device table prepares " + std::to_string(after.device.prepares - before.device.prepares) + ", miss records " + std::to_string(after.device.drained - before.device.drained) + ", inserted " + std::to_string(after.device.inserted - before.device.inserted) + ")";
+    return " (CPU table snapshots " + std::to_string(after.snapshots - before.snapshots) + ", CPU table bindings " + std::to_string(after.tableBuilds - before.tableBuilds) + ", device table prepares " + std::to_string(after.device.prepares - before.device.prepares) + ", miss records " + std::to_string(after.device.drained - before.device.drained) + ", inserted " + std::to_string(after.device.inserted - before.device.inserted) + (AgcDriver::Graphics::GpuHeapEnabled() ? ", GPU-mode draws " + std::to_string(after.device.gpuModeDraws - before.device.gpuModeDraws) : std::string()) + ")";
 }
 
 void RequireCpuTable(const Counters& before, const Counters& after, const std::string& what) {
@@ -572,6 +573,7 @@ void Draws(const Harness& harness) {
         RequireDrawn(ReadColor(harness), TexelOf(texture).value, name + ", second draw");
         after = Read();
         if (harness.device) RequireHits(before, after, name + ", second draw");
+        if (harness.device && AgcDriver::Graphics::GpuHeapEnabled() && kind == DrawKind::Direct) Require(after.device.gpuModeDraws > before.device.gpuModeDraws, name + ", second draw: the draw did not read the device image table in GPU mode" + Describe(before, after));
         std::printf("%s, second draw: the texel%s\n", name.c_str(), Describe(before, after).c_str());
     }
 }

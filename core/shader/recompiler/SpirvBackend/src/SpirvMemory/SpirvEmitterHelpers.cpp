@@ -436,10 +436,16 @@ void DefineDeviceImageTables(SpirvEmitterState& state) {
             if (!TableModeEmitted(mode)) continue;
             const auto kind = DescriptorBindingForImage(mode);
             if (std::any_of(state.deviceHeapVariables.begin(), state.deviceHeapVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
+            if (state.gpuResolvedImages && state.imageVariables.at(ImageBindingIndex(kind)) != 0u) {
+                state.deviceHeapVariables.push_back({kind, state.imageVariables.at(ImageBindingIndex(kind))});
+                continue;
+            }
             const auto name = "device_heap_" + std::to_string(static_cast<std::uint32_t>(kind));
             const auto type = state.module.Type(spv::OpTypeArray, ImageType(state, mode), ConstantU32(state, RuntimeAbi::GpuImageHeapSlots));
             const auto binding = RuntimeAbi::BindingNumber(RuntimeAbi::Stage::Fragment, static_cast<RuntimeAbi::Binding>(kind));
-            state.deviceHeapVariables.push_back({kind, define(type, name.c_str(), spv::StorageClassUniformConstant, RuntimeAbi::DeviceHeapSet, binding)});
+            const auto set = state.gpuResolvedImages ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DeviceHeapSet;
+            if (state.gpuResolvedImages) state.deviceHeapBindings.push_back(binding);
+            state.deviceHeapVariables.push_back({kind, define(type, name.c_str(), spv::StorageClassUniformConstant, set, binding)});
             if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(spv::CapabilitySampled1D);
         }
     }

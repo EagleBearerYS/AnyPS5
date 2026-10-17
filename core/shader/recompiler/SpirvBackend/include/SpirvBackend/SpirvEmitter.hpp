@@ -32,6 +32,7 @@ struct SpirvTargetOptions {
 
 struct SpirvEmitInfo {
     bool fullSubgroups = false;
+    std::vector<std::uint32_t> deviceHeapBindings;
 };
 
 struct SpannedWaveUnsupported : std::runtime_error {

@@ -106,6 +106,7 @@ public:
     bool ServesProgram(std::uint64_t codeAddress) const;
     bool ServesIdentity(const ShaderRecompiler::PipelineIdentity& identity) const;
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder);
+    void BindTable(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout pipelineLayout, Recorder& recorder);
     std::span<std::uint32_t> RingChunk(Recorder& recorder);
     VkBuffer TableBuffer() const;
     std::optional<DeviceImageValue> Find(const Key& key) const;
@@ -133,6 +134,7 @@ public:
         std::uint64_t refreshed = 0;
         std::uint64_t evicted = 0;
         std::uint64_t fallbacks = 0;
+        std::uint64_t gpuModeDraws = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
         std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding> peakTextures{};

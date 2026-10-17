@@ -297,6 +297,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
     if (info != nullptr) info->fullSubgroups = state.spannedWave;
+    if (info != nullptr) info->deviceHeapBindings = state.deviceHeapBindings;
     return state.module.Finalize();
 }
 

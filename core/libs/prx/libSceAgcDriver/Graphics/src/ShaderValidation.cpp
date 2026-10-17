@@ -546,7 +546,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(stride.has_value() && *stride == 4, "push constant array must have an ArrayStride of 4");
         } else if (variable.storage == spv::StorageClassWorkgroup) {
             Require(mesh, "workgroup memory outside a mesh shader");
-        } else if (shader.deviceImageTables && decoration.set && (*decoration.set == ShaderRecompiler::RuntimeAbi::DeviceHeapSet || *decoration.set == ShaderRecompiler::RuntimeAbi::DeviceTableSet)) {
+        } else if (shader.deviceImageTables && decoration.set && decoration.binding && (*decoration.set == ShaderRecompiler::RuntimeAbi::DeviceTableSet || (shader.gpuResolvedImages ? *decoration.set == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet && std::none_of(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == *decoration.set && item.binding == *decoration.binding; }) : *decoration.set == ShaderRecompiler::RuntimeAbi::DeviceHeapSet))) {
             Require(decoration.binding.has_value() && deviceDescriptors.insert({*decoration.set, *decoration.binding}).second, "unbound or duplicate device image table resource");
             if (*decoration.set == ShaderRecompiler::RuntimeAbi::DeviceTableSet) {
                 Require(variable.storage == spv::StorageClassStorageBuffer && (*decoration.binding == ShaderRecompiler::RuntimeAbi::DeviceTableBucketsBinding || *decoration.binding == ShaderRecompiler::RuntimeAbi::DeviceTableRingBinding), "the device image table's set holds its bucket and miss ring buffers only");

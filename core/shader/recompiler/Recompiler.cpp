@@ -295,10 +295,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     dumpIr("srt");
 
     const bool heapStage = request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Compute;
-    const bool gpuModeStage = request.target.gpuResolvedImages && heapStage;
+    const bool gpuModeCompute = request.target.gpuResolvedImages && request.shader.stage == ShaderStage::Compute;
     const bool deviceTableStage = heapStage || request.shader.stage == ShaderStage::Mesh;
     constexpr ResourceTracker resourceTracker;
-    resourceTracker.Track(program, request.target.deviceImageTables && supports(spv::CapabilityInt64) && deviceTableStage && !gpuModeStage);
+    resourceTracker.Track(program, request.target.deviceImageTables && supports(spv::CapabilityInt64) && deviceTableStage && !gpuModeCompute);
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
@@ -555,7 +555,9 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     } catch (const SpannedWaveUnsupported& error) {
         std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
         targetOptions.spannedWaves = false;
-        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
+        SpirvEmitInfo fallback;
+        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &fallback);
+        emitted.deviceHeapBindings = std::move(fallback.deviceHeapBindings);
     }
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
         registration = false;
@@ -563,7 +565,9 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         bindings = bindingAllocator.Allocate(program, request.layout, false, stencilReplay, gpuResolved);
         targetOptions.gpuResolvedImages = gpuResolved && bindings.layout.gpuResolvedImages;
         targetOptions.registrationModules = false;
-        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
+        SpirvEmitInfo unregistered;
+        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &unregistered);
+        emitted.deviceHeapBindings = std::move(unregistered.deviceHeapBindings);
     }
     result.registrationModule = registration;
     result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
@@ -574,6 +578,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.gpuResolvedImages = targetOptions.gpuResolvedImages;
     result.samplerSlotDword = result.gpuResolvedImages ? bindings.layout.SamplerSlotDword() : 0u;
     result.deviceImageTables = std::ranges::any_of(program.Info().images, [](const ImageResource& image) { return image.deviceTable; });
+    result.deviceHeapBindings = emitted.deviceHeapBindings;
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
@@ -731,14 +736,21 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
 #endif
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> bindingNumbers;
-    std::set<std::uint32_t> deviceTableVariables;
+    std::map<std::uint32_t, std::uint32_t> descriptorSets;
+    const auto deviceTableVariable = [&](std::uint32_t variable, std::uint32_t binding) {
+        const auto set = descriptorSets.find(variable);
+        if (!artifact.deviceImageTables || set == descriptorSets.end()) return false;
+        if (set->second == RuntimeAbi::DeviceTableSet) return true;
+        if (!artifact.gpuResolvedImages) return set->second == RuntimeAbi::DeviceHeapSet;
+        return set->second == RuntimeAbi::FragmentDescriptorSet && std::ranges::find(artifact.deviceHeapBindings, binding) != artifact.deviceHeapBindings.end();
+    };
     for (std::size_t cursor = 5; cursor < materialized.size();) {
         const auto count = materialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
-        if (artifact.deviceImageTables && op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == RuntimeAbi::DeviceHeapSet || materialized[cursor + 3u] == RuntimeAbi::DeviceTableSet)) deviceTableVariables.insert(materialized[cursor + 1u]);
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet) descriptorSets.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
         if (op == spv::OpVariable && count >= 4u) {
-            if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end() && !deviceTableVariables.contains(found->first)) module->bindings.push_back(found->second);
+            if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end() && !deviceTableVariable(found->first, found->second)) module->bindings.push_back(found->second);
             module->pushData |= materialized[cursor + 3u] == spv::StorageClassPushConstant;
         }
         cursor += count;
@@ -893,6 +905,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .gpuResolvedImages = artifact.gpuResolvedImages,
         .samplerSlotDword = artifact.samplerSlotDword,
         .deviceImageTables = artifact.deviceImageTables,
+        .deviceHeapBindings = artifact.deviceHeapBindings,
         .bdaAbiVersion = artifact.bdaAbiVersion,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
