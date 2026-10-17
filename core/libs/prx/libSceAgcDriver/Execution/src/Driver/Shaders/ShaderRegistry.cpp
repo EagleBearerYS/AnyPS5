@@ -478,7 +478,57 @@ bool LazyShaderPreparation() {
     return lazy;
 }
 
-void PrepareDeferredAbis(const ShaderSnapshot& snapshot);
+using PreparedAtUse = std::optional<std::vector<const ShaderRecompiler::SourceHandle*>>;
+
+PreparedAtUse PrepareDeferredAbis(const ShaderSnapshot& snapshot);
+
+struct DeferredAbiUseCounters {
+    std::atomic<std::uint64_t> firstUses{0};
+    std::atomic<std::uint64_t> found{0};
+    std::atomic<std::uint64_t> own{0};
+    std::atomic<std::uint64_t> entries{0};
+    std::atomic<std::uint64_t> matchedEntries{0};
+    std::atomic<std::int64_t> lastReport{0};
+};
+
+DeferredAbiUseCounters& DeferredAbiCounters() {
+    static DeferredAbiUseCounters counters;
+    return counters;
+}
+
+void ReportDeferredAbiUses() {
+    auto& counters = DeferredAbiCounters();
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto previous = counters.lastReport.load(std::memory_order_relaxed);
+    if ((previous != 0 && now - previous < 60000) || !counters.lastReport.compare_exchange_strong(previous, now, std::memory_order_relaxed)) return;
+    const auto entries = counters.entries.load(std::memory_order_relaxed);
+    const auto matched = counters.matchedEntries.load(std::memory_order_relaxed);
+    std::fprintf(stderr, "[shaders] deferred ABIs: %llu prepared at first use, %llu found their artifact there, %llu prepared their own; %llu of the %llu entries prepared from them never matched a use\n", static_cast<unsigned long long>(counters.firstUses.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.found.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.own.load(std::memory_order_relaxed)), static_cast<unsigned long long>(entries - std::min(entries, matched)), static_cast<unsigned long long>(entries));
+}
+
+void NoteMatchedEntry(PreparedShaders::Entry& entry, const PreparedAtUse& preparedAtUse) {
+    auto& counters = DeferredAbiCounters();
+    bool changed = false;
+    if (entry.fromDeferredAbi && !entry.matched) {
+        entry.matched = true;
+        counters.matchedEntries.fetch_add(1, std::memory_order_relaxed);
+        changed = true;
+    }
+    if (preparedAtUse) {
+        counters.firstUses.fetch_add(1, std::memory_order_relaxed);
+        if (std::ranges::find(*preparedAtUse, entry.handle.get()) != preparedAtUse->end()) counters.found.fetch_add(1, std::memory_order_relaxed);
+        changed = true;
+    }
+    if (changed) ReportDeferredAbiUses();
+}
+
+void NoteOwnPreparation(const PreparedAtUse& preparedAtUse) {
+    if (!preparedAtUse) return;
+    auto& counters = DeferredAbiCounters();
+    counters.firstUses.fetch_add(1, std::memory_order_relaxed);
+    counters.own.fetch_add(1, std::memory_order_relaxed);
+    ReportDeferredAbiUses();
+}
 
 void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::RecompileRequest& request) {
     if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
@@ -511,14 +561,19 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     ShaderRecompiler::BuildPreparedShaderKey(request, key);
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
+    PreparedAtUse preparedAtUse;
     if (!snapshot.prepared->deferredAbis.empty()) {
         lock.unlock();
-        PrepareDeferredAbis(snapshot);
+        preparedAtUse = PrepareDeferredAbis(snapshot);
         lock.lock();
     }
-    for (const auto& entry : snapshot.prepared->entries) {
-        if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
+    for (auto& entry : snapshot.prepared->entries) {
+        if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) {
+            NoteMatchedEntry(entry, preparedAtUse);
+            return entry.handle;
+        }
     }
+    NoteOwnPreparation(preparedAtUse);
     ReportPreparedAtUse(snapshot, request);
     auto handle = PrepareShaderWithDiagnostics(request);
     snapshot.prepared->entries.push_back({codeOffset, handle});
@@ -668,17 +723,22 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     ShaderRecompiler::BuildPreparedShaderKey(source, key);
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
+    PreparedAtUse preparedAtUse;
     if (!snapshot.prepared->deferredAbis.empty()) {
         lock.unlock();
-        PrepareDeferredAbis(snapshot);
+        preparedAtUse = PrepareDeferredAbis(snapshot);
         lock.lock();
     }
-    for (const auto& entry : snapshot.prepared->entries) {
+    for (auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset) continue;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
         if (!linked.code.empty() && !std::ranges::equal(invocationRequest.shader.code, linked.code)) continue;
-        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
+        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) {
+            NoteMatchedEntry(entry, preparedAtUse);
+            return std::move(*invocation);
+        }
     }
+    NoteOwnPreparation(preparedAtUse);
     ReportPreparedAtUse(snapshot, source);
     auto handle = PrepareShaderWithDiagnostics(source);
     invocationRequest = source;
@@ -944,12 +1004,14 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     return plan != nullptr ? PrepareRegistered(*plan) : std::vector<PreparedShaders::Entry>{};
 }
 
-void PrepareDeferredAbis(const ShaderSnapshot& snapshot) {
+PreparedAtUse PrepareDeferredAbis(const ShaderSnapshot& snapshot) {
     std::vector<PreparedShaders::DeferredAbi> deferred;
     {
         std::lock_guard lock(snapshot.prepared->mutex);
         deferred.swap(snapshot.prepared->deferredAbis);
     }
+    if (deferred.empty()) return std::nullopt;
+    std::vector<const ShaderRecompiler::SourceHandle*> added;
     for (const auto& abi : deferred) {
         const auto device = abi.device.lock();
         if (device == nullptr || snapshot.registeredState == nullptr) continue;
@@ -972,9 +1034,14 @@ void PrepareDeferredAbis(const ShaderSnapshot& snapshot) {
         std::lock_guard lock(snapshot.prepared->mutex);
         for (auto& entry : entries) {
             const auto duplicate = std::ranges::any_of(snapshot.prepared->entries, [&](const auto& existing) { return existing.codeOffset == entry.codeOffset && existing.handle->artifact == entry.handle->artifact; });
-            if (!duplicate) snapshot.prepared->entries.push_back(std::move(entry));
+            if (duplicate) continue;
+            entry.fromDeferredAbi = true;
+            added.push_back(entry.handle.get());
+            snapshot.prepared->entries.push_back(std::move(entry));
         }
     }
+    DeferredAbiCounters().entries.fetch_add(added.size(), std::memory_order_relaxed);
+    return added;
 }
 
 void DeferPipelineStage(PreparedShaderState& prepared, const ShaderSnapshot& snapshot, const char* reason) {
@@ -1395,6 +1462,13 @@ std::size_t Driver::PreparedEntries(const Shader* shader) {
     std::unique_lock lock(snapshot->prepared->mutex);
     AwaitRegisteredPreparation(*snapshot->prepared, lock);
     return snapshot->prepared->entries.size();
+}
+
+Driver::DeferredAbiUseCounts Driver::DeferredAbiUses() {
+    auto& counters = DeferredAbiCounters();
+    const auto entries = counters.entries.load(std::memory_order_relaxed);
+    const auto matched = counters.matchedEntries.load(std::memory_order_relaxed);
+    return {counters.firstUses.load(std::memory_order_relaxed), counters.found.load(std::memory_order_relaxed), counters.own.load(std::memory_order_relaxed), entries, entries - std::min(entries, matched)};
 }
 
 void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {

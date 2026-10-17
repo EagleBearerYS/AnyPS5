@@ -66,6 +66,14 @@ public:
     void ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType);
     void SettleShaderPreparations(std::span<const Shader* const> stages);
     [[nodiscard]] std::size_t PreparedEntries(const Shader* shader);
+    struct DeferredAbiUseCounts {
+        std::uint64_t firstUses;
+        std::uint64_t found;
+        std::uint64_t own;
+        std::uint64_t entries;
+        std::uint64_t unmatchedEntries;
+    };
+    [[nodiscard]] static DeferredAbiUseCounts DeferredAbiUses();
     static void FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters);
     static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
     static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request);
