@@ -1,7 +1,6 @@
-BUSY BF-058
-since: 2026-10-17T13:52:54Z (claimed)
-claimed: tasks/claimed/BF-058.md
-last: BF-057 done, results/cloud-4/BF-057.md (perf/agc-cpu-indirect-draw-cache aa37cae87); before it LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
+READY
+since: 2026-10-17T14:37:39Z (BF-058 done)
+last: BF-058 done, results/cloud-4/BF-058.md (perf/agc-cpu-indirect-draw-cache 3797ec87b, exp/bf058-measure 4612e14d6); before it BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
