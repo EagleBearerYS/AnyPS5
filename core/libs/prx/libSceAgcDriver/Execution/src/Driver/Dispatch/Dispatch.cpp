@@ -195,6 +195,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     };
     mix(address);
     mix(packet[4] & 0x8000u);
+    mix(request.target.deviceImageTables);
     for (const auto threads : compute.partialThreads) mix(threads);
     for (const auto word : userData) mix(word);
 
