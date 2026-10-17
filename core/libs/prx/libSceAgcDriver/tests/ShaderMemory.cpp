@@ -24,6 +24,7 @@
 #include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "ShaderDiskCache.hpp"
+#include "MeshGeometryFixture.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -2069,23 +2070,95 @@ void verifyDeviceImageTables() {
         require(!off.result->deviceImageTables && !offScan.lookup && !offScan.buckets && !offScan.ring && offScan.heapBindings.empty(), "device image tables: the option off still emitted the device lookup");
         require(TableBinding(*off.result, DescriptorRole::ImageTable) != nullptr && TableBinding(*off.result, DescriptorRole::ImageTableMap) != nullptr, "device image tables: the option off does not bind the CPU table");
     }
-    for (const auto stage : {ShaderStage::Vertex, ShaderStage::TessellationEvaluation}) {
+    const std::array<std::uint32_t, 11> meshUserData{0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, userData[0], userData[1], userData[2]};
+    for (const auto stage : {ShaderStage::Vertex, ShaderStage::Mesh, ShaderStage::TessellationEvaluation}) {
+        const bool mesh = stage == ShaderStage::Mesh;
         auto code = DeviceTablePixelCode;
         *std::find(code.begin(), code.end(), 0x7e020300u) = 0xbf800000u;
-        *std::find(code.begin(), code.end(), 0x00450000u) = 0x00450401u;
+        *std::find(code.begin(), code.end(), 0x00450000u) = mesh ? 0x00860401u : 0x00450401u;
         *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
         *std::find(code.begin(), code.end(), 0x03020100u) = 0x07060504u;
-        auto request = DeviceTableRequest(code, userData, false, true);
+        if (mesh) {
+            *std::find(code.begin(), code.end(), 0xf4080100u) = 0xf4080304u;
+            *std::find(code.begin(), code.end(), 0xf4080200u) = 0xf4080404u;
+            *std::find(code.begin(), code.end(), 0xbe900302u) = 0xbe94030au;
+            *std::find(code.begin(), code.end(), 0x8f108510u) = 0x8f148514u;
+            *std::find(code.begin(), code.end(), 0xf42c0502u) = 0xf42c0606u;
+            *std::find(code.begin(), code.end(), 0x20000000u) = 0x28000000u;
+        }
+        auto request = DeviceTableRequest(code, mesh ? std::span<const std::uint32_t>(meshUserData) : std::span<const std::uint32_t>(userData), false, true);
         request.shader.stage = stage;
         request.shader.codeAddress += 0x10u * static_cast<std::uint32_t>(stage);
         request.context.compute.reset();
         request.context.vertex = ShaderVertexStageInfo{};
         if (stage == ShaderStage::TessellationEvaluation) request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {}};
-        const bool device = stage == ShaderStage::Vertex;
+        if (mesh) request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 1u, 3u, 3u, 1u, 64u, 128u, 0u, 4u}, std::nullopt, {}};
+        const bool device = stage == ShaderStage::Vertex || mesh;
+        const std::string name = stage == ShaderStage::Vertex ? "vertex" : mesh ? "mesh" : "domain";
         const auto plan = GetResourcePlan(request);
-        const std::string name = stage == ShaderStage::Vertex ? "vertex" : "domain";
-        require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable == device, ("device image tables: the " + name + " stage's table column " + (device ? "is not read at run time" : "left the CPU path, but the heap and table sets are visible to vertex, pixel and compute stages only")).c_str());
+        require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable == device, ("device image tables: the " + name + " stage's table column " + (device ? "is not read at run time" : "left the CPU path, but the heap and table sets are visible to vertex, pixel, compute and mesh stages only")).c_str());
         require(device != plan->requiresSpecializationMemory, ("device image tables: the " + name + " stage's CPU table path does not match its column").c_str());
+    }
+    {
+        const auto& base = AgcDriver::Test::MeshGeometryCode;
+        constexpr std::size_t insert = 101;
+        constexpr std::size_t branch = 92;
+        constexpr std::array<std::uint32_t, 14> sample{0xf4080508u, 0xfa000000u, 0xf4080608u, 0xfa000010u, 0xbf8cc07fu, 0x8f1c8512u, 0xf42c080au, 0x38000000u, 0xbf8cc07fu, 0x7e6802f0u, 0x7e6a02f0u, 0xf09c0f08u, 0x00c83034u, 0xbf8c0000u};
+        std::vector<std::uint32_t> code(base.begin(), base.begin() + insert);
+        code.insert(code.end(), sample.begin(), sample.end());
+        code.insert(code.end(), base.begin() + insert, base.end());
+        code[branch] += static_cast<std::uint32_t>(sample.size());
+        alignas(256) static std::array<float, 64 * 8> vertices{};
+        std::array<std::uint32_t, 19> meshData{};
+        const auto vertexV = TableV(vertices.data(), 32u, 64u);
+        std::copy(vertexV.begin(), vertexV.end(), meshData.begin() + 8);
+        meshData[16] = userData[0];
+        meshData[17] = userData[1];
+        meshData[18] = userData[2];
+        static constexpr std::array<std::uint32_t, 5> meshCapabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityMeshShadingEXT};
+        static constexpr std::array<std::string_view, 3> meshExtensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"};
+        const auto meshRequest = [&](bool deviceTables, std::uint32_t subgroup) {
+            auto request = DeviceTableRequest(code, meshData, false, deviceTables);
+            request.shader.stage = ShaderStage::Mesh;
+            request.shader.codeAddress += 0x40u;
+            request.context.compute.reset();
+            request.context.vertex = ShaderVertexStageInfo{};
+            request.context.waveSize = 64u;
+            request.target.spirvVersion = 0x00010400u;
+            request.target.subgroupSize = subgroup;
+            request.target.supportedCapabilities = meshCapabilities;
+            request.target.supportedExtensions = meshExtensions;
+            request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+            request.target.maxWorkgroupInvocations = 1024u;
+            request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+            request.target.mesh = MeshTargetLimits{{128u, 1u, 1u}, 128u, 32768u, 256u, 256u, 128u, 32768u, 1u, 1u};
+            request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}};
+            return request;
+        };
+        for (const std::uint32_t subgroup : {64u, 32u}) {
+            std::array<std::size_t, 2> words{};
+            for (const bool deviceTables : {false, true}) {
+                const auto request = meshRequest(deviceTables, subgroup);
+                const auto plan = GetResourcePlan(request);
+                require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable == deviceTables, deviceTables ? "device image tables: the mesh program's T# from a 2,000-entry V# table is not read at run time" : "device image tables: the mesh program's table column left the CPU path with the option off");
+                require(deviceTables != plan->requiresSpecializationMemory, "device image tables: the mesh program's CPU table path does not match its column");
+                const auto compiled = CompileTable(request);
+                const auto& result = *compiled.result;
+                const auto scan = ScanDeviceTableSpirv(result.spirv.Words());
+                if (deviceTables) {
+                    require(result.deviceImageTables && scan.lookup && scan.buckets && scan.ring && !scan.heapBindings.empty(), "device image tables: the mesh module has no device lookup, bucket buffer, miss ring or heap array");
+                    require(!TableTouched(compiled.regions, heap.data(), sizeof(heap)), "device image tables: the mesh program's capture read the table records");
+                    require(TableBinding(result, DescriptorRole::ImageTable) == nullptr && TableBinding(result, DescriptorRole::ImageTableMap) == nullptr, "device image tables: the mesh program bound CPU table resources");
+                } else {
+                    require(!result.deviceImageTables && !scan.lookup && !scan.buckets && !scan.ring && TableBinding(result, DescriptorRole::ImageTable) != nullptr, "device image tables: the mesh program with the option off is not on the CPU table path");
+                }
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+                static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
+                words[deviceTables ? 1u : 0u] = result.spirv.Words().size();
+            }
+            std::cout << "device image tables: the mesh program reading a T# from a 2,000-entry table, host subgroup " << subgroup << ": " << words[0] << " words on the CPU table path, " << words[1] << " on the device path\n";
+        }
     }
 
     alignas(4096) static TableGuest guest;
