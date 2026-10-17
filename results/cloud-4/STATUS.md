@@ -1,7 +1,6 @@
-BUSY LA-007
-since: 2026-10-17T11:30:08Z (claimed)
-claimed: tasks/claimed/LA-007.md
-last: BF-055 done, results/cloud-4/BF-055.md (exp/descriptor-set-release-measure 1a90ccb64; cause: un-retired recorder batches keep the builds, no fix per step 5); before it PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
+READY
+since: 2026-10-17T12:35:43Z
+last: LA-007 done, results/cloud-4/LA-007.md (exp/lane-a-bind eb09b456e, exp/pr6947-bind-split bcb4d0c2e); before it BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
