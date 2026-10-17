@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "RuntimeAbi.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -53,7 +55,8 @@ constexpr std::uint32_t RecordBytes = 32;
 constexpr std::uint32_t Side = 4;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Textures = 16;
-constexpr std::size_t BlockBytes = std::size_t{4} << 20u;
+constexpr std::size_t BlockBytes = std::size_t{8} << 20u;
+constexpr std::size_t TableBlockBytes = std::size_t{2} << 20u;
 constexpr std::size_t TextureStride = 0x1000;
 constexpr std::size_t TableOffset = 0x100000;
 constexpr std::size_t SrtOffset = 0x180000;
@@ -61,8 +64,21 @@ constexpr std::size_t ColorOffset = 0x200000;
 constexpr std::uint32_t ColorWidth = 64;
 constexpr std::uint32_t ColorHeight = 4;
 constexpr std::uint32_t RenderTargetAttrib3 = (static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::RenderTarget) << 14u) | (1u << 24u) | (1u << 27u);
+constexpr std::uint32_t VillageRecords = 32768;
+constexpr std::uint32_t VillageStride = 0x30;
+constexpr std::uint32_t VillageAddend = 0x10;
+constexpr std::uint32_t VillageTextures = 256;
+constexpr std::uint32_t VillageDraws = 850;
+constexpr std::uint32_t VillageFrames = 20;
+constexpr std::uint32_t VillageWarmup = 5;
+constexpr std::uint32_t VillageTargets = 32;
+constexpr std::uint32_t VillageTargetKey = 32000;
+constexpr std::size_t VillageColorOffset = 0x100000;
+constexpr std::size_t VillageTargetOffset = 0x300000;
 constexpr std::uint32_t NullEntry = 1000;
 constexpr std::uint32_t InvalidEntry = 1001;
+constexpr std::uint32_t TargetEntry = 1990;
+constexpr std::size_t TargetOffset = 0x300000;
 constexpr std::array<std::uint32_t, 5> Formats{1u, 13u, 14u, 22u, 56u};
 constexpr std::array<const char*, 5> FormatNames{"8 unorm", "16 float", "8_8 unorm", "32 float", "8_8_8_8 unorm"};
 constexpr std::array<std::uint16_t, 4> HalfValues{0x3266u, 0x38cdu, 0x3666u, 0x3a66u};
@@ -85,6 +101,12 @@ alignas(256) constexpr std::array<std::uint32_t, 14> PixelCode{
     0x8f108508u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 13> VillagePixelCode{
+    0x9310b008u, 0xf42c0500u, 0x20000010u, 0xbf8cc07fu, 0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 8> ProducerPixelCode{0x7e0002f0u, 0x7e0202f2u, 0x7e040280u, 0x7e0602f2u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 8> OtherProducerPixelCode{0x7e0002f2u, 0x7e0202f0u, 0x7e040280u, 0x7e0602f2u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u};
+
 alignas(4096) std::array<std::array<float, 4>, 64> Outputs{};
 alignas(16) std::array<std::uint32_t, 4> DrawArguments{3u, 1u, 0u, 0u};
 alignas(16) std::array<std::uint32_t, 5> IndexedArguments{3u, 1u, 0u, 0u, 0u};
@@ -93,34 +115,34 @@ constexpr std::byte Kept{0x40};
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(std::size_t size = BlockBytes) : bytes(size) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
 #else
         constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+            if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
         }
 #endif
         Require(block != nullptr, "cannot allocate the guest block");
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+        GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 #else
-        munmap(block, BlockBytes);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+        munmap(block, bytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
 #endif
     }
 
@@ -131,8 +153,10 @@ public:
     std::uint32_t* Table() const { return reinterpret_cast<std::uint32_t*>(block + TableOffset); }
     std::uint32_t* Srt() const { return reinterpret_cast<std::uint32_t*>(block + SrtOffset); }
     std::uint8_t* Color() const { return block + ColorOffset; }
+    std::uint8_t* At(std::size_t offset) const { return block + offset; }
 
 private:
+    std::size_t bytes = 0;
     std::uint8_t* block = nullptr;
 };
 
@@ -253,6 +277,8 @@ std::uint32_t TextureOf(std::uint32_t entry) {
     return entry % Textures;
 }
 
+std::array<std::uint32_t, 8> TargetDescriptor(const void* data);
+
 void FillGuest(const GuestBlock& block) {
     for (std::uint32_t texture = 0; texture < Textures; ++texture) FillTexture(block.Texture(texture), TexelOf(texture).bytes);
     auto* table = block.Table();
@@ -264,6 +290,8 @@ void FillGuest(const GuestBlock& block) {
     std::fill_n(table + static_cast<std::size_t>(NullEntry) * (RecordBytes / 4u), RecordBytes / 4u, 0u);
     auto invalid = TextureDescriptor(block.Texture(0), 0u);
     std::copy(invalid.begin(), invalid.end(), table + static_cast<std::size_t>(InvalidEntry) * (RecordBytes / 4u));
+    const auto target = TargetDescriptor(block.At(TargetOffset));
+    std::copy(target.begin(), target.end(), table + static_cast<std::size_t>(TargetEntry) * (RecordBytes / 4u));
     auto* srt = block.Srt();
     const auto tableWords = BufferDescriptor(table, Entries * RecordBytes);
     std::copy(tableWords.begin(), tableWords.end(), srt);
@@ -279,6 +307,9 @@ alignas(8) Header ComputeHeader{};
 alignas(8) Header ExecClearHeader{};
 alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
+alignas(8) Header VillagePixelHeader{};
+alignas(8) Header ProducerHeader{};
+alignas(8) Header OtherProducerHeader{};
 
 void Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -406,6 +437,7 @@ Counters Read() {
         counters.device.rejected += totals.rejected;
         counters.device.refreshed += totals.refreshed;
         counters.device.checked += totals.checked;
+        counters.device.entries += totals.entries;
         counters.device.heapFull += totals.heapFull;
         counters.device.fallbacks += totals.fallbacks;
     }
@@ -614,6 +646,64 @@ void Faults(const Harness& harness) {
     Require(log.find(first) != std::string::npos, std::string("(e) the error does not name the descriptor's words: ") + log);
 }
 
+void Rechecks(const Harness& harness) {
+    auto commands = DrawCommands(harness.block, 1546u, DrawKind::Direct);
+    for (int extra = 0; extra < 3; ++extra) Append(commands, 0x2d, {3, 2});
+    const auto before = Read();
+    std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the four-draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    RequireDrawn(ReadColor(harness), TexelOf(TextureOf(1546u)).value, "(g) four draws in one submission");
+    const auto after = Read();
+    if (harness.device) Require(after.device.checked - before.device.checked <= after.device.entries, "(g) four draws in one submission re-checked " + std::to_string(after.device.checked - before.device.checked) + " entries of " + std::to_string(after.device.entries));
+    std::printf("(g) four draws in one submission: %llu entries re-checked of %u%s\n", static_cast<unsigned long long>(after.device.checked - before.device.checked), after.device.entries, Describe(before, after).c_str());
+}
+
+std::vector<std::uint32_t> ProduceAndSample(const GuestBlock& block, const std::uint32_t* producer) {
+    auto commands = DrawCommands(block, TargetEntry, DrawKind::Direct);
+    commands.resize(commands.size() - 3u);
+    const auto target = reinterpret_cast<std::uintptr_t>(block.At(TargetOffset));
+    const auto color = reinterpret_cast<std::uintptr_t>(block.Color());
+    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
+    const auto produce = reinterpret_cast<std::uintptr_t>(producer);
+    Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(target >> 8u)});
+    Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(target >> 40u)});
+    Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(produce >> 8u)});
+    Append(commands, 0x76, {0x009, static_cast<std::uint32_t>(produce >> 40u)});
+    Append(commands, 0x76, {0x00b, 0u});
+    Append(commands, 0x2d, {3, 2});
+    Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(color >> 8u)});
+    Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(color >> 40u)});
+    Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(pixel >> 8u)});
+    Append(commands, 0x76, {0x009, static_cast<std::uint32_t>(pixel >> 40u)});
+    Append(commands, 0x76, {0x00b, 9u << 1u});
+    Append(commands, 0x2d, {3, 2});
+    return commands;
+}
+
+void GpuWrittenTexture(const Harness& harness) {
+    const std::array<std::array<float, 4>, 2> colors{{{0.5f, 1.0f, 0.0f, 1.0f}, {1.0f, 0.5f, 0.0f, 1.0f}}};
+    const std::array<const std::uint32_t*, 3> producers{ProducerPixelCode.data(), ProducerPixelCode.data(), OtherProducerPixelCode.data()};
+    std::memset(harness.block.At(TargetOffset), 0, ColorLayout().Bytes());
+    for (std::size_t frame = 0; frame < producers.size(); ++frame) {
+        auto commands = ProduceAndSample(harness.block, producers[frame]);
+        const auto before = Read();
+        std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the render-then-sample submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+        const auto stored = ReadColor(harness);
+        const auto after = Read();
+        const auto expected = frame == 0 && harness.device ? std::array<float, 4>{} : colors[frame == 2 ? 1 : 0];
+        const auto what = "(h) frame " + std::to_string(frame + 1) + ": a render target drawn, then sampled through the table";
+        RequireDrawn(stored, expected, what);
+        if (harness.device && frame != 0) Require(after.device.drained == before.device.drained, what + ": the entry missed" + Describe(before, after));
+        if (harness.device && frame == 2) Require(after.device.inserted == before.device.inserted, what + ": the GPU-written entry was inserted again" + Describe(before, after));
+        std::printf("%s: %s, %llu entries given a new texture%s\n", what.c_str(), frame == 0 && harness.device ? "zeros, key recorded" : "the producer's texels", static_cast<unsigned long long>(after.device.refreshed - before.device.refreshed), Describe(before, after).c_str());
+    }
+}
+
 void FallsBackFromWarmCache(const Harness& harness) {
     const std::array<std::uint32_t, 4> keys{1546u, 1867u, 1772u, 1773u};
     auto before = Read();
@@ -639,11 +729,118 @@ void FallsBackFromWarmCache(const Harness& harness) {
     }
 }
 
+std::array<std::uint32_t, 8> TargetDescriptor(const void* data) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
+    return {
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (((ColorWidth - 1u) & 3u) << 30u),
+        ((ColorWidth - 1u) >> 2u) | ((ColorHeight - 1u) << 14u),
+        0xfacu | (static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::RenderTarget) << 20u) | (Type2D << 28u),
+        0u, 0u, 0u, 0u,
+    };
+}
+
+void FillVillage(const GuestBlock& block, const GuestBlock& tableBlock) {
+    for (std::uint32_t texture = 0; texture < VillageTextures; ++texture) FillTexture(block.Texture(texture), TexelOf(texture).bytes);
+    auto* table = tableBlock.At(0);
+    std::memset(table, 0, static_cast<std::size_t>(VillageRecords) * VillageStride);
+    for (std::uint32_t record = 0; record < VillageRecords; ++record) {
+        const bool target = record >= VillageTargetKey && record < VillageTargetKey + VillageTargets;
+        const auto descriptor = target ? TargetDescriptor(block.At(VillageTargetOffset + static_cast<std::size_t>(record - VillageTargetKey) * 0x10000u)) : TextureDescriptor(block.Texture(record % VillageTextures), TexelOf(record % VillageTextures).format);
+        std::memcpy(table + static_cast<std::size_t>(record) * VillageStride + VillageAddend, descriptor.data(), sizeof(descriptor));
+    }
+    for (std::uint32_t target = 0; target < VillageTargets; ++target) std::memset(block.At(VillageTargetOffset + static_cast<std::size_t>(target) * 0x10000u), 0, ColorLayout().Bytes());
+}
+
+std::vector<std::uint32_t> VillageFrame(const GuestBlock& block, const GuestBlock& tableBlock, std::uint32_t written, std::uint32_t draws = VillageDraws) {
+    const auto setColor = [&](std::vector<std::uint32_t>& commands, const void* target) {
+        const auto address = reinterpret_cast<std::uintptr_t>(target);
+        Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(address >> 8u)});
+        Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(address >> 40u)});
+    };
+    const auto setPixel = [&](std::vector<std::uint32_t>& commands, const std::uint32_t* code, std::uint32_t userWords) {
+        const auto address = reinterpret_cast<std::uintptr_t>(code);
+        Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(address >> 8u)});
+        Append(commands, 0x76, {0x009, static_cast<std::uint32_t>(address >> 40u)});
+        Append(commands, 0x76, {0x00b, userWords << 1u});
+    };
+    auto commands = DrawCommands(block, 0u, DrawKind::Direct);
+    commands.resize(commands.size() - 3u);
+    for (std::uint32_t target = 0; target < written; ++target) {
+        setColor(commands, block.At(VillageTargetOffset + static_cast<std::size_t>(target) * 0x10000u));
+        setPixel(commands, ProducerPixelCode.data(), 0u);
+        Append(commands, 0x2d, {3, 2});
+    }
+    setColor(commands, block.At(VillageColorOffset));
+    setPixel(commands, VillagePixelCode.data(), 9u);
+    const auto table = BufferDescriptor(tableBlock.At(0), VillageRecords * VillageStride);
+    for (std::uint32_t index = 0; index < 4u; ++index) Append(commands, 0x76, {0x00cu + index, table[index]});
+    for (std::uint32_t index = 4; index < 8u; ++index) Append(commands, 0x76, {0x00cu + index, 0u});
+    const auto arguments = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(DrawArguments.data()));
+    Append(commands, 0x11, {1, static_cast<std::uint32_t>(arguments), static_cast<std::uint32_t>(arguments >> 32u)});
+    for (std::uint32_t draw = 0; draw < draws; ++draw) {
+        const auto key = draw < written ? VillageTargetKey + draw : (draw * 7919u) % VillageTargetKey;
+        Append(commands, 0x76, {0x00cu + 8u, key});
+        Append(commands, 0x24, {0, 0, 0, 2});
+    }
+    return commands;
+}
+
+int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds) {
+    Require(written <= VillageTargets, "at most 32 GPU-written textures");
+    GuestBlock tableBlock(TableBlockBytes);
+    FillVillage(block, tableBlock);
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(VillagePixelHeader, VillagePixelCode.data(), sizeof(VillagePixelCode), 1);
+    Registered(ProducerHeader, ProducerPixelCode.data(), sizeof(ProducerPixelCode), 1);
+    auto commands = VillageFrame(block, tableBlock, written);
+    const auto frame = [&] {
+        std::memset(block.At(VillageColorOffset), static_cast<int>(Kept), ColorLayout().Bytes());
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the frame submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+    };
+    for (std::uint32_t warm = 0; warm < VillageWarmup; ++warm) frame();
+    const auto before = Read();
+    const auto started = std::chrono::steady_clock::now();
+    for (std::uint32_t measured = 0; measured < VillageFrames; ++measured) frame();
+    const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    const auto after = Read();
+    std::printf("village: %u frames of %u indirect draws (%u GPU-written textures) after %u warm-up frames: %.2f ms per frame, %.1f us per draw (wall clock, submit to idle)%s, %llu entries re-checked, %llu given a new texture\n", VillageFrames, VillageDraws, written, VillageWarmup, elapsed / VillageFrames, elapsed * 1000.0 / (static_cast<double>(VillageFrames) * VillageDraws), Describe(before, after).c_str(), static_cast<unsigned long long>(after.device.checked - before.device.checked), static_cast<unsigned long long>(after.device.refreshed - before.device.refreshed));
+    std::fflush(stdout);
+    if (written != 0u) {
+        auto verify = VillageFrame(block, tableBlock, written, 1u);
+        std::memset(block.At(VillageColorOffset), static_cast<int>(Kept), ColorLayout().Bytes());
+        Packet packet{verify.data(), static_cast<std::uint32_t>(verify.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the verification submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+        std::vector<std::byte> stored(ColorLayout().Bytes());
+        AgcDriver::GuestMemory::Read(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block.At(VillageColorOffset))), stored);
+        RequireDrawn(stored, {0.5f, 1.0f, 0.0f, 1.0f}, "village: a draw sampling a GPU-written texture through the table");
+        std::printf("village: a draw sampling a GPU-written texture through the table read the producer's texels\n");
+    }
+    std::uint32_t frames = 0;
+    const auto profiled = std::chrono::steady_clock::now();
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - profiled).count() < seconds) {
+        frame();
+        ++frames;
+    }
+    std::string peaks;
+    for (const auto& totals : DeviceImageTable::DeviceTotals()) {
+        for (std::size_t kind = 0; kind < totals.peakTextures.size(); ++kind) {
+            if (totals.peakTextures[kind] != 0u) peaks += " " + std::to_string(kind) + ":" + std::to_string(totals.peakTextures[kind]);
+        }
+    }
+    std::printf("village: %u more frames in %.0f s for the profile windows; peak heap textures by kind:%s (of %u per kind)\n", frames, seconds, peaks.empty() ? " none" : peaks.c_str(), ShaderRecompiler::RuntimeAbi::GpuImageHeapSlots);
+    std::fflush(stdout);
+    return 0;
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const std::string parts = argc > 2 ? argv[2] : "abcde";
+    const std::string parts = argc > 2 ? argv[2] : "abcdegh";
 #ifdef _WIN32
     _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
@@ -665,6 +862,11 @@ int main(int argc, char** argv) {
         }
         GuestBlock block;
         try {
+            if (mode == "--village-bench") {
+                const auto result = VillageBench(block, argc > 2 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 0u, argc > 3 ? std::stod(argv[3]) : 0.0);
+                AgcDriverShutdown_nid_postfix();
+                return result;
+            }
             FillGuest(block);
             Harness harness{block, requested || mode == "--expect-device-path"};
             std::printf("device image path %s, %s\n", requested ? "on" : "off", harness.device ? "expecting the device table" : "expecting the CPU table");
@@ -672,6 +874,8 @@ int main(int argc, char** argv) {
             Registered(ExecClearHeader, ExecClearCode.data(), sizeof(ExecClearCode), 0);
             Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
             Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+            Registered(ProducerHeader, ProducerPixelCode.data(), sizeof(ProducerPixelCode), 1);
+            Registered(OtherProducerHeader, OtherProducerPixelCode.data(), sizeof(OtherProducerPixelCode), 1);
             if (mode == "--heap-cap") {
                 FallsBackFromWarmCache(harness);
             } else {
@@ -680,6 +884,8 @@ int main(int argc, char** argv) {
                 if (parts.find('c') != std::string::npos) Freshness(harness);
                 if (parts.find('d') != std::string::npos) Lanes(harness);
                 if (parts.find('e') != std::string::npos) Faults(harness);
+                if (parts.find('g') != std::string::npos) Rechecks(harness);
+                if (parts.find('h') != std::string::npos) GpuWrittenTexture(harness);
             }
         } catch (const std::exception& error) {
             std::cerr << "device image path harness failed: " << error.what() << '\n';
