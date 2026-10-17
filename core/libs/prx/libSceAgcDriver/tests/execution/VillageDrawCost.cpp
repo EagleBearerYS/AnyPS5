@@ -423,6 +423,7 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         if (std::getenv("VILLAGE_GPU_SYNC") != nullptr) AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
     }
     std::vector<double> perDraw;
+    std::vector<double> syncMs;
 #ifdef __linux__
     const auto threads = DriverThreads();
     const auto rasterizer = [](const std::string& name) { return name.rfind("llvmpipe-", 0) == 0; };
@@ -438,7 +439,11 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         const auto heldBefore = HeldNs();
 #endif
         perDraw.push_back(Submit(commandSets[frame % commandSets.size()]) / draws);
-        if (std::getenv("VILLAGE_GPU_SYNC") != nullptr) AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
+        if (std::getenv("VILLAGE_GPU_SYNC") != nullptr) {
+            const auto syncStart = std::chrono::steady_clock::now();
+            AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
+            syncMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - syncStart).count());
+        }
 #ifdef __linux__
         double sum = 0.0;
         double raster = 0.0;
@@ -468,6 +473,7 @@ void Cost(const Layout& layout, std::uint32_t frames) {
     }
     std::printf("village frames: warm-up ms:%s\n", frameList.c_str());
     std::printf("village cost: %u frames of %u draws: wall median %.2f us per draw (min %.2f, max %.2f), %.2f ms per frame\n", frames, draws, Median(perDraw), *std::min_element(perDraw.begin(), perDraw.end()), *std::max_element(perDraw.begin(), perDraw.end()), Median(perDraw) * draws / 1e3);
+    if (!syncMs.empty()) std::printf("village gpu sync: the GPU finished %u frames %.1f ms after their submission returned (median; min %.1f, max %.1f)\n", frames, Median(syncMs), *std::min_element(syncMs.begin(), syncMs.end()), *std::max_element(syncMs.begin(), syncMs.end()));
 #ifdef __linux__
     std::string split;
     std::size_t rasterThreads = 0;

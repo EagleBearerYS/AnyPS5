@@ -536,6 +536,8 @@ public:
         std::uint64_t newestSerial = 0;
         std::uint64_t completedSerial = 0;
         double frontAgeMs = 0;
+        std::size_t openKeptBytes = 0;
+        std::size_t inFlightKeptBytes = 0;
     };
     KeepCensus KeptCensus() const;
     static bool FlipReadCheck();
