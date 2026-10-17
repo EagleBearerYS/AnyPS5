@@ -1,7 +1,6 @@
-BUSY BF-050
-since: 2026-10-17T06:48Z (BF-050, lane C-1 pass counters and red/green test)
-claimed: tasks/claimed/BF-050.md
-step: C-1 a939efe1a0 + cherry-picked counters (2d4512e5c, clean) + test commit b3e94a514 (AddressPasses.cpp without --store-beside-reads); building for red/green and the mirror
+READY
+since: 2026-10-17T07:06:13Z
+last: BF-050 done, results/cloud-5/BF-050.md: perf/agc-address-read-passes fast-forwarded a939efe1a0 -> b3e94a514 (counters 2d4512e5c, test b3e94a514); --readers red with the switch off and at 0300bb0e79, green at the head; guards green; mirror 1267/65/5 IPv6 of 1337; ^agc 638 passed
 previous: LA-002 done, results/cloud-5/LA-002.md: fork exp/lane-a-recompiler 385babcbf9 (4 commits on exp/lane-a-base fe07e21141 + merge of 8edb13bb2e); device image tables behind SpirvTarget::deviceImageTables, sets 2/3 as specified; agc_shader_device_image_tables passes; option-off corpus byte-identical to the base (1487/1487 modules); mirror 1326/65 skipped/5 IPv6 failures of 1396, per test equal to the base
 
 RESULT (setup):
