@@ -758,6 +758,7 @@ struct VulkanDevice::State {
             resourceCache.Clear();
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
+            Graphics::DeviceImageTable::Release(device);
             Graphics::BindlessHeap::Release(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
@@ -1944,6 +1945,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->recorder->Activate();
     state->context = buildContext();
     state->contextReady = true;
+    if (state->deviceImagePath) Graphics::DeviceImageTable::Create(state->context, {});
     if (window != nullptr) {
         require(window->getDrawableSize != nullptr, "missing window drawable size query");
         std::uint32_t drawableWidth = 0;
@@ -4456,6 +4458,11 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     };
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
+    if (resources.UsesDeviceImages()) {
+        auto* table = Graphics::DeviceImageTable::Existing(context);
+        Graphics::Require(table != nullptr, "a dispatch reading images through the device image table needs the device's table");
+        table->Prepare(context, recorder);
+    }
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     recordStep(PhaseRecordCommands);
@@ -4605,10 +4612,19 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
         setLayouts[1] = heapLayout;
         setLayouts[2] = dataLayout;
     }
+    const bool deviceSets = shader.deviceImageTables;
+    if (deviceSets) {
+        require(!gpuMode, "a GPU-mode compute stage reading images through the device image table is not implemented");
+        auto* table = Graphics::DeviceImageTable::Existing(context);
+        require(table != nullptr, "a compute stage reading images through the device image table needs the device's table");
+        setLayouts[ShaderRecompiler::WorkgroupMemoryDescriptorSet] = table->EmptyLayout();
+        setLayouts[ShaderRecompiler::RuntimeAbi::DeviceHeapSet] = Graphics::BindlessHeap::For(context).HeapLayout();
+        setLayouts[ShaderRecompiler::RuntimeAbi::DeviceTableSet] = table->Layout();
+    }
     if (shader.workgroupMemoryDwords != 0) setLayouts[workgroupSet] = state->workgroupMemoryLayout;
     const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    layoutInfo.setLayoutCount = shader.workgroupMemoryDwords != 0 ? workgroupSet + 1 : gpuMode ? 3u : 1u;
+    layoutInfo.setLayoutCount = deviceSets ? ShaderRecompiler::RuntimeAbi::DeviceTableSet + 1u : shader.workgroupMemoryDwords != 0 ? workgroupSet + 1 : gpuMode ? 3u : 1u;
     layoutInfo.pSetLayouts = setLayouts.data();
     layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
     layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;

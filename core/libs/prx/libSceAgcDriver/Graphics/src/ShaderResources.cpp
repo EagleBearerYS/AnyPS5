@@ -1589,6 +1589,11 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 heapStage = true;
                 if (shader.stage == ShaderRecompiler::ShaderStage::Compute) NoteHeapComputeStage();
             }
+            if (shader.program->deviceImageTables) {
+                Require(!heapShader, "a GPU-mode stage reading images through the device image table is not implemented");
+                Require(DeviceImageTable::Existing(context) != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
+                deviceImages = true;
+            }
             for (const auto& binding : shader.program->bindings) {
                 Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || ((shader.stage == ShaderRecompiler::ShaderStage::Fragment || heapShader) && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "unexpected descriptor set: a shader resource must use its stage's descriptor set");
                 if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) {
@@ -1947,6 +1952,13 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
         return result;
     }
     if (split) result.layouts.fragment = context.descriptorCache->Layout(result.fragmentKey, descriptions[1], updateAfterBind, bindingFlags[1]);
+    if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->deviceImageTables; })) {
+        auto* table = DeviceImageTable::Existing(context);
+        Require(table != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
+        result.layouts.deviceGap = table->EmptyLayout();
+        result.layouts.deviceHeap = BindlessHeap::For(context).HeapLayout();
+        result.layouts.deviceTable = table->Layout();
+    }
     return result;
 }
 
@@ -4846,6 +4858,11 @@ void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoi
 }
 
 void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
+    if (deviceImages) {
+        auto* table = DeviceImageTable::Existing(context);
+        Require(table != nullptr && context.recorder != nullptr, "a draw or dispatch reading images through the device image table needs the device's table and its recorder");
+        table->Bind(commands, bindPoint, layout, *context.recorder);
+    }
     if (!heapStage) return;
     auto& heap = BindlessHeap::For(context);
     const std::array<VkDescriptorSet, 2> sets{heap.HeapSet(), heap.DataSet()};
@@ -4853,6 +4870,11 @@ void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bin
 }
 
 PipelineSetLayouts ShaderResources::SetLayouts() const {
+    if (!heapStage && deviceImages) {
+        auto* table = DeviceImageTable::Existing(context);
+        Require(table != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
+        return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey, VK_NULL_HANDLE, table->EmptyLayout(), BindlessHeap::For(context).HeapLayout(), table->Layout()};
+    }
     if (!heapStage) return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey};
     auto& heap = BindlessHeap::For(context);
     return {_layout, heap.HeapLayout(), true, layoutKey, fragmentLayoutKey, heap.DataLayout()};

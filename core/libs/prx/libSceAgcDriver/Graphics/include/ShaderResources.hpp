@@ -62,6 +62,9 @@ struct PipelineSetLayouts {
     std::span<const std::uint32_t> mainKey;
     std::span<const std::uint32_t> fragmentKey;
     VkDescriptorSetLayout data = VK_NULL_HANDLE;
+    VkDescriptorSetLayout deviceGap = VK_NULL_HANDLE;
+    VkDescriptorSetLayout deviceHeap = VK_NULL_HANDLE;
+    VkDescriptorSetLayout deviceTable = VK_NULL_HANDLE;
 };
 
 class DescriptorCache {
@@ -193,6 +196,7 @@ public:
     bool SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
     std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
     bool UsesAddressTable() const { return usesBda; }
+    bool UsesDeviceImages() const { return deviceImages; }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
@@ -521,6 +525,7 @@ private:
     };
     bool splitSets = false;
     bool heapStage = false;
+    bool deviceImages = false;
     std::array<std::uint32_t, 4> heapOffsets{};
     void writeHeapStage(const CompiledShader& shader);
     struct HeapLookupMemo {
