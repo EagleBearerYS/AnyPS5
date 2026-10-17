@@ -1,6 +1,6 @@
-BUSY LA-005 (lane A: mesh and task stages on the device image table)
-since: 2026-10-17T08:54:37Z
-last: BF-053 done, results/cloud-1/BF-053.md: gate not met, cut under 5x, stopped; the only mesh-path multiplier is the wave64-on-32-wide lane halves (2.0x, SpirvFlowEmitter.cpp:769); nothing per vertex slot or output (words identical at 3/6/16 output vertices); same program as mesh costs 1.00x vertex at host 64; 77-way switch = runtime buffer formatSwitch; measurement test on exp/mesh-module-size fe2aaded8; runs as root (unprivileged user creation refused here); before that BF-051, PRM-036
+READY
+since: 2026-10-17T10:48:40Z
+last: LA-005 done, results/cloud-1/LA-005.md: exp/lane-a-mesh 480d3fc3b on exp/lane-a-join 3073e11d0; heap set and set 3 gain MESH when VK_EXT_mesh_shader (no task bit), tracker takes mesh stages, binding unchanged; tests (a) compile half, (b), (c), (d) pass, no bug in PR 6947 space reuse; (a) words 9,891->12,301 (host 64), llvmpipe aborts compiling mesh modules so no compile time; mirror 1399/1405 vs base 1396/1402, GPU_PATH scope 701/709 vs 698/706, same failures; before that BF-053, BF-051
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
