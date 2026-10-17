@@ -4456,10 +4456,11 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
     static_cast<void>(ResolveTextureFormat(resource.format));
     CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
     if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
-    auto texture = cachedTexture(context, words, resource, ViewComponents(resource), guestBytes, view.depthCompare);
     DeviceTableTexture result;
     result.address = resource.baseAddress;
     result.guestBytes = guestBytes;
+    result.generation = GuestMemory::CollectWrites(resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    auto texture = cachedTexture(context, words, resource, ViewComponents(resource), guestBytes, view.depthCompare);
     const auto& log = lookupLog();
     const auto* looked = !log.empty() && log.back().object == texture.get() ? &log.back() : nullptr;
     if (looked != nullptr && looked->depth) {

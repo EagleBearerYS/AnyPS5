@@ -1,5 +1,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -33,6 +36,7 @@ constexpr VkDeviceSize UpdateBytes = 65536u;
 constexpr VkDeviceSize TableBytes = static_cast<VkDeviceSize>(DeviceImageTable::TableWords) * sizeof(std::uint32_t);
 constexpr VkDeviceSize RingBytes = static_cast<VkDeviceSize>(DeviceImageTable::RingWords) * sizeof(std::uint32_t);
 constexpr VkDeviceSize BucketsOffset = static_cast<VkDeviceSize>(Abi::HeaderWords) * sizeof(std::uint32_t);
+constexpr std::uint32_t BlockShift = 16u;
 
 void check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) throw std::runtime_error(std::string("AGC device image table: ") + operation + ": Vulkan result " + std::to_string(result));
@@ -96,7 +100,9 @@ std::optional<std::string> DeviceImagePathRefusal(const VkPhysicalDeviceLimits& 
     return std::nullopt;
 }
 
-DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup) : context(context), lookup(std::move(lookup)) {
+DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup) : DeviceImageTable(context, std::move(lookup), Budget{}) {}
+
+DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Budget budget) : context(context), lookup(std::move(lookup)), budget(budget) {
     const auto destroyLayout = context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout");
     const auto destroyPool = context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool");
     try {
@@ -147,6 +153,8 @@ DeviceImageTable::~DeviceImageTable() {
 void DeviceImageTable::Prepare(const Context& build, Recorder& recorder) {
     std::lock_guard lock(mutex);
     resolve(build, recorder);
+    refresh(build, recorder);
+    evict(build, recorder);
     upload(recorder);
     static_cast<void>(chunkFor(recorder, true));
     report();
@@ -185,6 +193,12 @@ std::vector<std::uint32_t> DeviceImageTable::KeyWords() const {
 std::string DeviceImageTable::LastFault() const {
     std::lock_guard lock(mutex);
     return lastFault;
+}
+
+std::shared_ptr<Texture> DeviceImageTable::EntryTexture(const Key& key) const {
+    std::lock_guard lock(mutex);
+    const auto found = entries.find(key);
+    return found != entries.end() ? found->second.texture : nullptr;
 }
 
 void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
@@ -239,7 +253,7 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
         heapFull(key, kind);
         return std::nullopt;
     }
-    entry = {std::move(texture.texture), kind, texture.address, texture.guestBytes};
+    entry = {std::move(texture.texture), kind, texture.address, texture.guestBytes, texture.generation, 0u, 0u};
     return DeviceImageValue{*slot, *match.mode, 0u, 0u};
 }
 
@@ -276,7 +290,142 @@ void DeviceImageTable::hold(const Key& key, Entry entry) {
         auto& live = liveTextures[entry.kind];
         totals.peakTextures[entry.kind] = std::max(totals.peakTextures[entry.kind], ++live);
     }
+    entry.used = ++useSerial;
+    entry.usedPresent = Recorder::Presents();
+    const auto first = entry.address >> BlockShift;
+    const auto last = (entry.address + std::max<std::uint64_t>(entry.guestBytes, 1u) - 1u) >> BlockShift;
+    for (auto block = first; block <= last; ++block) blocks[block].keys.insert(key);
     entries[key] = std::move(entry);
+}
+
+void DeviceImageTable::release(const Key& key, Recorder& recorder) {
+    const auto found = entries.find(key);
+    if (found == entries.end()) return;
+    auto& entry = found->second;
+    const auto first = entry.address >> BlockShift;
+    const auto last = (entry.address + std::max<std::uint64_t>(entry.guestBytes, 1u) - 1u) >> BlockShift;
+    for (auto block = first; block <= last; ++block) {
+        const auto held = blocks.find(block);
+        if (held == blocks.end()) continue;
+        held->second.keys.erase(key);
+        if (held->second.keys.empty()) blocks.erase(held);
+    }
+    const std::pair use{entry.kind, static_cast<const void*>(entry.texture.get())};
+    if (const auto counted = textureUses.find(use); counted != textureUses.end() && --counted->second == 0u) {
+        textureUses.erase(counted);
+        --liveTextures[entry.kind];
+    }
+    if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
+    entries.erase(found);
+}
+
+void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
+    if (entries.empty()) return;
+    const ValidationState state{GuestMemory::ThreadCollectEpoch(), GuestMemory::UnwatchSerial(), DepthSurfacesSerial(), StorageTexture::PendingSerial(), GuestMemory::OwnWriteSerial()};
+    if (!validated.has_value()) {
+        validated = state;
+        return;
+    }
+    if (state.epoch != 0u && *validated == state) return;
+    const bool everything = validated->unwatch != state.unwatch || validated->depthSurfaces != state.depthSurfaces;
+    const bool pending = validated->pending != state.pending;
+    validated = state;
+    ++totals.scans;
+    std::set<Key> stale;
+    std::vector<std::uint64_t> generations;
+    std::vector<std::uint8_t> changed;
+    for (auto run = blocks.begin(); run != blocks.end();) {
+        auto end = std::next(run);
+        while (end != blocks.end() && end->first == std::prev(end)->first + 1u) ++end;
+        const auto begin = run->first << BlockShift;
+        const auto count = static_cast<std::size_t>(std::prev(end)->first - run->first + 1u);
+        const auto bytes = static_cast<std::size_t>(count) << BlockShift;
+        static_cast<void>(GuestMemory::CollectWrites(begin, bytes));
+        generations.clear();
+        for (auto block = run; block != end; ++block) generations.push_back(everything ? 0u : block->second.generation);
+        changed.assign(count, GuestMemory::BlockWritten);
+        static_cast<void>(GuestMemory::ChangedBlocks(begin, bytes, generations, changed));
+        StorageTexture::PendingQuery runQuery{begin, begin + bytes, nullptr, nullptr, false};
+        if (pending) static_cast<void>(StorageTexture::ScanPending(std::span(&runQuery, 1)));
+        const auto stamp = GuestMemory::TrackerGeneration();
+        std::size_t index = 0;
+        for (auto block = run; block != end; ++block, ++index) {
+            if (changed[index] != GuestMemory::BlockUnchanged || runQuery.overlaps) {
+                for (const auto& key : block->second.keys) {
+                    if (stale.contains(key)) continue;
+                    const auto& entry = entries.at(key);
+                    bool fresh = !everything && GuestMemory::UnchangedSince(entry.address, static_cast<std::size_t>(entry.guestBytes), entry.generation);
+                    if (fresh && runQuery.overlaps) {
+                        StorageTexture::PendingQuery query{entry.address, entry.address + entry.guestBytes, nullptr, nullptr, false};
+                        static_cast<void>(StorageTexture::ScanPending(std::span(&query, 1)));
+                        fresh = !query.overlaps;
+                    }
+                    if (!fresh) stale.insert(key);
+                }
+            }
+            block->second.generation = stamp;
+        }
+        run = end;
+    }
+    for (const auto& key : stale) {
+        ++totals.checked;
+        auto& held = entries.at(key);
+        Entry fresh;
+        const auto value = lookupKey(build, key, fresh);
+        const auto previous = keys.Find(key);
+        if (!value.has_value() || fresh.texture == nullptr) {
+            ++totals.refreshed;
+            release(key, recorder);
+            if (value.has_value()) static_cast<void>(insert(key, *value));
+            else static_cast<void>(keys.Retain([&](const Key& kept) { return kept != key; }));
+            continue;
+        }
+        const bool replaced = fresh.texture != held.texture;
+        if (!previous.has_value() || *previous != *value) static_cast<void>(insert(key, *value));
+        if (!replaced) {
+            held.generation = fresh.generation;
+            held.used = ++useSerial;
+            held.usedPresent = Recorder::Presents();
+            continue;
+        }
+        ++totals.refreshed;
+        release(key, recorder);
+        hold(key, std::move(fresh));
+    }
+}
+
+void DeviceImageTable::evict(const Context& build, Recorder& recorder) {
+    const auto presents = Recorder::Presents();
+    const bool overEntries = entries.size() > budget.entries;
+    if (!overEntries && presents < evictionCheck + budget.checkPresents) return;
+    evictionCheck = presents;
+    std::uint64_t bytes = 0;
+    for (const auto& [key, entry] : entries) bytes += entry.guestBytes;
+    const auto byteBudget = budget.textureBytes != 0u ? budget.textureBytes : SampledTextureCacheBudget(build) / 2u;
+    const bool overBytes = bytes > byteBudget;
+    if (!overEntries && !overBytes) return;
+    std::vector<std::pair<std::uint64_t, Key>> order;
+    order.reserve(entries.size());
+    for (const auto& [key, entry] : entries) order.emplace_back(entry.used, key);
+    std::ranges::sort(order, [](const auto& left, const auto& right) { return left.first < right.first; });
+    const auto entryTarget = static_cast<std::size_t>(budget.entries) / 4u * 3u;
+    const auto byteTarget = byteBudget / 4u * 3u;
+    std::set<Key> dropped;
+    for (const auto& [used, key] : order) {
+        const auto& entry = entries.at(key);
+        const bool count = overEntries && entries.size() - dropped.size() > entryTarget;
+        const bool idle = entry.usedPresent + budget.idlePresents <= presents;
+        const bool memory = overBytes && bytes > byteTarget && idle;
+        if (!count && !memory) {
+            if (!overBytes || bytes <= byteTarget) break;
+            continue;
+        }
+        bytes -= std::min(bytes, entry.guestBytes);
+        dropped.insert(key);
+    }
+    if (dropped.empty()) return;
+    for (const auto& key : dropped) release(key, recorder);
+    totals.evicted += keys.Retain([&](const Key& key) { return !dropped.contains(key); });
 }
 
 void DeviceImageTable::upload(Recorder& recorder) {
@@ -405,8 +554,8 @@ void DeviceImageTable::report() {
         if (totals.peakTextures[kind] != 0u) peaks += (peaks.empty() ? "" : " ") + std::to_string(kind) + ":" + std::to_string(totals.peakTextures[kind]);
     }
     const auto delta = [&](std::uint64_t Counts::* field) { return static_cast<unsigned long long>(totals.*field - reported.*field); };
-    std::fprintf(stderr, "[device-images] (10 s): %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s\n",
-        delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str());
+    std::fprintf(stderr, "[device-images] (10 s): %llu records drained, %llu distinct misses, %llu dropped, %llu inserted, %llu faults, %llu rejected, %llu unserved, %llu heap full, %llu refreshed (%llu checked, %llu scans), %llu evicted, %u live entries in %u buckets, %llu uploads (%llu bytes), peak textures by kind %s\n",
+        delta(&Counts::drained), delta(&Counts::distinct), delta(&Counts::dropped), delta(&Counts::inserted), delta(&Counts::faults), delta(&Counts::rejected), delta(&Counts::unserved), delta(&Counts::heapFull), delta(&Counts::refreshed), delta(&Counts::checked), delta(&Counts::scans), delta(&Counts::evicted), keys.Entries(), keys.Buckets(), delta(&Counts::uploads), delta(&Counts::uploadBytes), peaks.empty() ? "none" : peaks.c_str());
     reported = totals;
     lastReport = now;
 }
