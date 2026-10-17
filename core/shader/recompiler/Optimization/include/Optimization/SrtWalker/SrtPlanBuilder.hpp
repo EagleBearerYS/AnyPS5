@@ -18,6 +18,7 @@ public:
     void Run();
 
 private:
+    bool AddressBasedAnyway() const;
     struct Patch {
         IrValue* inst = nullptr;
         std::uint32_t slot = 0;
