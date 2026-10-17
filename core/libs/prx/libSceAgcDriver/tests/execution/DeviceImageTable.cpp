@@ -18,6 +18,7 @@
 #include "RuntimeAbi.hpp"
 #include "Recompiler.hpp"
 #include "Triangle_frag_spv.h"
+#include "Triangle_mesh_spv.h"
 #include "Triangle_vert_spv.h"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -612,6 +613,55 @@ void GraphicsLayouts(AgcDriver::VulkanDevice& device) {
     Require(plain.layouts.deviceTable == VK_NULL_HANDLE && plain.layouts.deviceHeap == VK_NULL_HANDLE, "stages without device tables describe no device sets");
 }
 
+void MeshLayouts(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto deviceContext = device.GraphicsContext();
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{deviceContext.device};
+    constexpr VkShaderStageFlags heapStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    const auto stages = AgcDriver::Graphics::ImageHeapStages(deviceContext);
+    Require((stages & heapStages) == heapStages && (stages & ~(heapStages | VK_SHADER_STAGE_MESH_BIT_EXT)) == 0u, "the heap and table sets are visible to vertex, pixel and compute stages, and to no stage but mesh besides");
+    Require(((stages & VK_SHADER_STAGE_MESH_BIT_EXT) != 0u) == deviceContext.meshShader, "the heap and table sets are visible to mesh stages exactly when the device enables VK_EXT_mesh_shader");
+    if (!deviceContext.meshShader) {
+        std::printf("mesh pipeline with sets 2 and 3: not tested, the device has no VK_EXT_mesh_shader\n");
+        return;
+    }
+    auto* table = DeviceImageTable::Existing(deviceContext);
+    Require(table != nullptr, "a device serving the path owns a device image table");
+    ShaderRecompiler::RecompileResult mesh, fragment;
+    mesh.variantId = 0xd3u;
+    fragment.variantId = 0xd4u;
+    mesh.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_mesh_SPV), std::end(TRIANGLE_mesh_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    mesh.deviceImageTables = true;
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Mesh, &mesh, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.stages = {AgcDriver::Graphics::ShaderPath::Geometry, 0x20u, 64u, 64u, ShaderRecompiler::MeshConfiguration{4u, 1u, 3u, 3u, 1u, 64u, 128u, 0u, 4u}, std::nullopt};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    std::vector<bool> librariesTried;
+    for (const bool libraries : {deviceContext.graphicsPipelineLibrary, false}) {
+        if (std::find(librariesTried.begin(), librariesTried.end(), libraries) != librariesTried.end()) continue;
+        librariesTried.push_back(libraries);
+        auto context = deviceContext;
+        context.graphicsPipelineLibrary = libraries;
+        const auto described = DescribeSetLayouts(context, shaders);
+        Require(described.layouts.deviceHeap == BindlessHeap::For(context).HeapLayout() && described.layouts.deviceTable == table->Layout() && described.layouts.deviceGap == table->EmptyLayout(), "a mesh stage reading images through the device table describes sets 2 and 3");
+        const auto view = described.View();
+        Require(view.deviceTable == table->Layout() && view.deviceHeap == described.layouts.deviceHeap, "the mesh pipeline's described layouts carry the device sets");
+        bool created = false;
+        const auto pipeline = CachedPipeline(context, state, VertexInputLayout{}, view, shaders, VK_IMAGE_LAYOUT_GENERAL, &created);
+        Require(pipeline != nullptr && pipeline->Layout() != VK_NULL_HANDLE, std::string("a mesh pipeline with sets 2 and 3 is created ") + (libraries ? "from pipeline libraries" : "without pipeline libraries"));
+        std::printf("mesh pipeline with sets 2 and 3 %s pipeline libraries (split sets %d): created, heap and table stages 0x%x\n", libraries ? "from" : "without", described.layouts.split ? 1 : 0, static_cast<unsigned>(stages));
+    }
+}
+
 VkPhysicalDeviceLimits UsableLimits() {
     VkPhysicalDeviceLimits limits{};
     limits.maxBoundDescriptorSets = 8;
@@ -727,6 +777,7 @@ int main(int argc, char** argv) {
         NonSeamlessCube(*device);
         ComputeLayout(*device);
         GraphicsLayouts(*device);
+        MeshLayouts(*device);
         device->WaitIdle();
         device.reset();
         std::cout << "device image table tests passed\n";
