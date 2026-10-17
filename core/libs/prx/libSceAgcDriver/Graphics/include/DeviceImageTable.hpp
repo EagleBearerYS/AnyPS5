@@ -112,6 +112,7 @@ public:
     std::vector<std::uint32_t> KeyWords() const;
     std::string LastFault() const;
     std::shared_ptr<Texture> EntryTexture(const Key& key) const;
+    std::vector<std::pair<VkImage, bool>> StorageImages() const;
 
     struct Counts {
         std::uint64_t prepares = 0;
@@ -218,6 +219,7 @@ private:
     std::map<std::uint64_t, Block> blocks;
     std::optional<ValidationState> validated;
     std::uint64_t scannedStamp = 0;
+    mutable std::optional<std::vector<std::pair<VkImage, bool>>> storageImages;
     std::uint64_t useSerial = 0;
     std::uint64_t evictionCheck = 0;
     std::map<ShaderRecompiler::PipelineIdentity, std::set<std::uint64_t>> identityPrograms;
