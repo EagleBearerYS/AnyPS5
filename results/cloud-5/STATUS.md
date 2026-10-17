@@ -1,7 +1,7 @@
 BUSY LA-002
 since: 2026-10-17T06:02Z (LA-002, lane A recompiler half)
 claimed: tasks/claimed/LA-002.md
-step: reading fable-void's d35b01a5b8 / 1ffc203905 against exp/lane-a-base fe07e21141
+step: recompiler port written (option, tracker, materializer and registry, SPIR-V lookup on sets 2/3); agc_shader_device_image_tables passes; full build, corpus check and mirror next
 previous: setup done, READY at 2026-10-17T05:59Z
 
 RESULT (setup):
