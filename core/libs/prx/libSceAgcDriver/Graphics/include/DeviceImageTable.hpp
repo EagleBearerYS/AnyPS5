@@ -53,6 +53,7 @@ struct DeviceTableTexture {
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
     std::uint64_t address = 0;
     std::uint64_t guestBytes = 0;
+    std::uint64_t generation = 0;
     std::string unservable;
 };
 
@@ -67,6 +68,12 @@ public:
         std::vector<ShaderRecompiler::ImageResource> modes;
     };
     using InterfaceLookup = std::function<std::shared_ptr<const Interface>(std::uint64_t id)>;
+    struct Budget {
+        std::uint32_t entries = 16384u;
+        std::uint64_t textureBytes = 0;
+        std::uint64_t checkPresents = 60u;
+        std::uint64_t idlePresents = 120u;
+    };
 
     static constexpr std::uint32_t RingCapacity = 4096u;
     static constexpr std::uint32_t RingChunks = 16u;
@@ -74,6 +81,7 @@ public:
     static constexpr std::uint32_t TableWords = ShaderRecompiler::DeviceImageTableAbi::HeaderWords + DeviceImageKeys::MaxBuckets * ShaderRecompiler::DeviceImageTableAbi::BucketWords;
 
     DeviceImageTable(const Context& context, InterfaceLookup lookup);
+    DeviceImageTable(const Context& context, InterfaceLookup lookup, Budget budget);
     ~DeviceImageTable();
     DeviceImageTable(const DeviceImageTable&) = delete;
     DeviceImageTable& operator=(const DeviceImageTable&) = delete;
@@ -86,6 +94,7 @@ public:
     std::optional<DeviceImageValue> Find(const Key& key) const;
     std::vector<std::uint32_t> KeyWords() const;
     std::string LastFault() const;
+    std::shared_ptr<Texture> EntryTexture(const Key& key) const;
 
     struct Counts {
         std::uint64_t drained = 0;
@@ -100,6 +109,10 @@ public:
         std::uint64_t unserved = 0;
         std::uint64_t heapFull = 0;
         std::uint64_t tableFull = 0;
+        std::uint64_t scans = 0;
+        std::uint64_t checked = 0;
+        std::uint64_t refreshed = 0;
+        std::uint64_t evicted = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
         std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding> peakTextures{};
@@ -112,6 +125,21 @@ private:
         std::uint32_t kind = 0;
         std::uint64_t address = 0;
         std::uint64_t guestBytes = 0;
+        std::uint64_t generation = 0;
+        std::uint64_t used = 0;
+        std::uint64_t usedPresent = 0;
+    };
+    struct ValidationState {
+        std::uint64_t epoch = 0;
+        std::uint64_t unwatch = 0;
+        std::uint64_t depthSurfaces = 0;
+        std::uint64_t pending = 0;
+        std::uint64_t ownWrites = 0;
+        bool operator==(const ValidationState&) const = default;
+    };
+    struct Block {
+        std::uint64_t generation = 0;
+        std::set<Key> keys;
     };
     struct Rejection {
         ShaderRecompiler::ImageTableAbi::PoisonReason reason = ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected;
@@ -129,6 +157,9 @@ private:
     void heapFull(const Key& key, std::uint32_t kind);
     bool insert(const Key& key, const DeviceImageValue& value);
     void hold(const Key& key, Entry entry);
+    void release(const Key& key, Recorder& recorder);
+    void refresh(const Context& build, Recorder& recorder);
+    void evict(const Context& build, Recorder& recorder);
     void upload(Recorder& recorder);
     std::uint32_t chunkFor(Recorder& recorder, bool mayWait);
     void drain(std::uint32_t chunk);
@@ -154,6 +185,11 @@ private:
     std::map<std::pair<std::uint32_t, const void*>, std::uint32_t> textureUses;
     std::set<Key> unservedKeys;
     std::set<std::uint32_t> fullKinds;
+    Budget budget;
+    std::map<std::uint64_t, Block> blocks;
+    std::optional<ValidationState> validated;
+    std::uint64_t useSerial = 0;
+    std::uint64_t evictionCheck = 0;
     bool tableFullReported = false;
     std::string lastFault;
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
