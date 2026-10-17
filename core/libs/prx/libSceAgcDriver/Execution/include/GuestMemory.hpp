@@ -31,6 +31,7 @@ struct TableReservation {
     std::size_t bytes = 0;
 };
 std::vector<TableReservation> TableReservations();
+std::size_t StampTableBytes();
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment = 1);
 // Variants for resources in heaps the guest commits on demand (partially resident textures, GPU
 // scratch heaps): uncommitted pages read as zeros, are not compared, and are never stored.
