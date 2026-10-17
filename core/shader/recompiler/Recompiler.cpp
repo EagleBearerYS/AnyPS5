@@ -1597,6 +1597,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
             const auto shared = found->second;
             useAttributes(shared.result);
             useBindings(shared);
+            CompleteHeapDataWords(*shared.result, words);
             return shared.result;
         }
     }
@@ -1614,6 +1615,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     }
     useAttributes(shared.result);
     useBindings(shared);
+    CompleteHeapDataWords(*shared.result, words);
     return shared.result;
 }
 
@@ -1632,6 +1634,28 @@ const std::shared_ptr<const IrResourcePlan>& PreparedShaderInvocation::Plan() co
 
 std::uint64_t PreparedShaderInvocation::VariantId() const {
     return handle != nullptr && handle->artifact != nullptr ? handle->artifact->artifact.variantId : 0u;
+}
+
+void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words) {
+    const auto count = shared.bindings.size();
+    if (!words.bindings.empty() && words.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ in number from its template");
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& binding = shared.bindings[index];
+        if (binding.role != DescriptorRole::ShaderData && binding.role != DescriptorRole::FlattenedSrt) continue;
+        if (!words.bindings.empty() && !words.bindings[index].empty()) continue;
+        std::vector<std::uint32_t> descriptor;
+        if (binding.role == DescriptorRole::FlattenedSrt) {
+            if (words.flattenedSrt.empty() || words.flattenedSrt == binding.guestDescriptor) continue;
+            descriptor = words.flattenedSrt;
+        } else {
+            const auto patched = std::min(words.userData.size(), binding.guestDescriptor.size());
+            if (std::equal(words.userData.begin(), words.userData.begin() + static_cast<std::ptrdiff_t>(patched), binding.guestDescriptor.begin())) continue;
+            descriptor = binding.guestDescriptor;
+            std::copy_n(words.userData.begin(), patched, descriptor.begin());
+        }
+        if (words.bindings.empty()) words.bindings.assign(count, {});
+        words.bindings[index] = std::move(descriptor);
+    }
 }
 
 bool HeapFragmentEligible(const IrResourcePlan& plan) {

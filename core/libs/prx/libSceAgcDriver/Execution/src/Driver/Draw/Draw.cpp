@@ -705,7 +705,15 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         words->vertexAttributes = *variant.ringAttributes;
         if (variant.ringFlat != nullptr) words->flattenedSrt = *variant.ringFlat;
-        if (variant.ringBindings != nullptr) words->bindings = *variant.ringBindings;
+        if (variant.ringBindings != nullptr) {
+            words->bindings = *variant.ringBindings;
+            require(words->bindings.size() == variant.compiled->bindings.size(), "a ring vertex hit's bindings differ in number from its template");
+            for (std::size_t index = 0; index < words->bindings.size(); ++index) {
+                const auto role = variant.compiled->bindings[index].role;
+                if (role == ShaderRecompiler::DescriptorRole::ShaderData || role == ShaderRecompiler::DescriptorRole::FlattenedSrt) words->bindings[index].clear();
+            }
+        }
+        ShaderRecompiler::CompleteHeapDataWords(*variant.compiled, *words);
         decodeVertexInfo(i);
         require(vertexInfos[i].has_value(), "a ring vertex hit has no vertex stage info");
         const auto& vertex = *vertexInfos[i];
