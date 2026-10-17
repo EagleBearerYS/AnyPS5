@@ -1,8 +1,6 @@
-BUSY LA-002
-since: 2026-10-17T06:02Z (LA-002, lane A recompiler half)
-claimed: tasks/claimed/LA-002.md
-step: recompiler port written (option, tracker, materializer and registry, SPIR-V lookup on sets 2/3); agc_shader_device_image_tables passes; full build, corpus check and mirror next
-previous: setup done, READY at 2026-10-17T05:59Z
+READY
+since: 2026-10-17T06:47:34Z
+last: LA-002 done, results/cloud-5/LA-002.md: fork exp/lane-a-recompiler 385babcbf9 (4 commits on exp/lane-a-base fe07e21141 + merge of 8edb13bb2e); device image tables behind SpirvTarget::deviceImageTables, sets 2/3 as specified; agc_shader_device_image_tables passes; option-off corpus byte-identical to the base (1487/1487 modules); mirror 1326/65 skipped/5 IPv6 failures of 1396, per test equal to the base
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
