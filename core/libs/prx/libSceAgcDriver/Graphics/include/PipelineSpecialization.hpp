@@ -13,7 +13,8 @@ namespace AgcDriver::Graphics {
 class PipelineSpecialization {
 public:
     static void Validate(const ShaderRecompiler::RecompileResult& shader) {
-        const auto& words = shader.spirv;
+        const auto lease = shader.spirv.Hold();
+        const auto words = lease.Words();
         Require(words.size() >= 5 && words[0] == spv::MagicNumber && words[3] != 0, "invalid specialization module header");
         std::set<std::uint32_t> unsignedTypes;
         std::map<std::uint32_t, std::uint32_t> constants;

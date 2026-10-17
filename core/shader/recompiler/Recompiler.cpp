@@ -396,10 +396,32 @@ bool diskPlans() {
     return enabled && ShaderDiskCache::Enabled() && !DebugProbeActive();
 }
 
-std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, bool reclaim = true) {
+using SourceMap = std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash>;
+
+PrimedSharedMutex& sourcesMutex() {
     static PrimedSharedMutex mutex;
+    return mutex;
+}
+
+SourceMap& sourceMap() {
+    static SourceMap sources;
+    return sources;
+}
+
+std::atomic<std::int64_t> spirvHolders{0};
+std::atomic<std::int64_t> spirvHeapWords{0};
+std::atomic<std::int64_t> spirvMappedWords{0};
+std::atomic<std::int64_t> spirvReleasable{0};
+std::atomic<std::int64_t> spirvResident{0};
+std::atomic<std::int64_t> spirvPinned{0};
+std::atomic<std::uint64_t> spirvReleases{0};
+std::atomic<std::uint64_t> spirvReloads{0};
+std::atomic<std::uint64_t> spirvReloadNanoseconds{0};
+
+std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, bool reclaim = true) {
+    auto& mutex = sourcesMutex();
     // Entries whose code hashes alike share a bucket; the code comparison picks the right one.
-    static std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash> sources;
+    auto& sources = sourceMap();
     struct SourceKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, SourceKeyStorage>();
     RecompileCacheKey::Build(request, key);
@@ -628,7 +650,7 @@ struct SpecializedModule {
     bool pushData = false;
 };
 
-std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+std::shared_ptr<SpecializedModule> specializeArtifact(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     auto source = SpecializeVertexInputTypes(artifact, classes);
     std::map<std::uint32_t, std::uint32_t> supplied;
     for (const auto& constant : constants) {
@@ -638,7 +660,8 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
     std::set<std::uint32_t> specializedIds;
     std::set<std::uint32_t> pushTypes;
     std::optional<std::uint32_t> replaySlotBytes;
-    const auto& words = source.Words();
+    const auto lease = source.Hold();
+    const auto words = lease.Words();
     if (words.size() < 5u || words[0] != spv::MagicNumber) throw std::runtime_error("invalid prepared specialization module");
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
@@ -725,6 +748,19 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
     }
     module->spirv = std::move(materialized);
     module->specializationId = constants.empty() ? 0u : nextVariantId();
+    return module;
+}
+
+std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    auto module = specializeArtifact(artifact, classes, constants, target);
+    if (SpirvReleaseEnabled()) {
+        module->spirv = SharedSpirv::Releasable(std::move(module->spirv), [artifact, classes = std::vector<std::uint32_t>(classes.begin(), classes.end()), constants = std::vector<PipelineSpecializationConstant>(constants.begin(), constants.end()), target] {
+            const auto reloaded = specializeArtifact(artifact, classes, constants, target);
+            artifact.spirv.Release();
+            return reloaded->spirv;
+        });
+    }
+    artifact.spirv.Release();
     return module;
 }
 
@@ -1049,6 +1085,22 @@ struct PreparedInterface {
 
 namespace {
 
+SharedSpirv::Reload diskReload(std::span<const std::byte> key) {
+    return [key = std::vector<std::byte>(key.begin(), key.end())] {
+        CompiledVariant reloaded;
+        if (!ShaderDiskCache::Reload(key, reloaded)) throw std::runtime_error("released SPIR-V is no longer in the shader disk cache");
+        return reloaded.artifact.spirv;
+    };
+}
+
+std::shared_ptr<const CompiledVariant> releasableArtifact(std::shared_ptr<const CompiledVariant> variant, std::span<const std::byte> key) {
+    if (!SpirvReleaseEnabled()) return variant;
+    auto releasable = std::make_shared<CompiledVariant>(*variant);
+    variant.reset();
+    releasable->artifact.spirv = SharedSpirv::Releasable(std::move(releasable->artifact.spirv), diskReload(key));
+    return releasable;
+}
+
 std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source, const RecompileRequest& request, bool& cacheHit, ShaderPreparationContext* preparation = nullptr) {
     for (const auto& candidate : source.variants) {
         if (sameLayout(candidate->layout, request.layout)) {
@@ -1069,6 +1121,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         if (ShaderDiskCache::Load(diskKey, loaded)) {
             loaded.layout = request.layout;
             loaded.artifact.variantId = nextVariantId();
+            if (SpirvReleaseEnabled()) loaded.artifact.spirv = SharedSpirv::Releasable(std::move(loaded.artifact.spirv), diskReload(diskKey));
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
         }
     }
@@ -1088,7 +1141,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             throw;
         }
         if (disk) {
-            if (auto persisted = ShaderDiskCache::Persist(diskKey, *variant)) variant = std::move(persisted);
+            if (auto persisted = ShaderDiskCache::Persist(diskKey, *variant)) variant = releasableArtifact(std::move(persisted), diskKey);
             else ShaderDiskCache::Store(std::move(diskKey), variant);
         }
     }
@@ -1373,6 +1426,49 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
     if (profile) capture->sourceNanoseconds = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
     materializeCapture(*capture, runtime);
     return capture;
+}
+
+bool SpirvReleaseEnabled() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("APS5_RELEASE_SPIRV");
+        return value != nullptr && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+void NoteSpirv(const SpirvResidencyChange& change) {
+    const auto add = [](std::atomic<std::int64_t>& counter, std::int64_t delta) {
+        if (delta != 0) counter.fetch_add(delta, std::memory_order_relaxed);
+    };
+    add(spirvHolders, change.holders);
+    add(change.mapped ? spirvMappedWords : spirvHeapWords, change.words);
+    add(spirvReleasable, change.releasable);
+    add(spirvResident, change.resident);
+    add(spirvPinned, change.pinned);
+    if (change.releases != 0) spirvReleases.fetch_add(change.releases, std::memory_order_relaxed);
+    if (change.reloads != 0) spirvReloads.fetch_add(change.reloads, std::memory_order_relaxed);
+    if (change.reloadNanoseconds != 0) spirvReloadNanoseconds.fetch_add(change.reloadNanoseconds, std::memory_order_relaxed);
+}
+
+SpirvResidency HeldSpirv() {
+    const auto count = [](const std::atomic<std::int64_t>& counter) { return static_cast<std::uint64_t>(std::max<std::int64_t>(counter.load(std::memory_order_relaxed), 0)); };
+    return {count(spirvHolders), count(spirvHeapWords), count(spirvMappedWords), count(spirvReleasable), count(spirvResident), count(spirvPinned), spirvReleases.load(std::memory_order_relaxed), spirvReloads.load(std::memory_order_relaxed), spirvReloadNanoseconds.load(std::memory_order_relaxed)};
+}
+
+HeldSourceStatistics HeldSources() {
+    HeldSourceStatistics statistics;
+    std::shared_lock lock(sourcesMutex());
+    for (const auto& [key, bucket] : sourceMap()) {
+        for (const auto& source : bucket) {
+            std::lock_guard sourceLock(source->mutex);
+            ++statistics.sources;
+            statistics.codeWords += source->code.size();
+            if (source->program != nullptr) ++statistics.programs;
+            statistics.variants += source->variants.size();
+            statistics.results += source->memo.size();
+        }
+    }
+    return statistics;
 }
 
 std::shared_ptr<const SourceHandle> ResolveSource(const RecompileRequest& request) {

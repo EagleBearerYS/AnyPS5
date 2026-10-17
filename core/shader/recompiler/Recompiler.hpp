@@ -6,12 +6,16 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <string_view>
 #include <vector>
@@ -500,6 +504,43 @@ inline std::uint64_t HashSpirvWords(std::span<const std::uint32_t> words, std::u
     return hash;
 }
 
+struct SpirvResidency {
+    std::uint64_t holders = 0;
+    std::uint64_t heapWords = 0;
+    std::uint64_t mappedWords = 0;
+    std::uint64_t releasable = 0;
+    std::uint64_t resident = 0;
+    std::uint64_t pinned = 0;
+    std::uint64_t releases = 0;
+    std::uint64_t reloads = 0;
+    std::uint64_t reloadNanoseconds = 0;
+};
+
+struct SpirvResidencyChange {
+    std::int64_t holders = 0;
+    std::int64_t words = 0;
+    bool mapped = false;
+    std::int64_t releasable = 0;
+    std::int64_t resident = 0;
+    std::int64_t pinned = 0;
+    std::uint64_t releases = 0;
+    std::uint64_t reloads = 0;
+    std::uint64_t reloadNanoseconds = 0;
+};
+
+[[nodiscard]] bool SpirvReleaseEnabled();
+void NoteSpirv(const SpirvResidencyChange& change);
+[[nodiscard]] SpirvResidency HeldSpirv();
+
+struct HeldSourceStatistics {
+    std::uint64_t sources = 0;
+    std::uint64_t codeWords = 0;
+    std::uint64_t programs = 0;
+    std::uint64_t variants = 0;
+    std::uint64_t results = 0;
+};
+[[nodiscard]] HeldSourceStatistics HeldSources();
+
 // Compiled SPIR-V shared between a cached variant and every result materialized from it: results
 // are copied per dispatch and draw, so the words are reference counted and only duplicated when a
 // holder writes to them (tests and tools patch modules in place). Reads look like a vector.
@@ -508,33 +549,72 @@ inline std::uint64_t HashSpirvWords(std::span<const std::uint32_t> words, std::u
 // reference, or the per-dispatch copy this class removes comes back without a compiler hint.
 // ContentHash is computed once per shared holder, on first use, and dropped by a write.
 class SharedSpirv {
+    struct Resident {
+        std::vector<std::uint32_t> words;
+        std::shared_ptr<const void> owner;
+        std::span<const std::uint32_t> view;
+        [[nodiscard]] std::span<const std::uint32_t> Words() const { return owner ? view : std::span<const std::uint32_t>(words); }
+    };
+
 public:
+    using Reload = std::function<SharedSpirv()>;
+
+    class Lease {
+    public:
+        Lease() = default;
+        [[nodiscard]] std::span<const std::uint32_t> Words() const { return resident ? resident->Words() : std::span<const std::uint32_t>{}; }
+
+    private:
+        friend class SharedSpirv;
+        explicit Lease(std::shared_ptr<const Resident> resident) : resident(std::move(resident)) {}
+        std::shared_ptr<const Resident> resident;
+    };
+
     SharedSpirv() = default;
-    SharedSpirv(std::vector<std::uint32_t> words) : holder(std::make_shared<Holder>(std::move(words), nullptr, std::span<const std::uint32_t>{})) {}
-    SharedSpirv(std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : holder(std::make_shared<Holder>(std::vector<std::uint32_t>{}, std::move(owner), view)) {}
+    SharedSpirv(std::vector<std::uint32_t> words) : holder(std::make_shared<Holder>(std::make_shared<const Resident>(Resident{std::move(words), nullptr, {}}), Reload{})) {}
+    SharedSpirv(std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : holder(std::make_shared<Holder>(std::make_shared<const Resident>(Resident{{}, std::move(owner), view}), Reload{})) {}
     SharedSpirv& operator=(std::vector<std::uint32_t> other) {
-        holder = std::make_shared<Holder>(std::move(other), nullptr, std::span<const std::uint32_t>{});
+        holder = std::make_shared<Holder>(std::make_shared<const Resident>(Resident{std::move(other), nullptr, {}}), Reload{});
         return *this;
     }
+
+    [[nodiscard]] static SharedSpirv Releasable(SharedSpirv loaded, Reload reload) {
+        if (!SpirvReleaseEnabled() || loaded.holder == nullptr || !reload) return loaded;
+        SharedSpirv releasable;
+        releasable.holder = std::make_shared<Holder>(loaded.holder->Hold(), std::move(reload));
+        static_cast<void>(releasable.ContentHash());
+        return releasable;
+    }
+
+    [[nodiscard]] Lease Hold() const { return holder ? Lease(holder->Hold()) : Lease{}; }
+    void Release() const {
+        if (holder) holder->Release();
+    }
+    [[nodiscard]] bool IsReleasable() const { return holder && holder->reload; }
+    [[nodiscard]] bool IsResident() const { return holder && holder->Present(); }
 
     [[nodiscard]] std::span<const std::uint32_t> Words() const { return holder ? holder->Words() : std::span<const std::uint32_t>{}; }
     [[nodiscard]] SpirvContentHash ContentHash() const {
         if (holder == nullptr) return {};
         if (holder->hashed.load(std::memory_order_acquire)) return {holder->hashLow.load(std::memory_order_relaxed), holder->hashHigh.load(std::memory_order_relaxed)};
-        const auto words = holder->Words();
+        const auto lease = Hold();
+        const auto words = lease.Words();
         if (words.empty()) return {};
-        const SpirvContentHash hash{HashSpirvWords(words, 0x5eed5a1d00000001ull), HashSpirvWords(words, 0x5eed5a1d00000002ull)};
+        const auto hash = HashOf(words);
         holder->hashLow.store(hash.low, std::memory_order_relaxed);
         holder->hashHigh.store(hash.high, std::memory_order_relaxed);
         holder->hashed.store(true, std::memory_order_release);
         return hash;
     }
-    [[nodiscard]] std::vector<std::uint32_t> Copy() const { return {Words().begin(), Words().end()}; }
-    [[nodiscard]] std::size_t size() const { return Words().size(); }
-    [[nodiscard]] bool empty() const { return Words().empty(); }
+    [[nodiscard]] std::vector<std::uint32_t> Copy() const {
+        const auto lease = Hold();
+        return {lease.Words().begin(), lease.Words().end()};
+    }
+    [[nodiscard]] std::size_t size() const { return holder ? holder->Size() : 0; }
+    [[nodiscard]] bool empty() const { return size() == 0; }
     [[nodiscard]] const std::uint32_t* data() const { return Words().data(); }
     [[nodiscard]] std::uint32_t* data() { return Mutable().data(); }
-    [[nodiscard]] const std::uint32_t& operator[](std::size_t index) const { return Words()[index]; }
+    [[nodiscard]] const std::uint32_t& operator[](std::size_t index) const { return holder && holder->reload && index < Holder::HeaderWords ? holder->header[index] : Words()[index]; }
     [[nodiscard]] std::uint32_t& operator[](std::size_t index) { return Mutable()[index]; }
     [[nodiscard]] std::span<const std::uint32_t>::iterator begin() const { return Words().begin(); }
     [[nodiscard]] std::span<const std::uint32_t>::iterator end() const { return Words().end(); }
@@ -542,27 +622,96 @@ public:
     [[nodiscard]] std::vector<std::uint32_t>::iterator end() { return Mutable().end(); }
     void resize(std::size_t count) { Mutable().resize(count); }
     std::vector<std::uint32_t>::iterator insert(std::vector<std::uint32_t>::const_iterator where, std::initializer_list<std::uint32_t> values) { return Mutable().insert(where, values); }
-    friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) { return std::ranges::equal(left.Words(), right.Words()); }
+    friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) {
+        const auto leftWords = left.Hold();
+        const auto rightWords = right.Hold();
+        return std::ranges::equal(leftWords.Words(), rightWords.Words());
+    }
 
 private:
+    static SpirvContentHash HashOf(std::span<const std::uint32_t> words) { return {HashSpirvWords(words, 0x5eed5a1d00000001ull), HashSpirvWords(words, 0x5eed5a1d00000002ull)}; }
+
     struct Holder {
-        Holder(std::vector<std::uint32_t> words, std::shared_ptr<const void> owner, std::span<const std::uint32_t> view) : words(std::move(words)), owner(std::move(owner)), view(view) {}
-        [[nodiscard]] std::span<const std::uint32_t> Words() const { return owner ? view : std::span<const std::uint32_t>(words); }
-        std::vector<std::uint32_t> words;
-        std::shared_ptr<const void> owner;
-        std::span<const std::uint32_t> view;
+        static constexpr std::size_t HeaderWords = 5;
+
+        Holder(std::shared_ptr<const Resident> loaded, Reload source) : resident(std::move(loaded)), reload(std::move(source)), mapped(resident->owner != nullptr), count(resident->Words().size()) {
+            const auto words = resident->Words();
+            std::copy_n(words.begin(), std::min(words.size(), HeaderWords), header.begin());
+            const std::int64_t releasable = reload ? 1 : 0;
+            NoteSpirv({.holders = 1, .words = static_cast<std::int64_t>(count), .mapped = mapped, .releasable = releasable, .resident = releasable});
+        }
+        ~Holder() {
+            const std::int64_t releasable = reload ? 1 : 0;
+            const bool present = resident != nullptr;
+            NoteSpirv({.holders = -1, .words = present ? -static_cast<std::int64_t>(count) : 0, .mapped = mapped, .releasable = -releasable, .resident = present ? -releasable : 0, .pinned = pinned.load(std::memory_order_relaxed) ? -1 : 0});
+        }
+        Holder(const Holder&) = delete;
+        Holder& operator=(const Holder&) = delete;
+
+        [[nodiscard]] std::size_t Size() const { return reload ? count : resident->Words().size(); }
+        [[nodiscard]] bool Present() {
+            if (!reload) return true;
+            std::lock_guard lock(mutex);
+            return resident != nullptr;
+        }
+        [[nodiscard]] std::shared_ptr<const Resident> Hold() {
+            if (!reload) return resident;
+            std::lock_guard lock(mutex);
+            load();
+            return resident;
+        }
+        [[nodiscard]] std::span<const std::uint32_t> Words() {
+            if (!reload) return resident->Words();
+            std::lock_guard lock(mutex);
+            if (!pinned.exchange(true, std::memory_order_relaxed)) NoteSpirv({.pinned = 1});
+            load();
+            return resident->Words();
+        }
+        void Release() {
+            if (!reload || pinned.load(std::memory_order_relaxed)) return;
+            std::lock_guard lock(mutex);
+            if (pinned.load(std::memory_order_relaxed) || resident == nullptr || resident.use_count() != 1) return;
+            resident.reset();
+            NoteSpirv({.words = -static_cast<std::int64_t>(count), .mapped = mapped, .resident = -1, .releases = 1});
+        }
+
+        std::shared_ptr<const Resident> resident;
+        const Reload reload;
+        const bool mapped;
+        const std::size_t count;
+        std::array<std::uint32_t, HeaderWords> header{};
+        std::mutex mutex;
+        std::atomic<bool> pinned{false};
         mutable std::atomic<std::uint64_t> hashLow{0};
         mutable std::atomic<std::uint64_t> hashHigh{0};
         mutable std::atomic<bool> hashed{false};
+
+    private:
+        void load() {
+            if (resident != nullptr) return;
+            const auto start = std::chrono::steady_clock::now();
+            const auto fresh = reload();
+            if (fresh.holder == nullptr) throw std::runtime_error("released SPIR-V could not be reloaded");
+            auto loaded = fresh.holder->Hold();
+            const auto words = loaded->Words();
+            if (words.size() != count || !std::equal(header.begin(), header.begin() + std::min(count, HeaderWords), words.begin())) throw std::runtime_error("reloaded SPIR-V differs from the released module");
+            if (hashed.load(std::memory_order_acquire)) {
+                const auto hash = HashOf(words);
+                if (hash.low != hashLow.load(std::memory_order_relaxed) || hash.high != hashHigh.load(std::memory_order_relaxed)) throw std::runtime_error("reloaded SPIR-V differs from the released module");
+            }
+            resident = std::move(loaded);
+            const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+            NoteSpirv({.words = static_cast<std::int64_t>(count), .mapped = mapped, .resident = 1, .reloads = 1, .reloadNanoseconds = static_cast<std::uint64_t>(elapsed)});
+        }
     };
 
     std::vector<std::uint32_t>& Mutable() {
-        if (holder == nullptr || holder.use_count() != 1 || holder->owner != nullptr) {
-            holder = std::make_shared<Holder>(Copy(), nullptr, std::span<const std::uint32_t>{});
+        if (holder == nullptr || holder.use_count() != 1 || holder->reload || holder->resident->owner != nullptr || holder->resident.use_count() != 1) {
+            holder = std::make_shared<Holder>(std::make_shared<const Resident>(Resident{Copy(), nullptr, {}}), Reload{});
         } else {
             holder->hashed.store(false, std::memory_order_relaxed);
         }
-        return holder->words;
+        return std::const_pointer_cast<Resident>(holder->resident)->words;
     }
 
     std::shared_ptr<Holder> holder;

@@ -781,6 +781,7 @@ void verifyStore() {
     const auto before = ShaderDiskCache::Totals();
     CompiledVariant loaded;
     require(!ShaderDiskCache::Load(key, loaded), "an entry loads before it was stored");
+    require(!ShaderDiskCache::Reload(key, loaded) && ShaderDiskCache::Totals().reloadMisses == before.reloadMisses + 1, "an entry reloads before it was stored, or the reload miss was not counted");
     ShaderDiskCache::Store(key, variant);
     ShaderDiskCache::Flush();
     require(ShaderDiskCache::Totals().writes == before.writes + 1, "the store did not write the entry");
@@ -789,6 +790,11 @@ void verifyStore() {
     require(ShaderDiskCache::Load(key, loaded), "a stored entry does not load");
     requireSameVariant(*variant, loaded, "store round trip");
     require(ShaderDiskCache::Totals().hits == before.hits + 1, "the load was not counted as a hit");
+    CompiledVariant reloaded;
+    require(ShaderDiskCache::Reload(key, reloaded), "a stored entry does not reload");
+    requireSameVariant(*variant, reloaded, "reload round trip");
+    const auto afterReload = ShaderDiskCache::Totals();
+    require(afterReload.hits == before.hits + 1 && afterReload.reloads == before.reloads + 1 && afterReload.reloadMisses == before.reloadMisses + 1, "a reload was counted as a hit, or not counted as a reload");
 
     std::vector<std::byte> file;
     require(ReadWholeFile(path, file), "cannot read the entry back");

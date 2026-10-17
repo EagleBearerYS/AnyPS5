@@ -911,6 +911,9 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
         request.layout.pushConstantSizeBytes = 0;
         append();
     }
+    for (const auto& entry : entries) {
+        if (entry.handle != nullptr && entry.handle->artifact != nullptr) entry.handle->artifact->artifact.spirv.Release();
+    }
     return entries;
 }
 
