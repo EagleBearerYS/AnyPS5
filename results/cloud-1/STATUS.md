@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T08:53:50Z
+BUSY LA-005 (lane A: mesh and task stages on the device image table)
+since: 2026-10-17T08:54:37Z
 last: BF-053 done, results/cloud-1/BF-053.md: gate not met, cut under 5x, stopped; the only mesh-path multiplier is the wave64-on-32-wide lane halves (2.0x, SpirvFlowEmitter.cpp:769); nothing per vertex slot or output (words identical at 3/6/16 output vertices); same program as mesh costs 1.00x vertex at host 64; 77-way switch = runtime buffer formatSwitch; measurement test on exp/mesh-module-size fe2aaded8; runs as root (unprivileged user creation refused here); before that BF-051, PRM-036
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
