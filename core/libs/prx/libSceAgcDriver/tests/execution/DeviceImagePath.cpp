@@ -85,6 +85,8 @@ constexpr std::uint32_t NullEntry = 1000;
 constexpr std::uint32_t InvalidEntry = 1001;
 constexpr std::uint32_t TargetEntry = 1990;
 constexpr std::size_t TargetOffset = 0x300000;
+constexpr std::size_t RecordOffset = 0x700000;
+constexpr std::size_t RecordIndicesOffset = 0x700100;
 constexpr std::array<std::uint32_t, 5> Formats{1u, 13u, 14u, 22u, 56u};
 constexpr std::array<const char*, 5> FormatNames{"8 unorm", "16 float", "8_8 unorm", "32 float", "8_8_8_8 unorm"};
 constexpr std::array<std::uint16_t, 4> HalfValues{0x3266u, 0x38cdu, 0x3666u, 0x3a66u};
@@ -117,6 +119,7 @@ alignas(4096) std::array<std::array<float, 4>, 64> Outputs{};
 alignas(16) std::array<std::uint32_t, 4> DrawArguments{3u, 1u, 0u, 0u};
 alignas(16) std::array<std::uint32_t, 5> IndexedArguments{3u, 1u, 0u, 0u, 0u};
 alignas(16) std::array<std::uint32_t, 8> InstancedArguments{3u, 1u, 0u, 1u, 3u, 1u, 0u, 2u};
+alignas(16) std::array<std::uint32_t, 10> IndexedInstancedArguments{3u, 1u, 0u, 0u, 1u, 3u, 1u, 0u, 0u, 2u};
 alignas(256) std::array<std::uint16_t, 4> Indices{0u, 1u, 2u, 0u};
 constexpr std::byte Kept{0x40};
 
@@ -823,6 +826,74 @@ void RequireNewRecord(const Harness& harness, const std::vector<std::byte>& stor
     else RequireDrawn(stored, TexelOf(written).value, what);
 }
 
+struct RecordDraw {
+    const char* what;
+    std::uint32_t opcode;
+    std::uint32_t startInstanceLocation;
+    std::uint32_t drawIndexLocation;
+    bool cpu;
+};
+
+void RecordKinds(const Harness& harness) {
+    constexpr std::uint32_t key = 1772u;
+    const std::array<RecordDraw, 4> draws{{
+        {"two DRAW_INDEX_INDIRECT packets patching their start instance (1, 2) into the vertex stage's user data", 0x25u, 0x8cu, 0u, true},
+        {"a DRAW_INDIRECT_MULTI of two records patching their draw index (0, 1) and start instance (1, 2) into the vertex stage's user data", 0x2cu, 0x8cu, 0x8du, true},
+        {"a DRAW_INDIRECT_MULTI of two records with start instances 1 and 2", 0x2cu, 0u, 0u, false},
+        {"a DRAW_INDEX_INDIRECT_MULTI of two records with start instances 1 and 2", 0x38u, 0u, 0u, false},
+    }};
+    for (const auto& draw : draws) {
+        const bool indexed = draw.opcode == 0x25u || draw.opcode == 0x38u;
+        auto commands = DrawCommands(harness.block, key, DrawKind::Direct);
+        commands.resize(commands.size() - 3u);
+        if (indexed) std::memcpy(harness.block.At(RecordOffset), IndexedInstancedArguments.data(), sizeof(IndexedInstancedArguments));
+        else std::memcpy(harness.block.At(RecordOffset), InstancedArguments.data(), sizeof(InstancedArguments));
+        std::memcpy(harness.block.At(RecordIndicesOffset), Indices.data(), sizeof(Indices));
+        const auto arguments = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(harness.block.At(RecordOffset)));
+        Append(commands, 0x11, {1, static_cast<std::uint32_t>(arguments), static_cast<std::uint32_t>(arguments >> 32u)});
+        if (indexed) {
+            const auto indices = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(harness.block.At(RecordIndicesOffset)));
+            Append(commands, 0x2a, {0});
+            Append(commands, 0x26, {static_cast<std::uint32_t>(indices), static_cast<std::uint32_t>(indices >> 32u)});
+            Append(commands, 0x13, {3});
+        }
+        std::uint64_t packets = 1;
+        if (draw.opcode == 0x25u) {
+            Append(commands, 0x25, {0, 0, draw.startInstanceLocation, 0});
+            Append(commands, 0x25, {20, 0, draw.startInstanceLocation, 0});
+            packets = 2;
+        } else {
+            const std::uint32_t control = draw.drawIndexLocation != 0u ? draw.drawIndexLocation | (1u << 31u) : 0u;
+            Append(commands, draw.opcode, {0, 0, draw.startInstanceLocation, control, 2, 0, 0, indexed ? 20u : 16u, indexed ? 0u : 2u});
+        }
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, std::string("(l) the submission of ") + draw.what + " failed");
+        AgcDriverWaitIdle_nid_postfix();
+        static_cast<void>(ReadColor(harness));
+        const auto paths = AgcDriver::Graphics::IndirectDrawCounts();
+        const auto before = Read();
+        std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, std::string("(l) the submission of ") + draw.what + " failed");
+        AgcDriverWaitIdle_nid_postfix();
+        const auto what = std::string("(l) ") + draw.what + ", key " + std::to_string(key);
+        RequireDrawn(ReadColor(harness), TexelOf(TextureOf(key)).value, what);
+        const auto after = Read();
+        const auto pathsAfter = AgcDriver::Graphics::IndirectDrawCounts();
+        const auto gpuSide = pathsAfter[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::Gpu)] - paths[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::Gpu)];
+        std::uint64_t cpuSide = 0;
+        std::string counted;
+        for (std::size_t path = 0; path < pathsAfter.size(); ++path) {
+            if (path != 0) cpuSide += pathsAfter[path] - paths[path];
+            if (pathsAfter[path] != paths[path]) counted += std::string(counted.empty() ? "" : ", ") + AgcDriver::Graphics::IndirectDrawPathName(static_cast<AgcDriver::Graphics::IndirectDrawPath>(path)) + " " + std::to_string(pathsAfter[path] - paths[path]);
+        }
+        Require(std::getenv("APS5_PROFILE_DRAW") == nullptr || (draw.cpu ? cpuSide == packets && gpuSide == 0u : gpuSide == packets && cpuSide == 0u), what + ": " + std::to_string(cpuSide) + " packets took the CPU path and " + std::to_string(gpuSide) + " the GPU-side path (" + counted + "), expected " + std::to_string(packets) + " on the " + (draw.cpu ? "CPU path" : "GPU-side path"));
+        if (harness.device) RequireHits(before, after, what);
+        const std::uint64_t gpuModeDraws = draw.cpu ? 2u : packets;
+        if (harness.device && AgcDriver::Graphics::GpuHeapEnabled()) Require(after.device.gpuModeDraws - before.device.gpuModeDraws == gpuModeDraws, what + ": the draws did not read the device image table in GPU mode, expected " + std::to_string(gpuModeDraws) + Describe(before, after));
+        std::printf("%s: the texel, %llu packets on the CPU path and %llu on the GPU-side path%s\n", what.c_str(), static_cast<unsigned long long>(cpuSide), static_cast<unsigned long long>(gpuSide), Describe(before, after).c_str());
+    }
+}
+
 void StaleRecord(const Harness& harness) {
     constexpr std::uint32_t entry = 1545u;
     constexpr std::array<std::uint32_t, 3> textures{9u, 14u, 9u};
@@ -1006,11 +1077,11 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     if (mode != "--village-bench" && mode != "--binds") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
-    if (parts == "k") _putenv_s("APS5_PROFILE_DRAW", "1");
+    if (parts == "k" || parts == "l") _putenv_s("APS5_PROFILE_DRAW", "1");
 #else
     if (mode != "--village-bench" && mode != "--binds") setenv("APS5_EAGER_WRITEBACK", "1", 1);
     if (mode == "--heap-cap") setenv("APS5_HEAP_SLOT_CAP", "2", 1);
-    if (parts == "k") setenv("APS5_PROFILE_DRAW", "1", 1);
+    if (parts == "k" || parts == "l") setenv("APS5_PROFILE_DRAW", "1", 1);
 #endif
     try {
         bool served = false;
@@ -1053,6 +1124,7 @@ int main(int argc, char** argv) {
                 if (parts.find('g') != std::string::npos) Rechecks(harness);
                 if (parts.find('h') != std::string::npos) GpuWrittenTexture(harness);
                 if (parts.find('k') != std::string::npos) PatchedRecords(harness);
+                if (parts.find('l') != std::string::npos) RecordKinds(harness);
                 if (parts.find('i') != std::string::npos) StaleRecord(harness);
             }
         } catch (const std::exception& error) {
