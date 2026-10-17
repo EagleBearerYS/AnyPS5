@@ -6,7 +6,7 @@
 
 namespace ShaderRecompiler::DeviceImageTableAbi {
 
-inline constexpr std::uint32_t Version = 2;
+inline constexpr std::uint32_t Version = 3;
 
 inline constexpr std::uint32_t DescriptorWords = 8;
 inline constexpr std::uint32_t InterfaceWord = 8;
@@ -35,7 +35,10 @@ inline constexpr std::uint32_t HeaderRingCapacity = 6;
 inline constexpr std::uint32_t HeaderWords = 16;
 
 inline constexpr std::uint32_t RingCountWord = 0;
-inline constexpr std::uint32_t RingRecordsWord = 4;
+inline constexpr std::uint32_t RingSeenWord = 4;
+inline constexpr std::uint32_t RingSeenSlots = 4096;
+inline constexpr std::uint32_t RingSeenProbes = 8;
+inline constexpr std::uint32_t RingRecordsWord = RingSeenWord + RingSeenSlots;
 inline constexpr std::uint32_t RecordWords = 16;
 inline constexpr std::uint32_t RecordPcWord = 15;
 

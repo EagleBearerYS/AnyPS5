@@ -1862,9 +1862,15 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
     const auto stepVariable = state.module.AllocateId();
     const auto doneVariable = state.module.AllocateId();
     const auto resultVariable = state.module.AllocateId();
+    const auto seenStepVariable = state.module.AllocateId();
+    const auto seenDoneVariable = state.module.AllocateId();
+    const auto appendVariable = state.module.AllocateId();
     state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), stepVariable, spv::StorageClassFunction);
     state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), doneVariable, spv::StorageClassFunction);
     state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, uvec4), resultVariable, spv::StorageClassFunction);
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), seenStepVariable, spv::StorageClassFunction);
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), seenDoneVariable, spv::StorageClassFunction);
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), appendVariable, spv::StorageClassFunction);
     std::array<std::uint32_t, Abi::KeyWords> key{};
     for (std::uint32_t word = 0; word < 4u; ++word) {
         key[word] = extract(low, word);
@@ -1910,7 +1916,37 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
     const auto result = load(resultVariable, uvec4);
     const auto missed = binary(spv::OpIEqual, boolean, extract(result, 3u), constant(0u));
     const auto faulted = binary(spv::OpLogicalAnd, boolean, negate(missed), binary(spv::OpINotEqual, boolean, extract(result, 2u), constant(0u)));
-    EmitIfCondition(state, binary(spv::OpLogicalAnd, boolean, record, binary(spv::OpLogicalOr, boolean, missed, faulted)), [&] {
+    state.module.AddFunction(spv::OpStore, appendVariable, binary(spv::OpLogicalAnd, boolean, record, faulted));
+    EmitIfCondition(state, binary(spv::OpLogicalAnd, boolean, record, missed), [&] {
+        const auto mark = binary(spv::OpBitwiseOr, u32, hash, constant(1u));
+        const auto seenHome = binary(spv::OpBitwiseAnd, u32, hash, constant(Abi::RingSeenSlots - 1u));
+        state.module.AddFunction(spv::OpStore, appendVariable, ConstantBool(state, true));
+        state.module.AddFunction(spv::OpStore, seenStepVariable, constant(0u));
+        state.module.AddFunction(spv::OpStore, seenDoneVariable, ConstantBool(state, false));
+        const auto seenHeader = state.module.AllocateId();
+        const auto seenBody = state.module.AllocateId();
+        const auto seenContinue = state.module.AllocateId();
+        const auto seenMerge = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBranch, seenHeader);
+        EmitLabel(state, seenHeader);
+        const auto seenStep = load(seenStepVariable, u32);
+        const auto probing = binary(spv::OpLogicalAnd, boolean, negate(load(seenDoneVariable, boolean)), binary(spv::OpULessThan, boolean, seenStep, constant(Abi::RingSeenProbes)));
+        state.module.AddFunction(spv::OpLoopMerge, seenMerge, seenContinue, spv::LoopControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, probing, seenBody, seenMerge);
+        EmitLabel(state, seenBody);
+        const auto slot = binary(spv::OpBitwiseAnd, u32, binary(spv::OpIAdd, u32, seenHome, seenStep), constant(Abi::RingSeenSlots - 1u));
+        const auto seen = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicCompareExchange, u32, seen, DeviceTableWordPointer(state, ring, binary(spv::OpIAdd, u32, constant(Abi::RingSeenWord), slot)), constant(spv::ScopeDevice), constant(spv::MemorySemanticsMaskNone), constant(spv::MemorySemanticsMaskNone), mark, constant(0u));
+        const auto own = binary(spv::OpIEqual, boolean, seen, mark);
+        state.module.AddFunction(spv::OpStore, appendVariable, negate(own));
+        state.module.AddFunction(spv::OpStore, seenDoneVariable, binary(spv::OpLogicalOr, boolean, own, binary(spv::OpIEqual, boolean, seen, constant(0u))));
+        state.module.AddFunction(spv::OpBranch, seenContinue);
+        EmitLabel(state, seenContinue);
+        state.module.AddFunction(spv::OpStore, seenStepVariable, binary(spv::OpIAdd, u32, seenStep, constant(1u)));
+        state.module.AddFunction(spv::OpBranch, seenHeader);
+        EmitLabel(state, seenMerge);
+    });
+    EmitIfCondition(state, load(appendVariable, boolean), [&] {
         const auto index = state.module.AllocateId();
         state.module.AddFunction(spv::OpAtomicIAdd, u32, index, DeviceTableWordPointer(state, ring, constant(Abi::RingCountWord)), constant(spv::ScopeDevice), constant(spv::MemorySemanticsMaskNone), constant(1u));
         const auto capacity = LoadDeviceTableWord(state, buckets, constant(Abi::HeaderRingCapacity));

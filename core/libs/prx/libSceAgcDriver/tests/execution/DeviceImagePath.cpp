@@ -83,6 +83,11 @@ constexpr std::uint32_t NullEntry = 1000;
 constexpr std::uint32_t InvalidEntry = 1001;
 constexpr std::uint32_t TargetEntry = 1990;
 constexpr std::size_t TargetOffset = 0x300000;
+constexpr std::size_t LargeColorOffset = 0x400000;
+constexpr std::uint32_t LargeSide = 512;
+constexpr std::uint32_t FreshEntry = 1900;
+constexpr std::uint32_t FreshTextures = 16;
+constexpr std::uint32_t StreamedKeys = 4;
 constexpr std::array<std::uint32_t, 5> Formats{1u, 13u, 14u, 22u, 56u};
 constexpr std::array<const char*, 5> FormatNames{"8 unorm", "16 float", "8_8 unorm", "32 float", "8_8_8_8 unorm"};
 constexpr std::array<std::uint16_t, 4> HalfValues{0x3266u, 0x38cdu, 0x3666u, 0x3a66u};
@@ -103,6 +108,10 @@ alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
 };
 alignas(256) constexpr std::array<std::uint32_t, 14> PixelCode{
     0x8f108508u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 14> LargePixelCode{
+    0x8f108508u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f2u, 0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 13> VillagePixelCode{
@@ -283,6 +292,24 @@ std::uint32_t TextureOf(std::uint32_t entry) {
 
 std::array<std::uint32_t, 8> TargetDescriptor(const void* data);
 
+std::array<std::uint8_t, 4> FreshTexel(std::uint32_t fresh) {
+    return {static_cast<std::uint8_t>(0x20u + 8u * fresh), static_cast<std::uint8_t>(0xe0u - 8u * fresh), static_cast<std::uint8_t>(0x40u + 4u * fresh), 0xffu};
+}
+
+std::array<float, 4> FreshValue(std::uint32_t entry) {
+    const auto texel = FreshTexel(entry - FreshEntry);
+    return {texel[0] / 255.0f, texel[1] / 255.0f, texel[2] / 255.0f, texel[3] / 255.0f};
+}
+
+void FillFresh(const GuestBlock& block) {
+    for (std::uint32_t fresh = 0; fresh < FreshTextures; ++fresh) {
+        auto* texture = block.Texture(Textures + fresh);
+        FillTexture(texture, FreshTexel(fresh));
+        const auto descriptor = TextureDescriptor(texture, Formats[4]);
+        std::copy(descriptor.begin(), descriptor.end(), block.Table() + static_cast<std::size_t>(FreshEntry + fresh) * (RecordBytes / 4u));
+    }
+}
+
 void FillGuest(const GuestBlock& block) {
     for (std::uint32_t texture = 0; texture < Textures; ++texture) FillTexture(block.Texture(texture), TexelOf(texture).bytes);
     auto* table = block.Table();
@@ -311,6 +338,7 @@ alignas(8) Header ComputeHeader{};
 alignas(8) Header ExecClearHeader{};
 alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
+alignas(8) Header LargePixelHeader{};
 alignas(8) Header VillagePixelHeader{};
 alignas(8) Header ProducerHeader{};
 alignas(8) Header OtherProducerHeader{};
@@ -435,6 +463,7 @@ Counters Read() {
     for (const auto& totals : DeviceImageTable::DeviceTotals()) {
         counters.device.prepares += totals.prepares;
         counters.device.drained += totals.drained;
+        counters.device.dropped += totals.dropped;
         counters.device.distinct += totals.distinct;
         counters.device.inserted += totals.inserted;
         counters.device.faults += totals.faults;
@@ -536,11 +565,10 @@ std::vector<std::byte> ReadColor(const Harness& harness) {
     return stored;
 }
 
-void RequireDrawn(const std::vector<std::byte>& stored, const std::array<float, 4>& value, const std::string& what) {
-    const auto layout = ColorLayout();
+std::size_t RequireCovered(const std::vector<std::byte>& stored, const AgcDriver::Graphics::ColorTargetLayout& layout, std::uint32_t width, std::uint32_t height, const std::array<float, 4>& value, const std::string& what) {
     std::size_t drawn = 0;
-    for (std::uint32_t y = 0; y < ColorHeight; ++y) {
-        for (std::uint32_t x = 0; x < ColorWidth; ++x) {
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
             const auto offset = layout.Offset(x, y);
             if (std::all_of(stored.begin() + static_cast<std::ptrdiff_t>(offset), stored.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte byte) { return byte == Kept; })) continue;
             for (std::size_t channel = 0; channel < 4; ++channel) {
@@ -552,6 +580,11 @@ void RequireDrawn(const std::vector<std::byte>& stored, const std::array<float, 
         }
     }
     Require(drawn != 0, what + ": the draw covered no pixel");
+    return drawn;
+}
+
+void RequireDrawn(const std::vector<std::byte>& stored, const std::array<float, 4>& value, const std::string& what) {
+    static_cast<void>(RequireCovered(stored, ColorLayout(), ColorWidth, ColorHeight, value, what));
 }
 
 void Draws(const Harness& harness) {
@@ -828,6 +861,125 @@ void FallsBackFromWarmCache(const Harness& harness) {
     }
 }
 
+AgcDriver::Graphics::ColorTargetLayout LargeLayout() {
+    return AgcDriver::Graphics::ColorTargetLayout(LargeSide, LargeSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+}
+
+std::vector<std::byte> DrawLarge(const Harness& harness, std::span<const std::uint32_t> entries) {
+    auto commands = DrawCommands(harness.block, entries.front(), DrawKind::Direct);
+    commands.resize(commands.size() - 3u);
+    const auto color = reinterpret_cast<std::uintptr_t>(harness.block.At(LargeColorOffset));
+    const auto pixel = reinterpret_cast<std::uintptr_t>(LargePixelCode.data());
+    const auto half = static_cast<float>(LargeSide / 2u);
+    const auto corner = LargeSide | (LargeSide << 16u);
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> large{
+        {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)}, {0x3b0, ((LargeSide - 1u) << 14u) | (LargeSide - 1u)},
+        {0x0d, corner}, {0x82, corner}, {0x91, corner}, {0x95, corner},
+        {0x10f, std::bit_cast<std::uint32_t>(half)}, {0x110, std::bit_cast<std::uint32_t>(half)}, {0x111, std::bit_cast<std::uint32_t>(-half)}, {0x112, std::bit_cast<std::uint32_t>(half)},
+    };
+    for (const auto& [offset, value] : large) Append(commands, 0x69, {offset, value});
+    Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(pixel >> 8u)});
+    Append(commands, 0x76, {0x009, static_cast<std::uint32_t>(pixel >> 40u)});
+    for (const auto entry : entries) {
+        Append(commands, 0x76, {0x00cu + 8u, entry});
+        Append(commands, 0x2d, {3, 2});
+    }
+    std::memset(harness.block.At(LargeColorOffset), static_cast<int>(Kept), LargeLayout().Bytes());
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the submission of draws into the large target failed");
+    AgcDriverWaitIdle_nid_postfix();
+    std::vector<std::byte> stored(LargeLayout().Bytes());
+    AgcDriver::GuestMemory::Read(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(harness.block.At(LargeColorOffset))), stored);
+    return stored;
+}
+
+std::size_t LargeCovered(const std::vector<std::byte>& stored) {
+    const auto layout = LargeLayout();
+    std::size_t covered = 0;
+    for (std::uint32_t y = 0; y < LargeSide; ++y) {
+        for (std::uint32_t x = 0; x < LargeSide; ++x) {
+            const auto offset = layout.Offset(x, y);
+            if (!std::all_of(stored.begin() + static_cast<std::ptrdiff_t>(offset), stored.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte byte) { return byte == Kept; })) ++covered;
+        }
+    }
+    return covered;
+}
+
+std::size_t RequireLargeDrawn(const std::vector<std::byte>& stored, const std::array<float, 4>& value, const std::string& what) {
+    return RequireCovered(stored, LargeLayout(), LargeSide, LargeSide, value, what);
+}
+
+void RequireDeduplicated(const Counters& before, const Counters& after, std::size_t keys, std::size_t pixels, const std::string& what) {
+    const auto records = after.device.drained - before.device.drained;
+    const auto dropped = after.device.dropped - before.device.dropped;
+    Require(dropped == 0u && records <= keys, what + ": " + std::to_string(records) + " miss records and " + std::to_string(dropped) + " dropped for " + std::to_string(keys) + " missed keys on " + std::to_string(pixels) + " pixels per draw, not one record per key" + Describe(before, after));
+}
+
+void Deduplicates(const Harness& harness, bool heapCap) {
+    const std::array<std::uint32_t, 1> one{FreshEntry};
+    std::array<std::uint32_t, 8> eight{};
+    for (std::uint32_t index = 0; index < eight.size(); ++index) eight[index] = FreshEntry + 1u + index;
+    for (const auto keys : {std::span<const std::uint32_t>(one), std::span<const std::uint32_t>(eight)}) {
+        const auto name = "(j) " + std::to_string(keys.size()) + " draws of new keys into a " + std::to_string(LargeSide) + "x" + std::to_string(LargeSide) + " target" + (heapCap ? " on a heap of two slots per kind" : "");
+        const auto value = FreshValue(keys.back());
+        auto before = Read();
+        auto stored = DrawLarge(harness, keys);
+        auto after = Read();
+        if (!harness.device) {
+            RequireCpuTable(before, after, name);
+            const auto pixels = RequireLargeDrawn(stored, value, name);
+            std::printf("%s: the texel on %zu pixels%s\n", name.c_str(), pixels, Describe(before, after).c_str());
+            continue;
+        }
+        const bool overCap = heapCap && keys.size() > 1u;
+        const auto pixels = overCap ? LargeCovered(stored) : RequireLargeDrawn(stored, {}, name + ", first batch");
+        RequireMisses(before, after, 1u, name + ", first batch");
+        RequireDeduplicated(before, after, keys.size(), pixels, name + ", first batch");
+        std::printf("%s, first batch: %s on %zu pixels per draw, %llu miss records, %llu dropped%s\n", name.c_str(), overCap ? "drawn" : "zeros", pixels, static_cast<unsigned long long>(after.device.drained - before.device.drained), static_cast<unsigned long long>(after.device.dropped - before.device.dropped), Describe(before, after).c_str());
+        const auto start = before;
+        before = after;
+        stored = DrawLarge(harness, keys);
+        after = Read();
+        if (!overCap) {
+            RequireHits(before, after, name + ", second batch");
+            Require(after.device.fallbacks == before.device.fallbacks, name + ", second batch: the program fell back to the CPU table path");
+            RequireLargeDrawn(stored, value, name + ", second batch");
+            std::printf("%s, second batch: the texel, no miss records%s\n", name.c_str(), Describe(before, after).c_str());
+            continue;
+        }
+        RequireDeduplicated(before, after, keys.size(), pixels, name + ", second batch");
+        Require(after.device.heapFull > start.device.heapFull && after.device.fallbacks == start.device.fallbacks + 1u, name + ": the keys past the heap's two slots did not send the program to the CPU table path in two batches (heap full " + std::to_string(after.device.heapFull - start.device.heapFull) + ", fallbacks " + std::to_string(after.device.fallbacks - start.device.fallbacks) + ")");
+        std::printf("%s, second batch: %llu lookups without a slot over both batches, the program falls back once, %llu miss records, %llu dropped%s\n", name.c_str(), static_cast<unsigned long long>(after.device.heapFull - start.device.heapFull), static_cast<unsigned long long>(after.device.drained - before.device.drained), static_cast<unsigned long long>(after.device.dropped - before.device.dropped), Describe(before, after).c_str());
+        stored = DrawLarge(harness, keys);
+        RequireLargeDrawn(stored, value, name + ", third batch");
+        std::printf("%s, third batch: the texel\n", name.c_str());
+    }
+}
+
+void Streams(const Harness& harness) {
+    constexpr std::uint32_t first = FreshEntry + 9u;
+    for (std::uint32_t batch = 0; batch <= StreamedKeys; ++batch) {
+        std::vector<std::uint32_t> keys;
+        if (batch < StreamedKeys) keys.push_back(first + batch);
+        if (batch > 0u) keys.push_back(first + batch - 1u);
+        const auto name = "(k) streaming, batch " + std::to_string(batch + 1u) + (batch < StreamedKeys ? " with a new key" : "") + (batch > 0u ? " after the previous batch's key" : "");
+        const auto before = Read();
+        const auto stored = DrawLarge(harness, keys);
+        const auto after = Read();
+        if (!harness.device) {
+            RequireCpuTable(before, after, name);
+            RequireLargeDrawn(stored, FreshValue(keys.back()), name);
+            std::printf("%s: the texel%s\n", name.c_str(), Describe(before, after).c_str());
+            continue;
+        }
+        Require(after.snapshots == before.snapshots && after.tableBuilds == before.tableBuilds && after.device.prepares > before.device.prepares && after.device.fallbacks == before.device.fallbacks, name + ": the program left the device path" + Describe(before, after));
+        const auto pixels = RequireLargeDrawn(stored, batch > 0u ? FreshValue(keys.back()) : std::array<float, 4>{}, name);
+        RequireDeduplicated(before, after, batch < StreamedKeys ? 1u : 0u, pixels, name);
+        if (batch < StreamedKeys) RequireMisses(before, after, 1u, name);
+        std::printf("%s: %s on %zu pixels per draw, %llu miss records, %llu dropped%s\n", name.c_str(), batch > 0u ? "the previous key's texel" : "zeros", pixels, static_cast<unsigned long long>(after.device.drained - before.device.drained), static_cast<unsigned long long>(after.device.dropped - before.device.dropped), Describe(before, after).c_str());
+    }
+}
+
 std::array<std::uint32_t, 8> TargetDescriptor(const void* data) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
     return {
@@ -939,7 +1091,7 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const std::string parts = argc > 2 ? argv[2] : "abcdeghi";
+    const std::string parts = argc > 2 ? argv[2] : mode == "--heap-cap" ? "f" : "abcdeghijk";
 #ifdef _WIN32
     if (mode != "--village-bench") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
@@ -967,16 +1119,19 @@ int main(int argc, char** argv) {
                 return result;
             }
             FillGuest(block);
+            FillFresh(block);
             Harness harness{block, requested || mode == "--expect-device-path"};
             std::printf("device image path %s, %s\n", requested ? "on" : "off", harness.device ? "expecting the device table" : "expecting the CPU table");
             Registered(ComputeHeader, ComputeCode.data(), sizeof(ComputeCode), 0);
             Registered(ExecClearHeader, ExecClearCode.data(), sizeof(ExecClearCode), 0);
             Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
             Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+            Registered(LargePixelHeader, LargePixelCode.data(), sizeof(LargePixelCode), 1);
             Registered(ProducerHeader, ProducerPixelCode.data(), sizeof(ProducerPixelCode), 1);
             Registered(OtherProducerHeader, OtherProducerPixelCode.data(), sizeof(OtherProducerPixelCode), 1);
             if (mode == "--heap-cap") {
-                FallsBackFromWarmCache(harness);
+                if (parts.find('f') != std::string::npos) FallsBackFromWarmCache(harness);
+                if (parts.find('j') != std::string::npos) Deduplicates(harness, true);
             } else {
                 if (parts.find('a') != std::string::npos) ComputeTable(harness);
                 if (parts.find('b') != std::string::npos) Draws(harness);
@@ -986,6 +1141,8 @@ int main(int argc, char** argv) {
                 if (parts.find('g') != std::string::npos) Rechecks(harness);
                 if (parts.find('h') != std::string::npos) GpuWrittenTexture(harness);
                 if (parts.find('i') != std::string::npos) StaleRecord(harness);
+                if (parts.find('j') != std::string::npos) Deduplicates(harness, false);
+                if (parts.find('k') != std::string::npos) Streams(harness);
             }
         } catch (const std::exception& error) {
             std::cerr << "device image path harness failed: " << error.what() << '\n';
