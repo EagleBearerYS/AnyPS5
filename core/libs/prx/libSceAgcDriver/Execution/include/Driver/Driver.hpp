@@ -80,6 +80,7 @@ public:
         std::uint64_t budget = 0;
     };
     CpuIndirectFootprint CpuIndirectCacheSize();
+    DispatchCacheFootprint DrawCacheSize();
     static std::uint64_t DispatchCacheBytes();
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 
