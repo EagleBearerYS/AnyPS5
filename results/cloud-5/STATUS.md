@@ -1,7 +1,6 @@
-BUSY BF-056
-since: 2026-10-17T12:01Z (BF-056, K4's GPU half with the GPU waited for: BF-046 arms A and B with VILLAGE_GPU_SYNC=1)
-claimed: tasks/claimed/BF-056.md
-step: reading BF-055 and BF-046, cherry-picking VILLAGE_GPU_SYNC onto both arms
+READY
+since: 2026-10-17T13:02:45Z
+last: BF-056 done, results/cloud-5/BF-056.md: K4 GPU half synced (VILLAGE_GPU_SYNC=1): Village shape B 11,925 vs A 10,050 ms GPU per frame (+18.7%, under 30%; BF-046's -50% was saturation); same-texture variants B 51-73x A (5,417/7,499 vs 106/103 ms); run-time T# read ~1 ms GPU per sample on B; driver CPU outside the GPU wait A 223.0, B 163.3 us per draw; exp/bf056-main 4126b1fa2, exp/bf056-fable 7d6d5ee54
 previous: PM-075 done with addendum, results/cloud-5/PM-075.md: no blocking finding in C-1; scan hardened (4ff3b0545), descriptor RAW/WAR cases (f06328265), and per the Bug Finder's note the write-back claim holds on current main 984e5d720 (#6892): tiled 0/0 (pass continued), linear over import 255/255, pinned by 4796eac2d's _targets_split pair (red on a scratch write-back at the pass break); review/agc-address-read-passes 4796eac2d; mirrors: head 1268/65/5 of 1338, main 1280/66/5 of 1351, merge 1282/66/5 of 1353, IPv6 only, no existing test changes
 
 RESULT (setup):
