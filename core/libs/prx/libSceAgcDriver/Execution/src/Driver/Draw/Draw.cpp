@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -876,6 +877,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
+        {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Indirect);
+            std::lock_guard leaseLock(GuestMemory::GpuMutex());
+            Graphics::FinishLeaseWork();
+        }
         const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
         std::vector<Pm4::DrawArguments> records;
         for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(indirect, record));
