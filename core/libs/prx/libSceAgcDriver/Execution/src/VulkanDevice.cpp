@@ -3705,6 +3705,17 @@ void reportSpirvResidency() {
     const auto heap = static_cast<double>(held.heapWords) * sizeof(std::uint32_t) / Mib;
     const auto mapped = static_cast<double>(held.mappedWords) * sizeof(std::uint32_t) / Mib;
     AgcDriver::ProfilePrint_nid_no_patch("[spirv] %.1f MiB held (heap %.1f, mapped %.1f) by %llu modules; releasable %llu, resident %llu, pinned %llu; released %llu, reloaded %llu (%llu in the last %.0f s, %.1f ms reloading in all); %llu kept under the %.0f MiB budget (%.1f MiB)\n", heap + mapped, heap, mapped, static_cast<unsigned long long>(held.holders), static_cast<unsigned long long>(held.releasable), static_cast<unsigned long long>(held.resident), static_cast<unsigned long long>(held.pinned), static_cast<unsigned long long>(held.releases), static_cast<unsigned long long>(held.reloads), static_cast<unsigned long long>(recent), static_cast<double>(nowMs - last) / 1000.0, static_cast<double>(held.reloadNanoseconds) / 1e6, static_cast<unsigned long long>(retired.modules), static_cast<double>(retired.budgetWords) * sizeof(std::uint32_t) / Mib, static_cast<double>(retired.words) * sizeof(std::uint32_t) / Mib);
+    const auto buffers = Graphics::LiveHostVisibleBuffers();
+    std::string purposes;
+    double total = 0.0;
+    for (std::size_t index = 0; index < buffers.bytes.size(); ++index) {
+        const auto mib = static_cast<double>(buffers.bytes[index]) / Mib;
+        total += mib;
+        char text[96];
+        std::snprintf(text, sizeof(text), "%s%s %.1f MiB in %llu", index == 0 ? "" : ", ", Graphics::BufferPurposeName(static_cast<Graphics::BufferPurpose>(index)), mib, static_cast<unsigned long long>(buffers.buffers[index]));
+        purposes += text;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] host-visible, live: %.1f MiB (%s)\n", total, purposes.c_str());
 }
 
 }

@@ -432,6 +432,12 @@ void Measure(const Layout& layout, std::uint32_t count, std::uint32_t blocks, st
         const auto retired = AgcDriver::Graphics::RetiredSpirvTotals();
         const auto sources = ShaderRecompiler::HeldSources();
         std::printf("residency %s: %u programs of %zu words (%u blocks), %.1f s: Rss %.0f MiB, Anonymous %.0f MiB, file-backed %.0f MiB (Pss_File), Private_Dirty %.0f MiB; SPIR-V held: %llu holders, %.1f MiB on the heap, %.1f MiB mapped; releasable %llu, resident %llu, pinned %llu, released %llu, reloaded %llu (%.1f ms), %llu kept under the budget (%.1f MiB); recompiler: %llu sources (%.1f MiB of code), %llu IR programs, %llu variants, %llu memoized results\n", phase, count, programWords, blocks, seconds, field("Rss"), field("Anonymous"), field("Pss_File"), field("Private_Dirty"), static_cast<unsigned long long>(spirv.holders), static_cast<double>(spirv.heapWords) * 4.0 / 1048576.0, static_cast<double>(spirv.mappedWords) * 4.0 / 1048576.0, static_cast<unsigned long long>(spirv.releasable), static_cast<unsigned long long>(spirv.resident), static_cast<unsigned long long>(spirv.pinned), static_cast<unsigned long long>(spirv.releases), static_cast<unsigned long long>(spirv.reloads), static_cast<double>(spirv.reloadNanoseconds) / 1e6, static_cast<unsigned long long>(retired.modules), static_cast<double>(retired.words) * 4.0 / 1048576.0, static_cast<unsigned long long>(sources.sources), static_cast<double>(sources.codeWords) * 4.0 / 1048576.0, static_cast<unsigned long long>(sources.programs), static_cast<unsigned long long>(sources.variants), static_cast<unsigned long long>(sources.results));
+        const auto buffers = AgcDriver::Graphics::LiveHostVisibleBuffers();
+        std::string purposes;
+        for (std::size_t index = 0; index < buffers.bytes.size(); ++index) {
+            purposes += (index == 0 ? "" : ", ") + std::string(AgcDriver::Graphics::BufferPurposeName(static_cast<AgcDriver::Graphics::BufferPurpose>(index))) + " " + std::to_string(buffers.bytes[index] / 1024u) + " KiB in " + std::to_string(buffers.buffers[index]);
+        }
+        std::printf("residency %s buffers: host-visible, live: %s\n", phase, purposes.c_str());
         std::fflush(stdout);
     };
     report("start", 0.0);

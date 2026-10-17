@@ -98,7 +98,7 @@ void GpuColorTransfer::prepare(std::uint32_t newWidth, std::uint32_t newHeight, 
     Require((newWidth + 7u) / 8u <= context.limits.maxComputeWorkGroupCount[0] && (newHeight + 7u) / 8u <= context.limits.maxComputeWorkGroupCount[1], "color transfer exceeds workgroup limits");
     if (tiled && width == newWidth && height == newHeight && mode == newMode && elementBytes == newElementBytes) return;
     constexpr VkBufferUsageFlags copies = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    auto newTiled = std::make_unique<Buffer>(context, layout.Bytes(), copies);
+    auto newTiled = std::make_unique<Buffer>(BufferPurpose::Staging, context, layout.Bytes(), copies);
     auto newTiledDevice = std::make_unique<DeviceBuffer>(context, layout.Bytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto newLinear = std::make_unique<DeviceBuffer>(context, linearBytes, copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const std::array<VkDescriptorBufferInfo, 2> buffers{{{newTiledDevice->Handle(), 0, layout.Bytes()}, {newLinear->Handle(), 0, linearBytes}}};

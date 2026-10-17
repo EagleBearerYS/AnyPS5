@@ -322,6 +322,24 @@ void ExactSizes(const Context& context) {
 
 }
 
+void PurposeCounts(const Context& context) {
+    using AgcDriver::Graphics::Buffer;
+    using AgcDriver::Graphics::BufferPurpose;
+    using AgcDriver::Graphics::LiveHostVisibleBuffers;
+    const auto mirrors = static_cast<std::size_t>(BufferPurpose::HeapMirror);
+    const auto before = LiveHostVisibleBuffers();
+    {
+        Buffer mirror(BufferPurpose::HeapMirror, context, 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer local(BufferPurpose::HeapMirror, context, 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Buffer unnamed(context, 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const auto during = LiveHostVisibleBuffers();
+        Require(during.buffers[mirrors] == before.buffers[mirrors] + 1 && during.bytes[mirrors] >= before.bytes[mirrors] + 4096, "a host-visible heap mirror was not counted once, or a device-local buffer was counted");
+        Require(during.buffers[0] == before.buffers[0] + 1, "a buffer without a purpose was not counted as other");
+    }
+    const auto after = LiveHostVisibleBuffers();
+    Require(after.buffers == before.buffers && after.bytes == before.bytes, "destroyed buffers stayed counted");
+}
+
 int main() {
     try {
         std::unique_ptr<Device> device;
@@ -334,6 +352,7 @@ int main() {
         }
         RobustReadPastEnd(device->GetContext());
         ExactSizes(device->GetContext());
+        PurposeCounts(device->GetContext());
         std::puts("pooled buffer range tests passed");
         return 0;
     } catch (const std::exception& error) {
