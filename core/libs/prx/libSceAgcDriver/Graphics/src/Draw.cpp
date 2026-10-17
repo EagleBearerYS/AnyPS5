@@ -1896,8 +1896,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (drawBindings != nullptr) {
         const auto set = drawBindings->allocation.set;
         const auto fragmentSet = drawBindings->fragmentAllocation.set;
-        if (set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
-        if (fragmentSet != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
+        if (set != VK_NULL_HANDLE) BindGraphicsSets(context, commands, record.pipeline->Layout(), 0, std::span<const VkDescriptorSet>(&set, 1), {});
+        if (fragmentSet != VK_NULL_HANDLE) BindGraphicsSets(context, commands, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, std::span<const VkDescriptorSet>(&fragmentSet, 1), {});
         resources.BindHeap(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     } else {
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());

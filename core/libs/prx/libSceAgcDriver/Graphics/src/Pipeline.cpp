@@ -179,6 +179,40 @@ namespace {
 thread_local bool prebuilding = false;
 thread_local bool prebuilt = false;
 
+struct LayoutSignature {
+    std::array<VkDescriptorSetLayout, 4> sets{};
+    std::uint32_t setCount = 0;
+    std::vector<VkPushConstantRange> push;
+    VkPipelineLayoutCreateFlags flags = 0;
+};
+
+struct LayoutSignatures {
+    std::mutex mutex;
+    std::unordered_map<VkPipelineLayout, LayoutSignature> layouts;
+};
+
+LayoutSignatures& layoutSignatures() {
+    static LayoutSignatures signatures;
+    return signatures;
+}
+
+void noteLayoutSignature(VkPipelineLayout layout, const VkPipelineLayoutCreateInfo& info) {
+    LayoutSignature signature;
+    signature.setCount = std::min<std::uint32_t>(info.setLayoutCount, static_cast<std::uint32_t>(signature.sets.size()));
+    std::copy_n(info.pSetLayouts, signature.setCount, signature.sets.begin());
+    if (info.pushConstantRangeCount != 0) signature.push.assign(info.pPushConstantRanges, info.pPushConstantRanges + info.pushConstantRangeCount);
+    signature.flags = info.flags;
+    auto& signatures = layoutSignatures();
+    std::lock_guard lock(signatures.mutex);
+    signatures.layouts[layout] = std::move(signature);
+}
+
+void forgetLayoutSignature(VkPipelineLayout layout) {
+    auto& signatures = layoutSignatures();
+    std::lock_guard lock(signatures.mutex);
+    signatures.layouts.erase(layout);
+}
+
 VkShaderStageFlags pushStagesOf(const Context& context) {
     return PreRasterizationPushStages(context.meshShader, context.tessellationShader, context.geometryShader);
 }
@@ -303,6 +337,23 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
 
 }
 
+bool PipelineLayoutsCompatible(VkPipelineLayout first, VkPipelineLayout second, std::uint32_t set) {
+    if (first == VK_NULL_HANDLE || second == VK_NULL_HANDLE) return false;
+    if (first == second) return true;
+    auto& signatures = layoutSignatures();
+    std::lock_guard lock(signatures.mutex);
+    const auto a = signatures.layouts.find(first);
+    const auto b = signatures.layouts.find(second);
+    if (a == signatures.layouts.end() || b == signatures.layouts.end()) return false;
+    const auto& x = a->second;
+    const auto& y = b->second;
+    if (set >= x.setCount || set >= y.setCount || x.flags != y.flags || x.push.size() != y.push.size()) return false;
+    for (std::size_t index = 0; index < x.push.size(); ++index) {
+        if (x.push[index].stageFlags != y.push[index].stageFlags || x.push[index].offset != y.push[index].offset || x.push[index].size != y.push[index].size) return false;
+    }
+    return std::equal(x.sets.begin(), x.sets.begin() + set + 1, y.sets.begin());
+}
+
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : Pipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout) {}
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
@@ -380,6 +431,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         layoutInfo.pushConstantRangeCount = dynamicRendering ? static_cast<std::uint32_t>(slots.size()) : pushStages != 0 ? 1 : 0;
         layoutInfo.pPushConstantRanges = dynamicRendering ? slots.data() : pushStages != 0 ? &push : nullptr;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "vkCreatePipelineLayout graphics");
+        noteLayoutSignature(layout, layoutInfo);
         std::vector<VkAttachmentDescription> colors;
         std::vector<VkAttachmentReference> references(state.blends.size(), VkAttachmentReference{VK_ATTACHMENT_UNUSED, attachmentLayout});
         for (std::uint32_t index = 0; index < state.colors.size(); ++index) {
@@ -602,7 +654,10 @@ void Pipeline::release() noexcept {
     if (backFaces) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, backFaces, nullptr);
     if (secondChannel) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, secondChannel, nullptr);
     if (renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, renderPass, nullptr);
-    if (layout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+    if (layout) {
+        forgetLayoutSignature(layout);
+        context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+    }
     for (auto module : _modules) {
         if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
     }

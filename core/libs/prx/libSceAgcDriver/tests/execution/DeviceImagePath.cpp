@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "RuntimeAbi.hpp"
@@ -666,6 +667,35 @@ void Rechecks(const Harness& harness) {
     std::printf("(g) four draws in one submission: %llu entries re-checked of %u%s\n", static_cast<unsigned long long>(after.device.checked - before.device.checked), after.device.entries, Describe(before, after).c_str());
 }
 
+void BindsOnce(const Harness& harness) {
+    auto commands = DrawCommands(harness.block, 1546u, DrawKind::Direct);
+    for (const auto mask : {0x7u, 0xfu, 0x7u, 0xfu}) {
+        Append(commands, 0x69, {0x8e, mask});
+        Append(commands, 0x2d, {3, 2});
+    }
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the five-draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    static_cast<void>(ReadColor(harness));
+    const auto before = AgcDriver::Graphics::GraphicsDescriptorBinds();
+    std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the five-draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    RequireDrawn(ReadColor(harness), TexelOf(TextureOf(1546u)).value, "(j) five draws over two pipelines in one submission");
+    const auto after = AgcDriver::Graphics::GraphicsDescriptorBinds();
+    const auto heapBinds = after.heapBinds - before.heapBinds;
+    const auto heapKept = after.heapKept - before.heapKept;
+    const auto tableBinds = after.tableBinds - before.tableBinds;
+    const auto tableKept = after.tableKept - before.tableKept;
+    const auto counts = "heap set bound " + std::to_string(heapBinds) + " and kept " + std::to_string(heapKept) + ", table set bound " + std::to_string(tableBinds) + " and kept " + std::to_string(tableKept) + ", " + std::to_string(after.binds - before.binds) + " descriptor set binds (" + std::to_string(after.dynamicBinds - before.dynamicBinds) + " with dynamic offsets)";
+    const bool every = std::getenv("APS5_BIND_EVERY_DRAW") != nullptr;
+    if (harness.device && !every) {
+        Require(heapBinds + heapKept == 5u && heapBinds <= 1u, "(j) five draws over two pipelines in one submission bound the image heap more than once: " + counts);
+        Require(tableBinds + tableKept == 5u && tableBinds <= 1u, "(j) five draws over two pipelines in one submission bound the device image table more than once: " + counts);
+    }
+    std::printf("(j) five draws over two pipelines in one submission: %s%s\n", counts.c_str(), harness.device ? (every ? " (APS5_BIND_EVERY_DRAW)" : "") : " (CPU table path)");
+}
+
 std::vector<std::uint32_t> ProduceAndSample(const GuestBlock& block, const std::uint32_t* producer) {
     auto commands = DrawCommands(block, TargetEntry, DrawKind::Direct);
     commands.resize(commands.size() - 3u);
@@ -943,10 +973,10 @@ int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     const std::string parts = argc > 2 ? argv[2] : "abcdeghi";
 #ifdef _WIN32
-    if (mode != "--village-bench") _putenv_s("APS5_EAGER_WRITEBACK", "1");
+    if (mode != "--village-bench" && mode != "--binds") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
 #else
-    if (mode != "--village-bench") setenv("APS5_EAGER_WRITEBACK", "1", 1);
+    if (mode != "--village-bench" && mode != "--binds") setenv("APS5_EAGER_WRITEBACK", "1", 1);
     if (mode == "--heap-cap") setenv("APS5_HEAP_SLOT_CAP", "2", 1);
 #endif
     try {
@@ -979,6 +1009,8 @@ int main(int argc, char** argv) {
             Registered(OtherProducerHeader, OtherProducerPixelCode.data(), sizeof(OtherProducerPixelCode), 1);
             if (mode == "--heap-cap") {
                 FallsBackFromWarmCache(harness);
+            } else if (mode == "--binds") {
+                BindsOnce(harness);
             } else {
                 if (parts.find('a') != std::string::npos) ComputeTable(harness);
                 if (parts.find('b') != std::string::npos) Draws(harness);

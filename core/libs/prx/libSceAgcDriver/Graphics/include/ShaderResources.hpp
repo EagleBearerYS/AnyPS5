@@ -55,6 +55,21 @@ bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddres
 // a storage image other than `except` has results pending in [address, address + bytes).
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except);
 
+struct GraphicsBindCounts {
+    std::uint64_t binds = 0;
+    std::uint64_t dynamicBinds = 0;
+    std::uint64_t heapBinds = 0;
+    std::uint64_t heapKept = 0;
+    std::uint64_t tableBinds = 0;
+    std::uint64_t tableKept = 0;
+};
+
+enum class KeptSet { Heap, Table };
+
+GraphicsBindCounts GraphicsDescriptorBinds();
+void BindGraphicsSets(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout, std::uint32_t first, std::span<const VkDescriptorSet> sets, std::span<const std::uint32_t> offsets);
+bool KeepGraphicsSet(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout, std::uint32_t index, VkDescriptorSet set, std::uint32_t offset, KeptSet kind);
+
 struct PipelineSetLayouts {
     VkDescriptorSetLayout main = VK_NULL_HANDLE;
     VkDescriptorSetLayout fragment = VK_NULL_HANDLE;

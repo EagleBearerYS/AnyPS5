@@ -2198,6 +2198,95 @@ void ShaderResources::noteReusable() {
     reusable = true;
 }
 
+namespace {
+
+struct BoundGraphicsSet {
+    std::uint64_t serial = 0;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    std::uint32_t offset = 0;
+};
+
+struct BoundGraphicsSets {
+    std::mutex mutex;
+    std::unordered_map<VkCommandBuffer, std::array<BoundGraphicsSet, 4>> commands;
+};
+
+BoundGraphicsSets& boundGraphicsSets() {
+    static BoundGraphicsSets bound;
+    return bound;
+}
+
+struct GraphicsBindCounters {
+    std::atomic<std::uint64_t> binds{0};
+    std::atomic<std::uint64_t> dynamicBinds{0};
+    std::atomic<std::uint64_t> heapBinds{0};
+    std::atomic<std::uint64_t> heapKept{0};
+    std::atomic<std::uint64_t> tableBinds{0};
+    std::atomic<std::uint64_t> tableKept{0};
+};
+
+GraphicsBindCounters& graphicsBindCounters() {
+    static GraphicsBindCounters counters;
+    return counters;
+}
+
+bool BindEveryDraw() {
+    static const bool every = std::getenv("APS5_BIND_EVERY_DRAW") != nullptr;
+    return every;
+}
+
+}
+
+GraphicsBindCounts GraphicsDescriptorBinds() {
+    auto& counters = graphicsBindCounters();
+    return {counters.binds.load(std::memory_order_relaxed), counters.dynamicBinds.load(std::memory_order_relaxed), counters.heapBinds.load(std::memory_order_relaxed), counters.heapKept.load(std::memory_order_relaxed), counters.tableBinds.load(std::memory_order_relaxed), counters.tableKept.load(std::memory_order_relaxed)};
+}
+
+void BindGraphicsSets(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout, std::uint32_t first, std::span<const VkDescriptorSet> sets, std::span<const std::uint32_t> offsets) {
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, first, static_cast<std::uint32_t>(sets.size()), sets.data(), static_cast<std::uint32_t>(offsets.size()), offsets.data());
+    auto& counters = graphicsBindCounters();
+    counters.binds.fetch_add(1, std::memory_order_relaxed);
+    if (!offsets.empty()) counters.dynamicBinds.fetch_add(1, std::memory_order_relaxed);
+    const auto* recorder = context.recorder != nullptr ? context.recorder : Recorder::Active();
+    const bool open = recorder != nullptr && commands != VK_NULL_HANDLE && commands == recorder->OpenCommands();
+    const auto serial = open ? recorder->OpenSerial() : 0u;
+    auto& bound = boundGraphicsSets();
+    std::lock_guard lock(bound.mutex);
+    if (!open) {
+        bound.commands.erase(commands);
+        return;
+    }
+    auto& slots = bound.commands[commands];
+    for (std::uint32_t index = 0; index < slots.size(); ++index) {
+        auto& slot = slots[index];
+        if (index >= first && index < first + sets.size()) {
+            const bool tracked = serial != 0u && sets.size() == 1u && offsets.size() <= 1u;
+            slot = tracked ? BoundGraphicsSet{serial, layout, sets[0], offsets.empty() ? 0u : offsets[0]} : BoundGraphicsSet{};
+        } else if (slot.serial != serial || !PipelineLayoutsCompatible(slot.layout, layout, index)) {
+            slot = {};
+        }
+    }
+}
+
+bool KeepGraphicsSet(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout, std::uint32_t index, VkDescriptorSet set, std::uint32_t offset, KeptSet kind) {
+    bool kept = false;
+    const auto* recorder = context.recorder != nullptr ? context.recorder : Recorder::Active();
+    if (!BindEveryDraw() && recorder != nullptr && index < 4u && commands != VK_NULL_HANDLE && commands == recorder->OpenCommands()) {
+        auto& bound = boundGraphicsSets();
+        std::lock_guard lock(bound.mutex);
+        const auto found = bound.commands.find(commands);
+        if (found != bound.commands.end()) {
+            const auto& slot = found->second[index];
+            kept = slot.serial != 0u && slot.serial == recorder->OpenSerial() && slot.set == set && slot.offset == offset && PipelineLayoutsCompatible(slot.layout, layout, index);
+        }
+    }
+    auto& counters = graphicsBindCounters();
+    if (kind == KeptSet::Heap) (kept ? counters.heapKept : counters.heapBinds).fetch_add(1, std::memory_order_relaxed);
+    else (kept ? counters.tableKept : counters.tableBinds).fetch_add(1, std::memory_order_relaxed);
+    return kept;
+}
+
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     const bool loopGuard = LoopGuardEnabled();
     return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
@@ -4863,6 +4952,12 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
 }
 
 void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
+    if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        if (_set != VK_NULL_HANDLE) BindGraphicsSets(context, commands, layout, 0, std::span<const VkDescriptorSet>(&_set, 1), {});
+        if (fragment.set != VK_NULL_HANDLE) BindGraphicsSets(context, commands, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, std::span<const VkDescriptorSet>(&fragment.set, 1), {});
+        BindHeap(commands, bindPoint, layout);
+        return;
+    }
     if (_set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, 0, 1, &_set, 0, nullptr);
     if (fragment.set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragment.set, 0, nullptr);
     BindHeap(commands, bindPoint, layout);
@@ -4879,6 +4974,11 @@ void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bin
     auto& heap = BindlessHeap::For(context);
     const auto heapSet = heap.HeapSet();
     const auto dataSet = heap.DataSet();
+    if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        if (!KeepGraphicsSet(context, commands, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, heapSet, 0, KeptSet::Heap)) BindGraphicsSets(context, commands, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, std::span<const VkDescriptorSet>(&heapSet, 1), {});
+        BindGraphicsSets(context, commands, layout, ShaderRecompiler::RuntimeAbi::GpuDataSet, std::span<const VkDescriptorSet>(&dataSet, 1), heapOffsets);
+        return;
+    }
     const auto bind = context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
     bind(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &heapSet, 0, nullptr);
     bind(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::GpuDataSet, 1, &dataSet, static_cast<std::uint32_t>(heapOffsets.size()), heapOffsets.data());

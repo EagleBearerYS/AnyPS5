@@ -287,6 +287,11 @@ void DeviceImageTable::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPo
     const auto chunk = chunkFor(recorder, false);
     const auto heap = DeviceImageHeap::Set(context);
     const auto offset = static_cast<std::uint32_t>(static_cast<VkDeviceSize>(chunk) * chunkStride);
+    if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        if (!KeepGraphicsSet(context, commands, pipelineLayout, Runtime::DeviceHeapSet, heap, 0, KeptSet::Heap)) BindGraphicsSets(context, commands, pipelineLayout, Runtime::DeviceHeapSet, std::span<const VkDescriptorSet>(&heap, 1), {});
+        if (!KeepGraphicsSet(context, commands, pipelineLayout, Runtime::DeviceTableSet, set, offset, KeptSet::Table)) BindGraphicsSets(context, commands, pipelineLayout, Runtime::DeviceTableSet, std::span<const VkDescriptorSet>(&set, 1), std::span<const std::uint32_t>(&offset, 1));
+        return;
+    }
     const auto bind = context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
     bind(commands, bindPoint, pipelineLayout, Runtime::DeviceHeapSet, 1, &heap, 0, nullptr);
     bind(commands, bindPoint, pipelineLayout, Runtime::DeviceTableSet, 1, &set, 1, &offset);
@@ -296,8 +301,12 @@ void DeviceImageTable::BindTable(VkCommandBuffer commands, VkPipelineBindPoint b
     std::lock_guard lock(mutex);
     const auto chunk = chunkFor(recorder, false);
     const auto offset = static_cast<std::uint32_t>(static_cast<VkDeviceSize>(chunk) * chunkStride);
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, pipelineLayout, Runtime::DeviceTableSet, 1, &set, 1, &offset);
-    if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) ++totals.gpuModeDraws;
+    if (bindPoint != VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, pipelineLayout, Runtime::DeviceTableSet, 1, &set, 1, &offset);
+        return;
+    }
+    ++totals.gpuModeDraws;
+    if (!KeepGraphicsSet(context, commands, pipelineLayout, Runtime::DeviceTableSet, set, offset, KeptSet::Table)) BindGraphicsSets(context, commands, pipelineLayout, Runtime::DeviceTableSet, std::span<const VkDescriptorSet>(&set, 1), std::span<const std::uint32_t>(&offset, 1));
 }
 
 std::span<std::uint32_t> DeviceImageTable::RingChunk(Recorder& recorder) {
