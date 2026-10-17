@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 #define CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 
+#include "DeviceImageTableAbi.hpp"
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
@@ -18,6 +19,8 @@
 #include <vector>
 
 namespace ShaderRecompiler {
+
+struct IrResourcePlan;
 
 enum class ShaderStage {
     Compute,
@@ -645,6 +648,9 @@ struct ShaderInvocation {
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
+    std::vector<std::uint64_t> deviceImageInterfaces;
+    std::vector<std::uint32_t> deviceSamplerClasses;
+    std::vector<DeviceImageTableAbi::Expectation> deviceImages;
 };
 
 // What a Vulkan pipeline built from a result depends on besides the fixed-function state and the
@@ -679,6 +685,7 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;
+    std::shared_ptr<const IrResourcePlan> deviceImagePlan;
     [[nodiscard]] std::uint64_t PipelineVariantId() const { return specializationId != 0 ? specializationId : variantId; }
     [[nodiscard]] PipelineIdentity Identity() const {
         const auto hash = spirv.ContentHash();

@@ -1035,6 +1035,21 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
     if (usedPlan != nullptr) *usedPlan = {entry != nullptr ? std::shared_ptr<const void>(entry) : std::shared_ptr<const void>(plan), bindingPlan};
     ResourceMaterializer::RegisterDeviceImageInterfaces(variant.info.info);
+    if (result.deviceImageTables) {
+        const auto& info = variant.info.info;
+        result.deviceImageInterfaces.assign(info.images.size(), 0u);
+        for (std::size_t image = 0; image < info.images.size(); ++image) {
+            if (info.images[image].deviceTable) result.deviceImageInterfaces[image] = ResourceMaterializer::DeviceImageInterfaceId(info.images[image], info.runtimeImageModes.at(image));
+        }
+        result.deviceSamplerClasses.assign(info.samplers.size(), 0u);
+        for (const auto& constant : plan->bindings.specialization) {
+            const auto sampler = constant.id - PipelineSpecialization::DeviceSamplerClassBase;
+            if (constant.id >= PipelineSpecialization::DeviceSamplerClassBase && sampler < info.samplers.size()) result.deviceSamplerClasses[sampler] = constant.value;
+        }
+        result.deviceImages = snapshot.deviceImages;
+        DeviceImageTableAbi::NameInterfaces(result.deviceImages, result.deviceImageInterfaces);
+        DeviceImageTableAbi::NameSamplerClasses(result.deviceImages, result.deviceSamplerClasses);
+    }
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
@@ -1165,15 +1180,22 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
     const auto runtime = memory.MakeRuntime(request.context.userData, request.shader.codeAddress);
     ResourceSnapshot snapshot;
     constexpr ResourceMaterializer materializer;
+    const auto expect = [&](const IrResourcePlan& plan) {
+        bool complete = false;
+        auto images = ResourceMaterializer::ExpectedDeviceImages(plan, runtime, complete);
+        if (complete) snapshot.deviceImages = std::move(images);
+    };
     if (!request.useCache) {
         auto program = PrepareResourceProgram(request);
         const auto plan = materializer.ExtractPlan(program);
         materializer.Materialize(plan, runtime, snapshot);
+        expect(plan);
         const auto variant = compileVariant(request, std::move(program));
         return materializeResult(variant, request, snapshot);
     }
     const auto source = getSource(request);
     materializer.Materialize(*source->plan, runtime, snapshot);
+    expect(*source->plan);
     return materializeVariant(*source, request, snapshot);
 }
 
@@ -1240,6 +1262,14 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mixDescriptors(snapshot.buffers);
         mixDescriptors(snapshot.images);
         mixDescriptors(snapshot.samplers);
+    }
+    mix(snapshot.deviceImages.size());
+    for (const auto& image : snapshot.deviceImages) {
+        mix(image.image);
+        mix(image.pc);
+        mix(image.sampler);
+        mix(image.candidate ? 1u : 0u);
+        for (const auto word : image.key) mix(word);
     }
     if (perDrawData) {
         mixWords(snapshot.flattenedSrt);
@@ -1324,6 +1354,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot));
     result->cacheHit = cacheHit;
+    if (result->deviceImageTables) result->deviceImagePlan = source.plan;
     if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     counters.misses.fetch_add(1, std::memory_order_relaxed);
     std::shared_ptr<const RecompileResult> shared = std::move(result);
@@ -1370,9 +1401,15 @@ std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& req
     if (!request.useCache || capture.source == nullptr) {
         auto program = PrepareResourceProgram(request);
         const auto variant = compileVariant(request, std::move(program));
-        return std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot));
+        auto result = std::make_shared<RecompileResult>(materializeResult(variant, request, capture.snapshot));
+        if (result->deviceImageTables) result->deviceImagePlan = capture.plan;
+        return result;
     }
-    if (!ResultMemo()) return std::make_shared<const RecompileResult>(materializeVariant(*capture.source, request, capture.snapshot));
+    if (!ResultMemo()) {
+        auto result = std::make_shared<RecompileResult>(materializeVariant(*capture.source, request, capture.snapshot));
+        if (result->deviceImageTables) result->deviceImagePlan = capture.plan;
+        return result;
+    }
     return materializeMemoized(*capture.source, request, capture.snapshot, memoHit);
 }
 
@@ -1632,6 +1669,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(con
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr);
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot));
     result->cacheHit = true;
+    if (result->deviceImageTables) result->deviceImagePlan = capture.plan;
     return result;
 }
 
@@ -1699,6 +1737,7 @@ std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest&
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle.source, handle.artifact, request, capture.snapshot, true, nullptr);
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, capture.snapshot));
     result->cacheHit = true;
+    if (result->deviceImageTables) result->deviceImagePlan = capture.plan;
     return result;
 }
 
