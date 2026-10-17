@@ -2498,6 +2498,8 @@ Recorder::KeepCensus Recorder::KeptCensus() const {
     census.holdKept = holdKept.size();
     census.finishing = finishing.size();
     census.unsignaled = UnsignaledBatches();
+    census.openKeptBytes = open != nullptr ? open->keptBytes : 0;
+    census.inFlightKeptBytes = inFlightKeptBytes;
     if (!inFlight.empty()) {
         census.frontSerial = inFlight.front()->serial;
         census.frontSubmitted = inFlight.front()->submitted;
