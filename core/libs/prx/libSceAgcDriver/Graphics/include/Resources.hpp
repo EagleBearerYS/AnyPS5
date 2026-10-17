@@ -2,13 +2,34 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RESOURCES_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include <array>
+#include <cstdint>
 #include <span>
 
 namespace AgcDriver::Graphics {
 
+enum class BufferPurpose : std::uint8_t {
+    Other,
+    HeapMirror,
+    BdaTable,
+    GuestRange,
+    Staging,
+    Upload,
+    Count
+};
+
+struct BufferPurposeBytes {
+    std::array<std::uint64_t, static_cast<std::size_t>(BufferPurpose::Count)> bytes{};
+    std::array<std::uint64_t, static_cast<std::size_t>(BufferPurpose::Count)> buffers{};
+};
+
+[[nodiscard]] const char* BufferPurposeName(BufferPurpose purpose);
+[[nodiscard]] BufferPurposeBytes LiveHostVisibleBuffers();
+
 class Buffer {
 public:
-    Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) : Buffer(BufferPurpose::Other, context, size, usage, properties) {}
+    Buffer(BufferPurpose purpose, const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     ~Buffer();
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
@@ -23,7 +44,10 @@ public:
 private:
     void initializeAddress(VkBufferUsageFlags usage);
     void release() noexcept;
+    void account(bool alive) noexcept;
     Context context;
+    BufferPurpose purpose;
+    bool counted = false;
     VkDeviceAddress deviceAddress = 0;
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;

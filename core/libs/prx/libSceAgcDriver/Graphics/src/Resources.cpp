@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <atomic>
 #include <exception>
 
 namespace AgcDriver::Graphics {
@@ -37,7 +38,47 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
 
 }
 
-Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size, properties)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
+namespace {
+
+constexpr std::size_t BufferPurposes = static_cast<std::size_t>(BufferPurpose::Count);
+std::array<std::atomic<std::int64_t>, BufferPurposes> purposeBytes{};
+std::array<std::atomic<std::int64_t>, BufferPurposes> purposeBuffers{};
+
+}
+
+const char* BufferPurposeName(BufferPurpose purpose) {
+    switch (purpose) {
+        case BufferPurpose::Other: return "other";
+        case BufferPurpose::HeapMirror: return "heap mirrors";
+        case BufferPurpose::BdaTable: return "BDA tables";
+        case BufferPurpose::GuestRange: return "guest ranges";
+        case BufferPurpose::Staging: return "staging";
+        case BufferPurpose::Upload: return "uploads";
+        case BufferPurpose::Count: break;
+    }
+    return "unknown";
+}
+
+BufferPurposeBytes LiveHostVisibleBuffers() {
+    BufferPurposeBytes live;
+    for (std::size_t index = 0; index < BufferPurposes; ++index) {
+        live.bytes[index] = static_cast<std::uint64_t>(std::max<std::int64_t>(purposeBytes[index].load(std::memory_order_relaxed), 0));
+        live.buffers[index] = static_cast<std::uint64_t>(std::max<std::int64_t>(purposeBuffers[index].load(std::memory_order_relaxed), 0));
+    }
+    return live;
+}
+
+void Buffer::account(bool alive) noexcept {
+    if (alive) counted = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+    if (!counted) return;
+    const auto index = static_cast<std::size_t>(purpose);
+    const auto bytes = static_cast<std::int64_t>(capacity);
+    purposeBytes[index].fetch_add(alive ? bytes : -bytes, std::memory_order_relaxed);
+    purposeBuffers[index].fetch_add(alive ? 1 : -1, std::memory_order_relaxed);
+    if (!alive) counted = false;
+}
+
+Buffer::Buffer(BufferPurpose purpose, const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), purpose(purpose), size(size), capacity(BufferPool::Capacity(size, properties)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
     Require(size != 0, "zero-sized GPU buffer");
     const bool addressable = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
     Require(!addressable || context.bufferDeviceAddress, "buffer device address is not enabled");
@@ -64,6 +105,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             }
         }
         ready = true;
+        account(true);
         return;
     }
     try {
@@ -93,6 +135,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             initializeAddress(usage);
             mapping = slot.mapping;
             ready = true;
+            account(true);
             return;
         }
         memory = cache->AllocateMemory(allocation, "vkAllocateMemory buffer");
@@ -100,6 +143,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         initializeAddress(usage);
         if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");
         ready = true;
+        account(true);
     } catch (...) {
         release();
         throw;
@@ -111,6 +155,7 @@ Buffer::~Buffer() {
 }
 
 void Buffer::release() noexcept {
+    account(false);
     if (ready && cache) {
         cache->Put({buffer, memory, mapping, deviceAddress, allocationBytes, capacity, usage, properties, offset, slab, size});
         return;
