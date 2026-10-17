@@ -676,14 +676,14 @@ void DeviceImageTable::drain(std::uint32_t index) {
     chunk.programs.clear();
     totals.drained += decoded.misses.size();
     totals.dropped += decoded.dropped;
-    if (decoded.dropped != 0u) {
+    if (decoded.dropped == 0u) {
+        for (const auto& identity : *programs) overflowStreaks.erase(identity);
+    } else if (pending.empty()) {
         std::set<ShaderRecompiler::PipelineIdentity> overflowing;
         for (const auto& identity : *programs) {
             if (++overflowStreaks[identity] >= OverflowBatches) overflowing.insert(identity);
         }
         if (!overflowing.empty()) fallBack(overflowing, "its misses overflowed the ring of " + std::to_string(RingCapacity) + " records in " + std::to_string(OverflowBatches) + " batches in a row");
-    } else {
-        for (const auto& identity : *programs) overflowStreaks.erase(identity);
     }
     std::optional<std::string> fault;
     for (const auto& miss : decoded.misses) {
