@@ -61,6 +61,12 @@ bool HeapFragmentsEnabled() {
     return Graphics::GpuHeapEnabled();
 }
 
+bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan, bool gpuConstantsVertex) {
+    if (plan == nullptr || (stage != ShaderRecompiler::ShaderStage::Fragment && stage != ShaderRecompiler::ShaderStage::Vertex)) return false;
+    if (stage == ShaderRecompiler::ShaderStage::Vertex && !(gpuConstantsVertex && plan->gpuConstants)) return false;
+    return (!plan->info.images.empty() || (gpuConstantsVertex && plan->srtReads.size() == plan->gpuConstantCheckSlots)) && ShaderRecompiler::HeapFragmentEligible(*plan);
+}
+
 namespace {
 
 struct HeapFragmentKey {
