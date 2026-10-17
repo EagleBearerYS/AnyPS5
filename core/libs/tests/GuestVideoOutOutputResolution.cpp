@@ -20,6 +20,8 @@ int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status);
 int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatus* status);
 void APS5_VABI sceVideoOutSetBufferAttribute2(VideoOutBufferAttribute2* attribute, uint64_t pixelFormat, uint32_t tilingMode, uint32_t width, uint32_t height, uint64_t option, uint32_t dccControl, uint64_t dccCbRegisterClearColor);
 int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIndexStart, const VideoOutBuffers* buffers, int bufferNum, const VideoOutBufferAttribute2* attribute, int category, void* option);
+void APS5_VABI sceVideoOutSetBufferAttribute(VideoOutBufferAttribute* attribute, uint32_t pixelFormat, uint32_t tilingMode, uint32_t aspectRatio, uint32_t width, uint32_t height, uint32_t pitchInPixel);
+int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void* const* addresses, int bufferNum, const VideoOutBufferAttribute* attribute);
 int APS5_VABI sceVideoOutUnregisterBuffers(int handle, int setIndex);
 }
 
@@ -29,6 +31,9 @@ static constexpr std::uint64_t PIXEL_FORMAT_B8G8R8A8_SRGB = 0x8000000000000000ul
 static constexpr std::uint32_t RESOLUTION_HD = 1;
 static constexpr std::uint32_t RESOLUTION_ULTRA_HD = 2;
 static constexpr std::size_t TILE_BLOCK_BYTES = 65536;
+static constexpr std::uint32_t PS4_PIXEL_FORMAT_A8R8G8B8_SRGB = 0x80000000u;
+static constexpr std::uint32_t PS4_TILING_LINEAR = 1;
+static constexpr std::size_t PS4_BUFFER_ALIGNMENT = 4096;
 static constexpr int VIDEO_OUT_ERROR_INVALID_RESOLUTION = static_cast<int>(0x80290005u);
 
 static void Require(bool value, const char* reason) {
@@ -67,6 +72,34 @@ static void Register(int handle, std::vector<std::byte>& allocation, std::uint32
     Require(TryRegister(handle, allocation, width, height) == 0, "buffer registration failed");
 }
 
+static int RegisterPs4(int handle, int bufferIndexStart, std::vector<std::byte>& allocation, std::uint32_t width, std::uint32_t height) {
+    const auto address = reinterpret_cast<std::uintptr_t>(allocation.data());
+    const auto offset = (PS4_BUFFER_ALIGNMENT - (address % PS4_BUFFER_ALIGNMENT)) % PS4_BUFFER_ALIGNMENT;
+    void* const addresses[] = {allocation.data() + offset};
+    VideoOutBufferAttribute attribute{};
+    sceVideoOutSetBufferAttribute(&attribute, PS4_PIXEL_FORMAT_A8R8G8B8_SRGB, PS4_TILING_LINEAR, 0, width, height, width);
+    return sceVideoOutRegisterBuffers(handle, bufferIndexStart, addresses, 1, &attribute);
+}
+
+static void RequirePs4BuffersFollowTheSetting(int handle, std::vector<std::byte>& allocation) {
+    RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported before a PS4 registration");
+    Require(RegisterPs4(handle, 0, allocation, 1280, 720) == 0, "the 1280x720 PS4 registration did not take set 0");
+    RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported after a 1280x720 PS4 registration");
+    std::vector<std::byte> smaller(640 * 360 * 4 + PS4_BUFFER_ALIGNMENT);
+    Require(RegisterPs4(handle, 1, smaller, 640, 360) == 1, "the 640x360 PS4 registration did not take set 1");
+    RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported after a 640x360 PS4 registration");
+    std::vector<std::byte> larger(2560 * 1440 * 4 + PS4_BUFFER_ALIGNMENT);
+    std::string answer;
+    try {
+        answer = "taken as set " + std::to_string(RegisterPs4(handle, 2, larger, 2560, 1440));
+    } catch (const std::runtime_error& error) {
+        answer = error.what();
+    }
+    Require(answer.find("ANYPS5_OUTPUT_RESOLUTION") != std::string::npos, ("2560x1440 PS4 buffers on a 1280x720 output did not stop with an error naming ANYPS5_OUTPUT_RESOLUTION: " + answer).c_str());
+    RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported after refused 2560x1440 PS4 buffers");
+    Require(sceVideoOutUnregisterBuffers(handle, 1) == 0, "PS4 buffer unregistration failed");
+}
+
 static int RequireInvalidValueStopsOpen() {
     try {
         sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
@@ -102,6 +135,8 @@ int main(int argc, char** argv) {
         RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported before registration");
         Register(handle, allocation, 1280, 720);
         RequireReports(handle, 1280, 720, RESOLUTION_HD, "1280x720 was not reported after a 1280x720 registration");
+    } else if (mode == "ps4_1280x720") {
+        RequirePs4BuffersFollowTheSetting(handle, allocation);
     } else if (mode == "2560x1440") {
         RequireReports(handle, 2560, 1440, RESOLUTION_HD, "2560x1440 was not reported before registration");
         Require(TryRegister(handle, allocation, 3840, 64) == VIDEO_OUT_ERROR_INVALID_RESOLUTION, "3840x64 buffers were not refused with INVALID_RESOLUTION on a 2560x1440 output");
