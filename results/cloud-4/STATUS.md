@@ -1,5 +1,6 @@
-READY
-since: 2026-10-17T08:30:20Z
+BUSY PM-070
+since: 2026-10-17T08:36:00Z (claimed)
+claimed: tasks/claimed/PM-070.md
 last: PM-069 done, results/cloud-4/PM-069.md (review/videoout-output-resolution ec4a01c07); before it BF-052, results/cloud-4/BF-052.md (exp/cpu-indirect-draw-cache fdb45156c)
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
