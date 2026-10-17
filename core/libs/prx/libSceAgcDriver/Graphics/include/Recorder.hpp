@@ -523,6 +523,21 @@ public:
     std::uint64_t NewestSubmitted(std::chrono::steady_clock::time_point* submittedAt = nullptr) const;
     // In-flight batches whose fence has not signaled (one status query each); under the mutex.
     std::size_t UnsignaledBatches() const;
+    struct KeepCensus {
+        std::size_t openKept = 0;
+        std::size_t inFlight = 0;
+        std::size_t inFlightKept = 0;
+        std::size_t holdKept = 0;
+        std::size_t finishing = 0;
+        std::size_t unsignaled = 0;
+        std::uint64_t frontSerial = 0;
+        bool frontSubmitted = false;
+        bool frontSignaled = false;
+        std::uint64_t newestSerial = 0;
+        std::uint64_t completedSerial = 0;
+        double frontAgeMs = 0;
+    };
+    KeepCensus KeptCensus() const;
     static bool FlipReadCheck();
 
 private:

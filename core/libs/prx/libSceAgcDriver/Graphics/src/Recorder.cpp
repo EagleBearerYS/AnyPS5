@@ -2490,6 +2490,28 @@ std::size_t Recorder::UnsignaledBatches() const {
     return static_cast<std::size_t>(std::count_if(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return !signaled(*batch); }));
 }
 
+Recorder::KeepCensus Recorder::KeptCensus() const {
+    KeepCensus census;
+    census.openKept = open != nullptr ? open->kept.size() : 0;
+    census.inFlight = inFlight.size();
+    for (const auto& batch : inFlight) census.inFlightKept += batch->kept.size();
+    census.holdKept = holdKept.size();
+    census.finishing = finishing.size();
+    census.unsignaled = UnsignaledBatches();
+    if (!inFlight.empty()) {
+        census.frontSerial = inFlight.front()->serial;
+        census.frontSubmitted = inFlight.front()->submitted;
+        census.frontSignaled = signaled(*inFlight.front());
+        census.newestSerial = inFlight.back()->serial;
+        census.frontAgeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inFlight.front()->submittedAt).count();
+    }
+    if (timeline != VK_NULL_HANDLE) {
+        std::uint64_t value = 0;
+        if (context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR")(context.device, timeline, &value) == VK_SUCCESS) census.completedSerial = value;
+    }
+    return census;
+}
+
 void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     ensureOpen();
     open->kept.push_back(std::move(object));
