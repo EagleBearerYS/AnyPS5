@@ -463,23 +463,27 @@ void OverflowFallsBack(AgcDriver::VulkanDevice& device) {
     Require(device.DeviceImagesServe(ProgramAddress), "a noted program is served by the device path");
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
     const auto keys = FormatKeys();
+    table.Prepare(context, *recorder, programs);
+    WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+    recorder->Sync();
     for (std::uint32_t batch = 1; batch <= DeviceImageTable::OverflowBatches; ++batch) {
         Require(table.ServesProgram(ProgramAddress), "the program keeps the device path before " + std::to_string(DeviceImageTable::OverflowBatches) + " overflowing batches");
         table.Prepare(context, *recorder, programs);
         WriteRecords(table.RingChunk(*recorder), keys, DeviceImageTable::RingCapacity + 1u);
         recorder->Sync();
     }
-    Require(!table.ServesProgram(ProgramAddress) && !table.ServesIdentity(programs[0]) && table.Totals().fallbacks == 1u, "a program whose misses overflow the ring in three batches in a row falls back to the CPU path");
+    Require(!table.ServesProgram(ProgramAddress) && !table.ServesIdentity(programs[0]) && table.Totals().fallbacks == 1u, "a program whose misses overflow the ring in three batches in a row after the table resolved its misses falls back to the CPU path");
     Require(!device.DeviceImagesServe(ProgramAddress) && device.DeviceImagesServe(ProgramAddress + 0x100u), "the device's next recompile request for that program, and only for it, asks for the CPU table path");
     Require(device.Target().deviceImageTables, "the device still serves the path to other programs");
     DeviceImageTable other(context, Lookup());
     other.NoteProgram(program, ProgramAddress);
-    for (std::uint32_t batch = 0; batch < DeviceImageTable::OverflowBatches + 1u; ++batch) {
+    constexpr std::uint32_t Overflow = DeviceImageTable::RingCapacity + 1u;
+    for (const auto count : {1u, Overflow, Overflow, 1u, Overflow, Overflow}) {
         other.Prepare(context, *recorder, programs);
-        WriteRecords(other.RingChunk(*recorder), keys, batch == 1u ? 1u : DeviceImageTable::RingCapacity + 1u);
+        WriteRecords(other.RingChunk(*recorder), keys, count);
         recorder->Sync();
     }
-    Require(other.ServesProgram(ProgramAddress), "a batch without overflow between them resets the count");
+    Require(other.ServesProgram(ProgramAddress) && other.OverflowStreak(programs[0]) == 2u, "a batch without overflow between them resets the count (streak " + std::to_string(other.OverflowStreak(programs[0])) + ")");
 }
 
 void OverflowsBeforeAResolveCountOnce(AgcDriver::VulkanDevice& device) {
@@ -505,6 +509,63 @@ void OverflowsBeforeAResolveCountOnce(AgcDriver::VulkanDevice& device) {
     table.Prepare(context, *recorder, programs);
     Require(table.Totals().inserted == keys.size(), "the records that fit are resolved");
     recorder->Sync();
+}
+
+void OverflowsBeforeTheirInsertsDoNotCount(AgcDriver::VulkanDevice& device) {
+    const auto program = DeviceTableProgram(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    table.NoteProgram(program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
+    const auto keys = FormatKeys();
+    std::vector<std::uint64_t> serials;
+    for (std::uint32_t batch = 0; batch < DeviceImageTable::OverflowBatches + 2u; ++batch) {
+        static_cast<void>(recorder->Commands());
+        table.Prepare(context, *recorder, programs);
+        WriteRecords(table.RingChunk(*recorder), keys, DeviceImageTable::RingCapacity + 1u);
+        serials.push_back(recorder->SubmitAndEpoch());
+    }
+    Require(table.Totals().drained == 0u, "the overflowing batches are still in flight");
+    for (const auto serial : serials) {
+        recorder->FinishUpTo(serial);
+        static_cast<void>(recorder->Commands());
+        table.Prepare(context, *recorder, programs);
+    }
+    const auto drained = table.Totals();
+    Require(drained.dropped == serials.size() && drained.inserted == keys.size(), "every batch overflowed the ring and the first batch's records were resolved before the others drained (dropped " + std::to_string(drained.dropped) + ", inserted " + std::to_string(drained.inserted) + ")");
+    const auto streak = table.OverflowStreak(programs[0]);
+    Require(table.ServesProgram(ProgramAddress) && drained.fallbacks == 0u && streak == 0u, "batches taken before the inserts that resolved their misses neither count toward the overflow streak nor make the program fall back (streak " + std::to_string(streak) + ", " + std::to_string(drained.fallbacks) + " fallbacks)");
+    recorder->Sync();
+}
+
+void WarmOverflowFallsBack(AgcDriver::VulkanDevice& device) {
+    const auto program = DeviceTableProgram(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    table.NoteProgram(program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{program.Identity()};
+    const auto warm = FormatKeys();
+    table.Prepare(context, *recorder, programs);
+    WriteRecords(table.RingChunk(*recorder), warm, static_cast<std::uint32_t>(warm.size()));
+    recorder->Sync();
+    std::vector<Key> keys(DeviceImageTable::RingCapacity + 1u, warm[0]);
+    for (std::uint32_t batch = 0; batch < DeviceImageTable::OverflowBatches; ++batch) {
+        Require(table.ServesProgram(ProgramAddress), "the program keeps the device path before " + std::to_string(DeviceImageTable::OverflowBatches) + " overflowing batches");
+        for (std::uint32_t index = 0; index < keys.size(); ++index) keys[index][Abi::SamplerWord] = batch * static_cast<std::uint32_t>(keys.size()) + index + 1u;
+        table.Prepare(context, *recorder, programs);
+        WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+        recorder->Sync();
+    }
+    const auto counts = table.Totals();
+    const auto resolved = warm.size() + (DeviceImageTable::OverflowBatches - 1u) * DeviceImageTable::RingCapacity;
+    Require(counts.inserted == resolved && counts.dropped == DeviceImageTable::OverflowBatches, "the table resolved the warm keys and each batch's recorded misses before the next batch was taken (" + std::to_string(counts.inserted) + " inserted, " + std::to_string(counts.dropped) + " dropped)");
+    Require(!table.ServesProgram(ProgramAddress) && counts.fallbacks == 1u, "a program that misses more distinct keys than the ring holds in three batches in a row, each taken after the previous batch's misses were inserted, falls back to the CPU path");
+    const auto reason = "its misses overflowed the ring of " + std::to_string(DeviceImageTable::RingCapacity) + " records in " + std::to_string(DeviceImageTable::OverflowBatches) + " batches in a row";
+    Require(table.LastFallback() == reason, "the fallback gives the overflow reason: " + table.LastFallback());
 }
 
 void FullTableFallsBack(AgcDriver::VulkanDevice& device) {
@@ -774,6 +835,8 @@ int main(int argc, char** argv) {
         FullTableFallsBack(*device);
         OverflowFallsBack(*device);
         OverflowsBeforeAResolveCountOnce(*device);
+        OverflowsBeforeTheirInsertsDoNotCount(*device);
+        WarmOverflowFallsBack(*device);
         NonSeamlessCube(*device);
         ComputeLayout(*device);
         GraphicsLayouts(*device);

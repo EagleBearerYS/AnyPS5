@@ -111,6 +111,8 @@ public:
     std::optional<DeviceImageValue> Find(const Key& key) const;
     std::vector<std::uint32_t> KeyWords() const;
     std::string LastFault() const;
+    std::string LastFallback() const;
+    std::uint32_t OverflowStreak(const ShaderRecompiler::PipelineIdentity& identity) const;
     std::shared_ptr<Texture> EntryTexture(const Key& key) const;
     std::vector<std::pair<VkImage, bool>> StorageImages() const;
 
@@ -169,6 +171,7 @@ private:
     };
     struct Chunk {
         std::uint64_t serial = 0;
+        std::uint64_t generation = 0;
         bool busy = false;
         std::set<ShaderRecompiler::PipelineIdentity> programs;
     };
@@ -226,8 +229,11 @@ private:
     std::set<ShaderRecompiler::PipelineIdentity> failedPrograms;
     std::set<std::uint64_t> fallbackPrograms;
     std::map<ShaderRecompiler::PipelineIdentity, std::uint32_t> overflowStreaks;
+    std::map<ShaderRecompiler::PipelineIdentity, std::uint64_t> overflowFrom;
+    std::uint64_t resolveGeneration = 0;
     bool tableFullReported = false;
     std::string lastFault;
+    std::string lastFallback;
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     Counts totals;
     Counts reported;
