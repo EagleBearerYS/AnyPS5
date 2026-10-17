@@ -1,5 +1,7 @@
-READY
-since: 2026-10-17T18:52Z
+BUSY BF-071
+since: 2026-10-17T18:52Z (BF-071, the guest-table commit-on-touch work as two clean commits on main, perf/agc-guest-tables-on-touch)
+claimed: tasks/claimed/BF-071.md
+step: splitting 3a361ed79 + 8a14ccb2c into tracker leaves, then page-state table; near -> around
 previous: BF-070 done, results/cloud-5/BF-070.md: fork perf/agc-cpu-indirect-draw-cache-v2 54bdd57ec = the five BF-052/BF-058 commits on main e1041f6a5, no conflicts, patch-ids equal; each commit builds and passes its tests (7/9/9/9/10); x20 60/60; ^agc 665/0; mirror 1,375 vs main 1,372, IPv6 5 only; conventions pass, no comment lines; main since moved to e3838332e (CI-only, merges clean); overlap: 43 open PRs share files, 6946/6947 conflict in 4 files (resolution routes their shape-replacement erase through dropDrawEntry; trials 15/15 and 25/25), 6931 1 hunk (trial 11/11; counters skip on its early return), 1896 clean (its APS5_PIPELINE_INDIRECT path bypasses the per-record patch; trial 11/11 both ways), 6612/6679 2 hunks (resolution given, not built), 5656 1 line, 25 clean, 12 already conflict with main
 
 RESULT (setup):
