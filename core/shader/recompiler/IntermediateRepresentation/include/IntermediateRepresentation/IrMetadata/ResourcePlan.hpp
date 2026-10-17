@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_RESOURCEPLAN_HPP
 #define CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_RESOURCEPLAN_HPP
 
+#include "DeviceImageTableAbi.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/IrValue.hpp"
 #include "IntermediateRepresentation/IrMetadata/ControlFlowInfo.hpp"
@@ -72,6 +73,7 @@ struct ResourceSnapshot {
     std::vector<SrtReadPoison> srtPoison;
     std::uint32_t nullRootReads = 0;
     ImageTableSnapshot tables;
+    std::vector<DeviceImageTableAbi::Expectation> deviceImages;
 };
 
 struct UniformFillPlan {

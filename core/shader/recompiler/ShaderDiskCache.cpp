@@ -85,18 +85,19 @@ namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(CompiledShaderArtifact) == 248, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 232, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(ShaderInvocation) == 304, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(RecompileResult) == 648, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
-static_assert(sizeof(CompiledShaderInfo) == 360, "CompiledShaderInfo changed: update the info encoder");
-static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
+static_assert(sizeof(CompiledShaderInfo) == 384, "CompiledShaderInfo changed: update the info encoder");
+static_assert(sizeof(ShaderInfo) == 256, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 92, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 12, "SampledResourcePair changed: update the info encoder");
+static_assert(sizeof(DeviceImageUse) == 16, "DeviceImageUse changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
 static_assert(sizeof(StageOutput) == 48, "StageOutput changed: update the info encoder");
 static_assert(sizeof(IrBindingLayout) == 88, "IrBindingLayout changed: update the layout encoder");
@@ -104,7 +105,7 @@ static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: u
 static_assert(sizeof(BindingAllocationResult) == 192, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(CompiledBindingLayout) == 96, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
-static_assert(sizeof(IrResourcePlan) == 736, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(sizeof(IrResourcePlan) == 760, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
@@ -138,11 +139,13 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 39, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
+static_assert(fieldCount<DeviceImageUse>() == 4, "DeviceImageUse changed: update the info encoder");
+static_assert(sizeof(DeviceImageTableAbi::Expectation) == 76 && fieldCount<DeviceImageTableAbi::Expectation>() == 5, "DeviceImageTableAbi::Expectation changed: update the invocation encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
 static_assert(fieldCount<IrResourcePlan>() == 26, "IrResourcePlan changed: update EncodePlan and DecodePlan");
@@ -600,6 +603,15 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
     writer.Value(invocation.userDataRegisterReads);
+    writer.List(invocation.deviceImageInterfaces, [](Writer& out, std::uint64_t id) { out.Value(id); });
+    writer.List(invocation.deviceSamplerClasses, [](Writer& out, std::uint32_t bits) { out.Value(bits); });
+    writer.List(invocation.deviceImages, [](Writer& out, const DeviceImageTableAbi::Expectation& image) {
+        for (const auto word : image.key) out.Value(word);
+        out.Value(image.pc);
+        out.Value(image.image);
+        out.Value(image.sampler);
+        out.Value(image.candidate);
+    });
 }
 
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
@@ -646,6 +658,15 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
     reader.Value(invocation.userDataRegisterReads);
+    reader.List(invocation.deviceImageInterfaces, 8, [](Reader& in, std::uint64_t& id) { in.Value(id); });
+    reader.List(invocation.deviceSamplerClasses, 4, [](Reader& in, std::uint32_t& bits) { in.Value(bits); });
+    reader.List(invocation.deviceImages, 73, [](Reader& in, DeviceImageTableAbi::Expectation& image) {
+        for (auto& word : image.key) in.Value(word);
+        in.Value(image.pc);
+        in.Value(image.image);
+        in.Value(image.sampler);
+        in.Value(image.candidate);
+    });
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
@@ -758,6 +779,12 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(pair.sampler);
         out.Value(pair.firstUsePc);
     });
+    writer.List(info.deviceImageUses, [](Writer& out, const DeviceImageUse& use) {
+        out.Value(use.image);
+        out.Value(use.sampler);
+        out.Value(use.descriptor);
+        out.Value(use.firstUsePc);
+    });
     writer.List(info.inputs, [](Writer& out, const StageInput& input) {
         out.Value(input.kind);
         out.Value(input.location);
@@ -862,6 +889,12 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(pair.image);
         in.Value(pair.sampler);
         in.Value(pair.firstUsePc);
+    });
+    reader.List(info.deviceImageUses, 16, [](Reader& in, DeviceImageUse& use) {
+        in.Value(use.image);
+        in.Value(use.sampler);
+        in.Value(use.descriptor);
+        in.Value(use.firstUsePc);
     });
     reader.List(info.inputs, 21, [](Reader& in, StageInput& input) {
         in.Value(input.kind);

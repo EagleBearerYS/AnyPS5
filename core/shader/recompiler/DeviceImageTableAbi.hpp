@@ -3,6 +3,8 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
+#include <span>
 
 namespace ShaderRecompiler::DeviceImageTableAbi {
 
@@ -64,6 +66,30 @@ inline constexpr std::uint32_t HashMix1 = 0x85ebca6bu;
 inline constexpr std::uint32_t HashMix2 = 0xc2b2ae35u;
 
 using Key = std::array<std::uint32_t, KeyWords>;
+
+inline constexpr std::uint32_t NoExpectedSampler = std::numeric_limits<std::uint32_t>::max();
+
+struct Expectation {
+    Key key{};
+    std::uint32_t pc = 0;
+    std::uint32_t image = 0;
+    std::uint32_t sampler = NoExpectedSampler;
+    bool candidate = false;
+
+    bool operator==(const Expectation& other) const = default;
+};
+
+inline void NameInterfaces(std::span<Expectation> images, std::span<const std::uint64_t> interfaces) {
+    for (auto& image : images) {
+        const auto id = interfaces[image.image];
+        image.key[InterfaceWord] = static_cast<std::uint32_t>(id);
+        image.key[InterfaceWord + 1u] = static_cast<std::uint32_t>(id >> 32u);
+    }
+}
+
+inline void NameSamplerClasses(std::span<Expectation> images, std::span<const std::uint32_t> classes) {
+    for (auto& image : images) image.key[SamplerClassWord] = image.sampler == NoExpectedSampler ? 0u : classes[image.sampler];
+}
 
 constexpr std::uint32_t RotateLeft(std::uint32_t value, std::uint32_t bits) {
     return (value << bits) | (value >> (32u - bits));
