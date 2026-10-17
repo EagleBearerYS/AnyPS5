@@ -195,7 +195,7 @@ A title's own CPU reads of that memory are not seen, so a title that waits for a
 
 The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. EASU is designed for up to twice the display buffer's size on each axis: larger factors, such as a 1280x720 buffer in a 3840x2160 window, still work but look softer. When it is the same size or smaller, the image is scaled as without FSR and only RCAS sharpens it.
 
-`ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`.
+`ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`. RCAS always sharpens: `2.0` is its weakest setting, not off. Its approximate reciprocal also darkens flat areas by a fixed fraction of their value: 0.17% at the default `0.2` (a flat 0.5 becomes 0.4992), 0.32% at `0.0` and 0.07% at `2.0`. That is at most one 8-bit level for SDR, and at most three 10-bit code values for HDR10.
 
 FSR works on SDR and HDR10 output alike, on the values the display receives: sRGB-encoded for SDR, PQ code values for HDR10. Sharpening never takes them out of the signal range. Each presentation in flight keeps two more images, one of the display buffer's size and one of the fitted image's size, and each frame takes two full-window passes.
 
