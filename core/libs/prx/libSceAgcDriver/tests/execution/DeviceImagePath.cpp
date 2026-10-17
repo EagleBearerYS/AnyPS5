@@ -499,6 +499,9 @@ Counters Read() {
         counters.device.entries += totals.entries;
         counters.device.heapFull += totals.heapFull;
         counters.device.fallbacks += totals.fallbacks;
+        counters.device.expectations += totals.expectations;
+        counters.device.expectationHits += totals.expectationHits;
+        counters.device.expectationNs += totals.expectationNs;
     }
     return counters;
 }
@@ -647,7 +650,10 @@ void Draws(const Harness& harness) {
         DrawOnce(harness, key, kind);
         RequireDrawn(ReadColor(harness), TexelOf(texture).value, name + ", second draw");
         after = Read();
-        if (harness.device) RequireHits(before, after, name + ", second draw");
+        if (harness.device) {
+            RequireHits(before, after, name + ", second draw");
+            Require(after.device.expectationHits > before.device.expectationHits, name + ", second draw: the expectation of an unchanged record in a later submission did not come from the memo");
+        }
         std::printf("%s, second draw: the texel%s\n", name.c_str(), Describe(before, after).c_str());
     }
 }
@@ -765,6 +771,7 @@ void Rechecks(const Harness& harness) {
     RequireDrawn(ReadColor(harness), TexelOf(TextureOf(1546u)).value, "(g) four draws in one submission");
     const auto after = Read();
     if (harness.device) Require(after.device.checked - before.device.checked <= after.device.entries, "(g) four draws in one submission re-checked " + std::to_string(after.device.checked - before.device.checked) + " entries of " + std::to_string(after.device.entries));
+    if (harness.device) Require(after.device.expectationHits - before.device.expectationHits >= 3u, "(g) four draws in one submission took " + std::to_string(after.device.expectationHits - before.device.expectationHits) + " of their expectations from the memo, expected at least 3");
     std::printf("(g) four draws in one submission: %llu entries re-checked of %u%s\n", static_cast<unsigned long long>(after.device.checked - before.device.checked), after.device.entries, Describe(before, after).c_str());
 }
 
@@ -1290,9 +1297,18 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "the frame submission failed");
         AgcDriverWaitIdle_nid_postfix();
     };
+    const auto describeExpectations = [](const Counters& from, const Counters& to, std::uint32_t frames) {
+        const auto expectations = to.device.expectations - from.device.expectations;
+        const auto hits = to.device.expectationHits - from.device.expectationHits;
+        const auto microseconds = expectations != 0u ? static_cast<double>(to.device.expectationNs - from.device.expectationNs) / 1000.0 / static_cast<double>(expectations) : 0.0;
+        char line[256];
+        std::snprintf(line, sizeof(line), "%llu expectations, %.2f us each, %.1f%% from the memo; per frame %.1f miss records, %.1f inserted", static_cast<unsigned long long>(expectations), microseconds, expectations != 0u ? 100.0 * static_cast<double>(hits) / static_cast<double>(expectations) : 0.0, static_cast<double>(to.device.drained - from.device.drained) / frames, static_cast<double>(to.device.inserted - from.device.inserted) / frames);
+        return std::string(line);
+    };
     const auto cold = Read();
     frame();
     const auto first = Read();
+    std::printf("village: cold frame: %s\n", describeExpectations(cold, first, 1u).c_str());
     for (std::uint32_t warm = 1; warm < VillageWarmup; ++warm) frame();
     const auto before = Read();
     std::printf("village: the cold frame drained %llu miss records and dropped %llu; the %u warm-up frames drained %llu and dropped %llu, found %llu distinct misses, inserted %llu and fell back %llu times\n", static_cast<unsigned long long>(first.device.drained - cold.device.drained), static_cast<unsigned long long>(first.device.dropped - cold.device.dropped), VillageWarmup, static_cast<unsigned long long>(before.device.drained - cold.device.drained), static_cast<unsigned long long>(before.device.dropped - cold.device.dropped), static_cast<unsigned long long>(before.device.distinct - cold.device.distinct), static_cast<unsigned long long>(before.device.inserted - cold.device.inserted), static_cast<unsigned long long>(before.device.fallbacks - cold.device.fallbacks));
@@ -1300,6 +1316,7 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
     for (std::uint32_t measured = 0; measured < VillageFrames; ++measured) frame();
     const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     const auto after = Read();
+    std::printf("village: steady frames: %s\n", describeExpectations(before, after, VillageFrames).c_str());
     std::printf("village: %u frames of %u indirect draws (%u GPU-written textures) after %u warm-up frames: %.2f ms per frame, %.1f us per draw (wall clock, submit to idle)%s, %llu entries re-checked, %llu given a new texture\n", VillageFrames, VillageDraws, written, VillageWarmup, elapsed / VillageFrames, elapsed * 1000.0 / (static_cast<double>(VillageFrames) * VillageDraws), Describe(before, after).c_str(), static_cast<unsigned long long>(after.device.checked - before.device.checked), static_cast<unsigned long long>(after.device.refreshed - before.device.refreshed));
     std::fflush(stdout);
     if (written != 0u) {

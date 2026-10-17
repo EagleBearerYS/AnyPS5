@@ -104,6 +104,7 @@ public:
     void Prepare(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::PipelineIdentity> programs = {});
     std::optional<std::string> Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
     void FallBackProgram(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t codeAddress, const std::string& reason);
+    void NoteExpectation(bool memoHit, std::uint64_t nanoseconds);
     void SetInterfaceLookup(InterfaceLookup lookup);
     void NoteProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress);
     bool ServesProgram(std::uint64_t codeAddress) const;
@@ -140,6 +141,9 @@ public:
         std::uint64_t fallbacks = 0;
         std::uint64_t expected = 0;
         std::uint64_t expectedInserted = 0;
+        std::uint64_t expectations = 0;
+        std::uint64_t expectationHits = 0;
+        std::uint64_t expectationNs = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
         std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding> peakTextures{};
