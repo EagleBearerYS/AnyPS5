@@ -90,7 +90,7 @@ std::shared_ptr<const DeviceImageTable::Interface> SampledInterface() {
 }
 
 DeviceImageTable::InterfaceLookup Lookup() {
-    return [](std::uint64_t id) { return id == InterfaceId ? SampledInterface() : nullptr; };
+    return [](std::uint64_t id) { return id == InterfaceId ? SampledInterface() : ShaderRecompiler::ResourceMaterializer::FindDeviceImageInterface(id); };
 }
 
 Key KeyFor(const std::array<std::uint32_t, 8>& descriptor, std::uint32_t samplerClass = 0u) {
@@ -183,6 +183,46 @@ void ResolvesAndUploads(AgcDriver::VulkanDevice& device) {
     Require(table.Totals().uploads == uploads, "a prepare with nothing changed uploads nothing");
     recorder->Sync();
     std::printf("resolved %zu formats: %llu uploads, %llu bytes\n", keys.size(), static_cast<unsigned long long>(table.Totals().uploads), static_cast<unsigned long long>(table.Totals().uploadBytes));
+}
+
+void ResolvesRegisteredInterfaces(AgcDriver::VulkanDevice& device) {
+    using ShaderRecompiler::ResourceMaterializer;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    auto* owned = DeviceImageTable::Existing(context);
+    Require(owned != nullptr, "a device serving the path owns a device image table");
+    ShaderRecompiler::ShaderInfo info;
+    auto image = SampledInterface()->image;
+    image.deviceTable = true;
+    info.images.push_back(image);
+    info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    const auto id = ResourceMaterializer::DeviceImageInterfaceId(image, info.runtimeImageModes[0]);
+    auto key = KeyFor(TextureDescriptor(Textures[4].data(), Formats[4]));
+    key[Abi::InterfaceWord] = static_cast<std::uint32_t>(id);
+    key[Abi::InterfaceWord + 1u] = static_cast<std::uint32_t>(id >> 32u);
+    try {
+        owned->Prepare(context, *recorder);
+        WriteRecords(owned->RingChunk(*recorder), std::span<const Key>(&key, 1u), 1u);
+        recorder->Sync();
+        owned->Prepare(context, *recorder);
+        Require(false, "the device's table resolved an interface no program registered");
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("which no compiled program registered") != std::string::npos, std::string("an unregistered interface is refused: ") + error.what());
+    }
+    recorder->Sync();
+    ResourceMaterializer::RegisterDeviceImageInterfaces(info);
+    Require(ResourceMaterializer::FindDeviceImageInterface(id) != nullptr, "the recompiler's registry holds the interface");
+    const auto before = owned->Totals();
+    owned->Prepare(context, *recorder);
+    WriteRecords(owned->RingChunk(*recorder), std::span<const Key>(&key, 1u), 1u);
+    recorder->Sync();
+    owned->Prepare(context, *recorder);
+    const auto value = owned->Find(key);
+    Require(owned->Totals().inserted == before.inserted + 1u && value.has_value() && value->fault == 0u, "the device's own table resolves a key through the interface the recompiler registered");
+    const auto expected = ExpectedMode(key);
+    Require(expected.mode.has_value() && value->mode == *expected.mode, "the registered interface gives the mode the CPU table path picks");
+    recorder->Sync();
 }
 
 void RejectsAndFaults(AgcDriver::VulkanDevice& device) {
@@ -650,6 +690,7 @@ int main(int argc, char** argv) {
             std::cout << "device image table heap cap tests passed\n";
             return 0;
         }
+        ResolvesRegisteredInterfaces(*device);
         ResolvesAndUploads(*device);
         RejectsAndFaults(*device);
         CountsOverflow(*device);
