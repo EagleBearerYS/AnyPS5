@@ -150,10 +150,7 @@ private:
 
 bool GpuHeapEnabled();
 bool BindlessTexturesEnabled();
-bool HeapComputeEnabled();
 bool GpuConstantsEnabled();
-void NoteHeapComputeStage();
-std::uint64_t HeapComputeStages();
 void NoteImageTableBuild();
 std::uint64_t ImageTableBuilds();
 

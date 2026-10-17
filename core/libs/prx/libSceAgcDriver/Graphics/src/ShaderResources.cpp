@@ -1246,7 +1246,6 @@ void ShaderResources::Complete() {
         buildPrepare(shaders, nullptr, 0, 0, 0);
     }
     buildComplete();
-    if (heapStage) RefreshHeapStage(shaders);
     forgetDeferredInputs();
 }
 
@@ -1586,11 +1585,10 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 Require(stageStorageBuffers <= limits.maxPerStageDescriptorUpdateAfterBindStorageBuffers && stageResources <= limits.maxPerStageUpdateAfterBindResources, "shader descriptors exceed per-stage limits");
                 updateAfterBind = true;
             };
-            const bool heapShader = (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute) && shader.program->gpuResolvedImages;
+            const bool heapShader = (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex) && shader.program->gpuResolvedImages;
             if (heapShader) {
                 Require(BindlessTexturesEnabled(), "a GPU-mode stage needs the bindless heap (APS5_GPU_HEAP)");
                 heapStage = true;
-                if (shader.stage == ShaderRecompiler::ShaderStage::Compute) NoteHeapComputeStage();
             }
             for (const auto& binding : shader.program->bindings) {
                 Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || ((shader.stage == ShaderRecompiler::ShaderStage::Fragment || heapShader) && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "unexpected descriptor set: a shader resource must use its stage's descriptor set");
@@ -1903,7 +1901,7 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     std::array<VkShaderStageFlags, 2> tableFlags{};
     bool updateAfterBind = false;
     std::uint64_t storageBuffers = 0;
-    const auto heapShader = [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->gpuResolvedImages && (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute); };
+    const auto heapShader = [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->gpuResolvedImages && (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex); };
     const bool heapStage = std::any_of(shaders.begin(), shaders.end(), heapShader);
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
@@ -4629,7 +4627,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || (usesBda && !spaceReuse)) return moved;
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) return std::nullopt;
-        const bool heapShader = (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute) && shader.program->gpuResolvedImages;
+        const bool heapShader = (shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex) && shader.program->gpuResolvedImages;
         for (const auto& binding : shader.program->bindings) {
             if (heapShader && (DataRole(binding.role) || binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers)) continue;
             if (DataRole(binding.role)) {
@@ -4839,7 +4837,7 @@ PipelineSetLayouts ShaderResources::SetLayouts() const {
 
 void ShaderResources::RefreshHeapStage(std::span<const CompiledShader> shaders) {
     for (const auto& shader : shaders) {
-        if ((shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Compute) && shader.program != nullptr && shader.program->gpuResolvedImages) writeHeapStage(shader);
+        if ((shader.stage == ShaderRecompiler::ShaderStage::Fragment || shader.stage == ShaderRecompiler::ShaderStage::Vertex) && shader.program != nullptr && shader.program->gpuResolvedImages) writeHeapStage(shader);
     }
 }
 
@@ -4848,7 +4846,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     auto& heap = BindlessHeap::For(context);
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
     const bool fragmentStage = shader.stage == ShaderRecompiler::ShaderStage::Fragment;
-    const VkShaderStageFlags stageBit = fragmentStage ? VK_SHADER_STAGE_FRAGMENT_BIT : shader.stage == ShaderRecompiler::ShaderStage::Compute ? VK_SHADER_STAGE_COMPUTE_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+    const VkShaderStageFlags stageBit = fragmentStage ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
     auto& stageState = heapStages[fragmentStage ? 1u : 0u];
     const auto ownHeap = [&](const Binding& binding) { return binding.heap && (binding.layout.stageFlags & stageBit) != 0u; };
     struct HeapKeyStorage {};

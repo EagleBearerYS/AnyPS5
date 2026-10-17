@@ -62,7 +62,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         target.gpuResolvedImages = heap;
         RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, regions}, target, {0u, 0u, 0u, 128u}};
         const auto shader = Recompile(request);
-        Require(shader.gpuResolvedImages == heap, heap ? "the compute heap did not take the table stage" : "a table stage took the heap without it");
+        Require(!shader.gpuResolvedImages, "a compute stage took the heap");
         if (artifact.variantId == 0u) artifact = shader;
         else Require(shader.cacheHit && shader.variantId == artifact.variantId, "bindless table changed the compiled artifact");
         if (iteration == 1u) {
