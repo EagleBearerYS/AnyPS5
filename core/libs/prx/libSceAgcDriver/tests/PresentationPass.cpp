@@ -12,6 +12,7 @@
 #include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -70,6 +71,7 @@ public:
             std::uint32_t family = 0;
             while (family < count && (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) ++family;
             Require(family < count, "no Vulkan graphics queue");
+            timestampBits = families[family].timestampValidBits;
             const float priority = 1;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
@@ -84,6 +86,7 @@ public:
             VkPhysicalDeviceProperties properties{};
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
             context.limits = properties.limits;
+            name = properties.deviceName;
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
@@ -99,6 +102,8 @@ public:
 
     ~Device() { release(); }
     const Context& GetContext() const { return context; }
+    const std::string& Name() const { return name; }
+    std::uint32_t TimestampBits() const { return timestampBits; }
 
 private:
     template<typename TFunction>
@@ -120,6 +125,8 @@ private:
     PFN_vkGetInstanceProcAddr instanceProc = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
+    std::string name;
+    std::uint32_t timestampBits = 0;
 };
 
 class Image {
@@ -938,6 +945,120 @@ void hdr10PresentTests(const Context& context) {
     }
 }
 
+double percentile(std::vector<double> values, double fraction) {
+    std::sort(values.begin(), values.end());
+    const auto rank = static_cast<std::size_t>(std::ceil(fraction * static_cast<double>(values.size())));
+    return values[std::clamp<std::size_t>(rank, 1, values.size()) - 1];
+}
+
+std::string spread(const std::vector<double>& values, int precision) {
+    if (values.empty()) return "-";
+    char text[64];
+    std::snprintf(text, sizeof(text), "%.*f/%.*f", precision, percentile(values, 0.5), precision, percentile(values, 0.95));
+    return text;
+}
+
+int fsrCost(const Device& device) {
+    const auto& context = device.GetContext();
+    if (device.TimestampBits() == 0 || !(context.limits.timestampPeriod > 0.0f)) {
+        std::printf("FSR cost on %s: the graphics queue has no timestamps\n", device.Name().c_str());
+        return VulkanTestSkipped;
+    }
+    constexpr std::uint32_t WarmUp = 20;
+    constexpr std::uint32_t Frames = 200;
+    constexpr std::uint32_t Stamps = 6;
+    constexpr VkFormat Format = VK_FORMAT_B8G8R8A8_UNORM;
+    const std::uint64_t mask = device.TimestampBits() >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << device.TimestampBits()) - 1;
+    const double nanoseconds = static_cast<double>(context.limits.timestampPeriod);
+    const std::array<std::pair<VkExtent2D, VkExtent2D>, 6> cases{{{{1920, 1080}, {2560, 1440}}, {{1920, 1080}, {3840, 2160}}, {{1920, 1080}, {1920, 1080}}, {{3840, 2160}, {3840, 2160}}, {{1280, 720}, {3840, 2160}}, {{3840, 2160}, {2560, 1440}}}};
+    VkQueryPoolCreateInfo queryInfo{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    queryInfo.queryCount = Stamps;
+    VkQueryPool queries = VK_NULL_HANDLE;
+    Check(context.Function<PFN_vkCreateQueryPool>("vkCreateQueryPool")(context.device, &queryInfo, nullptr, &queries), "vkCreateQueryPool FSR cost");
+    const auto destroyQueries = [&] { context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, queries, nullptr); };
+    try {
+        const auto timestamp = context.Function<PFN_vkCmdWriteTimestamp>("vkCmdWriteTimestamp");
+        const auto resetQueries = context.Function<PFN_vkCmdResetQueryPool>("vkCmdResetQueryPool");
+        const auto queryResults = context.Function<PFN_vkGetQueryPoolResults>("vkGetQueryPoolResults");
+        for (const auto& [size, window] : cases) {
+            Source pattern{Bgra8, Format, size.width, size.height, std::vector<std::byte>(static_cast<std::size_t>(size.width) * size.height * 4), {}};
+            std::uint32_t seed = size.width * 7919u + window.width;
+            for (auto& byte : pattern.words) {
+                seed = seed * 1664525u + 1013904223u;
+                byte = static_cast<std::byte>(seed >> 24u);
+            }
+            const auto source = residentImage(context, pattern);
+            const auto rect = AgcDriver::ComputeContainRect_nid_postfix(size.width, size.height, window.width, window.height);
+            const VkExtent2D fitted{rect.width, rect.height};
+            const bool upscales = PresentationUpscaler::Upscales(size.width, size.height, window);
+            PresentationUpscaler upscaler(context, 2, 0.2f);
+            Image easuOutput(context, Format, fitted, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+            Image rcasOutput(context, Format, window, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+            Image presented(context, Format, window, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+            Image blitted(context, Format, window, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+            const auto writeStage = [&](VkCommandBuffer commands, std::size_t slot, VkExtent2D extent) {
+                const auto stage = upscaler.Stage(slot, Format, extent);
+                upscaler.RecordStageTransferDestination(commands, slot);
+                PresentationScaler::RecordStretchFrom(context, commands, source->Handle(), VK_IMAGE_LAYOUT_GENERAL, size.width, size.height, VK_FILTER_LINEAR, stage, AgcDriver::AspectFitRect{0, 0, extent.width, extent.height});
+                upscaler.RecordStageWritten(commands, slot, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            };
+            {
+                CommandBatch batch(context);
+                writeStage(batch.Handle(), 1, fitted);
+                batch.SubmitAndWait();
+            }
+            std::vector<double> stageMs, presentedMs, easuMs, rcasMs, totalMs, blitMs, fsrCpuUs, blitCpuUs;
+            for (std::uint32_t frame = 0; frame < WarmUp + Frames; ++frame) {
+                CommandBatch batch(context);
+                const auto commands = batch.Handle();
+                resetQueries(commands, queries, 0, Stamps);
+                timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queries, 0);
+                const auto fsrStart = std::chrono::steady_clock::now();
+                writeStage(commands, 0, PresentationUpscaler::StageExtent(size.width, size.height, window));
+                timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queries, 1);
+                upscaler.RecordPresent(commands, 0, size.width, size.height, presented.Handle(), window, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                const auto fsrRecorded = std::chrono::steady_clock::now() - fsrStart;
+                timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queries, 2);
+                if (upscales) upscaler.RecordUpscale(commands, 0, easuOutput.Handle(), fitted, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queries, 3);
+                upscaler.RecordPresent(commands, 1, fitted.width, fitted.height, rcasOutput.Handle(), window, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queries, 4);
+                const auto blitStart = std::chrono::steady_clock::now();
+                transition(context, commands, blitted.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+                PresentationScaler::RecordBlitFrom(context, commands, source->Handle(), VK_IMAGE_LAYOUT_GENERAL, size.width, size.height, VK_FILTER_LINEAR, blitted.Handle(), window.width, window.height);
+                const auto blitRecorded = std::chrono::steady_clock::now() - blitStart;
+                timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queries, 5);
+                batch.SubmitAndWait();
+                const auto releaseStart = std::chrono::steady_clock::now();
+                upscaler.Release(0);
+                const auto released = std::chrono::steady_clock::now() - releaseStart;
+                upscaler.Release(1);
+                std::array<std::uint64_t, Stamps> stamps{};
+                Check(queryResults(context.device, queries, 0, Stamps, sizeof(stamps), stamps.data(), sizeof(std::uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT), "vkGetQueryPoolResults FSR cost");
+                if (frame < WarmUp) continue;
+                const auto milliseconds = [&](std::size_t from, std::size_t to) { return static_cast<double>((stamps[to] - stamps[from]) & mask) * nanoseconds / 1e6; };
+                stageMs.push_back(milliseconds(0, 1));
+                presentedMs.push_back(milliseconds(1, 2));
+                totalMs.push_back(milliseconds(0, 2));
+                if (upscales) easuMs.push_back(milliseconds(2, 3));
+                rcasMs.push_back(milliseconds(3, 4));
+                blitMs.push_back(milliseconds(4, 5));
+                fsrCpuUs.push_back(std::chrono::duration<double, std::micro>(fsrRecorded + released).count());
+                blitCpuUs.push_back(std::chrono::duration<double, std::micro>(blitRecorded).count());
+            }
+            const char* mode = !upscales ? (fitted.width == size.width && fitted.height == size.height ? "RCAS only" : "downscale, RCAS only") : fitted.width > size.width * 2 || fitted.height > size.height * 2 ? "EASU beyond 2x + RCAS" : "EASU + RCAS";
+            std::printf("FSR cost on %s: %ux%u into %ux%u (%s): GPU ms median/p95: stage %s, EASU %s, RCAS %s, EASU + RCAS as presented %s, FSR total %s; bilinear blit %s. CPU us median/p95: FSR recording and release %s, bilinear blit recording %s. %u frames after %u warm-up\n", device.Name().c_str(), size.width, size.height, window.width, window.height, mode, spread(stageMs, 2).c_str(), spread(easuMs, 2).c_str(), spread(rcasMs, 2).c_str(), spread(presentedMs, 2).c_str(), spread(totalMs, 2).c_str(), spread(blitMs, 2).c_str(), spread(fsrCpuUs, 0).c_str(), spread(blitCpuUs, 0).c_str(), Frames, WarmUp);
+            std::fflush(stdout);
+        }
+    } catch (...) {
+        destroyQueries();
+        throw;
+    }
+    destroyQueries();
+    return 0;
+}
+
 void fsrTests(const Context& context) {
     if (!floatTargets(context)) throw std::runtime_error("the device cannot render, sample and blit R32G32B32A32_SFLOAT images");
     easuTests(context);
@@ -952,11 +1073,12 @@ void fsrTests(const Context& context) {
 int main(int argc, char** argv) {
     try {
         const bool fsr = argc == 2 && std::string_view(argv[1]) == "--fsr";
+        const bool fsrCostMode = argc == 2 && std::string_view(argv[1]) == "--fsr-cost";
         if (fsr) {
             upscaleModeTests();
             stageExtentTests();
             exitDependencyTests();
-        } else {
+        } else if (!fsrCostMode) {
             letterboxBandTests();
         }
         std::unique_ptr<Device> device;
@@ -967,6 +1089,7 @@ int main(int argc, char** argv) {
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
         }
+        if (fsrCostMode) return fsrCost(*device);
         if (fsr) {
             fsrTests(device->GetContext());
             std::cout << "FSR 1 upscale mode, EASU, RCAS, default path and HDR10 tests passed\n";
