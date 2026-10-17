@@ -1,4 +1,4 @@
-BUSY BF-045 (user approved building fable-void's fork; control on main 16c607a93 done; building his ed8f2d7a2e)
+READY (last: BF-045 done, results/cloud-3/BF-045.md: his ed8f2d7a2e builds on Linux only with 2 local fixes; mirror 812 passed / 98 skipped / 298 failed of 1208, 248 of the new failures are his no-host-copy refusal without udmabuf)
 RESULT:
 - Repo: /home/user/AnyPS5, detached at upstream main e1ac3300d (Merge pull request #6224), submodules recursive at depth 1. fork/main was 92e50418f. Setup committed nothing to the code.
 - Packages: apt-get install --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev ccache vulkan-tools (release.yml's list, plus ccache and vulkan-tools). apt reaches the Ubuntu mirrors only over HTTPS through the agent proxy: /etc/apt/sources.list.d/ubuntu.sources uses https:// URIs and /etc/apt/apt.conf.d/99agentproxy sets the proxy (original in /root/ubuntu.sources.orig).
