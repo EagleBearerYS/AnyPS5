@@ -1,7 +1,6 @@
-BUSY PRM-035
-since: 2026-10-17T07:07Z (PRM-035, CI Linux job for trophies 1+2, output resolution, FSR on it, merged with main 0906c64501)
-claimed: tasks/claimed/PRM-035.md
-step: main baseline, heads #1-#3 clean (pushed in PRM-035.md); building head #4 776316a77e
+READY
+since: 2026-10-17T07:37:55Z
+last: PRM-035 done, results/cloud-5/PRM-035.md: main 0906c64501 1262/65/5 IPv6 of 1332; trophies 1 0e1891f70f, trophies 2 9b17080b06, output resolution 35f4fe60a0, FSR on it 776316a77e all clean (only IPv6 failures + one settle flake, 5/5 alone on both trees); own tests x10 pass (display ones also under Xvfb); both resolutions right; nothing pushed
 previous: BF-050 done, results/cloud-5/BF-050.md: perf/agc-address-read-passes fast-forwarded a939efe1a0 -> b3e94a514 (counters 2d4512e5c, test b3e94a514); --readers red with the switch off and at 0300bb0e79, green at the head; guards green; mirror 1267/65/5 IPv6 of 1337; ^agc 638 passed
 
 RESULT (setup):
