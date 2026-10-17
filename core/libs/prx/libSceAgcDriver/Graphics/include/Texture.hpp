@@ -110,8 +110,12 @@ public:
     PerUseCopy CopyKind() const { return perUseCopy; }
     bool RefreshedPerUse() const { return perUseCopy == PerUseCopy::RemadePerUse; }
     void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
+    std::uint32_t HeapHolds() const { return heapHolds.load(std::memory_order_relaxed); }
+    void AddHeapHold() { heapHolds.fetch_add(1, std::memory_order_relaxed); }
+    void DropHeapHold() { heapHolds.fetch_sub(1, std::memory_order_relaxed); }
 
 private:
+    std::atomic<std::uint32_t> heapHolds{0};
     void release() noexcept;
     bool refreshBlockCopy();
     void createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);

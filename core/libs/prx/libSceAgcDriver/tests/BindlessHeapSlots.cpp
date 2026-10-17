@@ -23,7 +23,7 @@ void require(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error(what);
 }
 
-alignas(64) std::array<std::array<std::byte, 64>, 2> fakeTextures{};
+alignas(Texture) std::array<std::array<std::byte, sizeof(Texture)>, 3> fakeTextures{};
 
 std::shared_ptr<Texture> fakeTexture(std::size_t index) {
     return std::shared_ptr<Texture>(reinterpret_cast<Texture*>(fakeTextures[index].data()), [](Texture*) {});
@@ -52,6 +52,19 @@ void textureSlots(const Context& context, VkImageView view) {
     require(heap.LookupWord(kind, firstKey.data(), *slot + 1u) == Abi::GpuLookupSentinel, "the freed slot's key is tombstoned and revived for the new slot");
     const auto counts = heap.Statistics();
     require(counts.slotsFreed == 1u && counts.slotsReused == 1u && counts.lookupRevived == 1u, "one slot freed, reused and its key revived");
+
+    auto shared = fakeTexture(2);
+    const auto otherKind = kind + 1u;
+    const auto firstShared = heap.TextureSlot(kind, shared, view, VK_IMAGE_LAYOUT_GENERAL);
+    require(!firstShared.has_value(), "the capped kind has no slot left for a third texture");
+    const auto sharedSlot = heap.TextureSlot(otherKind, shared, view, VK_IMAGE_LAYOUT_GENERAL);
+    require(sharedSlot.has_value() && shared->HeapHolds() == 1u, "a texture placed by the heap counts one heap hold");
+    second.reset();
+    shared.reset();
+    const auto freedBefore = heap.Statistics().slotsFreed;
+    auto third = fakeTexture(0);
+    require(heap.TextureSlot(kind, third, view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "a texture held only by the heap is swept");
+    require(heap.Statistics().slotsFreed == freedBefore + 2u, "one sweep frees every slot whose texture only the heap holds");
 }
 
 void samplerSlots(const Context& context) {

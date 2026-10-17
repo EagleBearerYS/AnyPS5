@@ -44,6 +44,8 @@ public:
     bool GenerationsCurrent(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> slotGenerations, std::span<const std::uint32_t> samplerSlots, std::span<const std::uint32_t> samplerGenerations) const;
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
     static bool NearlyFull();
+    static void NoteSweepDue();
+    static void SweepIfDue();
 
     struct DataSpan {
         std::uint32_t offset = 0;
