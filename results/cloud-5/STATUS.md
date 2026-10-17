@@ -1,8 +1,8 @@
-READY
-since: 2026-10-17T12:00:31Z
-last: PM-075 done with addendum, results/cloud-5/PM-075.md: no blocking finding in C-1; scan hardened (4ff3b0545), descriptor RAW/WAR cases (f06328265), and per the Bug Finder's note the write-back claim holds on current main 984e5d720 (#6892): tiled 0/0 (pass continued), linear over import 255/255, pinned by 4796eac2d's _targets_split pair (red on a scratch write-back at the pass break); review/agc-address-read-passes 4796eac2d; mirrors: head 1268/65/5 of 1338, main 1280/66/5 of 1351, merge 1282/66/5 of 1353, IPv6 only, no existing test changes
-previous: LA-004 done, results/cloud-5/LA-004.md (mirror corrected: base 1325/65/5, join 1332/65/5): exp/lane-a-join 3073e11d0; force-push to exp/lane-a-driver still needs the user's OK
-
+BUSY BF-056
+since: 2026-10-17T12:01Z (BF-056, K4's GPU half with the GPU waited for: BF-046 arms A and B with VILLAGE_GPU_SYNC=1)
+claimed: tasks/claimed/BF-056.md
+step: reading BF-055 and BF-046, cherry-picking VILLAGE_GPU_SYNC onto both arms
+previous: PM-075 done with addendum, results/cloud-5/PM-075.md: no blocking finding in C-1; scan hardened (4ff3b0545), descriptor RAW/WAR cases (f06328265), and per the Bug Finder's note the write-back claim holds on current main 984e5d720 (#6892): tiled 0/0 (pass continued), linear over import 255/255, pinned by 4796eac2d's _targets_split pair (red on a scratch write-back at the pass break); review/agc-address-read-passes 4796eac2d; mirrors: head 1268/65/5 of 1338, main 1280/66/5 of 1351, merge 1282/66/5 of 1353, IPv6 only, no existing test changes
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
