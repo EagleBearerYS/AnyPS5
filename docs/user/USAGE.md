@@ -144,9 +144,10 @@ python3 tools/pad_input.py /tmp/anyps5-pad down --hold-ms 500
 python3 tools/pad_input.py /tmp/anyps5-pad release
 python3 tools/pad_input.py /tmp/anyps5-pad release --left-stick 128 0 --hold-ms 2000
 python3 tools/pad_input.py /tmp/anyps5-pad cross --left-stick 255 128 --right-stick 0 128
+python3 tools/pad_input.py /tmp/anyps5-pad touch-right
 ```
 
-Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
+Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. `touch-left` and `touch-right` press the touchpad with a finger on its left or right half, as the `TouchLeft` and `TouchRight` keys do; in the command file they are bits `0x200000` and `0x400000` of the button field. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
 
 ### System fonts
 
@@ -167,6 +168,17 @@ Many games unlock trophies through statistics instead: `app0/sce_sys/uds/udsNN.u
 `APS5_TRACE_UDS=1` prints every posted event, such as `[uds] context 1 posted _UnlockTrophy {"_trophy_id":12}`, every statistic an event sets, such as `[uds] stat 10 of user 268435456 is 10 (COLLECT $.counter)`, and a `[uds]` line for a missing `trophyNN.ucp` or `udsNN.ucp`. An event that is not used prints the reason in a `[trophy] ignored` line: an `_UnlockTrophy` event without an int32 `_trophy_id` of 0 or more, or posted to a context that does not exist; the first `_UpdateTrophyProgress` event of each trophy, because that event is not interpreted; and, once per rule, an event whose property is missing, negative, not an integer or outside the statistic's range.
 
 A missing or malformed `trophyNN.ucp` or `udsNN.ucp` turns off only what it provides, and a malformed one prints the reason once: without trophy data the queries report placeholders and statistics unlock nothing, and without statistics rules events change no statistic. Icons are not read: `sceNpTrophy2GetGameIcon`, `sceNpTrophy2GetGroupIcon`, `sceNpTrophy2GetTrophyIcon` and `sceNpTrophy2GetRewardIcon` stop the game with an error. So does an unlock or statistics file in `_trophy/` that is damaged (a line that is not a new `<id> <value>` pair, such as a line an edit left blank or ended with a carriage return) or cannot be read or written. No notification is shown, and callbacks registered with `sceNpTrophy2RegisterUnlockCallback` are not called.
+
+### PlayGo dumps without metadata
+
+When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. Requests for those IDs stop with an error by default. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose an answer for that dump:
+
+| Value | Answer for an unlisted chunk ID | Observed title that needs it |
+|-------|---------------------------------|------------------------------|
+| `installed` | Report it as installed (`LOCAL_FAST`). | High on Life (PPSA15388) needs this to load its saves. |
+| `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001) uses this result to end its chunk-ID search. |
+
+Leave the variable unset to keep the explicit error. Any other value also stops with an error. Dumps that include PlayGo metadata are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
 
 ### GPU selection
 
@@ -261,6 +273,8 @@ ELF modules in `--modules` are audited regardless of filename: their undefined s
 Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
 
 The report also lists needed libraries that have no file in `--libs` or `--modules`, including dependencies with zero imports. These do not increase the import or reference counts. Windows can skip a missing dependency when no import needs it; Linux still needs the file. The audit also lists imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+
+The audit also walks the built libraries' own host dependencies: each `.prx` under `--libs` has its PE imports (or ELF `DT_NEEDED` entries) checked for `.prx` names with no file in `--libs` or `--modules`, following present libraries transitively. Gaps fail the audit and are reported as `Importer: <root> Chain: <root> -> ... -> <missing>` lines, since the loader fails on them even when every game import resolves.
 
 | Option | Effect |
 |--------|--------|
