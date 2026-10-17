@@ -97,7 +97,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         }
         stageCapture.regions.clear();
         stageCapture.direct = true;
-        stageCapture.ringVertex = gpuConstantsVertex && stageCapture.heapWords != nullptr && invocation.Plan() != nullptr && invocation.Plan()->gpuConstants;
+        stageCapture.ringVertex = gpuConstantsVertex && stageCapture.heapWords != nullptr && invocation.Plan() != nullptr && invocation.Plan()->gpuConstants && std::ranges::none_of(stageCapture.compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable || binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
         recompiled[i] = true;
         timing.Mark("heap_direct");
         phaseTiming.Phase(DrawRowRecompile);
