@@ -34,6 +34,8 @@
 #include <set>
 #include <unordered_map>
 #include <utility>
+#include <fstream>
+#include <unistd.h>
 
 namespace AgcDriver::Graphics {
 
@@ -1926,7 +1928,44 @@ std::optional<std::string> KnownValidationFailure(const Context& context, std::s
     return std::nullopt;
 }
 
+namespace {
+void censusLine(const Context& context, std::uint64_t draws) {
+    std::size_t maps = 0;
+    {
+        std::ifstream file("/proc/self/maps");
+        std::string line;
+        while (std::getline(file, line)) ++maps;
+    }
+    unsigned long long sizePages = 0;
+    unsigned long long residentPages = 0;
+    if (std::FILE* statm = std::fopen("/proc/self/statm", "r")) {
+        if (std::fscanf(statm, "%llu %llu", &sizePages, &residentPages) != 2) residentPages = 0;
+        std::fclose(statm);
+    }
+    const double page = static_cast<double>(sysconf(_SC_PAGESIZE));
+    const auto counters = context.descriptorCache != nullptr ? context.descriptorCache->Counters() : DescriptorCache::Stats{};
+    const auto census = context.descriptorCache != nullptr ? context.descriptorCache->Snapshot() : DescriptorCache::Census{};
+    std::fprintf(stderr, "[bf055] draws=%llu maps=%zu rssMB=%.1f vszMB=%.1f sets=%llu pools=%llu dedicatedCreated=%llu layoutMisses=%llu chainPools=%zu livePools=%zu exhausted=%zu liveChainSets=%zu allocatedChainSets=%zu deadChainSets=%zu hist=%zu/%zu/%zu/%zu/%zu/%zu uabPools=%zu uabLive=%zu uabAllocated=%zu dedicatedLive=%zu recycledSets=%zu recycledLayouts=%zu shaderResources=%lld resourceCache=%zu\n",
+                 static_cast<unsigned long long>(draws), maps, static_cast<double>(residentPages) * page / 1048576.0, static_cast<double>(sizePages) * page / 1048576.0,
+                 static_cast<unsigned long long>(counters.sets), static_cast<unsigned long long>(counters.pools), static_cast<unsigned long long>(counters.dedicatedPools), static_cast<unsigned long long>(counters.layoutMisses),
+                 census.chainPools, census.chainPoolsLive, census.chainPoolsExhausted, census.liveChainSets, census.allocatedChainSets, census.allocatedChainSets - census.liveChainSets,
+                 census.liveHistogram[0], census.liveHistogram[1], census.liveHistogram[2], census.liveHistogram[3], census.liveHistogram[4], census.liveHistogram[5],
+                 census.updateAfterBindPools, census.updateAfterBindLiveSets, census.updateAfterBindAllocatedSets, census.dedicatedPools, census.recycledSets, census.recycledLayouts,
+                 static_cast<long long>(ShaderResources::LiveObjects()), SharedResourceCache().Size());
+    if (auto* recorder = Recorder::Active()) {
+        const auto kept = recorder->KeptCensus();
+        std::fprintf(stderr, "[bf055r] draws=%llu openKept=%zu inFlight=%zu inFlightKept=%zu holdKept=%zu finishing=%zu unsignaled=%zu front=%llu submitted=%d signaled=%d newest=%llu completed=%llu frontAgeMs=%.0f\n", static_cast<unsigned long long>(draws), kept.openKept, kept.inFlight, kept.inFlightKept, kept.holdKept, kept.finishing, kept.unsignaled, static_cast<unsigned long long>(kept.frontSerial), kept.frontSubmitted ? 1 : 0, kept.frontSignaled ? 1 : 0, static_cast<unsigned long long>(kept.newestSerial), static_cast<unsigned long long>(kept.completedSerial), kept.frontAgeMs);
+    }
+}
+}
+
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut) {
+    static const bool census = std::getenv("APS5_BF055_CENSUS") != nullptr;
+    static std::atomic<std::uint64_t> censusDraws{0};
+    if (census) {
+        const auto draws = censusDraws.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (draws % 1000 == 0) censusLine(context, draws);
+    }
     std::vector<std::uint32_t> stencilReferences;
     for (const auto& shader : shaders) {
         if (shader.program != nullptr && !shader.program->stencilReferences.empty()) {
