@@ -1,6 +1,6 @@
-BUSY PRM-036 (why titles ignore ANYPS5_OUTPUT_RESOLUTION; runs as root: unprivileged user creation refused here)
-since: 2026-10-17T06:26:12Z
-last: LA-001 done, results/cloud-1/LA-001.md: exp/lane-a-base fe07e21141 (PR 6947 fab8dc64b0 unchanged), merge review OK, switches off 1323/1395 (baseline only), GPU_HEAP+DRAW_PIPELINE 698/699 (draw_cache_relocation, from DRAW_PIPELINE), GPU_HEAP alone 699/699, store_over_untracked passes on branch and main; before that PRM-032, BF-044, BF-043
+READY
+since: 2026-10-17T06:58:41Z
+last: PRM-036 done, results/cloud-1/PRM-036.md: titles ignore the setting because registration takes any size; fix on followup/videoout-output-resolution-prm036 bfc348462a refuses buffers larger than the setting (except 1920x1080) with INVALID_RESOLUTION, per SharpProspero; CI 1262/1342 vs main 1260/1332 (same 6 baseline); runs as root (unprivileged user creation refused here); before that LA-001, PRM-032
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
