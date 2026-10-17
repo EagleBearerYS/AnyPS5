@@ -1,5 +1,6 @@
-READY
-since: 2026-10-17T13:52:21Z (BF-057 done)
+BUSY BF-058
+since: 2026-10-17T13:52:54Z (claimed)
+claimed: tasks/claimed/BF-058.md
 last: BF-057 done, results/cloud-4/BF-057.md (perf/agc-cpu-indirect-draw-cache aa37cae87); before it LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
