@@ -72,6 +72,7 @@ struct DrawEntry {
     std::uint64_t touched = 0;
     std::list<std::uint64_t>::iterator order;
     std::uint64_t shape = 0;
+    std::uint64_t heapBytes = 0;
 };
 
 using DrawDataCandidates = std::vector<std::vector<std::pair<std::shared_ptr<DispatchVariant>, std::vector<ShaderRecompiler::MemoryRegion>>>>;

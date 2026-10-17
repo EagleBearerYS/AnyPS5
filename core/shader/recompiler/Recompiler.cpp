@@ -336,9 +336,19 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     // The result memo, most recently used first, at most ResultMemoEntries (under mutex).
     std::list<ResultMemoEntry> memo;
     std::unordered_map<std::uint64_t, std::list<ResultMemoEntry>::iterator> memoIndex;
+    HeapHolders::Held held;
 };
 
 namespace {
+
+std::shared_ptr<const IrResourcePlan> trackPlan(std::shared_ptr<const IrResourcePlan> plan) {
+    return HeapHolders::Track(std::move(plan), [](const IrResourcePlan& value) { return std::array{HeapHolders::Charge{HeapHolders::Holder::Plans, HeapHolders::PlanBytes(value)}}; });
+}
+
+template<typename T>
+std::shared_ptr<T> trackResult(std::shared_ptr<T> result) {
+    return HeapHolders::Track(std::move(result), [](const RecompileResult& value) { return std::array{HeapHolders::Charge{HeapHolders::Holder::Results, HeapHolders::ResultBytes(value)}}; });
+}
 
 class PrimedSharedMutex : public std::shared_mutex {
 public:
@@ -361,7 +371,7 @@ struct ResourceProgram {
         clearRegisterState(program->Blocks());
         clearRegisterState(program->Resources().blockStorage);
         if (reclaim) program->ReclaimUnusedValues();
-        plan = std::make_shared<const IrResourcePlan>(ResourceMaterializer{}.ExtractPlan(*program));
+        plan = trackPlan(std::make_shared<const IrResourcePlan>(ResourceMaterializer{}.ExtractPlan(*program)));
     }
 
     std::unique_ptr<IrProgram> program;
@@ -424,6 +434,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
             source = std::make_shared<SourceEntry>();
             source->code.assign(request.shader.code.begin(), request.shader.code.end());
             source->linkedCallFallbacks.assign(request.context.linkedCallFallbacks.begin(), request.context.linkedCallFallbacks.end());
+            if (HeapHolders::Profiled()) source->held.Hold(HeapHolders::Holder::Sources, sizeof(SourceEntry) + HeapHolders::VectorBytes(source->code) + HeapHolders::VectorBytes(source->linkedCallFallbacks) + HeapHolders::VectorBytes(key));
             auto& bucket = sources[key];
             if (!bucket.empty()) {
                 // A second entry under one key is a code hash collision (or the unhashed key with
@@ -447,7 +458,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
                 IrResourcePlan loaded;
                 if (ShaderDiskCache::LoadPlan(planKey, loaded)) {
                     loaded.shaderHash = request.shader.codeAddress;
-                    source->plan = std::make_shared<const IrResourcePlan>(std::move(loaded));
+                    source->plan = trackPlan(std::make_shared<const IrResourcePlan>(std::move(loaded)));
                 }
             }
             if (source->plan == nullptr) {
@@ -739,6 +750,7 @@ struct PreparedModuleEntry {
     std::exception_ptr failure;
     std::shared_ptr<const SpecializedModule> module;
     DescriptorBindingPlan bindings;
+    HeapHolders::Held held;
 };
 
 struct PreparedBindingPlan {
@@ -747,6 +759,7 @@ struct PreparedBindingPlan {
     DescriptorBindingPlan bindings;
     PrimedSharedMutex mutex;
     std::map<std::vector<std::uint32_t>, std::shared_ptr<PreparedModuleEntry>> modules;
+    HeapHolders::Held held;
 };
 
 struct RegistrationModuleEntry {
@@ -823,6 +836,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     std::call_once(plan->ready, [&] {
         try {
             plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet);
+            if (HeapHolders::Profiled()) plan->held.Hold(HeapHolders::Holder::Results, sizeof(PreparedBindingPlan) + HeapHolders::VectorBytes(key) + HeapHolders::BindingPlanBytes(plan->bindings), 0);
         } catch (...) {
             plan->failure = std::current_exception();
         }
@@ -969,6 +983,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             auto selected = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings);
             entry->bindings = std::move(selected);
             entry->module = module;
+            if (HeapHolders::Profiled()) entry->held.Hold(HeapHolders::Holder::Results, sizeof(PreparedModuleEntry) + HeapHolders::VectorBytes(moduleKey) + HeapHolders::BindingPlanBytes(entry->bindings), 0);
         };
         std::call_once(entry->ready, [&] {
             try {
@@ -1093,6 +1108,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         }
     }
     source.program.reset();
+    variant = HeapHolders::Track(std::move(variant), [](const CompiledVariant& value) { return std::array{HeapHolders::Charge{HeapHolders::Holder::VariantMetadata, HeapHolders::VariantMetadataBytes(value)}, HeapHolders::Charge{HeapHolders::Holder::Sources, HeapHolders::VariantBytes(value), 0}}; });
     source.variants.push_back(variant);
     return variant;
 }
@@ -1262,7 +1278,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         }
     }
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    auto result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot));
+    auto result = trackResult(std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot)));
     result->cacheHit = cacheHit;
     if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     counters.misses.fetch_add(1, std::memory_order_relaxed);
@@ -1310,9 +1326,9 @@ std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& req
     if (!request.useCache || capture.source == nullptr) {
         auto program = PrepareResourceProgram(request);
         const auto variant = compileVariant(request, std::move(program));
-        return std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot));
+        return trackResult(std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot)));
     }
-    if (!ResultMemo()) return std::make_shared<const RecompileResult>(materializeVariant(*capture.source, request, capture.snapshot));
+    if (!ResultMemo()) return trackResult(std::make_shared<const RecompileResult>(materializeVariant(*capture.source, request, capture.snapshot)));
     return materializeMemoized(*capture.source, request, capture.snapshot, memoHit);
 }
 
@@ -1395,7 +1411,7 @@ std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& reques
         bool cacheHit = false;
         std::lock_guard lock(handle->source->mutex);
         handle->artifact = findOrCompileVariant(*handle->source, request, cacheHit, preparation);
-        return handle;
+        return HeapHolders::Track(std::shared_ptr<const SourceHandle>(std::move(handle)), [](const SourceHandle& value) { return std::array{HeapHolders::Charge{HeapHolders::Holder::Sources, sizeof(SourceHandle) + HeapHolders::VectorBytes(value.staticKey), 0}}; });
     });
 }
 
@@ -1458,7 +1474,7 @@ std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const S
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(const ResourceCapture& capture) const {
     if (capture.source != handle->source || capture.plan != handle->source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr);
-    auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot));
+    auto result = trackResult(std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot)));
     result->cacheHit = true;
     return result;
 }
@@ -1479,14 +1495,14 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
     snapshot.samplers.assign(info.samplers.size(), {{}, 4u});
     snapshot.userData.assign(RuntimeAbi::UserDataCapacity, 0u);
     snapshot.flattenedSrt.assign(1u, 0u);
-    return std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, snapshot, true));
+    return trackResult(std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, snapshot, true)));
 }
 
 std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest& request, const ResourceCapture& capture, const SourceHandle& handle) {
     if (!MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
     if (capture.source != handle.source || capture.plan != handle.source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle.source, handle.artifact, request, capture.snapshot, true, nullptr);
-    auto result = std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, capture.snapshot));
+    auto result = trackResult(std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, capture.snapshot)));
     result->cacheHit = true;
     return result;
 }

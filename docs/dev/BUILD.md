@@ -203,6 +203,26 @@ A class range covers a command together with its own barriers. In `VulkanDevice:
 - `shadow-publish`: copies of unit shadow slabs into the import, with their barriers (`recordCopies` in `UnitShadow.cpp`, reached from `PublishShadow`). Copied bytes.
 - `template-refresh`: the `vkCmdUpdateBuffer` updates of a cached dispatch's changed data words, as one range from the first update to the last (`ShaderResources::refreshData`, called from `recordDispatch`). Refreshed bytes.
 
+## Shader heap holders
+
+Set `APS5_PROFILE_HEAP=1` to count the process-heap objects the shader path keeps and print one line on stderr at most every 10 s, from the presenter:
+
+```
+[heap] shader holders: plans N (X MiB), modules N (X MiB), variant metadata N (X MiB), results N (X MiB), sources N (X MiB), registry N (X MiB); draw cache N (X MiB), dispatch cache N (X MiB)
+```
+
+Each holder is a live object count and an estimate of its bytes (its size plus the capacities of its vectors), taken where the object is created and given back where it is destroyed, with relaxed atomics ([`HeapHolders.hpp`](../../core/shader/recompiler/HeapHolders.hpp)):
+
+- `plans`: the decoded resource plans (`IrResourcePlan`), one per source, built or loaded from the disk cache.
+- `modules`: SPIR-V words on the heap (`SharedSpirv` holders that own their words: specialized and registration modules, and artifacts not mapped from the disk cache).
+- `variant metadata`: each compiled variant's `ShaderInfo`, with its runtime image modes, and its binding layouts.
+- `results`: `RecompileResult`s from registration, the per-source memo and materialization, plus the binding plans `materializeResult` keeps per variant (counted in bytes only).
+- `sources`: the recompiler's source entries (code copies, keys), plus the variants' artifacts and the prepared source handles' keys (counted in bytes only).
+- `registry`: shader registry snapshots (code, header, registered state, prepared ABI key) and the raw-program snapshot cache.
+- `draw cache` and `dispatch cache`: the driver's cache entries, with their decode and the variants' bytes as the caches account them.
+
+Without the switch nothing is counted. Like `APS5_PROFILE_DRAW`, the switch is not part of the shader disk cache key. A snapshot's prepared state that grows after registration, and result copies the draw path makes, are not counted.
+
 ## Driver thread priority
 
 Set `APS5_THREAD_PRIORITY=high` to raise the AGC driver's queue workers and the video output presenter above the title's threads. On Linux the threads get nice `APS5_THREAD_NICE` (default -10) through rtkit; on Windows they get `THREAD_PRIORITY_HIGHEST`. `APS5_THREAD_PRIORITY=rt` asks rtkit for real-time priority `APS5_THREAD_RT` (default 10, at most rtkit's `MaxRealtimePriority`) under rtkit's policy, `SCHED_RR` by default; on Windows it sets `THREAD_PRIORITY_TIME_CRITICAL`. rtkit only grants it when the process's hard `RLIMIT_RTTIME` is at most its `RTTimeUSecMax` (200000 us by default), so a hard limit above `APS5_THREAD_RTTIME_US` (default 200000, capped at `RTTimeUSecMax`) is lowered to it and the soft limit to at most half of it. The hard limit cannot be raised again and stays lowered for the whole process even if rtkit then refuses; see [technical debt](TechnicalDebt.md#functional). There is no fallback between the modes: when rtkit or `SetThreadPriority` refuses, a queue worker reports the refusal as a driver failure, which the next submission, wait or shutdown rethrows, and the presenter's start throws it. Each raised thread logs its priority once as `[thread-priority]`. The setting is `off` by default; a value other than `off`, `high` or `rt` is reported the same way as a refusal.

@@ -64,19 +64,26 @@ std::uint64_t Driver::variantBytes(const DispatchVariant& variant) {
 }
 
 void Driver::accountVariant(const DispatchVariant& variant, bool added) {
+    const auto bytes = variantBytes(variant);
     if (added) {
         ++dispatchCacheVariants;
-        dispatchCacheVariantBytes += variantBytes(variant);
+        dispatchCacheVariantBytes += bytes;
     } else {
         --dispatchCacheVariants;
-        dispatchCacheVariantBytes -= variantBytes(variant);
+        dispatchCacheVariantBytes -= bytes;
     }
+    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DispatchCache, 0, added ? static_cast<std::int64_t>(bytes) : -static_cast<std::int64_t>(bytes));
+}
+
+void Driver::chargeDispatchEntries(std::int64_t entries) {
+    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DispatchCache, entries, entries * static_cast<std::int64_t>(sizeof(DispatchEntry)));
 }
 
 void Driver::eraseDispatchEntry(std::unordered_map<std::uint64_t, std::shared_ptr<DispatchEntry>>::iterator it) {
     for (const auto& variant : it->second->variants) accountVariant(*variant, false);
     dispatchOrder.erase(it->second->order);
     dispatchCache.erase(it);
+    chargeDispatchEntries(-1);
 }
 
 }

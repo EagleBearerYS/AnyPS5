@@ -158,6 +158,7 @@ public:
         --entries;
         return 1;
     }
+    std::size_t HeapBytes() const { return values.capacity() * sizeof(std::uint32_t) + present.capacity() * sizeof(std::uint64_t); }
     bool operator==(const Registers& other) const {
         auto a = begin();
         auto b = other.begin();

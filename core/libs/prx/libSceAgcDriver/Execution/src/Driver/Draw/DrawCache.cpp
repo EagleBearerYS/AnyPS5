@@ -66,13 +66,31 @@ std::size_t Driver::drawCacheEntries() {
 }
 
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
+    const auto bytes = variantBytes(variant);
     if (added) {
         ++drawCacheVariants;
-        drawCacheVariantBytes += variantBytes(variant);
+        drawCacheVariantBytes += bytes;
     } else {
         --drawCacheVariants;
-        drawCacheVariantBytes -= variantBytes(variant);
+        drawCacheVariantBytes -= bytes;
     }
+    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DrawCache, 0, added ? static_cast<std::int64_t>(bytes) : -static_cast<std::int64_t>(bytes));
+}
+
+void Driver::chargeDrawEntry(DrawEntry& entry) {
+    if (!ShaderRecompiler::HeapHolders::Profiled()) return;
+    entry.heapBytes = sizeof(DrawEntry) + ShaderRecompiler::HeapHolders::VectorBytes(entry.stages);
+    for (const auto& variants : entry.stages) entry.heapBytes += ShaderRecompiler::HeapHolders::VectorBytes(variants);
+    if (entry.decode != nullptr) {
+        const auto& decode = *entry.decode;
+        entry.heapBytes += sizeof(DrawDecode) + ShaderRecompiler::HeapHolders::VectorBytes(decode.state.colors) + ShaderRecompiler::HeapHolders::VectorBytes(decode.state.blends) + ShaderRecompiler::HeapHolders::VectorBytes(decode.programs) + ShaderRecompiler::HeapHolders::VectorBytes(decode.roles);
+        for (const auto& program : decode.programs) entry.heapBytes += ShaderRecompiler::HeapHolders::VectorBytes(program.userData);
+    }
+    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DrawCache, 1, static_cast<std::int64_t>(entry.heapBytes));
+}
+
+void Driver::releaseDrawEntry(const DrawEntry& entry) {
+    ShaderRecompiler::HeapHolders::Add(ShaderRecompiler::HeapHolders::Holder::DrawCache, -1, -static_cast<std::int64_t>(entry.heapBytes));
 }
 
 DrawKeySightings::DrawKeySightings(std::size_t keyCount) {
@@ -160,10 +178,13 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     if (found == drawCache.end()) {
         drawOrder.push_front(key);
         replacement->order = drawOrder.begin();
+        chargeDrawEntry(*replacement);
         drawCache.emplace(key, std::move(replacement));
     } else {
         replacement->order = found->second->order;
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
+        releaseDrawEntry(*found->second);
+        chargeDrawEntry(*replacement);
         found->second = std::move(replacement);
     }
     while (drawCache.size() > drawCacheEntries()) {
@@ -174,6 +195,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
         if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
         drawOrder.erase(last->second->order);
+        releaseDrawEntry(*last->second);
         drawCache.erase(last);
         ++drawCacheEvictions;
         ++counters.evictions;
@@ -188,6 +210,7 @@ void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>&
     }
     if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == key) drawShapes.erase(shapeOf);
     drawOrder.erase(found->second->order);
+    releaseDrawEntry(*found->second);
     drawCache.erase(found);
 }
 

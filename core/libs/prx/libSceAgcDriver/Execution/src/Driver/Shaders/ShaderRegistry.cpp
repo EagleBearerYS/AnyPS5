@@ -44,6 +44,19 @@
 
 namespace AgcDriver::DriverDetail {
 
+namespace {
+
+std::shared_ptr<const ShaderSnapshot> trackSnapshot(std::shared_ptr<const ShaderSnapshot> snapshot, std::uint64_t pending = 0) {
+    return ShaderRecompiler::HeapHolders::Track(std::move(snapshot), [pending](const ShaderSnapshot& value) {
+        std::uint64_t bytes = pending + sizeof(ShaderSnapshot) + ShaderRecompiler::HeapHolders::VectorBytes(value.code) + ShaderRecompiler::HeapHolders::VectorBytes(value.header) + sizeof(PreparedShaders) + ShaderRecompiler::HeapHolders::VectorBytes(value.prepared->entries) + ShaderRecompiler::HeapHolders::VectorBytes(value.prepared->registeredAbis);
+        for (const auto& key : value.prepared->registeredAbis) bytes += ShaderRecompiler::HeapHolders::VectorBytes(key);
+        if (value.registeredState != nullptr) bytes += sizeof(RegisteredShaderState) + value.registeredState->shader.HeapBytes() + value.registeredState->context.HeapBytes() + value.registeredState->userConfig.HeapBytes();
+        return std::array{ShaderRecompiler::HeapHolders::Charge{ShaderRecompiler::HeapHolders::Holder::Registry, bytes}};
+    });
+}
+
+}
+
 std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnostics(const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::ShaderPreparationContext* preparation) {
     std::exception_ptr failure;
     std::string dump;
@@ -107,7 +120,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
             if (const auto tail = ShaderRecompiler::FindUserDataTail(decoded, 0u, 106u)) snapshot.userDataTailRegister = tail->userDataRegister;
             const auto& last = decoded.instructions.back();
             snapshot.code.resize(last.programCounter / sizeof(std::uint32_t) + last.wordCount);
-            auto result = std::make_shared<const ShaderSnapshot>(std::move(snapshot));
+            auto result = trackSnapshot(std::make_shared<const ShaderSnapshot>(std::move(snapshot)));
             std::lock_guard lock(cacheMutex);
             const auto found = std::find_if(cache.begin(), cache.end(), [address](const auto& entry) { return entry->codeAddress == address; });
             if (found != cache.end()) {
@@ -1602,12 +1615,12 @@ void Driver::RegisterShader(const Shader* shader) {
         print(fields.sh_registers, fields.num_sh_registers);
         std::fprintf(stderr, "\n");
     }
-    const auto published = std::make_shared<const ShaderSnapshot>(std::move(snapshot));
+    const auto published = trackSnapshot(std::make_shared<const ShaderSnapshot>(std::move(snapshot)), preparation != nullptr ? ShaderRecompiler::HeapHolders::VectorBytes(preparation->abiKey) : 0);
     std::lock_guard lock(mutex);
     rethrowFailure();
     PublishRegisteredShader(shaders, published);
     if (shaders->find(NullPixelProgramAddress()) == shaders->end()) {
-        PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareNullPixelProgram(*localDevice)));
+        PublishRegisteredShader(shaders, trackSnapshot(std::make_shared<const ShaderSnapshot>(PrepareNullPixelProgram(*localDevice))));
     }
     transaction.Commit();
     if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));
