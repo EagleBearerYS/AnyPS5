@@ -4831,7 +4831,8 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     const VkShaderStageFlags stageBit = fragmentStage ? VK_SHADER_STAGE_FRAGMENT_BIT : shader.stage == ShaderRecompiler::ShaderStage::Compute ? VK_SHADER_STAGE_COMPUTE_BIT : VK_SHADER_STAGE_VERTEX_BIT;
     auto& stageState = heapStages[fragmentStage ? 1u : 0u];
     const auto ownHeap = [&](const Binding& binding) { return binding.heap && (binding.layout.stageFlags & stageBit) != 0u; };
-    thread_local std::vector<std::uintptr_t> key;
+    struct HeapKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::uintptr_t>, HeapKeyStorage>();
     key.clear();
     for (const auto& binding : bindings) {
         if (!ownHeap(binding)) continue;
@@ -4947,7 +4948,8 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
             heapOffsets[flatIndex] = span.offset;
             continue;
         }
-        thread_local std::vector<std::uint32_t> patched;
+        struct PatchedStorage {};
+        auto& patched = HostThreadLocal<std::vector<std::uint32_t>, PatchedStorage>();
         patched.assign(words.begin(), words.end());
         if (shader.heap != nullptr) std::copy_n(shader.heap->userData.begin(), std::min(shader.heap->userData.size(), patched.size()), patched.begin());
         for (const auto& [byte, adjustment] : stageState.dataPatches) {
