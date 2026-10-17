@@ -50,6 +50,8 @@ constexpr std::uint32_t QuadPositions = 64;
 constexpr std::uint32_t QuadPixels = 48;
 constexpr std::uint32_t VerticesPerDraw = 6;
 constexpr std::uint32_t CheckAttempts = 16;
+constexpr std::uint32_t MissWarmupFrames = 512;
+constexpr std::uint32_t QuietFrames = 2;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t ClampEdge = 2;
@@ -459,6 +461,20 @@ void Cost(const Layout& layout, std::uint32_t frames) {
     for (std::uint32_t set = 0; set < ObjectSets(); ++set) commandSets.push_back(Commands(layout, Frame(), set));
     std::vector<double> warmMs;
     for (auto& commands : commandSets) warmMs.push_back(Submit(commands) / 1e3);
+    std::uint32_t missFrames = 0;
+    std::uint32_t quiet = 0;
+    const auto warmBefore = ReadPath();
+    while (missFrames < MissWarmupFrames && quiet < QuietFrames) {
+        const auto before = ReadPath();
+        Submit(commandSets[missFrames % commandSets.size()]);
+        ++missFrames;
+        const auto after = ReadPath();
+        quiet = after.device.prepares == before.device.prepares || after.device.drained == before.device.drained ? quiet + 1u : 0u;
+    }
+    const auto warmAfter = ReadPath();
+    std::printf("village warm-up: %zu frames, then %u more until %u frames in a row recorded no device table miss (at most %u): %llu miss records, %llu inserted\n", commandSets.size(), missFrames, QuietFrames, MissWarmupFrames, static_cast<unsigned long long>(warmAfter.device.drained - warmBefore.device.drained), static_cast<unsigned long long>(warmAfter.device.inserted - warmBefore.device.inserted));
+    std::puts("village measured frames begin");
+    std::fflush(stdout);
     std::vector<double> perDraw;
     const auto pathBefore = ReadPath();
 #ifdef __linux__
