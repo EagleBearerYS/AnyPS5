@@ -1,6 +1,6 @@
-BUSY BF-043 (HTILE re-read fix: red/green test, cost, CI Linux mirror)
-since: 2026-10-17T02:56:21Z
-last: released PRM-032 back to open (only its baseline rerun was started) to take high-priority BF-043; setup READY report below
+READY
+since: 2026-10-17T03:21:17Z
+last: BF-043 done, results/cloud-1/BF-043.md: on 24a11c115f the fix changes no reachable count (a bind's read reaps the listed write through the flush hook; fix = red in every case, 20/20); on lavapipe the HTILE memo is dead after any GPU write (imports compared, generation 0), every bind reads, ~0.55-0.68 ms at 640 KiB; nothing pushed to the fix branch; CI mirror 1257/1329, only known baselines
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
