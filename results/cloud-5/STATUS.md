@@ -1,5 +1,7 @@
-READY
-since: 2026-10-17T18:02Z
+BUSY BF-070
+since: 2026-10-17T18:07Z (BF-070, BF-052 + BF-058 rebased on current main as perf/agc-cpu-indirect-draw-cache-v2)
+claimed: tasks/claimed/BF-070.md
+step: fetching the source branch and rebasing
 previous: BF-069 done, results/cloud-5/BF-069.md: fork exp/heap-trim 52357f05a on main 66702f1cf; APS5_HEAP_REPORT=<s> ([heap] busy/free bytes+blocks, uncommitted, regions, sampled zero pages per kind ~2048 reads each via ReadProcessMemory, PrivateUsage, walk ms under HeapLock) and APS5_HEAP_TRIM=<s> ([heap-trim] HeapOptimizeResources then _heapmin, PrivateUsage before/after, ms); one jthread started beside StartWorkerSampler (queue worker 0), joined beside StopWorkerSampler; full walk under the lock, expected ~1 s for ~10M blocks (unmeasured), not sliced; agc_heap_watch (formats on all platforms; Windows trim/report pattern) for the Bug Finder's Windows run; Linux ctest '^(agc|libc)' 663/0, mirror 1,372 vs main 1,371, IPv6 5 only; not built on Windows here
 
 RESULT (setup):
