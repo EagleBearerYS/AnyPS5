@@ -229,6 +229,7 @@ function(add_shader_recompiler target runtimeTarget)
             CaptureResources
             DebugProbeActive
             DepthBitsTextureWidth
+            DescriptorBindingForImage
             HashBytes
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
@@ -252,6 +253,7 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::EvaluateNanoseconds
             ResourceMaterializer::MaterializeNanoseconds
             ResourceMaterializer::SpecializationNanoseconds
+            ResourceMaterializer::TryRuntimeImageMode
             RuntimeAbi::RequireVersion
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
