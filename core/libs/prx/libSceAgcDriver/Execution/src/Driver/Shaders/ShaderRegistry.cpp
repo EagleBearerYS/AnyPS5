@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "CacheKey.hpp"
@@ -1388,6 +1389,35 @@ std::size_t Driver::PreparedEntries(const Shader* shader) {
     std::unique_lock lock(snapshot->prepared->mutex);
     AwaitRegisteredPreparation(*snapshot->prepared, lock);
     return snapshot->prepared->entries.size();
+}
+
+std::vector<std::array<std::uint64_t, 2>> Driver::PreparedEntryHashes(const Shader* shader) {
+    std::shared_ptr<const ShaderSnapshot> snapshot;
+    {
+        std::lock_guard lock(mutex);
+        if (shaders == nullptr) return {};
+        snapshot = RegisteredHeader(*shaders, shader);
+    }
+    if (snapshot == nullptr) return {};
+    std::unique_lock lock(snapshot->prepared->mutex);
+    AwaitRegisteredPreparation(*snapshot->prepared, lock);
+    std::vector<std::array<std::uint64_t, 2>> hashes;
+    for (const auto& entry : snapshot->prepared->entries) {
+        if (entry.handle == nullptr || entry.handle->artifact == nullptr) continue;
+        const auto hash = entry.handle->artifact->artifact.spirv.ContentHash();
+        std::uint64_t key = 0xcbf29ce484222325ull;
+        for (const auto word : entry.handle->staticKey) key = (key ^ word) * 0x100000001b3ull;
+        hashes.push_back({hash.low, hash.high ^ key});
+    }
+    std::ranges::sort(hashes);
+    return hashes;
+}
+
+std::array<std::uint64_t, 4> Driver::PrebuiltLibraries() {
+    if (auto* pool = RegistrationPreparePool::ExistingPrebuild()) pool->AwaitSubmitted();
+    const auto localDevice = device.Load();
+    if (localDevice == nullptr) return {};
+    return Graphics::PipelineLibraryCountersOf(localDevice->Device()).built;
 }
 
 void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
