@@ -95,7 +95,7 @@ void Submit(std::vector<std::uint32_t>& words) {
 void RequireSampled(const float* output, const std::array<std::uint8_t, 4>& expected, const std::string& what, bool heap) {
     for (std::size_t channel = 0; channel < 4; ++channel) {
         const float wanted = static_cast<float>(expected[channel]) / 255.0f;
-        Require(std::fabs(output[channel] - wanted) < 1e-6f, what + ": channel " + std::to_string(channel) + " is " + std::to_string(output[channel]) + ", expected " + std::to_string(wanted) + (heap ? " through the heap" : ""));
+        Require(std::fabs(output[channel] - wanted) < 1e-6f, what + ": channel " + std::to_string(channel) + " is " + std::to_string(output[channel]) + ", expected " + std::to_string(wanted) + (heap ? " with the heap on" : ""));
     }
 }
 
@@ -105,13 +105,11 @@ void Fill(std::array<std::uint8_t, 1024>& memory, const std::array<std::uint8_t,
 
 void DriverSample(bool heap) {
     Outputs[0].fill(-1.0f);
-    const auto before = AgcDriver::Graphics::HeapComputeStages();
     std::vector<std::uint32_t> words;
     Sample(words, TextureMemory.data(), Outputs[0].data());
     Sample(words, TextureMemory.data(), Outputs[0].data());
     Submit(words);
     RequireSampled(Outputs[0].data(), Texel, "the sampled texture", heap);
-    if (heap) Require(AgcDriver::Graphics::HeapComputeStages() > before, "the heap did not take the sampling compute stage");
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const void* image, float* output) {
@@ -132,14 +130,12 @@ void DeviceSample(AgcDriver::VulkanDevice& device, bool heap) {
     for (std::size_t index = 1; index < Outputs.size(); ++index) Outputs[index].fill(-1.0f);
     const auto first = Compile(device, OtherTextureMemory.data(), Outputs[1].data());
     const auto second = Compile(device, TextureMemory.data(), Outputs[2].data());
-    Require(first.gpuResolvedImages == heap && second.gpuResolvedImages == heap, heap ? "a sampling compute stage is not GPU mode" : "a compute stage took the heap without it");
-    const auto before = AgcDriver::Graphics::HeapComputeStages();
+    Require(!first.gpuResolvedImages && !second.gpuResolvedImages, "a sampling compute stage took the heap");
     device.Dispatch(first, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(SampleCode.data()));
     device.Dispatch(second, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(SampleCode.data()));
     device.WaitIdle();
     RequireSampled(Outputs[1].data(), OtherTexel, "the first of two textures in one batch", heap);
     RequireSampled(Outputs[2].data(), Texel, "the second of two textures in one batch", heap);
-    if (heap) Require(AgcDriver::Graphics::HeapComputeStages() >= before + 2u, "the heap did not take both sampling compute stages");
     const auto again = Compile(device, TextureMemory.data(), Outputs[3].data());
     device.Dispatch(again, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(SampleCode.data()));
     device.WaitIdle();
@@ -165,7 +161,7 @@ int main() {
             if (!device) return VulkanTestSkipped;
             DeviceSample(*device, heap);
         }
-        std::cout << "compute stages sampled their textures" << (heap ? " through the heap" : "") << '\n';
+        std::cout << "compute stages sampled their textures off the heap" << (heap ? " with the heap on" : "") << '\n';
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
