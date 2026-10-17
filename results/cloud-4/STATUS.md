@@ -1,7 +1,6 @@
-BUSY BF-060
-since: 2026-10-17T14:38:14Z (claimed)
-claimed: tasks/claimed/BF-060.md
-last: BF-058 done, results/cloud-4/BF-058.md (perf/agc-cpu-indirect-draw-cache 3797ec87b, exp/bf058-measure 4612e14d6); before it BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
+READY
+since: 2026-10-17T15:16:45Z (BF-060 done)
+last: BF-060 done, results/cloud-4/BF-060.md (followup/6678-settle-batching aaa1a3856 vs 5f822a500: no Linux change); before it BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
