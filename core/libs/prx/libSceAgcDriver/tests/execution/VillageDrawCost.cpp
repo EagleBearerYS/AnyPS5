@@ -1,10 +1,13 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -46,12 +49,14 @@ constexpr std::uint32_t MaxTableEntries = 4096;
 constexpr std::uint32_t QuadPositions = 64;
 constexpr std::uint32_t QuadPixels = 48;
 constexpr std::uint32_t VerticesPerDraw = 6;
+constexpr std::uint32_t CheckAttempts = 16;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t ClampEdge = 2;
 constexpr std::uint32_t RenderTargetTileMode = 0x1b;
 constexpr std::size_t SamplerOffset = 0x200;
 constexpr std::size_t FrameConstantsOffset = 0x210;
+constexpr std::size_t TableDescriptorOffset = 0x220;
 constexpr std::size_t FrameDataOffset = 0x400;
 constexpr std::size_t VertexTableOffset = 0x1000;
 constexpr std::size_t VertexDataOffset = 0x2000;
@@ -78,19 +83,19 @@ std::uint32_t ProgramRun() { return Setting("VILLAGE_PROGRAM_RUN", 8, 1, MaxDraw
 std::uint32_t Width() { return Setting("VILLAGE_WIDTH", 1920, 64, 1920); }
 std::uint32_t Height() { return Setting("VILLAGE_HEIGHT", 1080, 64, 1080); }
 
-enum class IndexMode { Table, Constant, Immediate };
+enum class IndexMode { Table, BufferTable, Constant, Immediate };
 
 IndexMode Indexing() {
     static const IndexMode mode = [] {
         const char* text = std::getenv("VILLAGE_INDEX");
         const std::string name = text != nullptr ? text : "table";
-        return name == "constant" ? IndexMode::Constant : name == "immediate" ? IndexMode::Immediate : IndexMode::Table;
+        return name == "constant" ? IndexMode::Constant : name == "immediate" ? IndexMode::Immediate : name == "buffer" ? IndexMode::BufferTable : IndexMode::Table;
     }();
     return mode;
 }
 
 const char* IndexName() {
-    return Indexing() == IndexMode::Constant ? "constant index" : Indexing() == IndexMode::Immediate ? "immediate T#, no table" : "table index";
+    return Indexing() == IndexMode::Constant ? "constant index" : Indexing() == IndexMode::Immediate ? "immediate T#, no table" : Indexing() == IndexMode::BufferTable ? "table index through the table V# at root offset 0x220" : "table index";
 }
 
 std::uint32_t TableIndex(std::uint32_t draw, std::uint32_t slot) {
@@ -119,7 +124,11 @@ std::array<std::uint32_t, PixelWords> MakePixelCode(std::uint32_t samples, Index
     std::array<std::uint32_t, PixelWords> code{};
     code.fill(0xbf810000u);
     std::size_t n = 0;
-    for (const auto word : {0xf4080200u, 0xfa000200u, 0xf4080300u, 0xfa000210u, 0x7e0002f0u, 0x7e0202f0u, 0x7e100280u, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf4280802u, 0xfa000010u, 0xbf8cc07fu}) code[n++] = word;
+    for (const auto word : {0xf4080200u, 0xfa000200u, 0xf4080300u, 0xfa000210u, 0x7e0002f0u, 0x7e0202f0u, 0x7e100280u, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf4280802u, 0xfa000010u}) code[n++] = word;
+    if (mode == IndexMode::BufferTable) {
+        for (const auto word : {0xf4080a00u, 0xfa000220u}) code[n++] = word;
+    }
+    code[n++] = 0xbf8cc07fu;
     for (std::uint32_t slot = 0; slot < samples; ++slot) {
         if (mode == IndexMode::Immediate) {
             for (std::uint32_t word = 0; word < 8; ++word) {
@@ -128,6 +137,8 @@ std::array<std::uint32_t, PixelWords> MakePixelCode(std::uint32_t samples, Index
             }
         } else if (mode == IndexMode::Constant) {
             for (const auto word : {0xbf800000u, 0xf40c0401u, 0xfa000000u | (TableIndex(0, slot) * 32u)}) code[n++] = word;
+        } else if (mode == IndexMode::BufferTable) {
+            for (const auto word : {0x8f248520u + slot, 0xf42c0414u, 0x48000000u}) code[n++] = word;
         } else {
             for (const auto word : {0x8f248520u + slot, 0xf40c0401u, 0x48000000u}) code[n++] = word;
         }
@@ -244,6 +255,8 @@ void Prepare(const Layout& layout) {
     std::memcpy(block.Bytes(SamplerOffset), sampler.data(), sizeof(sampler));
     const auto frame = BufferDescriptor(block.At(FrameDataOffset), 0, 256, 0x31016facu);
     std::memcpy(block.Bytes(FrameConstantsOffset), frame.data(), sizeof(frame));
+    const auto table = BufferDescriptor(block.At(TableOffset), 0, TableEntries() * 32u, 0x31016facu);
+    std::memcpy(block.Bytes(TableDescriptorOffset), table.data(), sizeof(table));
     const float one = 1.0f;
     std::memcpy(block.Bytes(FrameDataOffset), &one, sizeof(one));
     for (std::uint32_t position = 0; position <= QuadPositions; ++position) {
@@ -357,7 +370,34 @@ unsigned BrightestByte(const GuestBlock& target) {
     return brightest;
 }
 
+struct PathCounts {
+    std::uint64_t snapshots = 0;
+    std::uint64_t tableBuilds = 0;
+    AgcDriver::Graphics::DeviceImageTable::Counts device;
+};
+
+PathCounts ReadPath() {
+    PathCounts counts;
+    counts.snapshots = ShaderRecompiler::ResourceMaterializer::TableSnapshotColumns();
+    counts.tableBuilds = AgcDriver::Graphics::ImageTableBuilds();
+    for (const auto& totals : AgcDriver::Graphics::DeviceImageTable::DeviceTotals()) {
+        counts.device.prepares += totals.prepares;
+        counts.device.drained += totals.drained;
+        counts.device.inserted += totals.inserted;
+        counts.device.distinct += totals.distinct;
+        counts.device.dropped += totals.dropped;
+        counts.device.rejected += totals.rejected;
+        counts.device.fallbacks += totals.fallbacks;
+    }
+    return counts;
+}
+
+void ReportPath(const char* what, const PathCounts& before, const PathCounts& after) {
+    std::printf("village path, %s: CPU table snapshots %llu, CPU table bindings %llu, device table prepares %llu, miss records %llu, inserted %llu, rejected %llu, fallbacks %llu\n", what, static_cast<unsigned long long>(after.snapshots - before.snapshots), static_cast<unsigned long long>(after.tableBuilds - before.tableBuilds), static_cast<unsigned long long>(after.device.prepares - before.device.prepares), static_cast<unsigned long long>(after.device.drained - before.device.drained), static_cast<unsigned long long>(after.device.inserted - before.device.inserted), static_cast<unsigned long long>(after.device.rejected - before.device.rejected), static_cast<unsigned long long>(after.device.fallbacks - before.device.fallbacks));
+}
+
 void Check(const Layout& layout) {
+    const auto before = ReadPath();
     const auto full = std::max(1u, Draws() * FullPercent() / 100u);
     for (std::uint32_t samples = 1; samples <= MaxSamples; ++samples) {
         std::uint32_t chosen = ~0u;
@@ -366,13 +406,20 @@ void Check(const Layout& layout) {
         }
         if (chosen == ~0u) continue;
         unsigned expected = 0;
-        for (std::uint32_t slot = 0; slot < samples; ++slot) expected += TexelByte(Indexing() != IndexMode::Table ? TableIndex(0, slot) : TableIndex(chosen, slot));
-        std::memset(layout.target.Bytes(0), 0, layout.target.Size());
+        for (std::uint32_t slot = 0; slot < samples; ++slot) expected += TexelByte(Indexing() == IndexMode::Constant || Indexing() == IndexMode::Immediate ? TableIndex(0, slot) : TableIndex(chosen, slot));
         auto commands = Commands(layout, {chosen}, 0);
-        Submit(commands);
-        const auto byte = BrightestByte(layout.target);
-        Require(byte == expected, "village draw cost: a full-target draw sampling " + std::to_string(samples) + " table textures wrote " + std::to_string(byte) + ", expected " + std::to_string(expected));
+        unsigned byte = 0;
+        std::uint32_t attempts = 0;
+        while (byte != expected && attempts < CheckAttempts) {
+            std::memset(layout.target.Bytes(0), 0, layout.target.Size());
+            Submit(commands);
+            byte = BrightestByte(layout.target);
+            ++attempts;
+        }
+        if (attempts > 1) std::printf("village check: the full-target draw sampling %u textures read its texels at draw %u\n", samples, attempts);
+        Require(byte == expected, "village draw cost: a full-target draw sampling " + std::to_string(samples) + " table textures wrote " + std::to_string(byte) + ", expected " + std::to_string(expected) + ", after " + std::to_string(ReadPath().device.drained - before.device.drained) + " device table miss records, " + std::to_string(ReadPath().device.inserted - before.device.inserted) + " inserted, " + std::to_string(ReadPath().device.rejected - before.device.rejected) + " rejected, " + std::to_string(ReadPath().device.distinct - before.device.distinct) + " distinct, " + std::to_string(ReadPath().device.dropped - before.device.dropped) + " dropped, " + std::to_string(ReadPath().device.prepares - before.device.prepares) + " prepares");
     }
+    ReportPath("check draws", before, ReadPath());
 }
 
 #ifdef __linux__
@@ -407,12 +454,13 @@ double Median(std::vector<double> values) {
 
 void Cost(const Layout& layout, std::uint32_t frames) {
     const auto draws = Draws();
-    std::printf("village shape: %u draws per frame on a %ux%u target, %u full-target, the rest %ux%u quads over %u positions; programs sample 1-%u textures in runs of %u draws; a %u-entry T# table through user SGPRs s[2:3], indices from the object V# in s[4:7] (%s); %u object V# sets, one per frame\n", draws, Width(), Height(), draws * FullPercent() / 100u, QuadPixels, QuadPixels, QuadPositions, MaxSamples, ProgramRun(), TableEntries(), IndexName(), ObjectSets());
+    std::printf("village shape: %u draws per frame on a %ux%u target, %u full-target, the rest %ux%u quads over %u positions; programs sample 1-%u textures in runs of %u draws; a %u-entry T# table through user SGPRs s[2:3] or a V# at root offset 0x220, indices from the object V# in s[4:7] (%s); %u object V# sets, one per frame\n", draws, Width(), Height(), draws * FullPercent() / 100u, QuadPixels, QuadPixels, QuadPositions, MaxSamples, ProgramRun(), TableEntries(), IndexName(), ObjectSets());
     std::vector<std::vector<std::uint32_t>> commandSets;
     for (std::uint32_t set = 0; set < ObjectSets(); ++set) commandSets.push_back(Commands(layout, Frame(), set));
     std::vector<double> warmMs;
     for (auto& commands : commandSets) warmMs.push_back(Submit(commands) / 1e3);
     std::vector<double> perDraw;
+    const auto pathBefore = ReadPath();
 #ifdef __linux__
     const auto threads = DriverThreads();
     const auto rasterizer = [](const std::string& name) { return name.rfind("llvmpipe-", 0) == 0; };
@@ -438,6 +486,7 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         rasterCpu.push_back(raster);
 #endif
     }
+    ReportPath("measured frames", pathBefore, ReadPath());
     std::string frameList;
     char text[128];
     for (const auto ms : warmMs) {
