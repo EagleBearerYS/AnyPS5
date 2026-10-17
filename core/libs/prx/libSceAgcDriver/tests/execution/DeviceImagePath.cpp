@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -25,6 +26,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cmath>
@@ -34,11 +36,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <future>
 #include <initializer_list>
 #include <iostream>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -704,6 +708,101 @@ void GpuWrittenTexture(const Harness& harness) {
     }
 }
 
+struct Blocker {
+    std::atomic<bool> release{false};
+    void Enqueue() {
+        AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([this] {
+            while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }, {});
+    }
+};
+
+void Finish() {
+    auto idle = std::async(std::launch::async, [] { AgcDriverWaitIdle_nid_postfix(); });
+    if (idle.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
+        std::fputs("device image path harness: the queue worker and the draw pipeline deadlocked\n", stderr);
+        std::fflush(stderr);
+        std::_Exit(1);
+    }
+    idle.get();
+}
+
+void WriteRecord(const GuestBlock& block, std::uint32_t entry, std::uint32_t texture) {
+    const auto descriptor = TextureDescriptor(block.Texture(texture), TexelOf(texture).format);
+    std::copy(descriptor.begin(), descriptor.end(), block.Table() + static_cast<std::size_t>(entry) * (RecordBytes / 4u));
+}
+
+std::array<float, 4> DrawnValue(const std::vector<std::byte>& stored) {
+    const auto layout = ColorLayout();
+    for (std::uint32_t y = 0; y < ColorHeight; ++y) {
+        for (std::uint32_t x = 0; x < ColorWidth; ++x) {
+            const auto offset = layout.Offset(x, y);
+            if (std::all_of(stored.begin() + static_cast<std::ptrdiff_t>(offset), stored.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte byte) { return byte == Kept; })) continue;
+            std::array<float, 4> value{};
+            for (std::size_t channel = 0; channel < 4; ++channel) value[channel] = static_cast<float>(stored[offset + channel]) / 255.0f;
+            return value;
+        }
+    }
+    throw std::runtime_error("the draw covered no pixel");
+}
+
+bool SameTexel(const std::array<float, 4>& drawn, const std::array<float, 4>& value) {
+    for (std::size_t channel = 0; channel < 4; ++channel) {
+        if (std::lround(drawn[channel] * 255.0f) != std::lround(value[channel] * 255.0f)) return false;
+    }
+    return true;
+}
+
+void RequireNewRecord(const Harness& harness, const std::vector<std::byte>& stored, std::uint32_t old, std::uint32_t written, const std::string& what) {
+    const auto drawn = DrawnValue(stored);
+    Require(!SameTexel(drawn, TexelOf(old).value), what + ": the draw after the write sampled the texture the record named before it");
+    if (harness.device) Require(SameTexel(drawn, {}) || SameTexel(drawn, TexelOf(written).value), what + ": the draw after the write sampled neither zeros (a miss on the new key) nor the texture the record names now");
+    else RequireDrawn(stored, TexelOf(written).value, what);
+}
+
+void StaleRecord(const Harness& harness) {
+    constexpr std::uint32_t entry = 1545u;
+    constexpr std::array<std::uint32_t, 3> textures{9u, 14u, 9u};
+    Require(TextureOf(entry) == textures[0] && TexelOf(textures[1]).format == TexelOf(textures[0]).format && TexelOf(textures[2]).format == TexelOf(textures[0]).format, "the rewritten record's textures are not one format");
+    DrawOnce(harness, entry, DrawKind::Direct);
+    DrawOnce(harness, entry, DrawKind::Direct);
+    RequireDrawn(ReadColor(harness), TexelOf(textures[0]).value, "(i) the record before any write");
+    WriteRecord(harness.block, entry, textures[1]);
+    auto before = Read();
+    DrawOnce(harness, entry, DrawKind::Direct);
+    auto stored = ReadColor(harness);
+    auto after = Read();
+    RequireNewRecord(harness, stored, textures[0], textures[1], "(i) a CPU write to the record in the previous submission");
+    const auto nextFirst = DrawnValue(stored);
+    DrawOnce(harness, entry, DrawKind::Direct);
+    RequireDrawn(ReadColor(harness), TexelOf(textures[1]).value, "(i) the second draw after a write in the previous submission");
+    std::printf("(i) record rewritten between submissions (the next collect epoch): first draw %s, second draw the new texture%s\n", SameTexel(nextFirst, {}) ? "zeros, the new key missed" : "the new texture", Describe(before, after).c_str());
+    std::memset(harness.block.Color(), static_cast<int>(Kept), ColorLayout().Bytes());
+    auto commands = DrawCommands(harness.block, entry, DrawKind::Direct);
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    auto& pipeline = AgcDriver::DriverDetail::DrawPipeline::Queue0();
+    Blocker blocker;
+    before = Read();
+    blocker.Enqueue();
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the held draw's submission failed");
+    const auto start = std::chrono::steady_clock::now();
+    while (pipeline.Outstanding() < 3u && std::chrono::steady_clock::now() - start < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto outstanding = pipeline.Outstanding();
+    WriteRecord(harness.block, entry, textures[2]);
+    blocker.release = true;
+    Finish();
+    Require(outstanding >= 3u, "(i) the draw was not held behind the committer item (" + std::to_string(outstanding) + " items outstanding), so the write did not land inside its submission");
+    stored = ReadColor(harness);
+    after = Read();
+    const auto sameFirst = DrawnValue(stored);
+    if (harness.device) RequireNewRecord(harness, stored, textures[1], textures[2], "(i) a CPU write to the record after the draw was decoded, in its own submission");
+    DrawOnce(harness, entry, DrawKind::Direct);
+    RequireDrawn(ReadColor(harness), TexelOf(textures[2]).value, "(i) the draw after a write inside the previous submission");
+    const char* sampled = SameTexel(sameFirst, {}) ? "zeros, the new key missed" : SameTexel(sameFirst, TexelOf(textures[2]).value) ? "the new texture" : SameTexel(sameFirst, TexelOf(textures[1]).value) ? "the old texture (the CPU table was taken when the draw was decoded)" : "another value";
+    std::printf("(i) record rewritten after the draw was decoded, in the same collect epoch: first draw %s, next draw the new texture%s\n", sampled, Describe(before, after).c_str());
+    WriteRecord(harness.block, entry, textures[0]);
+}
+
 void FallsBackFromWarmCache(const Harness& harness) {
     const std::array<std::uint32_t, 4> keys{1546u, 1867u, 1772u, 1773u};
     auto before = Read();
@@ -840,7 +939,7 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const std::string parts = argc > 2 ? argv[2] : "abcdegh";
+    const std::string parts = argc > 2 ? argv[2] : "abcdeghi";
 #ifdef _WIN32
     if (mode != "--village-bench") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
@@ -886,6 +985,7 @@ int main(int argc, char** argv) {
                 if (parts.find('e') != std::string::npos) Faults(harness);
                 if (parts.find('g') != std::string::npos) Rechecks(harness);
                 if (parts.find('h') != std::string::npos) GpuWrittenTexture(harness);
+                if (parts.find('i') != std::string::npos) StaleRecord(harness);
             }
         } catch (const std::exception& error) {
             std::cerr << "device image path harness failed: " << error.what() << '\n';
