@@ -3655,7 +3655,32 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
     return Graphics::Pipeline::Prebuild(context, state, Graphics::VertexInputLayout{}, layouts.View(), group);
 }
 
+namespace {
+
+void reportSpirvResidency() {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    static std::atomic<std::int64_t> lastReport{0};
+    static std::atomic<std::uint64_t> lastReloads{0};
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto last = lastReport.load(std::memory_order_relaxed);
+    if (last == 0) {
+        lastReport.compare_exchange_strong(last, nowMs);
+        return;
+    }
+    if (nowMs - last < 10000 || !lastReport.compare_exchange_strong(last, nowMs)) return;
+    const auto held = ShaderRecompiler::HeldSpirv();
+    const auto recent = held.reloads - lastReloads.exchange(held.reloads, std::memory_order_relaxed);
+    constexpr double Mib = 1024.0 * 1024.0;
+    const auto heap = static_cast<double>(held.heapWords) * sizeof(std::uint32_t) / Mib;
+    const auto mapped = static_cast<double>(held.mappedWords) * sizeof(std::uint32_t) / Mib;
+    AgcDriver::ProfilePrint_nid_no_patch("[spirv] %.1f MiB held (heap %.1f, mapped %.1f) by %llu modules; releasable %llu, resident %llu, pinned %llu; released %llu, reloaded %llu (%llu in the last %.0f s, %.1f ms reloading in all)\n", heap + mapped, heap, mapped, static_cast<unsigned long long>(held.holders), static_cast<unsigned long long>(held.releasable), static_cast<unsigned long long>(held.resident), static_cast<unsigned long long>(held.pinned), static_cast<unsigned long long>(held.releases), static_cast<unsigned long long>(held.reloads), static_cast<unsigned long long>(recent), static_cast<double>(nowMs - last) / 1000.0, static_cast<double>(held.reloadNanoseconds) / 1e6);
+}
+
+}
+
 void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe) {
+    reportSpirvResidency();
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -4174,6 +4199,7 @@ std::uint64_t VulkanDevice::presync(std::span<const std::pair<std::uint64_t, std
 }
 
 std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t dispatchThreads, std::uint64_t programAddress) {
+    reportSpirvResidency();
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
     static const bool lockedBuild = std::getenv("APS5_LOCKED_BUILD") != nullptr;
