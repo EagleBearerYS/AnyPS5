@@ -1,21 +1,213 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
+#include "IntermediateRepresentation/IrProgram.hpp"
+#include "DeviceImageTableAbi.hpp"
+#include "ImageTableAbi.hpp"
 #include "RuntimeAbi.hpp"
 #include "VulkanTestDevice.hpp"
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
+#include <iomanip>
 #include <iostream>
+#include <memory>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
 using namespace AgcDriver::Graphics;
+namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
 namespace Runtime = ShaderRecompiler::RuntimeAbi;
+using Key = DeviceImageTable::Key;
 
 void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+constexpr std::uint32_t Side = 4;
+constexpr std::uint32_t Type2D = 9;
+constexpr std::array<std::uint32_t, 5> Formats{1u, 13u, 14u, 22u, 56u};
+constexpr std::uint64_t InterfaceId = 0x1234'5678'9abc'def0ull;
+
+alignas(256) std::array<std::array<std::uint32_t, Side * Side>, Formats.size()> Textures{};
+
+std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
+    return {
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
+        ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
+        0xfacu | (Type2D << 28u),
+        0u, 0u, 0u, 0u,
+    };
+}
+
+std::shared_ptr<const DeviceImageTable::Interface> SampledInterface() {
+    static const auto interface = [] {
+        auto made = std::make_shared<DeviceImageTable::Interface>();
+        made->id = InterfaceId;
+        made->image.resourceClass = ShaderRecompiler::ImageResourceClass::Sampled;
+        made->image.numericClass = ShaderRecompiler::IrTextureNumericClass::Float;
+        made->image.dimension = ShaderRecompiler::RdnaImageDimension::Dim2D;
+        made->image.read = true;
+        made->image.table = 0;
+        made->modes = ShaderRecompiler::ResourceMaterializer::RuntimeImageModes(made->image);
+        return made;
+    }();
+    return interface;
+}
+
+DeviceImageTable::InterfaceLookup Lookup() {
+    return [](std::uint64_t id) { return id == InterfaceId ? SampledInterface() : nullptr; };
+}
+
+Key KeyFor(const std::array<std::uint32_t, 8>& descriptor, std::uint32_t samplerClass = 0u) {
+    Key key{};
+    std::copy(descriptor.begin(), descriptor.end(), key.begin());
+    key[Abi::InterfaceWord] = static_cast<std::uint32_t>(InterfaceId);
+    key[Abi::InterfaceWord + 1u] = static_cast<std::uint32_t>(InterfaceId >> 32u);
+    key[Abi::SamplerClassWord] = samplerClass;
+    return key;
+}
+
+void WriteRecords(std::span<std::uint32_t> ring, std::span<const Key> keys, std::uint32_t count, std::uint32_t pcFlags = 0u) {
+    ring[Abi::RingCountWord] = count;
+    for (std::uint32_t record = 0; record < std::min(count, DeviceImageTable::RingCapacity); ++record) {
+        auto* at = ring.data() + Abi::RingRecordsWord + static_cast<std::size_t>(record) * Abi::RecordWords;
+        const auto& key = keys[record % keys.size()];
+        std::copy(key.begin(), key.end(), at);
+        at[Abi::RecordPcWord] = (0x100u + record * 4u) | pcFlags;
+    }
+}
+
+std::string HexWords(std::span<const std::uint32_t> words) {
+    std::ostringstream text;
+    text << std::hex << std::setfill('0');
+    for (std::size_t index = 0; index < words.size(); ++index) text << (index == 0 ? "" : " ") << std::setw(8) << words[index];
+    return text.str();
+}
+
+std::vector<std::uint32_t> ReadTable(const Context& context, Recorder& recorder, const DeviceImageTable& table, std::size_t words) {
+    Buffer readback(context, words * sizeof(std::uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto commands = recorder.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    const VkBufferCopy region{0, 0, words * sizeof(std::uint32_t)};
+    context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, table.TableBuffer(), readback.Handle(), 1, &region);
+    recorder.Sync();
+    std::vector<std::uint32_t> result(words);
+    std::memcpy(result.data(), readback.Bytes().data(), words * sizeof(std::uint32_t));
+    return result;
+}
+
+std::vector<Key> FormatKeys() {
+    std::vector<Key> keys;
+    for (std::size_t index = 0; index < Formats.size(); ++index) keys.push_back(KeyFor(TextureDescriptor(Textures[index].data(), Formats[index])));
+    return keys;
+}
+
+ShaderRecompiler::RuntimeImageModeMatch ExpectedMode(const Key& key) {
+    ShaderRecompiler::DescriptorValue descriptor;
+    descriptor.dwordCount = Abi::DescriptorWords;
+    descriptor.availableDwordMask = 0xffu;
+    std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
+    const auto interface = SampledInterface();
+    return ShaderRecompiler::ResourceMaterializer::TryRuntimeImageMode(interface->image, descriptor, interface->modes);
+}
+
+void ResolvesAndUploads(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, "the device has an active recorder");
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    const auto keys = FormatKeys();
+    table.Prepare(context, *recorder);
+    WriteRecords(table.RingChunk(*recorder), keys, 8u);
+    recorder->Sync();
+    auto counts = table.Totals();
+    Require(counts.drained == 8u && counts.dropped == 0u, "the batch's eight ring records are drained when it completes");
+    Require(counts.inserted == 0u, "nothing is inserted before the next prepare");
+    table.Prepare(context, *recorder);
+    counts = table.Totals();
+    Require(counts.distinct == keys.size() && counts.inserted == keys.size() && counts.entries == keys.size(), "the five distinct records are resolved and inserted (distinct " + std::to_string(counts.distinct) + ", inserted " + std::to_string(counts.inserted) + ")");
+    auto& heap = BindlessHeap::For(context);
+    std::set<std::pair<std::uint32_t, std::uint32_t>> slots;
+    for (std::size_t index = 0; index < keys.size(); ++index) {
+        const auto value = table.Find(keys[index]);
+        Require(value.has_value() && value->fault == 0u && value->samplerSlot == 0u, "format " + std::to_string(Formats[index]) + " is inserted without a fault");
+        const auto expected = ExpectedMode(keys[index]);
+        Require(expected.mode.has_value() && value->mode == *expected.mode, "format " + std::to_string(Formats[index]) + " names the mode the CPU table path picks");
+        const auto kind = static_cast<std::uint32_t>(ShaderRecompiler::DescriptorBindingForImage(SampledInterface()->modes.at(value->mode)));
+        Require(heap.SlotTexture(kind, value->slot) != nullptr, "format " + std::to_string(Formats[index]) + " holds a texture in its heap slot");
+        Require(slots.insert({kind, value->slot}).second, "every format has its own heap slot");
+    }
+    const auto words = table.KeyWords();
+    const auto uploaded = ReadTable(context, *recorder, table, Abi::HeaderWords + words.size());
+    Require(uploaded[Abi::HeaderVersion] == Abi::Version && uploaded[Abi::HeaderMask] == counts.buckets - 1u && uploaded[Abi::HeaderRingCapacity] == DeviceImageTable::RingCapacity, "the header names the version, the bucket mask and the ring capacity");
+    Require(uploaded[Abi::HeaderTableLow] == 0u && uploaded[Abi::HeaderTableHigh] == 0u && uploaded[Abi::HeaderRingLow] == 0u && uploaded[Abi::HeaderRingHigh] == 0u, "the header's address words stay zero");
+    Require(std::equal(words.begin(), words.end(), uploaded.begin() + Abi::HeaderWords), "the device's buckets equal the host key table");
+    const auto uploads = table.Totals().uploads;
+    table.Prepare(context, *recorder);
+    Require(table.Totals().uploads == uploads, "a prepare with nothing changed uploads nothing");
+    recorder->Sync();
+    std::printf("resolved %zu formats: %llu uploads, %llu bytes\n", keys.size(), static_cast<unsigned long long>(table.Totals().uploads), static_cast<unsigned long long>(table.Totals().uploadBytes));
+}
+
+void RejectsAndFaults(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    auto invalid = TextureDescriptor(Textures[0].data(), Formats[0]);
+    invalid[1] &= ~(0x1ffu << 20u);
+    auto unmapped = TextureDescriptor(reinterpret_cast<const void*>(std::uintptr_t{0x10000}), Formats[4]);
+    const std::array<Key, 2> keys{KeyFor(invalid), KeyFor(unmapped)};
+    const auto checked = ExpectedMode(keys[0]);
+    Require(!checked.mode.has_value(), "the CPU table path rejects a descriptor of format 0");
+    table.Prepare(context, *recorder);
+    WriteRecords(table.RingChunk(*recorder), keys, 2u);
+    recorder->Sync();
+    table.Prepare(context, *recorder);
+    const auto first = table.Find(keys[0]);
+    Require(first.has_value() && first->fault == 1u + static_cast<std::uint32_t>(checked.reason), "a descriptor the mode check rejects is inserted with 1 + its reason");
+    const auto second = table.Find(keys[1]);
+    Require(second.has_value() && second->fault == 1u + static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected), "a descriptor over unmapped memory is inserted as rejected by the driver");
+    Require(table.Totals().rejected == 2u && table.Totals().inserted == 0u, "both are rejections, neither holds a texture");
+    WriteRecords(table.RingChunk(*recorder), std::span<const Key>(keys).first(1), 1u, Abi::FaultFlag);
+    recorder->Sync();
+    const auto fault = table.LastFault();
+    const auto name = ShaderRecompiler::ImageTableAbi::PoisonReasonName(checked.reason);
+    Require(table.Totals().faults == 1u, "the fault record is counted");
+    Require(fault.find("image table: pc 0x100 selected the descriptor (words " + HexWords(std::span<const std::uint32_t>(invalid)) + ")") != std::string::npos && fault.find(std::string(name)) != std::string::npos, "the fault names the pc, the descriptor's words and the reason: " + fault);
+    std::printf("fault: %s\n", fault.c_str());
+}
+
+void CountsOverflow(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.GraphicsContext();
+    DeviceImageTable table(context, Lookup());
+    const auto keys = FormatKeys();
+    table.Prepare(context, *recorder);
+    WriteRecords(table.RingChunk(*recorder), keys, DeviceImageTable::RingCapacity + 100u);
+    recorder->Sync();
+    const auto counts = table.Totals();
+    Require(counts.drained == DeviceImageTable::RingCapacity && counts.dropped == 100u, "records past the ring's capacity are counted as dropped (drained " + std::to_string(counts.drained) + ", dropped " + std::to_string(counts.dropped) + ")");
+    table.Prepare(context, *recorder);
+    Require(table.Totals().inserted == keys.size(), "the records that fit are still resolved");
+    recorder->Sync();
 }
 
 VkPhysicalDeviceLimits UsableLimits() {
@@ -74,10 +266,20 @@ int main() {
 #endif
         Require(GpuPathEnabled(), "APS5_GPU_PATH turns the device path on");
         DevicePathLimits();
+        for (std::size_t index = 0; index < Textures.size(); ++index) {
+            for (std::size_t texel = 0; texel < Textures[index].size(); ++texel) Textures[index][texel] = static_cast<std::uint32_t>(0x01020304u * (index + 1u) + texel);
+        }
         auto device = OpenVulkanTestDevice();
         if (device == nullptr) return VulkanTestSkipped;
         DeviceTarget(*device);
         std::printf("device path on %s: %s\n", device->DeviceName().c_str(), device->DeviceImagePath() ? "on" : "off");
+        if (!device->DeviceImagePath()) {
+            std::printf("skipped, the device does not serve the device image path\n");
+            return VulkanTestSkipped;
+        }
+        ResolvesAndUploads(*device);
+        RejectsAndFaults(*device);
+        CountsOverflow(*device);
         device->WaitIdle();
         device.reset();
         std::cout << "device image table tests passed\n";
