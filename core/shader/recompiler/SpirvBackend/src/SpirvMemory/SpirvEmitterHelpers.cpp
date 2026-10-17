@@ -413,6 +413,40 @@ void DefineOutputs(SpirvEmitterState& state) {
     }
 }
 
+namespace {
+
+void DefineDeviceImageTables(SpirvEmitterState& state) {
+    const auto& info = state.program.Info();
+    if (std::none_of(info.images.begin(), info.images.end(), [](const ImageResource& image) { return image.deviceTable; })) return;
+    const auto define = [&](std::uint32_t type, const char* name, std::uint32_t storage, std::uint32_t set, std::uint32_t binding) {
+        const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
+        state.module.AddName(variable, name);
+        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, set);
+        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, binding);
+        return variable;
+    };
+    state.deviceTableBucketsVariable = define(StorageBufferBlockType(state), "device_image_buckets", spv::StorageClassStorageBuffer, RuntimeAbi::DeviceTableSet, RuntimeAbi::DeviceTableBucketsBinding);
+    state.module.AddAnnotation(spv::OpDecorate, state.deviceTableBucketsVariable, spv::DecorationNonWritable);
+    state.deviceTableRingVariable = define(StorageBufferBlockType(state), "device_image_ring", spv::StorageClassStorageBuffer, RuntimeAbi::DeviceTableSet, RuntimeAbi::DeviceTableRingBinding);
+    if (state.spirvVersion < 0x00010500u) state.module.EmitExtension("SPV_EXT_descriptor_indexing");
+    state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
+    for (std::uint32_t resource = 0; resource < info.images.size(); ++resource) {
+        if (!info.images[resource].deviceTable) continue;
+        for (const auto& mode : info.runtimeImageModes.at(resource)) {
+            if (!TableModeEmitted(mode)) continue;
+            const auto kind = DescriptorBindingForImage(mode);
+            if (std::any_of(state.deviceHeapVariables.begin(), state.deviceHeapVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
+            const auto name = "device_heap_" + std::to_string(static_cast<std::uint32_t>(kind));
+            const auto type = state.module.Type(spv::OpTypeArray, ImageType(state, mode), ConstantU32(state, RuntimeAbi::GpuImageHeapSlots));
+            const auto binding = RuntimeAbi::BindingNumber(RuntimeAbi::Stage::Fragment, static_cast<RuntimeAbi::Binding>(kind));
+            state.deviceHeapVariables.push_back({kind, define(type, name.c_str(), spv::StorageClassUniformConstant, RuntimeAbi::DeviceHeapSet, binding)});
+            if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(spv::CapabilitySampled1D);
+        }
+    }
+}
+
+}
+
 void DefineDescriptors(SpirvEmitterState& state) {
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     const IrShaderStage stage = state.program.Resources().stage;
@@ -479,7 +513,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
             RequireTableIndexing(state);
             for (std::uint32_t resource = 0; resource < state.program.Info().images.size(); ++resource) {
                 const auto& image = state.program.Info().images[resource];
-                if (image.table == NoTable) continue;
+                if (image.table == NoTable || image.deviceTable) continue;
                 for (const auto& mode : state.program.Info().runtimeImageModes.at(resource)) {
                     if (!TableModeEmitted(mode)) continue;
                     const auto kind = DescriptorBindingForImage(mode);
@@ -514,6 +548,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         }
         }
     }
+    DefineDeviceImageTables(state);
     if (LdsInDeviceMemory(state)) {
         state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
         state.module.AddName(state.ldsBufferVariable, "workgroup_memory");
