@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -14,7 +15,7 @@ class VideoOutTestEnvironment final {
     std::filesystem::path root;
 
 public:
-    VideoOutTestEnvironment() : previous(std::filesystem::current_path()) {
+    explicit VideoOutTestEnvironment(std::optional<std::uint32_t> attribute3 = std::nullopt) : previous(std::filesystem::current_path()) {
         const auto seed = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) ^
                           (static_cast<std::uint64_t>(std::random_device{}()) << 32u) ^ std::random_device{}();
         for (std::uint32_t attempt = 0; attempt < 64; ++attempt) {
@@ -32,7 +33,9 @@ public:
             std::filesystem::current_path(root);
             std::filesystem::create_directories("app0/sce_sys");
             std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
-            param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0})";
+            param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0)";
+            if (attribute3) param << R"(,"attribute3":)" << *attribute3;
+            param << "}";
             if (!param) throw std::runtime_error("Cannot write VideoOut param.json fixture");
         } catch (...) {
             std::error_code error;
