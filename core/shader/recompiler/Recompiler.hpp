@@ -362,6 +362,7 @@ struct HeapStageWords {
     std::vector<std::uint32_t> userData;
     std::vector<std::uint32_t> flattenedSrt;
     std::vector<VertexAttribute> vertexAttributes;
+    std::vector<std::vector<std::uint32_t>> bindings;
 };
 
 struct RecompileRequest {

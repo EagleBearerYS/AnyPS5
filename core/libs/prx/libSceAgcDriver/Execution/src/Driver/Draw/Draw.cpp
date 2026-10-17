@@ -705,6 +705,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         words->vertexAttributes = *variant.ringAttributes;
         if (variant.ringFlat != nullptr) words->flattenedSrt = *variant.ringFlat;
+        if (variant.ringBindings != nullptr) words->bindings = *variant.ringBindings;
         decodeVertexInfo(i);
         require(vertexInfos[i].has_value(), "a ring vertex hit has no vertex stage info");
         const auto& vertex = *vertexInfos[i];
@@ -756,6 +757,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             }
             if (dataEntry != nullptr && reused[i]) ++dataStagesReused;
             else if (dataEntry != nullptr) ++dataStagesCompiled;
+        }
+        if (stageCaptures[i].heapWords != nullptr && !stageCaptures[i].heapWords->bindings.empty()) {
+            compiledStages.push_back(PatchedHeapResult(*programResults[i], *stageCaptures[i].heapWords));
+            programResults[i] = compiledStages.back().get();
         }
         const auto& result = *programResults[i];
         if (i == 0 && drawParameters.indirect) {
