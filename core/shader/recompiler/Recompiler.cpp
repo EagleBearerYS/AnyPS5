@@ -294,8 +294,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     deadCodeEliminator.Eliminate(program);
     dumpIr("srt");
 
+    const bool gpuModeStage = request.target.gpuResolvedImages && (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Compute);
     constexpr ResourceTracker resourceTracker;
-    resourceTracker.Track(program);
+    resourceTracker.Track(program, request.target.deviceImageTables && supports(spv::CapabilityInt64) && !gpuModeStage);
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
