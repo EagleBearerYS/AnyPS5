@@ -551,7 +551,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
     targetOptions.gpuResolvedImages = gpuMode;
-    targetOptions.bdaRangeCache = request.target.gpuConstants;
+    targetOptions.bdaRangeCache = request.target.gpuConstants && request.shader.stage != ShaderStage::Compute;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
