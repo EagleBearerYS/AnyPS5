@@ -26,6 +26,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 
 #ifdef __linux__
@@ -237,6 +238,7 @@ extern "C" {
 FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
     if (descriptor < 0) { errno = 9; return nullptr; }
     if (!mode) { errno = 22; return nullptr; }
+    AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
     try {
@@ -324,6 +326,11 @@ int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, con
 }
 
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
+    if (stream && !stream->IsOpen()) {
+        std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
+        errno = 9;
+        return -1;
+    }
     GetNativeStream(stream);
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
     return stream->Close();
@@ -339,17 +346,15 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
         {In, "r"}, {Out, "w"}, {Out | Trunc, "w"}, {Out | App, "a"},
         {In | Binary, "rb"}, {Out | Binary, "wb"}, {Out | Trunc | Binary, "wb"}, {Out | App | Binary, "ab"},
         {In | Out, "r+"}, {In | Out | Trunc, "w+"}, {In | Out | App, "a+"},
-        {In | Out | Binary, "r+b"}, {In | Out | Trunc | Binary, "w+b"}, {In | Out | App | Binary, "a+b"}};
-    const int open = (mode & (In | Out | App | Trunc | Binary)) | ((mode & Nocreate) ? In : 0) | ((mode & App) ? Out : 0);
+        {In | Out | Binary, "r+b"}, {In | Out | Trunc | Binary, "w+b"}, {In | Out | App | Binary, "a+b"},
+        {Out | Noreplace, "wx"}, {Out | Trunc | Noreplace, "wx"}, {In | Out | Trunc | Noreplace, "w+x"},
+        {Out | Binary | Noreplace, "wbx"}, {Out | Trunc | Binary | Noreplace, "wbx"},
+        {In | Out | Trunc | Binary | Noreplace, "w+bx"}};
+    const int open = (mode & (In | Out | App | Trunc | Binary)) | ((mode & Nocreate) ? In : 0) | ((mode & App) ? Out : 0) |
+        (((mode & Noreplace) && (mode & (Out | App))) ? Noreplace : 0);
     const char* openMode = nullptr;
     for (const auto& [flags, text] : modes) if (flags == open) openMode = text;
     if (!openMode) return nullptr;
-    if ((mode & Noreplace) && (open & Out)) {
-        if (auto* existing = fopen_nid_postfix(filename, "r")) {
-            fclose_nid_postfix(existing);
-            return nullptr;
-        }
-    }
     auto* stream = fopen_nid_postfix(filename, openMode);
     if (!stream || !(mode & Ate) || fseek_nid_postfix(stream, 0, SEEK_END) == 0) return stream;
     fclose_nid_postfix(stream);
@@ -357,6 +362,7 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
 }
 
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
+    if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetNativeStream(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fread: null buffer");
@@ -371,6 +377,7 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
 }
 
 size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
+    if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetNativeStream(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fwrite: null buffer");
@@ -380,6 +387,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
 }
 
 int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int origin) {
+    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (origin != SEEK_SET && origin != SEEK_CUR && origin != SEEK_END) { errno = 22; return -1; }
 #ifdef _WIN32
     auto* native = GetNativeStream(stream);
@@ -396,6 +404,7 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
 }
 
 std::int64_t APS5_VABI ftello_nid_postfix(FileStream* stream) {
+    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
 #ifdef _WIN32
     auto* native = GetNativeStream(stream);
     if (IsPipeStream(native)) { errno = 29; return -1; }
@@ -435,12 +444,14 @@ void APS5_VABI rewind_nid_postfix(FileStream* stream) {
 
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
+    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     const int result = std::fputs(str, GetNativeStream(stream));
     stream->SyncStatus();
     return result;
 }
 
 int APS5_VABI fflush_nid_postfix(FileStream* stream) {
+    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     std::FILE* native = stream ? GetNativeStream(stream) : nullptr;
 #ifdef __linux__
     if (native && !__fwriting(native)) return 0;

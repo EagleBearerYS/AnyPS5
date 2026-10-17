@@ -1,4 +1,5 @@
 #include "BdaTests.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -23,6 +24,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <vector>
 
 #ifndef _WIN32
 #include <sys/mman.h>
@@ -40,6 +42,118 @@ void reject(TAction action, const char* reason) {
         return;
     }
     throw std::runtime_error(std::string("expected BDA rejection: ") + reason);
+}
+
+void addressTableKeyTests() {
+    using ShaderRecompiler::BdaAbi::Range;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> written{{{0x1000, 0x1040}}};
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> otherWritten{{{0x1000, 0x1080}}};
+    const std::array<Range, 1> own{{{0x2000, 0x2100, 0x70000000, ShaderRecompiler::BdaAbi::Read, 0}}};
+    const std::array<Range, 1> moved{{{0x2000, 0x2100, 0x70010000, ShaderRecompiler::BdaAbi::Read, 0}}};
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> ownAsWrites{{{0x2000, 0x2100}, {0x70000000, ShaderRecompiler::BdaAbi::Read}}};
+    const auto plain = AddressTableKey({}, own);
+    Require(AddressTableKey({}, own) == plain, "one build's BDA table key is not stable");
+    Require(AddressTableKey(written, own) != plain && AddressTableKey(written, own) != AddressTableKey(otherWritten, own), "BDA table keys of builds that differ only in their written ranges are equal");
+    Require(AddressTableKey({}, moved) != plain, "BDA table keys of builds whose own region moved are equal");
+    Require(AddressTableKey(ownAsWrites, {}) != plain, "written ranges and own regions with the same words give one BDA table key");
+}
+
+void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t piece = 65536;
+    void* block = ::operator new(piece, std::align_val_t{piece});
+    std::memset(block, 0x3c, piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    const auto change = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, piece, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    change(true);
+    alignas(256) static std::array<std::byte, 512> source{};
+    const auto snapshotAddress = reinterpret_cast<std::uint64_t>(source.data());
+    std::array<std::byte, 512> first{};
+    std::array<std::byte, 512> second{};
+    first.fill(std::byte{0x11});
+    second.fill(std::byte{0x22});
+    struct Build {
+        std::unique_ptr<GuestBufferMemory> memory;
+        std::unique_ptr<BdaResources> bda;
+        std::uint64_t snapshot = 0;
+        VkBuffer table = VK_NULL_HANDLE;
+        VkBuffer view = VK_NULL_HANDLE;
+    };
+    const auto build = [&](std::span<const std::byte> bytes, bool written, bool addressable, std::uint64_t address) {
+        Build result;
+        result.memory = std::make_unique<GuestBufferMemory>(importing);
+        auto& memory = *result.memory;
+        if (addressable) memory.AcquireRegistered();
+        if (written) memory.AddWritable(reinterpret_cast<std::uint64_t>(block) + 256, 64);
+        memory.AddSnapshot({address, bytes});
+        memory.Upload(addressable);
+        std::uint32_t adjustment = 0;
+        result.view = memory.Descriptor(address, bytes.size(), adjustment).buffer;
+        if (!addressable) return result;
+        const auto ranges = memory.AddressRanges();
+        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address; });
+        Require(found != ranges.end() && found->end == address + bytes.size(), "the snapshot has no BDA table entry of its own");
+        result.snapshot = found->deviceAddress;
+        const auto held = access.addressBytes(result.snapshot);
+        Require(held.size() >= bytes.size() && std::memcmp(held.data(), bytes.data(), bytes.size()) == 0, "the snapshot's device copy does not hold its bytes");
+        if (const auto cached = memory.CachedAddressTable()) {
+            Require(cached->ranges->size() == ranges.size() && std::memcmp(cached->ranges->data(), ranges.data(), ranges.size() * sizeof(ranges.front())) == 0, "a cached BDA table differs from the build's ranges");
+        }
+        result.bda = std::make_unique<BdaResources>(importing, memory);
+        result.table = result.bda->Table().buffer;
+        return result;
+    };
+    const bool spaces = AddressSpaceCounters().enabled;
+    {
+        auto a = build(first, false, true, snapshotAddress);
+        auto plain = build(first, false, false, snapshotAddress);
+        auto d = build(first, true, true, snapshotAddress);
+        auto b = build(first, false, true, snapshotAddress);
+        auto c = build(second, false, true, snapshotAddress);
+        Require(a.snapshot == b.snapshot && a.view == b.view, "two builds of one snapshot with the same bytes do not share its device copy");
+        Require(c.snapshot != a.snapshot, "a snapshot with other bytes took the device copy of the first");
+        Require(plain.view != a.view && d.snapshot == a.snapshot, "a snapshot copy made for BDA serves a build bound by descriptor, or a build with written ranges did not share the snapshot copy");
+        if (spaces) {
+            Require(a.memory->CachedAddressTable().has_value() && c.memory->CachedAddressTable().has_value() && d.memory->CachedAddressTable().has_value(), "a build with its own regions over the address space has no cached BDA table");
+            Require(a.table == b.table, "two builds of the same space and snapshot do not share their BDA table");
+            Require(c.table != a.table, "a build with other snapshot bytes took another build's BDA table");
+            Require(a.memory->CachedAddressTable()->serial == b.memory->CachedAddressTable()->serial && c.memory->CachedAddressTable()->serial != a.memory->CachedAddressTable()->serial, "cached BDA table serials do not follow the build's ranges");
+        }
+        ClearSnapshotCopies(importing.device);
+        auto e = build(first, false, true, snapshotAddress);
+        Require(e.snapshot != a.snapshot, "a snapshot copy outlived the teardown of its device's copies");
+        for (auto* item : {&a, &b, &c, &d, &e, &plain}) item->memory->WriteBack();
+    }
+    if (spaces) {
+        std::vector<std::array<std::byte, 512>> variants(66);
+        for (std::size_t index = 0; index < variants.size(); ++index) {
+            variants[index].fill(std::byte{0x40});
+            variants[index][0] = static_cast<std::byte>(index);
+            variants[index][1] = static_cast<std::byte>(index >> 8u);
+        }
+        alignas(256) static std::array<std::byte, 66 * 512> sources{};
+        std::vector<Build> builds;
+        const auto serial = [&](std::size_t index) {
+            builds.push_back(build(variants[index], false, true, reinterpret_cast<std::uint64_t>(sources.data()) + index * 512));
+            return builds.back().memory->CachedAddressTable()->serial;
+        };
+        const auto kept = serial(0);
+        const auto evicted = serial(1);
+        for (std::size_t index = 2; index < 64; ++index) serial(index);
+        Require(serial(0) == kept, "a BDA table was dropped before 64 newer tables of its space");
+        serial(64);
+        Require(serial(0) == kept, "the most recently used BDA table of a space was evicted");
+        Require(serial(1) != evicted, "the least recently used BDA table of a space was kept past 64 tables");
+        for (auto& item : builds) item.memory->WriteBack();
+    }
+    ClearSnapshotCopies(importing.device);
+    change(false);
+    ::operator delete(block, std::align_val_t{piece});
 }
 
 void importCrossingTests(const Context& context, const BdaTestAccess& access) {
@@ -664,6 +778,151 @@ void spaceReadAcrossImportsWrittenTests(const Context& context) {
         }
         for (std::size_t index = 0; index < 3; ++index) change(guest + index * piece, false);
     }
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{window});
+}
+
+void spaceReadsAcrossImportsMergedTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 2 * piece;
+    constexpr std::size_t pieces = 6;
+    void* block = ::operator new(pieces * piece, std::align_val_t{window});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    for (std::size_t index = 0; index < pieces; ++index) std::memset(guest + index * piece, static_cast<int>(0x10 + index), piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(window);
+    const auto change = [&](std::uint8_t* range, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, range == guest + 3 * piece, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    for (std::size_t index = 0; index < pieces; ++index) change(guest + index * piece, true);
+    const auto second = first + window;
+    const auto third = first + 2 * window;
+    const std::uint64_t lower = second - 256;
+    const std::uint64_t lowerBytes = 512;
+    const std::uint64_t upper = second + 128;
+    const std::uint64_t upperBytes = third + 256 - upper;
+    for (int build = 0; build < 3; ++build) {
+        const auto before = AddressSpaceCounters();
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.AddReadable(lower, lowerBytes);
+        leased.AddReadable(upper, upperBytes);
+        leased.UploadPrepare(true);
+        if (build == 2) ClearHostImports(importing.device);
+        leased.UploadFinish(true);
+        for (const auto& [address, bytes] : {std::pair{lower, lowerBytes}, std::pair{upper, upperBytes}}) {
+            std::uint32_t adjustment = 0;
+            const auto view = leased.Descriptor(address, bytes, adjustment);
+            Require(view.buffer != VK_NULL_HANDLE && view.range == bytes + adjustment, "a read-only V# over imports, merged with another one, has no descriptor of its size");
+            const auto mapped = access.bytes(view.buffer);
+            const auto at = static_cast<std::size_t>(view.offset + adjustment);
+            const auto expected = [&](std::uint64_t guestAddress) { return std::byte{static_cast<unsigned char>(0x10 + (guestAddress - first) / piece)}; };
+            Require(at + bytes <= mapped.size() && mapped[at] == expected(address) && mapped[at + bytes - 1] == expected(address + bytes - 1), "a read-only V# over imports, merged with another one, maps other bytes than its own");
+        }
+        leased.WriteBack();
+        const auto after = AddressSpaceCounters();
+        if (after.enabled && build > 0) Require(after.hits == before.hits + 1 && after.dissolvedOverlap == before.dissolvedOverlap && after.dissolvedImports == before.dissolvedImports + (build == 2 ? 1u : 0u), "read-only V#s over imports, merged with each other, left the cached address space other than by the import change");
+    }
+    for (std::size_t index = 0; index < pieces; ++index) change(guest + index * piece, false);
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{window});
+}
+
+void spaceWriteMergedPastImportTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 2 * piece;
+    constexpr std::size_t pieces = 5;
+    void* block = ::operator new(pieces * piece, std::align_val_t{window});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    const auto second = first + window;
+    const auto outside = first + 2 * window;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(window);
+    const auto change = [&](std::uint8_t* range, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, range == guest + 3 * piece, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    for (std::size_t index = 0; index + 1 < pieces; ++index) change(guest + index * piece, true);
+    const std::uint64_t written = outside + 512;
+    for (int build = 0; build < 2; ++build) {
+        std::memset(guest, 0x21, pieces * piece);
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.AddReadable(second - 256, window + 512);
+        leased.AddReadable(outside + 128, 640);
+        leased.AddWritable(written, 256);
+        leased.Upload(true);
+        std::uint32_t adjustment = 0;
+        const auto view = leased.Descriptor(written, 256, adjustment);
+        Require(view.buffer != VK_NULL_HANDLE && view.range == 256 + adjustment, "a written V# merged with a read-only V# past an import has no descriptor");
+        auto mapped = access.bytes(view.buffer);
+        const auto at = static_cast<std::size_t>(view.offset + adjustment);
+        Require(at + 256 <= mapped.size() && mapped[at] == std::byte{0x21} && mapped[at + 255] == std::byte{0x21}, "a written V# merged with a read-only V# past an import maps other bytes than its own");
+        std::memset(mapped.data() + at, 0x7c, 256);
+        Require(leased.HasCopiedWrites(), "a written V# merged with a read-only V# past an import is not stored back");
+        leased.WriteBack();
+        const auto offset = static_cast<std::size_t>(written - first);
+        Require(guest[offset] == 0x7c && guest[offset + 255] == 0x7c && guest[offset - 1] == 0x21 && guest[offset + 256] == 0x21, "a write through a V# merged with a read-only V# past an import did not land on its own bytes");
+    }
+    for (std::size_t index = 0; index + 1 < pieces; ++index) change(guest + index * piece, false);
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{window});
+}
+
+void spaceReadOverWritableImportTableTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 2 * piece;
+    void* block = ::operator new(3 * piece, std::align_val_t{window});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    const auto boundary = first + window;
+    std::memset(guest, 0x5a, 3 * piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(window);
+    const auto change = [&](std::uint8_t* range, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, range != guest + 2 * piece, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    for (std::size_t index = 0; index < 3; ++index) change(guest + index * piece, true);
+    const auto lookup = [](const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges, std::uint64_t address) {
+        const auto found = std::upper_bound(ranges.begin(), ranges.end(), address, [](std::uint64_t value, const auto& range) { return value < range.begin; });
+        return found == ranges.begin() ? ranges.end() : std::prev(found);
+    };
+    for (int build = 0; build < 3; ++build) {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.AddReadable(boundary - 256, 512);
+        leased.UploadPrepare(true);
+        if (build == 2) ClearHostImports(importing.device);
+        leased.UploadFinish(true);
+        std::uint32_t adjustment = 0;
+        const auto view = leased.Descriptor(boundary - 256, 512, adjustment);
+        Require(view.buffer != VK_NULL_HANDLE && view.range == 512 + adjustment, "a read-only V# across a writable and a read-only import has no descriptor");
+        const auto ranges = leased.AddressRanges();
+        Require(std::adjacent_find(ranges.begin(), ranges.end(), [](const auto& left, const auto& right) { return right.begin < left.end; }) == ranges.end(), "the BDA table of a build with a read-only V# across imports has overlapping ranges");
+        for (const auto address : {first + 16, boundary - 256, boundary - 128, boundary - 16}) {
+            const auto found = lookup(ranges, address);
+            Require(found != ranges.end() && address + 16 <= found->end && (found->permissions & ShaderRecompiler::BdaAbi::Write) != 0u, "a BDA store into a writable import resolves to the read-only copy of a V# across it");
+        }
+        for (const auto address : {boundary, boundary + 64, boundary + piece - 32}) {
+            const auto found = lookup(ranges, address);
+            Require(found != ranges.end() && address + 16 <= found->end && (found->permissions & ShaderRecompiler::BdaAbi::Read) != 0u, "a BDA read past a read-only V# across imports finds no range");
+        }
+        leased.WriteBack();
+    }
+    for (std::size_t index = 0; index < 3; ++index) change(guest + index * piece, false);
     SetHostImportWindow(0);
     ::operator delete(block, std::align_val_t{window});
 }
@@ -1661,6 +1920,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         if (dropped.enabled) Require(dropped.waiterDrops == after.waiterDrops + 1 && LeaseCounters().cacheDrops == dropped.waiterDrops, "the free did not drop the cached address space");
     }
     importCrossingTests(context, access);
+    addressTableKeyTests();
+    snapshotTableTests(context, access);
     importSpanTests(context);
     failedImportRemapTests(context, access);
     spaceImportRunTests(context);
@@ -1669,6 +1930,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importWindowTests(context);
     spaceReadAcrossImportsTests(context, access);
     spaceReadAcrossImportsWrittenTests(context);
+    spaceReadsAcrossImportsMergedTests(context, access);
+    spaceWriteMergedPastImportTests(context, access);
+    spaceReadOverWritableImportTableTests(context);
     importJoinTests(context);
     importWholeRangeOverWindowTests(context);
     importRefusedWholeRangeTests(context);
@@ -1686,4 +1950,5 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");
+    ClearSnapshotCopies(context.device);
 }

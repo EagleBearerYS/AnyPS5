@@ -3,6 +3,7 @@
 
 #include "IntermediateRepresentation/IrMetadata.hpp"
 #include "Recompiler.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -91,6 +92,7 @@ struct ShaderMeshInputInfo: ShaderWorkgroupInputInfo {
     std::uint32_t maxPrimitives = 0;
     std::uint32_t provokingVertex = 0;
     std::uint32_t esgsItemSize = 0;
+    std::uint32_t outputPrimitiveSize = 3;
 
     [[nodiscard]] std::uint32_t InputPrimitiveSize() const {
         return inputPrimitive == 1u ? 1u : inputPrimitive == 2u ? 2u : 3u;
@@ -167,6 +169,7 @@ struct ShaderPixelInputInfo {
     bool psPosZ = false;
     bool psPosW = false;
     bool psFrontFace = false;
+    bool psFrontFaceAllBits = false;
     bool psAncillary = false;
     bool psNoPerspective = false;
     bool psPixelKillEnable = false;
@@ -180,10 +183,20 @@ struct ShaderPixelInputInfo {
     bool psOrderedPixelShader = false;
     bool psAlphaToCoverage = false;
     bool psDitheredAlphaToCoverage = false;
+    std::uint8_t quadPixelMask = 0xf;
+    std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     ShaderStageRuntime stage;
 
     bool HasPositionInput() const {
         return psPosX || psPosY || psPosZ || psPosW;
+    }
+
+    [[nodiscard]] bool QuadSampleMaskPartial() const {
+        return std::ranges::any_of(quadSampleMask, [](std::uint16_t mask) { return mask != 0xffffu; });
+    }
+
+    [[nodiscard]] bool QuadMasked() const {
+        return quadPixelMask != 0xf || QuadSampleMaskPartial();
     }
 
     [[nodiscard]] bool InputIsDefault(std::uint32_t input) const {
