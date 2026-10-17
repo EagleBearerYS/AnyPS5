@@ -1,5 +1,7 @@
-READY
-since: 2026-10-17T17:49Z
+BUSY BF-069
+since: 2026-10-17T17:51Z (BF-069, Windows heap report and heap trim behind switches)
+claimed: tasks/claimed/BF-069.md
+step: finding where helper threads start and stop
 previous: BF-068 done, results/cloud-5/BF-068.md: perf/agc-commit-page-tables-on-touch 8a14ccb2c (BF-063 3a361ed79 + 1): blocks/cpuBlocks share the Linux Leaf layout on both platforms (no #ifdef split), allocated on first stamp, zero for a missing leaf; Windows hint leaves; StampTableBytes() accessor; agc_write_tracking: 16 scattered regions -> +8,704 KiB (17 leaves) on Linux, 400-step equivalence around a leaf boundary (and the arena's last block on Windows); Linux red = green (Linux had leaves); Windows red patch in the result (expected 192192 KiB failure); note: vs BF-063's TouchedTable the leaves are equal dense, up to 8x more for scattered stamps, separate commit so it can be dropped; bench equal within noise on Linux; scope 1,072/5 and mirror 1,372 vs main 1,371, IPv6 5 only
 
 RESULT (setup):
