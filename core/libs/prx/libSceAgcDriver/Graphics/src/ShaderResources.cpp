@@ -1956,7 +1956,7 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
         auto* table = DeviceImageTable::Existing(context);
         Require(table != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
         result.layouts.deviceGap = table->EmptyLayout();
-        result.layouts.deviceHeap = BindlessHeap::For(context).HeapLayout();
+        result.layouts.deviceHeap = DeviceImageHeap::Layout(context);
         result.layouts.deviceTable = table->Layout();
     }
     return result;
@@ -4874,7 +4874,7 @@ PipelineSetLayouts ShaderResources::SetLayouts() const {
     if (!heapStage && deviceImages) {
         auto* table = DeviceImageTable::Existing(context);
         Require(table != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
-        return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey, VK_NULL_HANDLE, table->EmptyLayout(), BindlessHeap::For(context).HeapLayout(), table->Layout()};
+        return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey, VK_NULL_HANDLE, table->EmptyLayout(), DeviceImageHeap::Layout(context), table->Layout()};
     }
     if (!heapStage) return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey};
     auto& heap = BindlessHeap::For(context);
