@@ -13,6 +13,7 @@
 namespace AgcDriver::DriverDetail {
 
 bool HeapFragmentsEnabled();
+bool HeapRefused();
 bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan, bool gpuConstantsVertex);
 std::optional<bool> HeapFragmentKnown(const void* snapshot, std::size_t codeOffset);
 void NoteHeapFragment(const void* snapshot, std::size_t codeOffset, bool eligible);

@@ -248,6 +248,7 @@ std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const
     kindOwners[*slot].texture = texture;
     kindOwners[*slot].key = key;
     ++counts.textures;
+    noteTakenLocked(kind, dropped);
     return slot;
 }
 
@@ -290,6 +291,63 @@ void BindlessHeap::sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped) {
     }
 }
 
+void BindlessHeap::sweepSamplersLocked(std::vector<std::shared_ptr<Sampler>>& dropped) {
+    auto* table = reinterpret_cast<std::uint32_t*>(lookup->Bytes().data());
+    for (std::uint32_t slot = 0; slot < heldSamplers.size(); ++slot) {
+        auto& held = heldSamplers[slot];
+        if (held == nullptr || held.use_count() != 1) continue;
+        samplerSlots.erase(held.get());
+        if (const auto entries = lookupBySlot.find(SamplerKind << 16u | slot); entries != lookupBySlot.end()) {
+            for (const auto at : entries->second) {
+                lookupShadow[at + Abi::GpuLookupSlotDword] = Abi::GpuLookupSentinel;
+                table[at + Abi::GpuLookupSlotDword] = Abi::GpuLookupSentinel;
+            }
+            lookupBySlot.erase(entries);
+        }
+        dropped.push_back(std::move(held));
+        ++samplerGenerations[slot];
+        slotSerial.fetch_add(1, std::memory_order_release);
+        freeSamplerSlots.push_back(slot);
+        ++counts.slotsFreed;
+    }
+}
+
+namespace {
+
+constexpr std::uint32_t ImageSlotMargin = 1024u;
+constexpr std::uint32_t SamplerSlotMargin = Abi::GpuSamplerHeapSlots / 4u;
+std::atomic<bool> nearlyFull{false};
+
+void noteNearlyFull(const char* what, std::uint32_t margin) {
+    if (!nearlyFull.exchange(true, std::memory_order_relaxed)) std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; draws take the per-draw path from now on\n", margin, what);
+}
+
+}
+
+bool BindlessHeap::NearlyFull() {
+    return nearlyFull.load(std::memory_order_relaxed);
+}
+
+void BindlessHeap::noteTakenLocked(std::uint32_t kind, std::vector<std::shared_ptr<Texture>>& dropped) {
+    if (nearlyFull.load(std::memory_order_relaxed)) return;
+    const auto margin = std::max(1u, std::min(ImageSlotMargin, slotCap / 4u));
+    const auto unused = [&] {
+        const auto next = nextTextureSlot[kind];
+        return (next < slotCap ? slotCap - next : 0u) + freeSlots[kind].size();
+    };
+    if (unused() >= margin) return;
+    sweepLocked(dropped);
+    if (unused() < margin) noteNearlyFull("image", margin);
+}
+
+void BindlessHeap::noteSamplerTakenLocked(std::vector<std::shared_ptr<Sampler>>& dropped) {
+    if (nearlyFull.load(std::memory_order_relaxed)) return;
+    const auto unused = [&] { return Abi::GpuSamplerHeapSlots - heldSamplers.size() + freeSamplerSlots.size(); };
+    if (unused() >= SamplerSlotMargin) return;
+    sweepSamplersLocked(dropped);
+    if (unused() < SamplerSlotMargin) noteNearlyFull("sampler", SamplerSlotMargin);
+}
+
 std::uint32_t BindlessHeap::SamplerGeneration(std::uint32_t slot) const {
     std::lock_guard lock(mutex);
     return slot < samplerGenerations.size() ? samplerGenerations[slot] : 0u;
@@ -324,9 +382,9 @@ std::uint32_t BindlessHeap::AbsentSlot(std::uint32_t kind, VkImageView view) {
     if (kind < Abi::FirstImageBinding || kind >= Abi::FirstStorageImageBinding) throw std::runtime_error("AGC bindless heap: invalid absent slot request");
     std::lock_guard lock(mutex);
     if (const auto found = absentSlots.find(kind); found != absentSlots.end()) return found->second;
-    auto& next = nextTextureSlot[kind];
-    if (next >= Abi::GpuImageHeapSlots) throw std::runtime_error("AGC bindless heap: the image heap is full");
-    const auto slot = next++;
+    const auto taken = takeSlotLocked(kind);
+    if (!taken) throw std::runtime_error("AGC bindless heap: the image heap is full");
+    const auto slot = *taken;
     const VkDescriptorImageInfo image{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
     const VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, heapSet, fragmentBinding(kind), slot, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &image, nullptr, nullptr};
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
@@ -339,26 +397,7 @@ std::optional<std::uint32_t> BindlessHeap::SamplerSlot(const std::shared_ptr<Sam
     std::vector<std::shared_ptr<Sampler>> dropped;
     std::lock_guard lock(mutex);
     if (const auto found = samplerSlots.find(sampler.get()); found != samplerSlots.end()) return found->second;
-    if (freeSamplerSlots.empty()) {
-        auto* table = reinterpret_cast<std::uint32_t*>(lookup->Bytes().data());
-        for (std::uint32_t slot = 0; slot < heldSamplers.size(); ++slot) {
-            auto& held = heldSamplers[slot];
-            if (held == nullptr || held.use_count() != 1) continue;
-            samplerSlots.erase(held.get());
-            if (const auto entries = lookupBySlot.find(SamplerKind << 16u | slot); entries != lookupBySlot.end()) {
-                for (const auto at : entries->second) {
-                    lookupShadow[at + Abi::GpuLookupSlotDword] = Abi::GpuLookupSentinel;
-                    table[at + Abi::GpuLookupSlotDword] = Abi::GpuLookupSentinel;
-                }
-                lookupBySlot.erase(entries);
-            }
-            dropped.push_back(std::move(held));
-            ++samplerGenerations[slot];
-            slotSerial.fetch_add(1, std::memory_order_release);
-            freeSamplerSlots.push_back(slot);
-            ++counts.slotsFreed;
-        }
-    }
+    if (freeSamplerSlots.empty()) sweepSamplersLocked(dropped);
     std::uint32_t slot = 0;
     if (!freeSamplerSlots.empty()) {
         slot = freeSamplerSlots.back();
@@ -378,6 +417,7 @@ std::optional<std::uint32_t> BindlessHeap::SamplerSlot(const std::shared_ptr<Sam
     samplerSlots.emplace(sampler.get(), slot);
     heldSamplers[slot] = sampler;
     ++counts.samplers;
+    noteSamplerTakenLocked(dropped);
     return slot;
 }
 
