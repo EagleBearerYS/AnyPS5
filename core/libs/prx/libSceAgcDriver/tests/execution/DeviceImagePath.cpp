@@ -70,6 +70,8 @@ constexpr std::size_t ColorOffset = 0x200000;
 constexpr std::uint32_t ColorWidth = 64;
 constexpr std::uint32_t ColorHeight = 4;
 constexpr std::uint32_t RenderTargetAttrib3 = (static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::RenderTarget) << 14u) | (1u << 24u) | (1u << 27u);
+constexpr std::uint32_t LinearAttrib3 = (static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::Linear) << 14u) | (1u << 24u) | (1u << 27u);
+constexpr std::uint32_t UnrecordedKey = 1503u;
 constexpr std::uint32_t VillageRecords = 32768;
 constexpr std::uint32_t VillageStride = 0x30;
 constexpr std::uint32_t VillageAddend = 0x10;
@@ -952,6 +954,55 @@ void ComputeMeetsFullHeap(const Harness& harness) {
     Require(errors.find("heap is full") == std::string::npos, "(l) the full heap raised an error");
 }
 
+AgcDriver::Graphics::ColorTargetLayout LinearLayout() {
+    return AgcDriver::Graphics::ColorTargetLayout(ColorWidth, ColorHeight, AgcDriver::Graphics::ColorTileMode::Linear, 4);
+}
+
+std::vector<std::byte> DrawLinear(const Harness& harness, const GuestBlock& target, std::uint32_t key) {
+    auto commands = DrawCommands(harness.block, key, DrawKind::Direct);
+    commands.resize(commands.size() - 3u);
+    const auto color = reinterpret_cast<std::uintptr_t>(target.At(0));
+    Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(color >> 8u)});
+    Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(color >> 40u)});
+    Append(commands, 0x69, {0x3b8, LinearAttrib3});
+    Append(commands, 0x2d, {3, 2});
+    std::memset(target.At(0), static_cast<int>(Kept), LinearLayout().Bytes());
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the submission of a draw into the linear target failed");
+    AgcDriverWaitIdle_nid_postfix();
+    std::vector<std::byte> stored(LinearLayout().Bytes());
+    AgcDriver::GuestMemory::Read(static_cast<std::uint64_t>(color), stored);
+    return stored;
+}
+
+void UnrecordedDraw(const Harness& harness) {
+    Require(TextureOf(UnrecordedKey) == Textures - 1u, "the unrecorded draw's key does not select its unused texture");
+    GuestBlock target(TableBlockBytes);
+    const auto value = TexelOf(TextureOf(UnrecordedKey)).value;
+    const auto start = Read();
+    auto before = start;
+    const auto stored = DrawLinear(harness, target, UnrecordedKey);
+    auto after = Read();
+    const auto outside = "(m) key " + std::to_string(UnrecordedKey) + ", a draw into a linear target outside the recorder";
+    RequireCpuTable(before, after, outside);
+    const auto pixels = RequireCovered(stored, LinearLayout(), ColorWidth, ColorHeight, value, outside);
+    std::printf("%s: the texel on %zu pixels through the CPU table%s\n", outside.c_str(), pixels, Describe(before, after).c_str());
+    before = after;
+    DrawOnce(harness, UnrecordedKey, DrawKind::Direct);
+    RequireDrawn(ReadColor(harness), harness.device ? std::array<float, 4>{} : value, "(m) the next recorded draw of the same program");
+    after = Read();
+    if (harness.device) RequireMisses(before, after, 1u, "(m) the next recorded draw of the same program");
+    else RequireCpuTable(before, after, "(m) the next recorded draw of the same program");
+    std::printf("(m) the next recorded draw of the same program: %s%s\n", harness.device ? "zeros, key recorded" : "the texel through the CPU table", Describe(before, after).c_str());
+    before = after;
+    DrawOnce(harness, UnrecordedKey, DrawKind::Direct);
+    RequireDrawn(ReadColor(harness), value, "(m) the recorded draw after it");
+    after = Read();
+    if (harness.device) RequireHits(before, after, "(m) the recorded draw after it");
+    std::printf("(m) the recorded draw after it: the texel%s\n", Describe(before, after).c_str());
+    Require(after.device.fallbacks == start.device.fallbacks, "(m) the draw outside the recorder sent the program back to the CPU table path (fallbacks " + std::to_string(after.device.fallbacks - start.device.fallbacks) + ")");
+}
+
 AgcDriver::Graphics::ColorTargetLayout LargeLayout() {
     return AgcDriver::Graphics::ColorTargetLayout(LargeSide, LargeSide, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
 }
@@ -1186,7 +1237,7 @@ int VillageBench(const GuestBlock& block, std::uint32_t written, double seconds)
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const std::string parts = argc > 2 ? argv[2] : mode == "--heap-cap" ? "f" : "abcdeghijk";
+    const std::string parts = argc > 2 ? argv[2] : mode == "--heap-cap" ? "f" : "abcdeghijkm";
 #ifdef _WIN32
     if (mode != "--village-bench") _putenv_s("APS5_EAGER_WRITEBACK", "1");
     if (mode == "--heap-cap") _putenv_s("APS5_HEAP_SLOT_CAP", "2");
@@ -1241,6 +1292,7 @@ int main(int argc, char** argv) {
                 if (parts.find('i') != std::string::npos) StaleRecord(harness);
                 if (parts.find('j') != std::string::npos) Deduplicates(harness, false);
                 if (parts.find('k') != std::string::npos) Streams(harness);
+                if (parts.find('m') != std::string::npos) UnrecordedDraw(harness);
             }
         } catch (const std::exception& error) {
             std::cerr << "device image path harness failed: " << error.what() << '\n';
