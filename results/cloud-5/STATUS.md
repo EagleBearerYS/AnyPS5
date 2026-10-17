@@ -1,8 +1,6 @@
-BUSY LA-010
-since: 2026-10-17T13:03Z (LA-010, reopened 14:40Z: its two notes from 13:39 and 13:54 UTC were missed at the first finish)
-claimed: tasks/claimed/LA-010.md
-step: rebasing onto PR 6947's newest head 2c9dae8b39 and keeping lane A out of his heap-refusal margin; results/cloud-5/LA-010.md is an interim result on 6456ee664 until then
-previous (interim, superseded): LA-010 on 6456ee664: lane A rebased onto PR 6947 6456ee664 as exp/lane-a-v2 1b8b9dfef (39 commits, 7 conflicts resolved, 16 commits built and tested, FormatVersion 42/43); compute on the heap set kept under APS5_GPU_PATH (5031a28e7, no VUID-07988); heap-full and journal compute cases meet the bar (lane A leaves GPU mode half of each heap kind with APS5_GPU_HEAP; journal entries without the table rejected, not failed); mirror vs PR head 1,431/1,412 tests, IPv6 5 only; switch-on scope LA-005's 8; bench no fallback; exp/pr6947-bind-split-v2 1621fede6: 2,000 GPU-mode draws 8,944 -> 958 us wall, lavapipe CPU 8,250 -> 675 us per draw
+READY
+since: 2026-10-17T16:00Z
+previous: LA-010 done, results/cloud-5/LA-010.md: lane A on PR 6947 cae12b7d5 as exp/lane-a-v2 b63fa365d (39 commits, 16 built and tested, FormatVersion 42/43); compute on the heap set kept under APS5_GPU_PATH (c6ac527a9, no VUID-07988); lane A keeps his heap-full margin free (max(margin, half with APS5_GPU_HEAP)): cap 1100 -> 550, 1030 -> 515, never refuses his heap; journal entries without the table rejected, not failed; his full_heap tests pass switch off, abort switch on (draw outside the recorder, open); mirror 1,450/1,428 IPv6 5 only; scope 10 = LA-005's 8 + his 2 full_heap; bench no fallback; exp/pr6947-bind-split-v2 9259bcdfc: 2,000 GPU-mode draws 8,838 -> 936 us wall, lavapipe 8,145 -> 675 us; PR since moved to f2a7557cd (39 commits pick clean, not built)
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
