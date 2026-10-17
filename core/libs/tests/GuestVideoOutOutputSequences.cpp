@@ -33,6 +33,7 @@ static constexpr std::uint32_t RESOLUTION_ULTRA_HD = 2;
 static constexpr std::size_t TILE_BLOCK_BYTES = 65536;
 static constexpr int INVALID_RESOLUTION = static_cast<int>(0x80290005u);
 static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001Eu);
+static constexpr std::uint32_t RESOLUTION_DETECTION = 0x4u;
 
 struct Size {
     std::uint32_t width;
@@ -190,7 +191,7 @@ static void AttributeChange(const Expectation& expect) {
 }
 
 int main(int argc, char** argv) {
-    VideoOutTestEnvironment environment;
+    VideoOutTestEnvironment environment(RESOLUTION_DETECTION);
     const std::string_view mode = argc >= 2 ? argv[1] : "";
     const bool check = !(argc == 3 && std::string_view(argv[2]) == "print");
     Expectation expect{check, FullHd, true};

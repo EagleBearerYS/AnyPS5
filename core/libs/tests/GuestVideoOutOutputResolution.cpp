@@ -35,6 +35,7 @@ static constexpr std::uint32_t PS4_PIXEL_FORMAT_A8R8G8B8_SRGB = 0x80000000u;
 static constexpr std::uint32_t PS4_TILING_LINEAR = 1;
 static constexpr std::size_t PS4_BUFFER_ALIGNMENT = 4096;
 static constexpr int VIDEO_OUT_ERROR_INVALID_RESOLUTION = static_cast<int>(0x80290005u);
+static constexpr std::uint32_t RESOLUTION_DETECTION = 0x4u;
 
 static void Require(bool value, const char* reason) {
     if (!value) {
@@ -112,8 +113,8 @@ static int RequireInvalidValueStopsOpen() {
 }
 
 int main(int argc, char** argv) {
-    VideoOutTestEnvironment environment;
     const std::string_view mode = argc == 2 ? argv[1] : "";
+    VideoOutTestEnvironment environment(RESOLUTION_DETECTION);
     if (mode == "invalid") return RequireInvalidValueStopsOpen();
     int handle = 0;
     try {
