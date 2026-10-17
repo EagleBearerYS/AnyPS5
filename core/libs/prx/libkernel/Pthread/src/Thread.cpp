@@ -179,17 +179,21 @@ static bool HostStackLimits(std::uintptr_t* low, std::uintptr_t* high) {
     *low = lowLimit;
     *high = highLimit;
 #else
-    pthread_attr_t attr;
-    if (pthread_getattr_np(pthread_self(), &attr) != 0)
-        return false;
-    void* address = nullptr;
-    std::size_t size = 0;
-    const bool queried = pthread_attr_getstack(&attr, &address, &size) == 0;
-    pthread_attr_destroy(&attr);
-    if (!queried)
-        return false;
-    *low = reinterpret_cast<std::uintptr_t>(address);
-    *high = *low + size;
+    static thread_local std::pair<std::uintptr_t, std::uintptr_t> stack{0, 0};
+    if (stack.second == 0) {
+        pthread_attr_t attr;
+        if (pthread_getattr_np(pthread_self(), &attr) != 0)
+            return false;
+        void* address = nullptr;
+        std::size_t size = 0;
+        const bool queried = pthread_attr_getstack(&attr, &address, &size) == 0;
+        pthread_attr_destroy(&attr);
+        if (!queried || size == 0)
+            return false;
+        stack = {reinterpret_cast<std::uintptr_t>(address), reinterpret_cast<std::uintptr_t>(address) + size};
+    }
+    *low = stack.first;
+    *high = stack.second;
 #endif
     return *high > *low;
 }
