@@ -271,6 +271,7 @@ void DeviceImageTable::fallBack(const std::set<ShaderRecompiler::PipelineIdentit
     for (const auto& identity : programs) {
         if (!failedPrograms.insert(identity).second) continue;
         ++totals.fallbacks;
+        lastFallback = reason;
         std::string addresses;
         if (const auto found = identityPrograms.find(identity); found != identityPrograms.end()) {
             for (const auto address : found->second) {
@@ -319,6 +320,17 @@ std::string DeviceImageTable::LastFault() const {
     return lastFault;
 }
 
+std::string DeviceImageTable::LastFallback() const {
+    std::lock_guard lock(mutex);
+    return lastFallback;
+}
+
+std::uint32_t DeviceImageTable::OverflowStreak(const ShaderRecompiler::PipelineIdentity& identity) const {
+    std::lock_guard lock(mutex);
+    const auto found = overflowStreaks.find(identity);
+    return found != overflowStreaks.end() ? found->second : 0u;
+}
+
 std::vector<std::pair<VkImage, bool>> DeviceImageTable::StorageImages() const {
     std::lock_guard lock(mutex);
     if (!storageImages.has_value()) {
@@ -340,12 +352,18 @@ std::shared_ptr<Texture> DeviceImageTable::EntryTexture(const Key& key) const {
 
 void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     if (pending.empty()) return;
+    ++resolveGeneration;
     std::vector<Key> order;
     std::map<Key, std::set<ShaderRecompiler::PipelineIdentity>> missed;
+    const std::set<ShaderRecompiler::PipelineIdentity>* resolved = nullptr;
     for (const auto& [miss, programs] : std::exchange(pending, {})) {
         const auto [found, inserted] = missed.try_emplace(miss.key);
         if (inserted) order.push_back(miss.key);
-        if (programs != nullptr) found->second.insert(programs->begin(), programs->end());
+        if (programs == nullptr) continue;
+        found->second.insert(programs->begin(), programs->end());
+        if (programs.get() == resolved) continue;
+        resolved = programs.get();
+        for (const auto& identity : *programs) overflowFrom.try_emplace(identity, resolveGeneration);
     }
     for (const auto& key : order) {
         const auto& programs = missed.at(key);
@@ -659,7 +677,7 @@ std::uint32_t DeviceImageTable::chunkFor(Recorder& recorder, bool mayWait) {
     }
     if (found == chunks.end()) throw std::runtime_error("AGC device image table: every miss ring chunk belongs to a batch still in flight, and a recording draw or dispatch cannot wait for one");
     const auto index = static_cast<std::uint32_t>(found - chunks.begin());
-    *found = {recorder.OpenSerial(), true};
+    *found = {recorder.OpenSerial(), resolveGeneration, true};
     std::memset(ring->Bytes().data() + static_cast<std::size_t>(index * chunkStride), 0, Abi::RingRecordsWord * sizeof(std::uint32_t));
     recorder.OnComplete([token = std::weak_ptr<bool>(alive), this, index] {
         if (token.lock() != nullptr) drain(index);
@@ -673,19 +691,23 @@ void DeviceImageTable::drain(std::uint32_t index) {
     const auto decoded = DecodeDeviceImageRing(std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(bytes.data()), RingWords), RingCapacity);
     auto& chunk = chunks[index];
     chunk.busy = false;
+    const auto taken = chunk.generation;
     const auto programs = std::make_shared<const std::set<ShaderRecompiler::PipelineIdentity>>(std::move(chunk.programs));
     chunk.programs.clear();
     totals.drained += decoded.misses.size();
     totals.dropped += decoded.dropped;
-    if (decoded.dropped == 0u) {
-        for (const auto& identity : *programs) overflowStreaks.erase(identity);
-    } else if (pending.empty()) {
-        std::set<ShaderRecompiler::PipelineIdentity> overflowing;
-        for (const auto& identity : *programs) {
-            if (++overflowStreaks[identity] >= OverflowBatches) overflowing.insert(identity);
+    std::set<ShaderRecompiler::PipelineIdentity> overflowing;
+    for (const auto& identity : *programs) {
+        const auto from = overflowFrom.find(identity);
+        if (from == overflowFrom.end() || taken < from->second) continue;
+        if (decoded.dropped == 0u) {
+            overflowStreaks.erase(identity);
+            continue;
         }
-        if (!overflowing.empty()) fallBack(overflowing, "its misses overflowed the ring of " + std::to_string(RingCapacity) + " records in " + std::to_string(OverflowBatches) + " batches in a row");
+        from->second = resolveGeneration + 1u;
+        if (++overflowStreaks[identity] >= OverflowBatches) overflowing.insert(identity);
     }
+    if (!overflowing.empty()) fallBack(overflowing, "its misses overflowed the ring of " + std::to_string(RingCapacity) + " records in " + std::to_string(OverflowBatches) + " batches in a row");
     std::optional<std::string> fault;
     for (const auto& miss : decoded.misses) {
         if ((miss.pc & Abi::FaultFlag) == 0u) {
