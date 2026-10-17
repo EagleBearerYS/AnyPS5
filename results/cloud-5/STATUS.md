@@ -1,7 +1,8 @@
-READY
-since: 2026-10-17T07:06:13Z
-last: BF-050 done, results/cloud-5/BF-050.md: perf/agc-address-read-passes fast-forwarded a939efe1a0 -> b3e94a514 (counters 2d4512e5c, test b3e94a514); --readers red with the switch off and at 0300bb0e79, green at the head; guards green; mirror 1267/65/5 IPv6 of 1337; ^agc 638 passed
-previous: LA-002 done, results/cloud-5/LA-002.md: fork exp/lane-a-recompiler 385babcbf9 (4 commits on exp/lane-a-base fe07e21141 + merge of 8edb13bb2e); device image tables behind SpirvTarget::deviceImageTables, sets 2/3 as specified; agc_shader_device_image_tables passes; option-off corpus byte-identical to the base (1487/1487 modules); mirror 1326/65 skipped/5 IPv6 failures of 1396, per test equal to the base
+BUSY PRM-035
+since: 2026-10-17T07:07Z (PRM-035, CI Linux job for trophies 1+2, output resolution, FSR on it, merged with main 0906c64501)
+claimed: tasks/claimed/PRM-035.md
+step: building main 0906c64501 baseline
+previous: BF-050 done, results/cloud-5/BF-050.md: perf/agc-address-read-passes fast-forwarded a939efe1a0 -> b3e94a514 (counters 2d4512e5c, test b3e94a514); --readers red with the switch off and at 0300bb0e79, green at the head; guards green; mirror 1267/65/5 IPv6 of 1337; ^agc 638 passed
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon @ 2.10 GHz, 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512), 15 GiB RAM, no swap, 28 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1 (no IPv6 loopback).
