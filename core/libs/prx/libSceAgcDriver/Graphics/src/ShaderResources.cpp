@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -29,6 +30,7 @@
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include <cstring>
 #include <limits>
@@ -1587,6 +1589,11 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 heapStage = true;
                 if (shader.stage == ShaderRecompiler::ShaderStage::Compute) NoteHeapComputeStage();
             }
+            if (shader.program->deviceImageTables) {
+                Require(!heapShader, "a GPU-mode stage reading images through the device image table is not implemented");
+                Require(DeviceImageTable::Existing(context) != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
+                deviceImages = true;
+            }
             for (const auto& binding : shader.program->bindings) {
                 Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || ((shader.stage == ShaderRecompiler::ShaderStage::Fragment || heapShader) && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "unexpected descriptor set: a shader resource must use its stage's descriptor set");
                 if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) {
@@ -1945,6 +1952,13 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
         return result;
     }
     if (split) result.layouts.fragment = context.descriptorCache->Layout(result.fragmentKey, descriptions[1], updateAfterBind, bindingFlags[1]);
+    if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->deviceImageTables; })) {
+        auto* table = DeviceImageTable::Existing(context);
+        Require(table != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
+        result.layouts.deviceGap = table->EmptyLayout();
+        result.layouts.deviceHeap = BindlessHeap::For(context).HeapLayout();
+        result.layouts.deviceTable = table->Layout();
+    }
     return result;
 }
 
@@ -4441,6 +4455,51 @@ void ShaderResources::resolveImageTables() {
     reportTextureCounters();
 }
 
+DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass) {
+    namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
+    std::array<std::uint32_t, 8> words{};
+    std::copy(descriptor.begin(), descriptor.end(), words.begin());
+    if (view.identitySwizzle) words[3] = (words[3] & ~0xfffu) | ShaderRecompiler::ShaderImageIdentitySwizzle;
+    const auto resource = DecodeTextureResource(words);
+    const bool firstLayer = view.shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray;
+    if (!firstLayer && !MatchesGuestDimension(view.shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(view.shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
+    const auto guestBytes = DescribeSurface(resource).guestBytes;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(guestBytes) + " bytes) is not mapped");
+    static_cast<void>(ResolveTextureFormat(resource.format));
+    CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
+    DeviceTableTexture result;
+    result.address = resource.baseAddress;
+    result.guestBytes = guestBytes;
+    result.generation = GuestMemory::CollectWrites(resource.baseAddress, static_cast<std::size_t>(guestBytes));
+    auto texture = cachedTexture(context, words, resource, ViewComponents(resource), guestBytes, view.depthCompare);
+    const auto& log = lookupLog();
+    const auto* looked = !log.empty() && log.back().object == texture.get() ? &log.back() : nullptr;
+    if (looked != nullptr && looked->depth) {
+        result.unservable = "the surface at 0x" + HexText(resource.baseAddress) + " is a depth surface, whose layout transitions per use the device image table does not make";
+        return result;
+    }
+    if (texture->CopyKind() != Texture::PerUseCopy::None) {
+        result.unservable = "the texture at 0x" + HexText(resource.baseAddress) + " is a copy remade or refreshed per use, which the device image table does not make";
+        return result;
+    }
+    if ((samplerClass & Abi::SamplerFilterMinmax) != 0u) {
+        VkFormatProperties properties{};
+        context.formatProperties(context.physical, texture->ViewFormat(), &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT) == 0) throw std::runtime_error("a sampled texture whose format " + std::to_string(texture->ViewFormat()) + " does not support min/max filtering is sampled through a min or max reduction sampler with linear filtering");
+    }
+    if ((samplerClass & Abi::SamplerOpaqueBlackBorder) != 0u && resource.bcSwizzle != 0u && resource.bcSwizzle != 4u) throw std::runtime_error("a sampled texture whose BC swizzle " + std::to_string(resource.bcSwizzle) + " moves the alpha channel is sampled through an opaque black border, which is not implemented");
+    if ((samplerClass & Abi::SamplerNonSeamlessCube) != 0u && resource.dimension == TextureDimension::kCube && !context.nonSeamlessCubeMap) throw std::runtime_error("a cube texture is sampled through a sampler that disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+    const auto numeric = ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) != 0u ? ShaderRecompiler::IrTextureNumericClass::Float : ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(resource.format));
+    const bool integerImage = numeric == ShaderRecompiler::IrTextureNumericClass::Uint || numeric == ShaderRecompiler::IrTextureNumericClass::Sint;
+    if (((samplerClass & Abi::SamplerFloatBorder) != 0u && integerImage) || ((samplerClass & Abi::SamplerIntegerBorder) != 0u && !integerImage)) throw std::runtime_error("an image table entry's sampler border color numeric class disagrees with its sampled image class, which needs dynamic pairing and is not implemented");
+    if ((samplerClass & Abi::SamplerAnisoOverride) != 0u) throw std::runtime_error("an image table entry paired with anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing, which is not implemented");
+    result.view = firstLayer ? texture->FirstLayerView() : texture->View();
+    result.layout = texture->Layout();
+    result.texture = std::move(texture);
+    return result;
+}
+
 ImageTableReuseCounts ImageTableReuses() {
     const auto& counters = TextureCounts();
     return {counters.tablesReused.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed)};
@@ -4800,6 +4859,11 @@ void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoi
 }
 
 void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
+    if (deviceImages) {
+        auto* table = DeviceImageTable::Existing(context);
+        Require(table != nullptr && context.recorder != nullptr, "a draw or dispatch reading images through the device image table needs the device's table and its recorder");
+        table->Bind(commands, bindPoint, layout, *context.recorder);
+    }
     if (!heapStage) return;
     auto& heap = BindlessHeap::For(context);
     const std::array<VkDescriptorSet, 2> sets{heap.HeapSet(), heap.DataSet()};
@@ -4807,6 +4871,11 @@ void ShaderResources::BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bin
 }
 
 PipelineSetLayouts ShaderResources::SetLayouts() const {
+    if (!heapStage && deviceImages) {
+        auto* table = DeviceImageTable::Existing(context);
+        Require(table != nullptr, "a stage reading images through the device image table needs the device's table (APS5_GPU_PATH)");
+        return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey, VK_NULL_HANDLE, table->EmptyLayout(), BindlessHeap::For(context).HeapLayout(), table->Layout()};
+    }
     if (!heapStage) return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey};
     auto& heap = BindlessHeap::For(context);
     return {_layout, heap.HeapLayout(), true, layoutKey, fragmentLayoutKey, heap.DataLayout()};

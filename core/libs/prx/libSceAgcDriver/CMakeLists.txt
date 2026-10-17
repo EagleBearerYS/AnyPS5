@@ -244,6 +244,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BindlessHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeviceImageKeys.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeviceImageTable.cpp
         ${agcTextureDetileShaderHeader}
         ${agcCmaskClearShaderHeader}
         ${agcMeshArgumentsShaderHeader}
@@ -1539,6 +1540,8 @@ foreach(stage IN ITEMS vert frag)
     target_sources(agc_driver_provoking_vertex_tests PRIVATE ${agcProvokingShaderHeader})
 endforeach()
 target_include_directories(agc_driver_provoking_vertex_tests PRIVATE ${agcTestShaderGeneratedRoot})
+target_sources(agc_driver_device_image_table_tests PRIVATE ${agcTriangleHeaders})
+target_include_directories(agc_driver_device_image_table_tests PRIVATE ${agcTestShaderGeneratedRoot})
 
 target_include_directories(agc_driver_prepared_exports_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
@@ -1638,6 +1641,8 @@ if(BUILD_TESTING)
             set_tests_properties(${agcTestName}_gpu_heap PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    add_test(NAME agc_driver_device_image_table_heap_cap COMMAND agc_driver_device_image_table_tests --heap-cap)
+    set_tests_properties(agc_driver_device_image_table_heap_cap PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_partially_resident_pending_stores COMMAND agc_driver_partially_resident_snapshot_tests --pending-stores)
     set_tests_properties(agc_driver_partially_resident_pending_stores PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
     if(WIN32)

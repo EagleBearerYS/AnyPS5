@@ -229,6 +229,7 @@ function(add_shader_recompiler target runtimeTarget)
             CaptureResources
             DebugProbeActive
             DepthBitsTextureWidth
+            DescriptorBindingForImage
             HashBytes
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
