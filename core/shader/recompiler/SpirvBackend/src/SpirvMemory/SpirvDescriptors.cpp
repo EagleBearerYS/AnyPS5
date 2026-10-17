@@ -2,6 +2,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "PipelineSpecialization.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -159,11 +160,7 @@ std::uint32_t HeapImageSlot(SpirvEmitterState& state, DescriptorBindingKind kind
     if (!supported) ExitDescriptorBindingFailure(state, kind, resource, "the image heap needs image array dynamic indexing, which the device lacks");
     state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
     const auto dword = state.program.Metadata().bindings.ImageMetadataDword() + resource * static_cast<std::uint32_t>(sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t)) + static_cast<std::uint32_t>(offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t));
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.shaderDataStorageVariable, ConstantU32(state, 0u), ConstantU32(state, dword));
-    const auto slot = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), slot, pointer);
-    return slot;
+    return LoadHeapSlotWord(state, dword);
 }
 
 std::uint32_t HeapImageSlotWord(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, std::uint32_t arrayIndex) {
@@ -178,11 +175,7 @@ std::uint32_t HeapImageSlotWord(SpirvEmitterState& state, DescriptorBindingKind 
     }
     dword += arrayIndex;
     if (dword >= layout.ShaderDataDwords()) ExitDescriptorBindingFailure(state, kind, resource, "image heap slot word lies outside the shader data");
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.shaderDataStorageVariable, ConstantU32(state, 0u), ConstantU32(state, dword));
-    const auto slot = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), slot, pointer);
-    return slot;
+    return LoadHeapSlotWord(state, dword);
 }
 
 std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t resource) {
@@ -245,10 +238,7 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
     if (state.gpuResolvedImages) {
         if (state.samplerVariable == 0) ExitDescriptorBindingFailure(state, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
         state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
-        const auto slotPointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), slotPointer, state.shaderDataStorageVariable, ConstantU32(state, 0u), ConstantU32(state, state.program.Metadata().bindings.SamplerSlotDword() + arrayIndex));
-        const auto slot = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeU32(state), slot, slotPointer);
+        const auto slot = LoadHeapSlotWord(state, state.program.Metadata().bindings.SamplerSlotDword() + arrayIndex);
         pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.samplerVariable, slot);
     } else {
