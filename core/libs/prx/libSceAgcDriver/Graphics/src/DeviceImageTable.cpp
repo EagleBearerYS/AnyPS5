@@ -250,17 +250,23 @@ void DeviceImageTable::Prepare(const Context& build, Recorder& recorder, std::sp
     report();
 }
 
-void DeviceImageTable::Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) {
-    if (!ExpectsKeys()) return;
+std::optional<std::string> DeviceImageTable::Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) {
+    if (!ExpectsKeys()) return std::nullopt;
     std::lock_guard lock(mutex);
+    std::optional<std::string> unserved;
     for (const auto& image : images) {
         ++totals.expected;
         if (keys.Find(image.key).has_value()) continue;
         Entry entry;
-        const auto value = lookupKey(build, image.key, entry);
-        if (!value.has_value()) continue;
+        std::string failure;
+        const auto value = lookupKey(build, image.key, entry, &failure);
+        if (!value.has_value()) {
+            if (!image.candidate && !unserved.has_value()) unserved = "the expected descriptor (words " + hexWords(std::span<const std::uint32_t>(image.key).first(Abi::DescriptorWords)) + ") at pc 0x" + hexText(image.pc) + " stays unresolved: " + failure;
+            continue;
+        }
         if (!insert(image.key, *value)) {
             if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
+            if (!image.candidate && !unserved.has_value()) unserved = "the key table is full at " + std::to_string(keys.Entries()) + " entries in " + std::to_string(keys.Buckets()) + " buckets";
             continue;
         }
         if (entry.texture == nullptr) continue;
@@ -268,6 +274,17 @@ void DeviceImageTable::Expect(const Context& build, Recorder& recorder, std::spa
         ++totals.inserted;
         ++totals.expectedInserted;
     }
+    return unserved;
+}
+
+void DeviceImageTable::FallBackProgram(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t codeAddress, const std::string& reason) {
+    std::lock_guard lock(mutex);
+    identityPrograms[identity].insert(codeAddress);
+    if (failedPrograms.contains(identity)) {
+        fallbackPrograms.insert(codeAddress);
+        return;
+    }
+    fallBack({identity}, reason);
 }
 
 void DeviceImageTable::SetInterfaceLookup(InterfaceLookup interfaces) {

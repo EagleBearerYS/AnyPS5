@@ -1786,7 +1786,8 @@ std::vector<ShaderRecompiler::PipelineIdentity> deviceImagePrograms(std::span<co
 
 void prepareDeviceImages(DeviceImageTable& table, const Context& context, Recorder& recorder, std::span<const CompiledShader> shaders) {
     for (const auto& shader : shaders) {
-        if (shader.program != nullptr && shader.program->deviceImageTables) table.Expect(context, recorder, shader.program->deviceImages);
+        if (shader.program == nullptr || !shader.program->deviceImageTables) continue;
+        if (const auto unserved = table.Expect(context, recorder, shader.program->deviceImages)) Require(false, "a draw recorded without the driver's expectation cannot take the CPU table path: " + *unserved);
     }
     table.Prepare(context, recorder, deviceImagePrograms(shaders));
 }
