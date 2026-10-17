@@ -40,6 +40,16 @@ struct CompiledShader {
     const ShaderRecompiler::HeapStageWords* heap = nullptr;
 };
 
+inline const std::vector<std::uint32_t>& DrawGuestWords(const ShaderRecompiler::RecompileResult& program, const ShaderRecompiler::HeapStageWords* heap, const ShaderRecompiler::DescriptorBinding& binding) {
+    if (heap == nullptr || heap->bindings.empty()) return binding.guestDescriptor;
+    const auto index = static_cast<std::size_t>(&binding - program.bindings.data());
+    return index < heap->bindings.size() && !heap->bindings[index].empty() ? heap->bindings[index] : binding.guestDescriptor;
+}
+
+inline const std::vector<std::uint32_t>& DrawGuestWords(const CompiledShader& shader, const ShaderRecompiler::DescriptorBinding& binding) {
+    return DrawGuestWords(*shader.program, shader.heap, binding);
+}
+
 inline const std::vector<ShaderRecompiler::VertexAttribute>& DrawVertexAttributes(const CompiledShader& shader) {
     return shader.heap != nullptr && !shader.heap->vertexAttributes.empty() ? shader.heap->vertexAttributes : shader.program->vertexAttributes;
 }
