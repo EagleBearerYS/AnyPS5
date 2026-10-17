@@ -10,7 +10,27 @@
 
 namespace ShaderRecompiler::Detail {
 
+bool PlanBuilder::AddressBasedAnyway() const {
+    const auto& memory = _program.Resources().memoryInfo;
+    for (const auto& block : _program.Blocks()) {
+        for (IrValue* inst : block->Instructions()) {
+            const auto op = inst->Opcode();
+            if (op == IrOpcode::ImageBvhIntersectRay) return true;
+            if (AddressOpcodeInfoOf(op).access == AddressAccess::None) continue;
+            const auto index = inst->Flags<MemoryFlags>().index;
+            if (index >= memory.size()) return true;
+            if (memory[index].kind == ResourceKind::Scratch) continue;
+            const auto* offset = op == IrOpcode::LoadAddressU32 ? inst->Argument(1)->Resolve() : nullptr;
+            if (offset != nullptr && IsRawRead(_program.Resources(), *inst) && offset->HasImmediate() && offset->Type() == IrType::U32 && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst)) continue;
+            return true;
+        }
+    }
+    return false;
+}
+
 void PlanBuilder::Run() {
+    if (_gpuConstants && !AddressBasedAnyway()) _gpuConstants = false;
+    _program.Metadata().gpuConstants = _gpuConstants;
     _program.Resources().srtReads.clear();
     _program.Metadata().dynamicReads.clear();
     for (auto& block : _program.Blocks()) {
