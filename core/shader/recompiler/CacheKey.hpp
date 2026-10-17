@@ -287,6 +287,7 @@ private:
         append(key, value.float16DenormPreserve);
         append(key, value.spannedWaves);
         append(key, value.gpuResolvedImages);
+        append(key, value.deviceImageTables);
         append(key, value.gpuConstants);
         append(key, value.gpuConstantsVerify);
     }
