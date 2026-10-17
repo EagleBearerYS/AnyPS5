@@ -85,7 +85,7 @@ void testPersistence() {
 
 void testDamagedRecords() {
     const std::filesystem::path directory("damaged");
-    for (const char* text : {"12\n", "12 x\n", "x 5\n", "-1 5\n", "12 5\n12 6\n", "12 5 7\n", "\n"}) {
+    for (const char* text : {"12\n", "12 x\n", "x 5\n", "-1 5\n", "12 5\n12 6\n", "12 5 7\n", "\n", "12 5\r\n"}) {
         std::filesystem::remove_all(directory);
         std::filesystem::create_directories(directory);
         write("damaged/268435456_0.txt", text);
