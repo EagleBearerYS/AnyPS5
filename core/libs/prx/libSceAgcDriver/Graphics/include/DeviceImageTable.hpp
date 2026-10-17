@@ -60,6 +60,8 @@ struct DeviceTableTexture {
 
 DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<const std::uint32_t, 8> descriptor, const DeviceTableView& view, std::uint32_t samplerClass);
 
+void NoteDeviceImagePacket(bool dispatch, bool deviceImages, double milliseconds);
+
 class DeviceImageHeap {
 public:
     static VkDescriptorSetLayout Layout(const Context& context);
@@ -135,6 +137,7 @@ public:
         std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding> peakTextures{};
     };
     Counts Totals() const;
+    static std::vector<Counts> DeviceTotals();
 
 private:
     struct Entry {
@@ -224,6 +227,7 @@ private:
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     Counts totals;
     Counts reported;
+    std::array<std::uint64_t, 8> reportedPackets{};
     long long lastReport = 0;
 };
 

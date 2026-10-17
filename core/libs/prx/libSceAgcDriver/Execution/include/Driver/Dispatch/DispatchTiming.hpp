@@ -31,6 +31,7 @@ struct PendingDispatchPhases {
     bool phases = false;
     bool hit = false;
     bool validated = false;
+    bool deviceImages = false;
     std::array<double, DriverPhaseCount> ms{};
     std::chrono::steady_clock::time_point tailAt{};
 };
