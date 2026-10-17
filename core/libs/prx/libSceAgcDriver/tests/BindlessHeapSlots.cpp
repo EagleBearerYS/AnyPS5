@@ -85,7 +85,11 @@ int main() {
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
         }
+#ifdef _WIN32
+        _putenv_s("APS5_HEAP_SLOT_CAP", "1");
+#else
         setenv("APS5_HEAP_SLOT_CAP", "1", 1);
+#endif
         {
             const auto context = device->GraphicsContext();
             const PlaceholderImages placeholders(context);
