@@ -229,7 +229,7 @@ std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const
     std::lock_guard lock(mutex);
     const TextureKey key{kind, texture.get(), view, layout};
     if (const auto found = textureSlots.find(key); found != textureSlots.end()) return found->second;
-    if (++slotRequests % 1024u == 0u) sweepLocked(dropped);
+    if (++slotRequests % 1024u == 0u) NoteSweepDue();
     auto slot = takeSlotLocked(kind);
     if (!slot) {
         sweepLocked(dropped);
@@ -344,24 +344,41 @@ void BindlessHeap::NoteSweepDue() {
 void BindlessHeap::SweepIfDue() {
     if (!sweepDue.load(std::memory_order_relaxed) || !sweepDue.exchange(false, std::memory_order_relaxed)) return;
     std::vector<std::shared_ptr<Texture>> dropped;
+    std::vector<std::shared_ptr<Sampler>> droppedSamplers;
     std::lock_guard heapsLock(heapsMutex());
+    bool room = true;
     for (auto& [device, heap] : heaps()) {
         if (heap == nullptr) continue;
         std::lock_guard lock(heap->mutex);
         heap->sweepLocked(dropped);
+        heap->sweepSamplersLocked(droppedSamplers);
+        room = room && heap->roomLocked();
     }
+    if (room && nearlyFull.exchange(false, std::memory_order_relaxed)) std::fprintf(stderr, "[gpu-heap] a sweep left twice the margin of slots free; draws take the heap again\n");
+}
+
+std::uint32_t BindlessHeap::imageMargin() const {
+    return std::max(1u, std::min(ImageSlotMargin, slotCap / 4u));
+}
+
+std::size_t BindlessHeap::unusedLocked(std::uint32_t kind) const {
+    const auto next = nextTextureSlot[kind];
+    return (next < slotCap ? slotCap - next : 0u) + freeSlots[kind].size();
+}
+
+bool BindlessHeap::roomLocked() const {
+    for (std::uint32_t kind = Abi::FirstImageBinding; kind < Abi::FirstStorageImageBinding; ++kind) {
+        if (unusedLocked(kind) < 2u * static_cast<std::size_t>(imageMargin())) return false;
+    }
+    return Abi::GpuSamplerHeapSlots - heldSamplers.size() + freeSamplerSlots.size() >= 2u * SamplerSlotMargin;
 }
 
 void BindlessHeap::noteTakenLocked(std::uint32_t kind, std::vector<std::shared_ptr<Texture>>& dropped) {
     if (nearlyFull.load(std::memory_order_relaxed)) return;
-    const auto margin = std::max(1u, std::min(ImageSlotMargin, slotCap / 4u));
-    const auto unused = [&] {
-        const auto next = nextTextureSlot[kind];
-        return (next < slotCap ? slotCap - next : 0u) + freeSlots[kind].size();
-    };
-    if (unused() >= margin) return;
+    const auto margin = imageMargin();
+    if (unusedLocked(kind) >= margin) return;
     sweepLocked(dropped);
-    if (unused() < margin) noteNearlyFull("image", margin);
+    if (unusedLocked(kind) < margin) noteNearlyFull("image", margin);
 }
 
 void BindlessHeap::noteSamplerTakenLocked(std::vector<std::shared_ptr<Sampler>>& dropped) {
