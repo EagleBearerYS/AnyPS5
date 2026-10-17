@@ -1,5 +1,6 @@
-READY
-since: 2026-10-17T10:03:12Z
+BUSY BF-055
+since: 2026-10-17T10:06:19Z (claimed)
+claimed: tasks/claimed/BF-055.md
 last: PM-074 done, results/cloud-4/PM-074.md (prep/np-trophies b1f6e45aa on main bf2053816; PM-073 head kept as prep/np-trophies-pm073 36c842ee6); before it PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
