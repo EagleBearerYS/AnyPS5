@@ -186,7 +186,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (!program.Resources().srtReads.empty()) {
         addBinding(next, DescriptorBindingKind::FlattenedSrt);
     }
-    const bool imageTables = std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable; });
+    const bool imageTables = std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable && !image.deviceTable; });
     const bool samplerTables = std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; });
     if (samplerTables) {
         addBinding(next, DescriptorBindingKind::SamplerTable);

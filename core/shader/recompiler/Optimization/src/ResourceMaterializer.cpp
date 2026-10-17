@@ -290,6 +290,17 @@ std::string hexText(std::uint64_t value) {
     return text;
 }
 
+std::uint32_t snapshottedTableCount(const ShaderInfo& info) {
+    std::uint32_t count = 0;
+    for (const auto& image : info.images) {
+        if (image.table != NoTable && !image.deviceTable) count = std::max(count, image.table + 1u);
+    }
+    for (const auto& sampler : info.samplers) {
+        if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
+    }
+    return count;
+}
+
 std::uint32_t TableKeyScanLimit() {
     static const std::uint32_t limit = [] {
         const char* text = std::getenv("APS5_IMAGE_TABLE_KEY_SCAN");
@@ -554,13 +565,7 @@ public:
 
     void Run() {
         tables = ImageTableSnapshot{};
-        std::uint32_t count = 0;
-        for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) count = std::max(count, image.table + 1u);
-        }
-        for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
-        }
+        const auto count = snapshottedTableCount(plan.info);
         if (count == 0u) {
             return;
         }
@@ -571,7 +576,7 @@ public:
         tables.shader = plan.shaderHash;
         tables.tables.resize(count);
         for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) Snapshot(image.source, image.table);
+            if (image.table != NoTable && !image.deviceTable) Snapshot(image.source, image.table);
         }
         for (const auto& sampler : plan.info.samplers) {
             if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
@@ -1281,13 +1286,7 @@ std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const Image
 ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
     namespace Abi = ImageTableAbi;
     ResolvedImageTables out;
-    std::uint32_t count = 0;
-    for (const auto& image : info.images) {
-        if (image.table != NoTable) count = std::max(count, image.table + 1u);
-    }
-    for (const auto& sampler : info.samplers) {
-        if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
-    }
+    const auto count = snapshottedTableCount(info);
     if (count == 0u) return out;
     const auto& tables = snapshot.tables;
     if (tables.tables.size() != count) throw std::runtime_error("image table snapshot disagrees with the static tables");
@@ -1444,7 +1443,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         }
     };
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
-        if (info.images[resource].table != NoTable) fill(resource, info.images[resource].table, false);
+        if (info.images[resource].table != NoTable && !info.images[resource].deviceTable) fill(resource, info.images[resource].table, false);
     }
     for (std::uint32_t resource = 0; resource < info.samplers.size(); resource++) {
         if (info.samplers[resource].table != NoTable) fill(resource, info.samplers[resource].table, true);
@@ -1459,6 +1458,94 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     out.map.resize(out.map.size() + out.samplers.size() / Abi::SamplerEntryElements, 0u);
     out.faults = static_cast<std::uint32_t>(expectedCount + static_cast<std::size_t>(std::count(outside.begin(), outside.end(), true)));
     return out;
+}
+
+namespace {
+
+ImageResource deviceInterfaceImage(const ImageResource& image) {
+    auto normalized = image;
+    normalized.source = 0u;
+    normalized.firstUsePc = 0u;
+    if (normalized.table != NoTable) normalized.table = 0u;
+    return normalized;
+}
+
+std::uint64_t mixImageInterface(std::uint64_t hash, const ImageResource& image) {
+    const auto mix = [&](std::uint64_t value) {
+        hash ^= value;
+        hash *= 0x100000001b3ull;
+    };
+    mix(static_cast<std::uint64_t>(image.resourceClass));
+    mix(static_cast<std::uint64_t>(image.numericClass));
+    mix(static_cast<std::uint64_t>(image.dimension));
+    mix(static_cast<std::uint64_t>(image.mipMode));
+    mix(image.mipCount);
+    mix(static_cast<std::uint64_t>(image.conversionFormat));
+    mix(image.shaderSwizzle);
+    mix((image.read ? 1u : 0u) | (image.written ? 2u : 0u) | (image.atomic ? 4u : 0u) | (image.atomic64 ? 8u : 0u) | (image.depthCompare ? 16u : 0u) | (image.cube ? 32u : 0u) | (image.r128 ? 64u : 0u) | (image.srgbDecode ? 128u : 0u));
+    mix((image.srgbDecodeCompatible ? 1u : 0u) | (image.depthBits ? 2u : 0u) | (image.depthUnorm16 ? 4u : 0u) | (image.packed ? 8u : 0u) | (image.fmaskCompatible ? 16u : 0u) | (image.depthBitsCompatible ? 32u : 0u) | (image.constantSwizzle ? 64u : 0u) | (image.constantSwizzleCompatible ? 128u : 0u));
+    mix((image.flatVolumeCompatible ? 1u : 0u) | (image.flatLineCompatible ? 2u : 0u) | (image.foldTexelOffsetsOnly ? 4u : 0u) | (image.table != NoTable ? 8u : 0u) | (image.deviceTable ? 16u : 0u) | (image.singleMipPlaneBiasCompatible ? 32u : 0u) | (image.flatVolumeLineCompatible ? 64u : 0u) | (image.cubeFaceCompatible ? 128u : 0u));
+    mix(image.srgbDecodeFormats);
+    mix(image.byElements);
+    mix(image.byComponents);
+    mix(static_cast<std::uint64_t>(image.packedFormat));
+    mix(image.emulatedCompare);
+    mix(static_cast<std::uint64_t>(image.tableOperation));
+    return hash;
+}
+
+struct DeviceImageInterfaceRegistry {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, std::shared_ptr<const DeviceImageInterface>> interfaces;
+};
+
+DeviceImageInterfaceRegistry& deviceImageInterfaces() {
+    static DeviceImageInterfaceRegistry registry;
+    return registry;
+}
+
+}
+
+std::uint64_t ResourceMaterializer::DeviceImageInterfaceId(const ImageResource& image, std::span<const ImageResource> modes) {
+    auto hash = mixImageInterface(0xcbf29ce484222325ull, deviceInterfaceImage(image));
+    hash = (hash ^ modes.size()) * 0x100000001b3ull;
+    for (const auto& mode : modes) hash = mixImageInterface(hash, deviceInterfaceImage(mode));
+    return hash;
+}
+
+void ResourceMaterializer::RegisterDeviceImageInterfaces(const ShaderInfo& info) {
+    for (std::uint32_t resource = 0; resource < info.images.size(); ++resource) {
+        const auto& image = info.images[resource];
+        if (!image.deviceTable) continue;
+        if (resource >= info.runtimeImageModes.size()) throw std::runtime_error("device image interface: the runtime image modes are missing");
+        const auto& modes = info.runtimeImageModes[resource];
+        const auto id = DeviceImageInterfaceId(image, modes);
+        const auto same = [&](const DeviceImageInterface& entry) {
+            if (entry.image != deviceInterfaceImage(image) || entry.modes.size() != modes.size()) return false;
+            for (std::size_t index = 0; index < modes.size(); ++index) {
+                if (entry.modes[index] != deviceInterfaceImage(modes[index])) return false;
+            }
+            return true;
+        };
+        auto& registry = deviceImageInterfaces();
+        std::lock_guard lock(registry.mutex);
+        if (const auto found = registry.interfaces.find(id); found != registry.interfaces.end()) {
+            if (!same(*found->second)) throw std::runtime_error("device image interface: two image interfaces share the id 0x" + hexText(id));
+            continue;
+        }
+        auto entry = std::make_shared<DeviceImageInterface>();
+        entry->id = id;
+        entry->image = deviceInterfaceImage(image);
+        for (const auto& mode : modes) entry->modes.push_back(deviceInterfaceImage(mode));
+        registry.interfaces.emplace(id, std::move(entry));
+    }
+}
+
+std::shared_ptr<const DeviceImageInterface> ResourceMaterializer::FindDeviceImageInterface(std::uint64_t id) {
+    auto& registry = deviceImageInterfaces();
+    std::lock_guard lock(registry.mutex);
+    const auto found = registry.interfaces.find(id);
+    return found != registry.interfaces.end() ? found->second : nullptr;
 }
 
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
@@ -1749,10 +1836,10 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
         image.numericClass = image.atomic ? IrTextureNumericClass::Uint : IrTextureNumericClass::Float;
         image.mipCount = image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
         if (image.table == NoTable) continue;
-        tables = true;
+        tables = tables || !image.deviceTable;
         const auto modes = RuntimeImageModes(image);
         const bool storage = image.resourceClass == ImageResourceClass::Storage;
-        if (modes.empty() || modes.size() > ImageTableAbi::MaxModes || (storage && image.mipMode == ImageMipMode::DynamicStorage)) image.tableOperation = TableOperation::Unsupported;
+        if (modes.empty() || (!image.deviceTable && modes.size() > ImageTableAbi::MaxModes) || (storage && image.mipMode == ImageMipMode::DynamicStorage)) image.tableOperation = TableOperation::Unsupported;
     }
     for (const auto& pair : resources.info.sampledPairs) {
         if (pair.image >= images.size() || pair.sampler >= resources.info.samplers.size()) throw std::runtime_error("static sampled pair is out of range");
@@ -1927,10 +2014,10 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         if (image.source >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan image references an unknown descriptor source");
         }
-        if (image.table != NoTable) {
-            plan.requiresSpecializationMemory = true;
-        } else {
+        if (image.table == NoTable) {
             addSource(image.source);
+        } else if (!image.deviceTable) {
+            plan.requiresSpecializationMemory = true;
         }
     }
     for (const auto& sampler : plan.info.samplers) {

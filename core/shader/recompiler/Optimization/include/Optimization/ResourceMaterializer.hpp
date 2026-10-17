@@ -6,7 +6,9 @@
 #include "ImageTableAbi.hpp"
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -47,6 +49,12 @@ struct RuntimeImageModeMatch {
     std::string detail;
 };
 
+struct DeviceImageInterface {
+    std::uint64_t id = 0;
+    ImageResource image;
+    std::vector<ImageResource> modes;
+};
+
 class ResourceMaterializer {
 public:
     static std::uint32_t EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
@@ -57,6 +65,9 @@ public:
     static void PrepareImageModes(ShaderInfo& info);
     static const char* UnnormalizedSampleMismatch(const ImageResource& image);
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
+    static std::uint64_t DeviceImageInterfaceId(const ImageResource& image, std::span<const ImageResource> modes);
+    static void RegisterDeviceImageInterfaces(const ShaderInfo& info);
+    static std::shared_ptr<const DeviceImageInterface> FindDeviceImageInterface(std::uint64_t id);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     static void CompactPlan(IrResourcePlan& plan);
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
