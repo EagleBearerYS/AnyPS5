@@ -20,6 +20,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -239,8 +240,8 @@ constexpr std::size_t ExpectationMemoEntries = 16384;
 constexpr std::size_t ExpectedRunWords = 64;
 
 std::unordered_map<std::uint64_t, ExpectationMemo>& expectationMemos() {
-    thread_local std::unordered_map<std::uint64_t, ExpectationMemo> memos;
-    return memos;
+    struct ExpectationMemoStorage {};
+    return HostThreadLocal<std::unordered_map<std::uint64_t, ExpectationMemo>, ExpectationMemoStorage>();
 }
 
 std::uint64_t expectationKey(const ShaderRecompiler::IrResourcePlan* plan, std::uint64_t codeAddress, std::span<const std::uint32_t> userData) {
