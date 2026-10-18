@@ -283,6 +283,29 @@ alignas(256) constexpr std::array<std::uint32_t, 33> PointerImageCode{
     0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 63> PointerBallotCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xd4c50034u,
+    0x00020680u, 0xbf8cc07fu, 0xbf068112u, 0xbf840003u, 0xbeac03ffu, 0x000000eau, 0xbf820009u, 0xbf068212u,
+    0xbf840002u, 0xbeac0334u, 0xbf820004u, 0xbf068312u, 0xbf840001u, 0xbeac0390u, 0xbf800000u, 0xbf800000u,
+    0xf40c0916u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffe1u, 0xbefe042eu,
+    0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 66> PointerCopiesCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf068112u, 0xbf840003u, 0xbeac03ffu, 0x000000eau, 0xbf82000eu, 0xbf068212u, 0xbf840007u, 0x3a160613u,
+    0x7e2c050bu, 0x8f178416u, 0xf4200b02u, 0x2e000008u, 0xbf8cc07fu, 0xbf820004u, 0xbf068312u, 0xbf840001u,
+    0xbeac0390u, 0xbf800000u, 0xbf800000u, 0xf40c0916u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u,
+    0x8afe3032u, 0xbf89ffdeu, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u,
+    0x80070408u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
@@ -1639,6 +1662,86 @@ void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
     std::puts("pointer sampler table: S# and T# through a record pointer whose low word passes a Phi checked on wave64 and wave32");
 }
 
+void RunPointerArmTests(AgcDriver::VulkanDevice& device, bool copies) {
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    for (std::uint32_t record = 0; record < 2u; ++record) std::copy(images[record].begin(), images[record].end(), records[record].begin() + 16u);
+    for (std::uint32_t record = 0; record < 3u; ++record) {
+        const auto pointer = reinterpret_cast<std::uintptr_t>(records[record % 2u].data());
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    }
+    const std::span<const std::uint32_t> code = copies ? std::span<const std::uint32_t>(PointerCopiesCode) : std::span<const std::uint32_t>(PointerBallotCode);
+    const std::string name = copies ? "pointer table with a second record read" : "pointer table with a lane-mask arm";
+    const auto run = [&] {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+        };
+        const auto inputTable = Table;
+        const auto inputRecords = records;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u);
+        Require(Table == inputTable && records == inputRecords, name + ": dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        return result;
+    };
+    const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = keys[group][0];
+        Keys[group * 4u + 1u] = keys[group][1];
+    }
+    const auto sampled = [&keys](std::uint32_t group, std::uint32_t flip) {
+        return std::function<std::uint32_t(std::uint32_t)>([&keys, group, flip](std::uint32_t x) {
+            const auto key = keys[group][x < 32u ? 0u : 1u] ^ flip;
+            return std::bit_cast<std::uint32_t>(key % 2u != 0u ? OtherFloatTexels[x] : FloatTexels[x]);
+        });
+    };
+    const auto untouched = [](const Outcome& outcome) { return std::all_of(outcome.words.begin(), outcome.words.end(), [](auto word) { return word == 0xdeadbeefu; }); };
+    const auto taken = run();
+    Require(!Faulted(taken), name + ": the record's pointer faulted:\n" + taken.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(taken, group, Lanes, sampled(group, 0u), name + ": the T# read through the record's pointer in a waterfall loop");
+    const auto outside = [&](std::uint32_t arm, const std::string& what) {
+        Keys[2] = arm;
+        const auto faulted = run();
+        Keys[2] = 0u;
+        Require(Faulted(faulted) && faulted.log.find("outside the snapshot") != std::string::npos, name + ": " + what + " did not fault as outside the snapshot:\n" + faulted.log);
+        Require(untouched(faulted), name + ": " + what + " published copied output");
+        Require(faulted.artifactId == taken.artifactId, name + ": " + what + " recompiled the shader");
+    };
+    outside(1u, "a constant pointer word");
+    outside(3u, "a second constant pointer word");
+    if (!copies) {
+        outside(2u, "a lane-mask pointer word");
+        std::puts("pointer table with a lane-mask arm: a T# through a record pointer whose low word passes nested Phis with constants and a Ballot word checked, and the Ballot word faults outside the snapshot");
+        return;
+    }
+    Keys[2] = 2u;
+    const auto again = run();
+    Require(!Faulted(again) && again.words == taken.words, name + ": a second read of the same record changed the result:\n" + again.log);
+    Keys[3] = 3u;
+    const auto flipped = run();
+    Keys[2] = 0u;
+    Keys[3] = 0u;
+    Require(!Faulted(flipped) && flipped.artifactId == taken.artifactId, name + ": a second read of another record faulted or recompiled:\n" + flipped.log);
+    RequireRed(flipped, 0u, Lanes, sampled(0u, 3u), name + ": the T# behind the other record's pointer word");
+    for (std::uint32_t group = 1; group < 4u; ++group) Require(Group(flipped, group) == Group(taken, group), name + ": a group that kept its record changed its result");
+    std::puts("pointer table with a second record read: a T# through a record pointer whose low word passes a second read keyed by another lane checked, by the pointer's value");
+}
+
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -1870,6 +1973,14 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-sampler") == 0) {
             RunPointerSamplerTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-ballot") == 0) {
+            RunPointerArmTests(*device, false);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-copies") == 0) {
+            RunPointerArmTests(*device, true);
             return 0;
         }
         RunTests(*device);
