@@ -187,7 +187,7 @@ void Driver::sweepCpuIndirect() {
 
 Driver::CpuIndirectFootprint Driver::CpuIndirectCacheSize() {
     std::lock_guard cacheLock(drawCacheMutex);
-    return {cpuIndirectEntries, cpuIndirectBytes, cpuIndirectBudget()};
+    return {cpuIndirectEntries, cpuIndirectBytes, cpuIndirectBudget(), cpuIndirectDropped, cpuIndirectRefusedTotal};
 }
 
 std::size_t Driver::drawCacheEntries() {
@@ -298,6 +298,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
             if (replacesCpuIndirect) pinCpuIndirect(*found->second);
             unpinCpuIndirect(*replacement);
             ++counters.cpuIndirectRefused;
+            ++cpuIndirectRefusedTotal;
             return;
         }
     } else if (replacesCpuIndirect) {
@@ -332,7 +333,10 @@ void Driver::dropDrawEntry(std::unordered_map<std::uint64_t, std::shared_ptr<Dra
     for (const auto& variants : found->second->stages) {
         for (const auto& variant : variants) accountDrawVariant(*variant, false);
     }
-    if (found->second->cpuIndirect) unpinCpuIndirect(*found->second);
+    if (found->second->cpuIndirect) {
+        unpinCpuIndirect(*found->second);
+        ++cpuIndirectDropped;
+    }
     if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == found->first) drawShapes.erase(shapeOf);
     drawOrder.erase(found->second->order);
     drawCache.erase(found);
