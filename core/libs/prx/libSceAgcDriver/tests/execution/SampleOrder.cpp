@@ -1252,24 +1252,9 @@ int GridReference(AgcDriver::VulkanDevice& device) {
     return 0;
 }
 
-int RecipeDepthLocations(AgcDriver::VulkanDevice& device) {
-    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    ClearTargets clearTargets{device, context.device};
+void CheckRecipeDepth(AgcDriver::VulkanDevice& device, const Context& context, const std::array<std::uint8_t, 32>& locations, std::size_t run, const std::string& what) {
     constexpr std::uint32_t samples = 2u;
-    if ((context.limits.framebufferDepthSampleCounts & samples) == 0u || !DepthSampleable(context, VK_FORMAT_D32_SFLOAT, samples)) {
-        std::printf("skipped, the device has no sampleable 2x depth targets\n");
-        return VulkanTestSkipped;
-    }
-    if ((context.sampleLocationSampleCounts & samples) == 0u || !AgcDriver::Graphics::SampleLocationsCompatibleDepth(context, VK_FORMAT_D32_SFLOAT, samples)) {
-        std::printf("skipped, the device has no custom sample locations at 2 samples\n");
-        return VulkanTestSkipped;
-    }
-    if (!AgcDriver::Graphics::DrawRecipes()) {
-        std::printf("skipped, draw recipes are off (APS5_NO_DRAW_RECIPE)\n");
-        return VulkanTestSkipped;
-    }
-    const auto locations = UniformLocations(VillageLocations, 0u);
-    AgcDriver::Graphics::DepthTarget depth{reinterpret_cast<std::uintptr_t>(DepthMemory.data()), 0u, ReferenceExtent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    AgcDriver::Graphics::DepthTarget depth{reinterpret_cast<std::uintptr_t>(DepthMemory.data()) + 256u * 1024u * run, 0u, ReferenceExtent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
     depth.samples = samples;
     const Vertices clear = Screen(ClearDepth);
     Pass clearPass;
@@ -1293,21 +1278,56 @@ int RecipeDepthLocations(AgcDriver::VulkanDevice& device) {
         Draw(device, context, clearPass);
         Settle(device);
         const auto cleared = read();
-        Require(std::all_of(cleared.begin(), cleared.end(), [](const std::array<std::uint32_t, 4>& value) { return std::bit_cast<float>(value[0]) == ClearDepth; }), "the clear between the recorded draw and its replay left depth other than the clear value");
+        Require(std::all_of(cleared.begin(), cleared.end(), [](const std::array<std::uint32_t, 4>& value) { return std::bit_cast<float>(value[0]) == ClearDepth; }), what + ": the clear between the recorded draw and its replay left depth other than the clear value");
     };
     Draw(device, context, clearPass);
     Draw(device, context, slopes);
     Settle(device);
     const auto replayed = read();
-    const auto first = PrintDepthLocations("the recorded draw", LocateDepth(recorded, locations));
-    PrintDepthLocations("the recipe's replay as the first draw of a pass", LocateDepth(replayed, locations));
-    Require(first.sloped != 0u, "the recorded draw left no sloped depth");
+    const auto first = PrintDepthLocations(what + ", the recorded draw", LocateDepth(recorded, locations));
+    PrintDepthLocations(what + ", the recipe's replay as the first draw of a pass", LocateDepth(replayed, locations));
+    Require(first.sloped != 0u, what + ": the recorded draw left no sloped depth");
     const bool readAtGuestLocations = first.guest == first.sloped;
-    if (!readAtGuestLocations) std::printf("the device reads depth drawn at custom sample locations back at other locations, even after a transition that names them: the replay is compared with the recorded draw as the device reads both back\n");
-    const auto differences = Differences(recorded, replayed, samples, "depth replayed from the recipe", true);
-    std::printf("2x depth at custom sample locations, %ux%u: the recipe's replay differs from the recorded draw in %zu of %zu samples\n", ReferenceExtent.width, ReferenceExtent.height, differences, recorded.size());
-    Require(differences == 0u, readAtGuestLocations ? "the recipe's replay did not leave the depth the recorded draw left at the guest's sample locations" : "the recipe's replay did not leave the depth the recorded draw left, as the device reads both back");
-    std::puts(readAtGuestLocations ? "a depth-only 2x draw replayed from its recipe as the first draw of a pass leaves the depth the recorded draw left, bit for bit" : "a depth-only 2x draw replayed from its recipe as the first draw of a pass leaves the depth the recorded draw left as the device reads both back, bit for bit");
+    if (!readAtGuestLocations) std::printf("%s: the device reads depth drawn at custom sample locations back at other locations, even after a transition that names them: the replay is compared with the recorded draw as the device reads both back\n", what.c_str());
+    const auto differences = Differences(recorded, replayed, samples, what + ", depth replayed from the recipe", true);
+    std::printf("%s, %ux%u: the recipe's replay differs from the recorded draw in %zu of %zu samples\n", what.c_str(), ReferenceExtent.width, ReferenceExtent.height, differences, recorded.size());
+    Require(differences == 0u, what + (readAtGuestLocations ? ": the recipe's replay did not leave the depth the recorded draw left at the guest's sample locations" : ": the recipe's replay did not leave the depth the recorded draw left, as the device reads both back"));
+    std::printf("%s: a depth-only 2x draw replayed from its recipe as the first draw of a pass leaves the depth the recorded draw left%s, bit for bit\n", what.c_str(), readAtGuestLocations ? "" : " as the device reads both back");
+}
+
+int RecipeDepthLocations(AgcDriver::VulkanDevice& device) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    ClearTargets clearTargets{device, context.device};
+    constexpr std::uint32_t samples = 2u;
+    if ((context.limits.framebufferDepthSampleCounts & samples) == 0u || !DepthSampleable(context, VK_FORMAT_D32_SFLOAT, samples)) {
+        std::printf("skipped, the device has no sampleable 2x depth targets\n");
+        return VulkanTestSkipped;
+    }
+    if ((context.sampleLocationSampleCounts & samples) == 0u || !AgcDriver::Graphics::SampleLocationsCompatibleDepth(context, VK_FORMAT_D32_SFLOAT, samples)) {
+        std::printf("skipped, the device has no custom sample locations at 2 samples\n");
+        return VulkanTestSkipped;
+    }
+    if (!AgcDriver::Graphics::DrawRecipes()) {
+        std::printf("skipped, draw recipes are off (APS5_NO_DRAW_RECIPE)\n");
+        return VulkanTestSkipped;
+    }
+    CheckRecipeDepth(device, context, UniformLocations(VillageLocations, 0u), 0u, "pixel (0,0)'s locations in every pixel");
+    auto emulated = context;
+    emulated.sampleLocationGridSampleCounts = 0u;
+    AgcDriver::Graphics::State probe{};
+    probe.samples = samples;
+    probe.customSampleLocations = true;
+    probe.sampleLocationGrid = true;
+    probe.sampleLocations = VillageLocations;
+    probe.depth = AgcDriver::Graphics::DepthTarget{0x100000u, 0u, ReferenceExtent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    probe.depth->samples = samples;
+    const auto refusal = AgcDriver::Graphics::SampleOrderRefusal(emulated, probe);
+    if (!refusal.empty()) {
+        std::printf("the checkerboard through the exact path is not checked: the device does not put its samples in the guest's order: %s\n", refusal.c_str());
+        return 0;
+    }
+    Require(AgcDriver::Graphics::ReordersSamples(AgcDriver::Graphics::HostSampleLocationsFor(emulated, probe).order), "the context without a 2x2 grid did not take the exact path");
+    CheckRecipeDepth(device, emulated, VillageLocations, 1u, "the 2x checkerboard through the exact path");
     return 0;
 }
 
