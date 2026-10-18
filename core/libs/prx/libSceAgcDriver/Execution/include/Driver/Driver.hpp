@@ -80,6 +80,8 @@ public:
         std::uint64_t budget = 0;
         std::uint64_t dropped = 0;
         std::uint64_t refused = 0;
+        std::size_t aliased = 0;
+        std::size_t aliasedOnly = 0;
     };
     CpuIndirectFootprint CpuIndirectCacheSize();
     static std::uint64_t DispatchCacheBytes();
@@ -146,6 +148,9 @@ private:
     void insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape = 0, bool cpuIndirect = false);
     bool admitDrawKey(std::uint64_t key, std::uint64_t shape);
     void eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>& expected);
+    void moveDrawAliases(const std::shared_ptr<DrawEntry>& from, const std::shared_ptr<DrawEntry>& to);
+    void releaseDrawAliases(const std::shared_ptr<DrawEntry>& entry);
+    std::pair<std::size_t, std::size_t> cpuIndirectAliased() const;
     void dropDrawEntry(std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>>::iterator found);
     static std::uint64_t cpuIndirectBudget();
     static std::uint64_t cpuIndirectIdleLookups();

@@ -187,7 +187,8 @@ void Driver::sweepCpuIndirect() {
 
 Driver::CpuIndirectFootprint Driver::CpuIndirectCacheSize() {
     std::lock_guard cacheLock(drawCacheMutex);
-    return {cpuIndirectEntries, cpuIndirectBytes, cpuIndirectBudget(), cpuIndirectDropped, cpuIndirectRefusedTotal};
+    const auto [aliased, aliasedOnly] = cpuIndirectAliased();
+    return {cpuIndirectEntries, cpuIndirectBytes, cpuIndirectBudget(), cpuIndirectDropped, cpuIndirectRefusedTotal, aliased, aliasedOnly};
 }
 
 std::size_t Driver::drawCacheEntries() {
@@ -318,6 +319,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     } else {
         replacement->order = found->second->order;
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
+        moveDrawAliases(found->second, replacement);
         found->second = std::move(replacement);
     }
     while (drawCache.size() > drawCacheEntries()) {
@@ -336,10 +338,42 @@ void Driver::dropDrawEntry(std::unordered_map<std::uint64_t, std::shared_ptr<Dra
     if (found->second->cpuIndirect) {
         unpinCpuIndirect(*found->second);
         ++cpuIndirectDropped;
+        releaseDrawAliases(found->second);
     }
     if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == found->first) drawShapes.erase(shapeOf);
     drawOrder.erase(found->second->order);
     drawCache.erase(found);
+}
+
+void Driver::moveDrawAliases(const std::shared_ptr<DrawEntry>& from, const std::shared_ptr<DrawEntry>& to) {
+    for (const auto alias : from->aliases) {
+        const auto held = drawAliases.find(alias);
+        if (held == drawAliases.end() || held->second != from) continue;
+        held->second = to;
+        if (std::find(to->aliases.begin(), to->aliases.end(), alias) == to->aliases.end()) to->aliases.push_back(alias);
+    }
+}
+
+void Driver::releaseDrawAliases(const std::shared_ptr<DrawEntry>& entry) {
+    for (const auto alias : entry->aliases) {
+        const auto held = drawAliases.find(alias);
+        if (held != drawAliases.end() && held->second == entry) drawAliases.erase(held);
+    }
+    entry->aliases.clear();
+}
+
+std::pair<std::size_t, std::size_t> Driver::cpuIndirectAliased() const {
+    std::unordered_set<const DrawEntry*> cached;
+    for (const auto& [key, entry] : drawCache) {
+        if (entry->cpuIndirect) cached.insert(entry.get());
+    }
+    std::unordered_set<const DrawEntry*> aliased;
+    std::size_t outside = 0;
+    for (const auto& [alias, entry] : drawAliases) {
+        if (!entry->cpuIndirect || !aliased.insert(entry.get()).second) continue;
+        if (!cached.contains(entry.get())) ++outside;
+    }
+    return {aliased.size(), outside};
 }
 
 void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>& expected) {
