@@ -1,0 +1,4 @@
+BASE=0bc3003f89e6c6448607c3f6c5809e1703f3fef4
+REPEAT=1
+EXTRA_TESTS='agc_driver_image_table_vouch_queued_draws'
+NO_BEFORE=1
