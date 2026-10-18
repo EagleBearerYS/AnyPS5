@@ -21,6 +21,7 @@ void Driver::maybeReportDrawCache(bool profile) {
     const auto now = std::chrono::steady_clock::now();
     if (now - counters.lastReport < std::chrono::seconds(10)) return;
     reportDrawCache(counters, profile);
+    if (profile) reportDrawRelocation();
     counters.lastReport = now;
 }
 
