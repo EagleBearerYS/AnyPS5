@@ -12,7 +12,9 @@
 #include <map>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_set>
+#include <utility>
 
 namespace Relinker {
 
@@ -35,7 +37,7 @@ public:
 
 }
 
-std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress) const {
+std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots) const {
     std::uint64_t lastProgress = 0;
     const auto report = [&](std::uint64_t completed) {
         if (completed <= lastProgress) return;
@@ -103,6 +105,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             auto begin = header.MappedAddress;
             for (const auto& interpreter : headers)
                 if (interpreter.Type == 3 && interpreter.MappedAddress >= begin && interpreter.MappedAddress < end) begin = interpreter.MappedAddress + std::min(interpreter.FileSize, end - interpreter.MappedAddress);
+            const std::string_view loaderPath("/libexec/ld-elf.so.1", 21);
+            if (begin == header.MappedAddress && end - begin > loaderPath.size() && std::equal(loaderPath.begin(), loaderPath.end(), segment.begin())) begin += loaderPath.size();
             header.Offset += begin - header.MappedAddress;
             header.MappedAddress = begin;
             header.FileSize = end - begin;
@@ -438,6 +442,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         }
     }
     report(10000);
+    if (entryRoots) *entryRoots = std::move(roots);
     return instructions;
 }
 

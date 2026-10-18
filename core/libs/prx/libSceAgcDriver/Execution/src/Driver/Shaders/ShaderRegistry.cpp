@@ -11,6 +11,7 @@
 #include "CompiledVariant.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <set>
@@ -415,6 +416,72 @@ bool SameHeader(const ShaderSnapshot& snapshot, const Shader* shader) {
     return std::memcmp(&used, &registered, offsetof(Shader, num_sh_registers) + sizeof(Shader::num_sh_registers)) == 0 || RelocatedRegisters(snapshot, used, registered) || FusedHullHeader(snapshot, used, registered);
 }
 
+std::size_t ShaderRegistry::chunkFor(std::uint64_t address) const {
+    const auto above = std::upper_bound(chunks.begin(), chunks.end(), address, [](std::uint64_t key, const std::shared_ptr<Chunk>& chunk) { return key < chunk->begin()->first; });
+    return above == chunks.begin() ? 0u : static_cast<std::size_t>(above - chunks.begin()) - 1u;
+}
+
+ShaderRegistry::Chunk& ShaderRegistry::writable(std::size_t index) {
+    auto& chunk = chunks[index];
+    if (chunk.use_count() != 1) chunk = std::make_shared<Chunk>(*chunk);
+    return *chunk;
+}
+
+ShaderRegistry::const_iterator ShaderRegistry::find(std::uint64_t address) const {
+    if (chunks.empty()) return end();
+    const auto index = chunkFor(address);
+    const auto found = chunks[index]->find(address);
+    if (found == chunks[index]->end()) return end();
+    return const_iterator(chunks.cbegin() + static_cast<std::ptrdiff_t>(index), chunks.cend(), found);
+}
+
+ShaderRegistry::const_iterator ShaderRegistry::upper_bound(std::uint64_t address) const {
+    if (chunks.empty()) return end();
+    const auto index = chunkFor(address);
+    const auto found = chunks[index]->upper_bound(address);
+    if (found != chunks[index]->end()) return const_iterator(chunks.cbegin() + static_cast<std::ptrdiff_t>(index), chunks.cend(), found);
+    if (index + 1u == chunks.size()) return end();
+    return const_iterator(chunks.cbegin() + static_cast<std::ptrdiff_t>(index + 1u), chunks.cend(), chunks[index + 1u]->cbegin());
+}
+
+const ShaderRegistry::mapped_type& ShaderRegistry::at(std::uint64_t address) const {
+    const auto found = find(address);
+    if (found == end()) throw std::out_of_range("shader registry has no entry for the code address");
+    return found->second;
+}
+
+ShaderRegistry::mapped_type& ShaderRegistry::operator[](std::uint64_t address) {
+    if (chunks.empty()) chunks.push_back(std::make_shared<Chunk>());
+    const auto index = chunks.front()->empty() ? 0u : chunkFor(address);
+    auto& chunk = writable(index);
+    const auto [entry, inserted] = chunk.try_emplace(address);
+    auto& headers = entry->second;
+    if (!inserted) return headers;
+    ++count;
+    if (chunk.size() > ChunkEntries) {
+        auto upper = std::make_shared<Chunk>();
+        for (auto moved = std::next(chunk.begin(), static_cast<std::ptrdiff_t>(chunk.size() / 2u)); moved != chunk.end();) upper->insert(upper->end(), chunk.extract(moved++));
+        chunks.insert(chunks.begin() + static_cast<std::ptrdiff_t>(index + 1u), std::move(upper));
+    }
+    return headers;
+}
+
+std::pair<ShaderRegistry::const_iterator, bool> ShaderRegistry::emplace(std::uint64_t address, mapped_type headers) {
+    if (const auto found = find(address); found != end()) return {found, false};
+    (*this)[address] = std::move(headers);
+    return {find(address), true};
+}
+
+std::size_t ShaderRegistry::erase(std::uint64_t address) {
+    if (!contains(address)) return 0;
+    const auto index = chunkFor(address);
+    auto& chunk = writable(index);
+    chunk.erase(address);
+    --count;
+    if (chunk.empty()) chunks.erase(chunks.begin() + static_cast<std::ptrdiff_t>(index));
+    return 1;
+}
+
 std::shared_ptr<const ShaderSnapshot> RegisteredHeader(const ShaderRegistry& registry, const Shader* shader) {
     const auto found = registry.find(reinterpret_cast<std::uintptr_t>(const_cast<const void*>(GuestShaderFields(shader).code)));
     if (found == registry.end()) return {};
@@ -653,7 +720,7 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     constexpr std::uint64_t limitBytes = 64u << 20u;
     constexpr std::size_t limitCallees = 64u;
     const auto slot = call.userDataRegister - request.context.userDataBaseRegister;
-    const auto pointer = static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
+    const auto pointer = call.constantPointer ? *call.constantPointer : static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
     const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor");
     ShaderRecompiler::ShaderBufferResource descriptor{};
     std::memcpy(descriptor.fields.data(), words.data(), words.size());
@@ -912,7 +979,13 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     } else {
         const auto routing = RegisterValue(state.context, 0x2d5);
         wave = (routing & 0x00400000u) != 0 ? 32u : 64u;
-        if (registration && stage == Stage::Vertex && (routing & 0x02002024u) == 0x2000u && ProgramUsesWorkgroup(snapshot, codeOffset)) return nullptr;
+        const bool unroutedBarrier = routing == 0 && std::ranges::any_of(decoded.instructions, [](const auto& instruction) {
+            return instruction.op == ShaderRecompiler::RdnaOpcode::SBarrier;
+        });
+        if (registration && stage == Stage::Vertex && (((routing & 0x02002024u) == 0x2000u && ProgramUsesWorkgroup(snapshot, codeOffset)) || unroutedBarrier)) {
+            if (unroutedBarrier && deferred != nullptr) return defer("its s_barrier depends on draw routing");
+            return nullptr;
+        }
         if ((routing & 0x20u) != 0 || stage == Stage::Mesh || (routing & 4u) != 0 || ((routing >> 3u) & 3u) == 1u) {
             if (registration) return {};
             auto stageState = state;
@@ -1074,7 +1147,8 @@ class RegistrationPreparePool {
 public:
     static RegistrationPreparePool& Instance() {
         static auto* pool = [] {
-            auto* created = new RegistrationPreparePool(std::max(2u, std::thread::hardware_concurrency() / 2u));
+            std::lock_guard lifecycle(Lifecycle());
+            auto* created = new RegistrationPreparePool(Closing() ? 0u : std::max(2u, std::thread::hardware_concurrency() / 2u));
             PreparationSlot().store(created);
             return created;
         }();
@@ -1088,7 +1162,8 @@ public:
     static RegistrationPreparePool& Prebuild() {
         static auto* pool = [] {
             const char* text = std::getenv("APS5_PREBUILD_THREADS");
-            auto* created = new RegistrationPreparePool(text != nullptr ? std::max(1u, static_cast<unsigned>(std::strtoul(text, nullptr, 10))) : 1u);
+            std::lock_guard lifecycle(Lifecycle());
+            auto* created = new RegistrationPreparePool(Closing() ? 0u : text != nullptr ? std::max(1u, static_cast<unsigned>(std::strtoul(text, nullptr, 10))) : 1u);
             PrebuildSlot().store(created);
             return created;
         }();
@@ -1099,7 +1174,33 @@ public:
         return PrebuildSlot().load();
     }
 
+    static unsigned LiveWorkers() {
+        return liveWorkers.load(std::memory_order_acquire);
+    }
+
+    static void CloseAll() {
+        std::array<RegistrationPreparePool*, 2> pools{};
+        {
+            std::lock_guard lifecycle(Lifecycle());
+            Closing() = true;
+            pools = {Existing(), ExistingPrebuild()};
+        }
+        for (auto* pool : pools) {
+            if (pool != nullptr) pool->Close();
+        }
+    }
+
 private:
+    static std::mutex& Lifecycle() {
+        static std::mutex lifecycle;
+        return lifecycle;
+    }
+
+    static bool& Closing() {
+        static bool closing = false;
+        return closing;
+    }
+
     static std::atomic<RegistrationPreparePool*>& PreparationSlot() {
         static std::atomic<RegistrationPreparePool*> slot{nullptr};
         return slot;
@@ -1143,9 +1244,17 @@ public:
     }
 
     void Close() {
-        std::unique_lock lock(mutex);
-        closed = true;
-        idle.wait(lock, [&] { return tasks.empty() && running == 0; });
+        std::vector<pthread_t> joined;
+        {
+            std::unique_lock lock(mutex);
+            closed = true;
+            idle.wait(lock, [&] { return tasks.empty() && running == 0; });
+            joined.swap(workers);
+        }
+        ready.notify_all();
+        for (const auto worker : joined) {
+            if (!pthread_equal(worker, pthread_self())) pthread_join(worker, nullptr);
+        }
     }
 
 private:
@@ -1156,8 +1265,9 @@ private:
         for (unsigned index = 0; index < count; ++index) {
             pthread_t thread;
             if (pthread_create(&thread, &attributes, &RegistrationPreparePool::Main, this) == 0) {
-                pthread_detach(thread);
+                workers.push_back(thread);
                 ++threads;
+                liveWorkers.fetch_add(1, std::memory_order_acq_rel);
             }
         }
         pthread_attr_destroy(&attributes);
@@ -1170,7 +1280,11 @@ private:
             Task task;
             {
                 std::unique_lock lock(pool.mutex);
-                pool.ready.wait(lock, [&] { return !pool.tasks.empty(); });
+                pool.ready.wait(lock, [&] { return !pool.tasks.empty() || pool.closed; });
+                if (pool.tasks.empty()) {
+                    liveWorkers.fetch_sub(1, std::memory_order_acq_rel);
+                    return nullptr;
+                }
                 task = std::move(pool.tasks.front());
                 pool.tasks.pop_front();
                 ++pool.running;
@@ -1203,7 +1317,9 @@ private:
     std::condition_variable ready;
     std::condition_variable idle;
     std::deque<Task> tasks;
+    std::vector<pthread_t> workers;
     unsigned threads = 0;
+    inline static std::atomic<unsigned> liveWorkers{0};
     unsigned running = 0;
     std::uint64_t submitted = 0;
     std::set<std::uint64_t> unfinished;
@@ -1260,9 +1376,16 @@ void SubmitLibraryPrebuild(std::function<void()> task) {
     RegistrationPreparePool::Prebuild().Submit(std::move(task));
 }
 
+void AwaitLibraryPrebuilds() {
+    if (auto* pool = RegistrationPreparePool::ExistingPrebuild()) pool->AwaitSubmitted();
+}
+
 void CloseRegistrationPreparation() {
-    RegistrationPreparePool::Instance().Close();
-    if (auto* prebuild = RegistrationPreparePool::ExistingPrebuild()) prebuild->Close();
+    RegistrationPreparePool::CloseAll();
+}
+
+unsigned RegistrationPreparationThreads() {
+    return RegistrationPreparePool::LiveWorkers();
 }
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared) {
@@ -1353,7 +1476,16 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     return prepared;
 }
 
+namespace {
+
+void BindTitleThread() {
+    if (PerformanceTrace::Configured()) PerformanceTrace::BindThread("title", TraceThread::DefaultCapacity / 8);
+}
+
+}
+
 void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
+    BindTitleThread();
     PerformanceContext timingContext(FrameTiming::Preparation());
     PerformanceTimer timing("Shader.ResolveGraphicsStagesAbi");
     ShaderPreparationTransaction transaction;
@@ -1465,6 +1597,7 @@ Driver::DeferredAbiUseCounts Driver::DeferredAbiUses() {
 }
 
 void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
+    BindTitleThread();
     PerformanceContext timingContext(FrameTiming::Preparation());
     PerformanceTimer timing("Shader.ResolveAbi");
     ShaderPreparationTransaction transaction;
@@ -1572,6 +1705,7 @@ std::uint64_t NullPixelProgramAddress() {
 }
 
 void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
+    BindTitleThread();
     PerformanceContext timingContext(FrameTiming::Preparation());
     PerformanceTimer timing("Shader.ResolveGraphicsAbi");
     CheckFailure();
@@ -1712,6 +1846,7 @@ std::shared_ptr<const ShaderRegistry> Driver::RegisteredShaders() {
 }
 
 void Driver::RegisterShader(const Shader* shader) {
+    BindTitleThread();
     PerformanceContext timingContext(FrameTiming::Preparation());
     PerformanceTimer timing("Shader.Register");
     ShaderPreparationTransaction transaction;

@@ -112,7 +112,8 @@ enum class ConservativeZExport : std::uint8_t {
 
 enum class ColorExportPacking : std::uint8_t {
     None,
-    Unorm10_11_11
+    Unorm10_11_11,
+    Float11_11_10
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -267,6 +268,8 @@ struct SpirvTarget {
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
     bool float16DenormPreserve = false;
+    bool spannedWaves = false;
+    bool robustBufferAccess2 = false;
 };
 
 struct BindingLayout {
@@ -393,7 +396,8 @@ enum class DescriptorRole {
     ShaderData,
     ImageTable,
     SamplerTable,
-    ImageTableMap
+    ImageTableMap,
+    ImageStorageTable
 };
 
 struct DescriptorBinding {
@@ -424,6 +428,7 @@ struct DescriptorBinding {
     std::vector<bool> bufferWritten;
     std::vector<bool> samplerUnnormalized;
     std::vector<bool> samplerIntegerBorder;
+    std::vector<bool> samplerCoordinatesIgnored;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
     std::vector<std::uint32_t> imageSamplers;
@@ -603,6 +608,7 @@ struct CompiledShaderArtifact {
     bool vertexOffsetConflict = false;
     bool instanceOffsetConflict = false;
     std::uint32_t hostSubgroupSize = 0;
+    bool fullSubgroups = false;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;
@@ -657,7 +663,7 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         };
         mix(specialization.size());
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
-        mix(hostSubgroupSize | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
+        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
         for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
         if (identity.Empty()) identity.low = 1;
@@ -681,6 +687,7 @@ void SetDebugProbeActive(bool active);
 struct RectListShaders {
     RecompileResult control;
     RecompileResult evaluation;
+    RecompileResult lastVertexControl;
 };
 
 [[nodiscard]] RectListShaders BuildRectListShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target);
@@ -694,6 +701,13 @@ struct GeometryStageLimits {
 };
 
 [[nodiscard]] RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits);
+
+struct BarycentricTessellationShaders {
+    RecompileResult control;
+    RecompileResult evaluation;
+};
+
+[[nodiscard]] BarycentricTessellationShaders BuildBarycentricTessellationShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, std::uint32_t maxFragmentInputComponents);
 
 }
 
