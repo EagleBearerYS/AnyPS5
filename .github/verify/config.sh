@@ -1,0 +1,4 @@
+BASE=3de84fa10698aef4ff43d6bd821d15698f9c8db0
+REPEAT=3
+EXTRA_TESTS='agc_shader_bindless|agc_shader_memory|agc_shader_table_snapshot_reuse|agc_driver_image_table|^agc'
+NO_BEFORE=1
