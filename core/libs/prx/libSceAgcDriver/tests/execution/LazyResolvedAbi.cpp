@@ -20,6 +20,8 @@
 #include <bit>
 #include <chrono>
 #include <random>
+#include <set>
+#include <sstream>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -29,6 +31,8 @@
 #include <fstream>
 #include <initializer_list>
 #include <iostream>
+#include <iterator>
+#include <map>
 #include <span>
 #include <string>
 #include <utility>
@@ -314,15 +318,15 @@ private:
     std::uint8_t* base = nullptr;
 };
 
-void RegisterSynthetic(Synthetic& program, ProgramArena& arena, const std::vector<std::uint32_t>& code) {
-    program.code = arena.Place(code);
+void RegisterHeader(Synthetic& program, std::uint32_t* code, std::size_t words) {
+    program.code = code;
     const auto address = reinterpret_cast<std::uintptr_t>(program.code);
     auto& header = program.header;
     header.registers = {{{0x008, static_cast<std::uint32_t>(address >> 8u)}, {0x009, static_cast<std::uint32_t>(address >> 40u)}, {0x00b, 8u << 1u}, {0x00a, 0}}};
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18u;
     header.shader.header_size = sizeof(SyntheticHeader);
-    header.shader.shader_size = static_cast<std::uint32_t>(code.size() * sizeof(std::uint32_t));
+    header.shader.shader_size = static_cast<std::uint32_t>(words * sizeof(std::uint32_t));
     header.shader.code = program.code;
     header.shader.type = 1;
     header.shader.user_data = &header.userData;
@@ -333,6 +337,10 @@ void RegisterSynthetic(Synthetic& program, ProgramArena& arena, const std::vecto
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
 
+void RegisterSynthetic(Synthetic& program, ProgramArena& arena, const std::vector<std::uint32_t>& code) {
+    RegisterHeader(program, arena.Place(code), code.size());
+}
+
 constexpr std::uint32_t Programs = 4;
 constexpr std::uint32_t Drawn = 2;
 
@@ -341,6 +349,14 @@ void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+void ClearEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -367,72 +383,191 @@ std::string Uses(const AgcDriver::DriverDetail::Driver::DeferredAbiUseCounts& us
     return std::to_string(uses.firstUses) + " first uses, " + std::to_string(uses.found) + " found, " + std::to_string(uses.own) + " own, " + std::to_string(uses.unmatchedEntries) + " of " + std::to_string(uses.entries) + " entries unmatched";
 }
 
-void MatchingResolution(const Layout& layout, ProgramArena& arena) {
-    const auto before = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
-    std::vector<Synthetic> programs(1);
-    RegisterSynthetic(programs.front(), arena, SyntheticPixelCode(Programs + 1, 0));
+constexpr std::uint32_t Matching = Programs;
+constexpr std::uint32_t Twice = Programs + 1;
+constexpr std::uint32_t Replaced = Programs + 2;
+constexpr std::uint32_t Replacement = Programs + 3;
+constexpr std::array<std::uint32_t, 6> DrawnPrograms{0, 1, Matching, Twice, Replaced, Replacement};
+
+bool RegistrationAbi(std::uint32_t index) {
+    return index < Programs || index == Twice;
+}
+
+using Report = std::map<std::string, std::string>;
+
+std::string Text(std::span<const std::array<std::uint64_t, 2>> hashes) {
+    std::string text = std::to_string(hashes.size());
+    char word[40];
+    for (const auto& hash : hashes) {
+        std::snprintf(word, sizeof(word), " %016llx%016llx", static_cast<unsigned long long>(hash[1]), static_cast<unsigned long long>(hash[0]));
+        text += word;
+    }
+    return text;
+}
+
+std::string Text(const std::array<std::uint64_t, 4>& libraries) {
+    std::string text;
+    for (const auto count : libraries) text += (text.empty() ? "" : " ") + std::to_string(count);
+    return text;
+}
+
+std::size_t Count(const std::string& text) {
+    return static_cast<std::size_t>(std::stoull(text.substr(0, text.find(' '))));
+}
+
+std::vector<std::string> Prints(const std::string& text) {
+    std::vector<std::string> prints;
+    std::istringstream stream(text);
+    std::string word;
+    stream >> word;
+    while (stream >> word) prints.push_back(word);
+    std::ranges::sort(prints);
+    return prints;
+}
+
+std::string Joined(std::span<const std::string> prints) {
+    std::string text = std::to_string(prints.size());
+    for (const auto& print : prints) text += " " + print;
+    return text;
+}
+
+std::vector<std::string> EagerResolutionEntries(const Report& eager, std::uint32_t index) {
+    const auto id = std::to_string(index);
+    const auto registered = Prints(eager.at("registered " + id));
+    const auto drawn = Prints(eager.at("drawn " + id));
+    if (RegistrationAbi(index)) return drawn;
+    std::vector<std::string> made;
+    std::ranges::set_difference(drawn, registered, std::back_inserter(made));
+    return made;
+}
+
+Report Scenario(const Layout& layout, std::vector<std::uint8_t>& first, std::array<AgcDriver::DriverDetail::Driver::DeferredAbiUseCounts, 3>* uses = nullptr) {
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    Report report;
+    report["libraries before"] = Text(driver.PrebuiltLibraries());
+    ProgramArena arena(1u << 20u);
+    std::vector<Synthetic> programs(Replacement + 1);
+    const auto record = [&](const char* phase, std::uint32_t index) {
+        report[std::string(phase) + " " + std::to_string(index)] = Text(driver.PreparedEntryHashes(&programs[index].header.shader));
+    };
+    const auto resolved = std::span(programs).first(Replaced + 1);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) RegisterSynthetic(programs[index], arena, SyntheticPixelCode(index + 1, 0));
+    Settle(resolved);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) record("registered", index);
     std::vector<ShaderRegister> context;
     for (const auto& [offset, value] : DrawContext(layout)) context.push_back({offset, value});
-    const std::array<ShaderRegister, 1> primitive{{{PrimitiveType.first, PrimitiveType.second}}};
-    AgcDriverResolveShaderAbi_nid_postfix(&programs.front().header.shader, context, primitive);
-    Settle(programs);
-    Require(Entries(programs.front()) == 0, "lazy resolved ABI: ResolveShaderAbi prepared entries for the shader resolved with its draw's state");
-    const auto bytes = Draw(layout, programs.front());
-    Require(std::ranges::any_of(bytes, [](std::uint8_t byte) { return byte != 0; }), "lazy resolved ABI: the shader resolved with its draw's state wrote nothing");
-    const auto after = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
-    Require(after.firstUses == before.firstUses + 1 && after.found == before.found + 1 && after.own == before.own, "lazy resolved ABI: a draw whose state matches the resolved ABI did not count as finding its artifact (before: " + Uses(before) + "; after: " + Uses(after) + ")");
-    Require(after.entries > before.entries && after.unmatchedEntries == before.unmatchedEntries + (after.entries - before.entries) - 1, "lazy resolved ABI: the entry a matching draw used still counts as unmatched (before: " + Uses(before) + "; after: " + Uses(after) + ")");
-    std::printf("lazy resolved ABI: a draw with the resolved ABI's state found its artifact among the %llu entries prepared at its first use (%s)\n", static_cast<unsigned long long>(after.entries - before.entries), Uses(after).c_str());
+    std::array<ShaderRegister, 1> primitive{{{PrimitiveType.first, PrimitiveType.second}}};
+    for (std::uint32_t index = 0; index < Programs; ++index) AgcDriverResolveShaderAbi_nid_postfix(&programs[index].header.shader, {}, {});
+    AgcDriverResolveShaderAbi_nid_postfix(&programs[Matching].header.shader, context, primitive);
+    AgcDriverResolveShaderAbi_nid_postfix(&programs[Twice].header.shader, {}, {});
+    AgcDriverResolveShaderAbi_nid_postfix(&programs[Twice].header.shader, context, primitive);
+    AgcDriverResolveShaderAbi_nid_postfix(&programs[Replaced].header.shader, context, primitive);
+    for (auto& reg : context) reg.value = ~reg.value;
+    primitive.front().value = ~primitive.front().value;
+    Settle(resolved);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) record("resolved", index);
+    report["libraries resolved"] = Text(driver.PrebuiltLibraries());
+    RegisterHeader(programs[Replacement], programs[Replaced].code, programs[Replaced].header.shader.shader_size / sizeof(std::uint32_t));
+    Settle(std::span(programs).subspan(Replacement, 1));
+    record("registered", Replacement);
+    const auto draw = [&](std::uint32_t index, const Synthetic& program) {
+        auto bytes = Draw(layout, program);
+        Require(std::ranges::any_of(bytes, [](std::uint8_t byte) { return byte != 0; }), "lazy resolved ABI: drawn shader " + std::to_string(index) + " wrote nothing");
+        if (index == 0) first = std::move(bytes);
+    };
+    const auto count = [&](std::size_t slot) {
+        if (uses != nullptr) (*uses)[slot] = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
+    };
+    count(0);
+    for (const auto index : {0u, 1u}) draw(index, programs[index]);
+    count(1);
+    draw(Matching, programs[Matching]);
+    count(2);
+    draw(Twice, programs[Twice]);
+    draw(Replacement, programs[Replacement]);
+    AgcDriverRegisterShader_nid_postfix(&programs[Replaced].header.shader);
+    draw(Replaced, programs[Replaced]);
+    for (std::uint32_t index = 0; index <= Replacement; ++index) record("drawn", index);
+    report["libraries drawn"] = Text(driver.PrebuiltLibraries());
+    return report;
+}
+
+std::filesystem::path ReportPath(const std::filesystem::path& reference) {
+    auto path = reference;
+    path += ".report";
+    return path;
+}
+
+std::set<std::string> CacheFiles(const std::filesystem::path& cache) {
+    std::set<std::string> files;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(cache)) {
+        if (entry.is_regular_file() && entry.path().filename().string().rfind("vk-pipelines-", 0) != 0) files.insert(std::filesystem::relative(entry.path(), cache).generic_string());
+    }
+    return files;
 }
 
 void EagerReference(const Layout& layout, const std::filesystem::path& output) {
-    ProgramArena arena(1u << 20u);
-    std::vector<Synthetic> programs(1);
-    RegisterSynthetic(programs.front(), arena, SyntheticPixelCode(1, 0));
-    AgcDriverResolveShaderAbi_nid_postfix(&programs.front().header.shader, {}, {});
-    Settle(programs);
-    Require(Entries(programs.front()) != 0, "lazy resolved ABI: eager preparation left the resolved shader unprepared");
-    const auto bytes = Draw(layout, programs.front());
+    std::vector<std::uint8_t> bytes;
+    const auto report = Scenario(layout, bytes);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) Require(Count(report.at("resolved " + std::to_string(index))) != 0, "lazy resolved ABI: eager preparation left resolved shader " + std::to_string(index) + " unprepared");
     std::ofstream file(output, std::ios::binary | std::ios::trunc);
     file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     Require(file.good(), "lazy resolved ABI: cannot write the eager reference");
+    std::ofstream text(ReportPath(output), std::ios::trunc);
+    for (const auto& [key, value] : report) text << key << '=' << value << '\n';
+    Require(text.good(), "lazy resolved ABI: cannot write the eager report");
 }
 
-void LazyResolution(const Layout& layout, const std::filesystem::path& reference) {
+void LazyResolution(const Layout& layout, const std::filesystem::path& reference, const std::set<std::string>& cached, const std::filesystem::path& cache) {
     std::vector<std::uint8_t> expected(ColorBytes);
     {
         std::ifstream file(reference, std::ios::binary);
         file.read(reinterpret_cast<char*>(expected.data()), static_cast<std::streamsize>(expected.size()));
         Require(file.gcount() == static_cast<std::streamsize>(expected.size()), "lazy resolved ABI: the eager reference is missing or short");
     }
-    ProgramArena arena(1u << 20u);
-    std::vector<Synthetic> programs(Programs);
-    for (std::uint32_t index = 0; index < Programs; ++index) {
-        RegisterSynthetic(programs[index], arena, SyntheticPixelCode(index + 1, 0));
-        AgcDriverResolveShaderAbi_nid_postfix(&programs[index].header.shader, {}, {});
-    }
-    Settle(programs);
-    for (std::uint32_t index = 0; index < Programs; ++index) {
-        const auto entries = Entries(programs[index]);
-        Require(entries == 0, "lazy resolved ABI: ResolveShaderAbi prepared " + std::to_string(entries) + " entries for shader " + std::to_string(index) + " under APS5_LAZY_SHADER_PREPARE");
+    Report eager;
+    {
+        std::ifstream text(ReportPath(reference));
+        for (std::string line; std::getline(text, line);) {
+            const auto split = line.find('=');
+            if (split != std::string::npos) eager[line.substr(0, split)] = line.substr(split + 1);
+        }
+        Require(eager.contains("libraries drawn"), "lazy resolved ABI: the eager report is missing or short");
     }
     std::vector<std::uint8_t> first;
-    for (std::uint32_t index = 0; index < Drawn; ++index) {
-        auto bytes = Draw(layout, programs[index]);
-        if (index == 0) first = std::move(bytes);
-        Require(Entries(programs[index]) != 0, "lazy resolved ABI: drawn shader " + std::to_string(index) + " holds no prepared entries");
+    std::array<AgcDriver::DriverDetail::Driver::DeferredAbiUseCounts, 3> uses{};
+    const auto lazy = Scenario(layout, first, &uses);
+    for (std::uint32_t index = 0; index <= Replaced; ++index) {
+        const auto key = "resolved " + std::to_string(index);
+        Require(Count(lazy.at(key)) == 0, "lazy resolved ABI: ResolveShaderAbi prepared " + std::to_string(Count(lazy.at(key))) + " entries for shader " + std::to_string(index) + " under APS5_LAZY_SHADER_PREPARE");
+    }
+    Require(lazy.at("libraries resolved") == lazy.at("libraries before"), "lazy resolved ABI: ResolveShaderAbi built pipeline libraries under APS5_LAZY_SHADER_PREPARE (" + lazy.at("libraries before") + " before, " + lazy.at("libraries resolved") + " after)");
+    for (std::uint32_t index = 0; index <= Replacement; ++index) Require(Count(lazy.at("registered " + std::to_string(index))) == 0, "lazy resolved ABI: registration prepared shader " + std::to_string(index) + " under APS5_LAZY_SHADER_PREPARE");
+    for (const auto index : DrawnPrograms) {
+        const auto expected = EagerResolutionEntries(eager, index);
+        const auto held = Prints(lazy.at("drawn " + std::to_string(index)));
+        Require(held == expected, "lazy resolved ABI: drawn shader " + std::to_string(index) + " holds other prepared entries than eager resolution and its draw made (eager " + Joined(expected) + "; lazy " + Joined(held) + ")");
     }
     for (std::uint32_t index = Drawn; index < Programs; ++index) {
-        const auto entries = Entries(programs[index]);
-        Require(entries == 0, "lazy resolved ABI: shader " + std::to_string(index) + ", which never drew, holds " + std::to_string(entries) + " prepared entries");
+        const auto key = "drawn " + std::to_string(index);
+        Require(Count(lazy.at(key)) == 0, "lazy resolved ABI: shader " + std::to_string(index) + ", which never drew, holds " + std::to_string(Count(lazy.at(key))) + " prepared entries");
     }
-    const auto uses = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
-    Require(uses.firstUses == Drawn && uses.own == Drawn && uses.found == 0, "lazy resolved ABI: draws whose state differs from the resolved ABI did not count as preparing their own artifact (" + Uses(uses) + ")");
-    Require(uses.entries != 0 && uses.unmatchedEntries == uses.entries, "lazy resolved ABI: entries prepared for an ABI no draw used do not count as unmatched (" + Uses(uses) + ")");
-    MatchingResolution(layout, arena);
-    Require(std::ranges::any_of(first, [](std::uint8_t byte) { return byte != 0; }), "lazy resolved ABI: the drawn shader wrote nothing");
+    const auto& [start, unmatched, matched] = uses;
+    Require(unmatched.firstUses - start.firstUses == Drawn && unmatched.own - start.own == Drawn && unmatched.found == start.found, "lazy resolved ABI: draws whose state differs from the resolved ABI did not count as preparing their own artifact (before: " + Uses(start) + "; after: " + Uses(unmatched) + ")");
+    Require(unmatched.entries > start.entries && unmatched.unmatchedEntries - start.unmatchedEntries == unmatched.entries - start.entries, "lazy resolved ABI: entries prepared for an ABI no draw used do not count as unmatched (before: " + Uses(start) + "; after: " + Uses(unmatched) + ")");
+    Require(matched.firstUses == unmatched.firstUses + 1 && matched.found == unmatched.found + 1 && matched.own == unmatched.own, "lazy resolved ABI: a draw whose state matches the resolved ABI did not count as finding its artifact (before: " + Uses(unmatched) + "; after: " + Uses(matched) + ")");
+    Require(matched.entries > unmatched.entries && matched.unmatchedEntries == unmatched.unmatchedEntries + (matched.entries - unmatched.entries) - 1, "lazy resolved ABI: the entry a matching draw used still counts as unmatched (before: " + Uses(unmatched) + "; after: " + Uses(matched) + ")");
+    for (const auto index : {Matching, Twice, Replaced}) Require(eager.at("drawn " + std::to_string(index)) == eager.at("resolved " + std::to_string(index)), "lazy resolved ABI: shader " + std::to_string(index) + ", drawn with its resolved ABI's state, did not find the ABI's entries with eager preparation");
+    for (std::uint32_t index = 0; index < Drawn; ++index) Require(Count(eager.at("drawn " + std::to_string(index))) == Count(eager.at("resolved " + std::to_string(index))) + 1, "lazy resolved ABI: a draw whose state differs from its resolved ABI did not prepare its own entry with eager preparation");
+    Require(Count(eager.at("drawn " + std::to_string(Replacement))) == Count(eager.at("registered " + std::to_string(Replacement))) + 1, "lazy resolved ABI: the header registered over a resolved one did not prepare its own entry at its draw with eager preparation");
+    Require(lazy.at("libraries drawn") == eager.at("libraries drawn"), "lazy resolved ABI: the pipeline libraries built differ from eager preparation (eager " + eager.at("libraries drawn") + "; lazy " + lazy.at("libraries drawn") + ")");
     Require(first == expected, "lazy resolved ABI: the shader prepared at its first draw drew other bytes than with eager preparation");
-    std::printf("lazy resolved ABI: %u of %u ABI-resolved shaders drew; the %u that never drew hold no prepared entries, and a drawn one drew the same %zu bytes as with eager preparation\n", Drawn, Programs, Programs - Drawn, first.size());
+    AgcDriverWaitIdle_nid_postfix();
+    const auto files = CacheFiles(cache);
+    std::vector<std::string> added;
+    std::ranges::set_difference(files, cached, std::back_inserter(added));
+    Require(added.empty(), "lazy resolved ABI: preparation at first use wrote " + std::to_string(added.size()) + " shader cache files eager preparation had not, the first " + (added.empty() ? std::string() : added.front()));
+    std::printf("lazy resolved ABI: %u shaders drew, %u of them ABI-resolved; the %u resolved ones that never drew hold no prepared entries; the drawn ones hold the entries eager resolution and their draws made: drawn with their ABI's state they found them, with the ABI register arrays overwritten after resolution (one resolved with two ABIs, one whose header was registered over and again before its draw), drawn with another state they prepared their own; the pipeline libraries built match eager's (%s), a drawn one drew the same %zu bytes, and the lazy run wrote none of the %zu shader cache files eager wrote again\n", static_cast<unsigned>(DrawnPrograms.size()), static_cast<unsigned>(DrawnPrograms.size() - 1), Programs - Drawn, lazy.at("libraries drawn").c_str(), first.size(), cached.size());
 }
 
 }
@@ -440,6 +575,17 @@ void LazyResolution(const Layout& layout, const std::filesystem::path& reference
 int main(int argc, char** argv) {
     const bool eager = argc == 2 && std::string(argv[1]) == "--eager-reference";
     std::filesystem::path reference;
+    std::filesystem::path cache;
+    std::set<std::string> cached;
+    const auto clean = [&] {
+        if (eager) return;
+        std::error_code ignored;
+        if (!reference.empty()) {
+            std::filesystem::remove(reference, ignored);
+            std::filesystem::remove(ReportPath(reference), ignored);
+        }
+        if (!cache.empty()) std::filesystem::remove_all(cache, ignored);
+    };
     try {
         {
             const auto device = OpenVulkanTestDevice();
@@ -450,10 +596,19 @@ int main(int argc, char** argv) {
             Require(path != nullptr, "lazy resolved ABI: the eager child has no reference path");
             reference = path;
         } else {
-            reference = std::filesystem::temp_directory_path() / ("aps5-lazy-resolved-abi-" + std::to_string(std::random_device{}()) + ".bin");
+            const auto run = std::to_string(std::random_device{}());
+            reference = std::filesystem::temp_directory_path() / ("aps5-lazy-resolved-abi-" + run + ".bin");
+            cache = std::filesystem::temp_directory_path() / ("aps5-lazy-resolved-abi-cache-" + run);
+            std::filesystem::create_directories(cache);
             SetEnvironment("LAZY_RESOLVED_ABI_REFERENCE", reference.string());
+            SetEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
+            SetEnvironment("ANYPS5_SHADER_CACHE_DIR", cache.string());
+            SetEnvironment("APS5_NO_PIPELINE_JOURNAL", "1");
+            ClearEnvironment("APS5_LAZY_SHADER_PREPARE");
             const std::string command = "\"" + std::string(argv[0]) + "\" --eager-reference";
             Require(std::system(command.c_str()) == 0, "lazy resolved ABI: the eager reference process failed");
+            cached = CacheFiles(cache);
+            Require(!cached.empty(), "lazy resolved ABI: the eager reference process wrote no shader cache files");
             SetEnvironment("APS5_LAZY_SHADER_PREPARE", "1");
         }
         Register(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
@@ -465,7 +620,7 @@ int main(int argc, char** argv) {
         Prepare(layout);
         Check(layout);
         if (eager) EagerReference(layout, reference);
-        else LazyResolution(layout, reference);
+        else LazyResolution(layout, reference, cached, cache);
         AgcDriverShutdown_nid_postfix();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
@@ -473,15 +628,9 @@ int main(int argc, char** argv) {
             AgcDriverShutdown_nid_postfix();
         } catch (...) {
         }
-        if (!eager && !reference.empty()) {
-            std::error_code ignored;
-            std::filesystem::remove(reference, ignored);
-        }
+        clean();
         return 1;
     }
-    if (!eager) {
-        std::error_code ignored;
-        std::filesystem::remove(reference, ignored);
-    }
+    clean();
     return 0;
 }
