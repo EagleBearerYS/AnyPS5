@@ -179,6 +179,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         }
                         rotated->touched = entry->touched;
                         rotated->order = entry->order;
+                        moveDrawAliases(again->second, rotated);
                         again->second = std::move(rotated);
                     }
                     if (drawCacheHits - again->second->touched > drawCacheEntries() / 8) {
