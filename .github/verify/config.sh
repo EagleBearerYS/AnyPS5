@@ -1,0 +1,4 @@
+BASE=9caecfd2d5a822be9daf84c69c7c33c7fafe52b9
+REPEAT=10
+EXTRA_TESTS='agc_shader_selected_records_image_limit|agc_shader_selected_records_pair_limit|agc_shader_bindless|agc_shader_memory'
+BEFORE_REPEAT=3
