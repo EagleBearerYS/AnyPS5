@@ -1052,24 +1052,20 @@ void reapSettleBatches(const Context& context, HostImports& state) {
 void rewatchSettledImports(HostImports& state) {
     if (state.settleReady.empty()) return;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
-    std::vector<std::uint64_t> deferred;
     for (const auto base : state.settleReady) {
         const auto settle = state.pendingSettles.find(base);
         if (settle == state.pendingSettles.end() || settle->second.phase != SettlePhase::Settled) continue;
+        state.pendingSettles.erase(settle);
         const auto import = state.imports.find(base);
-        if (import == state.imports.end() || !import->second.unwatched) {
-            state.pendingSettles.erase(settle);
-            continue;
-        }
+        if (import == state.imports.end() || !import->second.unwatched) continue;
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{base, base + import->second.bytes}}};
-        if (StorageTexture::AnyPendingOverlaps(span)) {
-            deferred.push_back(base);
+        if (StorageTexture::AnyLiveOverlaps(span)) {
+            ++state.settlesKeptCompared;
             continue;
         }
         ranges.push_back(span.front());
-        state.pendingSettles.erase(settle);
     }
-    state.settleReady = std::move(deferred);
+    state.settleReady.clear();
     if (ranges.empty()) return;
     GuestMemory::Rewatch(ranges);
     for (const auto& [begin, end] : ranges) {
