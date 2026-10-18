@@ -1,0 +1,4 @@
+BASE=66e71b63d16eb07b940892ed2ad02afd625f7b3f
+REPEAT=3
+EXTRA_TESTS='agc_driver_guest_memory_lifetime_copy|agc_driver_host_import_lifetime|agc_import_settle_deferred|^agc'
+NO_BEFORE=1
