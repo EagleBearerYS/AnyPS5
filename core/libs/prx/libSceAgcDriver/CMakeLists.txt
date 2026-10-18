@@ -1341,6 +1341,13 @@ if(BUILD_TESTING)
     endif()
     set_property(TEST agc_driver_host_import_lifetime APPEND PROPERTY ENVIRONMENT_MODIFICATION
         "APS5_RELEASE_UNDER_LOCK=unset:" "APS5_RELEASE_ON_UNLOCK=unset:")
+    if(WIN32)
+        add_test(NAME agc_driver_host_import_lifetime_other_family COMMAND agc_driver_recorder_tests --host-import-lifetime-other-family-only)
+        set_tests_properties(agc_driver_host_import_lifetime_other_family PROPERTIES
+            ENVIRONMENT "APS5_PIN_WAIT_MS=2000" SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_property(TEST agc_driver_host_import_lifetime_other_family APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "APS5_RELEASE_UNDER_LOCK=unset:" "APS5_RELEASE_ON_UNLOCK=unset:")
+    endif()
 endif()
 
 add_test_executable(agc_recorder_kept_bytes_tests EXCLUDE_FROM_ALL tests/RecorderKeptBytes.cpp)
