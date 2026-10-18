@@ -1,5 +1,7 @@
-READY
-since: 2026-10-18T02:42Z
+BUSY BF-084
+since: 2026-10-18T04:56Z (BF-084, stack BF-052's CPU-path indirect draw cache on BF-078's alias release, perf/agc-cpu-indirect-draw-cache-v3)
+claimed: tasks/claimed/BF-084.md
+step: fetching fix/agc-draw-cache-release-aliases a10796c5fc, perf/agc-cpu-indirect-draw-cache-v2 54bdd57ece and fix/agc-cpu-indirect-release-aliases
 previous: BF-077 done, results/cloud-5/BF-077.md: fork fix/agc-draw-recapture-on-change ff2837edf on main f1af6c5915; the worker compares the regions a draw or dispatch captured with guest memory (CompareMapped, no flush, no sync) after lockForDraw on both synchronous draw paths, before Enqueue on the pipelined draw and dispatch-item paths, and once in the locked dispatch loop (ahead-resolved skipped); on a difference it releases the GPU lock and prepares the packet again once, counted on the [labels] line; AddSnapshot skips regions the synchronous draw check found equal; seam Driver::SetCaptureCheckHook; tests agc_driver_draw_recapture_on_change (+_inline) and agc_driver_dispatch_recapture_on_change (+_items): red with the 5 check blocks removed (draw binds the zero V#, brightest 0, prints the live warning; dispatch stores 0x1001 not 0x2001, no warning since its AddSnapshot runs in PrepareDispatch), green on ff2837edf; cost on the Village harness 4,866 ns and 978 bytes per draw (raw memcmp 267 ns; the rest is a PROCMAP_QUERY per region, as the harness blocks are outside the arena span), walls 300.58 / 287.49 µs inside the VM's bimodal spread; mirror 1,411/5 vs main 1,407/5 (IPv6 baseline), xmlcmp only the 4 new tests, registration 980/0, until-fail:20 80/80, conventions pass; uncovered: Enqueue-to-commit window (AddSnapshot warns there, BDA only), writes between records of one CPU-path indirect packet, a second change after the one retry
 
 RESULT (setup):
