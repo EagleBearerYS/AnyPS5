@@ -407,11 +407,21 @@ ShaderRecompiler::SrtWriteStamp ShaderMemory::stampWrites(void* context, std::ui
 
 bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
     CaptureTotals().vouchCalls.fetch_add(1, std::memory_order_relaxed);
-    if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
-    if (pending != nullptr && pending(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return false;
+    const auto layoutNow = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    std::fprintf(stderr, "[probe6454] vouch 0x%llx+%llu stamp.gen=%llu stamp.layout=%llu layoutNow=%llu\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(stamp.generation), static_cast<unsigned long long>(stamp.layout), static_cast<unsigned long long>(layoutNow));
+    if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != layoutNow) { std::fprintf(stderr, "[probe6454] -> check1 stamp\n"); return false; }
+    if (pending != nullptr) {
+        const auto found = pending(address, static_cast<std::size_t>(bytes), {});
+        std::fprintf(stderr, "[probe6454] pending=%d\n", static_cast<int>(found));
+        if (found != PendingWrite::None) { std::fprintf(stderr, "[probe6454] -> check2 pending\n"); return false; }
+    }
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
-    if (GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)) == 0) return false;
-    return GuestMemory::UnchangedSince(address, static_cast<std::size_t>(bytes), stamp.generation);
+    const auto collected = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
+    std::fprintf(stderr, "[probe6454] collect=%llu\n", static_cast<unsigned long long>(collected));
+    if (collected == 0) { std::fprintf(stderr, "[probe6454] -> check3 collect\n"); return false; }
+    const bool unchanged = GuestMemory::UnchangedSince(address, static_cast<std::size_t>(bytes), stamp.generation);
+    std::fprintf(stderr, "[probe6454] unchanged=%d%s\n", unchanged ? 1 : 0, unchanged ? "" : " -> check4 changed");
+    return unchanged;
 }
 
 bool ShaderMemory::unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
