@@ -1,0 +1,4 @@
+BASE=3de84fa10698aef4ff43d6bd821d15698f9c8db0
+REPEAT=3
+EXTRA_TESTS='agc_import_settle_deferred|agc_driver_host_import_lifetime|^agc'
+NO_BEFORE=1
