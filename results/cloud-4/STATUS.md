@@ -1,5 +1,6 @@
-READY
-since: 2026-10-18T03:40:30Z (BF-082 done)
+BUSY BF-085
+since: 2026-10-18T05:05:33Z (claimed)
+claimed: tasks/claimed/BF-085.md
 last: BF-082 done, results/cloud-4/BF-082.md (test/agc-depth-bits-guest-memory 326104974a on #7346 4aaa125279: red fails with the not-implemented message, green, 20/20; ctest 1414/1341/68/5 vs PR 1413/1340/68/5, same 5 IPv6 failures, no status changes; Mesa 25.2.8, LLVM 20.1.2); before it BF-075, PRM-044, PRM-043 (withdrawn), BF-061, BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
