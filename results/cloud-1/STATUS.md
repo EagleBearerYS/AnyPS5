@@ -1,6 +1,6 @@
-BUSY PM-078 (map fable-void's new push d8731cc728 by lane, and check its health on Linux)
-since: 2026-10-18T17:37:44Z
-last: BF-089 done, results/cloud-1/BF-089.md: fork fix/shader-selected-records-within-limits 630999fae (one test commit on bac28c3d2, fast-forward): agc_shader_selected_records_direct_image_limit (63+1 direct: 64 images kept split; 63+2 direct: merged to 3 images) and _direct_pair_limit (31+1 direct x2 samplers: 64 pairs kept; +third sampler: merged, 2 images 5 pairs); red on main 9caecfd2d5's tracker with 'image resource limit exceeded' / 'sampled image/sampler pair limit exceeded', boundary cases pass on both; 15 tests x10 repeats pass; conventions pass; before that BF-078
+READY
+since: 2026-10-18T20:36:35Z
+last: PM-078 done, results/cloud-1/PM-078.md: map of fable-void's 374 commits (A 82, B 84, C 12, D 18, other 57, test-only 121; 22 clean, 280 adapt, 72 on deleted mechanisms; 28 features); his d8731cc728 on Linux as an unprivileged user: 1478 tests, 1176 passed, 157 skipped, 145 failed (BF-045: 1208/812/98/298); the udmabuf refusal is gone (190 of BF-045's failures pass), 92 failures are lavapipe LLVM JIT time and memory on his run-time V# page-table shaders (buffer_atomics alone 307 s at 6.4 GB vs 1.5 s on main); needs the ShaderDiskCache assert fix, two transfer-kernel tests don't build on Linux; top five: plan retention (B), smaller device-table image code (A), descriptors resolved once (A), work off the device lock (D), creation gate and store budget (B); before that BF-089
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
 - Toolchain: gcc/g++ 13.3.0, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1 (apt), Python 3.13.16, wild 0.10.0 (CI's sha256-checked release, used through -B as in CI). Vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2), API 1.4.318.
