@@ -164,6 +164,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     } else {
         replacement->order = found->second->order;
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
+        moveDrawAliases(found->second, replacement);
         found->second = std::move(replacement);
     }
     while (drawCache.size() > drawCacheEntries()) {
@@ -173,6 +174,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         }
         if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
         if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
+        releaseDrawAliases(last->second);
         drawOrder.erase(last->second->order);
         drawCache.erase(last);
         ++drawCacheEvictions;
@@ -187,8 +189,26 @@ void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>&
         for (const auto& variant : variants) accountDrawVariant(*variant, false);
     }
     if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == key) drawShapes.erase(shapeOf);
+    releaseDrawAliases(found->second);
     drawOrder.erase(found->second->order);
     drawCache.erase(found);
+}
+
+void Driver::moveDrawAliases(const std::shared_ptr<DrawEntry>& from, const std::shared_ptr<DrawEntry>& to) {
+    for (const auto alias : from->aliases) {
+        const auto held = drawAliases.find(alias);
+        if (held == drawAliases.end() || held->second != from) continue;
+        held->second = to;
+        if (std::find(to->aliases.begin(), to->aliases.end(), alias) == to->aliases.end()) to->aliases.push_back(alias);
+    }
+}
+
+void Driver::releaseDrawAliases(const std::shared_ptr<DrawEntry>& entry) {
+    for (const auto alias : entry->aliases) {
+        const auto held = drawAliases.find(alias);
+        if (held != drawAliases.end() && held->second == entry) drawAliases.erase(held);
+    }
+    entry->aliases.clear();
 }
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry&) {
