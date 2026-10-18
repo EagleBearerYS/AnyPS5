@@ -1,0 +1,4 @@
+BASE=3b887b51c8ed5a27bc16a931c49349b8bd3f8a80
+REPEAT=3
+EXTRA_TESTS='agc_driver_host_import_lifetime|agc_driver_host_import_mutation_race|^agc'
+NO_BEFORE=1
