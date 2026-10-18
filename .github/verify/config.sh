@@ -1,0 +1,3 @@
+BASE=c4c2b3aa7371ee988c94ca62f1431ebaaf0688c8
+REPEAT=3
+EXTRA_TESTS='agc_touched_table|^agc_write_track'
