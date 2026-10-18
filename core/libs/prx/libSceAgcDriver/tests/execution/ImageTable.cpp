@@ -16,6 +16,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -1396,7 +1397,22 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     state.blends = {state.blend};
     state.blendConstants = {};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
-    device.Draw(state, draw, shaders);
+    std::optional<ShaderRecompiler::RecompileResult> cpuVertexResult;
+    std::optional<ShaderRecompiler::RecompileResult> cpuPixelResult;
+    const auto cpuTableStages = [&] {
+        auto cpuTarget = target;
+        cpuTarget.deviceImageTables = false;
+        auto cpuVertex = vertex;
+        cpuVertex.target = cpuTarget;
+        cpuVertexResult = ShaderRecompiler::Recompile(cpuVertex);
+        const auto cpuVertexPush = static_cast<std::uint32_t>(cpuVertexResult->pushConstants.size());
+        auto cpuFragment = fragment;
+        cpuFragment.target = cpuTarget;
+        cpuFragment.layout = PixelPushLayout(cpuVertexPush, cpuTarget);
+        cpuPixelResult = ShaderRecompiler::Recompile(cpuFragment);
+        return std::vector<AgcDriver::Graphics::CompiledShader>{{ShaderStage::Vertex, &*cpuVertexResult, 0}, {ShaderStage::Fragment, &*cpuPixelResult, PixelPushOffset(cpuVertexPush, cpuTarget)}};
+    };
+    device.Draw(state, draw, shaders, {}, nullptr, cpuTableStages);
     device.WaitIdle();
     return {vertexResult.PipelineVariantId(), pixelResult.PipelineVariantId()};
 }
