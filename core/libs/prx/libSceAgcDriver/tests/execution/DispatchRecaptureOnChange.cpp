@@ -77,10 +77,28 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data) {
 
 const GuestBlock* Table = nullptr;
 const GuestBlock* Moved = nullptr;
+const GuestBlock* Unmapped = nullptr;
 std::atomic<bool> TableChangeArmed{false};
+std::atomic<bool> TableUnmapArmed{false};
 std::atomic<int> TableChanges{0};
+std::atomic<int> TableUnmaps{0};
+
+void UnmapTable(const GuestBlock& block) {
+    GuestAllocations::Mutation().Remove(block.Words());
+#ifdef _WIN32
+    GuestArena::GuestArenaReset_nid_postfix(block.Words(), BlockBytes);
+#else
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block.Words(), BlockBytes);
+    munmap(block.Words(), BlockBytes);
+#endif
+}
 
 void ChangeTableBeforeCheck() {
+    if (TableUnmapArmed.exchange(false)) {
+        UnmapTable(*Unmapped);
+        TableUnmaps.fetch_add(1);
+        return;
+    }
     if (!TableChangeArmed.exchange(false)) return;
     const auto descriptor = BufferDescriptor(Moved->Words());
     std::memcpy(Table->Words(), descriptor.data(), sizeof(descriptor));
@@ -161,9 +179,34 @@ int main() {
         ExpectOutput(output, 0x2000u, "the dispatch with an unchanged table");
         Expect(again == 0, "a dispatch whose captured memory did not change was prepared again");
 
+        GuestBlock doomed;
+        std::memcpy(doomed.Words(), initial.data(), sizeof(initial));
+        Dispatch(doomed, output);
+        ExpectOutput(output, 0x1000u, "the dispatch through the table that is unmapped next");
+        Unmapped = &doomed;
+        const auto beforeUnmap = AgcDriver::DriverDetail::captureChangeRetries.load();
+        TableUnmapArmed.store(true);
+        std::string failure;
+        try {
+            Dispatch(doomed, output);
+        } catch (const std::exception& error) {
+            failure = error.what();
+        }
+        const auto unmappedRedone = AgcDriver::DriverDetail::captureChangeRetries.load() - beforeUnmap;
+        char unreadable[64];
+        std::snprintf(unreadable, sizeof(unreadable), "not readable at 0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(doomed.Words())));
+        std::printf("the same dispatch through a table unmapped after its capture: the table was unmapped %d time(s), %llu packet(s) prepared again, and preparing it again reported: %s\n", TableUnmaps.load(), static_cast<unsigned long long>(unmappedRedone), failure.c_str());
+        Expect(TableUnmaps.load() == 1, "the check seam did not unmap the table before the dispatch was recorded");
+        Expect(unmappedRedone == 1, "a dispatch whose captured table was unmapped was prepared again " + std::to_string(unmappedRedone) + " times, not once");
+        Expect(failure.find(unreadable) != std::string::npos, "preparing the dispatch again did not read the unmapped table: '" + failure + "'");
+
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
-        AgcDriverShutdown_nid_postfix();
-        std::puts("dispatch recapture: a dispatch whose captured descriptor table changed before it was recorded binds the table in memory");
+        try {
+            AgcDriverShutdown_nid_postfix();
+        } catch (const std::exception& error) {
+            Expect(std::string(error.what()) == failure, std::string("shutdown reported another failure: ") + error.what());
+        }
+        std::puts("dispatch recapture: a dispatch whose captured descriptor table changed before it was recorded binds the table in memory, and one whose table was unmapped is prepared again from current memory");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

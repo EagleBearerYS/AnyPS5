@@ -207,8 +207,8 @@ bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegio
     const bool mark = compared.size() == regions.size();
     for (std::size_t i = 0; i < regions.size(); ++i) {
         const auto outcome = GuestMemory::CompareMapped(regions[i].guestAddress, regions[i].bytes);
-        if (outcome == GuestMemory::Compare::Differs) return true;
-        if (mark && outcome == GuestMemory::Compare::Equal) compared[i].compared = true;
+        if (outcome != GuestMemory::Compare::Equal) return true;
+        if (mark) compared[i].compared = true;
     }
     return false;
 }

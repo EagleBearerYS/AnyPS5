@@ -509,17 +509,45 @@ struct PageRun {
     bool writable;
 };
 
+struct ReadableRuns {
+    struct Run {
+        std::uintptr_t begin = 0;
+        std::uintptr_t end = 0;
+        std::uint64_t generation = 0;
+    };
+    std::array<Run, 8> runs{};
+    std::size_t next = 0;
+
+    std::uintptr_t endOf(std::uintptr_t address, std::uint64_t generation) const {
+        for (const auto& run : runs) {
+            if (run.generation == generation && address >= run.begin && address < run.end) return run.end;
+        }
+        return 0;
+    }
+
+    void remember(std::uintptr_t begin, std::uintptr_t end, std::uint64_t generation) {
+        runs[next] = {begin, end, generation};
+        next = (next + 1) % runs.size();
+    }
+};
+
+ReadableRuns& readableRuns() {
+    thread_local ReadableRuns runs;
+    return runs;
+}
+
 
 // Calls `emit` with consecutive runs of uniform accessibility covering [address, address + bytes) in
 // order, stopping early when it returns false. Returns false when the address space cannot be queried.
 template <class Emit>
-bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
+bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit, bool readOnly = false) {
     auto& pages = Pages();
     pages.initialize();
     const auto end = address + bytes;
     auto cursor = address;
     while (cursor < end) {
-        if (const auto* span = pages.spanOf(cursor)) {
+        const auto* span = pages.spanOf(cursor);
+        if (span != nullptr) {
             const auto value = span->load(cursor);
             if ((value & 3u) != 0) {
                 const auto next = span->runEnd(cursor, value, end);
@@ -527,7 +555,15 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
                 cursor = next;
                 continue;
             }
+        } else if (readOnly) {
+            if (const auto known = readableRuns().endOf(cursor, GuestAllocations::GuestAllocationsGeneration_nid_postfix()); known != 0) {
+                const auto next = std::min(end, known);
+                if (!emit(PageRun{cursor, next, true, false})) return true;
+                cursor = next;
+                continue;
+            }
         }
+        const bool remembered = readOnly && span == nullptr;
 #ifdef _WIN32
         const TimedAccess timed(CounterQuery, 0);
         MEMORY_BASIC_INFORMATION memory{};
@@ -560,6 +596,7 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         const bool readable = committed && readableProtection(protection);
         const bool writable = readable && writableProtection(protection);
         pages.record(base, regionEnd, readable, writable, generation);
+        if (remembered && readable) readableRuns().remember(base, regionEnd, generation);
         const auto next = std::min(end, regionEnd);
         if (!emit(PageRun{cursor, next, readable, writable})) return true;
         cursor = next;
@@ -586,6 +623,7 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
                 const bool writable = readable && (query.vma_flags & PROCMAP_QUERY_VMA_WRITABLE) != 0;
                 const auto next = std::min<std::uintptr_t>(end, query.vma_end);
                 recordRun(next, readable, writable);
+                if (remembered && readable) readableRuns().remember(static_cast<std::uintptr_t>(query.vma_start), static_cast<std::uintptr_t>(query.vma_end), generation);
                 if (!emit(PageRun{cursor, next, readable, writable})) return true;
                 cursor = next;
                 continue;
@@ -619,6 +657,7 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             const bool writable = readable && permissions[1] == 'w';
             const auto next = std::min(end, last);
             recordRun(next, readable, writable);
+            if (remembered && readable) readableRuns().remember(first, last, generation);
             if (!emit(PageRun{cursor, next, readable, writable})) return true;
             cursor = next;
             found = true;
@@ -2159,7 +2198,7 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
         if (!run.readable) outcome = Compare::Unmapped;
         else if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
         return outcome == Compare::Equal;
-    });
+    }, true);
     return queried ? outcome : Compare::Unmapped;
 }
 
@@ -2171,7 +2210,7 @@ Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
         if (!run.readable) outcome = Compare::Unmapped;
         else std::memcpy(out.data() + (run.begin - address), reinterpret_cast<const void*>(run.begin), static_cast<std::size_t>(run.end - run.begin));
         return outcome == Compare::Equal;
-    });
+    }, true);
     return queried ? outcome : Compare::Unmapped;
 }
 
