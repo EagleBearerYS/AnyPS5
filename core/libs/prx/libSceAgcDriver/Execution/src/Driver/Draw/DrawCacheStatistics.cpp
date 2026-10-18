@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include <algorithm>
 #include <cstdlib>
+#include <unordered_set>
 
 namespace AgcDriver::DriverDetail {
 
@@ -44,6 +46,23 @@ void Driver::reportDrawCache(DrawEntryCounters& counters, bool profile) {
 DrawEntryCounters Driver::DrawCacheCounters() {
     std::lock_guard cacheLock(drawCacheMutex);
     return drawEntryCounters;
+}
+
+Driver::DrawCacheFootprint Driver::DrawCacheSize() {
+    std::lock_guard cacheLock(drawCacheMutex);
+    DrawCacheFootprint footprint;
+    footprint.entries = drawCache.size();
+    footprint.evictions = drawCacheEvictions;
+    footprint.aliases = drawAliases.size();
+    std::unordered_set<const DrawEntry*> cached;
+    for (const auto& [key, entry] : drawCache) cached.insert(entry.get());
+    std::unordered_set<const DrawEntry*> aliased;
+    for (const auto& [alias, entry] : drawAliases) aliased.insert(entry.get());
+    footprint.aliased = aliased.size();
+    footprint.aliasedOutside = static_cast<std::size_t>(std::count_if(aliased.begin(), aliased.end(), [&](const DrawEntry* entry) { return !cached.contains(entry); }));
+    footprint.relocationLookups = drawRelocationCounters.lookups;
+    footprint.relocationHits = drawRelocationCounters.hits;
+    return footprint;
 }
 
 std::string Driver::profileDrawCacheLines(const DrawEntryCounters& counters) {

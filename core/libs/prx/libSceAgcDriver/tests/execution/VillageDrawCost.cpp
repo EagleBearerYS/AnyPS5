@@ -72,6 +72,16 @@ std::uint32_t Setting(const char* name, std::uint32_t fallback, std::uint32_t lo
 }
 
 std::uint32_t Draws() { return Setting("VILLAGE_DRAWS", 850, 1, MaxDraws); }
+std::uint32_t FootprintEvery() { return Setting("VILLAGE_FOOTPRINT_EVERY", 0, 0, 1u << 30u); }
+
+bool Indirect() {
+    static const bool indirect = std::getenv("VILLAGE_INDIRECT") != nullptr;
+    return indirect;
+}
+
+constexpr std::uint32_t IndirectBaseVertexLocation = 0x08e;
+constexpr std::uint32_t NoIndirectLocation = 0x280;
+alignas(256) std::array<std::uint32_t, MaxDraws * 4> IndirectRecords{};
 std::uint32_t TableEntries() { return Setting("VILLAGE_TABLE", 2000, MaxSamples, MaxTableEntries); }
 std::uint32_t FullPercent() { return Setting("VILLAGE_FULL_PERCENT", 10, 0, 100); }
 std::uint32_t ObjectSets() { return Setting("VILLAGE_SETS", 8, 1, MaxObjectSets); }
@@ -312,8 +322,16 @@ std::vector<std::uint32_t> Commands(const Layout& layout, const std::vector<std:
     Append(commands, 0x79, {0x242, 4});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     Append(commands, 0x76, {0xc8, static_cast<std::uint32_t>(vertex >> 8u), static_cast<std::uint32_t>(vertex >> 40u)});
-    Append(commands, 0x76, {0x8b, 2u << 1u});
+    Append(commands, 0x76, {0x8b, (Indirect() ? 3u : 2u) << 1u});
     Append(commands, 0x76, {0x00b, 8u << 1u});
+    if (Indirect()) {
+        for (std::uint32_t draw = 0; draw < MaxDraws; ++draw) {
+            IndirectRecords[draw * 4] = VerticesPerDraw;
+            IndirectRecords[draw * 4 + 1] = 1;
+        }
+        const auto records = reinterpret_cast<std::uintptr_t>(IndirectRecords.data());
+        Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+    }
     Append(commands, 0x76, {0x00c, static_cast<std::uint32_t>(root), static_cast<std::uint32_t>(root >> 32u), static_cast<std::uint32_t>(table), static_cast<std::uint32_t>(table >> 32u)});
     std::uint32_t boundSamples = 0;
     std::uint32_t boundPosition = ~0u;
@@ -332,7 +350,8 @@ std::vector<std::uint32_t> Commands(const Layout& layout, const std::vector<std:
         }
         const auto object = BufferDescriptor(block.At(ObjectOffset + (static_cast<std::size_t>(set) * MaxDraws + draw) * ObjectBytes), 0, ObjectBytes, 0x31016facu);
         Append(commands, 0x76, {0x010, object[0], object[1], object[2], object[3]});
-        Append(commands, 0x2d, {VerticesPerDraw, 2});
+        if (Indirect()) Append(commands, 0x24, {draw * 16u, IndirectBaseVertexLocation, NoIndirectLocation, 2});
+        else Append(commands, 0x2d, {VerticesPerDraw, 2});
     }
     return commands;
 }
@@ -407,6 +426,26 @@ std::map<std::string, std::uint64_t> HeldNs() {
 }
 #endif
 
+std::uint64_t StatusKib(const char* field) {
+#ifdef __linux__
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    const std::string prefix = std::string(field) + ":";
+    while (std::getline(status, line)) {
+        if (line.rfind(prefix, 0) == 0) return std::strtoull(line.c_str() + prefix.size(), nullptr, 10);
+    }
+#endif
+    return 0;
+}
+
+void Footprint(std::uint64_t drawn) {
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    const auto cache = driver.DrawCacheSize();
+    const auto counters = driver.DrawCacheCounters();
+    std::printf("village footprint: %llu draws, rss %.1f MiB, vmdata %.1f MiB, draw cache %zu entries (%llu evicted), relocation aliases %zu holding %zu entries (%zu outside the cache), relocation %llu lookups %llu hits, draw cache %llu hits of %llu lookups\n", static_cast<unsigned long long>(drawn), static_cast<double>(StatusKib("VmRSS")) / 1024.0, static_cast<double>(StatusKib("VmData")) / 1024.0, cache.entries, static_cast<unsigned long long>(cache.evictions), cache.aliases, cache.aliased, cache.aliasedOutside, static_cast<unsigned long long>(cache.relocationLookups), static_cast<unsigned long long>(cache.relocationHits), static_cast<unsigned long long>(counters.hits), static_cast<unsigned long long>(counters.lookups));
+    std::fflush(stdout);
+}
+
 double Median(std::vector<double> values) {
     std::sort(values.begin(), values.end());
     return values[values.size() / 2];
@@ -414,13 +453,25 @@ double Median(std::vector<double> values) {
 
 void Cost(const Layout& layout, std::uint32_t frames) {
     const auto draws = Draws();
+    if (Indirect()) std::printf("village draws: CPU-path indirect, each a DRAW_INDIRECT record of %u vertices with the base vertex patched into an unused vertex user SGPR\n", VerticesPerDraw);
     std::printf("village shape: %u draws per frame on a %ux%u target, %u full-target, the rest %ux%u quads over %u positions; programs sample 1-%u textures in runs of %u draws; a %u-entry T# table through user SGPRs s[2:3], indices from the object V# in s[4:7] (%s); %u object V# sets, one per frame\n", draws, Width(), Height(), draws * FullPercent() / 100u, QuadPixels, QuadPixels, QuadPositions, MaxSamples, ProgramRun(), TableEntries(), IndexName(), ObjectSets());
     std::vector<std::vector<std::uint32_t>> commandSets;
     for (std::uint32_t set = 0; set < ObjectSets(); ++set) commandSets.push_back(Commands(layout, Frame(), set));
+    const auto every = FootprintEvery();
+    std::uint64_t drawn = 0;
+    std::uint64_t reported = 0;
+    const auto noteDrawn = [&] {
+        drawn += draws;
+        if (every == 0 || drawn < reported + every) return;
+        reported = drawn - drawn % every;
+        Footprint(drawn);
+    };
+    if (every != 0) Footprint(0);
     std::vector<double> warmMs;
     for (auto& commands : commandSets) {
         warmMs.push_back(Submit(commands) / 1e3);
         if (std::getenv("VILLAGE_GPU_SYNC") != nullptr) AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
+        noteDrawn();
     }
     std::vector<double> perDraw;
     std::vector<double> syncMs;
@@ -444,6 +495,7 @@ void Cost(const Layout& layout, std::uint32_t frames) {
             AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(layout.target.At(0)), layout.target.Size());
             syncMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - syncStart).count());
         }
+        noteDrawn();
 #ifdef __linux__
         double sum = 0.0;
         double raster = 0.0;
