@@ -74,6 +74,16 @@ public:
         std::uint64_t variantBytes = 0;
     };
     DispatchCacheFootprint DispatchCacheSize();
+    struct DrawCacheFootprint {
+        std::size_t entries = 0;
+        std::uint64_t evictions = 0;
+        std::size_t aliases = 0;
+        std::size_t aliased = 0;
+        std::size_t aliasedOutside = 0;
+        std::uint64_t relocationLookups = 0;
+        std::uint64_t relocationHits = 0;
+    };
+    DrawCacheFootprint DrawCacheSize();
     static std::uint64_t DispatchCacheBytes();
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 
@@ -155,6 +165,7 @@ private:
     void learnPendingRelocation();
     void relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
     void reportDrawRelocation();
+    std::pair<std::size_t, std::size_t> aliasedDrawEntries() const;
     static bool sameVertexInfo(const ShaderRecompiler::ShaderVertexStageInfo& a, const ShaderRecompiler::ShaderVertexStageInfo& b);
     static bool sameDecode(const DrawDecode& a, const DrawDecode& b);
     std::shared_ptr<DrawDecode> decodeDraw(const QueueState& queue, const Submission& submission);
