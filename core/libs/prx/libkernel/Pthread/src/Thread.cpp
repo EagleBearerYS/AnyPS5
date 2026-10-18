@@ -3,6 +3,7 @@
 #include "../include/WindowsThreadLocal.hpp"
 #include "../include/Cancel.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
@@ -375,6 +376,28 @@ bool GuestThreadIsLive(const PthreadPrivate* thread) {
     return false;
 }
 
+bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& mask) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        mask = thread->affinity.load(std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
+bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        thread->affinity.store(mask, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
 bool LiveGuestThreadExists(std::int64_t tid) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
@@ -434,7 +457,7 @@ static void* MeasureStackReserve(void* reserve) {
     std::uintptr_t low = 0;
     std::uintptr_t high = 0;
     if (HostStackLimits(&low, &high))
-        *static_cast<std::size_t*>(reserve) = high - reinterpret_cast<std::uintptr_t>(&low);
+        *static_cast<std::size_t*>(reserve) = high - reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
     return nullptr;
 }
 
@@ -523,6 +546,31 @@ void ThreadCancel::EndWait() {
     BeginWait(nullptr);
 }
 
+extern "C" void* APS5_VABI Aps5CallGuestEntry_nid_no_patch(PthreadEntry entry, void* arg);
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("Aps5CallGuestEntry_nid_no_patch") R"(
+    .cfi_startproc
+    push %rbp
+    .cfi_adjust_cfa_offset 8
+    .cfi_rel_offset %rbp, 0
+    push $0
+    .cfi_adjust_cfa_offset 8
+    push $0
+    .cfi_adjust_cfa_offset 8
+    mov %rsp, %rbp
+    mov %rdi, %rax
+    mov %rsi, %rdi
+    call *%rax
+    add $16, %rsp
+    .cfi_adjust_cfa_offset -16
+    pop %rbp
+    .cfi_adjust_cfa_offset -8
+    .cfi_restore %rbp
+    ret
+    .cfi_endproc
+)" APS5_ASM_FUNCTION_END("Aps5CallGuestEntry_nid_no_patch"));
+
 static void RunThread(std::unique_ptr<ThreadArgs> args) {
     APS5_LOG_OUT("RunThread entry=0x%llx arg=%p self=%p", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(args->entry)), args->arg, static_cast<void*>(args->self));
     const auto entry = args->entry;
@@ -539,7 +587,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #ifndef _WIN32
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
-    finishThread(self, entry(arg));
+    finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
     CurrentGuestState().current = nullptr;
 }
 
@@ -808,9 +856,9 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
 
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
     if (!thread) return SCE_KERNEL_ERROR_EINVAL;
+    if (thread == CurrentGuestState().current) return SCE_KERNEL_ERROR_EDEADLK;
     if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
     if (thread->_joined.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
-    if (thread == CurrentGuestState().current) return SCE_KERNEL_ERROR_EDEADLK;
     ThreadCancel::Check();
     {
         std::unique_lock lock(thread->_join_mtx);

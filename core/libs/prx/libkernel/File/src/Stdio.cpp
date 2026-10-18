@@ -604,6 +604,14 @@ int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
     return 0;
 }
 
+int APS5_VABI nmount_nid_postfix(const KernelIovec* iov, unsigned int niov, int flags) {
+    (void)iov;
+    (void)niov;
+    (void)flags;
+    NotImplemented_nid_no_patch("nmount: mounting file systems");
+    return -1;
+}
+
 int APS5_VABI close_nid_postfix(int d) {
     if (File::IsHostStream(d)) return PosixFailure(GUEST_EBADF);
     int socketError = 0;
@@ -970,7 +978,7 @@ int APS5_VABI sceKernelFdatasync(int fd) {
 }
 
 int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
-    if (status == nullptr) throw std::invalid_argument("sceKernelWriteThrottlingStatus: status is null");
+    if (status == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     status[0] = std::numeric_limits<std::uint32_t>::max();
     status[1] = 0;
     status[2] = 0;
@@ -985,6 +993,10 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     File::RefuseArchivedFile(fd, "getdirentries");
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
+    if (!File::DirectoryDescriptorPath(fd)) {
+        if (WithoutParameterHandler([fd] { return ::_get_osfhandle(fd); }) == -1) return SceErrorFromErrno(GUEST_EBADF);
+        return SceErrorFromErrno(GUEST_EINVAL);
+    }
     if (basep != nullptr) *basep = 0;
     return File::ReadDirectoryDescriptor(fd, buf, nbytes);
 }
@@ -1002,6 +1014,9 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     constexpr std::size_t GuestMaxName = 255;
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
+    struct stat status{};
+    if (::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
+    if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
     const off_t base = ::lseek(fd, 0, SEEK_CUR);
     if (base < 0) return SceErrorFromErrno(errno);
     if (basep != nullptr) *basep = static_cast<int64_t>(base);
