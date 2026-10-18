@@ -442,7 +442,7 @@ void Footprint(std::uint64_t drawn) {
     auto& driver = AgcDriver::DriverDetail::Driver::Get();
     const auto cache = driver.CpuIndirectCacheSize();
     const auto counters = driver.DrawCacheCounters();
-    std::printf("village footprint: %llu draws, rss %.1f MiB, vmdata %.1f MiB, cpu-indirect entries %zu holding %.1f of %.1f MiB, %llu dropped, %llu refused, draw cache %llu hits of %llu lookups\n", static_cast<unsigned long long>(drawn), static_cast<double>(StatusKib("VmRSS")) / 1024.0, static_cast<double>(StatusKib("VmData")) / 1024.0, cache.entries, static_cast<double>(cache.bytes) / (1024.0 * 1024.0), static_cast<double>(cache.budget) / (1024.0 * 1024.0), static_cast<unsigned long long>(cache.dropped), static_cast<unsigned long long>(cache.refused), static_cast<unsigned long long>(counters.hits), static_cast<unsigned long long>(counters.lookups));
+    std::printf("village footprint: %llu draws, rss %.1f MiB, vmdata %.1f MiB, cpu-indirect entries %zu holding %.1f of %.1f MiB, %llu dropped, %llu refused, %zu held by relocation aliases (%zu outside the cache), draw cache %llu hits of %llu lookups\n", static_cast<unsigned long long>(drawn), static_cast<double>(StatusKib("VmRSS")) / 1024.0, static_cast<double>(StatusKib("VmData")) / 1024.0, cache.entries, static_cast<double>(cache.bytes) / (1024.0 * 1024.0), static_cast<double>(cache.budget) / (1024.0 * 1024.0), static_cast<unsigned long long>(cache.dropped), static_cast<unsigned long long>(cache.refused), cache.aliased, cache.aliasedOnly, static_cast<unsigned long long>(counters.hits), static_cast<unsigned long long>(counters.lookups));
     std::fflush(stdout);
 }
 
