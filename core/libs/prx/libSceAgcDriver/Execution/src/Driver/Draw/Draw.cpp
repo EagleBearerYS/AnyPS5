@@ -563,6 +563,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             lockForDraw();
             if (!recordedOne) {
                 runCaptureCheckHook();
+                if (capturedMemoryChanged(memory, snapshots)) {
+                    gpuLock.unlock();
+                    const RecaptureScope recapture;
+                    return draw(queue, packet, submission, rejected);
+                }
             }
             recordedOne = true;
             noteDrawWriters(stages, submission.queue);
@@ -593,6 +598,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     if (pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
         runCaptureCheckHook();
+        if (capturedMemoryChanged(memory)) {
+            const RecaptureScope recapture;
+            return draw(queue, packet, submission, rejected);
+        }
         phaseTiming.Phase(DrawRowVectors);
         auto writes = drawWriteRanges(graphics, stages);
         const auto commitQueue = submission.queue;
@@ -611,6 +620,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     lockForDraw();
     runCaptureCheckHook();
+    if (capturedMemoryChanged(memory, snapshots)) {
+        gpuLock.unlock();
+        const RecaptureScope recapture;
+        return draw(queue, packet, submission, rejected);
+    }
     noteDrawWriters(stages, submission.queue);
     phaseTiming.Phase(DrawRowVectors);
     if (recipe != nullptr) {

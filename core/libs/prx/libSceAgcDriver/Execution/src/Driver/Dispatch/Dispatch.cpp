@@ -441,6 +441,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
     if (pipelined) {
         runCaptureCheckHook();
+        if (capturedMemoryChanged(captured)) {
+            const RecaptureScope recapture;
+            dispatch(queue, packet, submission, indirectArguments);
+            return;
+        }
         const auto recipe = keepVariant->recipe.load(std::memory_order_acquire);
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
@@ -542,6 +547,12 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         if (!captureChecked) {
             captureChecked = true;
             runCaptureCheckHook();
+            if (capturedMemoryChanged(captured, snapshots)) {
+                gpuLock.unlock();
+                const RecaptureScope recapture;
+                dispatch(queue, packet, submission, indirectArguments);
+                return;
+            }
         }
 
         recordLabelsForPacket(localDevice.get(), submission.queue);
