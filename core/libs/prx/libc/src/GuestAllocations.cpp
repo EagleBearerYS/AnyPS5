@@ -1,3 +1,6 @@
+#include <cstdio>
+#include <cstdlib>
+#include <execinfo.h>
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <atomic>
@@ -133,6 +136,7 @@ void* GuestAllocationsBegin_nid_postfix() {
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept {
     auto* state = static_cast<MutationState*>(mutation);
     const auto ended = generation.fetch_add(1, std::memory_order_release) + 1;
+    if (std::getenv("APS5_PROBE6454") != nullptr) { void* frames[48]; const int count = backtrace(frames, 48); std::fprintf(stderr, "[probe6454b] %s 0x%llx+%llu gen->%llu\n", "End", 0ull, static_cast<unsigned long long>(state->changed.size()), static_cast<unsigned long long>(ended)); backtrace_symbols_fd(frames, count, 2); }
     if (const auto callback = invalidator.load(std::memory_order_acquire)) {
         for (const auto& [address, bytes] : state->changed) callback(address, bytes);
     }
@@ -171,7 +175,8 @@ void GuestAllocationsSetInvalidator_nid_postfix(void (*callback)(std::uintptr_t,
 }
 
 void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t bytes) {
-    generation.fetch_add(1, std::memory_order_release);
+    const auto bumped = generation.fetch_add(1, std::memory_order_release) + 1;
+    if (std::getenv("APS5_PROBE6454") != nullptr) { void* frames[48]; const int count = backtrace(frames, 48); std::fprintf(stderr, "[probe6454b] %s 0x%llx+%llu gen->%llu\n", "Invalidate", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(bumped)); backtrace_symbols_fd(frames, count, 2); }
     if (const auto callback = invalidator.load(std::memory_order_acquire)) callback(address, bytes);
 }
 

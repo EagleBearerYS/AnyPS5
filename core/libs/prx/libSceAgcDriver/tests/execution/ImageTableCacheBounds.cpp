@@ -315,8 +315,10 @@ void VouchUnderQueuedDraws(const GuestBlock& block) {
         }
     };
     vouch("an idle pipeline", true);
+    setenv("APS5_PROBE6454", "1", 1);
     elsewhere.Enqueue(block.At(OutputOffset), block.At(OutputOffset) + 4096u);
     vouch("a queued draw writing outside the table", true);
+    unsetenv("APS5_PROBE6454");
     between.Enqueue(low + 32u, low + WideStride);
     vouch("a queued draw writing between two records", false);
     into.Enqueue(WideRecord(block, 7u), WideRecord(block, 7u) + 32u);
