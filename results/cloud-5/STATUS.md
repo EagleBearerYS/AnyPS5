@@ -1,5 +1,7 @@
-READY
-since: 2026-10-17T19:20Z
+BUSY BF-077
+since: 2026-10-18T01:14Z (BF-077, prepare a draw again when its captured memory changed before it was recorded, fix/agc-draw-recapture-on-change)
+claimed: tasks/claimed/BF-077.md
+step: reading Draw.cpp, Dispatch.cpp and GuestBufferMemory::AddSnapshot on f1af6c5915
 previous: BF-072 done, results/cloud-5/BF-072.md: fork feat/agc-summary-phase-rates 8ba5c9041 on main 5859889b2; new summary key top_phases_calls_per_s after top_phases_ms_per_frame (same top phases and order, calls / seconds between first and last present, then Driver.Draw and Driver.Packet when they occur and are not listed; 0 without a span; counts are per interval via Since); every existing key unchanged; readers trace_digest.py and performance_compare.py read keys by name and work on lines with the key, tools tests 557 OK; BUILD.md documents it; agc_performance_trace: both exact lines + SummaryCallRates (2 Driver.Draw calls in 250 ms = 8.000 after 8 top phases), red with main's writer 'two calls of Driver.Draw in 250 ms are not 8 per second after the top phases' rates'; ^agc_.*(performance|trace) 2/0, ^agc 662/0, mirror 1,372/5 = main 5859889b2 1,372/5, no status changes; conventions pass, no comment lines
 
 RESULT (setup):
