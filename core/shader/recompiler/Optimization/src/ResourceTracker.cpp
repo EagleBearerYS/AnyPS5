@@ -213,6 +213,9 @@ private:
     IrValue* canonicalizeSampleAdjustDword3(IrValue* value) {
         for (;;) {
             value = value->Resolve();
+            if ((possibleU32Bits(value) & ~samplerDword3ReservedMask) == 0u) {
+                return &m_builder.Constant(0u);
+            }
             if (value->Opcode() != IrOpcode::BitwiseOr32) {
                 return value;
             }
@@ -220,9 +223,6 @@ private:
             IrValue* right = value->Argument(1)->Resolve();
             const bool leftReserved = (possibleU32Bits(left) & ~samplerDword3ReservedMask) == 0u;
             const bool rightReserved = (possibleU32Bits(right) & ~samplerDword3ReservedMask) == 0u;
-            if (leftReserved && rightReserved) {
-                return &m_builder.Constant(0u);
-            }
             if (leftReserved) {
                 value = right;
             } else if (rightReserved) {
@@ -546,11 +546,15 @@ private:
     static IrValue* SplitImmediateAddend(IrValue* value, std::uint32_t& addend) {
         value = value->Resolve();
         addend = 0;
-        if (value->Opcode() == IrOpcode::IAdd32 && value->ArgumentCount() == 2u) {
-            if (immediateU32(value->Argument(0), addend)) return value->Argument(1)->Resolve();
-            if (immediateU32(value->Argument(1), addend)) return value->Argument(0)->Resolve();
+        while (value->Opcode() == IrOpcode::IAdd32 && value->ArgumentCount() == 2u) {
+            std::uint32_t immediate = 0;
+            IrValue* rest = nullptr;
+            if (immediateU32(value->Argument(0), immediate)) rest = value->Argument(1)->Resolve();
+            else if (immediateU32(value->Argument(1), immediate)) rest = value->Argument(0)->Resolve();
+            else break;
+            addend += immediate;
+            value = rest;
         }
-        addend = 0;
         return value;
     }
 
