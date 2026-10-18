@@ -187,6 +187,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         rotated->lastUse = entry->lastUse;
                         rotated->ownBytes = entry->ownBytes;
                         rotated->pinned = entry->pinned;
+                        moveDrawAliases(again->second, rotated);
                         again->second = std::move(rotated);
                     }
                     if (again->second->cpuIndirect) again->second->lastUse = drawLookupSerial;

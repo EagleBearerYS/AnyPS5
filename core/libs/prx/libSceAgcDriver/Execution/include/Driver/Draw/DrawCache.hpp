@@ -76,6 +76,7 @@ struct DrawEntry {
     std::uint64_t lastUse = 0;
     std::uint64_t ownBytes = 0;
     std::vector<std::pair<const void*, std::uint64_t>> pinned;
+    std::vector<std::uint64_t> aliases;
 };
 
 using DrawDataCandidates = std::vector<std::vector<std::pair<std::shared_ptr<DispatchVariant>, std::vector<ShaderRecompiler::MemoryRegion>>>>;

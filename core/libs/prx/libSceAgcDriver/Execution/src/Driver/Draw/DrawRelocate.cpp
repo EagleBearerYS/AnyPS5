@@ -170,6 +170,8 @@ void Driver::learnPendingRelocation() {
     if (pending.alias == 0) return;
     if (drawAliases.size() >= MaxAliases) drawRelocationCounters.evicted += dropEveryOther(drawAliases);
     drawAliases[pending.alias] = inserted->second;
+    auto& learned = inserted->second->aliases;
+    if (inserted->second->cpuIndirect && std::find(learned.begin(), learned.end(), pending.alias) == learned.end()) learned.push_back(pending.alias);
 }
 
 void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches) {
