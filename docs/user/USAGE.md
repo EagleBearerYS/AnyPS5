@@ -157,6 +157,12 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 
 Games ask for the console's language with `sceSystemServiceParamGetInt` and show their text in it when they have it. It is English (United States) unless `ANYPS5_LANGUAGE` is set to another console language number: 0 Japanese, 1 English (United States), 2 French, 3 Spanish, 4 German, 5 Italian, 6 Dutch, 7 Portuguese (Portugal), 8 Russian, 9 Korean, 10 Chinese (Traditional), 11 Chinese (Simplified), 12 Finnish, 13 Swedish, 14 Danish, 15 Norwegian, 16 Polish, 17 Portuguese (Brazil), 18 English (United Kingdom), 19 Turkish, 20 Spanish (Latin America), 21 Arabic, 22 French (Canada), 23 Czech, 24 Hungarian, 25 Greek, 26 Romanian, 27 Thai, 28 Vietnamese, 29 Indonesian, 30 Ukrainian. For example, `ANYPS5_LANGUAGE=21` selects Arabic. An empty value is the same as an unset one; any other value stops the game at its first language query with an error that names the variable.
 
+### Trophies
+
+The trophy data comes from the game's own `app0/sce_sys/trophy2/trophyNN.ucp`, where `NN` is the service label (`00` for most games). The trophy queries report its names, descriptions and rewards in the console language (`ANYPS5_LANGUAGE`, see above), or in English (United States) or the data's default language when it has no text in that language, and its grades, groups, hidden flags, number of trophies and grade counts. The first trophy query prints what was read, such as `[trophy] /app0/sce_sys/trophy2/trophy00.ucp: 52 trophies, 1 group, texts in en-US`.
+
+Trophies are not unlocked yet: every trophy reports as locked, and nothing is written for them. A missing or malformed `trophyNN.ucp` makes the queries report placeholders, and a malformed one prints the reason once; `APS5_TRACE_UDS=1` prints a `[uds]` line for a missing one. Icons are not read: `sceNpTrophy2GetGameIcon`, `sceNpTrophy2GetGroupIcon`, `sceNpTrophy2GetTrophyIcon` and `sceNpTrophy2GetRewardIcon` stop the game with an error. No notification is shown, and callbacks registered with `sceNpTrophy2RegisterUnlockCallback` are not called.
+
 ### PlayGo dumps without metadata
 
 When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. Requests for those IDs stop with an error by default. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose an answer for that dump:
@@ -271,6 +277,8 @@ The audit also walks the built libraries' own host dependencies: each `.prx` und
 | `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
 | `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
 | `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
+
+Registry `nid` fields may contain either encoded NIDs or ordinary ELF symbol names such as `strcmp`. Imports are matched against literal exports first, then against their computed NIDs when the literal lookup misses. Reports retain the original import name. Export availability does not establish that every platform loader supports that lookup path.
 
 Exit codes: `0` nothing blocks loading, `1` there are `absent` imports or needed libraries without a file, `2` an input could not be read; the message names the file and the value.
 
