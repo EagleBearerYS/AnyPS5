@@ -786,20 +786,22 @@ void EmitPixelEntryPoint(SpirvEmitterState& state) {
     EmitLabel(state, state.module.AllocateId());
     state.module.AddFunction(spv::OpStore, state.pixelStopFlag, ConstantBool(state, false));
     state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.pixelGuestFunc);
-    const auto stopped = state.module.AllocateId();
-    const auto stop = state.module.AllocateId();
-    const auto done = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeBool(state), stopped, state.pixelStopFlag);
-    state.module.AddFunction(spv::OpSelectionMerge, done, spv::SelectionControlMaskNone);
-    state.module.AddFunction(spv::OpBranchConditional, stopped, stop, done);
-    EmitLabel(state, stop);
-    if (std::ranges::find(state.supportedExtensions, "SPV_KHR_terminate_invocation") != state.supportedExtensions.end()) {
-        state.module.EmitExtension("SPV_KHR_terminate_invocation");
-        state.module.AddFunction(spv::OpTerminateInvocation);
-    } else {
-        state.module.AddFunction(spv::OpKill);
+    if (state.pixelStopStored) {
+        const auto stopped = state.module.AllocateId();
+        const auto stop = state.module.AllocateId();
+        const auto done = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeBool(state), stopped, state.pixelStopFlag);
+        state.module.AddFunction(spv::OpSelectionMerge, done, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, stopped, stop, done);
+        EmitLabel(state, stop);
+        if (std::ranges::find(state.supportedExtensions, "SPV_KHR_terminate_invocation") != state.supportedExtensions.end()) {
+            state.module.EmitExtension("SPV_KHR_terminate_invocation");
+            state.module.AddFunction(spv::OpTerminateInvocation);
+        } else {
+            state.module.AddFunction(spv::OpKill);
+        }
+        EmitLabel(state, done);
     }
-    EmitLabel(state, done);
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);
 }

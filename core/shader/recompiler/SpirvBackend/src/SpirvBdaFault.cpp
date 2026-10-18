@@ -121,6 +121,7 @@ void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition) {
         } else if (state.pixelStopFlag != 0u) {
             state.module.AddFunction(spv::OpStore, state.pixelStopFlag, ConstantBool(state, true));
             state.module.AddFunction(spv::OpReturn);
+            state.pixelStopStored = true;
         } else if (std::ranges::find(state.supportedExtensions, "SPV_KHR_terminate_invocation") != state.supportedExtensions.end()) {
             state.module.EmitExtension("SPV_KHR_terminate_invocation");
             state.module.AddFunction(spv::OpTerminateInvocation);
