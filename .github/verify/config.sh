@@ -1,0 +1,4 @@
+BASE=bb2624a5331ad814616e24958a434eb9c1945200
+REPEAT=1
+EXTRA_TESTS='agc_driver_shutdown_mid_frame'
+NO_BEFORE=1
