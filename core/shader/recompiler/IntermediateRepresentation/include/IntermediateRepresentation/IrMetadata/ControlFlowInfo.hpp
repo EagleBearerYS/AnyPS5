@@ -45,9 +45,10 @@ struct TableColumn {
     std::uint32_t indirectImmediate = 0;
     std::uint32_t foldedAddend = 0;
     std::uint32_t foldedCarry = 0;
+    bool pointerKeyed = false;
 
     bool operator==(const TableColumn& other) const {
-        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && buffer == other.buffer && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry;
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && buffer == other.buffer && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry && pointerKeyed == other.pointerKeyed;
     }
 };
 

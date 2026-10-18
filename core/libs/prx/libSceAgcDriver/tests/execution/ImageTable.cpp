@@ -269,6 +269,20 @@ alignas(256) constexpr std::array<std::uint32_t, 38> NestedSamplerCode{
     0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 33> PointerSamplerCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf40c0900u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0x8f128411u, 0xf4240b02u, 0x24000008u, 0xf4080816u, 0xfa000020u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 33> PointerImageCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0x8f128411u, 0xf4240b02u, 0x24000008u, 0xf40c0916u, 0xfa000040u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
@@ -1510,6 +1524,121 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
     std::puts("nested sampler table: S# through record, pointer and V# checked on wave64 and wave32, with sharing, budgets and refusals");
 }
 
+void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+    const std::array<std::array<std::uint32_t, 4>, 2> samplers{PointWrap, PointClamp};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    for (std::uint32_t record = 0; record < 2u; ++record) {
+        std::copy(samplers[record].begin(), samplers[record].end(), records[record].begin() + 8u);
+        std::copy(images[record].begin(), images[record].end(), records[record].begin() + 16u);
+    }
+    for (std::uint32_t record = 0; record < 3u; ++record) {
+        const auto pointer = reinterpret_cast<std::uintptr_t>(records[record % 2u].data());
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    }
+    auto root = images[0];
+    std::uint32_t tableType = 0u;
+    const auto run = [&](std::span<const std::uint32_t> code, std::uint32_t waveSize = 64u) {
+        auto table = Buffer(Table.data(), 64u);
+        table[3] |= tableType;
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(root.begin(), root.end(), Srt.begin() + 12u);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+        };
+        const auto inputTable = Table;
+        const auto inputKeys = Keys;
+        const auto inputRecords = records;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, waveSize);
+        Require(Table == inputTable && Keys == inputKeys && records == inputRecords, "pointer sampler table: dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), "pointer sampler table: dispatch wrote past its output");
+        return result;
+    };
+    const auto sampled = [](bool wrap) {
+        return std::function<std::uint32_t(std::uint32_t)>([wrap](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[wrap ? x : Width - 1u]); });
+    };
+    const auto untouched = [](const Outcome& outcome) { return std::all_of(outcome.words.begin(), outcome.words.end(), [](auto word) { return word == 0xdeadbeefu; }); };
+    const std::array<std::uint32_t, 4> keys{1u, 2u, 1u, 2u};
+    for (std::uint32_t group = 0; group < 4u; ++group) Keys[group * 2u] = keys[group];
+    const auto direct = run(PointerSamplerCode);
+    Require(!Faulted(direct), "pointer sampler table: an S# read through a record's pointer faulted:\n" + direct.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(direct, group, Lanes, sampled(keys[group] % 2u == 0u), "pointer sampler table: the S# read through the record's pointer");
+    auto phi = std::vector<std::uint32_t>(PointerSamplerCode.begin(), PointerSamplerCode.end());
+    phi.insert(phi.begin() + 14u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
+    const auto original = run(phi);
+    Require(!Faulted(original) && original.words == direct.words, "pointer sampler table: a captured pointer selected through Phi changed the result:\n" + original.log);
+    const auto wave32 = run(phi, 32u);
+    Require(!Faulted(wave32) && wave32.words == original.words, "pointer sampler table: wave32 and wave64 disagree");
+    std::copy(PointWrap.begin(), PointWrap.end(), records[1].begin() + 8u);
+    const auto edited = run(phi);
+    Require(!Faulted(edited) && Group(edited, 0) == Group(original, 1) && Group(edited, 2) == Group(original, 3), "pointer sampler table: changing an S# retained a stale sampler");
+    Require(edited.artifactId == original.artifactId, "pointer sampler table: editing an S# recompiled the shader");
+    std::copy(PointClamp.begin(), PointClamp.end(), records[1].begin() + 8u);
+    Keys[0] = 0u;
+    const auto uncaptured = run(phi);
+    Require(Faulted(uncaptured) && uncaptured.log.find("outside the snapshot") != std::string::npos, "pointer sampler table: an uncaptured pointer did not fault:\n" + uncaptured.log);
+    Require(untouched(uncaptured), "pointer sampler table: an uncaptured pointer published copied output");
+    Require(uncaptured.artifactId == original.artifactId, "pointer sampler table: the pointer choice was specialized on the CPU");
+    auto alias = phi;
+    alias[17] = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(records[1].data()));
+    const auto aliased = run(alias);
+    Require(!Faulted(aliased) && Group(aliased, 0) == Group(original, 0) && Group(aliased, 1) == Group(original, 1), "pointer sampler table: a Phi constant naming another captured pointer did not read that pointer's S#:\n" + aliased.log);
+    Keys[0] = 3u;
+    const auto unmapped = run(phi);
+    Require(Faulted(unmapped) && unmapped.log.find("unmapped") != std::string::npos, "pointer sampler table: a null pointer did not fault:\n" + unmapped.log);
+    Require(untouched(unmapped), "pointer sampler table: a null pointer published copied output");
+    Keys[0] = 1u;
+    tableType = 1u << 30u;
+    const auto notBuffer = run(phi);
+    Require(Faulted(notBuffer) && notBuffer.log.find("not a buffer") != std::string::npos, "pointer sampler table: a non-buffer record table was accepted:\n" + notBuffer.log);
+    Require(untouched(notBuffer), "pointer sampler table: a non-buffer record table published copied output");
+    tableType = 0u;
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    };
+    {
+        const Registration registered(records.data(), sizeof(records));
+        auto consumer = phi;
+        consumer.insert(consumer.begin() + 30u, 0x7e0e0221u);
+        const auto shared = run(consumer);
+        Require(!Faulted(shared), "pointer sampler table: an S# with another consumer faulted:\n" + shared.log);
+        for (std::uint32_t group = 0; group < 4u; ++group) {
+            auto expected = Group(original, group);
+            for (std::uint32_t lane = 0; lane < Lanes; ++lane) expected[lane * 4u + 3u] = samplers[keys[group] % 2u][1];
+            Require(Group(shared, group) == expected, "pointer sampler table: an S# with another consumer read the wrong words");
+        }
+    }
+    root = PointWrap;
+    auto imagePhi = std::vector<std::uint32_t>(PointerImageCode.begin(), PointerImageCode.end());
+    imagePhi.insert(imagePhi.begin() + 14u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
+    const auto imageDirect = run(PointerImageCode);
+    const auto imageMerged = run(imagePhi);
+    Require(!Faulted(imageDirect) && !Faulted(imageMerged) && imageMerged.words == imageDirect.words, "pointer image table: a captured pointer selected through Phi changed the result:\n" + imageMerged.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        const bool other = keys[group] % 2u != 0u;
+        RequireRed(imageMerged, group, Lanes, [other](std::uint32_t x) { return std::bit_cast<std::uint32_t>(other ? OtherFloatTexels[x] : FloatTexels[x]); }, "pointer image table: the T# read through a Phi-selected pointer");
+    }
+    Keys[0] = 0u;
+    const auto imageFault = run(imagePhi);
+    Require(Faulted(imageFault) && imageFault.log.find("outside the snapshot") != std::string::npos && untouched(imageFault), "pointer image table: an uncaptured pointer did not fault:\n" + imageFault.log);
+    std::puts("pointer sampler table: S# and T# through a record pointer whose low word passes a Phi checked on wave64 and wave32");
+}
+
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -1737,6 +1866,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--nested-sampler") == 0) {
             RunNestedSamplerTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-sampler") == 0) {
+            RunPointerSamplerTests(*device);
             return 0;
         }
         RunTests(*device);

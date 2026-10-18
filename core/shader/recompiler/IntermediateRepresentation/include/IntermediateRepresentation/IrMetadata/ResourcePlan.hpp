@@ -46,6 +46,7 @@ struct ImageTableColumnSnapshot {
     std::uint32_t fault = 0;
     bool outside = false;
     bool nested = false;
+    bool pointerKeyed = false;
     std::vector<std::uint32_t> codes;
     std::vector<std::uint64_t> pointers;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;

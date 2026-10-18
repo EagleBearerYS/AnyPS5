@@ -1204,6 +1204,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
         mix(table.nested ? 1u : 0u);
+        mix(table.pointerKeyed ? 1u : 0u);
         mixWords(table.codes);
         mix(table.pointers.size());
         for (const auto pointer : table.pointers) mix(pointer);

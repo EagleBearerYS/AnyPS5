@@ -593,7 +593,7 @@ private:
         records.words.assign(records.keys, 0u);
         const auto end = records.base + records.size;
         if (column.indirect) {
-            if (column.buffer) records.pointers.assign(records.keys, ImageTableAbi::UncapturedPointer);
+            if (column.buffer || column.pointerKeyed) records.pointers.assign(records.keys, ImageTableAbi::UncapturedPointer);
             for (std::uint32_t record = 0; record < records.keys; record++) {
                 if (records.states[record] != RecordState::Read) continue;
                 const auto offset = column.addend + record * column.stride;
@@ -604,7 +604,7 @@ private:
                     continue;
                 }
                 const std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
-                if (column.buffer) records.pointers[record] = pointer;
+                if (column.buffer || column.pointerKeyed) records.pointers[record] = pointer;
                 DescriptorValue value;
                 value.dwordCount = column.sampler || column.buffer ? 4u : 8u;
                 std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
@@ -812,6 +812,7 @@ private:
         const auto& records = Column(source);
         auto& out = tables.tables.at(table);
         out = CopyRecords(records);
+        out.pointerKeyed = column.pointerKeyed;
         tableCounters().keys.fetch_add(records.keys, std::memory_order_relaxed);
         if (TableTraced()) {
             const auto poison = static_cast<std::uint32_t>(std::count_if(out.codes.begin(), out.codes.end(), [](auto code) { return (code & ImageTableAbi::PoisonFlag) != 0u; }));
@@ -1237,19 +1238,20 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             out.map[header + Abi::TableFault] = poison(resource, PoisonReason::UnsupportedOperation, nullptr);
         }
         outside[table] = outside[table] || column.outside;
+        const bool byPointer = column.nested || column.pointerKeyed;
         const auto mapStart = static_cast<std::uint32_t>(out.map.size());
-        if (!column.nested) {
+        if (!byPointer) {
             growMap(column.keys);
             out.map[header + Abi::TableMapStart] = mapStart;
             out.map.resize(out.map.size() + column.keys, 0u);
         } else if (column.pointers.size() != column.keys) {
-            throw std::runtime_error("nested image table snapshot has no pointer for each record");
+            throw std::runtime_error("pointer-keyed image table snapshot has no pointer for each record");
         }
         std::map<std::uint64_t, std::uint32_t> pointers;
         std::unordered_map<std::uint32_t, std::uint32_t> records;
         for (std::uint32_t key = 0; key < column.keys; key++) {
             const auto code = column.codes[key];
-            if (column.nested && column.pointers[key] == Abi::UncapturedPointer) continue;
+            if (byPointer && column.pointers[key] == Abi::UncapturedPointer) continue;
             std::uint32_t mapped = Abi::NullCode;
             if ((code & Abi::PoisonFlag) != 0u) {
                 const auto reason = static_cast<PoisonReason>(code & ~Abi::PoisonFlag);
@@ -1273,15 +1275,15 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                     mapped = found->second;
                 }
             }
-            if (column.nested) {
+            if (byPointer) {
                 const auto [found, inserted] = pointers.try_emplace(column.pointers[key], mapped);
-                if (!inserted && found->second != mapped) throw std::runtime_error("nested image table captured conflicting values at one pointer");
+                if (!inserted && found->second != mapped) throw std::runtime_error("pointer-keyed image table captured conflicting values at one pointer");
             } else {
                 out.map[mapStart + key] = mapped;
             }
         }
-        if (column.nested) {
-            if (pointers.size() > Abi::MaxParentKeys) throw std::runtime_error("nested image table has too many pointers");
+        if (byPointer) {
+            if (pointers.size() > Abi::MaxParentKeys) throw std::runtime_error("pointer-keyed image table has too many pointers");
             growMap(pointers.size() * Abi::PointerRecordWords);
             out.map[header + Abi::TableKeyCount] = static_cast<std::uint32_t>(pointers.size());
             out.map[header + Abi::TableMapStart] = static_cast<std::uint32_t>(out.map.size());
