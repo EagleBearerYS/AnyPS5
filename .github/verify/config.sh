@@ -1,0 +1,3 @@
+BASE=bd4ae99709953435cbec1ea3b7a0af6b688ccfad
+REPEAT=10
+EXTRA_TESTS='agc_driver_draw_cache_aliases'
