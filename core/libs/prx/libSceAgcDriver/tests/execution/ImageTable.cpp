@@ -1320,6 +1320,9 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     shared.insert(shared.begin() + 21u, {0xf4200c8cu, 0xfa000000u});
     std::fprintf(stderr, "nested image table: checking shared V# refusal\n");
     refused(shared, "a V# with another buffer consumer");
+    auto consumer = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
+    consumer.insert(consumer.begin() + 30u, 0x7e0e0225u);
+    refused(consumer, "a T# with another consumer");
     rootBytes = 0u;
     const auto empty = run();
     Require(Faulted(empty) && empty.log.find("unmapped") != std::string::npos, "nested image table: an empty pointer dictionary did not fault");
