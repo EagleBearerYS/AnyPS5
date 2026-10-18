@@ -2570,9 +2570,6 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
                     retiredImport = true;
                 }
             }
-#ifdef _WIN32
-            if (releaseSettleRetired(imports, address, end)) retiredImport = true;
-#endif
             if (retiredImport && recorder != nullptr && !recorder->Idle()) {
                 Recorder::CountSync(4);
                 recorder->Sync();
@@ -2580,6 +2577,9 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
                 drained = true;
             }
         }
+#ifdef _WIN32
+        if (releaseSettleRetired(imports, address, end)) retiredImport = true;
+#endif
     }
     auto& state = Leases();
     std::lock_guard lock(state.mutex);
