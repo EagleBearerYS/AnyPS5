@@ -259,7 +259,12 @@ SettleBatch* forgetSettle(HostImports& state, std::uint64_t base) {
     SettleBatch* running = nullptr;
     if (const auto settle = state.settles.find(found->second.device); found->second.phase == SettlePhase::Submitted && settle != state.settles.end()) {
         auto& batch = settle->second.batches[found->second.batch];
-        if (settleBatchRunning(settle->second, settle->first, batch)) running = &batch;
+        if (settleBatchRunning(settle->second, settle->first, batch)) {
+            running = &batch;
+        } else {
+            for (const auto alias : batch.aliases) settle->second.settleDestroyBuffer(settle->first, alias, nullptr);
+            batch.aliases.clear();
+        }
     }
     state.pendingSettles.erase(found);
     return running;
@@ -386,6 +391,8 @@ bool releaseSettleRetired(HostImports& state, std::uint64_t begin, std::uint64_t
                     ++state.settleUnmapWaits;
                     waitSettleBatch(settle, device, batch);
                 }
+                for (const auto alias : batch.aliases) settle.settleDestroyBuffer(device, alias, nullptr);
+                batch.aliases.clear();
                 for (auto& holder : batch.retired) released.push_back(std::move(holder));
                 batch.retired.clear();
             }
