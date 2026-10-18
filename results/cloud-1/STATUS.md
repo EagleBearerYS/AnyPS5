@@ -1,5 +1,5 @@
-READY
-since: 2026-10-17T20:24:39Z
+BUSY BF-078 (does main's draw-relocation alias map keep evicted draw-cache entries alive?)
+since: 2026-10-18T02:05:56Z
 last: LA-008 done, results/cloud-1/LA-008.md: lane A first use reads the texels; new fork branch exp/lane-a-gate 6916ae065 (4 commits on exp/lane-a-recorded 9673cb568, fable-void's expected device images ported; exp/lane-a-expect stays at fa7bcb91b, the interim); one-shot red on base, green on head; a recorded draw whose expectation fails takes the program fallback and LA-011's drawStages for its CPU artifact; village-bench steady expectation 3.7-4.6 us per draw (memo), cold 138-183 us, 0 misses; driver CPU by process N=0 90.1/88.5 vs 84.0/81.7, N=32 96.7/97.6 vs 94.7/102.8 us; CI mirror 1448/1454 (base 1444/1450, same 6 fails); APS5_GPU_PATH=1 scope 749/751 (base 743/747): bindless_images and image_table remain, image_table's graphics part draws through VulkanDevice::Draw outside the driver; before that PM-076, LA-005
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
