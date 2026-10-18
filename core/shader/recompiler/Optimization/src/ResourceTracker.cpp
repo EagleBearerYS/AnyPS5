@@ -193,6 +193,8 @@ private:
         IrValue* parentPointer = nullptr;
         std::vector<std::uint32_t> memory;
         std::vector<const IrValue*> reads;
+        std::vector<std::uint32_t> hopMemory;
+        std::vector<const IrValue*> hopReads;
         std::optional<KeyDomain> keyDomain;
     };
 
@@ -751,20 +753,50 @@ private:
         return origin;
     }
 
-    bool TryMakeIndirectColumn(IrValue& handle, IrValue& pointer, bool sampler, std::uint32_t words, std::uint32_t descriptorOffset, std::uint32_t descriptorImmediate, TableColumnPlan& plan) {
-        if (pointer.Opcode() != IrOpcode::GetAddressResource || pointer.ArgumentCount() != 2u) {
+    bool TryMakeIndirectColumn(IrValue& handle, IrValue& descriptorPointer, bool sampler, std::uint32_t words, std::uint32_t descriptorOffset, std::uint32_t descriptorImmediate, TableColumnPlan& plan) {
+        std::vector<PointerHop> hops;
+        IrValue* pointer = &descriptorPointer;
+        while (pointer->Opcode() == IrOpcode::GetAddressResource && pointer->ArgumentCount() == 2u) {
+            std::uint32_t memoryIndex = 0;
+            if (ScalarAddressMemory(*pointer->Argument(0)->Resolve(), memoryIndex) == nullptr) {
+                break;
+            }
+            PointerHop hop;
+            IrValue* next = nullptr;
+            for (std::uint32_t dword = 0; dword < 2u; dword++) {
+                IrValue* read = pointer->Argument(dword)->Resolve();
+                const MemoryInfo* memory = ScalarAddressMemory(*read, memoryIndex);
+                std::uint32_t readOffset = 0;
+                if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read) || !immediateU32(read->Argument(1), readOffset)) {
+                    return false;
+                }
+                IrValue* readPointer = read->Argument(0)->Resolve();
+                if (dword == 0u) {
+                    hop = PointerHop{readOffset, memory->offset};
+                    next = readPointer;
+                } else if (readOffset != hop.offset || memory->offset != hop.immediate + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (readPointer != next && !EquivalentValue(m_program.Resources(), next, readPointer))) {
+                    return false;
+                }
+                plan.hopMemory.push_back(memoryIndex);
+                plan.hopReads.push_back(read);
+            }
+            hops.insert(hops.begin(), hop);
+            pointer = next;
+        }
+        if (pointer->Opcode() != IrOpcode::GetAddressResource || pointer->ArgumentCount() != 2u) {
             return false;
         }
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
-        const bool merged = pointer.Argument(0)->Resolve()->IsPhi();
+        const bool merged = pointer->Argument(0)->Resolve()->IsPhi();
         const bool pointerKeyed = merged && !buffer;
-        auto* low = merged ? PointerRecordOrigin(pointer.Argument(0), pointerKeyed) : pointer.Argument(0)->Resolve();
+        if (!hops.empty() && (buffer || merged)) return false;
+        auto* low = merged ? PointerRecordOrigin(pointer->Argument(0), pointerKeyed) : pointer->Argument(0)->Resolve();
         if (low == nullptr) return false;
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
-            IrValue* read = dword == 0u ? low : pointer.Argument(dword)->Resolve();
+            IrValue* read = dword == 0u ? low : pointer->Argument(dword)->Resolve();
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
@@ -779,7 +811,7 @@ private:
             }
         }
         if (pointerKeyed) {
-            auto* high = pointer.Argument(1)->Resolve();
+            auto* high = pointer->Argument(1)->Resolve();
             bufferHandle = high->Argument(0)->Resolve();
             offset = high->Argument(1)->Resolve();
         }
@@ -807,6 +839,7 @@ private:
         column.indirectOffset = descriptorOffset;
         column.indirectImmediate = descriptorImmediate;
         column.pointerKeyed = pointerKeyed;
+        column.pointerHops = std::move(hops);
         const auto domain = merged ? std::optional<KeyDomain>{} : MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
@@ -1511,6 +1544,27 @@ private:
                 if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
                     m_tablePlanningReads.push_back(read);
                     m_tablePlanningMemory.push_back(plan.memory[index]);
+                }
+            }
+        }
+        for (bool marked = true; marked;) {
+            marked = false;
+            for (const auto& plan : m_tableColumns) {
+                for (std::size_t index = 0; index < plan.hopReads.size(); index++) {
+                    const IrValue* read = plan.hopReads[index];
+                    if (std::ranges::find(m_tablePlanningReads, read) != m_tablePlanningReads.end()) {
+                        continue;
+                    }
+                    const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* pointer) {
+                        return pointer->Opcode() == IrOpcode::GetAddressResource && std::ranges::all_of(pointer->Uses(), [&](const IrValue* user) {
+                            return std::ranges::find(m_tablePlanningReads, user) != m_tablePlanningReads.end();
+                        });
+                    });
+                    if (planned) {
+                        m_tablePlanningReads.push_back(read);
+                        m_tablePlanningMemory.push_back(plan.hopMemory[index]);
+                        marked = true;
+                    }
                 }
             }
         }
