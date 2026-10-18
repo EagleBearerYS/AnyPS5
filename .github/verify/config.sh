@@ -1,0 +1,4 @@
+BASE=195d0d08a8971faf15285d3b5b7dd659fce1ee22
+REPEAT=1
+EXTRA_TESTS='agc_driver_sample_order|agc_driver_sample_order_grid_reference|agc_driver_sample_order_recipe_depth_locations|agc_driver_sample_order_planning'
+NO_BEFORE=1
