@@ -1,7 +1,6 @@
-BUSY LA-014
-since: 2026-10-18T18:06:07Z (claimed); interim result 18:44Z, exp/lane-a-v4 at 22f604281 pushed
-claimed: tasks/claimed/LA-014.md
-last: BF-090 done, results/cloud-4/BF-090.md (#7395 aed137caee: a selected leaf column can never get a parentPointer; 211 plans across 716 ^agc tests, none with both; no test, nothing pushed); before it BF-085, BF-082, BF-075, PRM-044, PRM-043 (withdrawn), BF-061, BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
+READY
+since: 2026-10-18T20:23:30Z (LA-014 done)
+last: LA-014 done, results/cloud-4/LA-014.md (exp/lane-a-v4 046eb3231 on #6947 9a1b77846: 49 rebased commits, 9 conflicts resolved, none dropped, each conflicted commit builds and passes; mirror vs #6947 only +28 passing tests; switch-on scope fails bindless_images and image_table (selected-record part, CPU-path asserts); step 3 (j) is an idle-store race in main's code; step 4 flat with the switch on, OOM with it unset in copy mode; step 5 88e59ca22; docs 046eb3231); before it BF-090, BF-085, BF-082, BF-075, PRM-044, PRM-043 (withdrawn), BF-061, BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
 RESULT:
