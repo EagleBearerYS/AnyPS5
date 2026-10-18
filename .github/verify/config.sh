@@ -1,0 +1,4 @@
+BASE=a86577e46473213d82a4d46e3616452c52012150
+REPEAT=3
+EXTRA_TESTS='agc_driver_depth_plane_sampling|agc_driver_depth_bits_guest_memory|^agc'
+NO_BEFORE=1
