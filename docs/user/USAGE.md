@@ -144,9 +144,10 @@ python3 tools/pad_input.py /tmp/anyps5-pad down --hold-ms 500
 python3 tools/pad_input.py /tmp/anyps5-pad release
 python3 tools/pad_input.py /tmp/anyps5-pad release --left-stick 128 0 --hold-ms 2000
 python3 tools/pad_input.py /tmp/anyps5-pad cross --left-stick 255 128 --right-stick 0 128
+python3 tools/pad_input.py /tmp/anyps5-pad touch-right
 ```
 
-Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
+Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. `touch-left` and `touch-right` press the touchpad with a finger on its left or right half, as the `TouchLeft` and `TouchRight` keys do; in the command file they are bits `0x200000` and `0x400000` of the button field. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
 
 ### System fonts
 
@@ -155,6 +156,17 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 ### Console language
 
 Games ask for the console's language with `sceSystemServiceParamGetInt` and show their text in it when they have it. It is English (United States) unless `ANYPS5_LANGUAGE` is set to another console language number: 0 Japanese, 1 English (United States), 2 French, 3 Spanish, 4 German, 5 Italian, 6 Dutch, 7 Portuguese (Portugal), 8 Russian, 9 Korean, 10 Chinese (Traditional), 11 Chinese (Simplified), 12 Finnish, 13 Swedish, 14 Danish, 15 Norwegian, 16 Polish, 17 Portuguese (Brazil), 18 English (United Kingdom), 19 Turkish, 20 Spanish (Latin America), 21 Arabic, 22 French (Canada), 23 Czech, 24 Hungarian, 25 Greek, 26 Romanian, 27 Thai, 28 Vietnamese, 29 Indonesian, 30 Ukrainian. For example, `ANYPS5_LANGUAGE=21` selects Arabic. An empty value is the same as an unset one; any other value stops the game at its first language query with an error that names the variable.
+
+### PlayGo dumps without metadata
+
+When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.json`, AnyPS5 cannot tell which nonzero PlayGo chunk IDs exist. Requests for those IDs stop with an error by default. Set `APS5_PLAYGO_UNLISTED_CHUNKS` to choose an answer for that dump:
+
+| Value | Answer for an unlisted chunk ID | Observed title that needs it |
+|-------|---------------------------------|------------------------------|
+| `installed` | Report it as installed (`LOCAL_FAST`). | High on Life (PPSA15388) needs this to load its saves. |
+| `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001) and Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles (PPSA03490) use this result to end their chunk-ID search. With `installed`, PPSA03490 keeps asking about higher chunk IDs forever, so its chunk list grows until startup fails with a `Ran out of memory allocating 5565054976 bytes` error. |
+
+Leave the variable unset to keep the explicit error. Any other value also stops with an error. Dumps that include PlayGo metadata are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
 
 ### GPU selection
 
@@ -187,9 +199,9 @@ Besides the recompiled shaders, the shader cache directory holds `pipelines.jour
 
 ### Texture cache budget
 
-Sampled textures and storage images stay in device memory in two caches that evict their least recently used entries when they grow past their budgets. The storage image budget is a quarter of the `VK_EXT_memory_budget` budget of the largest device-local heap, capped at a quarter of the heap's size or 2 GiB, whichever is larger, and never below 512 MiB. The sampled texture budget is what the reported budget leaves after the heap's use other than cached textures, that cap and an eighth of the budget, and never below 2 GiB. Both are read again every second; `[gpu] sampled texture cache budget` lines report them at start-up and when they change. `APS5_TEXTURE_CACHE_MIB=<n>` fixes both budgets at `n` MiB, and the lines are then not printed.
+Sampled textures and storage images stay in device memory in two caches that evict their least recently used entries when they grow past their budgets. The storage image budget is what the `VK_EXT_memory_budget` budget of the largest device-local heap leaves after the heap's use other than the cached storage images themselves, the part of the sampled textures' 2 GiB floor not yet in use, and an eighth of the budget; it is capped at a quarter of that budget, at most a quarter of the heap's size or 2 GiB, whichever is larger, and never below 512 MiB. The sampled texture budget is what the reported budget leaves after the heap's use other than cached textures, a quarter of the heap's size (at least 2 GiB) and an eighth of the budget, and never below 2 GiB. While the sampled textures alive stay within their floor the sampled budget falls first, to that floor, then the storage budget; above it both fall together. Each cache trims at its next insert. Both budgets are read again every second; `[gpu] sampled texture cache budget` lines report them at start-up and when either moves by more than a tenth, at most every 10 s. `APS5_TEXTURE_CACHE_MIB=<n>` fixes both budgets at `n` MiB, and the lines are then not printed.
 
-A fixed budget above the automatic one can exceed what the card holds next to the rest of the frame. Allocations then go to host memory (`[gpu] ... placed in host memory` lines), where the GPU reads them over PCIe. PPSA16064 on an RTX 4060 8 GB, whose automatic storage image budget is 1797 MiB, placed 868 and 878 MiB in host memory with `APS5_TEXTURE_CACHE_MIB=3072` and walked through its first level at 4.46 and 4.83 FPS; with the variable unset it placed none and ran the same walk at 6.48 and 6.07 FPS. Leave it unset unless a measurement on the card shows otherwise.
+A fixed budget above the automatic one can exceed what the card holds next to the rest of the frame. Allocations then go to host memory (`[gpu] ... placed in host memory` lines), where the GPU reads them over PCIe. PPSA16064 on an RTX 4060 8 GB, whose automatic storage image budget was 1797 MiB under the earlier rule, placed 868 and 878 MiB in host memory with `APS5_TEXTURE_CACHE_MIB=3072` and walked through its first level at 4.46 and 4.83 FPS; with the variable unset it placed none and ran the same walk at 6.48 and 6.07 FPS. Leave it unset unless a measurement on the card shows otherwise.
 
 ### Storing GPU results at each flip
 
@@ -250,6 +262,8 @@ Each registry has a companion with the same prefix and the suffix `.needed.json`
 
 The report also lists needed libraries that have no file in `--libs` or `--modules`, including dependencies with zero imports. These do not increase the import or reference counts. Windows can skip a missing dependency when no import needs it; Linux still needs the file. The audit also lists imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
 
+The audit also walks the built libraries' own host dependencies: each `.prx` under `--libs` has its PE imports (or ELF `DT_NEEDED` entries) checked for `.prx` names with no file in `--libs` or `--modules`, following present libraries transitively. Gaps fail the audit and are reported as `Importer: <root> Chain: <root> -> ... -> <missing>` lines, since the loader fails on them even when every game import resolves.
+
 | Option | Effect |
 |--------|--------|
 | `--libs <dir>` | Built `.prx` directory. Required; repeat for several. |
@@ -257,6 +271,8 @@ The report also lists needed libraries that have no file in `--libs` or `--modul
 | `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
 | `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
 | `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
+
+Registry `nid` fields may contain either encoded NIDs or ordinary ELF symbol names such as `strcmp`. Imports are matched against literal exports first, then against their computed NIDs when the literal lookup misses. Reports retain the original import name. Export availability does not establish that every platform loader supports that lookup path.
 
 Exit codes: `0` nothing blocks loading, `1` there are `absent` imports or needed libraries without a file, `2` an input could not be read; the message names the file and the value.
 

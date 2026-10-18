@@ -28,10 +28,12 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+std::uint64_t ReleaseTextureCaches(std::uint64_t bytes);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
-std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
+std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes);
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
+std::uint64_t StorageTextureCacheBudget(const Context& context);
 struct TextureCacheUse {
     std::size_t sampledEntries = 0;
     std::uint64_t sampledBytes = 0;
@@ -42,6 +44,7 @@ std::uint64_t SampledTextureCacheBudget(const Context& context);
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words);
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second);
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
+bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.
@@ -98,6 +101,7 @@ private:
     PFN_vkDestroyDescriptorSetLayout destroyLayout;
     PFN_vkDestroyDescriptorPool destroyPool;
     PFN_vkResetDescriptorPool resetPool;
+    PFN_vkFreeDescriptorSets freeDescriptorSets = nullptr;
     mutable std::mutex mutex;
     std::map<std::vector<std::uint32_t>, VkDescriptorSetLayout> layouts;
     struct Pool {
@@ -121,6 +125,12 @@ struct ImageTableReuseCounts {
     std::uint64_t resolved = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
+
+struct PresyncSurface {
+    std::uint64_t address;
+    std::uint64_t bytes;
+    bool dccKeys;
+};
 
 class ShaderResources {
 public:
@@ -168,8 +178,16 @@ public:
         std::size_t size;
         std::vector<std::uint32_t> words;
     };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}) const;
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
     std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const;
+    enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
+    struct MoveProof {
+        MoveRefusal refusal = MoveRefusal::None;
+        std::size_t buffers = 0;
+        std::size_t bytes = 0;
+    };
+    static const char* MoveRefusalName(MoveRefusal refusal);
+    std::optional<std::vector<MovedBuffer>> MovedDispatchBuffers(const CompiledShader& shader, Recorder* recorder, std::size_t maxBytes, MoveProof& proof) const;
     static std::size_t MaxDrawSnapshotBytes();
     void WriteBack();
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
@@ -182,6 +200,7 @@ public:
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
     bool UsesAddressTable() const { return usesBda; }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
@@ -226,6 +245,7 @@ public:
     bool Reusable() const { return reusable; }
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
+    static std::uint64_t DepthGuardRefusals();
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }
     bool ChecksFaults() const { return bda != nullptr; }
     void CheckFaults() const;
@@ -280,7 +300,7 @@ public:
     // Usable right after the deferred constructor, for address-based builds too (it decodes the
     // compiled shader's bindings itself when stage A has not run), and on a completed object from
     // the resource cache (its Revalidate repeats the same lookups), without the device lock.
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> PresyncSurfaces() const;
+    std::vector<PresyncSurface> PresyncSurfaces() const;
 
 private:
     friend class AgcDriver::VulkanDevice;
@@ -338,12 +358,15 @@ private:
         std::uint32_t set = 0;
         std::size_t firstSampler = 0;
         std::size_t samplerCount = 0;
+        bool sampled = false;
+        bool storage = false;
         std::vector<std::size_t> elementTextures;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
     };
     std::vector<TableStage> tableStages;
     std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     std::array<std::uint32_t, 2> tableElements{};
+    std::array<std::size_t, 2> storageTableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
     std::uint32_t rejectTableElement(TableStage& table, std::span<const std::uint32_t> words, const std::string& message);
@@ -375,6 +398,7 @@ private:
     // same way but is left out of the write set (no write-back, no pending-write note). `atomic`
     // is its bufferAtomic (see GuestBufferMemory::AddWritable).
     std::size_t addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read);
+    std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
@@ -486,6 +510,7 @@ private:
     std::size_t maxDrawSnapshotBytes = MaxDrawSnapshotBytes();
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
+    bool bdaReadOnly = true;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
     bool faultChecks = false;

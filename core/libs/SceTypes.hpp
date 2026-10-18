@@ -921,6 +921,14 @@ struct VoicePortInfo {
     std::uint16_t reserved;
 };
 
+struct VoiceResourceInfo {
+    std::uint16_t max_voice_input_ports;
+    std::uint16_t max_voice_output_ports;
+    std::uint16_t max_device_input_ports;
+    std::uint16_t max_device_output_ports;
+    std::uint16_t max_ports;
+};
+
 struct VoiceStartParam {
     void* container;
     std::uint32_t mem_size;
@@ -2031,6 +2039,11 @@ struct VideoOutColorSettings {
     float gamma = 1.0f;
     std::uint32_t reserved[3] = {};
 };
+
+struct VideoOutColorSpaceConversionSettings {
+    std::uint32_t internalData[8] = {};
+};
+static_assert(sizeof(VideoOutColorSpaceConversionSettings) == 32);
 
 
 using atexit_func_t = void (*)();
