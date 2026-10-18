@@ -1,0 +1,4 @@
+BASE=889cee5f9f220e59715613059a454a62b62f1cb5
+REPEAT=3
+EXTRA_TESTS='agc_driver_host_import_lifetime|agc_driver_host_import_lifetime_other_family|agc_import_settle_deferred|agc_import_settle_deferred_other_family|agc_import_settle_retire'
+BEFORE_REPEAT=3
