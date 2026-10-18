@@ -1,0 +1,4 @@
+BASE=61d3d3080c372dd0b6adcf4dc13247108495d763
+REPEAT=3
+EXTRA_TESTS='image_table_vouch|image_table_reuse|agc_driver_graphics'
+NO_BEFORE=1
