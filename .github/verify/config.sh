@@ -1,0 +1,3 @@
+BASE=0bb238b4a447f448e5d6592eae39d43a6a8c7d8c
+REPEAT=10
+EXTRA_TESTS='agc_driver_depth_bits_guest_memory|agc_driver_depth_plane_sampling'
