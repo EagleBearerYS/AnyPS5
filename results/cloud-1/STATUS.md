@@ -1,5 +1,5 @@
-READY
-since: 2026-10-18T04:28:09Z
+BUSY BF-089 (boundary tests with direct images for the selected-records limit fix, BF-088)
+since: 2026-10-18T11:19:01Z
 last: BF-078 done, results/cloud-1/BF-078.md: main (195d0d08a) retains evicted draw-cache entries through relocation aliases; churn: 4607 aliased entries all outside the cache at 175k draws, RSS 450.6 vs 375.9 MiB with relocation off (+74.7), heaptrack +71.33 MiB held (48.8 binding contents, 7.7 decodes, 7.5 variants); hit: flat, 639 aliases all in the cache; fix on fork fix/agc-draw-cache-release-aliases 1a3a4c6b0 (release aliases on evict/erase, move on replace/rotate): churn flat 372.6-378.7 MiB, 0 outside; agc_driver_draw_cache_aliases red/green; relocation hits 0 on the harness before and after; mirror 1410/1416 (machine's 6); before that LA-008
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
