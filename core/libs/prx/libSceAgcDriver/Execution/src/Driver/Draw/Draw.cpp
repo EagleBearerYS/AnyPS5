@@ -512,6 +512,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto baseVertexWord = locate(indirect.baseVertexLocation);
         const auto startInstanceWord = locate(indirect.startInstanceLocation);
         const auto drawIndexWord = indirect.drawIndexEnabled ? locate(indirect.drawIndexLocation) : std::nullopt;
+        bool recordedOne = false;
         for (std::uint32_t record = 0; record < records.size(); ++record) {
             const auto& arguments = records[record];
             if (traceIndirect) std::fprintf(stderr, "[draw]   record %u: count %u instances %u first %u vertexOffset %u startInstance %u\n", record, arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance);
@@ -560,6 +561,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 return DrawVerdict::Rejected;
             }
             lockForDraw();
+            if (!recordedOne) {
+                runCaptureCheckHook();
+                if (capturedMemoryChanged(memory, snapshots)) {
+                    gpuLock.unlock();
+                    const RecaptureScope recapture;
+                    return draw(queue, packet, submission, rejected);
+                }
+            }
+            recordedOne = true;
             noteDrawWriters(stages, submission.queue);
             phaseTiming.Phase(DrawRowVectors);
             localDevice->Draw(graphics, direct, stages, snapshots);
@@ -587,6 +597,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
     }
     if (pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
+        runCaptureCheckHook();
+        if (capturedMemoryChanged(memory)) {
+            const RecaptureScope recapture;
+            return draw(queue, packet, submission, rejected);
+        }
         phaseTiming.Phase(DrawRowVectors);
         auto writes = drawWriteRanges(graphics, stages);
         const auto commitQueue = submission.queue;
@@ -604,6 +619,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         return drawn();
     }
     lockForDraw();
+    runCaptureCheckHook();
+    if (capturedMemoryChanged(memory, snapshots)) {
+        gpuLock.unlock();
+        const RecaptureScope recapture;
+        return draw(queue, packet, submission, rejected);
+    }
     noteDrawWriters(stages, submission.queue);
     phaseTiming.Phase(DrawRowVectors);
     if (recipe != nullptr) {
