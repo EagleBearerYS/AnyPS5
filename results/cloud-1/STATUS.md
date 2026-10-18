@@ -1,5 +1,5 @@
-READY
-since: 2026-10-18T11:37:02Z
+BUSY PM-078 (map fable-void's new push d8731cc728 by lane, and check its health on Linux)
+since: 2026-10-18T17:37:44Z
 last: BF-089 done, results/cloud-1/BF-089.md: fork fix/shader-selected-records-within-limits 630999fae (one test commit on bac28c3d2, fast-forward): agc_shader_selected_records_direct_image_limit (63+1 direct: 64 images kept split; 63+2 direct: merged to 3 images) and _direct_pair_limit (31+1 direct x2 samplers: 64 pairs kept; +third sampler: merged, 2 images 5 pairs); red on main 9caecfd2d5's tracker with 'image resource limit exceeded' / 'sampled image/sampler pair limit exceeded', boundary cases pass on both; 15 tests x10 repeats pass; conventions pass; before that BF-078
 RESULT:
 - Host: `vm`, Intel Xeon @ 2.80 GHz, 4 vCPUs (1 thread/core), 15 GiB RAM, no swap, 30 GB free disk allowance. Ubuntu 24.04.5 LTS x86_64, glibc 2.39.
