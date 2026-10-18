@@ -1,3 +1,4 @@
+#define SDL_MAIN_HANDLED
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
