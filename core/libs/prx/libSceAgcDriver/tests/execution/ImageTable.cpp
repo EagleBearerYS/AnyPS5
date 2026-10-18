@@ -261,6 +261,14 @@ alignas(256) constexpr std::array<std::uint32_t, 37> NestedRecordCode{
     0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 38> NestedSamplerCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf40c0900u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148414u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf428080cu, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
@@ -1364,6 +1372,144 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     std::puts("nested image table independent keys, alias, descriptor replacement, faults, budget and refusals checked");
 }
 
+void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    alignas(512) std::array<std::array<std::uint32_t, 64>, 2> records{};
+    alignas(256) std::array<std::array<std::uint32_t, 16>, 2> palettes{};
+    std::vector<std::uint32_t> extra;
+    const std::array<std::array<std::array<std::uint32_t, 4>, 2>, 2> samplers{{{PointWrap, PointClamp}, {PointClamp, PointWrap}}};
+    Table = {};
+    Keys = {};
+    for (std::uint32_t outer = 0; outer < 2u; ++outer) {
+        auto descriptor = Buffer(palettes[outer].data(), 1u);
+        descriptor[1] |= 64u << 16u;
+        std::copy(descriptor.begin(), descriptor.end(), records[outer].begin() + 40u);
+        for (std::uint32_t inner = 0; inner < 2u; ++inner) std::copy(samplers[outer][inner].begin(), samplers[outer][inner].end(), palettes[outer].begin() + inner * 4u);
+    }
+    for (std::uint32_t record = 0; record < 3u; ++record) {
+        const auto pointer = reinterpret_cast<std::uintptr_t>(records[record % 2u].data());
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    }
+    const auto image = Image(FloatTexels.data(), Format32Float);
+    const auto run = [&](std::span<const std::uint32_t> code = NestedSamplerCode, std::uint32_t waveSize = 64u) {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(image.begin(), image.end(), Srt.begin() + 12u);
+        std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+            {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+        };
+        if (!extra.empty()) memory.push_back({reinterpret_cast<std::uintptr_t>(extra.data()), std::as_bytes(std::span(extra))});
+        const auto inputTable = Table;
+        const auto inputKeys = Keys;
+        const auto inputRecords = records;
+        const auto inputPalettes = palettes;
+        const auto inputExtra = extra;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, waveSize);
+        Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes && extra == inputExtra, "nested sampler table: dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), "nested sampler table: dispatch wrote past its output");
+        return result;
+    };
+    const auto sampled = [&](std::uint32_t record, std::uint32_t child) {
+        const bool wrap = samplers[record % 2u][child] == PointWrap;
+        return std::function<std::uint32_t(std::uint32_t)>([wrap](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[wrap ? x : Width - 1u]); });
+    };
+    const auto untouched = [](const Outcome& outcome) { return std::all_of(outcome.words.begin(), outcome.words.end(), [](auto word) { return word == 0xdeadbeefu; }); };
+    const std::array<std::uint32_t, 8> keys{0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u};
+    std::copy(keys.begin(), keys.end(), Keys.begin());
+    const auto original = run();
+    Require(!Faulted(original), "nested sampler table: valid independent keys faulted:\n" + original.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(original, group, Lanes, sampled(keys[group * 2u], keys[group * 2u + 1u]), "nested sampler table: the sampler selected through record, pointer and V#");
+    const auto wave32 = run(NestedSamplerCode, 32u);
+    Require(!Faulted(wave32) && wave32.words == original.words, "nested sampler table: wave32 and wave64 disagree");
+    std::copy(PointWrap.begin(), PointWrap.end(), palettes[1].begin());
+    const auto edited = run();
+    Require(!Faulted(edited) && Group(edited, 2) == Group(original, 0) && Group(edited, 3) == Group(original, 3), "nested sampler table: changing only a child S# retained a stale sampler");
+    Require(edited.artifactId == original.artifactId, "nested sampler table: editing a child S# recompiled the shader");
+    std::copy(PointClamp.begin(), PointClamp.end(), palettes[1].begin());
+    Keys[0] = 3u;
+    const auto unmapped = run();
+    Require(Faulted(unmapped) && unmapped.log.find("unmapped") != std::string::npos, "nested sampler table: an unreadable parent did not fault:\n" + unmapped.log);
+    Require(untouched(unmapped), "nested sampler table: a faulting dispatch published copied output");
+    Keys[0] = 0u;
+    records[0][43] |= 1u << 30u;
+    const auto notBuffer = run();
+    Require(Faulted(notBuffer) && notBuffer.log.find("not a buffer") != std::string::npos, "nested sampler table: a non-buffer parent was accepted:\n" + notBuffer.log);
+    Require(untouched(notBuffer), "nested sampler table: a non-buffer parent published copied output");
+    records[0][43] &= ~(1u << 30u);
+    const auto savedRecords = records;
+    std::copy_n(records[0].begin() + 40u, 4u, records[1].begin() + 40u);
+    const auto moved = run();
+    Require(!Faulted(moved) && Group(moved, 2) == Group(original, 0) && Group(moved, 3) == Group(original, 1), "nested sampler table: replacing the nested V# retained a stale sampler");
+    Require(moved.artifactId == original.artifactId && moved.tableMap.size() < original.tableMap.size(), "nested sampler table: equal V#s did not share one child table");
+    records = savedRecords;
+    const auto refused = [&](const std::vector<std::uint32_t>& code, const char* what) {
+        bool rejected = false;
+        try { static_cast<void>(run(code)); }
+        catch (const std::runtime_error& error) { rejected = std::string(error.what()).find("not a valid runtime value") != std::string::npos; }
+        Require(rejected, std::string("nested sampler table: ") + what + " was not refused by resource planning");
+    };
+    auto shared = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
+    shared.insert(shared.begin() + 31u, 0x7e0e0232u);
+    shared.insert(shared.begin() + 21u, {0xf4200c8cu, 0xfa000000u});
+    refused(shared, "a V# with another buffer consumer");
+    auto consumer = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
+    consumer.insert(consumer.begin() + 31u, 0x7e0e0221u);
+    refused(consumer, "an S# with another consumer");
+    auto phi = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
+    phi.insert(phi.begin() + 17u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
+    for (std::uint32_t group = 0; group < 4u; ++group) Keys[group * 2u] = 1u;
+    const auto phiValid = run(phi);
+    Require(!Faulted(phiValid), "nested sampler table: a captured pointer selected through Phi faulted:\n" + phiValid.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(phiValid, group, Lanes, sampled(1u, Keys[group * 2u + 1u]), "nested sampler table: Phi-selected pointer");
+    Keys[0] = 0u;
+    const auto phiFault = run(phi);
+    Require(Faulted(phiFault) && phiFault.log.find("outside the snapshot") != std::string::npos, "nested sampler table: an uncaptured pointer did not fault:\n" + phiFault.log);
+    Require(untouched(phiFault), "nested sampler table: an uncaptured pointer published copied output");
+    Require(phiFault.artifactId == phiValid.artifactId, "nested sampler table: the pointer choice was specialized on the CPU");
+    std::copy(keys.begin(), keys.end(), Keys.begin());
+    extra.assign(320u * 4u, 0u);
+    for (std::uint32_t entry = 0; entry < 320u; ++entry) {
+        std::copy(PointWrap.begin(), PointWrap.end(), extra.begin() + entry * 4u);
+        extra[entry * 4u + 2u] |= entry;
+    }
+    const auto many = Buffer(extra.data(), static_cast<std::uint32_t>(extra.size() * sizeof(std::uint32_t)));
+    std::copy(many.begin(), many.end(), records[0].begin() + 40u);
+    Keys[1] = 319u;
+    auto unkeyed = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
+    unkeyed.insert(unkeyed.begin() + 14u, {0x8714ff14u, 0x000001ffu});
+    const auto overBudget = run(unkeyed);
+    Require(Faulted(overBudget) && overBudget.log.find("over budget") != std::string::npos, "nested sampler table: an S# past the sampler budget did not fault:\n" + overBudget.log);
+    Require(untouched(overBudget), "nested sampler table: an S# past the sampler budget published copied output");
+    extra.assign((NestedKeyLimit + 1u) * 4u, 0u);
+    std::copy(PointClamp.begin(), PointClamp.end(), extra.begin());
+    const auto large = Buffer(extra.data(), static_cast<std::uint32_t>(extra.size() * sizeof(std::uint32_t)));
+    std::copy(large.begin(), large.end(), records[0].begin() + 40u);
+    Keys[1] = 0u;
+    const auto bounded = run();
+    Require(Faulted(bounded) && bounded.log.find("outside the snapshot") != std::string::npos, "nested sampler table: an uncaptured child did not fault:\n" + bounded.log);
+    Require(bounded.tableMap.size() < NestedKeyLimit + 1024u, "nested sampler table: the two levels produced an unbounded map");
+    Require(untouched(bounded), "nested sampler table: a dispatch outside the snapshot published copied output");
+    std::copy(large.begin(), large.end(), records[1].begin() + 40u);
+    const auto sharedBudget = run();
+    Require(!Faulted(sharedBudget) && sharedBudget.tableMap.size() < NestedKeyLimit + 1024u, "nested sampler table: equal V#s consumed the snapshot budget twice");
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        const bool clamp = keys[group * 2u + 1u] == 0u;
+        RequireRed(sharedBudget, group, Lanes, [clamp](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[clamp ? Width - 1u : x]); }, "nested sampler table: aliased parent at the snapshot budget");
+    }
+    std::puts("nested sampler table: S# through record, pointer and V# checked on wave64 and wave32, with sharing, budgets and refusals");
+}
+
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -1587,6 +1733,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--nested-budget") == 0) {
             RunNestedRecordTests(*device, NestedCase::Budget);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--nested-sampler") == 0) {
+            RunNestedSamplerTests(*device);
             return 0;
         }
         RunTests(*device);

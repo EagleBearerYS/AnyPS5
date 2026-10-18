@@ -1242,7 +1242,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         const auto& column = *source.tableColumn;
         if (column.buffer && (column.sampler || column.dwordCount != 4u)) return false;
         const auto& parent = plan.descriptorSources[column.heapSource].tableColumn;
-        if (parent.has_value() && (column.buffer || column.sampler || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
+        if (parent.has_value() && (column.buffer || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
     }
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;

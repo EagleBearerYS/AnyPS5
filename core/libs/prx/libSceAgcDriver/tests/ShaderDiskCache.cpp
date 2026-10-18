@@ -1564,6 +1564,25 @@ std::vector<PlanFixture> planFixtures() {
     nestedCode.insert(nestedCode.begin() + 15u, 0x87148114u);
     add("nested pointer image table", 64u, std::move(nestedCode), srtPointer, {{PlanSrtAddress, nestedSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, nestedBuffers}, {PlanPayloadAddress, nestedImages}, {PlanMaterialAddress, {0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u}}});
     fixtures.back().groupId = true;
+    std::vector<std::uint32_t> samplerSrt(20u, 0u);
+    std::copy(nestedSrt.begin(), nestedSrt.end(), samplerSrt.begin());
+    place(samplerSrt, 12u, imageWords(PlanTextureAddress));
+    const std::vector<std::uint32_t> pointClamp{0x92u, 0x400000u, 0u, 0u};
+    const std::vector<std::uint32_t> pointWrap{0u, 0x400000u, 1u << 24u, 0u};
+    std::vector<std::uint32_t> nestedSamplers(32u, 0u);
+    place(nestedSamplers, 0u, pointWrap);
+    place(nestedSamplers, 4u, pointClamp);
+    place(nestedSamplers, 16u, pointClamp);
+    place(nestedSamplers, 20u, pointWrap);
+    std::vector<std::uint32_t> samplerCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf40c0900u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148414u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf428080cu, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,};
+    samplerCode.insert(samplerCode.begin() + 13u, 0x87118311u);
+    samplerCode.insert(samplerCode.begin() + 15u, 0x87148114u);
+    add("nested pointer sampler table", 64u, std::move(samplerCode), srtPointer, {{PlanSrtAddress, samplerSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, nestedBuffers}, {PlanPayloadAddress, nestedSamplers}, {PlanMaterialAddress, {0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u}}});
+    fixtures.back().groupId = true;
 
     PlanFixture fragment;
     fragment.name = "fragment parameters";

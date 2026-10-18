@@ -640,7 +640,7 @@ private:
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
         if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
-            if (sampler || address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
+            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
             const auto sameHandle = [&](const IrValue* user) {
                 if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
                 for (std::uint32_t argument = 0; argument < handle.ArgumentCount(); argument++) {
