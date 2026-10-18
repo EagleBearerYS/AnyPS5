@@ -314,8 +314,8 @@ void VouchUnderQueuedDraws(const GuestBlock& block) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     };
-    vouch("an idle pipeline", true);
     setenv("APS5_PROBE6454", "1", 1);
+    vouch("an idle pipeline", true);
     elsewhere.Enqueue(block.At(OutputOffset), block.At(OutputOffset) + 4096u);
     vouch("a queued draw writing outside the table", true);
     unsetenv("APS5_PROBE6454");
