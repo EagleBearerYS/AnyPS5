@@ -1,0 +1,4 @@
+BASE=c4c2b3aa7371ee988c94ca62f1431ebaaf0688c8
+REPEAT=3
+EXTRA_TESTS='agc_driver_lazy_resolved_abi|^agc_driver_prepared_shaders'
+NO_BEFORE=1
