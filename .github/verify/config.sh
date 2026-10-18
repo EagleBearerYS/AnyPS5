@@ -1,0 +1,4 @@
+BASE=f1af6c591588b257437f51e5ac1740fb788b231d
+REPEAT=3
+EXTRA_TESTS='agc_shader_bindless|^agc'
+NO_BEFORE=1
