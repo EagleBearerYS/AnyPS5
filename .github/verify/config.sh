@@ -1,0 +1,4 @@
+BASE=6e27fc8f07062f43caa5ad5682253337d27fec4e
+REPEAT=1
+EXTRA_TESTS='^agc|^guest_arena'
+NO_BEFORE=1
