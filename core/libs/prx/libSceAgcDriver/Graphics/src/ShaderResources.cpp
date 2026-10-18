@@ -607,15 +607,12 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         return depth;
     }
     const auto depthBitsWidth = words.size() >= 4 ? ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) : 0u;
-    if (depthBitsWidth == 32u) {
-        char text[160];
-        std::snprintf(text, sizeof(text), "AGC graphics: 32-bit integer read of the depth-layout texture 0x%llx, which is no depth surface drawn with, is not implemented", static_cast<unsigned long long>(resource.baseAddress));
-        throw std::runtime_error(text);
-    }
     constexpr auto unorm16 = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format16UNorm);
-    if (depthBitsWidth == 16u && resource.format != unorm16) {
+    constexpr auto float32 = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32Float);
+    const auto depthBitsFormat = depthBitsWidth == 32u ? float32 : unorm16;
+    if (depthBitsWidth != 0u && resource.format != depthBitsFormat) {
         auto normalized = resource;
-        normalized.format = unorm16;
+        normalized.format = depthBitsFormat;
         return cachedTexture(context, words, normalized, components, guestBytes, depthCompare);
     }
     static const bool disabled = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
