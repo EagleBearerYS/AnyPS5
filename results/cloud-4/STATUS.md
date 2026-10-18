@@ -1,5 +1,5 @@
-READY
-since: 2026-10-18T20:35:01Z (PM-082 done)
+IDLE
+since: 2026-10-18T22:49:04Z (the hourly check-in is turned off at the user's request and the board watcher is stopped; cloud-4 is not picking up tasks)
 last: PM-082 done, results/cloud-4/PM-082.md (LA-014's corrected head 9ce77bae4 pushed as fork exp/lane-a-v4-on-pr, no force; exp/lane-a-v4 left at 046eb3231); before it LA-014, BF-090, BF-085, BF-082, BF-075, PRM-044, PRM-043 (withdrawn), BF-061, BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
