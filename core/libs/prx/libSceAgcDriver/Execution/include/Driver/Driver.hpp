@@ -78,6 +78,8 @@ public:
         std::size_t entries = 0;
         std::uint64_t bytes = 0;
         std::uint64_t budget = 0;
+        std::uint64_t dropped = 0;
+        std::uint64_t refused = 0;
     };
     CpuIndirectFootprint CpuIndirectCacheSize();
     static std::uint64_t DispatchCacheBytes();
@@ -381,7 +383,7 @@ private:
     DrawRelocationCounters drawRelocationCounters;
     std::mutex drawCacheMutex;
     std::uint64_t drawCacheHits = 0, drawCacheEvictions = 0, drawCacheVariants = 0, drawCacheVariantBytes = 0;
-    std::uint64_t drawLookupSerial = 0, cpuIndirectBytes = 0, cpuIndirectSweptAt = 0;
+    std::uint64_t drawLookupSerial = 0, cpuIndirectBytes = 0, cpuIndirectSweptAt = 0, cpuIndirectDropped = 0, cpuIndirectRefusedTotal = 0;
     std::size_t cpuIndirectEntries = 0;
     std::unordered_map<const void*, std::pair<std::uint32_t, std::uint64_t>> cpuIndirectPins;
     std::optional<DrawKeySightings> drawKeySightings;
