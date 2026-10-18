@@ -1,0 +1,3 @@
+BASE=218aa8f00babfef620953f7664e2ed0efc6a14ee
+REPEAT=3
+EXTRA_TESTS='agc_driver_present_lock_wait'
