@@ -1,5 +1,6 @@
-READY
-since: 2026-10-18T12:36:10Z (BF-090 done)
+BUSY LA-014
+since: 2026-10-18T18:06:07Z (claimed)
+claimed: tasks/claimed/LA-014.md
 last: BF-090 done, results/cloud-4/BF-090.md (#7395 aed137caee: a selected leaf column can never get a parentPointer; 211 plans across 716 ^agc tests, none with both; no test, nothing pushed); before it BF-085, BF-082, BF-075, PRM-044, PRM-043 (withdrawn), BF-061, BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
