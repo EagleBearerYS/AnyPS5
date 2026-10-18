@@ -1,5 +1,6 @@
-READY
-since: 2026-10-18T05:43:15Z (BF-085 done)
+BUSY BF-090
+since: 2026-10-18T12:17:23Z (claimed)
+claimed: tasks/claimed/BF-090.md
 last: BF-085 done, results/cloud-4/BF-085.md (main bb2624a53 under VK_LAYER_KHRONOS_validation 1.3.275: 708 ^agc tests and 54 probe runs, 0 teardown messages; probe exp/agc-shutdown-mid-frame-probe 81fd94407; no fix branch); before it BF-082, BF-075, PRM-044, PRM-043 (withdrawn), BF-061, BF-060, BF-058, BF-057, LA-009, LA-007, BF-055, PM-074, PM-073, PM-072, PM-071, PM-070, PM-069, BF-052, LA-003
 baseline: upstream main 2bfe0045d ctest 1332/1337 passed in 387 s (5 IPv6 failures, guest_sce_net skip)
 setup report:
