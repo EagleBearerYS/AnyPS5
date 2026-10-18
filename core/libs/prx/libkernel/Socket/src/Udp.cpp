@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <unistd.h>
 #include <cerrno>
@@ -740,6 +741,20 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     return 0;
 }
 
+namespace {
+std::int64_t ListenQueueLength(NativeSocket socket) {
+#ifdef __linux__
+    tcp_info info{};
+    socklen_t length = sizeof(info);
+    if (getsockopt(socket, IPPROTO_TCP, TCP_INFO, &info, &length) == 0 && length >= offsetof(tcp_info, tcpi_unacked) + sizeof(info.tcpi_unacked))
+        return info.tcpi_unacked;
+#else
+    (void)socket;
+#endif
+    return 1;
+}
+}
+
 bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* eof) {
     std::shared_ptr<Socket> socket;
     {
@@ -766,6 +781,8 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
         int queued = 0;
         if (*data > 0 && ::ioctl(socket->value, SIOCOUTQ, &queued) == 0) *data = std::max<std::int64_t>(0, *data - queued);
 #endif
+    } else if (Listening(*socket)) {
+        *data = ListenQueueLength(socket->value);
     } else {
 #ifdef _WIN32
         unsigned long available = 0;
@@ -840,6 +857,15 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
         if (revents != 0) ++ready;
     }
     return ready;
+}
+
+extern "C" bool KernelLookupSocketNative_nid_no_patch(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native) {
+    if (auto socket = Find(descriptor)) {
+        *native = static_cast<std::uintptr_t>(socket->value);
+        *owner = std::move(socket);
+        return true;
+    }
+    return KernelFindSocketNative_nid_no_patch(descriptor, owner, native);
 }
 
 extern "C" {
@@ -917,6 +943,20 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
     socket->options.nonblocking = enabled != 0;
     return 0;
 }
+int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, command);
+    const auto argument = __builtin_va_arg(arguments, std::uint64_t);
+    __builtin_sysv_va_end(arguments);
+#else
+    std::va_list arguments;
+    va_start(arguments, command);
+    const auto argument = va_arg(arguments, std::uint64_t);
+    va_end(arguments);
+#endif
+    return fcntl_nid_postfix(descriptor, command, argument);
+}
 int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                                     const void* value, std::uint32_t length) {
     int netError = 0;
@@ -976,6 +1016,10 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     } catch (const std::bad_alloc&) {
         return Fail(12);
     }
+}
+int APS5_VABI __sys_socketex_nid_postfix(const char* name, int family, int type, int protocol) {
+    static_cast<void>(name);
+    return socket_nid_postfix(family, type, protocol);
 }
 int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* descriptors) {
     const bool nonblocking = (type & GuestNonBlocking) != 0;
