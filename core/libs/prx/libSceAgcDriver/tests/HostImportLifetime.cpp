@@ -83,6 +83,7 @@ Tracking* tracking = nullptr;
 VKAPI_ATTR void VKAPI_CALL destroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks* allocator) {
     const auto original = reinterpret_cast<PFN_vkDestroyBuffer>(tracking->resolve(device, "vkDestroyBuffer"));
     original(device, buffer, allocator);
+    std::fprintf(stderr, "PROBE destroy buffer %p\n", reinterpret_cast<void*>(buffer));
     std::lock_guard lock(tracking->mutex);
     for (const auto& [memory, state] : tracking->imports) {
         if (state->buffer == buffer && !state->freed.load()) state->destroyed.store(true);
@@ -97,6 +98,7 @@ VKAPI_ATTR void VKAPI_CALL freeMemory(VkDevice device, VkDeviceMemory memory, co
         if (found != tracking->imports.end()) state = found->second;
     }
     if (state != nullptr) {
+        std::fprintf(stderr, "PROBE free memory %p tracked buffer %p destroyed=%d\n", reinterpret_cast<void*>(memory), reinterpret_cast<void*>(state->buffer), state->destroyed.load() ? 1 : 0);
         if (!state->destroyed.load()) state->outOfOrder.store(true);
         if (!RegisteredReadableCovers(state->address, state->bytes) || !AgcDriver::GuestMemory::Accessible(reinterpret_cast<const void*>(state->address), state->bytes, false)) state->inaccessible.store(true);
         std::unique_lock lock(state->mutex);
@@ -138,7 +140,10 @@ VKAPI_ATTR VkResult VKAPI_CALL allocateMemory(VkDevice device, const VkMemoryAll
 VKAPI_ATTR VkResult VKAPI_CALL bindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize offset) {
     {
         std::lock_guard lock(tracking->mutex);
-        if (const auto found = tracking->imports.find(memory); found != tracking->imports.end()) found->second->buffer = buffer;
+        if (const auto found = tracking->imports.find(memory); found != tracking->imports.end()) {
+            std::fprintf(stderr, "PROBE bind buffer %p to import memory %p (was %p)\n", reinterpret_cast<void*>(buffer), reinterpret_cast<void*>(memory), reinterpret_cast<void*>(found->second->buffer));
+            found->second->buffer = buffer;
+        }
     }
     const auto original = reinterpret_cast<PFN_vkBindBufferMemory>(tracking->resolve(device, "vkBindBufferMemory"));
     return original(device, buffer, memory, offset);
