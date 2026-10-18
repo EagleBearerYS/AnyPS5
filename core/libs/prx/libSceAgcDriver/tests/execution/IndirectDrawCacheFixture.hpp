@@ -75,6 +75,8 @@ struct IndirectPacket {
     std::uint32_t startInstanceLocation = 0;
     std::uint32_t records = 1;
     std::uint32_t userWordCount = 2;
+    std::uint32_t baseVertexLocation = BaseVertexLocation;
+    float viewportScale = 32.0f;
 };
 
 inline const IndirectPacket PushedOne{PushedVertexCode.data(), {Clipped, Clipped}, StartInstanceLocation, 1};
@@ -100,7 +102,7 @@ inline std::vector<std::uint32_t> Commands(const IndirectPacket& draw) {
         {0x81, 0x80000000}, {0x82, 0x40040},
         {0x90, 0x80000000}, {0x91, 0x40040},
         {0x94, 0x80000000}, {0x95, 0x40040},
-        {0x10f, std::bit_cast<std::uint32_t>(32.0f)}, {0x110, std::bit_cast<std::uint32_t>(32.0f)},
+        {0x10f, std::bit_cast<std::uint32_t>(draw.viewportScale)}, {0x110, std::bit_cast<std::uint32_t>(draw.viewportScale)},
         {0x111, std::bit_cast<std::uint32_t>(-2.0f)}, {0x112, std::bit_cast<std::uint32_t>(2.0f)},
         {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0},
         {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
@@ -116,8 +118,8 @@ inline std::vector<std::uint32_t> Commands(const IndirectPacket& draw) {
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
     Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
-    if (draw.records == 1) Append(commands, 0x24, {0, BaseVertexLocation, draw.startInstanceLocation, 2});
-    else Append(commands, 0x2c, {0, BaseVertexLocation, draw.startInstanceLocation, 0, draw.records, 0, 0, 16, 2});
+    if (draw.records == 1) Append(commands, 0x24, {0, draw.baseVertexLocation, draw.startInstanceLocation, 2});
+    else Append(commands, 0x2c, {0, draw.baseVertexLocation, draw.startInstanceLocation, 0, draw.records, 0, 0, 16, 2});
     return commands;
 }
 
