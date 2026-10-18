@@ -1,0 +1,4 @@
+BASE=195d0d08a8971faf15285d3b5b7dd659fce1ee22
+REPEAT=3
+EXTRA_TESTS='agc_driver_sample_order|agc_driver_sample_location_grid_fallback|agc_driver_graphics|request_serializer|^agc'
+NO_BEFORE=1
