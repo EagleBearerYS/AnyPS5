@@ -71,6 +71,7 @@ void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);
+void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
 std::uint64_t HostImportLiveBytes();
 struct HostImportSettleCounts {
