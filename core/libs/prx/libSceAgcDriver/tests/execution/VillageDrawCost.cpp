@@ -567,6 +567,10 @@ int main(int argc, char** argv) {
         for (std::uint32_t samples = 1; samples <= MaxSamples; ++samples) Register(PixelHeaders[samples - 1], PixelPrograms()[samples - 1].code.data(), sizeof(PixelProgram::code), 1);
         Check(layout);
         if (argc > 2 && std::string(argv[1]) == "--cost") Cost(layout, static_cast<std::uint32_t>(std::stoul(argv[2])));
+        if (std::getenv("VILLAGE_EXIT_HELD") != nullptr) {
+            std::fflush(nullptr);
+            std::_Exit(0);
+        }
         AgcDriverShutdown_nid_postfix();
         std::puts("village draw cost: full-target draws sampled 1 to 4 textures through the T# table");
         return 0;
