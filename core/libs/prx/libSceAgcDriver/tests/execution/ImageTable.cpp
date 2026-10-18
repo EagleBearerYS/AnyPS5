@@ -333,6 +333,44 @@ alignas(256) constexpr std::array<std::uint32_t, 66> PointerCopiesCode{
     0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 74> PointerLaneAndCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0xf4040300u, 0xfa000040u, 0x8f108502u, 0xf42c0404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u,
+    0x02061411u, 0xbeae047eu, 0x7e300503u, 0xd4c20030u, 0x00020618u, 0xbeb22430u, 0x8f198418u, 0xf4240b02u,
+    0x32000008u, 0xd4c10034u, 0x00002900u, 0xd4c40036u, 0x00020014u, 0xbf8cc07fu, 0xbf068112u, 0xbf840003u,
+    0xbeac03ffu, 0x000000eau, 0xbf820010u, 0xbf068212u, 0xbf840006u, 0xbebc0334u, 0xbf068115u, 0xbf840001u,
+    0xbebc0336u, 0x872c343cu, 0xbf820007u, 0xbf068312u, 0xbf840004u, 0xbf068215u, 0xbf840001u, 0xbeac03a0u,
+    0x872c342cu, 0xbf800000u, 0xbf800000u, 0xf40c0916u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u,
+    0x8afe3032u, 0xbf89ffd8u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u,
+    0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 71> PointerHighCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0xf4040300u, 0xfa000040u, 0x8f108502u, 0xf42c0404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u,
+    0x02061411u, 0xbeae047eu, 0x7e300503u, 0xd4c20030u, 0x00020618u, 0xbeb22430u, 0x8f198418u, 0xf4240b02u,
+    0x32000008u, 0xd4c10034u, 0x00002900u, 0xd4c40036u, 0x00020014u, 0xbf8cc07fu, 0xbf068112u, 0xbf840002u,
+    0xbeac03ffu, 0x000000eau, 0xbf068113u, 0xbf840003u, 0xbead03ffu, 0x00001234u, 0xbf820009u, 0xbf068213u,
+    0xbf840006u, 0x3a160615u, 0x7e34050bu, 0x8f1b841au, 0xf4200b42u, 0x3600000cu, 0xbf8cc07fu, 0xbf800000u,
+    0xf40c0916u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffdbu, 0xbefe042eu,
+    0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 80> PointerHighSecondCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0xf4040300u, 0xfa000040u, 0x8f108502u, 0xf42c0404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u,
+    0x02061411u, 0xbeae047eu, 0x7e300503u, 0xd4c20030u, 0x00020618u, 0xbeb22430u, 0x8f198418u, 0xf4240b02u,
+    0x32000008u, 0xd4c10034u, 0x00002900u, 0xd4c40036u, 0x00020014u, 0xbf8cc07fu, 0xbf068112u, 0xbf840002u,
+    0xbeac03ffu, 0x000000eau, 0xbf068113u, 0xbf840003u, 0xbead03ffu, 0x00001234u, 0xbf820012u, 0xbf068313u,
+    0xbf840007u, 0xf4080e06u, 0xfa000000u, 0xbf8cc07fu, 0xf4200b5cu, 0xfa000000u, 0xbf8cc07fu, 0xbf820009u,
+    0xbf068213u, 0xbf840006u, 0x3a160615u, 0x7e34050bu, 0x8f1b841au, 0xf4200b42u, 0x3600000cu, 0xbf8cc07fu,
+    0xbf800000u, 0xf40c0916u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffd2u,
+    0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
@@ -1852,6 +1890,107 @@ void RunPointerArmTests(AgcDriver::VulkanDevice& device, bool copies) {
     std::puts("pointer table with a second record read: a T# through a record pointer whose low word passes a second read keyed by another lane checked, by the pointer's value");
 }
 
+enum class PointerMask { LaneAnd, High, HighSecond };
+
+void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+    alignas(256) std::array<std::uint32_t, 16> second{};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    for (std::uint32_t record = 0; record < 2u; ++record) std::copy(images[record].begin(), images[record].end(), records[record].begin() + 16u);
+    for (std::uint32_t record = 0; record < 3u; ++record) {
+        const auto pointer = reinterpret_cast<std::uintptr_t>(records[record % 2u].data());
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    }
+    const auto secondBuffer = Buffer(second.data() + 8u, 32u);
+    std::copy(secondBuffer.begin(), secondBuffer.end(), second.begin());
+    const std::span<const std::uint32_t> code = shape == PointerMask::LaneAnd ? std::span<const std::uint32_t>(PointerLaneAndCode) : shape == PointerMask::High ? std::span<const std::uint32_t>(PointerHighCode) : std::span<const std::uint32_t>(PointerHighSecondCode);
+    const std::string name = shape == PointerMask::LaneAnd ? "pointer table with lane-mask ANDs" : shape == PointerMask::High ? "pointer table with a high-word Phi" : "pointer table with a high word from a second buffer";
+    const auto run = [&] {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        const auto secondAddress = reinterpret_cast<std::uintptr_t>(second.data());
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
+        Srt[16] = static_cast<std::uint32_t>(secondAddress);
+        Srt[17] = static_cast<std::uint32_t>(secondAddress >> 32u);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+            {secondAddress, std::as_bytes(std::span(second))},
+        };
+        const auto inputTable = Table;
+        const auto inputRecords = records;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u);
+        Require(Table == inputTable && records == inputRecords, name + ": dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        return result;
+    };
+    const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 8u] = keys[group][0];
+        Keys[group * 8u + 1u] = keys[group][1];
+    }
+    if (shape == PointerMask::HighSecond) {
+        try {
+            static_cast<void>(run());
+        } catch (const std::exception& error) {
+            Require(std::string(error.what()).find("GetImageResource dword 0 is not a valid runtime value") != std::string::npos, name + ": refused for another reason: " + error.what());
+            std::puts("pointer table with a high word from a second buffer: a high-word arm read from a buffer whose V# is loaded through a pointer stays refused");
+            return;
+        }
+        Require(false, name + ": a high-word arm read from a buffer whose V# is loaded through a pointer was planned");
+    }
+    const auto sampled = [&keys](std::uint32_t group) {
+        return std::function<std::uint32_t(std::uint32_t)>([&keys, group](std::uint32_t x) {
+            const auto key = keys[group][x < 32u ? 0u : 1u];
+            return std::bit_cast<std::uint32_t>(key % 2u != 0u ? OtherFloatTexels[x] : FloatTexels[x]);
+        });
+    };
+    const auto untouched = [](const Outcome& outcome) { return std::all_of(outcome.words.begin(), outcome.words.end(), [](auto word) { return word == 0xdeadbeefu; }); };
+    const auto taken = run();
+    Require(!Faulted(taken), name + ": the record's pointer faulted:\n" + taken.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(taken, group, Lanes, sampled(group), name + ": the T# read through the record's pointer in a waterfall loop");
+    const auto outside = [&](std::uint32_t selector, std::uint32_t arm, std::uint32_t variant, const std::string& what) {
+        Keys[selector] = arm;
+        Keys[5] = variant;
+        const auto faulted = run();
+        Keys[selector] = 0u;
+        Keys[5] = 0u;
+        Require(Faulted(faulted) && faulted.log.find("outside the snapshot") != std::string::npos, name + ": " + what + " did not fault as outside the snapshot:\n" + faulted.log);
+        Require(untouched(faulted), name + ": " + what + " published copied output");
+        Require(faulted.artifactId == taken.artifactId, name + ": " + what + " recompiled the shader");
+    };
+    outside(2u, 1u, 0u, "a constant low word");
+    if (shape == PointerMask::LaneAnd) {
+        outside(2u, 2u, 0u, "a lane-mask Phi ANDed with a lane mask");
+        outside(2u, 2u, 1u, "the other lane-mask word ANDed with a lane mask");
+        outside(2u, 3u, 0u, "a record word ANDed with a lane mask");
+        std::puts("pointer table with lane-mask ANDs: a T# through a record pointer whose low word passes Phis of lane-mask ANDs checked, and every masked word faults outside the snapshot");
+        return;
+    }
+    outside(3u, 1u, 0u, "a constant high word");
+    Keys[3] = 2u;
+    const auto again = run();
+    Keys[5] = 3u;
+    const auto flipped = run();
+    Keys[3] = 0u;
+    Keys[5] = 0u;
+    Require(!Faulted(again) && again.words == taken.words && again.artifactId == taken.artifactId, name + ": a second read of the same record's high word changed the result:\n" + again.log);
+    Require(!Faulted(flipped) && flipped.words == taken.words && flipped.artifactId == taken.artifactId, name + ": the high word of the neighbouring record changed the result:\n" + flipped.log);
+    std::puts("pointer table with a high-word Phi: a T# through a record pointer whose high word passes a Phi of reads under other keys and a constant checked, by the pointer's value");
+}
+
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -2091,6 +2230,18 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-copies") == 0) {
             RunPointerArmTests(*device, true);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-lane-and") == 0) {
+            RunPointerMaskTests(*device, PointerMask::LaneAnd);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-high") == 0) {
+            RunPointerMaskTests(*device, PointerMask::High);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-high-second") == 0) {
+            RunPointerMaskTests(*device, PointerMask::HighSecond);
             return 0;
         }
         RunTests(*device);
