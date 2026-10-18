@@ -8763,7 +8763,7 @@ int main(int argc, char** argv) {
         }
         std::unique_ptr<Device> created;
         try {
-            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only"));
+            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only"));
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
@@ -8785,6 +8785,13 @@ int main(int argc, char** argv) {
             return 0;
         }
 #ifdef _WIN32
+        if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-other-family-only") {
+            if (device.GetContext().settleFamily == device.GetContext().queueFamily) {
+                std::cout << "skipped, no other queue family to settle imports on\n";
+                return 77;
+            }
+            return RunHostImportLifetimeTests(device.GetContext());
+        }
         if (argc == 2 && (std::string_view(argv[1]) == "--deferred-settle-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only")) {
             if (std::string_view(argv[1]) == "--deferred-settle-other-family-only" && device.GetContext().settleFamily == device.GetContext().queueFamily) {
                 std::cout << "skipped, no other queue family to settle imports on\n";

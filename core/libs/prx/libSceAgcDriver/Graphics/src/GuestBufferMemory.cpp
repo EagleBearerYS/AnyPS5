@@ -386,6 +386,8 @@ bool releaseSettleRetired(HostImports& state, std::uint64_t begin, std::uint64_t
                     ++state.settleUnmapWaits;
                     waitSettleBatch(settle, device, batch);
                 }
+                for (const auto alias : batch.aliases) settle.settleDestroyBuffer(device, alias, nullptr);
+                batch.aliases.clear();
                 for (auto& holder : batch.retired) released.push_back(std::move(holder));
                 batch.retired.clear();
             }
