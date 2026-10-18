@@ -6,7 +6,7 @@
 #include <string>
 
 #include "prx/libSceNpTrophy2/include/NpTrophy2.hpp"
-#include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace NpTrophy2 {
