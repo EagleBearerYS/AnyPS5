@@ -1,0 +1,4 @@
+BASE=80d9b3085f5f19914a649c50b07a2c086d7da817
+REPEAT=10
+EXTRA_TESTS='agc_driver_indirect_draw_cache_hit|agc_driver_indirect_draw_cache_guards|agc_driver_indirect_draw_cache_budget|agc_driver_indirect_draw_cache_aliases|agc_driver_draw_cache_aliases'
+BEFORE_REPEAT=3
