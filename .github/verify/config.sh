@@ -1,0 +1,4 @@
+BASE=78b0e2f2818ba2fb302cd9573e352c99270ae439
+REPEAT=3
+EXTRA_TESTS='agc_driver_multisample_retirement'
+BEFORE_REPEAT=3
