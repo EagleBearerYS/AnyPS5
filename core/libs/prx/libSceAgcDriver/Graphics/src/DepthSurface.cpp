@@ -71,6 +71,10 @@ std::atomic<bool>& anyDepthGuard() {
 struct DepthSamplingState {
     std::array<GuestMemory::UnchangedQuery, 2> initial{};
     std::string refusal;
+
+    void Refuse(const char* reason) {
+        if (refusal.empty()) refusal = reason;
+    }
 };
 
 bool htileProvesClear(std::uint32_t word, bool depthOnly, float clearDepth) {
@@ -1128,14 +1132,14 @@ PlaneOwners& stencilOwners() {
     return *owners;
 }
 
-void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address, VkImageAspectFlagBits aspect) {
+void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address, VkImageAspectFlagBits aspect, bool created, VkImageAspectFlags clearAspects) {
     auto& entry = owners[{surface.context.device, address}];
     auto* owner = entry.surface;
-    if (owner != nullptr && owner->active->load(std::memory_order_acquire) && owner != &surface && owner->target.format == surface.target.format && owner->target.samples == surface.target.samples && owner->target.extent.width == surface.target.extent.width && owner->target.extent.height == surface.target.extent.height) {
+    if (owner != nullptr && owner->active->load(std::memory_order_acquire) && owner != &surface && owner->target.format == surface.target.format && owner->target.samples == surface.target.samples && owner->target.extent.width == surface.target.extent.width && owner->target.extent.height == surface.target.extent.height && (!created || (clearAspects & aspect) == 0)) {
         if ((owner->pendingClear & aspect) != 0) {
-            surface.pendingClear |= aspect;
             if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) surface.depthFill = owner->depthFill;
             else surface.stencilFill = owner->stencilFill;
+            if (!created || (aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? surface.depthFill.has_value() : surface.stencilFill.has_value())) surface.pendingClear |= aspect;
         } else {
             surface.CopyAspectFrom(*owner, aspect);
         }
@@ -1143,9 +1147,9 @@ void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address
     entry = {&surface, ++planeBinds};
 }
 
-void takePlanes(DepthSurface& surface) {
-    takePlane(surface, depthOwners(), surface.target.address, VK_IMAGE_ASPECT_DEPTH_BIT);
-    if (surface.target.stencilAddress != 0) takePlane(surface, stencilOwners(), surface.target.stencilAddress, VK_IMAGE_ASPECT_STENCIL_BIT);
+void takePlanes(DepthSurface& surface, bool created, VkImageAspectFlags clearAspects) {
+    takePlane(surface, depthOwners(), surface.target.address, VK_IMAGE_ASPECT_DEPTH_BIT, created, clearAspects);
+    if (surface.target.stencilAddress != 0) takePlane(surface, stencilOwners(), surface.target.stencilAddress, VK_IMAGE_ASPECT_STENCIL_BIT, created, clearAspects);
 }
 
 DepthSurface* depthSlice(VkDevice device, std::uint64_t address, const DepthTarget& base) {
@@ -1241,8 +1245,7 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
     }
     std::vector<std::uint32_t> words(bytes / 4u);
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(words)), 4);
-    const bool uniform = std::all_of(words.begin(), words.end(), [&](std::uint32_t word) { return word == words.front(); });
-    VkImageAspectFlags cleared = target.firstSlice == 0 || uniform ? VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u) : 0u;
+    VkImageAspectFlags cleared = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
     for (const auto word : words) cleared &= HtileFillClears(word, target.htileStencil);
     auto generation = collected;
     if (cleared != 0) {
@@ -1404,13 +1407,13 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
     const bool inherits = owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && !owner->second.surface->retired;
     surface->clearDepth = target.clearDepth;
     surface->clearStencil = target.clearStencil;
-    takePlanes(*surface);
+    takePlanes(*surface, created, htileCleared | (cleared ? VK_IMAGE_ASPECT_DEPTH_BIT : 0u));
     if (created && !inherits && target.htileAddress == 0) surface->TakeStorage();
     if (cleared && (!created || inherits)) {
-        if (target.samples != 1u) surface->sampling.refusal = "native multisample depth fast-clear transition is not implemented";
-        surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
+        if (target.samples != 1u) surface->sampling.Refuse("native multisample depth fast-clear transition is not implemented");
+        if (!created) surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
     }
-    surface->NoteHtileClear(htileCleared);
+    if (!created) surface->NoteHtileClear(htileCleared);
     surface->ApplyFastClear();
     if (!created || inherits) surface->written = ++depthWrites;
     surface->NoteMemory();
@@ -1526,14 +1529,14 @@ void NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::siz
         if (!surface->active->load(std::memory_order_acquire)) continue;
         if (surface->samplingActive && surface->target.htileAddress == htileAddress) {
             const auto& metadata = surface->sampling.initial[1];
-            if (nativeBytes != bytes || nativeBytes < metadata.bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(metadata.address), metadata.bytes) || !GuestMemory::Watched(metadata.address, metadata.bytes)) surface->sampling.refusal = "native multisample depth incomplete or unproven fast-clear transition is not implemented";
-            else if (surface->clearGeneration != 0u) surface->sampling.refusal = "overlapping native multisample depth clear transitions are not implemented";
+            if (nativeBytes != bytes || nativeBytes < metadata.bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(metadata.address), metadata.bytes) || !GuestMemory::Watched(metadata.address, metadata.bytes)) surface->sampling.Refuse("native multisample depth incomplete or unproven fast-clear transition is not implemented");
+            else if (surface->clearGeneration != 0u) surface->sampling.Refuse("overlapping native multisample depth clear transitions are not implemented");
             else surface->clearGeneration = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
             existing = true;
             continue;
         }
         if (!HtileFillCovers(surface->target.htileAddress, surface->target.extent, htileAddress, bytes)) continue;
-        if (surface->target.samples != 1u) surface->sampling.refusal = "native multisample depth fast-clear transition is not implemented";
+        if (surface->target.samples != 1u) surface->sampling.Refuse("native multisample depth fast-clear transition is not implemented");
         surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
         existing = true;
     }
@@ -1688,7 +1691,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire)) continue;
         const auto& target = surface->target;
-        if (target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes) surface->sampling.refusal = "native multisample depth metadata fill transition is not implemented";
+        if (target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes) surface->sampling.Refuse("native multisample depth metadata fill transition is not implemented");
         if (HtileFillCovers(target.htileAddress, target.extent, address, bytes)) {
             const VkImageAspectFlags written = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
             surface->ForgetClear(written);

@@ -878,7 +878,7 @@ bool Texture::RefreshDepthCopy() {
     VkCommandBuffer commands = VK_NULL_HANDLE;
     if (recorder != nullptr) {
         commands = recorder->Commands();
-        recorder->Keep(linear);
+        recorder->Keep(linear, linear->Size());
         recorder->Keep(owned);
         recorder->Keep(storageSource);
     } else {
@@ -1003,7 +1003,9 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         Require(source != nullptr && CanCopyFrom(*source, descriptor), "storage image does not match the sampled texture");
         const auto vkFormat = SampledTextureFormat(context, descriptor.format);
         const auto geometry = DescribeSurface(descriptor);
+#ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "Texture address=0x%llx %ux%u mips=%u viewed from storage image (vk=%d)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, static_cast<int>(vkFormat));
+#endif
         // Storage images stay in the general layout; the view samples them there.
         layout = VK_IMAGE_LAYOUT_GENERAL;
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
@@ -1353,8 +1355,10 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         Require(mipLevel < descriptor.mipCount, "storage texture mip level is outside the texture");
         const auto vkFormat = StorageFormatFor(context, ResolveTextureFormat(descriptor.format));
         storageFormat = vkFormat;
+#ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "StorageTexture address=0x%llx %ux%u mips=%u mip=%u layers=%u base=%u dim=%d tile=%d format=%u vk=%d", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, mipLevel,
                      descriptor.depthOrLastArray, descriptor.baseArray, static_cast<int>(descriptor.dimension), static_cast<int>(descriptor.tileMode), descriptor.format, static_cast<int>(vkFormat));
+#endif
         geometry = DescribeSurface(descriptor);
         mips = geometry.mips;
         arrayLayers = geometry.layers;
@@ -3532,6 +3536,20 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         for (const auto& texture : flush) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && recorder->PendingWriterSerial(address, bytes) != 0) {
+        try {
+            recorder->Reap();
+            if (const auto writer = recorder->PendingWriterSerial(address, bytes); writer == recorder->OpenSerial()) {
+                Recorder::CountSync(recorder->OpenWriteOverlaps(address, bytes) ? 1 : 3);
+                recorder->Sync();
+            } else if (writer != 0) {
+                recorder->FinishUpTo(writer);
+            }
+        } catch (...) {
+            for (const auto& texture : flush) texture->reconcilePending();
+            throw;
+        }
+    }
     std::exception_ptr failure;
     const auto previousReason = std::exchange(flushReason, reason);
     for (const auto& texture : flush) {
@@ -5124,7 +5142,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             overhang = covered >= end;
         }
     }
-    if (unregisteredDrop && !overhang && !RegisteredReadableCovers(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
+    const bool registered = std::all_of(keep.begin(), keep.end(), [](const auto& range) { return RegisteredReadableCovers(range.first, static_cast<std::size_t>(range.second - range.first)); });
+    if (unregisteredDrop && !overhang && !registered) {
         static std::atomic<int> reports{0};
         if (reports.fetch_add(1) < 4) std::fprintf(stderr, "[gpu] storage image 0x%llx+0x%llx: memory no longer registered; %zu pending ranges dropped\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), keep.size());
         unregisteredDropped.fetch_add(1, std::memory_order_relaxed);
@@ -5142,7 +5161,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
     std::vector<bool> unsaved = layerOriginal;
     unsaved.flip();
-    for (const auto& [begin, end] : unitRuns(unsaved)) GuestMemory::ReadCommitted(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
+    for (const auto& [begin, end] : unitRuns(unsaved)) {
+        for (const auto& [from, to] : keep) {
+            const auto first = std::max(descriptor.baseAddress + begin, from);
+            const auto last = std::min(descriptor.baseAddress + end, to);
+            if (first < last) GuestMemory::ReadCommitted(first, std::span(original).subspan(static_cast<std::size_t>(first - descriptor.baseAddress), static_cast<std::size_t>(last - first)));
+        }
+    }
     DeviceBuffer linear(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     Buffer host(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
