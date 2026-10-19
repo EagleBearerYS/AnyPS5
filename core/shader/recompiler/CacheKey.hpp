@@ -4,6 +4,11 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <algorithm>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <span>
 #include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
@@ -265,13 +270,30 @@ private:
         append(key, value.maxEvaluationOutputComponents);
     }
 
+    static void appendExtensions(std::vector<std::uint64_t>& key, std::span<const std::string_view> names) {
+        struct ExtensionKey {
+            std::vector<std::string> names;
+            std::vector<std::uint64_t> words;
+            bool valid = false;
+        };
+        struct ExtensionKeyStorage {};
+        auto& memo = HostThreadLocal<ExtensionKey, ExtensionKeyStorage>();
+        if (!memo.valid || !std::ranges::equal(memo.names, names, [](const std::string& kept, std::string_view name) { return std::string_view(kept) == name; })) {
+            memo.names.assign(names.begin(), names.end());
+            memo.words.clear();
+            append(memo.words, names);
+            memo.valid = true;
+        }
+        key.insert(key.end(), memo.words.begin(), memo.words.end());
+    }
+
     static void append(std::vector<std::uint64_t>& key, const SpirvTarget& value) {
         append(key, value.vulkanVersion);
         append(key, value.spirvVersion);
         append(key, value.subgroupSize);
         append(key, value.bdaAbiVersion);
         append(key, value.supportedCapabilities);
-        append(key, value.supportedExtensions);
+        appendExtensions(key, value.supportedExtensions);
         append(key, value.fragmentShaderBarycentricEnabled);
         append(key, value.maxWorkgroupSize);
         append(key, value.maxWorkgroupInvocations);
@@ -292,6 +314,8 @@ private:
         append(key, value.float32FlushToZero);
         append(key, value.waveLdsMemoryBarriers);
         append(key, value.float32DenormPreserve);
+        append(key, value.gpuResolvedImages);
+        append(key, value.descriptorMemory);
     }
 };
 
