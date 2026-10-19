@@ -1758,7 +1758,12 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
         resolved.contentKey = preUsed && preResolved->keyed ? std::move(preResolved->key) : DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
         std::shared_ptr<ShaderResources> cached = built != nullptr ? nullptr : carried != nullptr ? std::move(carried) : SharedResourceCache().Find(resolved.contentKey);
         if (cached != nullptr) {
-            const bool valid = cached->Revalidate(shaders);
+            bool spaceHeld = !cached->SpaceReuse();
+            if (!spaceHeld && cached->RetakeSpace()) {
+                spaceHeld = cached->SnapshotsServedInPlace(snapshots);
+                if (!spaceHeld) static_cast<void>(cached->ReleaseSpace());
+            }
+            const bool valid = spaceHeld && cached->Revalidate(shaders);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
@@ -1769,8 +1774,10 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
             } else if (valid) {
+                if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
                 countCache(&DrawProfile::cacheMisses);
             } else {
+                if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
                 SharedResourceCache().Remove(resolved.contentKey, preUsed ? cached.get() : nullptr);
                 countCache(&DrawProfile::cacheInvalidated);
             }
@@ -2023,6 +2030,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1);
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
+    if (resources->SpaceReuse()) recorder.Keep(std::const_pointer_cast<void>(resources->ReleaseSpace()));
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
     // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
     if (listed && resources->HasCopiedWrites()) {
