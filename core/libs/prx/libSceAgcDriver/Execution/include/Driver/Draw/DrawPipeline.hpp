@@ -102,9 +102,13 @@ public:
         std::uint64_t shape = 0;
         bool unknown = true;
         std::vector<Range> writes;
+        std::uint64_t labelAddress = 0;
+        std::vector<std::byte> labelBytes;
     };
+    enum class LabelLookup : std::uint8_t { NotHeld, Value, Unknown };
     static bool Overlap();
     bool PendingOverlaps(std::uint64_t begin, std::uint64_t end);
+    LabelLookup PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t& value);
     bool PendingOverlapsAny(std::span<const Range> ranges);
     bool PendingKey(std::uint64_t key, std::uint64_t shape);
     enum class DrainSite : std::uint32_t { Lookup, Reads, Packet, Kept, Count };

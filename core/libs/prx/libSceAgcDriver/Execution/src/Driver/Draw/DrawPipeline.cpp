@@ -79,6 +79,22 @@ bool DrawFinisher::PendingOverlaps(std::uint64_t begin, std::uint64_t end) {
     return false;
 }
 
+DrawFinisher::LabelLookup DrawFinisher::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t& value) {
+    if (!Busy() || !finisherProducer) return LabelLookup::NotHeld;
+    const auto end = address + bytes;
+    std::lock_guard lock(mutex);
+    for (auto held = pending.rbegin(); held != pending.rend(); ++held) {
+        if (held->unknown) return LabelLookup::Unknown;
+        const bool overlaps = std::any_of(held->writes.begin(), held->writes.end(), [&](const Range& range) { return address < range.second && range.first < end; });
+        if (!overlaps) continue;
+        if (held->labelBytes.empty() || address < held->labelAddress || end > held->labelAddress + held->labelBytes.size()) return LabelLookup::Unknown;
+        value = 0;
+        std::memcpy(&value, held->labelBytes.data() + (address - held->labelAddress), bytes);
+        return LabelLookup::Value;
+    }
+    return LabelLookup::NotHeld;
+}
+
 bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
     if (!Busy() || !finisherProducer) return false;
     std::lock_guard lock(mutex);
@@ -457,6 +473,12 @@ void DrawPipeline::ReleaseRunningReads() {
 
 std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0 || bytes > 8) return std::nullopt;
+    if (DrawFinisher::Overlap()) {
+        std::uint64_t held = 0;
+        const auto lookup = DrawFinisher::Get().PendingLabel(address, bytes, held);
+        if (lookup == DrawFinisher::LabelLookup::Value) return held;
+        if (lookup == DrawFinisher::LabelLookup::Unknown) return std::nullopt;
+    }
     const auto end = address + bytes;
     std::lock_guard lock(mutex);
     for (auto item = items.rbegin(); item != items.rend(); ++item) {
