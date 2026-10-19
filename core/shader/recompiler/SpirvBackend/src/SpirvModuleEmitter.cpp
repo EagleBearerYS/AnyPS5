@@ -1364,7 +1364,6 @@ void EmitProgram(SpirvEmitterState& state) {
             const auto rasterized = state.module.AllocateId();
             state.module.AddFunction(spv::OpLoad, TypeI32(state), rasterized, pointer);
             auto guestRasterized = Unary(state, spv::OpBitcast, TypeU32(state), rasterized);
-            if (state.sampleOrderWord != 0u) guestRasterized = ReorderedSampleBits(state, guestRasterized, false);
             bit = EmitBinaryU32(state, spv::OpBitwiseAnd, guestRasterized, covered);
             state.quadSampleCoverage = Unary(state, spv::OpBitcast, TypeI32(state), covered);
         }
