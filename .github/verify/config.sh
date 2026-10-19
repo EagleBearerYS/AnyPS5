@@ -1,0 +1,4 @@
+BASE=ad502d7170769d752e2e4c66939ae3a58ad50f55
+REPEAT=1
+EXTRA_TESTS='^agc_driver_lazy|^agc_driver_prepared_shaders|^agc_driver_draw_pipeline_trace'
+NO_BEFORE=1
