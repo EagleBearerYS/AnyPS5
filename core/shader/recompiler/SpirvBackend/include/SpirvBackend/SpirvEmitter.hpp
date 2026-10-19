@@ -38,10 +38,12 @@ struct SpirvTargetOptions {
     std::vector<std::uint32_t> meshExportedLocations;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> meshPerVertexLocations;
     bool waveLdsMemoryBarriers = false;
+    bool gpuResolvedImages = false;
 };
 
 struct SpirvEmitInfo {
     bool fullSubgroups = false;
+    bool bdaStores = false;
 };
 
 struct SpannedWaveUnsupported : std::runtime_error {
