@@ -95,6 +95,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         return std::runtime_error(where.str() + error.what());
     };
     const auto unmapped = [&] {
+        Graphics::NoteHeapFallback(Graphics::HeapFallback::DrawUnmapped);
         NoteHeapFragment(program.snapshot.get(), heapKey, false);
         return materializeDrawStage(i, pushOffset, queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, heapPartners);
     };
