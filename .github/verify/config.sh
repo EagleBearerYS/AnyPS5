@@ -1,0 +1,4 @@
+BASE=13c63f9116d221f55e88f17f5a2d690a7c9386a6
+REPEAT=1
+EXTRA_TESTS='^agc|^shader|^recompiler'
+NO_BEFORE=1
