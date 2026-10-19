@@ -1201,6 +1201,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 timing.Mark("draw_enqueued");
                 return drawn();
             }
+            DrawPipeline::NoteInline(!pipelined ? DrawPipeline::InlineReason::Unpipelined : record != lastDrawable ? DrawPipeline::InlineReason::IndirectRecord : !pipelinedIndirect ? DrawPipeline::InlineReason::IndirectLast : gpuLock.owns_lock() ? DrawPipeline::InlineReason::LockedPrepare : DrawPipeline::InlineReason::Labels, (packet[0] >> 8u) & 0xffu);
             drainBeforeInline();
             lockForDraw();
             noteDrawWriters(stages, submission.queue);
@@ -1256,6 +1257,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         timing.Mark("draw_enqueued");
         return drawn();
     }
+    DrawPipeline::NoteInline(!pipelined ? DrawPipeline::InlineReason::Unpipelined : drawParameters.indirect ? DrawPipeline::InlineReason::IndirectGpu : gpuLock.owns_lock() ? DrawPipeline::InlineReason::LockedPrepare : DrawPipeline::InlineReason::Labels, (packet[0] >> 8u) & 0xffu);
     if (drawParameters.indirect) drainBeforeInline();
     lockForDraw();
     noteDrawWriters(stages, submission.queue);
