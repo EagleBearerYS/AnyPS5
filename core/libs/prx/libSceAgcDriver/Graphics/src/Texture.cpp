@@ -1003,7 +1003,9 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         Require(source != nullptr && CanCopyFrom(*source, descriptor), "storage image does not match the sampled texture");
         const auto vkFormat = SampledTextureFormat(context, descriptor.format);
         const auto geometry = DescribeSurface(descriptor);
+#ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "Texture address=0x%llx %ux%u mips=%u viewed from storage image (vk=%d)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, static_cast<int>(vkFormat));
+#endif
         // Storage images stay in the general layout; the view samples them there.
         layout = VK_IMAGE_LAYOUT_GENERAL;
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
@@ -1353,8 +1355,10 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         Require(mipLevel < descriptor.mipCount, "storage texture mip level is outside the texture");
         const auto vkFormat = StorageFormatFor(context, ResolveTextureFormat(descriptor.format));
         storageFormat = vkFormat;
+#ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "StorageTexture address=0x%llx %ux%u mips=%u mip=%u layers=%u base=%u dim=%d tile=%d format=%u vk=%d", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, mipLevel,
                      descriptor.depthOrLastArray, descriptor.baseArray, static_cast<int>(descriptor.dimension), static_cast<int>(descriptor.tileMode), descriptor.format, static_cast<int>(vkFormat));
+#endif
         geometry = DescribeSurface(descriptor);
         mips = geometry.mips;
         arrayLayers = geometry.layers;
@@ -1415,28 +1419,48 @@ namespace {
 class PendingList {
 public:
     using iterator = std::vector<StorageTexture*>::iterator;
+    using Ranges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
     iterator begin() { return textures.begin(); }
     iterator end() { return textures.end(); }
     void push_back(StorageTexture* texture) {
         textures.push_back(texture);
-        ++version;
+        changed();
     }
     iterator erase(iterator it) {
-        ++version;
-        return textures.erase(it);
+        const auto next = textures.erase(it);
+        changed();
+        return next;
     }
     void remove(const StorageTexture* texture) {
-        if (std::erase(textures, texture) != 0) ++version;
+        if (std::erase(textures, texture) != 0) changed();
     }
     bool MayOverlap(std::uint64_t address, std::size_t bytes) {
-        if (textures.empty() || bytes == 0) return false;
         if (indexed != version) rebuild();
+        return !textures.empty() && Overlaps(ranges, address, bytes);
+    }
+    bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
+        const auto current = published.load(std::memory_order_acquire);
+        return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
+    }
+
+private:
+    struct Snapshot {
+        std::uint64_t version = 0;
+        Ranges ranges;
+    };
+
+    static bool Overlaps(const Ranges& ranges, std::uint64_t address, std::size_t bytes) {
+        if (bytes == 0) return false;
         const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
         const auto it = std::upper_bound(ranges.begin(), ranges.end(), address, [](std::uint64_t value, const std::pair<std::uint64_t, std::uint64_t>& range) { return value < range.second; });
         return it != ranges.end() && it->first < end;
     }
 
-private:
+    void changed() {
+        ++version;
+        changes.store(version, std::memory_order_release);
+    }
+
     void rebuild() {
         ranges.clear();
         for (const auto* texture : textures) ranges.emplace_back(texture->Descriptor().baseAddress, texture->Descriptor().baseAddress + texture->GuestBytes());
@@ -1448,11 +1472,14 @@ private:
         }
         ranges.resize(merged);
         indexed = version;
+        published.store(std::make_shared<const Snapshot>(Snapshot{version, ranges}), std::memory_order_release);
     }
     std::vector<StorageTexture*> textures;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    Ranges ranges;
     std::uint64_t version = 0;
     std::uint64_t indexed = ~std::uint64_t{0};
+    std::atomic<std::uint64_t> changes{0};
+    std::atomic<std::shared_ptr<const Snapshot>> published;
 };
 
 // Storage images whose results have not reached guest memory yet.
@@ -3532,6 +3559,20 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         for (const auto& texture : flush) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && recorder->PendingWriterSerial(address, bytes) != 0) {
+        try {
+            recorder->Reap();
+            if (const auto writer = recorder->PendingWriterSerial(address, bytes); writer == recorder->OpenSerial()) {
+                Recorder::CountSync(recorder->OpenWriteOverlaps(address, bytes) ? 1 : 3);
+                recorder->Sync();
+            } else if (writer != 0) {
+                recorder->FinishUpTo(writer);
+            }
+        } catch (...) {
+            for (const auto& texture : flush) texture->reconcilePending();
+            throw;
+        }
+    }
     std::exception_ptr failure;
     const auto previousReason = std::exchange(flushReason, reason);
     for (const auto& texture : flush) {
@@ -3881,6 +3922,7 @@ std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(
     // FlushPending's listing; the images stay alive across the caller's scan as there.
     std::vector<std::shared_ptr<StorageTexture>> overlapping;
     auto& pending = Pending();
+    if (pending.textures.SurelyClear(address, bytes)) return overlapping;
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return overlapping;
     const auto* exempt = refreshing;

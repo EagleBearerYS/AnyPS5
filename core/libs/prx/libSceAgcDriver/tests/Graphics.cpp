@@ -1484,6 +1484,19 @@ void PixelInputLayoutTests() {
     queue.context[0x1b8] = 1u << 24u;
     Require(decode(0x1146u, 0x1146u).frontFaceAllBits, "SPI_BARYC_CNTL FRONT_FACE_ALL_BITS was not decoded");
     Require(!decode(0x326u, 0x326u).frontFaceAllBits, "FRONT_FACE_ALL_BITS was decoded for a pixel program without the front-face input");
+    using ShaderRecompiler::PixelPositionLocation;
+    Require(decode(0x326u, 0x326u).positionLocation == PixelPositionLocation::Center, "POS_FLOAT_LOCATION 0 was not decoded as the pixel center");
+    queue.context[0x1b8] = 0x10000u;
+    Require(decode(0x326u, 0x326u).positionLocation == PixelPositionLocation::Centroid, "POS_FLOAT_LOCATION 1 was not decoded as the centroid");
+    queue.context[0x1b8] = 0x20000u;
+    Require(decode(0x326u, 0x326u).positionLocation == PixelPositionLocation::Sample, "POS_FLOAT_LOCATION 2 was not decoded as the iterated sample");
+    queue.context[0x1b8] = 0x120000u;
+    Require(decode(0x326u, 0x326u).positionLocation == PixelPositionLocation::UpperLeft, "POS_FLOAT_ULC did not override POS_FLOAT_LOCATION");
+    queue.context[0x1b8] = 0x30000u;
+    expectFailure([&] { static_cast<void>(decode(0x326u, 0x326u)); }, "POS_FLOAT_LOCATION uses the reserved value 3");
+    Require(decode(0x1002u, 0x1002u).positionLocation == PixelPositionLocation::Center, "POS_FLOAT_LOCATION was decoded for a pixel program without positions");
+    queue.context.erase(0x1b8);
+    Require(decode(0x326u, 0x326u).positionLocation == PixelPositionLocation::Center, "positions without SPI_BARYC_CNTL were not at the pixel center");
     queue.context[0x1b8] = 0u;
     pixel = decode(0x506u, 0x7afu);
     Require(pixel.inputAddr == 0x7afu && !pixel.posY && pixel.posZ && PixelInputVgpr(pixel.inputAddr, PixelInput::PerspectiveCentroid) == 4u && PixelInputVgpr(pixel.inputAddr, PixelInput::PositionX) == 12u && PixelInputVgpr(pixel.inputAddr, PixelInput::PositionZ) == 14u, "ADDR-only inputs did not reserve their VGPRs");
@@ -3161,7 +3174,10 @@ void multisampleTests() {
         state = DecodeState(withInputs(queue, {input}));
         Require(state.samples == 1 && !state.perSampleShading, "a sample or sample-index input into a one-sample target did not rasterize sample 0 alone");
     }
-    for (const auto position : {ShaderRecompiler::PixelInput::PositionX, ShaderRecompiler::PixelInput::PositionY}) expectFailure([&] { DecodeState(withInputs(queue, {ShaderRecompiler::PixelInput::Ancillary, position})); }, "sample count differs from the rasterizer's");
+    for (const auto position : {ShaderRecompiler::PixelInput::PositionX, ShaderRecompiler::PixelInput::PositionY}) {
+        state = DecodeState(withInputs(queue, {ShaderRecompiler::PixelInput::Ancillary, position}));
+        Require(state.samples == 1 && !state.perSampleShading, "a sample-index and position input into a one-sample target did not rasterize sample 0 alone");
+    }
     auto iterated = queue;
     iterated.context[0x293] = 0x06030000u;
     state = DecodeState(iterated);
@@ -3171,7 +3187,8 @@ void multisampleTests() {
     state = DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::PerspectiveCentroid, ShaderRecompiler::PixelInput::LinearCentroid}));
     Require(state.samples == 1, "PS_ITER_SAMPLE with centroid inputs did not rasterize sample 0 alone");
     expectFailure([&] { DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::SampleCoverage})); }, "sample count differs from the rasterizer's");
-    expectFailure([&] { DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::PositionX})); }, "sample count differs from the rasterizer's");
+    state = DecodeState(withInputs(iterated, {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::PositionX}));
+    Require(state.samples == 1 && !state.perSampleShading, "PS_ITER_SAMPLE with sample-index and position inputs did not rasterize sample 0 alone");
     auto iteratedStencil = withInputs(stenciled, {});
     iteratedStencil.context[0x1b3] &= ~ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
     iteratedStencil.context[0x1b4] &= ~ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid);
@@ -5078,10 +5095,12 @@ void descriptorSnapshotTests() {
             const auto original = findWrite(0).buffers;
             const auto originalThird = findWrite(4).buffers;
             std::vector<ShaderResources::MovedBuffer> moved;
+            std::array<std::vector<std::uint32_t>, 2> words;
             for (std::size_t index = 0; index < 2; ++index) {
                 if ((selected & (1u << index)) == 0) continue;
                 const std::size_t bytes = index == 0 ? 24 : 12;
-                moved.push_back({index, 0, bytes, std::vector<std::uint32_t>(bytes / 4, static_cast<std::uint32_t>(0x12340000u + index))});
+                words[index].assign(bytes / 4, static_cast<std::uint32_t>(0x12340000u + index));
+                moved.push_back({index, 0, bytes, words[index]});
             }
             mock.writes.clear();
             const auto snapshots = resources.PrepareDrawBindings(recorder, moved);
@@ -5500,19 +5519,27 @@ void descriptorCacheTests() {
         Require(mock.poolSizes.size() == 2 && mock.poolSizes[0].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && mock.poolSizes[0].descriptorCount == 4097 && mock.poolSizes[1].type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE && mock.poolSizes[1].descriptorCount == 3, "the dedicated pool is not sized to its set");
         Require(cache.Counters().pools == 0 && cache.Counters().sets == 1, "an oversized set was counted in the chain pools");
         cache.Free(dedicated);
-        Require(mock.live == live, "freeing an oversized set did not destroy its pool");
+        Require(mock.live == live + 1 && cache.Counters().keptSets == 1, "freeing an oversized set did not keep its set and pool");
+        const auto again = cache.Allocate(large, oversized);
+        Require(again.set == dedicated.set && again.pool == dedicated.pool && mock.live == live + 1 && cache.Counters().reusedSets == 1 && cache.Counters().dedicatedPools == 1, "an oversized set of the kept set's layout and sizes did not take the kept set");
+        cache.Free(again);
+        const std::array<VkDescriptorPoolSize, 2> otherSizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4098}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 3}}};
+        const auto other = cache.Allocate(large, otherSizes);
+        Require(other.pool != dedicated.pool && mock.live == live + 2 && cache.Counters().dedicatedPools == 2, "an oversized set of other sizes took a kept set");
+        cache.Free(other);
+        Require(mock.live == live + 2 && cache.Counters().keptSets == 3, "freeing a second oversized set did not keep it");
         const std::array<VkDescriptorPoolSize, 1> fitting{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096}}};
         const auto chained = cache.Allocate(layout(4096), fitting);
         Require(chained.set != VK_NULL_HANDLE && mock.poolMaxSets == 1024 && mock.poolFlags == 0 && cache.Counters().pools == 1, "a set the chain pool holds left the chain");
         cache.Free(chained);
-        Require(mock.descriptorPools.at(chained.pool).resets == 1 && mock.live == live + 2, "a chain pool was not reset after its last set");
+        Require(mock.descriptorPools.at(chained.pool).resets == 1 && mock.live == live + 4, "a chain pool was not reset after its last set");
         const std::array<VkDescriptorPoolSize, 1> regular{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096}}};
         const auto first = cache.Allocate(layout(4096), regular);
         const auto oversizedMixed = cache.Allocate(large, oversized);
         const auto second = cache.Allocate(layout(4096), regular);
         Require(first.pool == chained.pool && second.pool == chained.pool && oversizedMixed.pool != chained.pool && mock.descriptorPools.at(chained.pool).resets == 1, "an oversized set disturbed the chain pool");
         cache.Free(oversizedMixed);
-        Require(mock.live == live + 2 && mock.descriptorPools.count(oversizedMixed.pool) == 0 && mock.descriptorPools.at(chained.pool).resets == 1, "freeing an oversized set between chain sets touched the chain pool");
+        Require(oversizedMixed.pool == dedicated.pool && mock.live == live + 4 && mock.descriptorPools.count(oversizedMixed.pool) == 1 && mock.descriptorPools.at(chained.pool).resets == 1, "freeing an oversized set between chain sets touched the chain pool");
         cache.Free(first);
         Require(mock.descriptorPools.at(chained.pool).resets == 1, "a chain pool reset while a set was live");
         cache.Free(second);
@@ -5523,6 +5550,15 @@ void descriptorCacheTests() {
         expectFailure([&] { cache.Allocate(large, storageImages); }, "descriptor set exceeds the device's per-set descriptor limit");
         const std::array<VkDescriptorPoolSize, 1> uniformBuffers{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1}}};
         expectFailure([&] { cache.Allocate(large, uniformBuffers); }, "descriptor set uses an unsupported descriptor type 6");
+        const auto keptBefore = mock.live;
+        std::vector<AgcDriver::Graphics::DescriptorCache::SetAllocation> spread;
+        for (std::uint32_t index = 0; index < 10; ++index) {
+            const std::array<VkDescriptorPoolSize, 1> sized{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4100 + index}}};
+            spread.push_back(cache.Allocate(large, sized));
+        }
+        Require(mock.live == keptBefore + 10, "ten oversized sets of new sizes did not get ten pools");
+        for (const auto& set : spread) cache.Free(set);
+        Require(mock.live == keptBefore - 2 + 8, "freeing more oversized sets than the cache keeps did not destroy the oldest pools");
     }
     Require(mock.live == 0, "the descriptor cache leaked a pool or layout");
     mock = MockVulkan{};
@@ -5656,7 +5692,8 @@ void imageTableSnapshotAllocationTests() {
         const auto state = DecodeState(makeState());
         ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
         const auto originalMap = findWrite(map.binding).buffers.at(0);
-        const std::array<ShaderResources::MovedBuffer, 1> moved{{{0, 0, 16, {11, 22, 33, 44}}}};
+        const std::array<std::uint32_t, 4> movedWords{11, 22, 33, 44};
+        const std::array<ShaderResources::MovedBuffer, 1> moved{{{0, 0, 16, movedWords}}};
         const auto sets = cache.Counters().sets;
         mock.writes.clear();
         mock.variableDescriptorCount.reset();
@@ -7731,7 +7768,15 @@ void ConservativeRasterizationTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(tessellation); }, "conservative rasterization of lines is unsupported (VGT_GS_OUT_PRIM_TYPE=0x1)");
     for (const auto inputs : {0x6u, 0x42u}) {
         queue.context[0x1b3] = inputs;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "conservative rasterization with centroid interpolation");
+        Require(AgcDriver::Graphics::DecodeState(queue).conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT, "OVER_RAST_ENABLE rejected centroid inputs " + std::to_string(inputs) + " of a single rasterized sample");
+        auto multisampled = queue;
+        multisampled.context[0x2f8] = 0x00200002;
+        multisampled.context[0x31d] = (1u << 12u) | (1u << 15u);
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(multisampled); }, "conservative rasterization with centroid interpolation of more than one rasterized sample is unsupported");
+        auto raised = queue;
+        raised.context[0x31d] = (1u << 12u) | (1u << 15u);
+        raised.context[0x292] = 2;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(raised); }, "conservative rasterization with centroid interpolation of a draw raised to a multisampled target is unsupported");
     }
     queue.context[0x1b3] = 2;
     for (const auto control : {0x6003u, 0x6020u, 0x6401u, 0xe06001u, 0x1u}) {
