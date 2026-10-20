@@ -1338,7 +1338,7 @@ ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, s
     auto run = crossedRun(lease, begin, end);
     if (run.ranges.empty()) return run;
     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
-    if (begin == run.base && end == run.base + run.bytes) return run;
+    if (begin == run.base) return run;
     return {};
 }
 
@@ -4848,6 +4848,7 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         readBytes += region.snapshot.size();
     }
     region.snapshot.clear();
+    NoteCpuBufferCopy(readBytes);
     if (profile) readUs.fetch_add(microsecondsSince(readStart), std::memory_order_relaxed);
     if (profile) {
         static std::mutex reasonsMutex;
