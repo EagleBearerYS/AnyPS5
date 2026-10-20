@@ -36,6 +36,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         const auto index = *tail - program.firstUserSgpr;
         return index + 1u < 64u ? std::uint64_t{3} << index : ~std::uint64_t{0};
     };
+    Graphics::HeapCostScope prepareCost(Graphics::HeapCost::StagePrepare);
     const auto waveSize = program.binary.stage == Stage::Fragment ? graphics.stages.fragmentWaveSize : graphics.stages.vertexWaveSize;
     ShaderRecompiler::RecompileRequest request{
         program.binary,
@@ -78,6 +79,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         }
     }
     Graphics::NoteHeapStageReason(stageReason);
+    prepareCost.Stop();
     timing.Mark("prepared_invocation");
     auto& stageCapture = stageCaptures[i];
     stageCapture.direct = false;
@@ -112,11 +114,14 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         std::shared_ptr<const ShaderRecompiler::HeapStageWords> reusedWords;
         HeapStageReads reads;
         decltype(MaterializeHeapStage(invocation, program.userData, program.binary.codeAddress, words.get(), &reusedWords, &reads)) direct;
+        Graphics::HeapCostScope callCost(Graphics::HeapCost::HeapStageCall);
         try {
             direct = MaterializeHeapStage(invocation, program.userData, program.binary.codeAddress, words.get(), &reusedWords, &reads);
         } catch (const std::exception& error) {
             throw named(error, request.context.memory);
         }
+        callCost.Stop();
+        Graphics::HeapCostScope finishCost(Graphics::HeapCost::StageFinish);
         if (direct == nullptr) goto heapCapture;
         if (!HeapStageMappable(*direct)) return unmapped();
         NoteHeapDirect();
