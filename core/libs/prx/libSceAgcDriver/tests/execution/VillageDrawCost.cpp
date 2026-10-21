@@ -52,6 +52,7 @@ constexpr std::uint32_t ClampEdge = 2;
 constexpr std::uint32_t RenderTargetTileMode = 0x1b;
 constexpr std::size_t SamplerOffset = 0x200;
 constexpr std::size_t FrameConstantsOffset = 0x210;
+constexpr std::size_t TableDescriptorOffset = 0x220;
 constexpr std::size_t FrameDataOffset = 0x400;
 constexpr std::size_t VertexTableOffset = 0x1000;
 constexpr std::size_t VertexDataOffset = 0x2000;
@@ -77,6 +78,7 @@ std::uint32_t ObjectSets() { return Setting("VILLAGE_SETS", 8, 1, MaxObjectSets)
 std::uint32_t ProgramRun() { return Setting("VILLAGE_PROGRAM_RUN", 8, 1, MaxDraws); }
 std::uint32_t Width() { return Setting("VILLAGE_WIDTH", 1920, 64, 1920); }
 std::uint32_t Height() { return Setting("VILLAGE_HEIGHT", 1080, 64, 1080); }
+std::uint32_t WritePercent() { return Setting("VILLAGE_WRITE_PERCENT", 0, 0, 100); }
 
 enum class IndexMode { Table, Constant, Immediate };
 
@@ -90,7 +92,7 @@ IndexMode Indexing() {
 }
 
 const char* IndexName() {
-    return Indexing() == IndexMode::Constant ? "constant index" : Indexing() == IndexMode::Immediate ? "immediate T#, no table" : "table index";
+    return Indexing() == IndexMode::Constant ? "constant index" : Indexing() == IndexMode::Immediate ? "immediate T#, no table" : "table index through the T# table V# at root+0x220, plus a zero read at run time";
 }
 
 std::uint32_t TableIndex(std::uint32_t draw, std::uint32_t slot) {
@@ -113,13 +115,16 @@ alignas(256) constexpr std::array<std::uint32_t, 9> VertexCode{
     0xf4080304u, 0xfa000000u, 0xbf8cc07fu, 0xe00c2000u, 0x80030105u, 0xbf8c3f70u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
 };
 
-constexpr std::size_t PixelWords = 13 + MaxSamples * 24 + 5 + 8 + 3;
+constexpr std::size_t PixelWords = 13 + 5 + MaxSamples * 24 + 5 + 8 + 3;
 
 std::array<std::uint32_t, PixelWords> MakePixelCode(std::uint32_t samples, IndexMode mode, const std::array<std::array<std::uint32_t, 8>, MaxSamples>& immediates) {
     std::array<std::uint32_t, PixelWords> code{};
     code.fill(0xbf810000u);
     std::size_t n = 0;
     for (const auto word : {0xf4080200u, 0xfa000200u, 0xf4080300u, 0xfa000210u, 0x7e0002f0u, 0x7e0202f0u, 0x7e100280u, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf4280802u, 0xfa000010u, 0xbf8cc07fu}) code[n++] = word;
+    if (mode == IndexMode::Table) {
+        for (const auto word : {0xf4080a00u, 0xfa000220u, 0xe0300004u, 0x80030d00u, 0xbf8c0070u}) code[n++] = word;
+    }
     for (std::uint32_t slot = 0; slot < samples; ++slot) {
         if (mode == IndexMode::Immediate) {
             for (std::uint32_t word = 0; word < 8; ++word) {
@@ -129,7 +134,7 @@ std::array<std::uint32_t, PixelWords> MakePixelCode(std::uint32_t samples, Index
         } else if (mode == IndexMode::Constant) {
             for (const auto word : {0xbf800000u, 0xf40c0401u, 0xfa000000u | (TableIndex(0, slot) * 32u)}) code[n++] = word;
         } else {
-            for (const auto word : {0x8f248520u + slot, 0xf40c0401u, 0x48000000u}) code[n++] = word;
+            for (const auto word : {0x4a181a20u + slot, 0x7e48050cu, 0x8f248524u, 0xf42c0414u, 0x48000000u}) code[n++] = word;
         }
         for (const auto word : {0xbf8cc07fu, 0xf09c0f08u, 0x00440400u, 0xbf8c3f70u, 0x06101104u, 0x06121305u, 0x06141506u, 0x06161707u}) code[n++] = word;
     }
@@ -244,6 +249,8 @@ void Prepare(const Layout& layout) {
     std::memcpy(block.Bytes(SamplerOffset), sampler.data(), sizeof(sampler));
     const auto frame = BufferDescriptor(block.At(FrameDataOffset), 0, 256, 0x31016facu);
     std::memcpy(block.Bytes(FrameConstantsOffset), frame.data(), sizeof(frame));
+    const auto table = BufferDescriptor(block.At(TableOffset), 0, TableEntries() * 32u, 0x31016facu);
+    std::memcpy(block.Bytes(TableDescriptorOffset), table.data(), sizeof(table));
     const float one = 1.0f;
     std::memcpy(block.Bytes(FrameDataOffset), &one, sizeof(one));
     for (std::uint32_t position = 0; position <= QuadPositions; ++position) {
@@ -410,6 +417,15 @@ std::string ResidentMemory() {
 }
 #endif
 
+void WriteTextures(const Layout& layout, std::uint32_t frame) {
+    const auto entries = TableEntries();
+    const auto count = WritePercent() == 0 ? 0u : std::max(1u, entries * WritePercent() / 100u);
+    for (std::uint32_t k = 0; k < count; ++k) {
+        const auto entry = static_cast<std::uint32_t>((static_cast<std::uint64_t>(frame) * count + k) * 37u % entries);
+        std::memset(layout.textures.Bytes(entry * TextureStride), static_cast<int>(TexelByte(entry)), 4);
+    }
+}
+
 double Median(std::vector<double> values) {
     std::sort(values.begin(), values.end());
     return values[values.size() / 2];
@@ -417,7 +433,7 @@ double Median(std::vector<double> values) {
 
 void Cost(const Layout& layout, std::uint32_t frames) {
     const auto draws = Draws();
-    std::printf("village shape: %u draws per frame on a %ux%u target, %u full-target, the rest %ux%u quads over %u positions; programs sample 1-%u textures in runs of %u draws; a %u-entry T# table through user SGPRs s[2:3], indices from the object V# in s[4:7] (%s); %u object V# sets, one per frame\n", draws, Width(), Height(), draws * FullPercent() / 100u, QuadPixels, QuadPixels, QuadPositions, MaxSamples, ProgramRun(), TableEntries(), IndexName(), ObjectSets());
+    std::printf("village shape: %u draws per frame on a %ux%u target, %u full-target, the rest %ux%u quads over %u positions; programs sample 1-%u textures in runs of %u draws; a %u-entry T# table, indices from the object V# in s[4:7] (%s); %u object V# sets, one per frame; %u%% of the table's textures rewritten with their own bytes before each frame\n", draws, Width(), Height(), draws * FullPercent() / 100u, QuadPixels, QuadPixels, QuadPositions, MaxSamples, ProgramRun(), TableEntries(), IndexName(), ObjectSets(), WritePercent());
     std::vector<std::vector<std::uint32_t>> commandSets;
     for (std::uint32_t set = 0; set < ObjectSets(); ++set) commandSets.push_back(Commands(layout, Frame(), set));
     std::vector<double> warmMs;
@@ -435,6 +451,7 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         std::vector<std::uint64_t> cpuBefore;
         for (const auto& thread : threads) cpuBefore.push_back(ThreadCpuNs(thread.first));
 #endif
+        WriteTextures(layout, frame);
         perDraw.push_back(Submit(commandSets[frame % commandSets.size()]) / draws);
 #ifdef __linux__
         double sum = 0.0;
