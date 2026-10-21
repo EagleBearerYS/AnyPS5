@@ -1,5 +1,5 @@
-BUSY BF-097
-since: 2026-10-21T03:18Z (claimed BF-097: #7395 lane-mask AND and pointer-V# chain tests and fix)
+READY
+since: 2026-10-21T06:35Z (last: BF-097 done, results/cloud-4/BF-097.md; fork feat/shader-nested-sampler-tables-lane-and-v2 = 2788b8f98 on pm/7395-restack)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
