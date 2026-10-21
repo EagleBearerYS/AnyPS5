@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +27,10 @@ public:
     static WindowsMappings& Get() {
         static auto* mappings = new WindowsMappings;
         return *mappings;
+    }
+
+    static std::uint64_t RegionQueries() {
+        return regionQueries.load(std::memory_order_relaxed);
     }
 
     void* Reserve(void* address, std::size_t bytes) {
@@ -352,6 +357,7 @@ public:
                 }
             }
         } else if (clear && !collectable(address, end)) return false;
+        bool direct = collection != Collection::Fresh && proved(address, end);
         auto position = views.lower_bound(address & ~(pageBytes - 1));
         std::uintptr_t cleanStart = 0;
         std::uintptr_t cleanEnd = 0;
@@ -467,15 +473,23 @@ public:
                     cursor = next == views.end() ? end : std::min(end, next->first);
                     continue;
                 }
+                if (direct) {
+                    if (capacity == *count) return true;
+                    auto stop = end;
+                    if (const auto next = views.lower_bound(cursor); next != views.end()) stop = std::min(stop, next->first);
+                    if (nextClean != cleanRanges.end()) stop = std::min(stop, nextClean->first);
+                    if (watchPrivate(cursor, stop, pages, count, capacity, clear)) {
+                        if (*count == capacity) return true;
+                        cursor = stop;
+                        continue;
+                    }
+                    direct = false;
+                }
                 const auto memory = query(cursor);
                 if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
                 const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
                 if (capacity == *count) return true;
-                const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
-                ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
-                DWORD granularity = 0;
-                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) fail("collect private guest writes");
-                *count += available;
+                if (!watchPrivate(cursor, stop, pages, count, capacity, clear)) fail("collect private guest writes");
                 if (*count == capacity) return true;
                 cursor = stop;
             }
@@ -485,9 +499,22 @@ public:
     }
 
 private:
-    bool collectable(std::uintptr_t address, std::uintptr_t end) {
+    static bool watchPrivate(std::uintptr_t cursor, std::uintptr_t stop, void** pages, std::size_t* count, std::size_t capacity, bool clear) {
+        const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
+        ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
+        DWORD granularity = 0;
+        if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) return false;
+        *count += available;
+        return true;
+    }
+
+    bool proved(std::uintptr_t address, std::uintptr_t end) const {
         const auto proven = collectableRanges.upper_bound(address);
-        if (proven != collectableRanges.begin() && std::prev(proven)->second >= end) return true;
+        return proven != collectableRanges.begin() && std::prev(proven)->second >= end;
+    }
+
+    bool collectable(std::uintptr_t address, std::uintptr_t end) {
+        if (proved(address, end)) return true;
         auto position = views.lower_bound(address & ~(pageBytes - 1));
         for (auto cursor = address; cursor < end;) {
             const auto base = cursor & ~(pageBytes - 1);
@@ -885,6 +912,7 @@ private:
     }
 
     static MEMORY_BASIC_INFORMATION query(std::uintptr_t address) {
+        regionQueries.fetch_add(1, std::memory_order_relaxed);
         MEMORY_BASIC_INFORMATION memory{};
         if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory)) fail("query guest memory");
         return memory;
@@ -998,6 +1026,7 @@ private:
         return error;
     }
 
+    static inline std::atomic<std::uint64_t> regionQueries{0};
     Ranges cleanRanges;
     Ranges collectableRanges;
     Ranges freshRanges;
