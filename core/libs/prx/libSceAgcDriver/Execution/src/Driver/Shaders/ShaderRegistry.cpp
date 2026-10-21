@@ -841,6 +841,16 @@ std::optional<ShaderRecompiler::ShaderFloatMode> DispatchFloatMode(const ShaderS
 
 namespace {
 
+std::atomic<std::uint64_t> libraryPrebuildsRefused{0};
+
+}
+
+std::uint64_t LibraryPrebuildsRefused() {
+    return libraryPrebuildsRefused.load(std::memory_order_relaxed);
+}
+
+namespace {
+
 template<typename TValue>
 std::vector<TValue> ReadHeaderArray(const ShaderSnapshot& snapshot, const TValue* pointer, std::size_t count) {
     if (count == 0) return {};
@@ -1049,6 +1059,8 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
             PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, request.context.waveSize, {}, {}}, request.shader.stage, ShaderRecompiler::RegistrationResult(request, *entries.front().handle), request.layout.pushConstantOffsetBytes);
         } catch (const std::exception& error) {
             APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
+            static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+            if (profile) libraryPrebuildsRefused.fetch_add(1, std::memory_order_relaxed);
         }
     }
     if (request.context.compute) {
@@ -1465,6 +1477,8 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
                 registration = ShaderRecompiler::RegistrationResult(request, *handle);
             } catch (const std::exception& error) {
                 APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
+                static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+                if (profile) libraryPrebuildsRefused.fetch_add(1, std::memory_order_relaxed);
             }
         }
         prepared.push_back({program.snapshot, {program.codeOffset, handle}, program.binary.stage, offset, std::move(registration)});
