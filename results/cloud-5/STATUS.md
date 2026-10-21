@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T04:58:50Z
+BUSY BF-096
+since: 2026-10-21T04:59:22Z
 previous: PRM-047 done, results/cloud-5/PRM-047.md: pm/7644-rebased = 1ba22061e on upstream/main f47c856634; seven PR commits rebased linear (b883c9d58f moved last, it sat on a parallel line), tree at dae468d26 equal to 40e0d968c3 merged with f47c856634 (62b8686aee); 4eeeeb643 prepares a deferred ABI once (flag + wait on settled; red 20/20 "0 found, 0 entries used", green 0/20) with agc_driver_prepared_shaders_abi_deferred_concurrent_lazy; 1ba22061e prints the deferred-ABI line only under APS5_PROFILE_DRAW via ProfilePrint; 5 tests 20/20; ^agc 854 tests, 795 passed, 57 skipped, 2 failed (sgpr_pattern_fill_keys load flake; storage_read_during_idle_store, a main flake: base 3/360, head 4/360). Before that: PRM-046 done, results/cloud-5/PRM-046.md.
 
 RESULT (setup):
