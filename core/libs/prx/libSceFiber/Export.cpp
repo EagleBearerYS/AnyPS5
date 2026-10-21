@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -34,8 +35,9 @@ static constexpr std::size_t FIBER_OPT_PARAM_SIZE = 0x80;
 static constexpr std::size_t FIBER_MIN_CONTEXT_SIZE = 512;
 static constexpr std::uint64_t FIBER_CONTEXT_FILL = 0xdeadbeefdeadbeefull;
 static constexpr std::size_t FIBER_HOST_STACK_MARGIN = 1u << 20;
+static constexpr std::size_t FIBER_GUEST_STACK_MIN = 64u << 10;
 
-using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
+using GuestFiberEntry = FiberEntry;
 
 // A fiber that is switching away stays Suspending until its context is saved; whoever runs next
 // on that host thread publishes Suspended. Fibers migrate between threads, so a resumer must never
@@ -165,6 +167,9 @@ Aps5FiberSwitchStack_nid_no_patch:
 Aps5FiberTrampoline_nid_no_patch:
     mov %r12, %rcx
     and $-16, %rsp
+    push $0
+    push $0
+    mov %rsp, %rbp
     sub $32, %rsp
     call Aps5FiberMain_nid_no_patch
     ud2
@@ -207,11 +212,8 @@ static void UnpinStack(const void* context, std::uint64_t bytes) {
 extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load);
 extern "C" void Aps5FiberTrampoline_nid_no_patch();
 
-asm(R"(
-    .text
-    .globl Aps5FiberSwitchStack_nid_no_patch
-    .type Aps5FiberSwitchStack_nid_no_patch, @function
-Aps5FiberSwitchStack_nid_no_patch:
+asm(".text\n"
+    APS5_ASM_FUNCTION("Aps5FiberSwitchStack_nid_no_patch") R"(
     push %rbp
     push %rbx
     push %r12
@@ -233,17 +235,16 @@ Aps5FiberSwitchStack_nid_no_patch:
     pop %rbx
     pop %rbp
     ret
-    .size Aps5FiberSwitchStack_nid_no_patch, .-Aps5FiberSwitchStack_nid_no_patch
-
-    .globl Aps5FiberTrampoline_nid_no_patch
-    .type Aps5FiberTrampoline_nid_no_patch, @function
-Aps5FiberTrampoline_nid_no_patch:
+)" APS5_ASM_FUNCTION_END("Aps5FiberSwitchStack_nid_no_patch")
+    APS5_ASM_FUNCTION("Aps5FiberTrampoline_nid_no_patch") R"(
     mov %r12, %rdi
     and $-16, %rsp
-    call Aps5FiberMain_nid_no_patch
+    push $0
+    push $0
+    mov %rsp, %rbp
+    call )" APS5_ASM_SYMBOL("Aps5FiberMain_nid_no_patch") R"(
     ud2
-    .size Aps5FiberTrampoline_nid_no_patch, .-Aps5FiberTrampoline_nid_no_patch
-)");
+)" APS5_ASM_FUNCTION_END("Aps5FiberTrampoline_nid_no_patch"));
 
 struct InitialFrame {
     std::uint32_t mxcsr;
@@ -303,7 +304,11 @@ static void ReleaseHostStack(Fiber* fiber) {
 static void AllocateHostStack(Fiber* fiber) {
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     const auto bytes = (fiber->contextSize + FIBER_HOST_STACK_MARGIN + page - 1) / page * page + page;
-    void* mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+#ifdef MAP_STACK
+    flags |= MAP_STACK;
+#endif
+    void* mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, flags, -1, 0);
     if (mapping == MAP_FAILED) throw std::runtime_error(std::string("sceFiberInitialize: no host stack of ") + std::to_string(bytes) + " bytes for fiber '" + fiber->name + "' (errno " + std::to_string(errno) + ")");
     if (mprotect(mapping, page, PROT_NONE) != 0) {
         const int error = errno;
@@ -333,6 +338,7 @@ static std::uint64_t* SizedWindow(const Fiber* fiber) {
 #ifdef _WIN32
 
 static StackBounds FiberBounds(const Fiber* fiber) {
+    if (!fiber->hostStack) return {fiber->context + fiber->contextSize, fiber->context, fiber->context};
     return {fiber->hostStack + fiber->hostStackBytes, fiber->hostStack + HostStackGuardBytes(), fiber->hostStack};
 }
 
@@ -423,7 +429,7 @@ int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const
     fiber->context = static_cast<std::uint8_t*>(addr_context);
     fiber->contextSize = size_context;
     std::strncpy(fiber->name, name, FIBER_MAX_NAME_LENGTH);
-    AllocateHostStack(fiber);
+    if (size_context < FIBER_GUEST_STACK_MIN) AllocateHostStack(fiber);
     fiber->contextSizeCheck = g_contextSizeCheck.load(std::memory_order_relaxed);
     if (fiber->contextSizeCheck) {
         auto* words = SizedWindow(fiber);
@@ -509,9 +515,9 @@ int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     auto* fiber = AsFiber(object);
     if (!fiber || !fiber_info) return object && fiber_info ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
     if (fiber_info->size != sizeof(FiberInfo)) return SCE_FIBER_ERROR_INVALID;
-    fiber_info->entry = reinterpret_cast<FiberEntry>(fiber->entry);
+    fiber_info->entry = fiber->entry;
     fiber_info->arg_on_initialize = fiber->argOnInitialize;
-    fiber_info->addr_context = fiber->context;
+    fiber_info->addr_context = SizedWindow(fiber);
     fiber_info->size_context = fiber->contextSize;
     std::memcpy(fiber_info->name, fiber->name, sizeof(fiber_info->name));
     fiber_info->size_context_margin = static_cast<uint64_t>(-1);
@@ -559,5 +565,24 @@ int32_t APS5_VABI sceFiberStopContextSizeCheck(void) {
     return g_contextSizeCheck.compare_exchange_strong(expected, false) ? SCE_OK : SCE_FIBER_ERROR_STATE;
 }
 
+int APS5_VABI _sceFiberAttachContextAndRun(FiberObject* fiber, void* addr_context, uint64_t size_context,
+                                          uint64_t arg_on_run, uint64_t* arg_on_return) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
+int APS5_VABI _sceFiberAttachContextAndSwitch(FiberObject* fiber, void* addr_context, uint64_t size_context,
+                                              uint64_t arg_on_run, uint64_t* arg_on_run_out) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _sceFiberInitializeWithInternalOptionImpl(FiberObject* fiber, const char* name, GuestFiberEntry entry,
+                                                        uint64_t arg_on_initialize, void* addr_context,
+                                                        uint64_t size_context, const FiberOptParam* opt_param,
+                                                        uint32_t flags, uint32_t build_version) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}

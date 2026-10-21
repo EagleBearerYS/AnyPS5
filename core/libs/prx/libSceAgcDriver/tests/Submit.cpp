@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -195,11 +196,26 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverAddEqEvent(eq, 0, &graphicsTag) == 0, "graphics event registration failed");
     check(sceAgcDriverAddEqEvent(eq, 0x20, &computeTag) == 0, "compute event registration failed");
     expectFailure([] { sceAgcDriverAddEqEvent(0, 0, nullptr); });
+    struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
+        std::atomic<int> ready{0};
+        std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
+        void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override { ready.fetch_add(1); }
+        void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
+    };
+    const auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    std::array<std::uint32_t, 6> flip{AgcDriver::FlipPacketHeader, 7, 0xfffffffeu, 1, 0, 0};
+    Packet flipPacket{flip.data(), static_cast<std::uint32_t>(flip.size()), 0, {}};
+    std::array<KernelEvent, 2> events{};
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip-only queue submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == 1, "flip-only queue flip was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip on a queue that never requested a release interrupt did not raise its event");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip-only queue event was not cleared");
     std::array<std::uint32_t, 8> words{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitDcb(&packet) == 0 && sceAgcDriverSubmitDcb(&packet) == 0, "interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
-    std::array<KernelEvent, 2> events{};
     check(owner->GetTriggeredEvents(events.data(), 2) == 1, "graphics end-of-pipe interrupt was not delivered to its queue only");
     check(events[0].filter == -14 && events[0].udata == &graphicsTag && events[0].data == 2 && sceAgcDriverGetEqEventType(events.data()) == 0, "graphics end-of-pipe event encoding is wrong");
     check(sceAgcDriverGetEqContextId(events.data()) == 0, "graphics end-of-pipe event reports another context");
@@ -212,21 +228,39 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverSubmitDcb(&packet) == 0, "plain release submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "release without INT_SEL raised an interrupt");
-    struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
-        std::atomic<int> ready{0};
-        std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
-        void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override { ready.fetch_add(1); }
-        void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
-    };
-    const auto output = std::make_shared<Output>();
-    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
-    std::array<std::uint32_t, 6> flip{AgcDriver::FlipPacketHeader, 7, 0xfffffffeu, 1, 0, 0};
-    Packet flipPacket{flip.data(), static_cast<std::uint32_t>(flip.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip submit failed");
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after a release interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
-    check(output->ready.load() == 1, "flip was not handed to its output");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip did not raise the graphics end-of-pipe event");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip event was not cleared");
+    check(output->ready.load() == 2, "flip after a release interrupt was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip on a queue that already raised its own release interrupt raised a second event");
+    words[2] = 1u << 24u;
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "release before sustained flips submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a release interrupt did not deliver on a queue whose flip event is suppressed");
+    std::uint32_t sustainedFlips = 0;
+    std::uint32_t flipsUntilEvent = 0;
+    while (sustainedFlips < 8 && flipsUntilEvent == 0) {
+        check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "sustained flip submit failed");
+        AgcDriverWaitIdle_nid_postfix();
+        ++sustainedFlips;
+        check(output->ready.load() == static_cast<int>(2 + sustainedFlips), "sustained flip was not handed to its output");
+        if (owner->GetTriggeredEvents(events.data(), 2) != 0) flipsUntilEvent = sustainedFlips;
+    }
+    check(flipsUntilEvent != 0, "a flip never raised an event again on a queue whose own release interrupts stopped");
+    check(flipsUntilEvent > 2, "a flip raised an event within two flips of the queue's own release interrupt");
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after the latch cleared submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == static_cast<int>(3 + sustainedFlips), "flip after the latch cleared was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a flip did not raise an event after the latch cleared");
+    words[2] = 1u << 24u;
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "release after a cleared latch submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a release interrupt did not deliver after the latch cleared");
+    for (int index = 0; index < 2; ++index) {
+        check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip paired with a release interrupt submit failed");
+        AgcDriverWaitIdle_nid_postfix();
+        check(output->ready.load() == static_cast<int>(4 + sustainedFlips + index), "flip paired with a release interrupt was not handed to its output");
+        check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip raised an event within two flips of the queue's own release interrupt");
+    }
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
@@ -489,6 +523,34 @@ std::array<std::uint32_t, 7> memoryCopy(const void* destination, const void* sou
     return {0xc0055000, 0x60000000, static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(static_cast<std::uint64_t>(from) >> 32u), static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(static_cast<std::uint64_t>(to) >> 32u), bytes};
 }
 
+std::array<std::uint32_t, 7> dataFill(const void* destination, std::uint32_t value, std::uint32_t bytes) {
+    const auto to = reinterpret_cast<std::uintptr_t>(destination);
+    return {0xc0055000, 0x40300000, value, 0, static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(static_cast<std::uint64_t>(to) >> 32u), bytes};
+}
+
+void testLargeDataFill() {
+    alignas(64) static volatile std::uint32_t filled = 0;
+    constexpr std::size_t words = 65536;
+    constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
+    constexpr std::uint32_t value = 0x5a5a5a5au;
+    auto* produced = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* destination = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    for (std::size_t i = 0; i < words; ++i) {
+        produced[i] = 0x96000000u | static_cast<std::uint32_t>(i);
+        destination[i] = 0;
+    }
+    const auto drainsBefore = AgcDriver::DriverDetail::storesDrained.load();
+    const auto fillsBefore = AgcDriver::DriverDetail::dmaFills.load();
+    submit(0, commands(memoryCopy(destination, produced, bytes), dataFill(destination, value, bytes), writeData(&filled, 1)));
+    waitFor(&filled, 1, "the label after a DMA_DATA fill never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::all_of(destination, destination + words, [](std::uint32_t word) { return word == value; }), "a DMA_DATA fill over a GPU copy's destination lost the fill or ran before the copy");
+    check(AgcDriver::DriverDetail::storesDrained.load() == drainsBefore, "a DMA_DATA fill larger than 64 KiB drained the device");
+    check(AgcDriver::DriverDetail::dmaFills.load() == fillsBefore + 1, "a DMA_DATA fill larger than 64 KiB was not stored as a buffer fill");
+    GuestHeap::GuestHeapFree_nid_postfix(destination);
+    GuestHeap::GuestHeapFree_nid_postfix(produced);
+}
+
 void testCopyIntoHostMemory() {
     constexpr std::size_t words = 32768;
     constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
@@ -508,6 +570,49 @@ void testCopyIntoHostMemory() {
         check(std::equal(destination.begin(), destination.end(), produced), label ? "a copy into host memory behind a label into its destination lost bytes" : "a copy into host memory did not see the GPU copy into its source");
         check(AgcDriver::DriverDetail::copiesToHostMemory.load() == copiesBefore + 1, "a copy into host memory drained instead of syncing its source");
     }
+    GuestHeap::GuestHeapFree_nid_postfix(source);
+    GuestHeap::GuestHeapFree_nid_postfix(produced);
+}
+
+void testSmallCopyBehindPendingSource() {
+    alignas(64) static volatile std::uint32_t copied = 0, settledCopied = 0, hostCopied = 0;
+    constexpr std::size_t words = 32768;
+    constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
+    constexpr std::size_t smallWords = 1024;
+    constexpr auto smallBytes = static_cast<std::uint32_t>(smallWords * 4);
+    auto* produced = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* source = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* destination = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, smallBytes));
+    for (std::size_t i = 0; i < words; ++i) {
+        produced[i] = 0xc3000000u | static_cast<std::uint32_t>(i);
+        source[i] = 0x3c000000u | static_cast<std::uint32_t>(i);
+    }
+    std::fill(destination, destination + smallWords, 0u);
+    const auto before = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(destination, source, smallBytes), writeData(&copied, 1)));
+    waitFor(&copied, 1, "the label after a small copy behind a pending source never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(destination, destination + smallWords, produced), "a small copy did not see the GPU copy into its source before it");
+    if (std::getenv("APS5_COPY_SYNC") != nullptr) check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before, "a small copy that has to wait for a completion store over its source went through the GPU copy");
+    else check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before + 1, "a small copy whose source the GPU still stores into was not recorded on the GPU");
+    std::fill(destination, destination + smallWords, 0u);
+    const auto settled = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    submit(0, commands(memoryCopy(destination, produced, smallBytes), writeData(&settledCopied, 1)));
+    waitFor(&settledCopied, 1, "the label after a small copy of a settled source never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(destination, destination + smallWords, produced), "a small copy of a settled source lost bytes");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == settled, "a small copy of a settled source was recorded on the GPU");
+    std::vector<std::uint32_t> hostDestination(smallWords);
+    for (std::size_t i = 0; i < words; ++i) source[i] = 0x3c000000u | static_cast<std::uint32_t>(i);
+    const auto hostCopies = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    const auto aliasChecks = AgcDriver::VulkanDevice::CopyAliasCounts().noSource;
+    submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(hostDestination.data(), source, smallBytes), writeData(&hostCopied, 1)));
+    waitFor(&hostCopied, 1, "the label after a small copy into memory that is not imported never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(hostDestination.begin(), hostDestination.end(), produced), "a small copy into memory that is not imported did not see the GPU copy into its source");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == hostCopies, "a small copy into memory that is not imported was recorded on the GPU");
+    check(AgcDriver::VulkanDevice::CopyAliasCounts().noSource == aliasChecks + 1, "a small copy into memory that is not imported went through the GPU copy before its CPU path");
+    GuestHeap::GuestHeapFree_nid_postfix(destination);
     GuestHeap::GuestHeapFree_nid_postfix(source);
     GuestHeap::GuestHeapFree_nid_postfix(produced);
 }
@@ -607,6 +712,25 @@ void testRegisteredFloatMode() {
     }
 }
 
+void testDispatchFloatMode() {
+    using AgcDriver::DriverDetail::DispatchFloatMode;
+    using AgcDriver::DriverDetail::ShaderSnapshot;
+    using AgcDriver::DriverDetail::RegisteredShaderState;
+    const AgcDriver::Registers live{{0x212, (0xc0u << 12u) | (1u << 21u) | (1u << 26u)}};
+    ShaderSnapshot raw{0x20000, 0, 0, {}, {}};
+    const auto fromLive = DispatchFloatMode(raw, live);
+    check(fromLive.has_value() && fromLive->floatMode == 0xc0u && fromLive->dx10Clamp && !fromLive->ieeeMode && fromLive->fp16Overflow, "an unregistered compute shader does not take its float mode from the live COMPUTE_PGM_RSRC1");
+    check(!DispatchFloatMode(raw, AgcDriver::Registers{}).has_value(), "an unregistered compute shader without a live COMPUTE_PGM_RSRC1 has a float mode");
+    auto state = std::make_shared<RegisteredShaderState>();
+    state->shader.emplace(0x212, 1u << 23u);
+    ShaderSnapshot registered{0x20000, 0, 0, {}, {}};
+    registered.registeredState = state;
+    const auto fromRegistered = DispatchFloatMode(registered, live);
+    check(fromRegistered.has_value() && fromRegistered->ieeeMode && fromRegistered->floatMode == 0u, "a registered compute shader takes its float mode from the live registers");
+    registered.registeredState = std::make_shared<RegisteredShaderState>();
+    check(!DispatchFloatMode(registered, live).has_value(), "a registered compute shader without RSRC1 takes its float mode from the live registers");
+}
+
 void testProgramSnapshots() {
     alignas(256) static std::array<std::uint32_t, 64> registered{};
     registered.fill(0xbf800000);
@@ -624,9 +748,10 @@ void testProgramSnapshots() {
     shaders[registeredAddress] = {entry};
     check(AgcDriver::DriverDetail::ProgramSnapshot(shaders, registeredAddress, {2}) == entry, "a registered program was not resolved to its registration");
     check(AgcDriver::DriverDetail::ProgramSnapshot(shaders, registeredAddress + 4 * 8, {2}) == entry, "an entry inside registered code was not resolved to its registration");
-    check(!expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::ProgramSnapshot(shaders, rawAddress, {2})); }).empty(), "an unregistered program was read raw while shaders are registered");
-    const auto unregistered = AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress, {2});
-    check(unregistered != entry && unregistered->codeAddress == rawAddress && unregistered->header.empty() && unregistered->code.size() == 2, "an empty registry did not read the program as raw code");
+    const auto unregistered = AgcDriver::DriverDetail::ProgramSnapshot(shaders, rawAddress, {2});
+    check(unregistered != entry && unregistered->codeAddress == rawAddress && unregistered->header.empty() && unregistered->code.size() == 2, "an unregistered program beside registered shaders was not read as raw code");
+    check(AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress, {2}) == unregistered, "an empty registry did not read the program as raw code");
+    check(!expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::ProgramSnapshot(shaders, registeredAddress, {1})); }).empty(), "a registered program was accepted as another shader type");
     check(AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress, {2}) == unregistered, "unchanged raw code lost its snapshot identity");
     check(!expectFailure([] { static_cast<void>(AgcDriver::DriverDetail::ProgramSnapshot({}, 0, {2})); }).empty(), "an unmapped unregistered program was accepted");
     AgcDriver::DriverDetail::DrawDecode decode{};
@@ -643,6 +768,27 @@ void testProgramSnapshots() {
     check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a decode with the rewritten program was not current");
 }
 
+void testRawGraphicsRanges() {
+    using AgcDriver::DriverDetail::RawGraphicsDrawnIn;
+    constexpr std::uint64_t base = 0x7e0000000000ull;
+    const auto note = [](std::uint64_t address, std::size_t dwords) {
+        AgcDriver::DriverDetail::ShaderSnapshot snapshot{address, 0, 0, std::vector<std::uint32_t>(dwords, 0xbf810000u), {}};
+        AgcDriver::DriverDetail::NoteRawGraphicsDraw(snapshot);
+        check(snapshot.rawGraphicsNoted->load(), "a raw graphics program was not marked as noted");
+        AgcDriver::DriverDetail::NoteRawGraphicsDraw(snapshot);
+    };
+    note(base + 0x100, 0x10);
+    note(base, 0x100);
+    note(base + 0x3f0, 0x8);
+    note(base + 0x800, 0x1);
+    check(RawGraphicsDrawnIn(base + 0x200, base + 0x210), "code inside a raw program that contains a smaller one was not reported");
+    check(RawGraphicsDrawnIn(base + 0x40c, base + 0x500), "the end of a raw program that overlaps another was not reported");
+    check(!RawGraphicsDrawnIn(base + 0x410, base + 0x800), "code between raw programs was reported");
+    check(!RawGraphicsDrawnIn(base - 4, base), "code before a raw program was reported");
+    check(RawGraphicsDrawnIn(base + 0x700, base + 0x900), "a range covering a raw program was not reported");
+    check(!RawGraphicsDrawnIn(base + 0x804, base + 0x808) && !RawGraphicsDrawnIn(base + 0x200, base + 0x200), "code after a raw program or an empty range was reported");
+}
+
 void testProgramWorkgroupUse() {
     const auto snapshot = [](std::vector<std::uint32_t> code) {
         AgcDriver::DriverDetail::ShaderSnapshot result{0x1000, 0, 2, std::move(code), {}};
@@ -656,6 +802,39 @@ void testProgramWorkgroupUse() {
     check(AgcDriver::DriverDetail::ProgramUsesWorkgroup(lds, 0) && AgcDriver::DriverDetail::ProgramUsesWorkgroup(lds, 0), "an LDS write did not need a workgroup");
     const auto entry = snapshot({0xbf8a0000, 0xbf810000, 0xbf800000, 0xbf810000});
     check(!AgcDriver::DriverDetail::ProgramUsesWorkgroup(entry, 2) && AgcDriver::DriverDetail::ProgramUsesWorkgroup(entry, 0), "the workgroup check did not start at the program's entry");
+}
+
+void testVertexTailSnapshots() {
+    using namespace AgcDriver::DriverDetail;
+    alignas(256) static std::array<std::uint32_t, 64> prolog{0xbe802008u, 0xbf9f0000u};
+    alignas(256) static std::array<std::uint32_t, 64> continuation{0xbf800000u, 0xbf810000u};
+    const auto address = reinterpret_cast<std::uintptr_t>(prolog.data());
+    const auto next = reinterpret_cast<std::uintptr_t>(continuation.data());
+    const std::array<std::uint32_t, 2> data{static_cast<std::uint32_t>(next), static_cast<std::uint32_t>(next >> 32u)};
+    const auto source = ReadRawShader(address);
+    check(source->userDataTailRegister == 8u, "raw tail metadata is missing");
+    const auto target = ReadUserDataTailContinuation(source->code, 8u, data);
+    check(target && target->codeAddress == next, "tail did not read its user-data continuation");
+    DrawDecode decode{};
+    decode.programs.resize(1);
+    decode.programs[0].snapshot = source;
+    decode.programs[0].tailContinuation = target;
+    check(DecodeProgramsCurrent(decode, {}), "unchanged tail snapshot became stale");
+    continuation[0] = 0xbf8a0000u;
+    check(!DecodeProgramsCurrent(decode, {}), "rewriting the continuation did not invalidate the draw cache");
+    AgcDriver::QueueState queue{};
+    queue.context[0x2d5] = 0x2000u;
+    queue.shader = {{0xc8, static_cast<std::uint32_t>(address >> 8u)}, {0xc9, static_cast<std::uint32_t>(address >> 40u)},
+        {0x8b, 4u}, {0x8c, data[0]}, {0x8d, data[1]}};
+    check(VertexWorkgroupRequired(queue, {}), "a barrier in the continuation was hidden from workgroup routing");
+    queue.context[0x2d5] |= 0x02000000u;
+    check(!VertexWorkgroupRequired(queue, {}), "a passthrough program was rerouted to a workgroup");
+    const std::array<std::uint32_t, 2> nullAddress{};
+    check(expectFailure([&] { static_cast<void>(ReadUserDataTailContinuation(source->code, 8u, nullAddress)); }).find("address is null") != std::string::npos, "null tail address was accepted");
+    const std::array<std::uint32_t, 2> unaligned{data[0] + 1u, data[1]};
+    check(expectFailure([&] { static_cast<void>(ReadUserDataTailContinuation(source->code, 8u, unaligned)); }).find("dword aligned") != std::string::npos, "unaligned tail address was accepted");
+    const std::array<std::uint32_t, 2> unmapped{0x1000u, 0u};
+    check(!expectFailure([&] { static_cast<void>(ReadUserDataTailContinuation(source->code, 8u, unmapped)); }).empty(), "unmapped tail address was accepted");
 }
 
 void testRegisteredVertexWorkgroupRouting() {
@@ -682,6 +861,36 @@ void testRegisteredVertexWorkgroupRouting() {
     check(expectFailure([&] { static_cast<void>(VertexWorkgroupRequired(queue, registry)); }).find("reserved graphics program address") != std::string::npos, "reserved NGG program address bits were accepted");
 }
 
+void testRegisteredFastLaunchWorkgroupVertex() {
+    alignas(256) static const std::array<std::uint32_t, 6> code{
+        0xd8340000u, 0x00000100u, 0xbf8a0000u, 0xf80008cfu, 0x00000000u, 0xbf810000u,
+    };
+    struct Header {
+        Shader shader{};
+        ShaderUserData userData{};
+        std::array<ShaderRegister, 4> registers{};
+    };
+    alignas(8) static Header header{};
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(Header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.type = 2u;
+    header.shader.user_data = &header.userData;
+    header.registers = {{{0x0c8u, static_cast<std::uint32_t>(address >> 8u)}, {0x0c9u, static_cast<std::uint32_t>(address >> 40u)}, {0x08au, 0x022c0245u}, {0x08bu, 0x0009002au}}};
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    const std::array<const Shader*, 1> stages{&header.shader};
+    const std::array<ShaderRegister, 6> context{{
+        {0x2d5u, 0x00482030u}, {0x1ffu, 32u}, {0x2ceu, 32u}, {0x2d3u, 64u}, {0x29bu, 2u}, {0x2abu, 4u},
+    }};
+    const std::array<ShaderRegister, 2> primitive{{{0x242u, 1u}, {0x25bu, 0x201u}}};
+    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -702,6 +911,12 @@ void testWorkerFailure() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--eop-interrupts") {
+            testEndOfPipeInterrupts();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC end-of-pipe interrupt queue mode tests passed");
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--readonly-resummarize") {
             testReadOnlyResummarize();
             LibcRunShutdown_nid_postfix();
@@ -710,6 +925,13 @@ int main(int argc, char** argv) {
         }
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--small-copy-sync") {
+            testHeaderWithoutProgramAddress();
+            testSmallCopyBehindPendingSource();
+            LibcRunShutdown_nid_postfix();
+            std::puts("Small copies with APS5_COPY_SYNC passed");
+            return 0;
+        }
         alignas(256) std::array<std::uint32_t, 64> rawCode{};
         rawCode.fill(0xbf800000);
         rawCode[0] = 0xbe8003ff;
@@ -780,8 +1002,11 @@ int main(int argc, char** argv) {
         check(!unterminated.empty() && bounded->code.size() == 64, "raw compute crossed inaccessible memory or missed its last instruction");
 #endif
         testProgramSnapshots();
+        testRawGraphicsRanges();
         testProgramWorkgroupUse();
+        testVertexTailSnapshots();
         testRegisteredVertexWorkgroupRouting();
+        testRegisteredFastLaunchWorkgroupVertex();
         testEvents();
         testValidation();
         testClearState();
@@ -800,7 +1025,10 @@ int main(int argc, char** argv) {
         testShaderHeaderAlignment();
         testHeaderWithoutProgramAddress();
         testCopyIntoHostMemory();
+        testLargeDataFill();
+        testSmallCopyBehindPendingSource();
         testRegisteredFloatMode();
+        testDispatchFloatMode();
         testReadOnlyResummarize();
         testWorkerFailure();
         check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("required shader register") != std::string::npos, "shutdown lost worker failure");

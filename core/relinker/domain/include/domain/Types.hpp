@@ -16,6 +16,12 @@ using FileByteOffset = std::uint64_t;
 using VirtualAddress = std::uint64_t;
 using ByteCount = std::uint64_t;
 
+struct CodeRange {
+    ByteCount Begin;
+    ByteCount End;
+    bool operator==(const CodeRange&) const = default;
+};
+
 struct ElfHeader {
     std::uint16_t Machine;
     std::uint16_t Type;
@@ -101,6 +107,7 @@ struct SysVDynamicSection {
     std::map<VirtualAddress, std::string> ImportModules;
     std::set<VirtualAddress> FunctionImports;
     std::set<std::string> UnmatchedImportModules;
+    std::vector<std::string> NeededLibraries;
 };
 
 struct CallRegistryEntry {
@@ -112,6 +119,7 @@ struct CallRegistryEntry {
     FileByteOffset TargetOffset;
     std::vector<FileByteOffset> CallSites;
     bool CallSitesResolved;
+    bool Weak = false;
 };
 
 }

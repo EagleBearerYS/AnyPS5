@@ -17,6 +17,7 @@ union RackOptions {
     Ngs2SubmixerRackOption submixer;
     Ngs2MasteringRackOption mastering;
     Ngs2ReverbRackOption reverb;
+    Ngs2CustomSamplerRackOption customSampler;
     Ngs2CustomSubmixerRackOption customSubmixer;
 };
 
@@ -26,13 +27,16 @@ static std::size_t RackOptionSize(std::uint32_t rackId) {
         case SCE_NGS2_RACK_ID_SUBMIXER: return sizeof(Ngs2SubmixerRackOption);
         case SCE_NGS2_RACK_ID_MASTERING: return sizeof(Ngs2MasteringRackOption);
         case SCE_NGS2_RACK_ID_REVERB: return sizeof(Ngs2ReverbRackOption);
+        case SCE_NGS2_RACK_ID_CUSTOM_SAMPLER: return sizeof(Ngs2CustomSamplerRackOption);
         case SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER: return sizeof(Ngs2CustomSubmixerRackOption);
         default: throw std::runtime_error("NGS2: rack id " + Ngs2Hex(rackId) + " is not implemented");
     }
 }
 
 static RackOptions DefaultRackOption(std::uint32_t rackId) {
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) throw std::runtime_error("NGS2: default custom rack options are not implemented");
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER || rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+        throw std::runtime_error("NGS2: default custom rack options are not implemented");
+    }
     RackOptions options{};
     auto& common = options.common;
     common.size = RackOptionSize(rackId);
@@ -93,6 +97,7 @@ static RackOptions CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption*
     if (options.common.max_voices == 0 || maxChannels == 0 || maxChannels > NGS2_MAX_CHANNELS) {
         throw std::invalid_argument("NGS2: invalid rack voice or channel count");
     }
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) Ngs2CheckCustomRack(options.customSampler.custom_rack_option);
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) Ngs2CheckCustomRack(options.customSubmixer.custom_rack_option);
     if (rackId == SCE_NGS2_RACK_ID_REVERB && options.reverb.reverb_size != 1) {
         throw std::runtime_error("NGS2: reverb rack size " + std::to_string(options.reverb.reverb_size) + " is not implemented");
@@ -109,12 +114,15 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
     rack->system = system;
     rack->rackId = rackId;
     rack->maxChannels = RackMaxChannels(rackId, options);
-    rack->maxFilters = rackId == SCE_NGS2_RACK_ID_SAMPLER ? options.sampler.max_filters : 0;
+    rack->maxFilters = rackId == SCE_NGS2_RACK_ID_SAMPLER ? options.sampler.max_filters
+                      : rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER ? options.customSampler.custom_rack_option.num_modules
+                      : rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER ? options.customSubmixer.custom_rack_option.num_modules : 0;
     rack->uid = nextUid++;
     std::memcpy(rack->name, options.common.name, sizeof(rack->name));
     rack->name[sizeof(rack->name) - 1] = '\0';
     rack->maxGrainSamples = options.common.max_grain_samples;
     if (rackId == SCE_NGS2_RACK_ID_SAMPLER) rack->maxChannelWorks = options.sampler.max_channel_works;
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) rack->maxChannelWorks = options.customSampler.max_channel_works;
     if (rackId == SCE_NGS2_RACK_ID_SUBMIXER) rack->maxInputs = options.submixer.max_inputs;
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) rack->maxInputs = options.customSubmixer.max_inputs;
     rack->bufferInfo = bufferInfo;
@@ -125,6 +133,7 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
         voice.ports.resize(options.common.max_ports);
         voice.matrices.resize(options.common.max_matrices);
     }
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) Ngs2SetupUserFx(*rack, options.customSampler.custom_rack_option);
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) Ngs2SetupUserFx(*rack, options.customSubmixer.custom_rack_option);
     system->racks.push_back(rack);
     *handle = reinterpret_cast<Ngs2Handle>(rack);
@@ -132,9 +141,11 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
 }
 
 int Ngs2DestroyRack(Ngs2Rack& rack, Ngs2ContextBufferInfo* outBufferInfo) {
+    if (rack.lockDepth != 0) Ngs2LeaveExclusive(rack.lockDepth);
     Ngs2CleanupUserFx(rack);
     auto& racks = rack.system->racks;
     std::erase(racks, &rack);
+    Ngs2NotifyWaiters();
     for (auto* other : racks) {
         for (auto& voice : other->voices) {
             for (auto& port : voice.ports) {
@@ -164,7 +175,7 @@ int APS5_VABI sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     const auto options = CheckedRackOption(rack_id, option);
     if (buffer_info == nullptr) APS5_INVALID_ARG_EX;
-    std::lock_guard lock(Ngs2Mutex());
+    const Ngs2Lock lock;
     return CreateRack(system_handle, rack_id, options, *buffer_info, {}, handle);
 }
 
@@ -172,7 +183,7 @@ int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t r
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     const auto options = CheckedRackOption(rack_id, option);
     if (allocator == nullptr || allocator->alloc_handler == nullptr || allocator->free_handler == nullptr) APS5_INVALID_ARG_EX;
-    std::lock_guard lock(Ngs2Mutex());
+    const Ngs2Lock lock;
     if (Ngs2FindSystem(system_handle) == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
     Ngs2ContextBufferInfo bufferInfo{};
     bufferInfo.host_buffer_size = sizeof(Ngs2Rack);
@@ -183,19 +194,25 @@ int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t r
 }
 
 int APS5_VABI sceNgs2RackDestroy(uintptr_t rack_handle, Ngs2ContextBufferInfo* buffer_info) {
-    std::lock_guard lock(Ngs2Mutex());
+    const Ngs2Lock lock;
     if (buffer_info != nullptr) *buffer_info = {};
     auto* rack = Ngs2FindRack(rack_handle);
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    while (rack != nullptr && Ngs2ExclusiveElsewhere()) {
+        Ngs2WaitOnce();
+        rack = Ngs2FindRack(rack_handle);
+    }
+    if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    if (Ngs2RenderingHere(*rack->system)) throw std::runtime_error("NGS2: destroying a rack of a system from that system's render (a voice callback) is not implemented");
     return Ngs2DestroyRack(*rack, buffer_info);
 }
 
 int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id, uintptr_t* handle) {
-    if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    std::lock_guard lock(Ngs2Mutex());
+    const Ngs2Lock lock;
     auto* rack = Ngs2FindRack(rack_handle);
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
-    if (voice_id >= rack->voices.size()) APS5_INVALID_ARG_EX;
+    if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (voice_id >= rack->voices.size()) return SCE_NGS2_ERROR_INVALID_VOICE_INDEX;
     *handle = reinterpret_cast<Ngs2Handle>(&rack->voices[voice_id]);
     return SCE_NGS2_OK;
 }
@@ -203,7 +220,7 @@ int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id
 int APS5_VABI sceNgs2RackGetInfo(uintptr_t rack_handle, Ngs2RackInfo* info, size_t info_size) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (info_size != sizeof(Ngs2RackInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-    std::lock_guard lock(Ngs2Mutex());
+    const Ngs2Lock lock;
     const auto* rack = Ngs2FindRack(rack_handle);
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
     *info = {};
@@ -228,17 +245,44 @@ int APS5_VABI sceNgs2RackGetInfo(uintptr_t rack_handle, Ngs2RackInfo* info, size
     return SCE_NGS2_OK;
 }
 
+int APS5_VABI sceNgs2RackSetUserData(uintptr_t rack_handle, uintptr_t user_data) {
+    std::lock_guard lock(Ngs2Mutex());
+    auto* rack = Ngs2FindRack(rack_handle);
+    if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    rack->userData = user_data;
+    return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2RackGetUserData(uintptr_t rack_handle, uintptr_t* user_data) {
+    std::lock_guard lock(Ngs2Mutex());
+    const auto* rack = Ngs2FindRack(rack_handle);
+    if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    if (user_data == nullptr) APS5_INVALID_ARG_EX;
+    *user_data = rack->userData;
+    return SCE_NGS2_OK;
+}
+
 int APS5_VABI sceNgs2RackLock(uintptr_t rack_handle) {
-    Ngs2Mutex().lock();
-    if (Ngs2FindRack(rack_handle) != nullptr) return SCE_NGS2_OK;
-    Ngs2Mutex().unlock();
-    return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    const Ngs2Lock lock;
+    const auto self = std::this_thread::get_id();
+    auto* rack = Ngs2FindRack(rack_handle);
+    while (rack != nullptr && Ngs2ExclusiveElsewhere()) {
+        Ngs2WaitOnce();
+        rack = Ngs2FindRack(rack_handle);
+    }
+    if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    Ngs2EnterExclusive();
+    rack->lockOwner = self;
+    rack->lockDepth++;
+    return SCE_NGS2_OK;
 }
 
 int APS5_VABI sceNgs2RackUnlock(uintptr_t rack_handle) {
-    std::lock_guard lock(Ngs2Mutex());
-    if (Ngs2FindRack(rack_handle) == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
-    Ngs2Mutex().unlock();
+    const Ngs2Lock lock;
+    auto* rack = Ngs2FindRack(rack_handle);
+    if (rack == nullptr || rack->lockDepth == 0 || rack->lockOwner != std::this_thread::get_id()) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    if (--rack->lockDepth == 0) rack->lockOwner = {};
+    Ngs2LeaveExclusive();
     return SCE_NGS2_OK;
 }
 

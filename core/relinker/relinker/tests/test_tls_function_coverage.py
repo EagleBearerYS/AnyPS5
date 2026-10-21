@@ -491,6 +491,25 @@ def make_image(transfer, metadata, extent=None, body=None):
     return image
 
 
+def make_eof_segment_prefix_image():
+    image = bytearray(0x1000)
+    image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
+    struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, 0x1200, 64, 0, 0, 64, 56, 4, 64, 0, 0)
+    image[0x200:0x206] = bytes.fromhex("ff 25 fa 00 00 00")
+    image[0x210:0x216] = bytes.fromhex("b8 2a 00 00 00 c3")
+    struct.pack_into("<QQq", image, 0x700, 0x300, 8, 0x210)
+    tags = [(5, 0x600), (10, 1), (6, 0x620), (11, 24), (7, 0x700), (8, 24), (9, 24), (0, 0)]
+    struct.pack_into("<IIQQQQQQ", image, 64, 1, 7, 0, 0, 0, len(image), len(image), 0x1000)
+    struct.pack_into("<IIQQQQQQ", image, 120, 2, 6, 0x400, 0x400, 0x400, len(tags) * 16, len(tags) * 16, 8)
+    image.extend(b"\x90" * 0x1000)
+    struct.pack_into("<IIQQQQQQ", image, 176, 7, 4, 0x800, 0x800, 0x800, 8, 16, 16)
+    struct.pack_into("<IIQQQQQQ", image, 232, 1, 5, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", image, 0x400 + index * 16, *tag)
+    image[0x1ffe:0x2000] = bytes.fromhex("64 90")
+    return image
+
+
 def pe_bytes_at(pe, rva, size):
     header = struct.unpack_from("<I", pe, 0x3c)[0]
     count = struct.unpack_from("<H", pe, header + 6)[0]
@@ -511,7 +530,7 @@ def add_alias(image, size, begin=0x1200):
 
 def main():
     groups = ("metadata", "padding", "register_loads", "displacement_bounds", "alu_execution",
-              "register_address_loads", "moved_branch", "rejected")
+              "register_address_loads", "moved_branch", "rejected", "gs_traps", "gs_traps_implicit")
     groups += tuple(f"displacement_r{register}" for register in range(16) if register != 4)
     groups += tuple(f"alu_{name}" for name in ALU_READ)
     parser = argparse.ArgumentParser(description="Run Windows guest TLS function coverage fixtures")
@@ -728,6 +747,10 @@ def main():
                 "short-before-tls": bytes.fromhex("64 48 8b 03 64 48 8b 03 c3"),
                 "short-alu-before-return": bytes.fromhex("64 48 33 03 c3"),
                 "short-before-loop": bytes.fromhex("64 48 33 03 e2 00"),
+                "short-before-word-jcc8": bytes.fromhex("64 48 33 03 66 75 00 c3"),
+                "short-before-word-jmp8": bytes.fromhex("64 48 33 03 66 eb 00 c3"),
+                "short-before-word-jmp16": bytes.fromhex("64 48 33 03 66 e9 00 00 c3"),
+                "short-before-word-jcc16": bytes.fromhex("64 48 33 03 66 0f 85 00 00 c3"),
             }.items():
                 convert(name, make_image("register", "unwind", body=instruction),
                         "Short guest TLS instruction is followed by an instruction that cannot move", error_offset=0x1244)
@@ -735,7 +758,6 @@ def main():
                 "rsp-displacement": fs_load(4, 40),
                 "rsp-alu": fs_alu(0x33, 4, 40),
                 "dword-load": bytes.fromhex("64 8b 04 25 28 00 00 00"),
-                "gs-load": bytes.fromhex("65 48 8b 04 25 28 00 00 00"),
                 "rex-b-load": bytes.fromhex("64 49 8b 04 25 28 00 00 00"),
                 "rsp-base-load": bytes.fromhex("64 48 8b 04 24"),
                 "rsp-register-address": bytes.fromhex("64 48 8b 20"),
@@ -746,12 +768,65 @@ def main():
             for name, instruction in rejected.items():
                 convert(name, make_image("register", "unwind", body=instruction + b"\xc3"),
                         "Unsupported Windows guest TLS instruction")
+            convert("segment-prefix-at-eof", make_eof_segment_prefix_image(),
+                    "Unsupported Windows guest TLS instruction")
             conflicting = make_image("register", "symbol")
             unwind = make_image("register", "unwind", 0x51)
             conflicting[0x900:0x9a0] = unwind[0x900:0x9a0]
             conflicting[232:344] = unwind[232:344]
             struct.pack_into("<H", conflicting, 56, 5)
             convert("conflicting-function-extents", conflicting, "Code analysis: conflicting function ranges")
+
+        def check_gs_traps(cases):
+            for name, instruction, trapped in cases:
+                source = work / (name + ".elf")
+                output = source.with_suffix(".exe")
+                source.write_bytes(make_image("register", "unwind", body=instruction + b"\xc3"))
+                result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
+                                        capture_output=True, text=True, timeout=30)
+                assert result.returncode == 0, (name, result.stdout, result.stderr)
+                patched = pe_bytes_at(output.read_bytes(), 0x11240, len(instruction) + 1)
+                if trapped:
+                    expected = b"\x0f\x0b" + b"\x90" * (len(instruction) - 2) + b"\xc3"
+                else:
+                    expected = instruction + b"\xc3"
+                assert patched == expected, (name, patched.hex())
+
+        if args.group in ("all", "gs_traps"):
+            check_gs_traps([
+                ("gs-load-rcx", bytes.fromhex("65 48 8b 0c 25 78 03 00 00"), True),
+                ("gs-load-r13", bytes.fromhex("65 4c 8b 2c 25 30 00 00 00"), True),
+                ("gs-store", bytes.fromhex("65 48 89 04 25 30 00 00 00"), True),
+                ("gs-alu", bytes.fromhex("65 48 33 04 25 28 00 00 00"), True),
+                ("gs-short-register-address", bytes.fromhex("65 48 8b 00"), True),
+                ("gs-nop", bytes.fromhex("65 90"), False),
+                ("gs-register-move", bytes.fromhex("65 48 89 c8"), False),
+                ("gs-cpuid", bytes.fromhex("65 0f a2"), False),
+            ])
+            instruction = bytes.fromhex("65 48 8b 0c 25 78 03 00 00")
+            image = make_image("register", "unwind", body=instruction + b"\xc3")
+            struct.pack_into("<I", image, 176, 0)
+            source = work / "gs-without-pt-tls.elf"
+            output = source.with_suffix(".exe")
+            source.write_bytes(image)
+            result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, ("gs-without-pt-tls", result.stdout, result.stderr)
+            patched = pe_bytes_at(output.read_bytes(), 0x11240, len(instruction) + 1)
+            assert patched == b"\x0f\x0b" + b"\x90" * (len(instruction) - 2) + b"\xc3", ("gs-without-pt-tls", patched.hex())
+        if args.group in ("all", "gs_traps_implicit"):
+            check_gs_traps([
+                ("gs-maskmovdqu", bytes.fromhex("65 66 0f f7 c1"), True),
+                ("gs-maskmovq", bytes.fromhex("65 0f f7 c1"), True),
+                ("gs-vmaskmovdqu", bytes.fromhex("65 c5 f9 f7 c1"), True),
+                ("gs-monitor", bytes.fromhex("65 0f 01 c8"), True),
+                ("gs-monitorx", bytes.fromhex("65 0f 01 fa"), True),
+                ("gs-clzero", bytes.fromhex("65 0f 01 fc"), True),
+                ("gs-umonitor", bytes.fromhex("65 f3 0f ae f0"), True),
+                ("gs-mwait", bytes.fromhex("65 0f 01 c9"), False),
+                ("gs-rdpru", bytes.fromhex("65 0f 01 fd"), False),
+                ("gs-umwait", bytes.fromhex("65 f2 0f ae f0"), False),
+            ])
     print(f"TLS function coverage integration tests passed: {args.group}")
 
 

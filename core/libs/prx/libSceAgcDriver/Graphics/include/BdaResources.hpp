@@ -2,6 +2,10 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_BDARESOURCES_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "Recompiler.hpp"
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -14,6 +18,18 @@ public:
     VkDescriptorBufferInfo Table() const;
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    struct ImageTableFaults {
+        std::uint32_t stage = 0;
+        std::uint64_t shader = 0;
+        std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
+        std::vector<std::string> messages;
+    };
+    void SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
+    struct SrtGuardFaults {
+        std::uint32_t stage = 0;
+        std::vector<std::uint32_t> flattenedSrt;
+    };
+    void SetSrtGuards(std::vector<SrtGuardFaults> guards);
     // APS5_PROFILE_DRAW: page tables served from the per-device cache and built anew (cumulative),
     // and how many recent tables the cache holds right now.
     struct TableCacheStats {
@@ -41,9 +57,13 @@ private:
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
     void markWrittenPages() const;
+    void checkSrtGuard() const;
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
     std::size_t tableBytes = 0;
+    std::vector<ImageTableFaults> imageTables;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
+    std::vector<SrtGuardFaults> srtGuards;
 };
 
 }
