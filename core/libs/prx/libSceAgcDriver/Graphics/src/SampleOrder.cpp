@@ -63,6 +63,17 @@ bool depthSampleable(const Context& context, VkFormat format, std::uint32_t samp
     return (supported.sampleCounts & samples) != 0;
 }
 
+bool copySampledOnly(const Context& context, VkFormat format, std::uint32_t samples) {
+    if (context.imageFormatProperties == nullptr || context.formatProperties == nullptr) return false;
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    constexpr VkFormatFeatureFlags features = VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if ((properties.optimalTilingFeatures & features) != features) return false;
+    VkImageFormatProperties supported{};
+    if (context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &supported) != VK_SUCCESS) return false;
+    return (supported.sampleCounts & samples) != 0;
+}
+
 std::array<std::uint32_t, 4> mapFor(const SampleOrder& order, bool toHost) {
     std::array<std::uint32_t, 4> map{};
     for (std::size_t pixel = 0; pixel < map.size(); ++pixel) {
@@ -91,7 +102,7 @@ void transitionLocated(const Context& context, VkCommandBuffer commands, VkImage
 
 class CopyImage {
 public:
-    CopyImage(const Context& context, VkFormat format, std::uint32_t samples, VkExtent2D extent, bool stencil) : context(context), format(format), samples(samples), extent(extent) {
+    CopyImage(const Context& context, VkFormat format, std::uint32_t samples, VkExtent2D extent, bool stencil, bool sampledOnly) : context(context), format(format), samples(samples), extent(extent), sampledOnly(sampledOnly) {
         try {
             VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
             info.imageType = VK_IMAGE_TYPE_2D;
@@ -101,7 +112,7 @@ public:
             info.arrayLayers = 1;
             info.samples = static_cast<VkSampleCountFlagBits>(samples);
             info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            info.usage = sampledOnly ? VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage sample order copy");
@@ -131,7 +142,8 @@ public:
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView depthView = VK_NULL_HANDLE;
     VkImageView stencilView = VK_NULL_HANDLE;
-    bool general = false;
+    bool sampledOnly;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
 private:
     VkImageView createView(VkImageAspectFlags aspect) {
@@ -185,18 +197,21 @@ public:
         auto copy = copyFor(target.format, target.samples, target.extent, stencil);
         kept.push_back(copy);
         const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
-        if (!copy->general) {
-            VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            toGeneral.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            toGeneral.image = copy->image;
-            toGeneral.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(target.format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
-            context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
-            copy->general = true;
-        }
+        const VkImageLayout sampledLayout = copy->sampledOnly ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        const auto transitionCopy = [&](VkImageLayout to, VkPipelineStageFlags sourceStages, VkAccessFlags sourceAccess, VkPipelineStageFlags destinationStages, VkAccessFlags destinationAccess) {
+            VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            barrier.srcAccessMask = sourceAccess;
+            barrier.dstAccessMask = destinationAccess;
+            barrier.oldLayout = copy->layout;
+            barrier.newLayout = to;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = copy->image;
+            barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(target.format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
+            context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, sourceStages, destinationStages, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+            copy->layout = to;
+        };
+        if (copy->layout != VK_IMAGE_LAYOUT_GENERAL) transitionCopy(VK_IMAGE_LAYOUT_GENERAL, copy->layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         VkImageCopy region3d{};
         region3d.srcSubresource = {aspects, 0, 0, 1};
         region3d.dstSubresource = {aspects, 0, 0, 1};
@@ -208,11 +223,12 @@ public:
         constexpr VkAccessFlags depthAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         if (located) transitionLocated(context, commands, target.image, target.format, info, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, anyWrite, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, target.image, located ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, copy->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region3d);
+        if (sampledLayout != VK_IMAGE_LAYOUT_GENERAL) transitionCopy(sampledLayout, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
         if (located) transitionLocated(context, commands, target.image, target.format, info, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, fragmentStages, depthAccess);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, fragmentStages, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | depthAccess);
         const auto& pass = depthPass(target.format, target.samples, target.method, located, locations);
         const auto set = allocate(sampledSetLayout, {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, setsPerPool * 2u}});
-        std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, copy->depthView, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, stencil ? copy->stencilView : copy->depthView, VK_IMAGE_LAYOUT_GENERAL}}};
+        std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, copy->depthView, sampledLayout}, {VK_NULL_HANDLE, stencil ? copy->stencilView : copy->depthView, sampledLayout}}};
         std::array<VkWriteDescriptorSet, 2> writes{};
         for (std::uint32_t binding = 0; binding < writes.size(); ++binding) {
             writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -222,7 +238,7 @@ public:
             writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             writes[binding].pImageInfo = &images[binding];
         }
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, stencil ? 2u : 1u, writes.data(), 0, nullptr);
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
         const std::array<VkImageView, 1> views{target.view};
         auto framebuffer = std::make_shared<Framebuffer>(context, pass.renderPass, views, region);
         kept.push_back(framebuffer);
@@ -465,7 +481,7 @@ private:
             const auto oldest = std::ranges::min_element(copies, [](const auto& a, const auto& b) { return a.second.second < b.second.second; });
             copies.erase(oldest);
         }
-        auto copy = std::make_shared<CopyImage>(context, format, samples, extent, stencil);
+        auto copy = std::make_shared<CopyImage>(context, format, samples, extent, stencil, copySampledOnly(context, format, samples));
         copies.emplace(key, std::pair{copy, ++uses});
         return copy;
     }

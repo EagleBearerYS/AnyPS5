@@ -42,11 +42,13 @@
 #include <deque>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <numeric>
 #include <optional>
 #include <random>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -745,6 +747,138 @@ int DepthCopyBarriers(AgcDriver::VulkanDevice& device) {
         return VulkanTestSkipped;
     }
     std::printf("every image barrier of %u depth passes over depth/stencil formats names both aspects\n", swapped);
+    return 0;
+}
+
+struct CreatedImage {
+    VkFormat format;
+    std::uint32_t samples;
+    VkImageUsageFlags usage;
+};
+
+struct WrittenImage {
+    VkDescriptorSet set;
+    std::uint32_t binding;
+    VkImageView view;
+    VkImageLayout layout;
+};
+
+PFN_vkGetDeviceProcAddr forwardProc = nullptr;
+PFN_vkCreateImage forwardCreateImage = nullptr;
+PFN_vkCreateImageView forwardCreateImageView = nullptr;
+PFN_vkUpdateDescriptorSets forwardUpdateDescriptorSets = nullptr;
+PFN_vkCmdBindDescriptorSets forwardBindDescriptorSets = nullptr;
+PFN_vkGetPhysicalDeviceImageFormatProperties forwardImageFormatProperties = nullptr;
+std::map<VkImage, CreatedImage> createdImages;
+std::map<VkImageView, VkImage> createdViews;
+std::vector<WrittenImage> writtenImages;
+std::set<VkDescriptorSet> graphicsSets;
+
+VKAPI_ATTR VkResult VKAPI_CALL RecordCreateImage(VkDevice device, const VkImageCreateInfo* info, const VkAllocationCallbacks* allocator, VkImage* image) {
+    const auto result = forwardCreateImage(device, info, allocator, image);
+    if (result == VK_SUCCESS) createdImages[*image] = {info->format, static_cast<std::uint32_t>(info->samples), info->usage};
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL RecordCreateImageView(VkDevice device, const VkImageViewCreateInfo* info, const VkAllocationCallbacks* allocator, VkImageView* view) {
+    const auto result = forwardCreateImageView(device, info, allocator, view);
+    if (result == VK_SUCCESS) createdViews[*view] = info->image;
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL RecordUpdateDescriptorSets(VkDevice device, std::uint32_t writeCount, const VkWriteDescriptorSet* writes, std::uint32_t copyCount, const VkCopyDescriptorSet* copies) {
+    for (std::uint32_t write = 0; write < writeCount; ++write) {
+        if (writes[write].descriptorType != VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) continue;
+        for (std::uint32_t element = 0; element < writes[write].descriptorCount; ++element) writtenImages.push_back({writes[write].dstSet, writes[write].dstBinding, writes[write].pImageInfo[element].imageView, writes[write].pImageInfo[element].imageLayout});
+    }
+    forwardUpdateDescriptorSets(device, writeCount, writes, copyCount, copies);
+}
+
+VKAPI_ATTR void VKAPI_CALL RecordBindDescriptorSets(VkCommandBuffer commands, VkPipelineBindPoint point, VkPipelineLayout layout, std::uint32_t first, std::uint32_t count, const VkDescriptorSet* sets, std::uint32_t dynamicCount, const std::uint32_t* dynamicOffsets) {
+    if (point == VK_PIPELINE_BIND_POINT_GRAPHICS) graphicsSets.insert(sets, sets + count);
+    forwardBindDescriptorSets(commands, point, layout, first, count, sets, dynamicCount, dynamicOffsets);
+}
+
+PFN_vkVoidFunction VKAPI_CALL RecordingProc(VkDevice device, const char* name) {
+    const std::string_view function(name);
+    if (function == "vkCreateImage") return reinterpret_cast<PFN_vkVoidFunction>(RecordCreateImage);
+    if (function == "vkCreateImageView") return reinterpret_cast<PFN_vkVoidFunction>(RecordCreateImageView);
+    if (function == "vkUpdateDescriptorSets") return reinterpret_cast<PFN_vkVoidFunction>(RecordUpdateDescriptorSets);
+    if (function == "vkCmdBindDescriptorSets") return reinterpret_cast<PFN_vkVoidFunction>(RecordBindDescriptorSets);
+    return forwardProc(device, name);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL RefuseSampledOnly(VkPhysicalDevice physical, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
+    if (usage == (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    return forwardImageFormatProperties(physical, format, type, tiling, usage, flags, properties);
+}
+
+bool CopySampledOnly(const Context& context, VkFormat format, std::uint32_t samples) {
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    constexpr VkFormatFeatureFlags features = VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if ((properties.optimalTilingFeatures & features) != features) return false;
+    VkImageFormatProperties supported{};
+    if (context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &supported) != VK_SUCCESS) return false;
+    return (supported.sampleCounts & samples) != 0;
+}
+
+int DepthCopyUsage(AgcDriver::VulkanDevice& device, bool refuseSampledOnly) {
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!context.sampleRateShading || context.imageFormatProperties == nullptr || context.formatProperties == nullptr) {
+        std::printf("skipped, the device lacks sampleRateShading or format queries\n");
+        return VulkanTestSkipped;
+    }
+    static AgcDriver::Graphics::DeviceFunctions functions{};
+    if (context.functions != nullptr) functions = *context.functions;
+    forwardProc = context.deviceProc;
+    forwardCreateImage = context.Function<PFN_vkCreateImage>("vkCreateImage");
+    forwardCreateImageView = context.Function<PFN_vkCreateImageView>("vkCreateImageView");
+    forwardUpdateDescriptorSets = context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets");
+    forwardBindDescriptorSets = functions.cmdBindDescriptorSets != nullptr ? functions.cmdBindDescriptorSets : context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
+    functions.cmdBindDescriptorSets = RecordBindDescriptorSets;
+    context.functions = &functions;
+    context.deviceProc = RecordingProc;
+    if (refuseSampledOnly) {
+        forwardImageFormatProperties = context.imageFormatProperties;
+        context.imageFormatProperties = RefuseSampledOnly;
+    }
+    const std::array<std::pair<VkFormat, SampleOrderMethod>, 8> passes{{
+        {VK_FORMAT_D32_SFLOAT, SampleOrderMethod::Depth}, {VK_FORMAT_D16_UNORM, SampleOrderMethod::Depth},
+        {VK_FORMAT_D32_SFLOAT_S8_UINT, SampleOrderMethod::Depth}, {VK_FORMAT_D32_SFLOAT_S8_UINT, SampleOrderMethod::DepthStencilExport}, {VK_FORMAT_D32_SFLOAT_S8_UINT, SampleOrderMethod::DepthStencilBits},
+        {VK_FORMAT_D16_UNORM_S8_UINT, SampleOrderMethod::Depth}, {VK_FORMAT_D16_UNORM_S8_UINT, SampleOrderMethod::DepthStencilExport}, {VK_FORMAT_D16_UNORM_S8_UINT, SampleOrderMethod::DepthStencilBits},
+    }};
+    std::uint32_t swapped = 0;
+    for (const auto samples : SwapSampleCounts(context)) {
+        for (const auto& [format, method] : passes) {
+            writtenImages.clear();
+            graphicsSets.clear();
+            if (!DepthSwaps(context, format, samples, method)) continue;
+            ++swapped;
+            const auto name = "the " + std::to_string(samples) + "x depth format " + std::to_string(format) + " through " + MethodName(method);
+            const bool sampledOnly = CopySampledOnly(context, format, samples);
+            const auto expectedLayout = sampledOnly ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            std::map<VkDescriptorSet, std::uint32_t> bindings;
+            for (const auto& written : writtenImages) {
+                if (!graphicsSets.contains(written.set)) continue;
+                bindings[written.set] |= 1u << written.binding;
+                const auto view = createdViews.find(written.view);
+                Require(view != createdViews.end(), name + ": the depth pass samples a view the test did not see created");
+                const auto& copy = createdImages.at(view->second);
+                Require(copy.format == format && copy.samples == samples, name + ": the depth pass samples an image of another format or sample count");
+                Require(!sampledOnly || (copy.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0u, name + ": the copy the depth pass samples was created with depth attachment usage although transfer destination and sampled usage alone is legal for it");
+                Require(written.layout == expectedLayout, name + ": the depth pass samples its copy in layout " + std::to_string(written.layout) + ", not " + std::to_string(expectedLayout));
+            }
+            Require(!bindings.empty(), name + ": no depth pass descriptor set was seen");
+            for (const auto& [set, written] : bindings) Require(written == 3u, name + ": a depth pass's descriptor set leaves binding " + std::string((written & 1u) == 0u ? "0" : "1") + " unwritten");
+            std::printf("%s: the copy %s\n", name.c_str(), sampledOnly ? "has transfer destination and sampled usage only and is sampled in GENERAL" : "keeps depth attachment usage and is sampled in DEPTH_STENCIL_READ_ONLY_OPTIMAL");
+        }
+    }
+    if (swapped == 0u) {
+        std::printf("skipped, no depth format can be sampled at a multisampled count here\n");
+        return VulkanTestSkipped;
+    }
+    std::printf("the copies and descriptor sets of %u depth passes are as expected\n", swapped);
     return 0;
 }
 
@@ -1600,6 +1734,8 @@ int main(int argc, char** argv) {
         if (mode == "--grid-reference") return GridReference(*device);
         if (mode == "--recipe-depth-locations") return RecipeDepthLocations(*device);
         if (mode == "--depth-copy-barriers") return DepthCopyBarriers(*device);
+        if (mode == "--depth-copy-usage") return DepthCopyUsage(*device, false);
+        if (mode == "--depth-copy-usage-refused") return DepthCopyUsage(*device, true);
         if (mode == "--bench") {
             VkExtent2D extent{1920u, 2160u};
             if (argc > 2) Require(std::sscanf(argv[2], "%ux%u", &extent.width, &extent.height) == 2, "--bench takes WIDTHxHEIGHT");
