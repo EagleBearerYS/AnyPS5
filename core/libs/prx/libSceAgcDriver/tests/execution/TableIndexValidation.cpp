@@ -41,6 +41,8 @@ constexpr std::uint32_t TexelWidth = 64;
 constexpr std::uint32_t TexelHeight = 4;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t Type2DArray = 13;
+constexpr std::uint32_t LastSlice = 63;
 constexpr std::size_t BlockBytes = 0x10000;
 constexpr std::uint32_t TargetWidth = 64;
 constexpr std::uint32_t TargetHeight = 32;
@@ -53,6 +55,10 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{0xe0382000u, 0x80
 alignas(256) constexpr std::array<std::uint32_t, 16> PixelTableCode{
     0x7e040f00u, 0x2c04049fu, 0x4a040404u, 0x7e080502u, 0x8f058404u, 0xf4280300u, 0x0a000000u, 0x7e140280u,
     0x7e160280u, 0xbf8cc07fu, 0xf0008f08u, 0x0003100au, 0xbf8c3f70u, 0xf800180fu, 0x13121110u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 11> PixelArrayCode{
+    0xf42c0300u, 0xfa000060u, 0x7e140280u, 0x7e160280u, 0xbf8cc07fu, 0xf0000f08u, 0x0003100au, 0xbf8c3f70u, 0xf800180fu, 0x13121110u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
@@ -77,6 +83,11 @@ std::array<std::uint32_t, 4> VertexBuffer(const void* data, std::uint32_t stride
 std::array<std::uint32_t, 4> Image(const void* texels) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
     return {static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32Float << 20u) | (((TexelWidth - 1u) & 3u) << 30u), ((TexelWidth - 1u) >> 2u) | ((TexelHeight - 1u) << 14u) | (1u << 31u), 0xfacu | (Type2D << 28u)};
+}
+
+std::array<std::uint32_t, 8> ArrayImage(const void* texels) {
+    const auto words = Image(texels);
+    return {words[0], words[1], words[2], (words[3] & 0x0fffffffu) | (Type2DArray << 28u), LastSlice, 0u, 0u, 0u};
 }
 
 class GuestBlocks {
@@ -146,12 +157,18 @@ Scene& NewScene() {
     return *Scenes.emplace_back(std::make_unique<Scene>());
 }
 
-void Build(AgcDriver::VulkanDevice& device, Scene& scene) {
+void Build(AgcDriver::VulkanDevice& device, Scene& scene, bool arrays = false) {
     const auto target = device.Target();
+    const std::uint32_t stride = arrays ? 8u : 4u;
     for (std::uint32_t image = 0; image < Images; ++image) {
         std::fill_n(scene.Texels(image), TexelWidth * TexelHeight, image == Key ? 1.0f : 0.0f);
-        const auto words = Image(scene.Texels(image));
-        std::copy(words.begin(), words.end(), scene.Table() + image * 4u);
+        if (arrays) {
+            const auto words = ArrayImage(scene.Texels(image));
+            std::copy(words.begin(), words.end(), scene.Table() + image * stride);
+        } else {
+            const auto words = Image(scene.Texels(image));
+            std::copy(words.begin(), words.end(), scene.Table() + image * stride);
+        }
     }
     std::vector<std::uint32_t> vertexUserData(4, 0u);
     auto* triangle = reinterpret_cast<std::array<float, 4>*>(scene.Constants() + 64);
@@ -175,11 +192,11 @@ void Build(AgcDriver::VulkanDevice& device, Scene& scene) {
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(12, 0u);
-    const std::span<const std::uint32_t> code(PixelTableCode);
-    const auto tableWords = Buffer(scene.Table(), Images * 16u);
+    const std::span<const std::uint32_t> code = arrays ? std::span<const std::uint32_t>(PixelArrayCode) : std::span<const std::uint32_t>(PixelTableCode);
+    const auto tableWords = Buffer(scene.Table(), Images * stride * 4u);
     std::copy(tableWords.begin(), tableWords.end(), pixelUserData.begin());
     pixelUserData[4] = Key;
-    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {reinterpret_cast<std::uintptr_t>(scene.Table()), std::as_bytes(std::span(scene.Table(), Images * 4u))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {reinterpret_cast<std::uintptr_t>(scene.Table()), std::as_bytes(std::span(scene.Table(), Images * stride))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
@@ -442,6 +459,19 @@ void Imported(AgcDriver::VulkanDevice& device) {
     Settle(device, scene, "import (after)");
 }
 
+void ArraySlices(AgcDriver::VulkanDevice& device) {
+    auto& scene = NewScene();
+    Build(device, scene, true);
+    Settle(device, scene, "array");
+    Fill(scene.Texels(Key), 0.0f);
+    auto outcome = Draw(device, scene);
+    Require(outcome.brightest == 0u && outcome.bumped == 1.0 && outcome.fallback == 0.0 && outcome.builds == 0.0, "array: a write to the base slice of a 2D array read as 2D was missed or rebuilt the object (" + outcome.Describe() + ")");
+    std::fill_n(scene.Texels(Key) + 8u * TexelWidth * TexelHeight, TexelWidth * TexelHeight, 1.0f);
+    outcome = Draw(device, scene);
+    Require(outcome.brightest == 0u && outcome.rebound == 0.0 && outcome.fallback == 0.0 && outcome.builds == 0.0, "array: a write to another slice of a 2D array read as 2D re-bound the element the draw reads from its base slice (" + outcome.Describe() + ")");
+    Settle(device, scene, "array (after)", 0u);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -466,7 +496,7 @@ int main(int argc, char** argv) {
         TargetBytes = AgcDriver::Graphics::ColorTargetLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4).Bytes();
         GuestBlocks target((TargetBytes + BlockBytes - 1) / BlockBytes * BlockBytes);
         Target = &target;
-        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 9> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}}};
+        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 10> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}}};
         for (const auto& [name, run] : cases) {
             if (!args.empty() && std::find(args.begin(), args.end(), name) == args.end()) continue;
             run(*device);

@@ -3393,6 +3393,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
                     auto& entry = indexElements[textureIndex];
                     std::copy(words.begin(), words.end(), entry.words.begin());
                     entry.count = static_cast<std::uint32_t>(words.size());
+                    entry.shape = binding.imageShape;
                     entry.depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
                     entry.known = true;
                 }
@@ -3409,6 +3410,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
             const auto words = std::span<const std::uint32_t>(table.images->guestDescriptor).subspan(element * 8u, 8u);
             std::copy(words.begin(), words.end(), entry.words.begin());
             entry.count = 8;
+            entry.shape = element < table.images->imageShapes.size() ? std::optional(table.images->imageShapes[element]) : std::nullopt;
             entry.depthCompare = element < table.images->imageDepthCompare.size() && table.images->imageDepthCompare[element];
             entry.known = true;
         }
@@ -3476,9 +3478,11 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
     for (const auto i : elements) {
         if (i >= indexElements.size() || i >= textures.size() || !indexElements[i].known) return false;
         const auto& element = indexElements[i];
-        const auto words = std::span<const std::uint32_t>(element.words.data(), element.count);
+        std::array<std::uint32_t, 8> narrowed{};
+        const auto words = firstLayerWords(std::span<const std::uint32_t>(element.words.data(), element.count), element.shape, narrowed, false);
         const auto resource = DecodeTextureResource(words);
-        auto texture = cachedTexture(context, words, resource, ViewComponents(resource), 0, element.depthCompare);
+        const VkImageViewType multisampleViewType = element.shape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+        auto texture = cachedTexture(context, words, resource, ViewComponents(resource), 0, element.depthCompare, multisampleViewType);
         if (texture == nullptr) return false;
         if (texture != textures[i]) replaced.emplace_back(i, std::move(texture));
     }

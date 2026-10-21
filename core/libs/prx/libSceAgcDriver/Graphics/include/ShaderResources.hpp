@@ -550,6 +550,7 @@ private:
     struct IndexElement {
         std::array<std::uint32_t, 8> words{};
         std::uint32_t count = 0;
+        std::optional<ShaderRecompiler::DescriptorImageShape> shape;
         bool depthCompare = false;
         bool known = false;
     };
