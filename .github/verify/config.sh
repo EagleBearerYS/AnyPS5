@@ -1,0 +1,5 @@
+BASE=6c1f63674e24295d089fa014491c3ef5e4e75b82
+REPEAT=3
+EXTRA_TESTS='windows_shared_map_cost|windows_write_watch|guest_memory|guest_jit_shared_memory|guest_shm_open|guest_raise_exception'
+BEFORE_REPEAT=1
+BENCH=windows_shared_map_cost
