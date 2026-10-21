@@ -1,0 +1,4 @@
+BASE=7cef9bcf8f88c143cba8feeaee9fafef73199df7
+REPEAT=5
+EXTRA_TESTS='agc_driver_address_dispatch_reuse|agc_driver_address_draw_reuse|agc_driver_address_draw_reuse_watched_imports|agc_driver_graphics'
+NO_BEFORE=1
