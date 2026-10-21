@@ -1,6 +1,5 @@
-READY
+BUSY BF-098
 
 RESULT:
-- last finished: BF-093 (Lane C per-draw-packet CPU tail split and cut) at 2026-10-21T05:02:19Z; result results/cloud-1/BF-093.md
-- branches: exp/bf046-main-v2 59ddb1272, exp/bf046-floor-v2 a2b173d3c, exp/lane-c-tail-untracked-target-proof 33f3b3105
-- cut: floor arm driver CPU per draw 74.3 -> 68.2 us (median of 3), below the 20 us bar; next cut Recorder::NewestWriteNote's linear scan
+- claimed BF-098 (Lane B: shared BDA fault buffers instead of one 32 KiB host-visible buffer per cached BdaResources) at 2026-10-21T05:03:10Z; board commit 40a35cc2a
+- last finished: BF-093 (results/cloud-1/BF-093.md)
