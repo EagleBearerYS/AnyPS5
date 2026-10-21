@@ -1,0 +1,4 @@
+BASE=27bcd6a29e2fd69aba0626610b2350eb8f2847f6
+REPEAT=3
+EXTRA_TESTS='windows_write_watch|agc_rewatched_direct_shared'
+NO_BEFORE=1
