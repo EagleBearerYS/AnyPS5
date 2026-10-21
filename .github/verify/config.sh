@@ -1,0 +1,4 @@
+BASE=c4bcbc9f9bbe30113f32f912a7a2ef58230f1dc4
+REPEAT=10
+EXTRA_TESTS='guest_semaphore'
+BEFORE_REPEAT=3
