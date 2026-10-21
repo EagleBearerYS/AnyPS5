@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T06:20:57Z
+BUSY BF-109
+since: 2026-10-21T11:21:46Z
 previous: PRM-050 done, results/cloud-5/PRM-050.md: pm/8224-moved-cut = 28af929a0 on #8224 9d659c509 (MovedReadOnlyBuffers takes the draw target and cuts like the build, through ShaderResources::BytesUpToTarget; reproduced 1 moved entry of 240 bytes; red 20/20, green 20/20; graphics 10/10; ^agc 815, 0 failed); pm/6636-with-8224 = merge 5d72ff741 of 28af929a0 into fc9c5416f, cut folded into GuestBufferBytes(context, words, target) (3 hunks resolved; graphics, address_draw_reuse and its watched_imports registration 10/10 each; ^agc 850, 1 failed: sgpr_pattern_fill_keys flake). Before that: BF-096 done, results/cloud-5/BF-096.md.
 
 RESULT (setup):
