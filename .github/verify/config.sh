@@ -1,0 +1,4 @@
+BASE=16b2c84c61507f8d87c90d067bbca40b0719a34a
+REPEAT=10
+EXTRA_TESTS='guest_signal_handler_mask'
+BEFORE_REPEAT=3
