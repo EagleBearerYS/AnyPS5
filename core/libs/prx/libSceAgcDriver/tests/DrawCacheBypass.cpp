@@ -1,7 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCacheBypass.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <thread>
+#include <vector>
 
 using AgcDriver::DriverDetail::DrawCacheBypassWindow;
 
@@ -51,12 +54,32 @@ void testStageHitsKeepTheCache() {
     Expect(!window.Bypass(), "a window with stage hits above the threshold bypassed the cache");
 }
 
+void testConcurrentWindowsCloseOnce() {
+    constexpr std::uint32_t Threads = 4, Windows = 256;
+    DrawCacheBypassWindow window;
+    std::atomic<bool> go{false};
+    std::atomic<std::uint32_t> started{0};
+    std::vector<std::thread> workers;
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        workers.emplace_back([&] {
+            while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+            for (std::uint32_t lookup = 0; lookup < Windows * DrawCacheBypassWindow::Window / Threads; ++lookup) {
+                if (window.Note(false, 0)) started.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    go.store(true, std::memory_order_release);
+    for (auto& worker : workers) worker.join();
+    Expect(started.load() == Windows, std::to_string(Threads) + " threads noting " + std::to_string(Windows) + " all-miss windows of " + std::to_string(DrawCacheBypassWindow::Window) + " lookups started " + std::to_string(started.load()) + " bypasses");
+}
+
 }
 
 int main() {
     testMissesBypassThenProbe();
     testHitsNeverBypass();
     testStageHitsKeepTheCache();
+    testConcurrentWindowsCloseOnce();
     if (failures != 0) {
         std::fprintf(stderr, "%d draw cache bypass checks failed\n", failures);
         return 1;

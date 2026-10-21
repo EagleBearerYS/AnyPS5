@@ -14,7 +14,7 @@ public:
     bool Note(bool hit, std::uint32_t stages);
 
 private:
-    std::atomic<std::uint32_t> lookups{0}, hits{0}, stageHits{0}, idle{0};
+    std::atomic<std::uint64_t> state{0};
 };
 
 }
