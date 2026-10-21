@@ -4,8 +4,19 @@ import subprocess
 import sys
 
 
+def resolved_stacks(lines):
+    stacks = []
+    for line in lines:
+        if line.startswith("[bigalloc] #") and " frames " in line:
+            stacks.append((line, []))
+        elif line.startswith("    ") and stacks:
+            stacks[-1][1].append(line)
+    return stacks
+
+
 def main():
     binary, resolver = sys.argv[1], sys.argv[2]
+    functions = sys.argv[3:] or ["AllocateBigVectors"]
     environment = dict(os.environ, APS5_PROFILE_BIG_ALLOCS="1")
     run = subprocess.run([binary], env=environment, capture_output=True, text=True, timeout=60, check=False)
     sys.stdout.write(run.stdout)
@@ -19,20 +30,13 @@ def main():
         sys.stderr.write(resolved.stderr)
         print("big allocation sites: the resolver failed")
         return 1
-    lines = resolved.stdout.splitlines()
-    start = next((index for index, line in enumerate(lines) if " live 2.0 MiB in 2 (+3 -1) sizes 1MiB 2 2MiB 0 other 0 frames " in line), None)
-    if start is None:
-        print("big allocation sites: the resolved report has no stack with 2 live 1 MiB blocks")
-        return 1
-    frames = []
-    for line in lines[start + 1:]:
-        if not line.startswith("    "):
-            break
-        frames.append(line)
-    if not any("AllocateBigVectors" in frame for frame in frames):
-        print("big allocation sites: no frame of the stack resolves to AllocateBigVectors")
-        return 1
-    print("big allocation sites: the stack resolves to AllocateBigVectors")
+    stacks = resolved_stacks(resolved.stdout.splitlines())
+    for function in functions:
+        found = next((header for header, frames in stacks if any(function in frame for frame in frames)), None)
+        if found is None:
+            print(f"big allocation sites: no frame of any stack resolves to {function}")
+            return 1
+        print(f"big allocation sites: a stack resolves to {function} ({'scanned' if ' scanned frames ' in found else 'unwound'})")
     return 0
 
 

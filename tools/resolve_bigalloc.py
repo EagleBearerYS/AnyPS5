@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 STACK = re.compile(r"^\[bigalloc\] #\d+ live .* frames (?P<frames>.*)$")
-FRAME = re.compile(r"^(?P<module>[^\s+]+)\+0x(?P<offset>[0-9a-fA-F]+)$")
+FRAME = re.compile(r"^(?P<module>\S+)\+0x(?P<offset>[0-9a-fA-F]+)$")
 
 
 def image_base(path):

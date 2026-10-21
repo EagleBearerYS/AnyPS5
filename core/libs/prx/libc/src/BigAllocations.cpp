@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -18,6 +19,11 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#include "prx/libc/include/exceptions/Unwind.hpp"
+extern "C" {
+_Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*);
+_Unwind_Ptr APS5_VABI _Unwind_GetIP_nid_postfix(_Unwind_Context*);
+}
 #else
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -27,6 +33,9 @@ namespace {
 
 constexpr std::size_t Threshold = std::size_t{512} << 10;
 constexpr std::size_t Depth = 16;
+constexpr std::size_t UnwoundEnough = 3;
+constexpr std::size_t ScanBytes = std::size_t{32} << 10;
+constexpr std::size_t CallBytes = 7;
 constexpr std::size_t TopStacks = 12;
 constexpr std::size_t Dumped = 3;
 constexpr std::size_t DumpWords = 8;
@@ -42,15 +51,16 @@ bool enabled() {
 struct Stack {
     std::array<void*, Depth> frames{};
     std::size_t depth = 0;
+    bool scanned = false;
 
     bool operator==(const Stack& other) const {
-        return depth == other.depth && std::equal(frames.begin(), frames.begin() + static_cast<std::ptrdiff_t>(depth), other.frames.begin());
+        return depth == other.depth && scanned == other.scanned && std::equal(frames.begin(), frames.begin() + static_cast<std::ptrdiff_t>(depth), other.frames.begin());
     }
 };
 
 struct StackHash {
     std::size_t operator()(const Stack& stack) const {
-        std::uint64_t hash = 14695981039346656037ull;
+        std::uint64_t hash = stack.scanned ? 1099511628211ull : 14695981039346656037ull;
         for (std::size_t index = 0; index < stack.depth; ++index) hash = (hash ^ reinterpret_cast<std::uintptr_t>(stack.frames[index])) * 1099511628211ull;
         return static_cast<std::size_t>(hash);
     }
@@ -151,21 +161,167 @@ void dropStale(Tracker& state, const Block& block) {
     ++state.stale;
 }
 
-[[gnu::noinline]] void record(void* block, std::size_t bytes, unsigned skip) {
-    if (block == nullptr || bytes < Threshold || !enabled()) return;
+thread_local bool capturing = false;
+
+void* const* returnSlot(void* frame, void* returnAddress) {
+    const auto slot = static_cast<void* const*>(frame) + 1;
+    return *slot == returnAddress ? slot : nullptr;
+}
+
+#ifdef _WIN32
+
+struct CodeRange {
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+
+    bool operator==(const CodeRange& other) const {
+        return begin == other.begin && end == other.end;
+    }
+};
+
+std::atomic<const std::vector<CodeRange>*> codeRanges{nullptr};
+
+std::vector<std::unique_ptr<const std::vector<CodeRange>>>& publishedCodeRanges() {
+    static auto* const published = new std::vector<std::unique_ptr<const std::vector<CodeRange>>>;
+    return *published;
+}
+
+void addCodeRanges(HMODULE module, std::vector<CodeRange>& ranges) {
+    const auto* base = reinterpret_cast<const std::uint8_t*>(module);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return;
+    const auto* section = IMAGE_FIRST_SECTION(nt);
+    for (unsigned index = 0; index < nt->FileHeader.NumberOfSections; ++index, ++section) {
+        if ((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) == 0) continue;
+        const auto begin = reinterpret_cast<std::uintptr_t>(base) + section->VirtualAddress;
+        const auto size = section->Misc.VirtualSize != 0 ? section->Misc.VirtualSize : section->SizeOfRawData;
+        if (size != 0) ranges.push_back({begin, begin + size});
+    }
+}
+
+void publishCodeRanges(const std::vector<HMODULE>& modules) {
+    std::vector<CodeRange> ranges;
+    for (const auto module : modules) addCodeRanges(module, ranges);
+    std::sort(ranges.begin(), ranges.end(), [](const CodeRange& left, const CodeRange& right) { return left.begin < right.begin; });
+    const auto* current = codeRanges.load(std::memory_order_acquire);
+    if (current != nullptr && *current == ranges) return;
+    auto& published = publishedCodeRanges();
+    published.push_back(std::make_unique<const std::vector<CodeRange>>(std::move(ranges)));
+    codeRanges.store(published.back().get(), std::memory_order_release);
+}
+
+std::size_t indirectCallLength(const std::uint8_t* modrm, std::size_t available) {
+    const unsigned mod = modrm[0] >> 6u;
+    const unsigned rm = modrm[0] & 7u;
+    if (mod == 3) return 2;
+    std::size_t length = 2;
+    if (rm == 4) {
+        if (available < 2) return 0;
+        ++length;
+        if (mod == 0 && (modrm[1] & 7u) == 5) length += 4;
+    } else if (mod == 0 && rm == 5) {
+        length += 4;
+    }
+    if (mod == 1) length += 1;
+    if (mod == 2) length += 4;
+    return length;
+}
+
+bool callEndsAt(const std::uint8_t* end) {
+    if (end[-5] == 0xE8) return true;
+    for (std::size_t length = 2; length <= CallBytes; ++length) {
+        const auto* opcode = end - length;
+        if (opcode[0] != 0xFF || (opcode[1] >> 3u & 7u) != 2) continue;
+        if (indirectCallLength(opcode + 1, length - 1) == length) return true;
+    }
+    return false;
+}
+
+bool readableCode(DWORD protect) {
+    return (protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0 && (protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0;
+}
+
+bool followsCall(std::uintptr_t address) {
+    const auto* ranges = codeRanges.load(std::memory_order_acquire);
+    if (ranges == nullptr) return false;
+    const auto found = std::upper_bound(ranges->begin(), ranges->end(), address, [](std::uintptr_t value, const CodeRange& range) { return value < range.begin; });
+    if (found == ranges->begin()) return false;
+    const auto& range = *std::prev(found);
+    if (address < range.begin + CallBytes || address > range.end) return false;
+    MEMORY_BASIC_INFORMATION region{};
+    if (VirtualQuery(reinterpret_cast<const void*>(address - CallBytes), &region, sizeof(region)) == 0) return false;
+    if (region.State != MEM_COMMIT || !readableCode(region.Protect) || reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize < address) return false;
+    return callEndsAt(reinterpret_cast<const std::uint8_t*>(address));
+}
+
+void scanStack(Stack& stack, void* const* slot, unsigned drop) {
+    const auto* thread = reinterpret_cast<const NT_TIB*>(NtCurrentTeb());
+    const auto low = reinterpret_cast<std::uintptr_t>(thread->StackLimit);
+    const auto high = reinterpret_cast<std::uintptr_t>(thread->StackBase);
+    const auto begin = reinterpret_cast<std::uintptr_t>(slot);
+    if (begin < low || begin >= high || begin % sizeof(void*) != 0) return;
+    const auto end = std::min(high, begin + ScanBytes);
+    stack.scanned = true;
+    for (auto at = begin; at + sizeof(void*) <= end && stack.depth < Depth; at += sizeof(void*)) {
+        const auto value = *reinterpret_cast<const std::uintptr_t*>(at);
+        if (!followsCall(value)) continue;
+        if (drop != 0) {
+            --drop;
+            continue;
+        }
+        stack.frames[stack.depth++] = reinterpret_cast<void*>(value);
+    }
+}
+
+struct Walk {
+    Stack* stack = nullptr;
+    unsigned skip = 0;
+};
+
+_Unwind_Reason_Code APS5_VABI traceFrame(_Unwind_Context* context, void* argument) {
+    auto& walk = *static_cast<Walk*>(argument);
+    const auto address = _Unwind_GetIP_nid_postfix(context);
+    if (address == 0) return _URC_END_OF_STACK;
+    if (walk.skip != 0) {
+        --walk.skip;
+        return _URC_NO_REASON;
+    }
+    walk.stack->frames[walk.stack->depth++] = reinterpret_cast<void*>(address);
+    return walk.stack->depth < Depth ? _URC_NO_REASON : _URC_NORMAL_STOP;
+}
+
+[[gnu::noinline]] void captureStack(Stack& stack, unsigned skip, void* const* slot) {
+    Walk walk{&stack, skip + 2};
+    _Unwind_Backtrace_nid_postfix(&traceFrame, &walk);
+    if (stack.depth >= UnwoundEnough || slot == nullptr) return;
+    Stack scanned;
+    scanStack(scanned, slot, skip - 1);
+    if (scanned.depth > stack.depth) stack = scanned;
+}
+
+#else
+
+[[gnu::noinline]] void captureStack(Stack& stack, unsigned skip, void* const*) {
+    std::array<void*, Depth + 4> raw{};
+    const auto wanted = static_cast<int>(std::min<std::size_t>(raw.size(), Depth + skip + 2));
+    const auto captured = static_cast<std::size_t>(std::max(0, backtrace(raw.data(), wanted)));
+    const auto first = std::min<std::size_t>(captured, skip + 2);
+    stack.depth = std::min(Depth, captured - first);
+    std::copy_n(raw.begin() + static_cast<std::ptrdiff_t>(first), stack.depth, stack.frames.begin());
+}
+
+#endif
+
+[[gnu::noinline]] void record(void* block, std::size_t bytes, unsigned skip, void* const* slot) {
+    if (block == nullptr || bytes < Threshold || !enabled() || capturing) return;
     auto& state = tracker();
     if (reentered(state)) return;
     Stack stack;
-#ifdef _WIN32
-    stack.depth = CaptureStackBackTrace(skip + 1, static_cast<DWORD>(Depth), stack.frames.data(), nullptr);
-#else
-    std::array<void*, Depth + 4> raw{};
-    const auto wanted = static_cast<int>(std::min<std::size_t>(raw.size(), Depth + skip + 1));
-    const auto captured = static_cast<std::size_t>(std::max(0, backtrace(raw.data(), wanted)));
-    const auto first = std::min<std::size_t>(captured, skip + 1);
-    stack.depth = std::min(Depth, captured - first);
-    std::copy_n(raw.begin() + static_cast<std::ptrdiff_t>(first), stack.depth, stack.frames.begin());
-#endif
+    capturing = true;
+    captureStack(stack, skip, slot);
+    capturing = false;
     try {
         std::lock_guard lock(state.mutex);
         Owned owned(state);
@@ -311,13 +467,13 @@ void patchModules(bool wait);
 
 void* hookMalloc(std::size_t bytes) {
     void* block = original<MallocFunction>(Malloc)(bytes);
-    record(block, bytes, 1);
+    record(block, bytes, 1, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     return block;
 }
 
 void* hookCalloc(std::size_t count, std::size_t size) {
     void* block = original<CallocFunction>(Calloc)(count, size);
-    record(block, multiplied(count, size), 1);
+    record(block, multiplied(count, size), 1, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     return block;
 }
 
@@ -325,9 +481,9 @@ void* hookRealloc(void* block, std::size_t bytes) {
     const auto previous = forget(block);
     void* moved = original<ReallocFunction>(Realloc)(block, bytes);
     if (moved != nullptr) {
-        record(moved, bytes, 1);
+        record(moved, bytes, 1, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     } else if (bytes != 0) {
-        record(block, previous, 1);
+        record(block, previous, 1, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     }
     return moved;
 }
@@ -339,7 +495,7 @@ void hookFree(void* block) {
 
 void* hookAlignedMalloc(std::size_t bytes, std::size_t alignment) {
     void* block = original<AlignedMallocFunction>(AlignedMalloc)(bytes, alignment);
-    record(block, bytes, 1);
+    record(block, bytes, 1, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     return block;
 }
 
@@ -347,9 +503,9 @@ void* hookAlignedRealloc(void* block, std::size_t bytes, std::size_t alignment) 
     const auto previous = forget(block);
     void* moved = original<AlignedReallocFunction>(AlignedRealloc)(block, bytes, alignment);
     if (moved != nullptr) {
-        record(moved, bytes, 1);
+        record(moved, bytes, 1, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     } else if (bytes != 0) {
-        record(block, previous, 1);
+        record(block, previous, 1, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     }
     return moved;
 }
@@ -486,6 +642,7 @@ void patchModules(bool wait) {
             modules.resize(needed / sizeof(HMODULE) + 64);
         }
         modules.resize(needed / sizeof(HMODULE));
+        publishCodeRanges(modules);
         for (const auto module : modules) {
             if (seenModules().contains(reinterpret_cast<std::uintptr_t>(module))) continue;
             std::array<wchar_t, MAX_PATH> path{};
@@ -583,9 +740,9 @@ std::string report(const char* window) {
     text += '\n';
     for (std::size_t rank = 0; rank < shown.size(); ++rank) {
         const auto& site = shown[rank];
-        append(text, "[bigalloc] #%llu live %.1f MiB in %llu (+%llu -%llu) sizes 1MiB %llu 2MiB %llu other %llu frames", static_cast<unsigned long long>(rank + 1), mebibytes(site.liveBytes),
+        append(text, "[bigalloc] #%llu live %.1f MiB in %llu (+%llu -%llu) sizes 1MiB %llu 2MiB %llu other %llu %s frames", static_cast<unsigned long long>(rank + 1), mebibytes(site.liveBytes),
             static_cast<unsigned long long>(site.liveCount), static_cast<unsigned long long>(site.allocated), static_cast<unsigned long long>(site.freed),
-            static_cast<unsigned long long>(site.sizes[0]), static_cast<unsigned long long>(site.sizes[1]), static_cast<unsigned long long>(site.sizes[2]));
+            static_cast<unsigned long long>(site.sizes[0]), static_cast<unsigned long long>(site.sizes[1]), static_cast<unsigned long long>(site.sizes[2]), site.stack.scanned ? "scanned" : "unwound");
         for (std::size_t frame = 0; frame < site.stack.depth; ++frame) {
             text += ' ';
             text += frameName(site.stack.frames[frame]);
@@ -643,7 +800,7 @@ bool BigAllocationsEnabled_nid_no_patch() {
 }
 
 void BigAllocationsNote_nid_no_patch(void* block, std::size_t bytes) {
-    record(block, bytes, 2);
+    record(block, bytes, 2, returnSlot(__builtin_frame_address(0), __builtin_return_address(0)));
     std::atomic_signal_fence(std::memory_order_seq_cst);
 }
 

@@ -222,10 +222,11 @@ using ImageKey = std::array<Word, 6>;
 const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte* end) {
     static std::mutex mutex;
     static std::map<ImageKey, FrameIndex> indexes;
-    std::lock_guard lock(mutex);
-    const auto [entry, inserted] = indexes.try_emplace(key);
-    auto& index = entry->second;
-    if (!inserted) return index;
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = indexes.find(key); found != indexes.end()) return found->second;
+    }
+    FrameIndex index;
     const Byte* p = begin;
     while (end - p >= 8) {
         const Byte* record = p;
@@ -244,7 +245,8 @@ const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte
         p = next;
     }
     std::sort(index.begin(), index.end());
-    return index;
+    std::lock_guard lock(mutex);
+    return indexes.try_emplace(key, std::move(index)).first->second;
 }
 
 const IMAGE_NT_HEADERS64* ImageHeaders(Word pc, const Byte*& base) {
