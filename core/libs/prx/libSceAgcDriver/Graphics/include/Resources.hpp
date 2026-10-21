@@ -6,6 +6,8 @@
 
 namespace AgcDriver::Graphics {
 
+enum class HostOwner : std::uint8_t;
+
 class Buffer {
 public:
     Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -22,6 +24,7 @@ public:
 
 private:
     void initializeAddress(VkBufferUsageFlags usage);
+    void countHost() noexcept;
     void release() noexcept;
     Context context;
     VkDeviceAddress deviceAddress = 0;
@@ -36,6 +39,8 @@ private:
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize offset = 0;
     bool slab = false;
+    bool hostCounted = false;
+    HostOwner owner{};
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags properties;
     std::shared_ptr<BufferPool> cache;
@@ -64,6 +69,7 @@ private:
     VkBufferUsageFlags usage;
     std::shared_ptr<BufferPool> cache;
     bool hostPlaced = false;
+    bool hostCounted = false;
     bool ready = false;
 };
 

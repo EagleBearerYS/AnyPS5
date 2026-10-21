@@ -275,6 +275,9 @@ With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on st
 | `[flip]` | from the start |
 | `[fill-sync]` | from the start |
 | `[buffers] descriptor elements bound` | from the start |
+| `[buffers] host-visible memory` | held when printed |
+
+`[buffers] host-visible memory` is also printed once when the device shuts down. It gives the host-visible `VkDeviceMemory` that buffers hold, in MiB with the buffer count, by owner: heap mirrors, image mirrors, copies of guest ranges, staging, storage write-back, device-local buffers placed in host memory after the device memory ran out (device spill), shader data (data buffers the driver builds for descriptors, and the BDA tables and fault buffers), and other. `BufferPool` is the memory the pool keeps idle: retained buffers and the free slots of its slab blocks. The allocation count adds the buffers with their own allocation, the retained ones and the slab blocks. Images placed in host memory and allocations made outside the pool are not counted. Without `APS5_PROFILE_DRAW` nothing is counted.
 
 `[gputime]` is described above and needs `APS5_PROFILE_GPU`. Other profile lines state their window in their text or are not listed here because their counters were not checked.
 
