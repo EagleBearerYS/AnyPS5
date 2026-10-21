@@ -1,0 +1,4 @@
+BASE=ed444481b7178281a66a6b1c23d97109f74e5d3e
+REPEAT=3
+EXTRA_TESTS='big_allocation_sites|agc_driver_image_table_cache_bounds'
+NO_BEFORE=1
