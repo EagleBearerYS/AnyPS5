@@ -16,6 +16,7 @@ struct DeferredLabel {
     std::uint64_t address;
     std::size_t size;
     std::array<std::byte, Capacity> bytes;
+    std::uint32_t opcode = 0;
 };
 
 struct DeferredLabels {

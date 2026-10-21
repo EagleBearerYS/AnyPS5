@@ -47,7 +47,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
                 if (reason == 1) GuestMemory::Write(label->address, bytes, 4);
                 if (reason == 0 || reason == 1 || reason == 5) {
-                    noteLabelStore(label->address, bytes, stamp, submission.queue);
+                    noteLabelStore(label->address, bytes, stamp, submission.queue, opcode);
                     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
                 }
                 countLabelOutcome(reason);
@@ -85,6 +85,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 auto& entry = deferred.labels.emplace_back();
                 entry.address = label->address;
                 entry.size = bytes.size();
+                entry.opcode = opcode;
                 std::memcpy(entry.bytes.data(), bytes.data(), bytes.size());
                 ++queuedLabels;
                 wroteOnGpu = true;
@@ -102,7 +103,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                     GuestMemory::Write(label->address, bytes, 4);
                     wroteOnGpu = true;
                 }
-                if (wroteOnGpu) noteLabelStore(label->address, bytes, stamp, submission.queue);
+                if (wroteOnGpu) noteLabelStore(label->address, bytes, stamp, submission.queue, opcode);
                 Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
                 countLabelOutcome(reason);
                 ++immediateLabels;
@@ -158,7 +159,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 recordDeferredLabels(localDevice.get(), submission.queue);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(store->address, bytes, stamp, submission.queue) : 4;
-                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue);
+                if (reason == 0 || reason == 1 || reason == 5) noteLabelStore(store->address, bytes, stamp, submission.queue, opcode);
                 if (reason == 0 || reason == 5) {
                     if (reason == 0) ++storesOnGpu;
                     else ++storesBehindCompletions;
@@ -371,13 +372,13 @@ void Driver::commitDmaStore(std::uint32_t queue, std::uint64_t address, std::spa
         reason = localDevice->WriteLabelOnGpu(address, bytes, stamp, queue);
     }
     if (reason == 0 || reason == 5 || reason == 6) {
-        noteLabelStore(address, bytes, stamp, queue);
+        noteLabelStore(address, bytes, stamp, queue, 0x50);
         if (reason == 0) ++storesOnGpu;
         else ++storesBehindCompletions;
     } else {
         if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
         GuestMemory::Write(address, bytes, 1);
-        noteLabelStore(address, bytes, stamp != 0 ? stamp : ++eventSerial, queue);
+        noteLabelStore(address, bytes, stamp != 0 ? stamp : ++eventSerial, queue, 0x50);
         ++storesOnCpu;
     }
     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
@@ -419,7 +420,7 @@ bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint
     auto enqueue =[this, queue, opcode, address, bytes = std::move(bytes), endOfPipeInterrupt, writes, stored = std::move(stored)]() mutable {
         DrawPipeline::Queue0().Enqueue([this, queue, opcode, address, bytes = std::move(bytes), endOfPipeInterrupt] {
             GuestMemory::SetCurrentPacket(opcode, queue);
-            commitLabel(queue, address, bytes, endOfPipeInterrupt);
+            commitLabel(queue, opcode, address, bytes, endOfPipeInterrupt);
         }, std::move(writes), address, std::move(stored));
     };
     if (queue == 0 && DrawFinisher::Overlap() && DrawFinisher::Busy()) {
@@ -435,7 +436,7 @@ bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint
     return true;
 }
 
-void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes, bool endOfPipeInterrupt) {
+void Driver::commitLabel(std::uint32_t queue, std::uint32_t opcode, std::uint64_t address, std::span<const std::byte> bytes, bool endOfPipeInterrupt) {
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto localDevice = device.Load();
@@ -450,7 +451,7 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
             if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(address, bytes, 4);
         }
-        noteLabelStore(address, bytes, stamp, queue);
+        noteLabelStore(address, bytes, stamp, queue, opcode);
         Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
         countLabelOutcome(reason);
         ++immediateLabels;

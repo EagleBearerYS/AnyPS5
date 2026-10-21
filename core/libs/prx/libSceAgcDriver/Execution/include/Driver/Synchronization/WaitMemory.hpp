@@ -18,6 +18,7 @@ struct LabelStore {
     std::uint64_t stamp = 0;
     std::uint32_t value = 0;
     std::uint32_t queue = 0xffffffffu;
+    std::uint32_t opcode = 0;
 };
 
 struct WriteRecord {
