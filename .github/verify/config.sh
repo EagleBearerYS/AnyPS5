@@ -1,0 +1,4 @@
+BASE=1d2fdfb261a67ea961655512cfac59a6eb56b85b
+REPEAT=10
+EXTRA_TESTS='agc_driver_draw_cache_relocation|agc_driver_draw_cache_relocation_evicted|agc_driver_draw_cache_relocation_kept'
+BEFORE_REPEAT=3
