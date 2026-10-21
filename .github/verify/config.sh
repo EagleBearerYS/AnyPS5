@@ -1,0 +1,4 @@
+BASE=6696def6e65efa54a184367a5c8a6bac9a6712f9
+REPEAT=5
+EXTRA_TESTS='agc_driver_lazy_resolved_abi|agc_driver_lazy_resolved_abi_switch_set|agc_driver_prepared_shaders|agc_driver_prepared_shaders_abi_deferred_compute_lazy'
+NO_BEFORE=1
