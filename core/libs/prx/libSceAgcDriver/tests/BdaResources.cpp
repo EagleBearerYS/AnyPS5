@@ -15,15 +15,21 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <initializer_list>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -2168,6 +2174,266 @@ void retiredImportWatchTests(const Context& context) {
 #endif
 }
 
+#ifdef _WIN32
+struct RewatchCostSpread {
+    std::size_t count = 0;
+    double total = 0;
+    double median = 0;
+    double p99 = 0;
+    double peak = 0;
+};
+
+RewatchCostSpread rewatchCostSpread(std::vector<double> values) {
+    RewatchCostSpread spread;
+    spread.count = values.size();
+    if (values.empty()) return spread;
+    std::sort(values.begin(), values.end());
+    for (const auto value : values) spread.total += value;
+    spread.median = values[values.size() / 2];
+    spread.p99 = values[std::min(values.size() - 1, values.size() * 99 / 100)];
+    spread.peak = values.back();
+    return spread;
+}
+
+void rewatchCostLine(std::ostringstream& out, const char* label, const std::vector<double>& values) {
+    const auto spread = rewatchCostSpread(values);
+    out << "  " << label << ": " << spread.count << ", total " << spread.total << " us, median " << spread.median << " us, p99 " << spread.p99 << " us, max " << spread.peak << " us\n";
+}
+#endif
+
+int retiredImportRewatchCost(const Context& context, const char* size) {
+#ifndef _WIN32
+    static_cast<void>(context);
+    static_cast<void>(size);
+    std::cout << "retired import rewatch cost: Windows only (imports never leave the write watch on Linux)\n";
+    return 77;
+#else
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix() || !AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "retired import rewatch cost: the guest arena is unavailable or not write-watched\n";
+        return 77;
+    }
+    const auto percent = size != nullptr ? std::strtoull(size, nullptr, 10) : 100ull;
+    Require(percent >= 1 && percent <= 1000, "retired import rewatch cost: the size is a percent of Village's workload, from 1 to 1000");
+    const auto scale = [percent](std::uint64_t count) { return std::max<std::uint64_t>(1, (count * percent + 50) / 100); };
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> refreshes;
+    const auto singles = scale(1648);
+    const auto bigSingles = std::min(singles, scale(148));
+    for (std::uint64_t index = 0; index < singles; ++index) refreshes.emplace_back(1u, (index + 1) * bigSingles / singles != index * bigSingles / singles ? 1u : 0u);
+    for (std::uint64_t index = 0, count = scale(339); index < count; ++index) refreshes.emplace_back(2u, 1u);
+    for (const auto& [count, pieces] : std::initializer_list<std::pair<std::uint64_t, std::uint32_t>>{{60, 4}, {20, 16}, {6, 64}, {3, 361}}) {
+        for (std::uint64_t index = 0, scaled = scale(count); index < scaled; ++index) refreshes.emplace_back(pieces, 0u);
+    }
+    refreshes.emplace_back(static_cast<std::uint32_t>(scale(1412)), 0u);
+    std::uint64_t seed = 8926;
+    for (auto index = refreshes.size(); index > 1; --index) {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        std::swap(refreshes[index - 1], refreshes[(seed >> 33u) % index]);
+    }
+    std::uint64_t plannedPieces = 0;
+    std::uint64_t plannedBig = 0;
+    std::uint32_t mostPieces = 0;
+    for (const auto& [pieces, big] : refreshes) {
+        plannedPieces += pieces;
+        plannedBig += big;
+        mostPieces = std::max(mostPieces, pieces);
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t pieceStride = 4 * piece;
+    constexpr std::size_t bigPiece = 4ull << 20u;
+    constexpr std::size_t bigStride = 4 * bigPiece;
+    constexpr std::size_t bigSlots = 4;
+    constexpr std::size_t probeBytes = 32ull << 20u;
+    constexpr std::size_t buildRounds = 32;
+    constexpr std::uint64_t budget = 1ull << 30u;
+    constexpr auto deadline = std::chrono::seconds(75);
+    const std::size_t pieceSlots = std::max<std::size_t>(mostPieces, 2);
+    const std::size_t bytes = bigSlots * bigStride + pieceSlots * pieceStride + probeBytes;
+    auto* block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, bigStride));
+    Require(block != nullptr, "retired import rewatch cost: cannot allocate its guest arena block");
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    auto* bigArea = block;
+    auto* pieceArea = block + bigSlots * bigStride;
+    auto* probe = pieceArea + pieceSlots * pieceStride;
+    const auto address = [](const std::uint8_t* pointer) { return reinterpret_cast<std::uint64_t>(pointer); };
+    const auto probeAddress = address(probe);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(8ull << 20u);
+    SetHostImportDeferredSettles(false);
+    ClearHostImports(importing.device);
+    const auto decided = PrepareImportWatch(importing);
+    SetImportWatch(importing, ImportWatch::Unwatch);
+    SetHostImportBudget(budget);
+    using Ranges = std::vector<std::pair<std::uint8_t*, std::size_t>>;
+    const auto registry = [](const Ranges& ranges, bool add) {
+        GuestAllocations::Mutation mutation;
+        for (const auto& [pointer, length] : ranges) {
+            if (add) mutation.Add(pointer, length, true, true, true);
+            else mutation.Remove(pointer);
+        }
+    };
+    const auto refresh = [&] { static_cast<void>(HostImportSerial(importing, probeAddress, 1, true)); };
+    std::uint8_t stored = 0;
+    const auto store = [&stored](std::uint8_t* pointer, std::size_t length, std::size_t stride) {
+        ++stored;
+        auto* target = static_cast<volatile std::uint8_t*>(pointer);
+        for (std::size_t offset = 0; offset < length; offset += stride) target[offset] = stored;
+    };
+    using Clock = std::chrono::steady_clock;
+    const auto since = [](Clock::time_point start) { return std::chrono::duration<double, std::micro>(Clock::now() - start).count(); };
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    std::vector<double> restoredBuilds;
+    std::vector<double> repeatBuilds;
+    std::size_t buildsRestored = 0;
+    std::size_t buildsUnwatched = 0;
+    const Ranges buildRanges{{pieceArea, piece}, {pieceArea + piece, piece}};
+    for (std::size_t round = 0; round < buildRounds; ++round) {
+        registry({buildRanges[0]}, true);
+        const auto* entry = HostImportFor(importing, address(pieceArea), piece, ImportRequester::Map);
+        if (entry != nullptr && entry->unwatched) ++buildsUnwatched;
+        store(pieceArea, piece, 4096);
+        registry({buildRanges[1]}, true);
+        refresh();
+        if (AgcDriver::GuestMemory::Watched(address(pieceArea), piece)) ++buildsRestored;
+        SetHostImportBudget(4096);
+        auto start = Clock::now();
+        build();
+        restoredBuilds.push_back(since(start));
+        start = Clock::now();
+        build();
+        repeatBuilds.push_back(since(start));
+        SetHostImportBudget(budget);
+        registry(buildRanges, false);
+        refresh();
+    }
+    std::vector<double> refreshTimes;
+    std::array<std::vector<double>, 4> refreshClasses;
+    std::vector<double> collectAfterBump;
+    std::vector<double> collectAfterQuiet;
+    std::vector<double> collectRepeat;
+    std::uint64_t made = 0;
+    std::uint64_t madeUnwatched = 0;
+    std::uint64_t failed = 0;
+    std::uint64_t retired = 0;
+    std::uint64_t retiredBytes = 0;
+    std::uint64_t rewatched = 0;
+    std::uint64_t rewatchedBytes = 0;
+    std::uint64_t bumpedRefreshes = 0;
+    std::uint64_t bumps = 0;
+    std::size_t done = 0;
+    std::size_t pieceCursor = 0;
+    std::size_t bigCursor = 0;
+    const auto workloadStart = Clock::now();
+    for (const auto& [pieces, big] : refreshes) {
+        if (Clock::now() - workloadStart > deadline) break;
+        Ranges heads;
+        Ranges tails;
+        for (std::uint32_t index = 0; index < pieces; ++index) {
+            const bool whole = index < big;
+            auto* slot = whole ? bigArea + (bigCursor++ % bigSlots) * bigStride : pieceArea + (pieceCursor++ % pieceSlots) * pieceStride;
+            const auto length = whole ? bigPiece : piece;
+            heads.emplace_back(slot, length);
+            tails.emplace_back(slot + length, length);
+        }
+        registry(heads, true);
+        for (const auto& [pointer, length] : heads) {
+            const auto* entry = HostImportFor(importing, address(pointer), length, ImportRequester::Map);
+            if (entry == nullptr) {
+                ++failed;
+            } else {
+                ++made;
+                if (entry->unwatched) ++madeUnwatched;
+            }
+            store(pointer, length, 4 * 4096);
+        }
+        registry(tails, true);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        static_cast<void>(AgcDriver::GuestMemory::CollectWrites(probeAddress, probeBytes));
+        store(probe, probeBytes, 16 * 4096);
+        const auto serial = AgcDriver::GuestMemory::UnwatchSerial();
+        auto start = Clock::now();
+        refresh();
+        const auto took = since(start);
+        const auto bumped = AgcDriver::GuestMemory::UnwatchSerial() - serial;
+        start = Clock::now();
+        static_cast<void>(AgcDriver::GuestMemory::CollectWrites(probeAddress, probeBytes));
+        (bumped != 0 ? collectAfterBump : collectAfterQuiet).push_back(since(start));
+        start = Clock::now();
+        static_cast<void>(AgcDriver::GuestMemory::CollectWrites(probeAddress, probeBytes));
+        collectRepeat.push_back(since(start));
+        std::uint64_t retiredHere = 0;
+        for (const auto& [pointer, length] : heads) {
+            if (HostImportCovers(importing, address(pointer), length)) continue;
+            ++retiredHere;
+            retiredBytes += length;
+            if (!AgcDriver::GuestMemory::Watched(address(pointer), length)) continue;
+            ++rewatched;
+            rewatchedBytes += length;
+        }
+        retired += retiredHere;
+        if (retiredHere != 0) {
+            refreshTimes.push_back(took);
+            refreshClasses[pieces == 1 ? 0 : pieces == 2 ? 1 : pieces <= 64 ? 2 : 3].push_back(took);
+        }
+        if (bumped != 0) {
+            ++bumpedRefreshes;
+            bumps += bumped;
+        }
+        heads.insert(heads.end(), tails.begin(), tails.end());
+        registry(heads, false);
+        refresh();
+        ++done;
+    }
+    const auto workload = since(workloadStart);
+    SetHostImportBudget(0);
+    SetImportWatch(importing, decided);
+    ClearHostImports(importing.device);
+    SetHostImportWindow(0);
+    SetHostImportDeferredSettles(true);
+    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+    GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+    const auto mib = [](std::uint64_t value) { return static_cast<double>(value) / 1048576.0; };
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2);
+    if (rewatched != 0) out << "[rewatch-cost] retired ranges rewatched: " << rewatched << " of " << retired << " retired (" << mib(rewatchedBytes) << " MiB)\n";
+    else out << "[rewatch-cost] retired ranges left unwatched: " << retired << " retired (" << mib(retiredBytes) << " MiB), 0 rewatched\n";
+    out << "  size: " << percent << "% of Village's workload (--retired-import-rewatch-cost <percent>, default 100): " << refreshes.size() << " retiring refreshes planned, " << plannedPieces << " retirements (" << plannedPieces - plannedBig << " of 64 KiB, " << plannedBig << " of 4 MiB, " << mib((plannedPieces - plannedBig) * piece + plannedBig * bigPiece) << " MiB), at most " << mostPieces << " in one refresh\n";
+    out << "  setup: mock device, import window 8 MiB, import budget 1 GiB, imports unwatched without settle reads; CPU stores to every 4th page of each imported piece and to every 16th page of a 32 MiB probe range before each refresh\n";
+    out << "  done: " << done << " of " << refreshes.size() << " refreshes in " << workload / 1e6 << " s" << (done < refreshes.size() ? " (stopped by the 75 s cap)" : "") << "\n";
+    out << "  imports: " << made << " made (" << madeUnwatched << " unwatched), " << failed << " failed; retired by their refresh: " << retired << " (" << mib(retiredBytes) << " MiB) in " << refreshTimes.size() << " refreshes\n";
+    rewatchCostLine(out, "retiring refreshes", refreshTimes);
+    rewatchCostLine(out, "  retiring 1 piece", refreshClasses[0]);
+    rewatchCostLine(out, "  retiring 2 pieces", refreshClasses[1]);
+    rewatchCostLine(out, "  retiring 3 to 64 pieces", refreshClasses[2]);
+    rewatchCostLine(out, "  retiring over 64 pieces", refreshClasses[3]);
+    out << "  UnwatchSerial: bumped by " << bumpedRefreshes << " of " << done << " refreshes, " << bumps << " bumps in all\n";
+    out << "  watched again after their refresh: " << rewatched << " retired spans, " << mib(rewatchedBytes) << " MiB\n";
+    rewatchCostLine(out, "collect of the 32 MiB probe after a refresh that bumped UnwatchSerial", collectAfterBump);
+    rewatchCostLine(out, "collect of the 32 MiB probe after a refresh that did not", collectAfterQuiet);
+    rewatchCostLine(out, "the same collect again, no bump between", collectRepeat);
+    out << "  builds over a retired 64 KiB piece and its neighbour, import budget 4 KiB: " << buildRounds << " rounds, the piece imported unwatched in " << buildsUnwatched << ", watched again after the retirement in " << buildsRestored << "\n";
+    rewatchCostLine(out, "first build after the retirement", restoredBuilds);
+    rewatchCostLine(out, "the same build again", repeatBuilds);
+    out << "  workload wall time: " << workload / 1e6 << " s, " << rewatchCostSpread(refreshTimes).total / 1e3 << " ms of it in retiring refreshes\n";
+    const auto report = out.str();
+    std::cout << report << std::flush;
+    if (const char* workspace = std::getenv("GITHUB_WORKSPACE"); workspace != nullptr && *workspace != '\0') {
+        std::error_code error;
+        const auto directory = std::filesystem::path(workspace) / "verify-logs";
+        std::filesystem::create_directories(directory, error);
+        std::ofstream file(directory / "rewatch-cost.txt", std::ios::app);
+        file << report << '\n';
+        if (!file) std::cout << "retired import rewatch cost: could not append to " << (directory / "rewatch-cost.txt").string() << '\n';
+    }
+    return 0;
+#endif
+}
+
 void importedFreshTests(const Context& context) {
 #ifndef _WIN32
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
@@ -2753,6 +3019,10 @@ void spaceCommittedPagesTests(const Context& context, const BdaTestAccess& acces
         mutation.Remove(block);
     }
     releaseSparse(block, reserved);
+}
+
+int RunRetiredImportRewatchCost(const Context& context, const char* size) {
+    return retiredImportRewatchCost(context, size);
 }
 
 bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& access) {

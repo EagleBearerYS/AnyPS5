@@ -10234,6 +10234,13 @@ int main(int argc, char** argv) {
             std::cout << "sparse buffer hole tests " << (passed ? "passed" : "failed") << '\n';
             return passed ? 0 : 1;
         }
+        if ((argc == 2 || argc == 3) && std::string_view(argv[1]) == "--retired-import-rewatch-cost") {
+            mock = MockVulkan{};
+            auto context = mockContext();
+            context.bufferDeviceAddress = true;
+            context.limits.maxStorageBufferRange = 1u << 27;
+            return RunRetiredImportRewatchCost(context, argc == 3 ? argv[2] : nullptr);
+        }
         if (argc == 2 && (std::string_view(argv[1]) == "--heap-mirror-unwatch" || std::string_view(argv[1]) == "--heap-mirror-unwatched-import")) {
             {
                 mock = MockVulkan{};
