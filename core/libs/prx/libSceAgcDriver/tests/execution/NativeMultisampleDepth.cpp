@@ -254,6 +254,15 @@ void QueueTargetFill(const Context& context, Recorder& recorder, std::uint64_t a
     recorder.NotePendingWrite(address, bytes);
 }
 
+void QueueTargetWordFill(const Context& context, Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t word) {
+    AgcDriver::GuestMemory::StoreOwnBytes(address, bytes, [&] { for (std::size_t offset = 0u; offset < bytes; offset += 4u) std::memcpy(reinterpret_cast<void*>(address + offset), &word, 4u); });
+    auto buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(recorder.Commands(), buffer->Handle(), 0u, bytes, word);
+    recorder.Keep(buffer);
+    recorder.NotePendingWordFill(address, bytes, word);
+    AgcDriver::GuestMemory::MarkWritten(address, bytes);
+}
+
 std::vector<std::uint32_t> FetchShader(std::uint32_t width, std::uint32_t height, std::uint32_t fragments, bool arrayed, bool floating) {
     ShaderRecompiler::SpirvModule module;
     module.EmitCapability(spv::CapabilityShader);
@@ -1244,6 +1253,78 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     std::printf("Native depth with a separate stencil plane samples=%u clear=%u fill=%u pipeAligned=%u: imported, stencil-tested and sampled with and without HTILE; other metadata and XOR refused\n", fragments, one, static_cast<std::uint32_t>(fill), pipeAligned);
 }
 
+enum class GhostFill { Stored, QueuedAfterNote, QueuedBeforeNote };
+enum class GhostFault { None, LaterStencilWrite, OtherHtileWord, PartialHtileFill, CreationRefused };
+
+void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path, GhostFault fault = GhostFault::None) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
+    TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::memset(memory.Data(), 0x5c, bytes);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    if (fault == GhostFault::CreationRefused) metadata.Data()[metadataBytes - 4u] = std::byte{0x10};
+    std::memset(stencil.Data(), 0, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0u, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    for (const auto& range : {std::pair{target.htileAddress, metadataBytes}, std::pair{target.stencilAddress, stencilBytes}}) {
+        const auto address = range.first;
+        const auto size = range.second;
+        if (path == GhostFill::QueuedBeforeNote) QueueTargetWordFill(context, recorder, address, size, 0u);
+        NoteDepthMetadataFill(address, size, 0u);
+        const bool htile = address == target.htileAddress;
+        if (path == GhostFill::QueuedAfterNote) QueueTargetWordFill(context, recorder, address, htile && fault == GhostFault::PartialHtileFill ? size - 4u : size, htile && fault == GhostFault::OtherHtileWord ? 0xfffffff0u : 0u);
+        if (path == GhostFill::Stored) AgcDriver::GuestMemory::StoreOwnBytes(address, size, [&] { std::memset(reinterpret_cast<void*>(address), 0, size); });
+    }
+    if (fault == GhostFault::LaterStencilWrite) QueueTargetByteWrite(context, recorder, target.stencilAddress + stencilBytes - 1u, std::byte{0});
+    const auto words = DepthSampleWords(target);
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "native depth sampled after the HTILE and stencil plane fills was not imported");
+    recorder.Sync();
+    const auto count = extent.width * extent.height * fragments;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, fragments, false, true));
+    const auto sample = [&](const DepthRaster* raster, float offset, std::optional<float> drawn) {
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        if (raster != nullptr) {
+            CommandBatch rasterBatch(context);
+            raster->Run(rasterBatch.Handle(), offset);
+            rasterBatch.SubmitAndWait();
+            Require(CachedSampledTexture(context, words) == texture, "native depth sampled after the HTILE and stencil plane fills changed its view after a raster write");
+            recorder.Sync();
+        }
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            const auto expected = drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth;
+            Require(result == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "native depth sampled after the HTILE and stencil plane fills lost a depth sample or a stencil test outcome");
+        }
+    };
+    sample(nullptr, 0.0f, std::nullopt);
+    const DepthRaster miss(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, 1u});
+    sample(&miss, 0.375f, std::nullopt);
+    const DepthRaster hit(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, 0u});
+    sample(&hit, 0.25f, 0.25f);
+    Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0}; }), "native depth sampling after the stencil plane fill changed the guest stencil plane");
+    texture.reset();
+    std::printf("Native depth after HTILE and stencil plane fills samples=%u path=%u: imported, sampled the cleared depth and stencil-tested the filled stencil\n", fragments, static_cast<std::uint32_t>(path));
+}
+
 void CheckEligibility(Context context) {
     constexpr VkExtent2D extent{129u, 67u};
     constexpr std::uint32_t samples = 4u;
@@ -1614,6 +1695,18 @@ int main(int argc, char** argv) {
                      std::pair{PlaneFault::StencilFillCpuWrite, "CPU writes raced native multisample stencil plane fill"}}) {
                 TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, true, PlaneFill::Stencil, fault, false); }, expected);
                 std::printf("Native depth with a separate stencil plane fill fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
+            }
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { unavailable += 3u; continue; }
+                for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote, GhostFill::QueuedBeforeNote}) { CheckGhostSequence(context, samples, path); ++checked; }
+            }
+            for (const auto fault : {GhostFault::LaterStencilWrite, GhostFault::OtherHtileWord, GhostFault::PartialHtileFill}) {
+                TargetRefuses([&] { CheckGhostSequence(context, 4u, GhostFill::QueuedAfterNote, fault); }, "external GPU writes over native multisample depth are not implemented");
+                std::printf("Native depth after HTILE and stencil plane fills fault=%u refused: external GPU writes over native multisample depth are not implemented\n", static_cast<std::uint32_t>(fault));
+            }
+            for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote}) {
+                TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::CreationRefused); }, "native multisample depth HTILE that is not pipe-aligned holds more than one word");
+                std::printf("Native depth after HTILE and stencil plane fills path=%u kept its creation refusal: native multisample depth HTILE that is not pipe-aligned holds more than one word\n", static_cast<std::uint32_t>(path));
             }
             std::printf("Native depth with a separate stencil plane cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
