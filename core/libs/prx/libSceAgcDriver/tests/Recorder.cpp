@@ -9676,6 +9676,71 @@ void denormalClearTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+void pipelineCountTests(const Device& device) {
+    std::lock_guard gpu(GpuMutex());
+    const auto& context = device.GetContext();
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ClearCachedPipelines(context.device);
+    Require(CountsPipelines(), "the pipeline counts are only kept with APS5_PROFILE_DRAW set");
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 21;
+    fragment.variantId = 22;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    ShaderResources resources(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0);
+    VertexInputLayout input;
+    const auto lookup = [&] { return CachedPipeline(context, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL); };
+    const auto moved = [](const PipelineCounts& after, const PipelineCounts& before, PipelineKind kind, std::uint64_t live, std::uint64_t created) {
+        return after.Kind(kind).live == before.Kind(kind).live + live && after.Kind(kind).created == before.Kind(kind).created + created;
+    };
+    const auto before = PipelineCountTotals();
+    auto pipeline = lookup();
+    const auto linked = PipelineCountTotals();
+    if (!context.graphicsPipelineLibrary) {
+        Require(moved(linked, before, PipelineKind::Whole, 1, 1) && moved(linked, before, PipelineKind::FastLinked, 0, 0), "a whole pipeline was not counted once");
+        std::cout << "graphics pipeline libraries unavailable or disabled: only the whole pipeline count is checked\n";
+        pipeline.reset();
+        ClearCachedPipelines(context.device);
+        Require(moved(PipelineCountTotals(), before, PipelineKind::Whole, 0, 1), "a destroyed whole pipeline is still counted live");
+        return;
+    }
+    for (const auto kind : {PipelineKind::VertexInput, PipelineKind::PreRasterization, PipelineKind::FragmentShader, PipelineKind::FragmentOutput}) {
+        Require(moved(linked, before, kind, 1, 1), std::string("one link did not create one ") + PipelineKindName(kind) + " library");
+    }
+    Require(moved(linked, before, PipelineKind::FastLinked, 1, 1) && moved(linked, before, PipelineKind::Whole, 0, 0) && moved(linked, before, PipelineKind::Prebuilt, 0, 0), "one link was not counted as one fast-linked pipeline and nothing else");
+    if (std::getenv("APS5_NO_PIPELINE_LTO") == nullptr && context.pipelineLinkTimeOptimization) {
+        WaitForOptimizedPipelines(context.device);
+        const auto optimized = PipelineCountTotals();
+        Require(pipeline->Optimized(), "the pipeline did not switch to its optimized link");
+        Require(optimized.queuedLinks == 0, "a background link is still queued after the wait");
+        Require(moved(optimized, before, PipelineKind::Optimized, 1, 1), "the background link was counted as " + std::to_string(optimized.Kind(PipelineKind::Optimized).live - before.Kind(PipelineKind::Optimized).live) + " live and " + std::to_string(optimized.Kind(PipelineKind::Optimized).created - before.Kind(PipelineKind::Optimized).created) + " created optimized pipelines, expected 1 and 1");
+        Require(FormatPipelineCounts(optimized, before).find("fast-linked " + std::to_string(optimized.Kind(PipelineKind::FastLinked).live) + " (+1), optimized " + std::to_string(optimized.Kind(PipelineKind::Optimized).live) + " (+1)") != std::string::npos, "the [pipelines] line does not give the live and created counts");
+    } else {
+        WaitForOptimizedPipelines(context.device);
+        Require(moved(PipelineCountTotals(), before, PipelineKind::Optimized, 0, 0), "an optimized pipeline was counted with background links off");
+        std::cout << "background links disabled on this device: only the absence of optimized pipelines is checked\n";
+    }
+    const auto settled = PipelineCountTotals();
+    Require(lookup() == pipeline, "the same configuration did not find its cached pipeline");
+    const auto again = PipelineCountTotals();
+    for (std::size_t kind = 0; kind < again.kinds.size(); ++kind) Require(again.kinds[kind].live == settled.kinds[kind].live && again.kinds[kind].created == settled.kinds[kind].created, "a cached pipeline lookup created or destroyed a pipeline");
+    pipeline.reset();
+    ClearCachedPipelines(context.device);
+    const auto cleared = PipelineCountTotals();
+    for (std::size_t kind = 0; kind < cleared.kinds.size(); ++kind) Require(cleared.kinds[kind].live == before.kinds[kind].live, std::string("the device's ") + PipelineKindName(static_cast<PipelineKind>(kind)) + " pipelines are still counted live after they were destroyed");
+}
+
 void pipelineLibraryTests(const Device& device) {
     std::lock_guard gpu(GpuMutex());
     const auto& context = device.GetContext();
@@ -10025,6 +10090,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-only") {
             pipelineLibraryTests(device);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-counts-only") {
+            pipelineCountTests(device);
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--benchmark-pipeline-cache" || std::string_view(argv[1]) == "--pipeline-cache-only")) {

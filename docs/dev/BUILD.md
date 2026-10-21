@@ -275,6 +275,9 @@ With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on st
 | `[flip]` | from the start |
 | `[fill-sync]` | from the start |
 | `[buffers] descriptor elements bound` | from the start |
+| `[pipelines]` | live: held when printed; created: since the previous `[pipelines]` line |
+
+`[pipelines]` is printed at most every 10 s, between command buffer packets and when a draw looks up its pipeline, and once more when the device shuts down, before its pipelines are destroyed. By kind it gives the graphics pipelines alive and, in brackets, how many were created since the previous line: the four pipeline library kinds (vertex input, pre-rasterization, fragment shader, fragment output; libraries are kept until the device is destroyed), prebuilt libraries (the libraries of those four that a shader library prebuild made rather than a draw), fast-linked pipelines (linked from libraries for a draw), optimized pipelines (the background link-time-optimized relinks of fast-linked ones), and whole pipelines (created without libraries, including the second-channel and back-face pipelines). It then gives the background links and the shader library prebuilds still queued. Compute pipelines and the driver's own utility pipelines are not counted. Without `APS5_PROFILE_DRAW` nothing is counted.
 
 `[gputime]` is described above and needs `APS5_PROFILE_GPU`. Other profile lines state their window in their text or are not listed here because their counters were not checked.
 

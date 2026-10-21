@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "CacheKey.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
@@ -1371,7 +1372,22 @@ void AwaitRegistrationPreparation() {
 }
 
 void SubmitLibraryPrebuild(std::function<void()> task) {
-    RegistrationPreparePool::Prebuild().Submit(std::move(task));
+    if (!Graphics::CountsPipelines()) {
+        RegistrationPreparePool::Prebuild().Submit(std::move(task));
+        return;
+    }
+    struct Queued {
+        bool counted = true;
+        ~Queued() {
+            if (counted) Graphics::CountQueuedPrebuild(false);
+        }
+    };
+    Graphics::CountQueuedPrebuild(true);
+    RegistrationPreparePool::Prebuild().Submit([queued = std::make_shared<Queued>(), task = std::move(task)] {
+        queued->counted = false;
+        Graphics::CountQueuedPrebuild(false);
+        task();
+    });
 }
 
 void AwaitLibraryPrebuilds() {

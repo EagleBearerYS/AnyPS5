@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -58,6 +59,29 @@ struct PipelineLibraryCounters {
 };
 
 PipelineLibraryCounters PipelineLibraryCountersOf(VkDevice device);
+
+enum class PipelineKind : std::uint8_t { VertexInput = 0, PreRasterization, FragmentShader, FragmentOutput, Prebuilt, FastLinked, Optimized, Whole, Count };
+const char* PipelineKindName(PipelineKind kind);
+bool CountsPipelines();
+void CountPipeline(PipelineKind kind, bool live) noexcept;
+void ForgetPipelines(PipelineKind kind, std::uint64_t count) noexcept;
+void CountQueuedPrebuild(bool queued) noexcept;
+
+struct PipelineKindCount {
+    std::uint64_t live = 0;
+    std::uint64_t created = 0;
+};
+
+struct PipelineCounts {
+    std::array<PipelineKindCount, static_cast<std::size_t>(PipelineKind::Count)> kinds{};
+    std::uint64_t queuedLinks = 0;
+    std::uint64_t queuedPrebuilds = 0;
+    const PipelineKindCount& Kind(PipelineKind kind) const { return kinds[static_cast<std::size_t>(kind)]; }
+};
+
+PipelineCounts PipelineCountTotals();
+std::string FormatPipelineCounts(const PipelineCounts& counts, const PipelineCounts& previous);
+void ReportPipelineCounts(bool now);
 
 }
 
