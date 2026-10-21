@@ -356,18 +356,36 @@ public:
 
     void CheckCurrent() {
         if (target.samples == 1u) return;
-        const auto clearLease = clearGeneration == 0u ? GuestAllocations::Lease{} : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
+        const auto clearLease = clearGeneration == 0u && stencilClearGeneration == 0u ? GuestAllocations::Lease{} : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
         Require(active->load(std::memory_order_acquire), "the native multisample depth owner was released");
         Require(sampling.refusal.empty(), sampling.refusal);
         Require(!clearPending, "native multisample depth clear has not been recorded");
         const auto* recorder = RecorderFor(context);
         const auto newestHtileNote = recorder != nullptr ? recorder->NewestWriteNote(sampling.initial[1].address, sampling.initial[1].bytes) : 0u;
         const bool queuedFill = clearPattern.has_value() && clearFillNote != 0u && newestHtileNote == clearFillNote;
+        const auto newestStencilNote = recorder != nullptr && sampling.initial.size() > 2u ? recorder->NewestWriteNote(sampling.initial[2].address, sampling.initial[2].bytes) : 0u;
+        const bool queuedStencilFill = stencilClearValue.has_value() && stencilFillNote != 0u && newestStencilNote == stencilFillNote;
         for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
             const auto& range = sampling.initial[index];
             Require(GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) && GuestMemory::Watched(range.address, range.bytes), "native multisample depth requires watched accessible guest memory");
-            if (recorder != nullptr && !(index == 1u && queuedFill)) Require(!recorder->PendingWriteOverlaps(range.address, range.bytes), "external GPU writes over native multisample depth are not implemented");
+            if (recorder != nullptr && !(index == 1u && queuedFill) && !(index == 2u && queuedStencilFill)) Require(!recorder->PendingWriteOverlaps(range.address, range.bytes), "external GPU writes over native multisample depth are not implemented");
             GuestMemory::CollectWritesUncached(range.address, range.bytes);
+        }
+        if (stencilClearGeneration != 0u) {
+            auto& plane = sampling.initial[2];
+            const bool gpuFill = stencilFillNote != 0u && (queuedStencilFill || newestStencilNote == 0u);
+            Require(GuestMemory::UnchangedSinceCollected(plane.address, plane.bytes, stencilClearGeneration), "CPU writes raced native multisample stencil plane fill");
+            Require(gpuFill || GuestMemory::StoredAllSince_nid_no_patch(plane.address, plane.bytes, stencilClearGeneration), "native multisample stencil plane fill has no complete tracked store");
+            if (!queuedStencilFill) {
+                const auto* bytes = reinterpret_cast<const std::uint8_t*>(plane.address);
+                Require(std::all_of(bytes, bytes + plane.bytes, [&](std::uint8_t value) { return value == *stencilClearValue; }), "native multisample stencil plane does not hold its fill value");
+            }
+            const auto generation = GuestMemory::CollectWritesUncached(plane.address, plane.bytes);
+            Require(GuestMemory::UnchangedSinceCollected(plane.address, plane.bytes, stencilClearGeneration), "CPU writes raced native multisample stencil plane fill");
+            stencilFill = *stencilClearValue;
+            RecordClear(VK_IMAGE_ASPECT_STENCIL_BIT);
+            plane.generation = generation;
+            stencilClearGeneration = 0u;
         }
         if (clearGeneration != 0u) {
             const auto& metadata = sampling.initial[1];
@@ -951,6 +969,9 @@ public:
     VkImageAspectFlags clearAspects = 0u;
     std::optional<std::uint32_t> clearPattern;
     std::uint64_t clearFillNote = 0u;
+    std::uint64_t stencilClearGeneration = 0u;
+    std::optional<std::uint8_t> stencilClearValue;
+    std::uint64_t stencilFillNote = 0u;
     std::shared_ptr<OwnedImage> owned;
     std::shared_ptr<OwnedImage> sampleShadow;
     bool useSampleShadow = false;
@@ -2455,6 +2476,22 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire)) continue;
         const auto& target = surface->target;
+        if (surface->samplingActive && target.stencilAddress != 0u && !target.htileStencil && target.htileDepthOnly && surface->sampling.initial.size() > 2u) {
+            const auto& plane = surface->sampling.initial[2];
+            if (address < plane.address + plane.bytes && plane.address < address + bytes) {
+                const auto value = StencilFillValue(pattern);
+                if (!PlaneFillCovers(plane.address, plane.bytes, address, bytes)) surface->sampling.Refuse("native multisample stencil plane partial fill transition is not implemented");
+                else if (!value.has_value()) surface->sampling.Refuse("native multisample stencil plane fill of more than one byte value is not implemented");
+                else if (!GuestMemory::Accessible(reinterpret_cast<const void*>(plane.address), plane.bytes) || !GuestMemory::Watched(plane.address, plane.bytes)) surface->sampling.Refuse("native multisample stencil plane fill over unwatched memory is not implemented");
+                else if (surface->stencilClearGeneration != 0u) surface->sampling.Refuse("overlapping native multisample stencil plane fills are not implemented");
+                else {
+                    surface->stencilClearGeneration = GuestMemory::CollectWritesUncached(plane.address, plane.bytes);
+                    surface->stencilClearValue = *value;
+                    const auto* recorder = RecorderFor(surface->context);
+                    surface->stencilFillNote = recorder != nullptr ? recorder->LastWriteNote(address, bytes) : 0u;
+                }
+            }
+        }
         const bool overlaps = target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes;
         if (overlaps && surface->samplingActive && HtileFillCovers(target.htileAddress, target.extent, address, bytes)) {
             const auto& metadata = surface->sampling.initial[1];
