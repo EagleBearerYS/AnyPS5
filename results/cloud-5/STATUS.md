@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T05:40Z (new cloud-5 session; earlier cloud-5 results kept)
+BUSY BF-095
+since: 2026-10-21T03:14Z (claimed BF-095; READY at 03:13Z, new cloud-5 session, earlier cloud-5 results kept)
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
