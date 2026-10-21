@@ -386,6 +386,9 @@ private:
     void captureGuestBytes(const std::vector<bool>* layers);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
+    std::array<std::uint64_t, 5> untrackedStamp(std::uint64_t address, std::size_t bytes, bool memoize, bool& cacheable) const;
+    bool untrackedSettled() const;
+    bool untrackedProofStands() const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block
     // units asked for in pieces too often are all stored at once for a while (the hysteresis:
@@ -567,6 +570,8 @@ private:
         std::uint64_t pendingSerial = 0;
         std::uint64_t keyGeneration = 0;
         DccKeys keys = DccKeys::Uncompressed;
+        bool untracked = false;
+        std::array<std::uint64_t, 5> compared{};
     };
     RefreshProof refreshProof;
     struct ForeignKeyProof {

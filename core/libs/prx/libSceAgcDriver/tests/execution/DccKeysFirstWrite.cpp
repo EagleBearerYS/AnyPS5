@@ -601,10 +601,14 @@ void RunUntrackedReuse(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Require(!AgcDriver::GuestMemory::Watched(address, BlockBytes), "the imported test image is still write-watched");
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto version = image->Version();
+    const auto proved = StorageTexture::RefreshesProved();
     for (int repeat = 0; repeat < 3; ++repeat) {
         Require(image->Refresh() && image->Version() == version, "an unchanged untracked image was uploaded again");
         Require(Count(block, BlockBytes, 0x55) == BlockBytes, "refresh wrote GPU results into unchanged guest memory");
     }
+    char message[192];
+    std::snprintf(message, sizeof(message), "an unchanged untracked image was compared again within one collect epoch: %llu of the 2 refreshes after the first were proved", static_cast<unsigned long long>(StorageTexture::RefreshesProved() - proved));
+    Require(StorageTexture::RefreshesProved() - proved >= 2, message);
     std::memset(block + SurfaceBytes, 0x33, SurfaceBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     Require(!image->Refresh(), "an untracked CPU edit was missed");

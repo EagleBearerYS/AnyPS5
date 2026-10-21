@@ -1675,6 +1675,11 @@ bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const
 // so the comparison with guest memory must not flush them.
 thread_local const StorageTexture* refreshing = nullptr;
 
+bool UntrackedRefreshProofs() {
+    static const bool enabled = std::getenv("APS5_NO_UNTRACKED_REFRESH_PROOF") == nullptr;
+    return enabled;
+}
+
 void FlushHook(std::uint64_t address, std::size_t bytes) {
     StorageTexture::FlushPending(address, bytes);
 }
@@ -2334,20 +2339,24 @@ bool StorageTexture::otherPendingOverlaps() const {
 }
 
 bool StorageTexture::refreshProved() {
-    if (refreshProof.generation == 0) return false;
+    if (refreshProof.generation == 0 && !refreshProof.untracked) return false;
     if (generation != refreshProof.generation || uploadedKeys != refreshProof.keys || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
-    const auto bytes = static_cast<std::size_t>(guestBytes);
-    std::array<GuestMemory::UnchangedQuery, 2> queries{};
-    std::size_t used = 0;
-    if (GuestMemory::CollectWrites(descriptor.baseAddress, bytes) == 0) return false;
-    queries[used++] = {descriptor.baseAddress, bytes, generation};
-    if (descriptor.dccAddress != 0) {
-        const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
-        if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys) return false;
-        if (GuestMemory::CollectWrites(descriptor.dccAddress, keyCount) == 0) return false;
-        queries[used++] = {descriptor.dccAddress, keyCount, keyProof.generation};
+    if (refreshProof.untracked) {
+        if (!untrackedProofStands()) return false;
+    } else {
+        const auto bytes = static_cast<std::size_t>(guestBytes);
+        std::array<GuestMemory::UnchangedQuery, 2> queries{};
+        std::size_t used = 0;
+        if (GuestMemory::CollectWrites(descriptor.baseAddress, bytes) == 0) return false;
+        queries[used++] = {descriptor.baseAddress, bytes, generation};
+        if (descriptor.dccAddress != 0) {
+            const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
+            if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys) return false;
+            if (GuestMemory::CollectWrites(descriptor.dccAddress, keyCount) == 0) return false;
+            queries[used++] = {descriptor.dccAddress, keyCount, keyProof.generation};
+        }
+        if (!GuestMemory::UnchangedSinceAll(std::span(queries.data(), used))) return false;
     }
-    if (!GuestMemory::UnchangedSinceAll(std::span(queries.data(), used))) return false;
     const auto serial = PendingSerial();
     if (serial != refreshProof.pendingSerial) {
         if (otherPendingOverlaps()) return false;
@@ -2358,11 +2367,38 @@ bool StorageTexture::refreshProved() {
 
 void StorageTexture::takeRefreshProof(bool aliased) {
     refreshProof = {};
-    if (aliased || generation == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (aliased || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    const bool untracked = generation == 0;
+    if (untracked) {
+        if (!UntrackedRefreshProofs() || descriptor.dccAddress != 0 || !untrackedSettled()) return;
+        bool cacheable = false;
+        if (untrackedStamp(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), true, cacheable) != comparedGuestBytes || !cacheable) return;
+    }
     if (descriptor.dccAddress != 0 && (keyProof.generation == 0 || keyProof.keys != uploadedKeys)) return;
     const auto serial = PendingSerial();
     if (otherPendingOverlaps()) return;
-    refreshProof = {generation, serial, keyProof.generation, uploadedKeys};
+    refreshProof = {generation, serial, keyProof.generation, uploadedKeys, untracked, untracked ? comparedGuestBytes : std::array<std::uint64_t, 5>{}};
+}
+
+bool StorageTexture::untrackedSettled() const {
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    if (!keptAtUnwatch.empty() || !handedOver.empty() || !handedUnits.empty()) return false;
+    if (std::any_of(savedTicket.begin(), savedTicket.end(), [](std::uint64_t ticket) { return ticket != 0; })) return false;
+    return GuestMemory::CollectWrites(descriptor.baseAddress, bytes) == 0 && originalHolds(descriptor.baseAddress, bytes);
+}
+
+bool StorageTexture::untrackedProofStands() const {
+    if (comparedGuestBytes != refreshProof.compared || !untrackedSettled()) return false;
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    struct Exempt {
+        const StorageTexture* previous;
+        ~Exempt() { refreshing = previous; }
+    } exempt{refreshing};
+    refreshing = this;
+    GuestMemory::FlushGpuWrites(descriptor.baseAddress, bytes);
+    if (!originalHolds(descriptor.baseAddress, bytes)) return false;
+    bool cacheable = false;
+    return untrackedStamp(descriptor.baseAddress, bytes, true, cacheable) == refreshProof.compared && cacheable;
 }
 
 std::uint64_t StorageTexture::RefreshesProved() {
@@ -2444,12 +2480,8 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     const auto end = address + bytes;
     const auto first = address / blockBytes;
     Require(changed.size() == (end - 1) / blockBytes - first + 1, "texture comparison block count differs");
-    const auto* recorder = Recorder::Active();
-    const auto epoch = GuestMemory::CollectEpoch();
-    const bool whole = address == descriptor.baseAddress && bytes == guestBytes;
-    const auto hint = memoize && epoch != 0 && whole ? GuestMemory::UntrackedHint(address, bytes) : 0;
-    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetSerial(), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
-    const bool cacheable = memoize && epoch != 0 && (stamp[3] & 1u) == 0 && whole;
+    bool cacheable = false;
+    const auto stamp = untrackedStamp(address, bytes, memoize, cacheable);
     if (cacheable && comparedGuestBytes == stamp) {
         std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
         return true;
@@ -2469,6 +2501,16 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
         changed[index] = GuestMemory::EqualsCommittedUnsynced(begin, saved) ? GuestMemory::BlockUnchanged : GuestMemory::BlockWritten;
     }
     return true;
+}
+
+std::array<std::uint64_t, 5> StorageTexture::untrackedStamp(std::uint64_t address, std::size_t bytes, bool memoize, bool& cacheable) const {
+    const auto* recorder = Recorder::Active();
+    const auto epoch = GuestMemory::CollectEpoch();
+    const bool whole = address == descriptor.baseAddress && bytes == guestBytes;
+    const auto hint = memoize && epoch != 0 && whole ? GuestMemory::UntrackedHint(address, bytes) : 0;
+    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetSerial(), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    cacheable = memoize && epoch != 0 && (stamp[3] & 1u) == 0 && whole;
+    return stamp;
 }
 
 constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
