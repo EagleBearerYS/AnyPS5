@@ -12,11 +12,14 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -32,34 +35,34 @@ constexpr std::size_t PoolBytes = std::size_t{4} << 20u;
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(std::size_t bytes = HeapBytes, std::size_t written = HeapBytes, bool writable = false) : bytes(bytes), writable(writable) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(HeapBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, HeapBytes, PAGE_READWRITE, HeapBytes);
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
 #else
         constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, HeapBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + HeapBytes != begin + HeapBytes + alignment) munmap(reinterpret_cast<void*>(aligned + HeapBytes), begin + alignment - aligned);
+            if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, HeapBytes);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
         }
 #endif
         Require(block != nullptr, "host-visible owners: cannot allocate the guest heap block");
-        std::memset(block, 0x5a, HeapBytes);
+        std::memset(block, 0x5a, std::min(written, bytes));
     }
 
     ~GuestBlock() {
         Register(false);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(block, HeapBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(block, HeapBytes);
+        GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 #else
-        munmap(block, HeapBytes);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, HeapBytes);
+        munmap(block, bytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
 #endif
     }
 
@@ -69,12 +72,14 @@ public:
     void Register(bool add) {
         if (add == registered) return;
         GuestAllocations::Mutation mutation;
-        if (add) mutation.Add(block, HeapBytes, true, false, true);
+        if (add) mutation.Add(block, bytes, true, writable, true);
         else mutation.Remove(block);
         registered = add;
     }
 
 private:
+    std::size_t bytes;
+    bool writable;
     std::uint8_t* block = nullptr;
     bool registered = false;
 };
@@ -154,6 +159,32 @@ void heapMirrorTests(const Context& context, BufferPool& pool) {
     std::cout << "released: " << FormatHostVisible(released) << '\n';
 }
 
+double residentMebibytes() {
+#ifdef __linux__
+    std::ifstream statm("/proc/self/statm");
+    std::uint64_t size = 0;
+    std::uint64_t resident = 0;
+    statm >> size >> resident;
+    return static_cast<double>(resident * static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE))) / 1048576.0;
+#else
+    return 0.0;
+#endif
+}
+
+void heapResidency(const Context& context, BufferPool& pool, std::size_t mebibytes, std::size_t writtenKib, bool writable) {
+    GuestBlock block(mebibytes << 20u, writtenKib << 10u, writable);
+    build(context);
+    const auto before = residentMebibytes();
+    const auto mirrorsBefore = MirrorCounters();
+    block.Register(true);
+    for (int pass = 1; pass <= 2; ++pass) {
+        build(context);
+        const auto mirrors = MirrorCounters();
+        std::printf("heap residency pass %d: %zu MiB %s heap with %zu KiB written: %llu heap mirrors (%.1f MiB), resident %+.1f MiB\n", pass, mebibytes, writable ? "writable" : "read-only", writtenKib, static_cast<unsigned long long>(mirrors.heapMirrors - mirrorsBefore.heapMirrors), static_cast<double>(mirrors.heapBytes - mirrorsBefore.heapBytes) / 1048576.0, residentMebibytes() - before);
+        std::printf("heap residency pass %d: %s\n", pass, FormatHostVisible(pool.HostVisible()).c_str());
+    }
+}
+
 void offTests(const Context& context, BufferPool& pool) {
     Require(!BufferPool::CountsHost(), "the host-visible counter is on without APS5_PROFILE_DRAW");
     std::optional<Buffer> pooled;
@@ -180,9 +211,13 @@ int main(int argc, char** argv) {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         auto context = device->graphicsContext();
+        const auto pool = GetBufferPool(context);
+        if (argc > 3 && std::string_view(argv[1]) == "--heap") {
+            heapResidency(context, *pool, std::stoul(argv[2]), std::stoul(argv[3]), argc > 4 && std::string_view(argv[4]) == "writable");
+            return 0;
+        }
         context.hostImportAlignment = 0;
         context.sparseBinding = false;
-        const auto pool = GetBufferPool(context);
         if (off) {
             offTests(context, *pool);
             std::puts("host-visible owner tests (counter off) passed");
