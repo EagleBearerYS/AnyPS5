@@ -102,6 +102,17 @@ std::atomic<std::uint64_t> collectDirtyRuns{0};
 #endif
 std::atomic<std::uint64_t> trackerWaits{0};
 std::atomic<std::uint64_t> trackerAcquisitions{0};
+enum class CollectFailure { Unwatched, Outside, Incomplete, Count };
+constexpr const char* CollectFailureNames[static_cast<std::size_t>(CollectFailure::Count)] = {"unwatched", "outside", "incomplete"};
+struct CollectFailureSample {
+    CollectFailure reason = CollectFailure::Count;
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t count = 0;
+};
+std::atomic<std::uint64_t> collectFailures[static_cast<std::size_t>(CollectFailure::Count)] = {};
+std::mutex collectFailureMutex;
+std::array<CollectFailureSample, 12> collectFailureSamples{};
 std::uintptr_t PagesBase();
 std::size_t PagesSize();
 std::uintptr_t ImagePagesBase();
@@ -327,6 +338,19 @@ public:
         }
         AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu, collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" collect-dirty %llu tracker waits %llu / %llu", static_cast<unsigned long long>(collectDirty.load()), static_cast<unsigned long long>(trackerWaits.load()), static_cast<unsigned long long>(trackerAcquisitions.load()));
+        AgcDriver::ProfilePrint_nid_no_patch(" | collect failures (10 s):");
+        for (std::size_t reason = 0; reason < static_cast<std::size_t>(CollectFailure::Count); ++reason) {
+            AgcDriver::ProfilePrint_nid_no_patch(" %s %llu", CollectFailureNames[reason], static_cast<unsigned long long>(collectFailures[reason].exchange(0, std::memory_order_relaxed)));
+        }
+        {
+            std::lock_guard lock(collectFailureMutex);
+            AgcDriver::ProfilePrint_nid_no_patch(", ranges:");
+            for (auto& sample : collectFailureSamples) {
+                if (sample.count == 0) continue;
+                AgcDriver::ProfilePrint_nid_no_patch(" %s 0x%llx+0x%llx x%llu", CollectFailureNames[static_cast<std::size_t>(sample.reason)], static_cast<unsigned long long>(sample.address), static_cast<unsigned long long>(sample.bytes), static_cast<unsigned long long>(sample.count));
+                sample = {};
+            }
+        }
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
         {
             std::lock_guard lock(state.callersMutex);
@@ -1496,6 +1520,22 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
 #endif
 }
 
+std::uint64_t collectFailed(CollectFailure reason, std::uint64_t address, std::size_t bytes) {
+    if (!MemoryProfiled()) return 0;
+    collectFailures[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard lock(collectFailureMutex);
+    CollectFailureSample* empty = nullptr;
+    for (auto& sample : collectFailureSamples) {
+        if (sample.count != 0 && sample.reason == reason && sample.address == address && sample.bytes == bytes) {
+            ++sample.count;
+            return 0;
+        }
+        if (sample.count == 0 && empty == nullptr) empty = &sample;
+    }
+    if (empty != nullptr) *empty = {reason, address, bytes, 1};
+    return 0;
+}
+
 std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoized) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
     auto& tracker = Tracker();
@@ -1531,7 +1571,8 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     }
     const auto lock = lockTracker(tracker);
     tracker.initialize();
-    if (!tracker.watched || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return 0;
+    if (!tracker.watched) return collectFailed(CollectFailure::Unwatched, address, bytes);
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return collectFailed(CollectFailure::Outside, address, bytes);
     auto cursor = first;
     if (useMemo && sharedCollectMemo()) {
         for (const auto& entry : tracker.memo) {
@@ -1552,7 +1593,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
         }
     }
 #endif
-    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return collectFailed(CollectFailure::Incomplete, address, bytes);
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
