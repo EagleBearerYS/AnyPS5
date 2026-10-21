@@ -1,0 +1,4 @@
+BASE=27bcd6a29e2fd69aba0626610b2350eb8f2847f6
+REPEAT=10
+EXTRA_TESTS='windows_write_watch|agc_rewatched_direct_shared|agc_write_tracking|agc_resident_direct_remap|agc_driver_msaa_dcc_clear'
+NO_BEFORE=1
