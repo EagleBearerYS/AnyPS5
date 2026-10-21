@@ -1,6 +1,6 @@
-BUSY BF-112
-since: 2026-10-21T12:26:53Z
-previous: BF-110 done, results/cloud-5/BF-110.md: on main d099bc6cd8 with vulkan-validationlayers 1.3.275 (core, sync, GPU-AV) on lavapipe 4x, one message in the pass: VUID-VkImageMemoryBarrier-image-03320 (the sample order copy UNDEFINED->GENERAL barrier names only depth for D32S8 under the depth-only method); fixed on fix/agc-sample-order-depth-copy-aspects = 5a9d89179c with agc_driver_sample_order_depth_copy_barriers (red 20/20, green 20/20) and the map-index check agc_driver_sample_order_map_indices (3,003 orders pass); step 2 setups all valid; lavapipe has no 2x and no sample locations, so the reporter's located 2x D32 path was not reachable; suggestions listed. Before that: BF-109 done, results/cloud-5/BF-109.md.
+READY
+since: 2026-10-21T12:46:36Z
+previous: BF-112 done, results/cloud-5/BF-112.md: fix/agc-sample-order-copy-sampled-only = 4bdf36e05e on 5a9d89179c (sample order copy TRANSFER_DST|SAMPLED only where legal, else DEPTH_STENCIL_READ_ONLY_OPTIMAL; binding 1 written); lavapipe 4x: every format took the sampled-only path, the read-only path forced and checked by _refused; red 20/20 per hunk, green 20/20; validation core+sync+GPU-AV clean apart from the test 00337 and pNext notices; ^agc: sgpr flake plus a pipelined_indirect_draw load deadlock that main shares (main 1/200, head 1/400); tester commands in the result. Before that: BF-110 done, results/cloud-5/BF-110.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
