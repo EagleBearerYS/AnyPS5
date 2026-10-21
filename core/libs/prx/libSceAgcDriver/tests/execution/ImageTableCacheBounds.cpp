@@ -75,6 +75,8 @@ constexpr std::size_t DrawKeys = SrtSlots * SrtBytes / DrawSrtBytes;
 constexpr std::size_t ColorBytes = 1024;
 constexpr std::array<std::uint32_t, 13> TriangleVertexCode{0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 20> TablePixelCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xd7650002u, 0x000100c1u, 0x7e200502u, 0x8f108510u, 0xbf8cc07fu, 0xf42c0502u, 0x20000000u, 0x7e000280u, 0x7e020280u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xbf8c3f70u, 0xf800180fu, 0x03020100u, 0xbf810000u};
+constexpr std::size_t WidePixelOffset = 1024;
+constexpr std::array<std::uint32_t, 20> WideTablePixelCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xd7650002u, 0x000100c1u, 0x7e200502u, 0x9310b010u, 0xbf8cc07fu, 0xf42c0502u, 0x20000000u, 0x7e000280u, 0x7e020280u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xbf8c3f70u, 0xf800180fu, 0x03020100u, 0xbf810000u};
 
 class GuestBlock {
 public:
@@ -176,10 +178,10 @@ void SrtMovingPerDispatch(const GuestBlock& block) {
     Require(most <= Driver::DispatchCacheBytes(), "image table cache bounds: dispatches reading a 2 MiB table through " + std::to_string(SrtSlots) + " SRTs kept " + std::to_string(most >> 20u) + " MiB of captured words in the dispatch cache, over its budget of " + std::to_string(Driver::DispatchCacheBytes() >> 20u) + " MiB");
 }
 
-void Draw(const GuestBlock& block, std::size_t key) {
+void Draw(const GuestBlock& block, std::size_t key, std::size_t pixelOffset = PixelOffset) {
     const auto color = block.At(OutputOffset);
     const auto vertex = block.At(VertexOffset);
-    const auto pixel = block.At(PixelOffset);
+    const auto pixel = block.At(pixelOffset);
     const auto srt = block.At(SrtOffset + key * DrawSrtBytes);
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000}, {0x1b6, 0}, {0x207, 0}, {0x200, 0}, {0x203, 0x800}, {0x2dc, 0xaa00}, {0x2f8, 0}, {0x292, 2}, {0x293, 0},
@@ -277,6 +279,38 @@ std::uint64_t WideRecord(const GuestBlock& block, std::uint32_t record) {
 void SetWideRecord(const GuestBlock& block, std::uint32_t record, std::uint32_t element) {
     const auto words = TextureWords(block, element);
     std::memcpy(block.Bytes(WideHeapOffset + static_cast<std::size_t>(record) * WideStride), words.data(), sizeof(words));
+}
+
+void WideTableDrawVariant(const GuestBlock& block) {
+    using AgcDriver::DriverDetail::Driver;
+    std::memcpy(block.Bytes(VertexOffset), TriangleVertexCode.data(), sizeof(TriangleVertexCode));
+    std::memcpy(block.Bytes(WidePixelOffset), WideTablePixelCode.data(), sizeof(WideTablePixelCode));
+    for (std::uint32_t record = 0; record < WideRecords; ++record) {
+        SetWideRecord(block, record, 5u * Aliases);
+        std::memset(block.Bytes(WideHeapOffset + static_cast<std::size_t>(record) * WideStride + 32u), 0x5a, WideStride - 32u);
+    }
+    auto* srt = reinterpret_cast<std::uint32_t*>(block.Bytes(SrtOffset));
+    std::fill(srt, srt + DrawSrtBytes / 4u, 0u);
+    const auto heap = V(block.At(WideHeapOffset), WideStride, WideRecords);
+    std::copy(heap.begin(), heap.end(), srt);
+    std::memset(block.Bytes(OutputOffset), 0, ColorBytes);
+    auto& driver = Driver::Get();
+    const auto before = driver.DrawCacheCounters();
+    Draw(block, 0, WidePixelOffset);
+    Draw(block, 0, WidePixelOffset);
+    const auto inserts = driver.DrawCacheCounters().inserts - before.inserts;
+    const auto size = driver.DrawCacheSize();
+    using AgcDriver::DriverDetail::DispatchVariant;
+    const auto records = static_cast<std::uint64_t>(WideRecords);
+    const auto captured = records * 32u + 32u;
+    const auto regions = records + records * WideStride / 4096u + 1u;
+    const auto perRegion = sizeof(decltype(DispatchVariant::runs)::value_type) + sizeof(decltype(DispatchVariant::runBases)::value_type);
+    const auto bound = captured + 2u * regions * perRegion + 2u * sizeof(DispatchVariant) + sizeof(ShaderRecompiler::ShaderVertexStageInfo);
+    const auto counts = " (" + std::to_string(inserts) + " inserts, " + std::to_string(size.entries) + " entries holding " + std::to_string(size.variantBytes) + " bytes for " + std::to_string(captured) + " captured, bound " + std::to_string(bound) + ")";
+    Require(BrightestColor(block) == 5u, "image table wide draw variant: the draws through the stride-48 table wrote " + std::to_string(BrightestColor(block)) + ", expected 5");
+    Require(inserts == 1u && size.entries == 1u, "image table wide draw variant: two draws of one key did not leave one draw cache entry" + counts);
+    Require(size.variantBytes <= bound, "image table wide draw variant: the draw over the stride-48 table captured " + std::to_string(captured) + " bytes of words and holds " + std::to_string(size.variantBytes) + " bytes in the draw cache, over the " + std::to_string(bound) + " its words, a run and a run base per region at up to twice their count, and its two variants allow");
+    std::puts(("image table wide draw variant passed" + counts).c_str());
 }
 
 void VouchedLookups(const GuestBlock& block) {
@@ -499,6 +533,7 @@ int main(int argc, char** argv) {
         }
         TablesChangingPerDispatch(block);
         SrtMovingPerDispatch(block);
+        WideTableDrawVariant(block);
         SrtMovingPerDraw(block);
         AgcDriverShutdown_nid_postfix();
         std::puts("image table cache bounds tests passed");

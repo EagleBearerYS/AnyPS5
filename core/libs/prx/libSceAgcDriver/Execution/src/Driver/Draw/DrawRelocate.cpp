@@ -84,6 +84,10 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
         return (relocatable >> found->second & 1u) != 0 ? static_cast<std::int8_t>(found->second) : std::int8_t {-1};
     };
     variant.relocatableWords = relocatable;
+    std::size_t total = 0;
+    for (const auto& region : regions) total += region.bytes.size() / sizeof(std::uint32_t);
+    variant.words.reserve(variant.words.size() + total);
+    if (relocatable == 0) variant.runs.reserve(variant.runs.size() + regions.size());
     for (std::size_t index = 0; index < regions.size(); ++index) {
         const auto& region = regions[index];
         const auto count = region.bytes.size() / sizeof(std::uint32_t);
