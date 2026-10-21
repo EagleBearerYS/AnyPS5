@@ -1,0 +1,4 @@
+BASE=2f161d4f33f82bca2cc113cbd9432adf1dc0ec1e
+REPEAT=5
+EXTRA_TESTS='agc_driver_graphics|agc_driver_depth_storage|agc_driver_depth_expand_out_of_place|agc_driver_depth_expand_out_of_place_inline|agc_driver_depth_expand_review|agc_driver_sgpr_pattern_fill_keys'
+NO_BEFORE=1
