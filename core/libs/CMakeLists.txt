@@ -321,6 +321,8 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME windows_write_watch COMMAND windows_write_watch_tests)
         set_tests_properties(windows_write_watch PROPERTIES TIMEOUT 20)
+        add_test(NAME windows_write_watch_verify_direct COMMAND windows_write_watch_tests --verify-direct)
+        set_tests_properties(windows_write_watch_verify_direct PROPERTIES TIMEOUT 20 ENVIRONMENT "APS5_VERIFY_DIRECT_COLLECT=1")
     endif()
 
     if(WIN32)
