@@ -1,5 +1,5 @@
-BUSY BF-107
+READY
 
 RESULT:
-- claimed BF-107 (big-allocation call-site counter for the Village menu growth) at 2026-10-21T10:28:43Z; board commit 008a84706
-- last finished: BF-102 (results/cloud-1/BF-102.md)
+- finished BF-107 (big-allocation call-site counter): branch exp/big-alloc-sites head 735b5f01c47a; result results/cloud-1/BF-107.md (5f0a451d38)
+- APS5_PROFILE_BIG_ALLOCS=1 prints [bigalloc] lines every 10 s; resolve with tools/resolve_bigalloc.py; Windows hooks are import-table patches in libc.prx
