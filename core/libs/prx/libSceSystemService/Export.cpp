@@ -262,6 +262,10 @@ int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAre
  return SYSTEM_SERVICE_OK;
 }
 
+int APS5_VABI sceSystemServiceShowDisplaySafeAreaSettings(void) {
+ return SYSTEM_SERVICE_OK;
+}
+
 int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance) {
  if (luminance == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
@@ -388,6 +392,16 @@ int APS5_VABI sceSystemServiceOpenChallengeActivity(void) {
 }
 
 int APS5_VABI sceSystemServiceOpenTournamentOccurrence(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char*, const char* const*, const void*) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceSystemServiceKillLocalProcessForPsmKit(int) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

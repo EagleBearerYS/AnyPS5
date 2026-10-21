@@ -143,6 +143,7 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
                         }
                         case StageInputKind::Layer:
                         case StageInputKind::SampleId:
+                        case StageInputKind::SampleMask:
                         case StageInputKind::RasterPrimitive:
                         case StageInputKind::LayerExported:
                             if (program.Resources().stage != IrShaderStage::Pixel || component != 0u) {
@@ -335,10 +336,16 @@ void CollectComputeInputs(const ShaderComputeInputInfo* compute, ShaderInfo& inf
     }
 }
 
+bool OwnControlPointWrite(const IrValue& inst) {
+    if (inst.Opcode() != IrOpcode::SetTessellationAttribute) return false;
+    const auto kind = static_cast<TessellationAttribute>(inst.Argument(0)->ImmediateU32());
+    return kind == TessellationAttribute::ControlOutput || kind == TessellationAttribute::ControlShared;
+}
+
 void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
-            if (program.Resources().stage == IrShaderStage::TessellationControl && inst->Opcode() == IrOpcode::LaneId) {
+            if (program.Resources().stage == IrShaderStage::TessellationControl && (inst->Opcode() == IrOpcode::LaneId || OwnControlPointWrite(*inst))) {
                 AddInput(info, StageInputKind::InvocationId, 0, 1, "gl_InvocationID");
             }
             if (inst->Opcode() != IrOpcode::GetBuiltin) {
@@ -378,6 +385,9 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     break;
                 case StageInputKind::SampleId:
                     AddInput(info, kind, 0, 1, "gl_SampleID");
+                    break;
+                case StageInputKind::SampleMask:
+                    AddInput(info, kind, 0, 1, "gl_SampleMaskIn");
                     break;
                 case StageInputKind::BaryCoordSmooth:
                 case StageInputKind::BaryCoordSmoothCenter:
