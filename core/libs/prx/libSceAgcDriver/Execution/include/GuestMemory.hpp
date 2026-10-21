@@ -62,6 +62,19 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
 bool WriteWatched();
 void Unwatch(std::uint64_t address, std::size_t bytes);
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+
+enum class RewatchPhase : std::size_t { Calls, Ticks, Lock, Spans, Restored, Covers, Walk, Restore, Note, Stamp, Filtered, ImportWalk, LiveOverlaps, Count };
+struct RewatchSpan {
+    std::uint64_t begin = 0;
+    std::uint64_t end = 0;
+    std::uint64_t ticks = 0;
+    bool restored = false;
+};
+void SetRewatchPhases(bool enabled);
+std::uint64_t RewatchPhaseNow();
+void AddRewatchPhase(RewatchPhase phase, std::uint64_t value);
+void AddRewatchPhaseSince(RewatchPhase phase, std::uint64_t start);
+void ReadRewatchPhases(std::span<std::uint64_t> values, std::vector<RewatchSpan>* spans, bool reset);
 bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched = true);
 void SetUnwatchHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 #ifdef _WIN32

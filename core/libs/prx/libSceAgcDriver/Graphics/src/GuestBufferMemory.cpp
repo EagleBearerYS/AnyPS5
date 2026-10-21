@@ -1466,13 +1466,27 @@ void noteRetiredUnwatched(std::vector<std::pair<std::uint64_t, std::uint64_t>>& 
 
 void rewatchRetired(const HostImports& state, std::vector<std::pair<std::uint64_t, std::uint64_t>> spans) {
     std::erase_if(spans, [&](const auto& span) {
+        const auto walked = GuestMemory::RewatchPhaseNow();
+        bool covered = false;
         auto it = state.imports.upper_bound(span.first);
         if (it != state.imports.begin()) --it;
         for (; it != state.imports.end() && it->first < span.second; ++it) {
-            if (it->second.unwatched && span.first < it->first + it->second.bytes) return true;
+            if (it->second.unwatched && span.first < it->first + it->second.bytes) {
+                covered = true;
+                break;
+            }
+        }
+        GuestMemory::AddRewatchPhaseSince(GuestMemory::RewatchPhase::ImportWalk, walked);
+        if (covered) {
+            GuestMemory::AddRewatchPhase(GuestMemory::RewatchPhase::Filtered, 1);
+            return true;
         }
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> one{{span}};
-        return StorageTexture::AnyLiveOverlaps(one);
+        const auto overlapped = GuestMemory::RewatchPhaseNow();
+        const bool live = StorageTexture::AnyLiveOverlaps(one);
+        GuestMemory::AddRewatchPhaseSince(GuestMemory::RewatchPhase::LiveOverlaps, overlapped);
+        if (live) GuestMemory::AddRewatchPhase(GuestMemory::RewatchPhase::Filtered, 1);
+        return live;
     });
     if (!spans.empty()) GuestMemory::Rewatch(spans);
 }

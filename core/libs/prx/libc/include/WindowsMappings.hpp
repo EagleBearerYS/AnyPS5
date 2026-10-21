@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -22,6 +23,17 @@ namespace GuestArena {
 class WindowsMappings {
 public:
     enum class Collection { All, Armed, Fresh };
+    enum class Phase : std::size_t { Calls, Ticks, Lock, CollectableCalls, CollectableTicks, Queries, QueryTicks, QueryBytes, Protects, ProtectTicks, WriteWatches, WriteWatchTicks, CleanMarks, CleanTicks, Count };
+
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(Phase::Count)>& Phases() {
+        static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(Phase::Count)> phases{};
+        return phases;
+    }
+
+    static std::atomic<bool>& PhasesEnabled() {
+        static std::atomic<bool> enabled{false};
+        return enabled;
+    }
 
     static WindowsMappings& Get() {
         static auto* mappings = new WindowsMappings;
@@ -334,7 +346,11 @@ public:
     }
 
     bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
+        PhaseTimer total(Phase::Calls, Phase::Ticks, false);
+        const auto waited = phaseNow(false);
         std::lock_guard lock(mutex);
+        notePhase(Phase::Lock, waited);
+        InsideCollect inside;
         const auto capacity = *count;
         *count = 0;
         const auto end = address + bytes;
@@ -474,7 +490,7 @@ public:
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
                 ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
                 DWORD granularity = 0;
-                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) fail("collect private guest writes");
+                if (getWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) fail("collect private guest writes");
                 *count += available;
                 if (*count == capacity) return true;
                 cursor = stop;
@@ -485,9 +501,60 @@ public:
     }
 
 private:
+    static bool& insideCollect() {
+        thread_local bool inside = false;
+        return inside;
+    }
+
+    struct InsideCollect {
+        InsideCollect() : previous(insideCollect()) { insideCollect() = true; }
+        ~InsideCollect() { insideCollect() = previous; }
+        InsideCollect(const InsideCollect&) = delete;
+        InsideCollect& operator=(const InsideCollect&) = delete;
+        bool previous;
+    };
+
+    static std::uint64_t phaseNow(bool collectOnly = true) {
+        if (!PhasesEnabled().load(std::memory_order_relaxed) || (collectOnly && !insideCollect())) return 0;
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        return static_cast<std::uint64_t>(now.QuadPart);
+    }
+
+    static void addPhase(Phase phase, std::uint64_t value) {
+        Phases()[static_cast<std::size_t>(phase)].fetch_add(value, std::memory_order_relaxed);
+    }
+
+    static void notePhase(Phase ticks, std::uint64_t start) {
+        if (start == 0) return;
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        addPhase(ticks, static_cast<std::uint64_t>(now.QuadPart) - start);
+    }
+
+    struct PhaseTimer {
+        PhaseTimer(Phase calls, Phase ticks, bool collectOnly = true) : calls(calls), ticks(ticks), start(phaseNow(collectOnly)) {}
+        ~PhaseTimer() {
+            if (start == 0) return;
+            addPhase(calls, 1);
+            notePhase(ticks, start);
+        }
+        PhaseTimer(const PhaseTimer&) = delete;
+        PhaseTimer& operator=(const PhaseTimer&) = delete;
+        Phase calls;
+        Phase ticks;
+        std::uint64_t start;
+    };
+
+    static UINT getWriteWatch(DWORD flags, void* base, SIZE_T size, void** addresses, ULONG_PTR* count, ULONG* granularity) {
+        PhaseTimer timer(Phase::WriteWatches, Phase::WriteWatchTicks);
+        return GetWriteWatch(flags, base, size, addresses, count, granularity);
+    }
+
     bool collectable(std::uintptr_t address, std::uintptr_t end) {
         const auto proven = collectableRanges.upper_bound(address);
         if (proven != collectableRanges.begin() && std::prev(proven)->second >= end) return true;
+        PhaseTimer timer(Phase::CollectableCalls, Phase::CollectableTicks);
         auto position = views.lower_bound(address & ~(pageBytes - 1));
         for (auto cursor = address; cursor < end;) {
             const auto base = cursor & ~(pageBytes - 1);
@@ -588,7 +655,7 @@ private:
         if (run.fresh == 0 && collection != Collection::Fresh) {
             ULONG_PTR reported = (stop - first + 4095) / 4096;
             DWORD granularity = 0;
-            if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, pages + *count, &reported, &granularity) != 0) fail("collect resident guest writes");
+            if (getWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, pages + *count, &reported, &granularity) != 0) fail("collect resident guest writes");
             for (ULONG_PTR index = 0; index < reported; ++index) pages[*count + index] = reinterpret_cast<void*>(std::max(from, reinterpret_cast<std::uintptr_t>(pages[*count + index])));
             *count += reported;
             if (armed) rememberClean(from, stop);
@@ -599,7 +666,7 @@ private:
             std::vector<void*> found((stop - first + 4095) / 4096);
             ULONG_PTR reported = found.size();
             DWORD granularity = 0;
-            if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, found.data(), &reported, &granularity) != 0) fail("collect resident guest writes");
+            if (getWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, found.data(), &reported, &granularity) != 0) fail("collect resident guest writes");
             for (ULONG_PTR index = 0; index < reported; ++index) written.push_back(reinterpret_cast<std::uintptr_t>(found[index]));
         }
         auto next = written.begin();
@@ -662,7 +729,10 @@ private:
         }
         DWORD previous;
         const auto readOnly = protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY;
-        if (!VirtualProtect(reinterpret_cast<void*>(from), stop - from, readOnly, &previous)) fail("arm resident memory write tracking");
+        {
+            PhaseTimer timer(Phase::Protects, Phase::ProtectTicks);
+            if (!VirtualProtect(reinterpret_cast<void*>(from), stop - from, readOnly, &previous)) fail("arm resident memory write tracking");
+        }
         for (auto it = first; it != views.end() && it->first < stop; ++it) it->second.armed |= subpagesOf(it->first, from, stop);
         return true;
     }
@@ -821,6 +891,7 @@ private:
     }
 
     void rememberClean(std::uintptr_t start, std::uintptr_t end) {
+        PhaseTimer timer(Phase::CleanMarks, Phase::CleanTicks);
         remember(cleanRanges, start, end);
     }
 
@@ -886,7 +957,13 @@ private:
 
     static MEMORY_BASIC_INFORMATION query(std::uintptr_t address) {
         MEMORY_BASIC_INFORMATION memory{};
+        const auto start = phaseNow();
         if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory)) fail("query guest memory");
+        if (start != 0) {
+            notePhase(Phase::QueryTicks, start);
+            addPhase(Phase::Queries, 1);
+            addPhase(Phase::QueryBytes, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize - address);
+        }
         return memory;
     }
 

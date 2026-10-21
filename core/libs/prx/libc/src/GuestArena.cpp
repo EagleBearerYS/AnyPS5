@@ -438,6 +438,18 @@ bool GuestArenaCollectFreshWrites_nid_postfix(std::uintptr_t address, std::size_
     return WindowsMappings::Get().Collect(address, bytes, pages, count, clear, WindowsMappings::Collection::Fresh);
 }
 
+void GuestArenaSetCollectPhases_nid_no_patch(bool enabled) {
+    WindowsMappings::PhasesEnabled().store(enabled, std::memory_order_relaxed);
+}
+
+void GuestArenaCollectPhases_nid_no_patch(std::uint64_t* values, std::size_t count, bool reset) {
+    auto& phases = WindowsMappings::Phases();
+    for (std::size_t index = 0; index < phases.size(); ++index) {
+        const auto value = reset ? phases[index].exchange(0, std::memory_order_relaxed) : phases[index].load(std::memory_order_relaxed);
+        if (index < count) values[index] = value;
+    }
+}
+
 bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes) {
     return Arena::Get().OverlapsHostRegion(address, bytes);
 }

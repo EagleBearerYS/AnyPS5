@@ -12,6 +12,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "prx/libc/include/WindowsMappings.hpp"
 #endif
 #include <algorithm>
 #include <array>
@@ -2199,12 +2200,78 @@ void rewatchCostLine(std::ostringstream& out, const char* label, const std::vect
     const auto spread = rewatchCostSpread(values);
     out << "  " << label << ": " << spread.count << ", total " << spread.total << " us, median " << spread.median << " us, p99 " << spread.p99 << " us, max " << spread.peak << " us\n";
 }
+
+void rewatchPhaseLines(std::ostringstream& out, const std::array<std::uint64_t, static_cast<std::size_t>(GuestArena::WindowsMappings::Phase::Count)>& collect, const std::array<std::uint64_t, static_cast<std::size_t>(AgcDriver::GuestMemory::RewatchPhase::Count)>& rewatch, const std::vector<AgcDriver::GuestMemory::RewatchSpan>& spans, std::uint64_t blockEnd, bool wholeBlock) {
+    using CollectPhase = GuestArena::WindowsMappings::Phase;
+    using RewatchPhase = AgcDriver::GuestMemory::RewatchPhase;
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency);
+    const auto us = [&](std::uint64_t ticks) { return static_cast<double>(ticks) * 1e6 / static_cast<double>(frequency.QuadPart); };
+    const auto c = [&](CollectPhase phase) { return collect[static_cast<std::size_t>(phase)]; };
+    const auto r = [&](RewatchPhase phase) { return rewatch[static_cast<std::size_t>(phase)]; };
+    const auto spanCount = std::max<std::uint64_t>(1, r(RewatchPhase::Spans));
+    const auto each = [&](std::uint64_t ticks) { return us(ticks) / static_cast<double>(spanCount); };
+    const auto phase = [&](const char* label, std::uint64_t ticks, std::uint64_t calls) {
+        out << "    " << label << ": " << us(ticks) << " us, " << each(ticks) << " us per span";
+        if (calls != 0) out << ", " << calls << " calls (" << static_cast<double>(calls) / static_cast<double>(spanCount) << " per span)";
+        out << "\n";
+    };
+    out << "  phases over the timed retiring refreshes (QueryPerformanceCounter at " << frequency.QuadPart << " Hz):\n";
+    out << "    rewatchRetired: " << r(RewatchPhase::Filtered) << " spans kept unwatched (another unwatched import or a live texture)\n";
+    phase("rewatchRetired imports walk", r(RewatchPhase::ImportWalk), 0);
+    phase("rewatchRetired AnyLiveOverlaps", r(RewatchPhase::LiveOverlaps), 0);
+    out << "    Rewatch: " << r(RewatchPhase::Calls) << " calls, " << r(RewatchPhase::Spans) << " spans, " << r(RewatchPhase::Restored) << " restored\n";
+    phase("Rewatch in all", r(RewatchPhase::Ticks), r(RewatchPhase::Calls));
+    phase("Rewatch tracker lock wait", r(RewatchPhase::Lock), 0);
+    phase("Rewatch coverage.Covers", r(RewatchPhase::Covers), 0);
+    phase("Rewatch walkWrites", r(RewatchPhase::Walk), 0);
+    phase("Rewatch coverage.Restore", r(RewatchPhase::Restore), 0);
+    phase("Rewatch noteCpuStore", r(RewatchPhase::Note), 0);
+    phase("Rewatch driverPieces.erase and stamps", r(RewatchPhase::Stamp), 0);
+    phase("WindowsMappings::Collect in all", c(CollectPhase::Ticks), c(CollectPhase::Calls));
+    phase("Collect mutex wait", c(CollectPhase::Lock), 0);
+    phase("Collect collectable(), not memoized", c(CollectPhase::CollectableTicks), c(CollectPhase::CollectableCalls));
+    phase("Collect VirtualQuery (in collectable() and the walk)", c(CollectPhase::QueryTicks), c(CollectPhase::Queries));
+    if (c(CollectPhase::Queries) != 0) out << "      each VirtualQuery's region runs " << static_cast<double>(c(CollectPhase::QueryBytes)) / static_cast<double>(c(CollectPhase::Queries)) / 1048576.0 << " MiB on average from the queried address\n";
+    phase("Collect armResident VirtualProtect", c(CollectPhase::ProtectTicks), c(CollectPhase::Protects));
+    phase("Collect GetWriteWatch", c(CollectPhase::WriteWatchTicks), c(CollectPhase::WriteWatches));
+    phase("Collect rememberClean", c(CollectPhase::CleanTicks), c(CollectPhase::CleanMarks));
+    const auto counted = c(CollectPhase::Lock) + c(CollectPhase::CollectableTicks) + c(CollectPhase::QueryTicks) + c(CollectPhase::ProtectTicks) + c(CollectPhase::WriteWatchTicks) + c(CollectPhase::CleanTicks);
+    const auto inside = c(CollectPhase::Ticks) > counted ? c(CollectPhase::Ticks) - counted : 0;
+    phase("Collect rest (clean-range walk, views, bookkeeping; collectable()'s VirtualQuery counted once)", inside, 0);
+    std::vector<double> costs;
+    for (const auto& span : spans) costs.push_back(us(span.ticks));
+    const auto window = [&](const char* label, std::size_t from, std::size_t to) {
+        std::vector<double> part(costs.begin() + static_cast<std::ptrdiff_t>(from), costs.begin() + static_cast<std::ptrdiff_t>(to));
+        const auto spread = rewatchCostSpread(part);
+        out << "    " << label << ": " << spread.count << " spans, median " << spread.median << " us, mean " << (spread.count != 0 ? spread.total / static_cast<double>(spread.count) : 0.0) << " us, max " << spread.peak << " us\n";
+    };
+    const auto slice = std::min<std::size_t>(500, costs.size());
+    window("Rewatch per span, first 500 spans", 0, slice);
+    window("Rewatch per span, last 500 spans", costs.size() - slice, costs.size());
+    std::array<std::vector<double>, 8> byDistance;
+    std::array<std::vector<double>, 2> bySize;
+    for (const auto& span : spans) {
+        const auto distance = blockEnd > span.begin ? (blockEnd - span.begin) >> 20u : 0;
+        byDistance[std::min<std::uint64_t>(distance / 64, byDistance.size() - 1)].push_back(us(span.ticks));
+        bySize[span.end - span.begin > 65536 ? 1 : 0].push_back(us(span.ticks));
+    }
+    out << "    Rewatch per span by distance from the span to the end of the committed block" << (wholeBlock ? " (one placeholder replacement)" : "") << ":\n";
+    for (std::size_t bucket = 0; bucket < byDistance.size(); ++bucket) {
+        if (byDistance[bucket].empty()) continue;
+        const auto spread = rewatchCostSpread(byDistance[bucket]);
+        out << "      " << bucket * 64 << (bucket + 1 == byDistance.size() ? "+ MiB" : " to " + std::to_string((bucket + 1) * 64) + " MiB") << ": " << spread.count << " spans, median " << spread.median << " us\n";
+    }
+    rewatchCostLine(out, "Rewatch per 64 KiB span", bySize[0]);
+    rewatchCostLine(out, "Rewatch per 4 MiB span", bySize[1]);
+}
 #endif
 
-int retiredImportRewatchCost(const Context& context, const char* size) {
+int retiredImportRewatchCost(const Context& context, const char* size, const char* granularity) {
 #ifndef _WIN32
     static_cast<void>(context);
     static_cast<void>(size);
+    static_cast<void>(granularity);
     std::cout << "retired import rewatch cost: Windows only (imports never leave the write watch on Linux)\n";
     return 77;
 #else
@@ -2248,9 +2315,32 @@ int retiredImportRewatchCost(const Context& context, const char* size) {
     constexpr auto deadline = std::chrono::seconds(75);
     const std::size_t pieceSlots = std::max<std::size_t>(mostPieces, 2);
     const std::size_t bytes = bigSlots * bigStride + pieceSlots * pieceStride + probeBytes;
+    const std::size_t granule = granularity != nullptr ? static_cast<std::size_t>(std::strtoull(granularity, nullptr, 10)) : bytes;
+    Require(granule >= 16384 && granule % 16384 == 0, "retired import rewatch cost: the commit granule is a multiple of 16384 bytes");
     auto* block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, bigStride));
     Require(block != nullptr, "retired import rewatch cost: cannot allocate its guest arena block");
-    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, granule);
+    constexpr auto collectPhaseCount = static_cast<std::size_t>(GuestArena::WindowsMappings::Phase::Count);
+    constexpr auto rewatchPhaseCount = static_cast<std::size_t>(AgcDriver::GuestMemory::RewatchPhase::Count);
+    std::array<std::uint64_t, collectPhaseCount> collectPhases{};
+    std::array<std::uint64_t, rewatchPhaseCount> rewatchPhases{};
+    std::vector<AgcDriver::GuestMemory::RewatchSpan> rewatchSpans;
+    const auto discardPhases = [] {
+        std::array<std::uint64_t, collectPhaseCount> collect{};
+        std::array<std::uint64_t, rewatchPhaseCount> rewatch{};
+        GuestArena::GuestArenaCollectPhases_nid_no_patch(collect.data(), collect.size(), true);
+        AgcDriver::GuestMemory::ReadRewatchPhases(rewatch, nullptr, true);
+    };
+    const auto keepPhases = [&] {
+        std::array<std::uint64_t, collectPhaseCount> collect{};
+        std::array<std::uint64_t, rewatchPhaseCount> rewatch{};
+        GuestArena::GuestArenaCollectPhases_nid_no_patch(collect.data(), collect.size(), true);
+        AgcDriver::GuestMemory::ReadRewatchPhases(rewatch, &rewatchSpans, true);
+        for (std::size_t index = 0; index < collect.size(); ++index) collectPhases[index] += collect[index];
+        for (std::size_t index = 0; index < rewatch.size(); ++index) rewatchPhases[index] += rewatch[index];
+    };
+    GuestArena::GuestArenaSetCollectPhases_nid_no_patch(true);
+    AgcDriver::GuestMemory::SetRewatchPhases(true);
     auto* bigArea = block;
     auto* pieceArea = block + bigSlots * bigStride;
     auto* probe = pieceArea + pieceSlots * pieceStride;
@@ -2356,9 +2446,11 @@ int retiredImportRewatchCost(const Context& context, const char* size) {
         static_cast<void>(AgcDriver::GuestMemory::CollectWrites(probeAddress, probeBytes));
         store(probe, probeBytes, 16 * 4096);
         const auto serial = AgcDriver::GuestMemory::UnwatchSerial();
+        discardPhases();
         auto start = Clock::now();
         refresh();
         const auto took = since(start);
+        keepPhases();
         const auto bumped = AgcDriver::GuestMemory::UnwatchSerial() - serial;
         start = Clock::now();
         static_cast<void>(AgcDriver::GuestMemory::CollectWrites(probeAddress, probeBytes));
@@ -2390,6 +2482,9 @@ int retiredImportRewatchCost(const Context& context, const char* size) {
         ++done;
     }
     const auto workload = since(workloadStart);
+    GuestArena::GuestArenaSetCollectPhases_nid_no_patch(false);
+    AgcDriver::GuestMemory::SetRewatchPhases(false);
+    discardPhases();
     SetHostImportBudget(0);
     SetImportWatch(importing, decided);
     ClearHostImports(importing.device);
@@ -2403,6 +2498,7 @@ int retiredImportRewatchCost(const Context& context, const char* size) {
     if (rewatched != 0) out << "[rewatch-cost] retired ranges rewatched: " << rewatched << " of " << retired << " retired (" << mib(rewatchedBytes) << " MiB)\n";
     else out << "[rewatch-cost] retired ranges left unwatched: " << retired << " retired (" << mib(retiredBytes) << " MiB), 0 rewatched\n";
     out << "  size: " << percent << "% of Village's workload (--retired-import-rewatch-cost <percent>, default 100): " << refreshes.size() << " retiring refreshes planned, " << plannedPieces << " retirements (" << plannedPieces - plannedBig << " of 64 KiB, " << plannedBig << " of 4 MiB, " << mib((plannedPieces - plannedBig) * piece + plannedBig * bigPiece) << " MiB), at most " << mostPieces << " in one refresh\n";
+    out << "  commit: " << (granule == bytes ? std::string("the whole ") + std::to_string(bytes >> 20u) + " MiB block in one placeholder replacement" : std::string("the block in ") + std::to_string(granule / 1024) + " KiB placeholder replacements") << " (--retired-import-rewatch-cost <percent> <granule bytes>)\n";
     out << "  setup: mock device, import window 8 MiB, import budget 1 GiB, imports unwatched without settle reads; CPU stores to every 4th page of each imported piece and to every 16th page of a 32 MiB probe range before each refresh\n";
     out << "  done: " << done << " of " << refreshes.size() << " refreshes in " << workload / 1e6 << " s" << (done < refreshes.size() ? " (stopped by the 75 s cap)" : "") << "\n";
     out << "  imports: " << made << " made (" << madeUnwatched << " unwatched), " << failed << " failed; retired by their refresh: " << retired << " (" << mib(retiredBytes) << " MiB) in " << refreshTimes.size() << " refreshes\n";
@@ -2420,6 +2516,7 @@ int retiredImportRewatchCost(const Context& context, const char* size) {
     rewatchCostLine(out, "first build after the retirement", restoredBuilds);
     rewatchCostLine(out, "the same build again", repeatBuilds);
     out << "  workload wall time: " << workload / 1e6 << " s, " << rewatchCostSpread(refreshTimes).total / 1e3 << " ms of it in retiring refreshes\n";
+    rewatchPhaseLines(out, collectPhases, rewatchPhases, rewatchSpans, address(block) + bytes, granule == bytes);
     const auto report = out.str();
     std::cout << report << std::flush;
     if (const char* workspace = std::getenv("GITHUB_WORKSPACE"); workspace != nullptr && *workspace != '\0') {
@@ -3021,8 +3118,8 @@ void spaceCommittedPagesTests(const Context& context, const BdaTestAccess& acces
     releaseSparse(block, reserved);
 }
 
-int RunRetiredImportRewatchCost(const Context& context, const char* size) {
-    return retiredImportRewatchCost(context, size);
+int RunRetiredImportRewatchCost(const Context& context, const char* size, const char* granularity) {
+    return retiredImportRewatchCost(context, size, granularity);
 }
 
 bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& access) {

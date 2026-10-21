@@ -1499,26 +1499,114 @@ void Unwatch(std::uint64_t address, std::size_t bytes) {
     unwatchLocked(tracker, address, bytes);
 }
 
+namespace {
+
+std::atomic<bool> rewatchPhasesEnabled{false};
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(RewatchPhase::Count)> rewatchPhases{};
+std::mutex rewatchSpansMutex;
+std::vector<RewatchSpan> rewatchSpans;
+
+std::uint64_t phaseClock() {
+#ifdef _WIN32
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return static_cast<std::uint64_t>(now.QuadPart);
+#else
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+#endif
+}
+
+}
+
+void SetRewatchPhases(bool enabled) {
+    rewatchPhasesEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+std::uint64_t RewatchPhaseNow() {
+    return rewatchPhasesEnabled.load(std::memory_order_relaxed) ? phaseClock() : 0;
+}
+
+void AddRewatchPhase(RewatchPhase phase, std::uint64_t value) {
+    if (rewatchPhasesEnabled.load(std::memory_order_relaxed)) rewatchPhases[static_cast<std::size_t>(phase)].fetch_add(value, std::memory_order_relaxed);
+}
+
+void AddRewatchPhaseSince(RewatchPhase phase, std::uint64_t start) {
+    if (start != 0) AddRewatchPhase(phase, phaseClock() - start);
+}
+
+void ReadRewatchPhases(std::span<std::uint64_t> values, std::vector<RewatchSpan>* spans, bool reset) {
+    for (std::size_t index = 0; index < rewatchPhases.size(); ++index) {
+        const auto value = reset ? rewatchPhases[index].exchange(0, std::memory_order_relaxed) : rewatchPhases[index].load(std::memory_order_relaxed);
+        if (index < values.size()) values[index] = value;
+    }
+    const std::lock_guard lock(rewatchSpansMutex);
+    if (spans != nullptr) spans->insert(spans->end(), rewatchSpans.begin(), rewatchSpans.end());
+    if (reset) rewatchSpans.clear();
+}
+
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
 #ifdef _WIN32
+    const auto entered = RewatchPhaseNow();
     auto& tracker = Tracker();
+    const auto waited = RewatchPhaseNow();
     const auto lock = lockTracker(tracker);
+    AddRewatchPhaseSince(RewatchPhase::Lock, waited);
     tracker.initialize();
     if (!tracker.watched) return;
     bool restored = false;
     for (const auto& [begin, end] : ranges) {
-        if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WriteBlockBytes != 0 || (end - tracker.base) % WriteBlockBytes != 0) continue;
+        const auto spanStart = RewatchPhaseNow();
+        AddRewatchPhase(RewatchPhase::Spans, 1);
+        const auto note = [&](bool done) {
+            if (spanStart == 0) return;
+            const std::lock_guard spansLock(rewatchSpansMutex);
+            rewatchSpans.push_back({begin, end, phaseClock() - spanStart, done});
+        };
+        if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WriteBlockBytes != 0 || (end - tracker.base) % WriteBlockBytes != 0) {
+            note(false);
+            continue;
+        }
         const auto bytes = static_cast<std::size_t>(end - begin);
-        if (tracker.coverage.Covers(begin, bytes) || !walkWrites(tracker, begin, end, StampKind::Cpu) || !tracker.coverage.Restore(begin, bytes)) continue;
+        auto step = RewatchPhaseNow();
+        const bool covered = tracker.coverage.Covers(begin, bytes);
+        AddRewatchPhaseSince(RewatchPhase::Covers, step);
+        if (covered) {
+            note(false);
+            continue;
+        }
+        step = RewatchPhaseNow();
+        const bool walked = walkWrites(tracker, begin, end, StampKind::Cpu);
+        AddRewatchPhaseSince(RewatchPhase::Walk, step);
+        if (!walked) {
+            note(false);
+            continue;
+        }
+        step = RewatchPhaseNow();
+        const bool restoredSpan = tracker.coverage.Restore(begin, bytes);
+        AddRewatchPhaseSince(RewatchPhase::Restore, step);
+        if (!restoredSpan) {
+            note(false);
+            continue;
+        }
         ++tracker.generation;
+        step = RewatchPhaseNow();
         tracker.noteCpuStore(begin, end, tracker.generation);
+        AddRewatchPhaseSince(RewatchPhase::Note, step);
+        step = RewatchPhaseNow();
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
             tracker.driverPieces.erase(block);
             tracker.stamp(block, tracker.generation, StampKind::Cpu);
         }
+        AddRewatchPhaseSince(RewatchPhase::Stamp, step);
+        AddRewatchPhase(RewatchPhase::Restored, 1);
+        note(true);
         restored = true;
     }
     if (restored) unwatchSerial.fetch_add(1, std::memory_order_release);
+    if (entered != 0) {
+        AddRewatchPhase(RewatchPhase::Calls, 1);
+        AddRewatchPhaseSince(RewatchPhase::Ticks, entered);
+    }
 #else
     static_cast<void>(ranges);
 #endif
