@@ -1,0 +1,4 @@
+BASE=3e91c8edf57bdf51671db0063115e38ab2ddc85e
+REPEAT=10
+EXTRA_TESTS='windows_write_watch'
+BEFORE_REPEAT=3
