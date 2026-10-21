@@ -487,6 +487,7 @@ bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mas
     for (const auto& [id, thread] : registry.threads) {
         if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
         thread->affinity.store(mask, std::memory_order_relaxed);
+        if (thread->threadId != std::thread::id{}) PlaceGuestThread(*thread, thread->threadId == std::this_thread::get_id());
         return true;
     }
     return false;

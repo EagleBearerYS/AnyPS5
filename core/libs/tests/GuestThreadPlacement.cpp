@@ -25,6 +25,8 @@ int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inheritSched)
 int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param);
 int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
 Pthread APS5_VABI scePthreadSelf();
+KernelCpumask APS5_VABI sceKernelGetAvailableCpumask(void);
+int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, const void* mask);
 }
 
 static constexpr int SCE_OK = 0;
@@ -128,6 +130,35 @@ static void CheckTwoCpuMask() {
     Require(probe.seenAfter != 0 && (probe.seenAfter & ~moved) == 0, "after scePthreadSetaffinity the thread runs only on its mapped host CPUs");
 }
 
+struct SelfMoveProbe {
+    std::uint64_t maskBefore = 0;
+    int result = -1;
+    std::uint64_t maskAfter = 0;
+    std::uint64_t seenAfter = 0;
+};
+
+static void* APS5_VABI SelfMoveWorker(void* opaque) {
+    auto* probe = static_cast<SelfMoveProbe*>(opaque);
+    probe->maskBefore = CurrentHostMask();
+    const KernelCpumask mask = MOVED_MASK;
+    probe->result = cpuset_setaffinity_nid_postfix(3, 1, -1, sizeof(mask), &mask);
+    probe->maskAfter = CurrentHostMask();
+    probe->seenAfter = BusyRanOn();
+    return nullptr;
+}
+
+static void CheckCpusetMovesThread() {
+    SelfMoveProbe probe;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, SelfMoveWorker, &probe, "cpuset move") == SCE_OK, "create for cpuset_setaffinity");
+    Require(scePthreadJoin(thread, nullptr) == SCE_OK, "join after cpuset_setaffinity");
+    const std::uint64_t moved = CpuTopology::HostMaskForGuest(MOVED_MASK & sceKernelGetAvailableCpumask());
+    std::fprintf(stderr, "cpuset_setaffinity 0x5 on the calling thread: host mask 0x%llx before, 0x%llx after, ran on 0x%llx\n", static_cast<unsigned long long>(probe.maskBefore), static_cast<unsigned long long>(probe.maskAfter), static_cast<unsigned long long>(probe.seenAfter));
+    Require(probe.result == 0, "cpuset_setaffinity on the calling thread succeeds");
+    Require(probe.maskAfter == moved, "cpuset_setaffinity moves the calling thread to its mapped host CPUs");
+    Require(probe.seenAfter != 0 && (probe.seenAfter & ~moved) == 0, "after cpuset_setaffinity the thread runs only on its mapped host CPUs");
+}
+
 #ifdef _WIN32
 struct PriorityProbe {
     int initial = 0;
@@ -211,6 +242,7 @@ int main() {
     CheckPriorityOrder();
 #endif
     CheckTwoCpuMask();
+    CheckCpusetMovesThread();
     if (failures != 0) std::abort();
     return 0;
 }
