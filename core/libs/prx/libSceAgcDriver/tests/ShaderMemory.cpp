@@ -739,6 +739,99 @@ void verifyPlanRetentionChains() {
     require(kept[0] == kept[1] && kept[1] == kept[2], ("plan retention: the plan keeps " + std::to_string(kept[0]) + ", " + std::to_string(kept[1]) + " and " + std::to_string(kept[2]) + " values for vector chains of 1, 16 and 64 steps before the scalar load its branch condition reads; it must keep only what the condition's evaluation can reach").c_str());
 }
 
+void verifyPlanCopyAnswers() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::vector<std::unique_ptr<IrBlock>> blocks;
+    std::uint32_t ids = 0;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t value) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(value);
+        return immediate;
+    };
+    const auto userData = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto binary = [&](IrOpcode opcode, IrType type, IrValue& left, IrValue& right) -> IrValue& {
+        auto& value = make(opcode, type);
+        value.AddArgument(&left);
+        value.AddArgument(&right);
+        return value;
+    };
+    const auto vectorLoad = [&](IrValue& address) -> IrValue& {
+        auto& load = make(IrOpcode::LoadBufferU32, IrType::U32);
+        load.AddArgument(&address);
+        return load;
+    };
+    const auto rawRead = [&](IrValue& low, IrValue& high, IrValue& offset) -> IrValue& {
+        auto& read = binary(IrOpcode::LoadAddressU32, IrType::U32, binary(IrOpcode::CompositeConstructU64, IrType::U64, low, high), offset);
+        read.SetFlags(MemoryFlags{0, 0});
+        return read;
+    };
+    const auto walks = [&](IrProgram& program, IrValue& read, const std::array<std::uint32_t, 14>& userWords, std::uint8_t expected, const char* what) {
+        auto& resources = program.Resources();
+        resources.srtPlanComplete = true;
+        resources.resourceTrackingComplete = true;
+        MemoryInfo memory;
+        memory.kind = ResourceKind::ScalarAddress;
+        resources.memoryInfo.push_back(memory);
+        DescriptorSource descriptor;
+        descriptor.dwordCount = 4;
+        for (std::uint32_t dword = 0; dword < 4u; ++dword) descriptor.dwords[dword] = &userData(10u + dword);
+        resources.descriptorSources.push_back(descriptor);
+        BufferResource buffer;
+        resources.info.buffers.push_back(buffer);
+        resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, read, constant(5)), {1, 2}, {}, {}});
+        resources.controlFlow.push_back({nullptr, {}, {}, {}});
+        resources.controlFlow.push_back({nullptr, {}, {0}, {}});
+        const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+        SrtRuntime runtime{userWords};
+        runtime.readMemory = readFive;
+        runtime.readSpecializationMemory = readFive;
+        const std::array<std::uint32_t, 1> sources{0u};
+        const auto whole = walkPlan(resources, sources, {}, runtime);
+        const auto taped = walkPlan(plan, plan.materializationSources, plan.cleanFlatSlots, runtime);
+        const auto interpreted = walkPlan(plan, sources, {}, runtime);
+        require(whole.active == std::vector<std::uint8_t>{expected}, what);
+        require(taped.active == whole.active && taped.results == whole.results, what);
+        require(interpreted.active == whole.active && interpreted.results == whole.results, what);
+    };
+    std::array<std::uint32_t, 14> userWords{};
+    for (std::uint32_t word = 10; word < userWords.size(); ++word) userWords[word] = 0x100u + word;
+
+    IrProgram phiProgram;
+    auto& shared = userData(1);
+    const auto low = [&](IrValue& hidden) -> IrValue& {
+        return binary(IrOpcode::CompositeExtractU32x2, IrType::U32, binary(IrOpcode::CompositeConstructU32x2, IrType::U32x2, shared, hidden), constant(0));
+    };
+    auto& left = *blocks.emplace_back(std::make_unique<IrBlock>(1u));
+    auto& right = *blocks.emplace_back(std::make_unique<IrBlock>(2u));
+    auto& phi = make(IrOpcode::Phi, IrType::U32);
+    phi.AddPhiOperand(&left, &low(vectorLoad(userData(4))));
+    phi.AddPhiOperand(&right, &low(vectorLoad(userData(5))));
+    userWords[1] = 8u;
+    userWords[2] = 0x1000u;
+    walks(phiProgram, rawRead(userData(2), userData(3), phi), userWords, 1u, "plan copy: a phi whose incoming values differ below a vector load resolved in the plan, not in the program");
+
+    IrProgram rootProgram;
+    auto& mask = binary(IrOpcode::IEqual32, IrType::Bool, userData(5), constant(0));
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&mask);
+    choice.AddArgument(&userData(2));
+    choice.AddArgument(&vectorLoad(rawRead(userData(8), userData(9), constant(0))));
+    userWords[1] = 0u;
+    userWords[2] = 0u;
+    walks(rootProgram, rawRead(binary(IrOpcode::ReadFirstLane, IrType::U32, choice, mask), userData(3), constant(0)), userWords, 0u, "plan copy: a read from a null base loaded from memory only below a vector load counted as a null root in the plan, not in the program");
+}
+
 void verifySignedMinimum() {
     using namespace ShaderRecompiler;
     IrResourcePlan plan;
@@ -7686,6 +7779,7 @@ int main(int argc, char** argv) {
         verifyPlanConditionPruning();
         verifyPlanRetention();
         verifyPlanRetentionChains();
+        verifyPlanCopyAnswers();
         verifyGuardedDescriptorSources();
         verifySrtTape();
         verifyImageTableKeys();
