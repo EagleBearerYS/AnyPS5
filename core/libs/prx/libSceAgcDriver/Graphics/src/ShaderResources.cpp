@@ -3253,6 +3253,8 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
         recorder->SyncThrough(address, bytes);
         return true;
     }
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile && labels && recorder->PendingLabelIn(address, bytes)) Recorder::CountLabelWaitSkipped();
     return false;
 }
 
