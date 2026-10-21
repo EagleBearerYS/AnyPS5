@@ -190,15 +190,21 @@ void CheckPrivateAllocations() {
     const auto write = [&](std::size_t page) { static_cast<volatile unsigned char*>(memory)[page * Small] = static_cast<unsigned char>(page + 1); };
     const auto pages = Bytes / Small;
     std::set<std::size_t> found;
+    const auto failures = Mappings::FailedDirectCollects();
     Require(collect(0, 2 * pages, found), "a collect over two private allocations failed");
+    Require(Mappings::FailedDirectCollects() - failures == 1, "a collect over two private allocations did not fail exactly one direct call");
     write(3);
     write(pages + 1);
     write(2 * pages - 1);
     Require(collect(0, 2 * pages, found) && found == std::set<std::size_t>({3, pages + 1, 2 * pages - 1}), "a collect over two private allocations lost or invented a write");
     Require(collect(0, 2 * pages, found) && found.empty(), "a collect over two private allocations did not clear its writes");
+    Require(Mappings::FailedDirectCollects() - failures == 1, "a collect over two private allocations repeated its failed direct call");
     write(pages - 1);
     write(pages);
     Require(collect(pages - 2, 4, found) && found == std::set<std::size_t>({pages - 1, pages}), "a collect across the boundary of two private allocations lost a write");
+    const auto crossing = Mappings::FailedDirectCollects();
+    Require(collect(pages - 2, 4, found) && found.empty(), "a collect across the boundary of two private allocations did not clear its writes");
+    Require(Mappings::FailedDirectCollects() == crossing, "a collect across the boundary of two private allocations repeated its failed direct call");
     Require(collect(0, pages, found) && found.empty(), "a collect within one private allocation reported a cleared write");
     write(5);
     const auto queries = Mappings::RegionQueries();
@@ -210,11 +216,14 @@ void CheckPrivateAllocations() {
     Require(!collect(0, 2 * pages, found), "a collect over a released private allocation succeeded");
     Require(collect(0, pages, found) && found.empty(), "releasing a neighbor changed a private allocation's writes");
     mappings.Commit(memory + Bytes, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto recommitted = Mappings::FailedDirectCollects();
     Require(collect(0, 2 * pages, found), "a collect over a recommitted private allocation failed");
+    Require(Mappings::FailedDirectCollects() - recommitted == 1, "a commit did not forget a failed direct call");
     write(pages + 4);
     write(1);
     Require(collect(0, 2 * pages, found) && found == std::set<std::size_t>({1, pages + 4}), "a collect over a recommitted private allocation lost or kept a write");
     Require(collect(0, 2 * pages, found) && found.empty(), "a collect over a recommitted private allocation did not clear its writes");
+    Require(Mappings::FailedDirectCollects() - recommitted == 1, "a collect over a recommitted private allocation repeated its failed direct call");
     mappings.Reset(memory, 2 * Bytes);
     VirtualFree(memory, 0, MEM_RELEASE);
 }
