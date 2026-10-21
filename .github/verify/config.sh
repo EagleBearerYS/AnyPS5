@@ -1,0 +1,4 @@
+BASE=fce8ecf162a61ec4b34cab7511f9bd74db0bb3b2
+REPEAT=5
+EXTRA_TESTS='agc_driver_image_table_cache_bounds|agc_driver_graphics'
+NO_BEFORE=1
