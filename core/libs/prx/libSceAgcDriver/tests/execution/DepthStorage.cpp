@@ -1,6 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -29,6 +32,7 @@ using namespace AgcDriver::Graphics;
 constexpr std::uint32_t Side = 64;
 constexpr std::size_t BlockBytes = 65536;
 alignas(4096) std::array<std::uint8_t, BlockBytes * 2> Storage{};
+alignas(4096) std::array<std::uint8_t, BlockBytes * 2> CopyStorage{};
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Format8Uint = 5;
 
@@ -109,6 +113,7 @@ public:
             if (hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) context.memoryProperties2 = function<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {
@@ -199,7 +204,13 @@ void Run(Context context, std::uint8_t* block) {
     Require(DepthSurfaceStorage(context, {}, PlaneResource(address, Format32Float, Side / 2), 0) == nullptr, "a storage view of another extent over the depth memory was taken for the depth surface");
     Require(DepthSurfaceTexture(context, {}, PlaneResource(address, Format32Float, Side / 2), {}) == nullptr, "a sampled view of another extent over the depth memory was taken for the depth surface");
     Require(DepthSurfaceStorage(context, {}, PlaneResource(address, Format8Uint), 0) == nullptr, "an 8-bit storage view of the depth plane was taken for the depth surface");
-    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, PlaneResource(address, Format32Float), 1)); }, "not implemented", "a storage view of another level of the depth plane was accepted");
+    Require(DepthSurfaceStorage(context, {}, PlaneResource(address, Format32Float), 1) == nullptr, "a storage access to a later level over the depth memory was taken for the depth surface");
+    auto later = PlaneResource(address, Format32Float);
+    later.mipCount = 2;
+    later.baseLevel = 1;
+    later.lastLevel = 1;
+    Require(DepthSurfaceStorage(context, {}, later, 0) == nullptr, "a storage view of a later level over the depth memory was taken for the depth surface");
+    Require(DepthSurfaceTexture(context, {}, later, {}) == nullptr, "a sampled view of a later level over the depth memory was taken for the depth surface");
     const auto depth = DepthSurfaceStorage(context, {}, PlaneResource(address, Format32Float), 0);
     Require(depth != nullptr, "the depth plane has no storage image");
     submit(recorder);
@@ -243,10 +254,118 @@ void Run(Context context, std::uint8_t* block) {
     layeredStencil.depthOrLastArray = 1;
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredStencil, 0)); }, "storage image access to depth/stencil surface", "a two-layer 2D array view of the stencil plane was accepted");
     layeredDepth.depthOrLastArray = 1;
-    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "storage image access to depth/stencil surface", "a two-layer 2D array view of the depth plane was accepted");
-    layeredDepth.depthOrLastArray = 0;
+    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "with a layer pitch of", "a two-layer 2D array view of the depth plane with a layer pitch other than the depth slice size was accepted");
     layeredDepth.baseArray = 1;
-    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "storage image access to depth/stencil surface", "a 2D array view of layer 1 of the depth plane was accepted");
+    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "with a layer pitch of", "a 2D array view of layer 1 of the depth plane with a layer pitch other than the depth slice size was accepted");
+    const auto own = StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float), 0);
+    const std::array<std::uint32_t, 4> eighth{std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f)};
+    Require(own->FillClear(eighth, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the storage image could not be filled");
+    Require(DepthSurfaceStoreBack(context, *own), "a storage image over the depth plane that the depth surface did not hand out was not stored back");
+    submit(recorder);
+    const auto reread = DepthSurfaceStorage(context, {}, PlaneResource(address, Format32Float), 0);
+    Require(reread != nullptr, "the depth plane has no storage image");
+    submit(recorder);
+    readBack(*reread);
+    Require(CountFloats(block, 0.125f) == Side * Side, "a storage image written over the depth plane did not reach the depth surface");
+    Require(!DepthSurfaceStoreBack(context, *StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float, Side / 2), 0)), "a storage image of another extent over the depth memory was stored into the depth surface");
+}
+
+void RunPairings(Context context, std::uint8_t* block) {
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto submit = [&](Recorder& recorder) {
+        recorder.Submit();
+        Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
+    };
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto readBack = [&](StorageTexture& texture) {
+        texture.MarkDirty();
+        texture.WriteBack();
+        submit(recorder);
+    };
+    const DepthTarget first{address, address + BlockBytes / 2, {Side, Side}, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.25f, 7};
+    const DepthTarget second{address, address + BlockBytes / 2 + 8192, {Side, Side}, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.5f, 3};
+    Require(DepthSurfaceView(context, first) != VK_NULL_HANDLE && DepthSurfaceView(context, second) != VK_NULL_HANDLE, "the two pairings of the depth plane were not created");
+    const auto depth = DepthSurfaceStorage(context, {}, PlaneResource(address, Format32Float), 0);
+    Require(depth != nullptr, "the depth plane has no storage image");
+    submit(recorder);
+    const std::array<std::uint32_t, 4> pattern{std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f)};
+    const char* refusal = nullptr;
+    Require(depth->FillClear(pattern, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the storage image could not be filled");
+    Require(DepthSurfaceStoreBack(context, *depth), "the newest pairing's storage image was not stored back");
+    submit(recorder);
+    const auto reread = DepthSurfaceStorage(context, {}, PlaneResource(address, Format32Float), 0);
+    Require(reread != nullptr, "the depth plane has no storage image");
+    submit(recorder);
+    readBack(*reread);
+    Require(CountFloats(block, 0.75f) == Side * Side, "a storage image stored back went into an older pairing instead of the pairing that handed it out");
+    auto layered = PlaneResource(address, Format32Float);
+    layered.dimension = TextureDimension::k2DArray;
+    Require(DepthSurfaceStorage(context, {}, layered, 0) != nullptr, "a one-layer 2D array view of the depth plane was not taken");
+    ExpectFailure([&] { static_cast<void>(DepthSurfaceStoreBack(context, *depth)); }, "through a view that another view of the plane", "a store back through a replaced view was taken by an older pairing that covers the plane");
+}
+
+void DepthCopyCase(Context context, std::uint8_t* block) {
+    const auto colorAddress = reinterpret_cast<std::uint64_t>(block);
+    const auto depthAddress = colorAddress + BlockBytes / 4;
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto submit = [&] {
+        recorder.Submit();
+        Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
+    };
+    ColorTarget color{};
+    color.address = colorAddress;
+    color.surfaceAddress = colorAddress;
+    color.extent = {Side, Side};
+    color.surfaceExtent = color.extent;
+    color.format = VK_FORMAT_R32_SFLOAT;
+    color.elementBytes = 4;
+    color.tileMode = ColorTileMode::RenderTarget;
+    color.bytes = ColorTargetLayout(Side, Side, ColorTileMode::RenderTarget, 4).Bytes();
+    const auto copy = [&](std::uint32_t samples, std::uint32_t sample, VkExtent2D extent) {
+        RunDepthCopyPass(context, DepthCopyPass{depthAddress, extent, samples, sample, color});
+        submit();
+        const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
+        resident->MarkDirty();
+        resident->WriteBack();
+        submit();
+    };
+    const auto countBlock = [&](float value) {
+        std::size_t count = 0;
+        for (std::size_t offset = 0; offset < BlockBytes; offset += sizeof(float)) {
+            float texel = 0;
+            std::memcpy(&texel, block + offset, sizeof(texel));
+            if (texel == value) ++count;
+        }
+        return count;
+    };
+    std::fill(block, block + BlockBytes, std::uint8_t{0});
+    ExpectFailure([&] { copy(1, 0, {Side, Side}); }, "no draw rendered", "a DB depth copy from memory without a depth surface was accepted");
+    const auto sampledCounts = context.limits.sampledImageDepthSampleCounts & context.limits.framebufferDepthSampleCounts;
+    const std::uint32_t samples = (sampledCounts & VK_SAMPLE_COUNT_2_BIT) != 0 ? 2u : (sampledCounts & VK_SAMPLE_COUNT_4_BIT) != 0 ? 4u : 0u;
+    if (samples != 0) {
+        Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.375f, 0, 0, false, samples}) != VK_NULL_HANDLE, "the multisample depth surface was not created");
+        for (std::uint32_t sample = 0; sample < samples; ++sample) {
+            std::fill(block, block + BlockBytes, std::uint8_t{0});
+            copy(samples, sample, {Side, Side});
+            Require(countBlock(0.375f) == Side * Side, "the DB depth copy of sample " + std::to_string(sample) + " of " + std::to_string(samples) + " did not store the cleared depth in every texel of the R32 float target");
+        }
+        ExpectFailure([&] { copy(samples, samples, {Side, Side}); }, "does not have", "a DB depth copy of a sample past the last of a multisample surface was accepted");
+        ExpectFailure([&] { copy(samples, 0, {Side / 2, Side / 2}); }, "of another size", "a DB depth copy of another extent than the depth surface was accepted");
+        ClearDepthSurfaces(context.device);
+    }
+    if ((context.limits.sampledImageDepthSampleCounts & VK_SAMPLE_COUNT_2_BIT) == 0) {
+        Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.375f, 0, 0, false, 2}) != VK_NULL_HANDLE, "the unsampleable two-sample depth surface was not created");
+        ExpectFailure([&] { copy(2, 0, {Side, Side}); }, "cannot sample at its sample count", "a DB depth copy from an unsampleable two-sample depth surface was accepted");
+        ClearDepthSurfaces(context.device);
+        std::puts("DB depth copy: unsupported two-sample source refused cleanly");
+    }
+    Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.625f, 0, 0, false, 1}) != VK_NULL_HANDLE, "the one-sample depth surface was not created");
+    std::fill(block, block + BlockBytes, std::uint8_t{0});
+    copy(1, 0, {Side, Side});
+    Require(countBlock(0.625f) == Side * Side, "the DB depth copy of a one-sample depth surface did not store the cleared depth in every texel of the R32 float target");
+    ExpectFailure([&] { copy(1, 1, {Side, Side}); }, "does not have", "a DB depth copy of a second sample of a one-sample surface was accepted");
 }
 
 }
@@ -269,6 +388,13 @@ int main() {
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             Run(context, block);
+            auto* copyBlock = CopyStorage.data() + (BlockBytes - reinterpret_cast<std::uintptr_t>(CopyStorage.data()) % BlockBytes) % BlockBytes;
+            GuestAllocations::Mutation().Add(copyBlock, BlockBytes, true, true, true);
+            DepthCopyCase(context, copyBlock);
+            ClearCachedTextures(context.device);
+            GuestAllocations::Mutation().Remove(copyBlock);
+            ClearDepthSurfaces(context.device);
+            RunPairings(context, block);
             ClearDepthSurfaces(context.device);
         }
         GuestAllocations::Mutation().Remove(block);

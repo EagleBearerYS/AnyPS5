@@ -70,6 +70,7 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0xa5u, RdnaOpcode::ImageSample, "image_sample_b_a", RdnaImageSampleFlagBias | RdnaImageSampleFlagAdjust, true, false, false},
     {0xa8u, RdnaOpcode::ImageSample, "image_sample_c_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagAdjust, true, false, false},
     {0xb0u, RdnaOpcode::ImageSample, "image_sample_o_a", RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, true, false, false},
+    {0xb8u, RdnaOpcode::ImageSample, "image_sample_c_o_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, true, false, false},
     {0x3cu, RdnaOpcode::ImageSampleCLO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLod | RdnaImageSampleFlagOffset, true, false, false},
     {0x3fu, RdnaOpcode::ImageSampleCLzO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, true, false, false},
     {0x3au, RdnaOpcode::ImageSampleCDO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset, true, false, false},
@@ -417,7 +418,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     const auto resource = ((word1 >> 16u) & 31u) * 4u;
     const auto sampler = ((word1 >> 21u) & 31u) * 4u;
     const bool r128 = (word0 & 0x8000u) != 0u;
-    if (resource + (r128 ? 4u : 8u) > 106u || ((info.sample || info.gather || opcode == 0x60u) && sampler + 4u > 106u)) {
+    if (resource + (r128 ? 4u : 8u) > 106u || ((info.sample || info.gather || opcode == 0x60u) && sampler > 104u)) {
         throw std::runtime_error("MIMG descriptor register range overflow");
     }
     RdnaInstruction instruction{};

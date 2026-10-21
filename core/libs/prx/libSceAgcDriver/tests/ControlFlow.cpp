@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <initializer_list>
@@ -269,13 +270,13 @@ void verifyRequest(const char* path) {
     std::printf("%s: structured with %zu added blocks, %zu cloned instructions, %zu route variables\n", path, result.addedBlocks, result.clonedInstructions, result.routeVariables);
 }
 
-std::size_t recompile(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t subgroupSize) {
+std::size_t recompile(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t waveSize = 64u) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
     const std::array<std::uint32_t, 2> capabilities{1u, 61u};
     const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
-    request.context.waveSize = 64;
+    request.context.waveSize = waveSize;
     request.context.userDataBaseRegister = 0;
     request.context.userData = userData;
     request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
@@ -293,6 +294,26 @@ std::size_t recompile(const std::string& name, std::span<const std::uint32_t> co
     const auto result = Recompile(request);
     require(!result.spirv.empty(), name + ": no SPIR-V for a " + std::to_string(subgroupSize) + "-lane subgroup");
     return result.spirv.size();
+}
+
+void verifyCallLinkOverwrittenByWave64Compare() {
+    const std::vector<std::uint32_t> code{0xbb080007u, 0xd4060008u, 0x0001e500u, 0xd5010001u, 0x0021e880u, 0xe0700000u, 0x80010100u, 0xbf810000u, 0xbe802008u, 0xbf9f0000u};
+    static_cast<void>(recompile("a wave64 compare that overwrites a call's link pair before a v_cndmask reads it", code, 64u));
+}
+
+void verifyCallLinkMaskReadByScalarInstruction() {
+    const std::array<std::uint32_t, 3> readers{0xbe8a2408u, 0xbe8a0408u, 0xbe8a0309u};
+    for (const auto reader : readers) {
+        const std::vector<std::uint32_t> code{0xbb080007u, 0xd4060008u, 0x0001e500u, reader, 0xbf800000u, 0xe0700000u, 0x80010100u, 0xbf810000u, 0xbe802008u, 0xbf9f0000u};
+        static_cast<void>(recompile("a wave64 scalar read of a compare mask in a call's link pair", code, 64u));
+        bool refused = false;
+        try {
+            static_cast<void>(recompile("a wave32 scalar read of a call's return address", code, 32u, 32u));
+        } catch (const std::exception& error) {
+            refused = std::string_view(error.what()).find("escapes the constant-offset call/return model") != std::string_view::npos;
+        }
+        require(refused, "a wave32 program reading a call's return address high half was not refused");
+    }
 }
 
 void verifyLargeLoopExitFallback() {
@@ -342,16 +363,10 @@ void verifyLargeLoopExitFallback() {
     static_cast<void>(recompile(name, code, 64u));
 }
 
-void verifyNestedExitForwarders() {
+std::vector<std::uint32_t> branchProgram(std::span<const std::array<std::uint32_t, 2>> targets, std::span<const std::uint32_t> order) {
     constexpr auto none = InvalidControlFlowId;
-    constexpr std::array<std::array<std::uint32_t, 2>, 21> targets{{
-        {1, none}, {2, none}, {2, 3}, {2, 4}, {5, 6}, {1, 7}, {8, 9}, {10, none},
-        {11, 12}, {13, 14}, {1, 15}, {16, none}, {9, none}, {17, 18}, {19, none},
-        {16, none}, {none, none}, {16, none}, {15, 20}, {10, none}, {19, none},
-    }};
-    constexpr std::array<std::uint32_t, 21> order{0, 1, 2, 3, 4, 6, 9, 14, 19, 10, 15, 13, 18, 20, 17, 8, 12, 11, 5, 7, 16};
     std::vector<std::uint32_t> code;
-    std::array<std::size_t, targets.size()> starts{};
+    std::vector<std::size_t> starts(targets.size());
     std::vector<std::pair<std::size_t, std::uint32_t>> patches;
     for (std::size_t at = 0; at < order.size(); ++at) {
         const auto block = order[at];
@@ -377,11 +392,35 @@ void verifyNestedExitForwarders() {
     }
     for (const auto& [instruction, target] : patches) {
         const auto displacement = static_cast<std::int64_t>(starts[target]) - static_cast<std::int64_t>(instruction) - 1;
-        require(displacement >= -32768 && displacement <= 32767, "nested exit forwarder test branch is out of range");
+        require(displacement >= -32768 && displacement <= 32767, "a generated test branch is out of range");
         code[instruction] |= static_cast<std::uint32_t>(displacement) & 0xffffu;
     }
+    return code;
+}
+
+void verifyNestedExitForwarders() {
+    constexpr auto none = InvalidControlFlowId;
+    constexpr std::array<std::array<std::uint32_t, 2>, 21> targets{{
+        {1, none}, {2, none}, {2, 3}, {2, 4}, {5, 6}, {1, 7}, {8, 9}, {10, none},
+        {11, 12}, {13, 14}, {1, 15}, {16, none}, {9, none}, {17, 18}, {19, none},
+        {16, none}, {none, none}, {16, none}, {15, 20}, {10, none}, {19, none},
+    }};
+    constexpr std::array<std::uint32_t, 21> order{0, 1, 2, 3, 4, 6, 9, 14, 19, 10, 15, 13, 18, 20, 17, 8, 12, 11, 5, 7, 16};
+    const auto code = branchProgram(targets, order);
     const std::string name("nested exit forwarders keep conditional selections structured");
     static_cast<void>(verifyGraph(name, code));
+    static_cast<void>(recompile(name, code, 32u));
+    static_cast<void>(recompile(name, code, 64u));
+}
+
+void verifyIrreducibleLoopEntry() {
+    constexpr auto none = InvalidControlFlowId;
+    constexpr std::array<std::array<std::uint32_t, 2>, 4> targets{{{1, 2}, {2, 3}, {1, 3}, {none, none}}};
+    constexpr std::array<std::uint32_t, 4> order{0, 1, 2, 3};
+    const auto code = branchProgram(targets, order);
+    const std::string name("a loop entered at either of its two blocks runs behind reach flags");
+    const auto result = verifyGraph(name, code);
+    require(result.clonedInstructions == 0 && result.routeVariables != 0, name + ": expected the reach flag fallback, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     static_cast<void>(recompile(name, code, 32u));
     static_cast<void>(recompile(name, code, 64u));
 }
@@ -389,7 +428,9 @@ void verifyNestedExitForwarders() {
 void verifyProgram(const Program& program) {
     const std::string name(program.name);
     const auto result = verifyGraph(name, program.code);
-    if (program.split == Split::None) {
+    if (std::getenv("APS5_FORCE_STRUCTURIZER_FALLBACK") != nullptr) {
+        require(result.clonedInstructions == 0 && result.routeVariables != 0, name + ": expected the reach flag fallback, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+    } else if (program.split == Split::None) {
         require(result.clonedInstructions == 0 && result.routeVariables == 0, name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else if (program.split == Split::Clone) {
         require(result.clonedInstructions != 0 && result.routeVariables == 0, name + ": expected a clone, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
@@ -450,6 +491,31 @@ void verifyLongBranch(const std::string& name, std::span<const std::uint32_t> co
     require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch && graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target, name + ": the jump does not branch to " + std::to_string(target));
 }
 
+void verifyScheduledJumpTable() {
+    const std::vector<std::uint32_t> code{
+        0x83888208u, 0x7e020280u, 0x8f088308u, 0x7e040280u, 0xbe8c1f00u, 0x800cff0cu, 0x00000048u,
+        0x820d800du, 0xf4040386u, 0x10000000u, 0xbf8cc07fu, 0xbe901f00u, 0x80100e10u, 0x82110f11u,
+        0xbe802010u, 0x7e020281u, 0xbf820003u, 0x7e020282u, 0xbf820001u, 0x7e020283u, 0xe0700000u,
+        0x80000100u, 0xbf810000u, 0x0000000cu, 0u, 0x00000014u, 0u, 0x0000001cu, 0u,
+    };
+    verifyJumpTable("scheduled two-dword table", code, 0x20u, {0xcu, 0x14u, 0x1cu}, {0x3cu, 0x44u, 0x4cu});
+    static_cast<void>(recompile("scheduled two-dword table", code, 32u));
+    static_cast<void>(recompile("scheduled two-dword table", code, 64u));
+    auto vcc = patched(code, 0, {0x83ea826au});
+    vcc = patched(std::move(vcc), 2, {0x8f6a836au});
+    vcc = patched(std::move(vcc), 9, {0xd4000000u});
+    verifyJumpTable("scheduled two-dword table through vcc", vcc, 0x20u, {0xcu, 0x14u, 0x1cu}, {0x3cu, 0x44u, 0x4cu});
+    static_cast<void>(recompile("scheduled two-dword table through vcc", vcc, 32u));
+    static_cast<void>(recompile("scheduled two-dword table through vcc", vcc, 64u));
+    const std::vector<std::vector<std::uint32_t>> refused{
+        patched(code, 1, {0xbe880380u}),
+        patched(code, 3, {0xbe880380u}),
+        patched(code, 1, {0xbf820001u}),
+        patched(code, 3, {0xbf850000u}),
+    };
+    for (const auto& rejected : refused) require(refusal(rejected).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a rewritten or conditional two-dword table index was accepted");
+}
+
 void verifyNullSwappc() {
     const std::array<std::uint32_t, 2> jump{0xbefd210cu, 0xbf810000u};
     const auto swappc = RdnaInstructionDecoder{}.Decode(jump).instructions.front();
@@ -478,6 +544,75 @@ void verifyNullSwappc() {
     }
 }
 
+}
+
+void VerifyUserDataTail() {
+    const RdnaInstructionDecoder decoder;
+    const std::vector<std::uint32_t> code{0x7e000280u, 0xbe802008u, 0xbf9f0000u};
+    const auto decoded = decoder.Decode(code);
+    const auto tail = FindUserDataTail(decoded, 8u, 2u);
+    require(tail && tail->programCounter == 4u && tail->userDataRegister == 8u, "unchanged user-data tail was not recognized");
+    require(!FindUserDataTail(decoded, 9u, 2u) && !FindUserDataTail(decoded, 8u, 1u), "tail outside user data was accepted");
+    const std::vector<std::vector<std::uint32_t>> refused{
+        {0xbe880380u, 0xbe802008u, 0xbf9f0000u},
+        {0xbe890300u, 0xbe802008u, 0xbf9f0000u},
+        {0xbe880480u, 0xbe802008u, 0xbf9f0000u},
+        {0xf4080200u, 0xfa000000u, 0xbe802008u, 0xbf9f0000u},
+        {0xbf820000u, 0xbe802008u, 0xbf9f0000u},
+        {0xbe802009u, 0xbf9f0000u},
+        {0xbe802008u, 0xbf810000u},
+        {0xbe802008u, 0xbf800000u, 0xbf9f0000u},
+    };
+    for (const auto& rejected : refused) require(!FindUserDataTail(decoder.Decode(rejected), 8u, 4u), "a modified, branching or malformed tail was accepted");
+    const std::vector<std::uint32_t> continuation{0xbf820001u, 0x7e000281u, 0xbf810000u};
+    const auto linked = LinkUserDataTail(decoded, *tail, decoder.Decode(continuation));
+    require(linked == std::vector<std::uint32_t>({0x7e000280u, 0xbf820000u, 0xbf820001u, 0x7e000281u, 0xbf810000u}), "linking did not preserve relative branches and register operations");
+    static_cast<void>(GraphBuilder{}.Build(decoder.Decode(linked)));
+    const std::vector<std::uint32_t> readsPc{0xbe8c1f00u, 0xbf810000u};
+    bool refusedPc = false;
+    try {
+        static_cast<void>(LinkUserDataTail(decoded, *tail, decoder.Decode(readsPc)));
+    } catch (const std::invalid_argument& error) {
+        refusedPc = std::string_view(error.what()).find("reads its program counter") != std::string_view::npos;
+    }
+    require(refusedPc, "a continuation reading its relocated PC was accepted");
+}
+
+void VerifyConstantHighTail() {
+    const RdnaInstructionDecoder decoder;
+    const std::vector<std::vector<std::uint32_t>> accepted{
+        {0xbe850382u, 0xbe802004u, 0xbf9f0000u},
+        {0xbe8503ffu, 0x12345678u, 0xbe802004u, 0xbf9f0000u},
+        {0xbe850380u, 0xbe802004u, 0xbf9f0000u},
+        {0xbe850300u, 0xbe850382u, 0xbe802004u, 0xbf9f0000u},
+    };
+    const std::array<std::uint32_t, 4> values{2u, 0x12345678u, 0u, 2u};
+    const std::vector<std::uint32_t> end{0xbf810000u};
+    for (std::size_t index = 0; index < accepted.size(); ++index) {
+        const auto program = decoder.Decode(accepted[index]);
+        const auto tail = FindUserDataTail(program, 0u, 5u);
+        require(tail && tail->userDataRegister == 4u && tail->constantHigh == values[index], "constant high half was not resolved without a sixth user SGPR");
+        const auto linked = LinkUserDataTail(program, *tail, decoder.Decode(end));
+        require(std::equal(accepted[index].begin(), accepted[index].end() - 2u, linked.begin()), "constant high tail changed preceding scalar operations");
+        auto mismatched = *tail;
+        mismatched.constantHigh = values[index] ^ 1u;
+        bool rejected = false;
+        try {
+            static_cast<void>(LinkUserDataTail(program, mismatched, decoder.Decode(end)));
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected, "linker accepted a stale high-half proof");
+    }
+    const std::vector<std::vector<std::uint32_t>> refused{
+        {0xbe850382u, 0xbe850300u, 0xbe802004u, 0xbf9f0000u},
+        {0xbe850382u, 0x80058105u, 0xbe802004u, 0xbf9f0000u},
+        {0xbe850382u, 0xbe840380u, 0xbe802004u, 0xbf9f0000u},
+        {0xbe850382u, 0xf4000140u, 0xfa000000u, 0xbe802004u, 0xbf9f0000u},
+        {0xbf840001u, 0xbe850382u, 0xbe802004u, 0xbf9f0000u},
+    };
+    for (const auto& code : refused) require(!FindUserDataTail(decoder.Decode(code), 0u, 6u), "unknown, overwritten or conditional tail address was accepted");
+    require(!FindUserDataTail(decoder.Decode(accepted.front()), 0u, 4u), "tail low half outside user data was accepted");
 }
 
 int main(int argc, char** argv) {
@@ -1279,8 +1414,14 @@ done:
     }
     try {
         verifyNullSwappc();
+        verifyScheduledJumpTable();
+        VerifyUserDataTail();
+        VerifyConstantHighTail();
+        verifyCallLinkOverwrittenByWave64Compare();
+        verifyCallLinkMaskReadByScalarInstruction();
         verifyLargeLoopExitFallback();
         verifyNestedExitForwarders();
+        verifyIrreducibleLoopEntry();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         ++failures;

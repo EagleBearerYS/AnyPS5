@@ -6,6 +6,9 @@
 #include <exception>
 #include "SceTypes.hpp"
 
+constexpr std::uint16_t kTouchPadWidth = 1920;
+constexpr std::uint16_t kTouchPadHeight = 1080;
+
 struct PadTouchPoint {
     bool active = false;
     std::uint16_t x = 0;
@@ -40,6 +43,8 @@ struct PadOutputState {
     std::uint32_t sequence = 0;
     std::uint8_t vibrationLarge = 0;
     std::uint8_t vibrationSmall = 0;
+    std::uint8_t audioVibrationLarge = 0;
+    std::uint8_t audioVibrationSmall = 0;
     bool lightBarValid = false;
     std::uint8_t lightBar[3]{};
     PadTriggerRequest trigger[2];
@@ -50,6 +55,7 @@ struct PadOutputState {
 
 namespace Pad {
 void Initialize();
+bool IsInitialized();
 PadData ReadState();
 int Read(PadData* data, int num);
 void SetVibration(std::uint8_t large, std::uint8_t small);
@@ -65,5 +71,8 @@ void SetAngularVelocityDeadband(bool enabled);
 extern "C" void PadPublishInput_nid_postfix(const PadInputState& input);
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error);
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out);
+extern "C" void PadSubmitAudioHaptics_nid_postfix(std::uint8_t large, std::uint8_t small);
+extern "C" void PadQueueLegacyAudioHaptics_nid_postfix(int source, std::uint64_t begin, std::uint64_t end, std::uint8_t large, std::uint8_t small);
+extern "C" void PadClearLegacyAudioHaptics_nid_postfix(int source);
 
 #endif

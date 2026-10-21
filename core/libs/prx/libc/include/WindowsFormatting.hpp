@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include <array>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <climits>
@@ -15,10 +16,16 @@
 #include <type_traits>
 
 extern "C" int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length);
+extern "C" std::FILE* GuestStandardOutputFile_nid_no_patch();
 
 namespace LibcDetail {
 
 enum class ArgumentClass : unsigned char { Integer, Double, LongDouble };
+
+class FormatConstraintViolation : public std::invalid_argument {
+public:
+    using std::invalid_argument::invalid_argument;
+};
 
 class FormatArguments {
     VaList args;
@@ -154,6 +161,15 @@ inline void AppendUtf8(std::string& utf8, char32_t code) {
     }
 }
 
+inline std::string NanSpec(const std::string& spec) {
+    std::string result = "%";
+    std::size_t index = 1;
+    for (; index < spec.size() && std::strchr("-+ #0", spec[index]); ++index)
+        if (spec[index] == '-' && result.size() == 1) result += '-';
+    for (; index < spec.size() && spec[index] >= '0' && spec[index] <= '9'; ++index) result += spec[index];
+    return result + 's';
+}
+
 inline std::string FormatPointer(const std::string& spec, const void* pointer) {
     std::size_t index = 1;
     bool left = false;
@@ -183,11 +199,10 @@ inline std::string FormatPointer(const std::string& spec, const void* pointer) {
     for (unsigned long long rest = value; rest != 0; rest >>= 4) digits.insert(digits.begin(), "0123456789abcdef"[rest & 15]);
     if (digits.empty() && !(hasPrecision && precision == 0)) digits = "0";
     if (digits.size() < precision) digits.insert(0, precision - digits.size(), '0');
-    const std::size_t used = digits.size() + 2;
-    const std::size_t padding = width > used ? width - used : 0;
-    if (left) return "0x" + digits + std::string(padding, ' ');
-    if (zero && !hasPrecision) return "0x" + std::string(padding, '0') + digits;
-    return std::string(padding, ' ') + "0x" + digits;
+    const std::size_t padding = width > digits.size() ? width - digits.size() : 0;
+    if (left) return digits + std::string(padding, ' ');
+    if (zero && !hasPrecision) return std::string(padding, '0') + digits;
+    return std::string(padding, ' ') + digits;
 }
 
 constexpr size_t maximumArgumentPosition = 99;
@@ -241,7 +256,7 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
     return classes;
 }
 
-inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr) {
+inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr, bool secure = false) {
     if (!format || !source) throw std::invalid_argument("Null formatting argument");
     const int savedError = errno;
     const char* const formatStart = format;
@@ -317,6 +332,10 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("ouxX", conversion)) {
             if (!integerLength) throw std::invalid_argument("Invalid integer length");
+            for (size_t flag = 1; flag < spec.size() && std::strchr("-+ #0", spec[flag]);) {
+                if (spec[flag] == ' ' || spec[flag] == '+') spec.erase(flag, 1);
+                else ++flag;
+            }
             unsigned long long value;
             if (length.empty() || length == "h" || length == "hh") {
                 value = args.Next<unsigned int>();
@@ -327,13 +346,18 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 spec = spec.substr(0, spec.find('.')) + ".1";
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
+            const char* nan = conversion >= 'a' ? "nan" : "NAN";
             if (length == "L") {
                 static_assert(sizeof(long double) == 16);
                 static_assert(std::numeric_limits<long double>::digits == 64);
-                output.Value(spec + "L" + conversion, args.Next<long double>());
+                const long double value = args.Next<long double>();
+                if (std::isnan(value)) output.Value(NanSpec(spec), nan);
+                else output.Value(spec + "L" + conversion, value);
             } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
-                output.Value(spec + conversion, args.Next<double>());
+                const double value = args.Next<double>();
+                if (std::isnan(value)) output.Value(NanSpec(spec), nan);
+                else output.Value(spec + conversion, value);
             }
         } else if (conversion == 'c' && (length.empty() || length == "h")) {
             output.Value(spec + conversion, args.Next<int>());
@@ -344,10 +368,12 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             else output.Value(spec + 's', utf8.c_str());
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
+            if (!value && secure) throw FormatConstraintViolation("Null string argument");
             if (!value) value = "(null)";
             output.Value(spec + 's', value);
         } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
             const char16_t* value = args.Next<const char16_t*>();
+            if (!value && secure) throw FormatConstraintViolation("Null string argument");
             if (!value) value = u"(null)";
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
@@ -361,13 +387,15 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 }
             }
             output.Value(spec + 's', utf8.c_str());
-        } else if (conversion == 'p' && length.empty()) {
+        } else if (conversion == 'p' && (length.empty() || length == "l")) {
             const std::string text = FormatPointer(spec, args.Next<void*>());
             output.Append(text.data(), text.size());
         } else if (conversion == 'm') {
             char message[128];
             strerror_r_nid_postfix(savedError, message, sizeof(message));
             output.Value(spec + 's', static_cast<const char*>(message));
+        } else if (conversion == 'n' && secure) {
+            throw FormatConstraintViolation("Format count conversion");
         } else if (conversion == 'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
             if (!pointer) throw std::invalid_argument("Null format count pointer");
@@ -386,7 +414,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
 inline int PrintWindows(const char* format, const void* args) {
     std::string buffer;
     const int size = FormatWindows(nullptr, 0, format, args, &buffer);
-    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), stdout) != static_cast<size_t>(size))
+    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), GuestStandardOutputFile_nid_no_patch()) != static_cast<size_t>(size))
         throw std::runtime_error("Formatted output write failed");
     return size;
 }

@@ -5,12 +5,18 @@
 
 extern "C" {
 
-int APS5_VABI sceKernelGetCpuTemperature(int *out_celcius) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI __tls_get_addr_nid_postfix(void) {
     NotImplemented_nid_no_patch("vNe1w4diLCs");
+    return 0;
+}
+
+int APS5_VABI physhm_open_nid_postfix(void) {
+    NotImplemented_nid_no_patch("physhm_open");
+    return 0;
+}
+
+int APS5_VABI physhm_unlink_nid_postfix(void) {
+    NotImplemented_nid_no_patch("physhm_unlink");
     return 0;
 }
 
@@ -115,4 +121,15 @@ int APS5_VABI sceKernelUnknown19(void) {
     NotImplemented_nid_no_patch("uDGXwUKqi8s");
     return 0;
 }
+
+int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceKernelGetProcessAbiType() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

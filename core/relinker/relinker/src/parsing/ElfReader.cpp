@@ -2,7 +2,9 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <relinker/domain/Types.hpp>
 #include <algorithm>
+#include <bit>
 #include <cstring>
+#include <utility>
 
 namespace Relinker {
 
@@ -23,6 +25,10 @@ ElfReader::ElfReader(std::vector<std::uint8_t> fileBuffer)
 
 const std::vector<std::uint8_t>& ElfReader::GetRawBytes() const {
     return _fileBuffer;
+}
+
+std::vector<std::uint8_t> ElfReader::TakeBytes() {
+    return std::move(_fileBuffer);
 }
 
 std::string ElfReader::formatMagic() const {
@@ -70,7 +76,7 @@ std::uint64_t ElfReader::_readU64At(FileByteOffset fileByteOffset) const {
     return value;
 }
 
-ElfHeader ElfReader::ReadHeader() const {
+void ElfReader::ValidateMagic() const {
     if (_fileBuffer.size() < 0x40) {
         throw RelinkerException("File too small for ELF header");
     }
@@ -84,6 +90,10 @@ ElfHeader ElfReader::ReadHeader() const {
         _fileBuffer[2] != 'L' || _fileBuffer[3] != 'F') {
         throw RelinkerException("Invalid ELF magic number: " + formatMagic());
     }
+}
+
+ElfHeader ElfReader::ReadHeader() const {
+    ValidateMagic();
     if (_fileBuffer[4] != 2 || _fileBuffer[5] != 1 || _fileBuffer[6] != 1)
         throw RelinkerException("Expected little-endian ELF64 version 1");
     if (_readU16At(0x12) != 62)
@@ -130,6 +140,11 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         ph.MemorySize = _readU64At(offset + 0x28);
         ph.Alignment = _readU64At(offset + 0x30);
 
+        if (ph.Type == PT_LOAD && ph.FileSize > ph.MemorySize)
+            throw RelinkerException("PT_LOAD file size exceeds memory size", ph.Offset);
+        if (ph.Type == PT_LOAD && !_rangeFits(ph.Offset, ph.FileSize, _fileBuffer.size()))
+            throw RelinkerException("Segment offset out of bounds", ph.Offset);
+
         headers.push_back(ph);
         offset += header.ProgramHeaderEntrySize;
     }
@@ -146,9 +161,32 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             covered = true;
         }
         if (!covered) {
+            if (relro.FileSize > relro.MemorySize)
+                throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
+            if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
+                throw RelinkerException("Segment offset out of bounds", relro.Offset);
             relro.Type = PT_LOAD;
             relro.Flags = PF_R | PF_W;
         }
+    }
+
+    bool hasTls = false;
+    for (const auto& tls : headers) {
+        if (tls.Type != PT_TLS) continue;
+        if (hasTls)
+            throw RelinkerException("Multiple ELF TLS segments", tls.Offset);
+        hasTls = true;
+        if (tls.FileSize > tls.MemorySize || (tls.Alignment > 1 && !std::has_single_bit(tls.Alignment)))
+            throw RelinkerException("Invalid or unsupported ELF TLS layout", tls.Offset);
+        if (tls.FileSize == 0) continue;
+        if (!_rangeFits(tls.Offset, tls.FileSize, _fileBuffer.size()))
+            throw RelinkerException("PT_TLS initialization image is outside the file", tls.Offset);
+        const bool covered = std::any_of(headers.begin(), headers.end(), [&](const ProgramHeader& load) {
+            return load.Type == PT_LOAD && tls.MappedAddress >= load.MappedAddress && tls.MappedAddress - load.MappedAddress <= load.MemorySize
+                && tls.FileSize <= load.MemorySize - (tls.MappedAddress - load.MappedAddress);
+        });
+        if (!covered)
+            throw RelinkerException("PT_TLS initialization image is outside PT_LOAD memory", tls.Offset);
     }
 
     return headers;
@@ -253,25 +291,11 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
 FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const {
     for (const auto& segment : ReadProgramHeaders()) {
         if (segment.Type == PT_LOAD && address >= segment.MappedAddress &&
-            address - segment.MappedAddress < segment.FileSize) {
-            if (!_rangeFits(segment.Offset, segment.FileSize, _fileBuffer.size())) {
-                throw RelinkerException("PT_LOAD file mapping out of bounds", segment.Offset);
-            }
+            address - segment.MappedAddress < segment.FileSize)
             return segment.Offset + (address - segment.MappedAddress);
-        }
     }
 
     throw RelinkerException("Virtual address not mapped by any PT_LOAD segment", address);
-}
-
-std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& header) const {
-    if (!_rangeFits(header.Offset, header.SectionSize, _fileBuffer.size())) {
-        throw RelinkerException("Section offset out of bounds", header.Offset);
-    }
-
-    return std::vector<std::uint8_t>(
-        _fileBuffer.begin() + header.Offset,
-        _fileBuffer.begin() + header.Offset + header.SectionSize);
 }
 
 std::vector<std::uint8_t> ElfReader::ReadSegment(const ProgramHeader& header) const {

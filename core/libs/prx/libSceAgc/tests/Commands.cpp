@@ -10,21 +10,28 @@
 #include <cstring>
 #include <string>
 
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address);
+extern "C" std::uint64_t APS5_VABI sceAgcDcbEventWriteGetSize(std::uint8_t eventType);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t op, std::uint32_t state);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbClearState(CommandBuffer* buf, std::uint32_t command);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, std::uint32_t handle, std::int32_t index, std::uint32_t mode, std::int64_t argument);
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, std::uint32_t handle, std::uint32_t index);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t handle, std::int32_t index, std::uint32_t mode, std::int64_t argument);
 extern "C" int APS5_VABI sceAgcSuspendPoint();
 extern "C" int APS5_VABI sceAgcInit(std::uint32_t version);
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults();
+extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t version);
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaultsInternal();
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2Internal(std::uint32_t version);
+extern "C" int APS5_VABI sceAgcGetDefaultCxStateFlat(void* out_state, std::uint32_t size);
 extern "C" int APS5_VABI sceAgcInit_0090(std::uint32_t* state, std::uint32_t version);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexAuto(CommandBuffer* buf, std::uint32_t indexCount, std::uint64_t modifier);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint64_t reference);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint64_t mask);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile void* address);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint32_t reference);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint32_t mask);
 extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
 extern "C" std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
@@ -43,14 +50,14 @@ extern "C" std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, cons
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint64_t attributeAddress, std::uint32_t attributeIndex);
+extern "C" std::uint32_t APS5_VABI sceAgcDcbSetIndexIndirectArgsGetSize();
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, std::uint32_t shaderType, const volatile void* indirectBaseAddr);
 extern "C" std::uint32_t* APS5_VABI sceAgcSetNop(CommandBuffer* buf, std::uint32_t sizeDw);
 extern "C" int APS5_VABI sceAgcDebugRaiseException(std::uint32_t exceptionId);
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbAtomicGds_0900(CommandBuffer* buf, std::uint32_t control, std::uint32_t mode, std::uint32_t gdsOp, std::uint32_t src, std::uint16_t offset, std::uint16_t index, std::uint32_t mask, std::uint32_t data, std::uint64_t compareData, std::uint64_t extraData);
 
 namespace {
-
-constexpr int SCE_AGC_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80890001);
 
 void check(bool condition, const char* message) {
     if (!condition) {
@@ -322,6 +329,20 @@ void testIndexBuffer() {
     throw std::runtime_error("misaligned index buffer was accepted");
 }
 
+void testIndexIndirectArgs() {
+    Storage storage;
+    const auto* packet = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222220u, 0x4444u);
+    const std::array<std::uint32_t, 4> expected{0xc0029100u, 0x22222220u, 0x11111111u, 0x4444u};
+    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "index indirect args packet differs from the console's");
+    check(sceAgcDcbSetIndexIndirectArgsGetSize() == expected.size() * sizeof(std::uint32_t), "index indirect args size differs from its packet");
+    const auto* cleared = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0, 0);
+    check(cleared == packet + expected.size() && cleared[0] == expected[0] && cleared[1] == 0 && cleared[2] == 0 && cleared[3] == 0, "null index attribute base was not written as 0");
+    const auto before = storage.words;
+    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222228u, 0); });
+    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222220u, 0x10000u); });
+    check(storage.words == before && storage.buffer.cursor_up == cleared + expected.size(), "rejected index indirect args modified the buffer");
+}
+
 void testIndirectBase() {
     Storage storage;
     alignas(8) std::uint32_t arguments[4]{};
@@ -424,6 +445,16 @@ void testFlip() {
     full.buffer.cursor_down = full.words.data() + 3;
     expectFailure([&] { sceAgcAcbWaitUntilSafeForRendering(&full.buffer, 1, 0); });
     check(full.buffer.cursor_up == full.words.data(), "failed compute rendering wait advanced cursor");
+    Storage acbFlip;
+    acbFlip.words.fill(0xdeadbeefu);
+    auto* computeFlip = sceAgcAcbSetFlip(&acbFlip.buffer, 0xfedcba98u, -2, 0x12345678u, -0x123456789abcdefLL);
+    check(computeFlip == acbFlip.words.data() && std::equal(expected.begin(), expected.end(), computeFlip), "compute flip packet mismatch");
+    check(acbFlip.buffer.cursor_up == computeFlip + 6 && computeFlip[6] == 0xdeadbeefu, "compute flip overran allocation");
+    expectFailure([] { sceAgcAcbSetFlip(nullptr, 1, 0, 1, 0); });
+    Storage fullFlip;
+    fullFlip.buffer.cursor_down = fullFlip.words.data() + 5;
+    expectFailure([&] { sceAgcAcbSetFlip(&fullFlip.buffer, 1, 0, 1, 0); });
+    check(fullFlip.buffer.cursor_up == fullFlip.words.data(), "failed compute flip advanced cursor");
     check(sceAgcSuspendPoint() == 0, "empty suspend failed");
 }
 
@@ -461,8 +492,14 @@ void testRegisterRange() {
     check(packet == storage.words.data() + 6 && storage.buffer.cursor_up == storage.words.data() + 12, "incorrect populated register range allocation");
     check(storage.words == expected, "register values were not copied correctly");
     const auto* misaligned = reinterpret_cast<const std::uint32_t*>(reinterpret_cast<const unsigned char*>(values.data()) + 1);
-    expectFailure([&] { sceAgcCbSetShRegisterRangeDirect(&storage.buffer, 0x8c, misaligned, 4); });
-    check(storage.words == expected && storage.buffer.cursor_up == storage.words.data() + 12, "misaligned register values modified command buffer");
+    packet = sceAgcCbSetShRegisterRangeDirect(&storage.buffer, 0x8c, misaligned, 3);
+    expected[12] = 0xc0037600u;
+    expected[13] = 0x8c;
+    expected[14] = 0x02000000u;
+    expected[15] = 0x03000000u;
+    expected[16] = 0x04000000u;
+    check(packet == storage.words.data() + 12 && storage.buffer.cursor_up == storage.words.data() + 17, "incorrect misaligned register range allocation");
+    check(storage.words == expected, "misaligned register values were not read byte for byte");
 }
 
 void testPacketPayloadAddress() {
@@ -496,18 +533,28 @@ void testMemory() {
     check(packet[8] == 0x55667788u && packet[9] == 0x11223344u && packet[12] == 2u, "wait reference or poll interval mismatch");
     sceAgcWaitRegMemPatchReference(packet, 7);
     check(packet[8] == 7 && packet[9] == 0x11223344u, "reference patch changed the high word");
-    const auto before = storage.words;
-    expectFailure([&] { sceAgcWaitRegMemPatchReference(packet, 0x100000000ull); });
-    check(storage.words == before, "invalid memory operation modified packet memory");
     auto* truncated = Agc::Command::WriteWait(&storage.buffer, 0, 3, 0, 0, &value, 0x100000000ull, 0xffffffff00000001ull, 32, __func__);
     check(truncated[8] == 0u && truncated[9] == 1u, "32-bit wait did not keep the low halves of the reference and mask");
     sceAgcWaitRegMemPatchMask(packet, 0x0f0f0f0fu);
     check(packet[10] == 0x0f0f0f0fu && packet[11] == 0xffffffffu && packet[8] == 7, "64-bit mask patch changed the wrong word");
     sceAgcWaitRegMemPatchMask(truncated, 0xff00u);
     check(truncated[9] == 0xff00u && truncated[8] == 0u && truncated[10] == 2u, "32-bit mask patch changed the wrong word");
+    for (auto* waitPacket : {packet, truncated}) {
+        const auto lowMask = waitPacket == packet ? 7u : 3u;
+        waitPacket[6] |= lowMask;
+        waitPacket[7] = 0xa5fc0000u;
+        const auto tag = waitPacket[2] & 0xffff0000u;
+        const std::uintptr_t address = 0x1236abcd12345679ull;
+        check(sceAgcWaitRegMemPatchAddress(waitPacket, reinterpret_cast<const volatile void*>(address)) == 0, "wait address patch failed");
+        check(waitPacket[2] == (tag | 0xabcdu) && waitPacket[3] == 0x12345679u, "wait wrapper address patch mismatch");
+        check(waitPacket[6] == ((0x12345679u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5feabcdu, "wait address patch did not preserve control bits");
+        for (std::uint32_t comparison = 0; comparison <= 255; ++comparison) {
+            const auto control = waitPacket[5] & ~7u;
+            check(sceAgcWaitRegMemPatchCompareFunction(waitPacket, static_cast<std::uint8_t>(comparison)) == 0, "wait comparison patch failed");
+            check(waitPacket[5] == (control | (comparison & 7u)), "wait comparison patch changed control bits");
+        }
+    }
     const auto beforeMask = storage.words;
-    expectFailure([&] { sceAgcWaitRegMemPatchMask(packet, 0x100000000ull); });
-    expectFailure([&] { sceAgcWaitRegMemPatchMask(truncated, 0x100000000ull); });
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
 }
@@ -622,12 +669,12 @@ void testDefaults() {
     check(sceAgcInit_0090(&state, 8) == 0 && state == 0x12345678, "AGC initialization failed or modified caller state");
     check(sceAgcInit_0090(&state, 13) == 0 && state == 0x12345678, "AGC version 13 initialization changed caller state");
     expectFailure([] { sceAgcInit_0090(nullptr, 8); });
-    expectFailure([&] { sceAgcInit_0090(&state, 14); });
+    check(sceAgcInit_0090(&state, 14) == 0 && state == 0x12345678, "out-of-range AGC initialization version changed caller state");
     check(sceAgcInit(8) == 0, "AGC version initialization failed");
     check(sceAgcInit(13) == 0, "AGC version 13 initialization failed");
-    check(sceAgcInit(14) == SCE_AGC_ERROR_INVALID_ARGUMENT, "unsupported AGC version did not return invalid argument");
-    check(sceAgcInit(0xffffffffu) == SCE_AGC_ERROR_INVALID_ARGUMENT, "maximum AGC version did not return invalid argument");
-    check(sceAgcInit(0xffffc278u) == SCE_AGC_ERROR_INVALID_ARGUMENT, "pointer-valued AGC argument did not return invalid argument");
+    check(sceAgcInit(14) == 0, "out-of-range AGC version did not return success");
+    check(sceAgcInit(0xffffffffu) == 0, "maximum AGC version did not return success");
+    check(sceAgcInit(0xffffc278u) == 0, "pointer-valued AGC argument did not return success");
     for (std::uint32_t version = 0; version < 14; ++version) {
         for (const bool internal : {false, true}) {
             auto* first = Agc::Command::GetRegisterDefaults(version, internal, __func__);
@@ -637,8 +684,118 @@ void testDefaults() {
     auto* internalDefaults = sceAgcGetRegisterDefaultsInternal();
     check(internalDefaults != nullptr && internalDefaults == Agc::Command::GetRegisterDefaults(0, true, __func__) && internalDefaults == sceAgcGetRegisterDefaults2Internal(0), "internal register defaults are not the baseline internal table");
     check(internalDefaults != sceAgcGetRegisterDefaults(), "internal register defaults returned the public table");
+    constexpr int kInvalidArgument = static_cast<int>(0x80890001u);
+    std::array<std::uint32_t, 512> flatCxBuffer{};
+    check(sceAgcGetDefaultCxStateFlat(nullptr, sizeof(flatCxBuffer)) == kInvalidArgument, "null destination was accepted");
+    check(sceAgcGetDefaultCxStateFlat(flatCxBuffer.data(), 0) == 0, "zero size copy failed");
+    check(sceAgcGetDefaultCxStateFlat(flatCxBuffer.data(), sizeof(flatCxBuffer)) == 0, "flat CX state default retrieval failed");
+    check(flatCxBuffer[0x001] == 0x11000100u, "flat CX state register 0x001 mismatch");
+    check(flatCxBuffer[0x007] == 0x0000ffffu, "flat CX state register 0x007 mismatch");
+    check(flatCxBuffer[0x12d] == 0x3f800000u, "flat CX state register 0x12d mismatch");
+    check(flatCxBuffer[0x1e0] == 0x20010001u, "flat CX state register 0x1e0 mismatch");
+    std::array<std::uint32_t, 513> overBuffer{};
+    overBuffer[512] = 0x12345678u;
+    check(sceAgcGetDefaultCxStateFlat(overBuffer.data(), sizeof(overBuffer)) == 0, "oversized copy failed");
+    check(overBuffer[512] == 0x12345678u, "oversized copy overflowed buffer");
+    check(Agc::Command::GetDefaultCxStateFlat(nullptr, sizeof(flatCxBuffer)) == kInvalidArgument, "null command destination was accepted");
+    check(Agc::Command::GetDefaultCxStateFlat(flatCxBuffer.data(), sizeof(flatCxBuffer)) == 0, "command flat CX state retrieval failed");
     expectFailure([] { Agc::Command::GetRegisterDefaults(14, false, __func__); });
     expectFailure([] { Agc::Command::GetRegisterDefaults(0xffffffffu, true, __func__); });
+}
+
+struct DefaultsType {
+    std::uint32_t key;
+    std::uint32_t bankIndex;
+};
+
+std::uint32_t colourTargetBlock(const void* root) {
+    const auto* bytes = static_cast<const unsigned char*>(root);
+    ShaderRegister** contextBlocks = nullptr;
+    const DefaultsType* types = nullptr;
+    std::uint32_t count = 0;
+    std::memcpy(&contextBlocks, bytes, sizeof(contextBlocks));
+    std::memcpy(&types, bytes + 0x30, sizeof(types));
+    std::memcpy(&count, bytes + 0x38, sizeof(count));
+    check(contextBlocks != nullptr && types != nullptr && count > 0, "register defaults root has no context blocks or types");
+    std::uint32_t contexts = 0;
+    std::uint32_t matches = 0;
+    std::uint32_t block = 0;
+    for (std::uint32_t entry = 0; entry < count; ++entry) {
+        if ((types[entry].bankIndex & 3u) == 0)
+            ++contexts;
+        if (types[entry].key != 0x38e92c91u)
+            continue;
+        check((types[entry].bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
+        block = types[entry].bankIndex >> 2;
+        ++matches;
+    }
+    check(matches == 1 && block < contexts && contextBlocks[block] != nullptr, "MRT0 defaults key is missing, repeated or outside the context blocks");
+    constexpr std::array<std::uint32_t, 16> offsets{0x318, 0x31b, 0x31c, 0x31d, 0x31e, 0x31f, 0x321, 0x323, 0x324, 0x325, 0x390, 0x398, 0x3a0, 0x3a8, 0x3b0, 0x3b8};
+    for (std::size_t i = 0; i < offsets.size(); ++i)
+        check(contextBlocks[block][i].offset == offsets[i], "MRT0 defaults block does not hold the colour target registers");
+    return block;
+}
+
+void testDefaultsTypes() {
+    const auto* legacy = sceAgcGetRegisterDefaults();
+    check(legacy != sceAgcGetRegisterDefaults2(13), "legacy register defaults reused the compact versioned table");
+    check(colourTargetBlock(legacy) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+
+    const auto checkCompactTypes = [](const void* root, std::uint32_t count, std::uint32_t key,
+                                      std::uint32_t packedType, std::uint32_t extra) {
+        const auto* bytes = static_cast<const unsigned char*>(root);
+        const std::uint32_t* types = nullptr;
+        std::uint32_t actualCount = 0;
+        std::memcpy(&types, bytes + 0x30, sizeof(types));
+        std::memcpy(&actualCount, bytes + 0x38, sizeof(actualCount));
+        check(types != nullptr && actualCount == count, "versioned register defaults have an invalid compact type table");
+        check(types[0] == key && types[1] == packedType && types[2] == extra,
+              "versioned register defaults did not preserve their compact type entry");
+    };
+    checkCompactTypes(sceAgcGetRegisterDefaults2(0), 150, 0xe24f806du, 0x00040400u, 0);
+    checkCompactTypes(sceAgcGetRegisterDefaults2(10), 128, 0xe24f806du, 0x00040400u, 0);
+    checkCompactTypes(sceAgcGetRegisterDefaults2Internal(0), 15, 0xf58fea31u, 0x00040400u, 0);
+}
+
+void testEventWrite() {
+    Storage storage;
+    const auto* samplePacket = sceAgcDcbEventWrite(&storage.buffer, 0x38, reinterpret_cast<const void*>(0x1000));
+    check(samplePacket == storage.words.data(), "incorrect event 0x38 return pointer");
+    check(storage.words[0] == 0xc0024600u, "incorrect event 0x38 packet header");
+    check(storage.words[1] == (0x100u | 0x38u), "incorrect event 0x38 first payload word");
+    check(storage.words[2] == 0x1000u, "incorrect event 0x38 low address word");
+    check(storage.words[3] == 0u, "incorrect event 0x38 high address word");
+    check(sceAgcDcbEventWriteGetSize(0x38) == 16, "incorrect event 0x38 size");
+    check(sceAgcDcbEventWriteGetSize(0x39) == 16, "incorrect event 0x39 size");
+
+    Storage sample39;
+    sceAgcDcbEventWrite(&sample39.buffer, 0x39, reinterpret_cast<const void*>(0x2008));
+    check(sample39.words[0] == 0xc0024600u && sample39.words[1] == (0x100u | 0x39u) && sample39.words[2] == 0x2008u && sample39.words[3] == 0u, "incorrect event 0x39 packet");
+
+    expectFailure([&] { sceAgcDcbEventWrite(&storage.buffer, 0x38, reinterpret_cast<const void*>(0x1001)); });
+    expectFailure([&] { sceAgcDcbEventWrite(&storage.buffer, 0x40, nullptr); });
+
+    Storage partialFlush;
+    sceAgcDcbEventWrite(&partialFlush.buffer, 7, nullptr);
+    check(partialFlush.words[0] == 0xc0004600u && partialFlush.words[1] == 0x407u, "incorrect event 7 partial flush packet");
+    check(sceAgcDcbEventWriteGetSize(7) == 8, "incorrect event 7 size");
+
+    Storage partialFlush15;
+    sceAgcDcbEventWrite(&partialFlush15.buffer, 15, nullptr);
+    check(partialFlush15.words[0] == 0xc0004600u && partialFlush15.words[1] == 0x40fu, "incorrect event 15 partial flush packet");
+
+    Storage partialFlush16;
+    sceAgcDcbEventWrite(&partialFlush16.buffer, 16, nullptr);
+    check(partialFlush16.words[0] == 0xc0004600u && partialFlush16.words[1] == 0x410u, "incorrect event 16 partial flush packet");
+
+    Storage cacheFlushNull;
+    sceAgcDcbEventWrite(&cacheFlushNull.buffer, 0x16, nullptr);
+    check(cacheFlushNull.words[0] == 0xc0004600u && cacheFlushNull.words[1] == 0x16u, "incorrect event 0x16 null address packet");
+    check(sceAgcDcbEventWriteGetSize(0x16) == 8, "incorrect event 0x16 size");
+
+    Storage cacheFlushWithAddress;
+    sceAgcDcbEventWrite(&cacheFlushWithAddress.buffer, 0x16, reinterpret_cast<const void*>(0x2d2a10000ull));
+    check(cacheFlushWithAddress.words[0] == 0xc0004600u && cacheFlushWithAddress.words[1] == 0x16u, "incorrect event 0x16 with address packet");
 }
 
 }
@@ -647,11 +804,13 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::strcmp(argv[1], "defaults") == 0) {
             testDefaults();
+            testDefaultsTypes();
             LibcRunShutdown_nid_postfix();
             std::puts("AGC initialization tests passed");
             return 0;
         }
         testPackets();
+        testEventWrite();
         testNop();
         testClearState();
         testIndexedIndirectDraws();
@@ -659,6 +818,7 @@ int main(int argc, char** argv) {
         testWorkloads();
         testWorkloadStreams();
         testIndexBuffer();
+        testIndexIndirectArgs();
         testIndirectBase();
         testContextState();
         testFlip();
@@ -669,6 +829,7 @@ int main(int argc, char** argv) {
         testAtomicGds();
         testDebugRaiseException();
         testDefaults();
+        testDefaultsTypes();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC command tests passed");
         return 0;

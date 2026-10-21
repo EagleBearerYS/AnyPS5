@@ -107,6 +107,9 @@ struct ControlFlowGraph {
     std::vector<StronglyConnectedComponent> components;
     std::vector<std::uint32_t> codeTableLoadProgramCounters;
     std::vector<CodeTableLoad> codeTableLoads;
+    std::vector<std::uint32_t> unlinkedCallProgramCounters;
+    std::uint32_t linkEscapeWaveSize = 0;
+    std::string linkEscapeReason;
     std::uint32_t entryBlock = InvalidControlFlowId;
     bool hasFetchCall = false;
     std::uint32_t fetchCallProgramCounter = 0;

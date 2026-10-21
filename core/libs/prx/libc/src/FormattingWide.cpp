@@ -167,6 +167,8 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                 if (length == "h") value = static_cast<unsigned short>(value);
                 if (length == "hh") value = static_cast<unsigned char>(value);
             } else value = args.Next<unsigned long long>();
+            if (conversion == u'o' && value == 0 && precision == 0 && spec.find('#') != std::string::npos)
+                spec = spec.substr(0, spec.find('.')) + ".1";
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
             if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());
@@ -215,6 +217,9 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
 }  // namespace
 
 extern "C" {
+extern FileStream* __stdoutp_nid_postfix;
+std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream);
+int APS5_VABI ferror_nid_postfix(FileStream* stream);
 
 int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
     if (buffer == nullptr || size == 0) { errno = 22; return -1; }
@@ -259,18 +264,101 @@ int APS5_VABI snwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const 
     return result;
 }
 
+int APS5_VABI vswprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
+    constexpr std::size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    int result = -1;
+    if (buffer != nullptr && format != nullptr && args != nullptr && size != 0 && size <= RsizeMax) {
+        try {
+            const std::u16string text = FormatWide(format, args, true);
+            if (text.size() + 1 <= size && text.size() <= static_cast<std::size_t>(INT_MAX)) {
+                std::memcpy(buffer, text.data(), text.size() * sizeof(char16_t));
+                buffer[text.size()] = 0;
+                result = static_cast<int>(text.size());
+            }
+        } catch (const std::invalid_argument&) {
+        }
+    }
+    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
+    return result;
+}
+
+int APS5_VABI swprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
+    constexpr std::size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    int result = -1;
+    if (buffer != nullptr && format != nullptr && size != 0 && size <= RsizeMax) {
+        APS5_VA_BEGIN(format);
+        try {
+            const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args), true);
+            if (text.size() + 1 <= size && text.size() <= static_cast<std::size_t>(INT_MAX)) {
+                std::memcpy(buffer, text.data(), text.size() * sizeof(char16_t));
+                buffer[text.size()] = 0;
+                result = static_cast<int>(text.size());
+            }
+        } catch (const std::invalid_argument&) {
+        }
+        APS5_VA_END();
+    }
+    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
+    return result;
+}
+
+int APS5_VABI vsnwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
+    constexpr std::size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    int result = -1;
+    if (buffer != nullptr && format != nullptr && args != nullptr && size != 0 && size <= RsizeMax) {
+        try {
+            const std::u16string text = FormatWide(format, args, true);
+            if (text.size() <= static_cast<std::size_t>(INT_MAX)) {
+                const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
+                std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
+                buffer[copied] = 0;
+                result = static_cast<int>(text.size());
+            }
+        } catch (const std::invalid_argument&) {
+        }
+    }
+    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
+    return result;
+}
+
 int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
     int result = -1;
     try {
         const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args));
         const std::string bytes = ToUtf8(text);
-        if (std::fwrite(bytes.data(), 1, bytes.size(), stdout) == bytes.size()) result = static_cast<int>(text.size());
+        if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(__stdoutp_nid_postfix)) == bytes.size()) result = static_cast<int>(text.size());
     } catch (const std::exception&) {
         errno = 22;
     }
     APS5_VA_END();
     return result;
+}
+
+int APS5_VABI vfwprintf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
+    if (stream == nullptr || format == nullptr) { errno = 22; return -1; }
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    int result = -1;
+    try {
+        const std::u16string text = FormatWide(format, args);
+        const std::string bytes = ToUtf8(text);
+        if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
+    } catch (const std::exception&) {
+        errno = 22;
+    }
+    stream->SyncStatus();
+    return result;
+}
+
+int APS5_VABI fwprintf_nid_postfix(FileStream* stream, const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfwprintf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI vwprintf_nid_postfix(const char16_t* format, VaList* args) {
+    return vfwprintf_nid_postfix(__stdoutp_nid_postfix, format, args);
 }
 
 int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
@@ -300,6 +388,35 @@ int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream) {
         errno = 22;
         return -1;
     }
+}
+
+int APS5_VABI putwc_nid_postfix(char16_t value, FileStream* stream) {
+    return fputwc_nid_postfix(value, stream);
+}
+
+int APS5_VABI putwchar_nid_postfix(char16_t value) {
+    return fputwc_nid_postfix(value, __stdoutp_nid_postfix);
+}
+
+char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
+    if (buffer == nullptr || stream == nullptr || size <= 0) {
+        if (stream != nullptr) stream->SetError();
+        errno = 22;
+        return nullptr;
+    }
+    int count = 0;
+    while (count < size - 1) {
+        const std::int32_t character = fgetwc_nid_postfix(stream);
+        if (character == -1) {
+            if (count == 0) return nullptr;
+            break;
+        }
+        buffer[count++] = static_cast<char16_t>(character);
+        if (character == static_cast<std::int32_t>(u'\n')) break;
+    }
+    if (ferror_nid_postfix(stream) != 0) return nullptr;
+    buffer[count] = 0;
+    return buffer;
 }
 
 }

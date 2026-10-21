@@ -9,11 +9,14 @@
 #include <iterator>
 #include <numbers>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
-static uintptr_t Sampler(uintptr_t system, const std::vector<std::int16_t>& pcm, std::uint32_t repeats) {
-    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+static uintptr_t Sampler(uintptr_t system, const std::vector<std::int16_t>& pcm, std::uint32_t repeats, uintptr_t* rack = nullptr) {
+    const auto created = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
+    if (rack != nullptr) *rack = created;
+    const auto voice = Voice(created);
     Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
     const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), repeats, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0x55};
     Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
@@ -41,8 +44,8 @@ static void TestErrorsAndInfo() {
     Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SAMPLER, nullptr, nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
 
     Ngs2SystemInfo info{};
-    Require(sceNgs2SystemGetInfo(0x1234, &info, sizeof(info)) == static_cast<int>(0x804A0230u));
-    Require(sceNgs2RackDestroy(0x1234, nullptr) == static_cast<int>(0x804A0261u));
+    Require(sceNgs2SystemGetInfo(0x1234, &info, sizeof(info)) == static_cast<int>(0x804A8201u));
+    Require(sceNgs2RackDestroy(0x1234, nullptr) == static_cast<int>(0x804A8202u));
 
     const auto system = CreateSystem();
     const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
@@ -144,6 +147,27 @@ static void TestPcmBlockEnd() {
     Require(Flags(sampler) == 0);
     Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
     Require(state.num_decoded_samples == pcm.size() && state.waveform_data == pcm.data() + pcm.size());
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPatchToRackHandle() {
+    const auto system = CreateSystem();
+    const auto masteringRack = CreateRack(system, SCE_NGS2_RACK_ID_MASTERING);
+    const auto master = Voice(masteringRack);
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 1, 0});
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT, Ngs2MasteringVoiceOutputParam{{}, 0, 0});
+    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    const std::vector<std::int16_t> pcm(Grain, 16384);
+    const auto sampler = Sampler(system, pcm, 0);
+    Control(sampler, SCE_NGS2_VOICE_PARAM_PATCH, Ngs2VoicePatchParam{{}, 0, 0, masteringRack});
+
+    Ngs2VoicePortInfo port{};
+    Require(sceNgs2VoiceGetPortInfo(sampler, 0, &port, sizeof(port)) == SCE_NGS2_OK);
+    Require(port.dest_handle == master && port.dest_input_id == 0);
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    const auto out = RenderI16(system);
+    Require(out == pcm);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -274,6 +298,163 @@ static void TestPitchAndRepeat() {
     Require(callbackFlags.size() == 2 && callbackFlags[1] == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END);
     Require(Flags(sampler) == 0);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestSetupClearsCallback() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 1);
+    const std::vector<std::int16_t> pcm{1000, 2000, 3000, 4000};
+    const auto sampler = Sampler(system, pcm, 0);
+    Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, OnBlock, 7, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+    const Ngs2WaveformBlock oneShot{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0};
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &oneShot});
+    Patch(sampler, master);
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    callbackFlags.clear();
+    auto out = RenderI16(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == (i < pcm.size() ? pcm[i] : 0));
+    Require(callbackFlags.empty() && Flags(sampler) == 0);
+
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+    Patch(sampler, master);
+    Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, OnBlock, 7, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    const Ngs2WaveformBlock stream{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0x55};
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &stream});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    out = RenderI16(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == (i < pcm.size() ? pcm[i] : 0));
+    Require(callbackFlags.size() == 1 && callbackFlags[0] == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+struct PcmResetCallback {
+    std::vector<std::int16_t> pcm;
+    std::uint32_t flag;
+    int calls = 0;
+    std::uint32_t waveformFlags = SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET;
+    bool pause = false;
+};
+
+static void APS5_VABI ResetPcm(const Ngs2VoiceCallbackInfo* info) {
+    auto& callback = *reinterpret_cast<PcmResetCallback*>(info->callback_data);
+    if (++callback.calls != 1) return;
+    Require(info->flag == callback.flag);
+    const Ngs2WaveformBlock block{0, callback.pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(callback.pcm.size()), 0, 0};
+    Control(info->voice_handle, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, callback.pcm.data(), callback.waveformFlags, 1, &block});
+    if (callback.pause) Event(info->voice_handle, SCE_NGS2_VOICE_EVENT_PAUSE);
+}
+
+static void TestPcmCallbackReset() {
+    for (const auto flag : {SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT}) {
+        const auto system = CreateSystem();
+        const std::vector<std::int16_t> pcm{16384};
+        const auto sampler = Sampler(system, pcm, flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT ? 1 : 0);
+        Patch(sampler, Mastering(system, 1));
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, 2.0f});
+        PcmResetCallback callback{{}, flag};
+        for (std::uint32_t frame = 0; frame < Grain * 2 + 2; ++frame) callback.pcm.push_back(static_cast<std::int16_t>(1000 + frame * 100));
+        Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK,
+                Ngs2VoiceCallbackParam{{}, ResetPcm, reinterpret_cast<std::uintptr_t>(&callback), flag, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        const auto first = RenderI16(system);
+        Require(callback.calls == 1);
+        Ngs2SamplerVoiceState state{};
+        Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+        if (state.num_decoded_samples != 1) std::fprintf(stderr, "PCM callback reset consumed %llu samples before the next grain, expected 1\n", static_cast<unsigned long long>(state.num_decoded_samples));
+        Require(state.num_decoded_samples == 1 && state.decoded_data_size == sizeof(std::int16_t) && state.waveform_data == callback.pcm.data());
+        for (std::uint32_t frame = 0; frame < Grain; ++frame) Require(first[frame] == (frame == 0 ? 16384 : 0));
+        const auto second = RenderI16(system);
+        for (std::uint32_t frame = 0; frame < Grain; ++frame) Require(second[frame] == callback.pcm[frame * 2]);
+        Require(callback.calls == 1);
+        Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+        Require(state.num_decoded_samples == 1 + Grain * 2 && state.waveform_data == callback.pcm.data() + Grain * 2);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+}
+
+static void TestPcmCallbackRefill() {
+    for (const bool pause : {false, true}) {
+        const auto system = CreateSystem();
+        const auto sampler = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+        Patch(sampler, Mastering(system, 1));
+        const std::int16_t pcm = 16384;
+        const Ngs2WaveformBlock block{0, sizeof(pcm), 0, 0, 1, 0, 0};
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+                Ngs2SamplerVoiceWaveformBlocksParam{{}, &pcm, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 1, &block});
+        PcmResetCallback callback{{}, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0, 0, pause};
+        for (std::uint32_t frame = 0; frame < Grain * 2; ++frame) callback.pcm.push_back(static_cast<std::int16_t>(1000 + frame * 100));
+        Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK,
+                Ngs2VoiceCallbackParam{{}, ResetPcm, reinterpret_cast<std::uintptr_t>(&callback), callback.flag, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        const auto first = RenderI16(system);
+        Require(callback.calls == 1 && first.front() == pcm);
+        for (std::uint32_t frame = 1; frame < Grain; ++frame) Require(first[frame] == (pause ? 0 : callback.pcm[frame - 1]));
+        Ngs2SamplerVoiceState state{};
+        Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+        const std::uint32_t consumed = pause ? 0 : Grain - 1;
+        Require(state.num_decoded_samples == consumed + 1 && state.waveform_data == callback.pcm.data() + consumed);
+        if (pause) Event(sampler, SCE_NGS2_VOICE_EVENT_RESUME);
+        const auto second = RenderI16(system);
+        for (std::uint32_t frame = 0; frame < Grain; ++frame) Require(second[frame] == callback.pcm[consumed + frame]);
+        Require(callback.calls == 1);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+}
+
+struct PcmSetupCallback {
+    uintptr_t master;
+    std::uint32_t channels;
+    std::uint32_t flag;
+    std::vector<std::int16_t> pcm;
+    int calls = 0;
+};
+
+static void APS5_VABI SetupPcm(const Ngs2VoiceCallbackInfo* info) {
+    auto& callback = *reinterpret_cast<PcmSetupCallback*>(info->callback_data);
+    if (++callback.calls != 1) return;
+    Require(info->flag == callback.flag);
+    Control(info->voice_handle, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP,
+            Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, callback.channels, 48000, 0, 0, 0}});
+    const Ngs2WaveformBlock block{0, callback.pcm.size() * sizeof(std::int16_t), 0, 0, Grain * 2, 0, 0};
+    Control(info->voice_handle, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, callback.pcm.data(), 0, 1, &block});
+    Patch(info->voice_handle, callback.master);
+    Event(info->voice_handle, SCE_NGS2_VOICE_EVENT_PLAY);
+}
+
+static void TestPcmCallbackSetup() {
+    for (const auto channels : {2u, 8u}) {
+        for (const auto flag : {SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT}) {
+            const auto system = CreateSystem();
+            const std::vector<std::int16_t> pcm{16384};
+            const auto sampler = Sampler(system, pcm, flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT ? 1 : 0);
+            PcmSetupCallback callback{Mastering(system, channels), channels, flag, {}};
+            for (std::uint32_t frame = 0; frame < Grain * 2; ++frame) {
+                for (std::uint32_t channel = 0; channel < channels; ++channel) callback.pcm.push_back(static_cast<std::int16_t>(1000 + frame * 25 + channel * 100));
+            }
+            Patch(sampler, callback.master);
+            Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK,
+                    Ngs2VoiceCallbackParam{{}, SetupPcm, reinterpret_cast<std::uintptr_t>(&callback), flag, 0});
+            Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+            std::vector<std::int16_t> output(Grain * channels, -1);
+            const Ngs2RenderBufferInfo info{output.data(), output.size() * sizeof(std::int16_t), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels};
+            Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+            Require(callback.calls == 1 && std::all_of(output.begin(), output.end(), [](std::int16_t sample) { return sample == 0; }));
+            Ngs2SamplerVoiceState state{};
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            Require(state.num_decoded_samples == 0 && state.decoded_data_size == 0 && state.waveform_data == callback.pcm.data());
+            Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+            Require(callback.calls == 1 && std::equal(output.begin(), output.end(), callback.pcm.begin()));
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            Require(state.num_decoded_samples == Grain && state.decoded_data_size == Grain * channels * sizeof(std::int16_t));
+            Require(state.waveform_data == callback.pcm.data() + Grain * channels);
+            Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+        }
+    }
 }
 
 static void TestSubmixerMatrix() {
@@ -584,6 +765,33 @@ static void TestUserData() {
         threw = true;
     }
     Require(threw);
+
+    Require(sceNgs2RackSetUserData(0x1234, 5) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    Require(sceNgs2RackSetUserData(system, 5) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    value = 1;
+    Require(sceNgs2RackGetUserData(0x1234, &value) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE && value == 1);
+    Require(sceNgs2RackGetUserData(system, &value) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE && value == 1);
+    Require(sceNgs2RackGetUserData(0x1234, nullptr) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
+    const auto other = CreateRack(system, SCE_NGS2_RACK_ID_MASTERING);
+    Require(sceNgs2RackGetUserData(rack, &value) == SCE_NGS2_OK && value == 0);
+    Require(sceNgs2RackSetUserData(rack, 0x0123456789abcdef) == SCE_NGS2_OK);
+    Require(sceNgs2RackGetUserData(rack, &value) == SCE_NGS2_OK && value == 0x0123456789abcdef);
+    Require(sceNgs2RackGetUserData(other, &value) == SCE_NGS2_OK && value == 0);
+    Require(sceNgs2SystemGetUserData(system, &value) == SCE_NGS2_OK && value == 0xfedcba9876543210);
+    Require(sceNgs2RackSetUserData(other, 0) == SCE_NGS2_OK);
+    Require(sceNgs2RackGetUserData(rack, &value) == SCE_NGS2_OK && value == 0x0123456789abcdef);
+    threw = false;
+    try {
+        sceNgs2RackGetUserData(rack, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    value = 1;
+    Require(sceNgs2RackGetUserData(rack, &value) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE && value == 1);
+    Require(sceNgs2RackSetUserData(rack, 5) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -730,25 +938,335 @@ static void TestStereoIntoSurround() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static bool AnsweredWithin(const std::atomic<bool>& answered, std::chrono::milliseconds limit = std::chrono::seconds(2)) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (!answered && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return answered;
+}
+
+static void TestRackLockLeavesQueries() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
+    const auto voice = Voice(rack);
+    Require(sceNgs2RackLock(0x1234) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    Require(sceNgs2RackLock(rack) == SCE_NGS2_OK);
+    Require(sceNgs2RackLock(rack) == SCE_NGS2_OK);
+    std::atomic<bool> answered = false;
+    std::thread query([&] {
+        std::uint32_t flags = 0;
+        Require(sceNgs2VoiceGetStateFlags(voice, &flags) == SCE_NGS2_OK);
+        answered = true;
+    });
+    const bool answeredWhileLocked = AnsweredWithin(answered);
+    std::atomic<bool> rendered = false;
+    std::thread render([&] {
+        RenderI16(system);
+        rendered = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const bool renderedWhileLocked = rendered;
+    Require(sceNgs2RackUnlock(rack) == SCE_NGS2_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const bool renderedWhileLockedOnce = rendered;
+    Require(sceNgs2RackUnlock(rack) == SCE_NGS2_OK);
+    query.join();
+    render.join();
+    Require(answeredWhileLocked);
+    Require(!renderedWhileLocked && !renderedWhileLockedOnce && rendered);
+    Require(sceNgs2RackUnlock(rack) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+struct QueryInCallback {
+    uintptr_t voice = 0;
+    std::atomic<bool> answered = false;
+    bool answeredInCallback = false;
+    std::thread query;
+};
+
+static void APS5_VABI QueryFromAnotherThread(const Ngs2VoiceCallbackInfo* info) {
+    auto& callback = *reinterpret_cast<QueryInCallback*>(info->callback_data);
+    callback.query = std::thread([&callback] {
+        std::uint32_t flags = 0;
+        Require(sceNgs2VoiceGetStateFlags(callback.voice, &flags) == SCE_NGS2_OK);
+        callback.answered = true;
+    });
+    callback.answeredInCallback = AnsweredWithin(callback.answered);
+}
+
+static void TestVoiceCallbackLeavesQueries() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 1);
+    const std::vector<std::int16_t> pcm(Grain / 2, 1000);
+    const auto sampler = Sampler(system, pcm, 0);
+    Patch(sampler, master);
+    QueryInCallback callback;
+    callback.voice = sampler;
+    Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, QueryFromAnotherThread, reinterpret_cast<std::uintptr_t>(&callback), SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    RenderI16(system);
+    Require(callback.query.joinable());
+    callback.query.join();
+    Require(callback.answered && callback.answeredInCallback);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+struct RackLockInCallback {
+    uintptr_t rack = 0;
+    std::atomic<bool> locked = false;
+    std::atomic<bool> callbackReturned = false;
+    std::atomic<bool> release = false;
+    bool lockedDuringCallback = false;
+    std::thread locker;
+};
+
+static void APS5_VABI LockFromAnotherThread(const Ngs2VoiceCallbackInfo* info) {
+    auto& callback = *reinterpret_cast<RackLockInCallback*>(info->callback_data);
+    callback.locker = std::thread([&callback] {
+        Require(sceNgs2RackLock(callback.rack) == SCE_NGS2_OK);
+        callback.lockedDuringCallback = !callback.callbackReturned;
+        callback.locked = true;
+        while (!callback.release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        Require(sceNgs2RackUnlock(callback.rack) == SCE_NGS2_OK);
+    });
+    static_cast<void>(AnsweredWithin(callback.locked, std::chrono::milliseconds(200)));
+    callback.callbackReturned = true;
+}
+
+static void TestRackLockWaitsForRender() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 1);
+    const std::vector<std::int16_t> pcm(Grain / 2, 1000);
+    RackLockInCallback callback;
+    const auto sampler = Sampler(system, pcm, 0, &callback.rack);
+    Patch(sampler, master);
+    Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, LockFromAnotherThread, reinterpret_cast<std::uintptr_t>(&callback), SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    RenderI16(system);
+    const bool lockedAfterRender = AnsweredWithin(callback.locked);
+    callback.release = true;
+    Require(callback.locker.joinable());
+    callback.locker.join();
+    Require(lockedAfterRender && !callback.lockedDuringCallback);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+struct CrossSystemCallback {
+    uintptr_t otherRack = 0;
+    std::atomic<bool>* entered = nullptr;
+    const std::atomic<bool>* awaited = nullptr;
+};
+
+static void APS5_VABI LockAnotherSystem(const Ngs2VoiceCallbackInfo* info) {
+    auto& callback = *reinterpret_cast<CrossSystemCallback*>(info->callback_data);
+    *callback.entered = true;
+    static_cast<void>(AnsweredWithin(*callback.awaited, std::chrono::milliseconds(200)));
+    Require(sceNgs2RackLock(callback.otherRack) == SCE_NGS2_OK);
+    Require(sceNgs2RackUnlock(callback.otherRack) == SCE_NGS2_OK);
+}
+
+static uintptr_t CallbackSampler(uintptr_t system, CrossSystemCallback& callback, uintptr_t* rack) {
+    static const std::vector<std::int16_t> pcm(Grain / 2, 1000);
+    const auto sampler = Sampler(system, pcm, 0, rack);
+    Patch(sampler, Mastering(system, 1));
+    Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, LockAnotherSystem, reinterpret_cast<std::uintptr_t>(&callback), SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    return sampler;
+}
+
+static void TestCallbacksLockEachOthersSystem() {
+    const auto first = CreateSystem();
+    const auto second = CreateSystem();
+    std::atomic<bool> firstEntered = false;
+    std::atomic<bool> secondEntered = false;
+    CrossSystemCallback firstCallback{0, &firstEntered, &secondEntered};
+    CrossSystemCallback secondCallback{0, &secondEntered, &firstEntered};
+    uintptr_t firstRack = 0;
+    uintptr_t secondRack = 0;
+    CallbackSampler(first, firstCallback, &firstRack);
+    CallbackSampler(second, secondCallback, &secondRack);
+    firstCallback.otherRack = secondRack;
+    secondCallback.otherRack = firstRack;
+    std::atomic<bool> firstRendered = false;
+    std::atomic<bool> secondRendered = false;
+    std::thread firstRender([&] {
+        RenderI16(first);
+        firstRendered = true;
+    });
+    std::thread secondRender([&] {
+        RenderI16(second);
+        secondRendered = true;
+    });
+    Require(AnsweredWithin(firstRendered) && AnsweredWithin(secondRendered));
+    firstRender.join();
+    secondRender.join();
+    Require(firstEntered && secondEntered);
+    Require(sceNgs2SystemDestroy(first, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(second, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRackLocksAcrossSystemsAndRender() {
+    const auto first = CreateSystem();
+    const auto second = CreateSystem();
+    const auto heldRack = CreateRack(second, SCE_NGS2_RACK_ID_SAMPLER);
+    std::atomic<bool> entered = false;
+    const std::atomic<bool> never = false;
+    CrossSystemCallback callback{heldRack, &entered, &never};
+    uintptr_t renderedRack = 0;
+    CallbackSampler(first, callback, &renderedRack);
+    std::atomic<bool> holding = false;
+    std::atomic<bool> released = false;
+    std::thread locker([&] {
+        Require(sceNgs2RackLock(heldRack) == SCE_NGS2_OK);
+        holding = true;
+        static_cast<void>(AnsweredWithin(entered, std::chrono::milliseconds(200)));
+        Require(sceNgs2RackLock(renderedRack) == SCE_NGS2_OK);
+        Require(sceNgs2RackUnlock(renderedRack) == SCE_NGS2_OK);
+        Require(sceNgs2RackUnlock(heldRack) == SCE_NGS2_OK);
+        released = true;
+    });
+    Require(AnsweredWithin(holding));
+    std::atomic<bool> rendered = false;
+    std::thread render([&] {
+        RenderI16(first);
+        rendered = true;
+    });
+    Require(AnsweredWithin(released) && AnsweredWithin(rendered));
+    locker.join();
+    render.join();
+    Require(entered);
+    Require(sceNgs2SystemDestroy(first, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(second, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRackDestroyWaitsForLock() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
+    Require(sceNgs2RackLock(rack) == SCE_NGS2_OK);
+    std::atomic<bool> destroyed = false;
+    std::thread destroyer([&] {
+        Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+        destroyed = true;
+    });
+    const bool destroyedWhileLocked = AnsweredWithin(destroyed, std::chrono::milliseconds(200));
+    Require(!destroyedWhileLocked && sceNgs2RackUnlock(rack) == SCE_NGS2_OK);
+    Require(AnsweredWithin(destroyed));
+    destroyer.join();
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+struct DestroyInCallback {
+    uintptr_t handle = 0;
+    bool system = false;
+};
+
+static void APS5_VABI DestroyFromCallback(const Ngs2VoiceCallbackInfo* info) {
+    const auto& destroy = *reinterpret_cast<const DestroyInCallback*>(info->callback_data);
+    static_cast<void>(destroy.system ? sceNgs2SystemDestroy(destroy.handle, nullptr) : sceNgs2RackDestroy(destroy.handle, nullptr));
+}
+
+static void APS5_VABI RenderFromCallback(const Ngs2VoiceCallbackInfo* info) {
+    static_cast<void>(RenderI16(info->callback_data));
+}
+
+static void TestDestroyDuringOwnRenderThrows() {
+    for (const bool destroySystem : {false, true}) {
+        const auto system = CreateSystem();
+        uintptr_t rack = 0;
+        const std::vector<std::int16_t> pcm(Grain / 2, 1000);
+        const auto sampler = Sampler(system, pcm, 0, &rack);
+        Patch(sampler, Mastering(system, 1));
+        const DestroyInCallback destroy{destroySystem ? system : rack, destroySystem};
+        Control(sampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, DestroyFromCallback, reinterpret_cast<std::uintptr_t>(&destroy), SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        bool refused = false;
+        try {
+            RenderI16(system);
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()).find("is not implemented") != std::string::npos;
+        }
+        Require(refused);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+    for (const bool destroySystem : {false, true}) {
+        const auto outer = CreateSystem();
+        const auto inner = CreateSystem();
+        uintptr_t outerRack = 0;
+        const std::vector<std::int16_t> pcm(Grain / 2, 1000);
+        const auto outerSampler = Sampler(outer, pcm, 0, &outerRack);
+        Patch(outerSampler, Mastering(outer, 1));
+        const auto innerSampler = Sampler(inner, pcm, 0);
+        Patch(innerSampler, Mastering(inner, 1));
+        const DestroyInCallback destroy{destroySystem ? outer : outerRack, destroySystem};
+        Control(outerSampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, RenderFromCallback, inner, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+        Control(innerSampler, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, DestroyFromCallback, reinterpret_cast<std::uintptr_t>(&destroy), SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+        Event(outerSampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Event(innerSampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        bool refused = false;
+        try {
+            RenderI16(outer);
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()).find("is not implemented") != std::string::npos;
+        }
+        Require(refused);
+        Require(sceNgs2SystemDestroy(inner, nullptr) == SCE_NGS2_OK);
+        Require(sceNgs2SystemDestroy(outer, nullptr) == SCE_NGS2_OK);
+    }
+}
+
 static void TestLock() {
     const auto system = CreateSystem();
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
     Require(sceNgs2SystemLock(0x1234) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE);
     Require(sceNgs2SystemUnlock(0x1234) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE);
-    Ngs2SystemInfo info{};
-    std::thread free([&] { Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK); });
-    free.join();
+    Require(sceNgs2SystemUnlock(system) == SCE_NGS2_OK);
 
+    Ngs2SystemInfo info{};
     Require(sceNgs2SystemLock(system) == SCE_NGS2_OK);
+    Require(sceNgs2SystemLock(system) == SCE_NGS2_OK);
+    std::atomic<bool> otherDone = false;
+    std::thread other([&] {
+        Ngs2SystemInfo otherInfo{};
+        std::uint32_t flags = 0;
+        Require(sceNgs2SystemGetInfo(system, &otherInfo, sizeof(otherInfo)) == SCE_NGS2_OK);
+        Require(sceNgs2VoiceGetStateFlags(voice, &flags) == SCE_NGS2_OK);
+        std::vector<std::int16_t> out(Grain * 2, -1);
+        const Ngs2RenderBufferInfo buffer{out.data(), out.size() * sizeof(std::int16_t), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1};
+        Require(sceNgs2SystemRender(system, &buffer, 1) == SCE_NGS2_OK);
+        Require(std::all_of(out.begin(), out.begin() + Grain, [](std::int16_t sample) { return sample == 0; }));
+        Require(std::all_of(out.begin() + Grain, out.end(), [](std::int16_t sample) { return sample == -1; }));
+        Require(sceNgs2SystemGetInfo(system, &otherInfo, sizeof(otherInfo)) == SCE_NGS2_OK && otherInfo.render_count == 0);
+        otherDone = true;
+    });
+    for (int i = 0; i < 200 && !otherDone; i++) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    Require(otherDone);
+    other.join();
+    RenderI16(system);
+    Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK && info.render_count == 1);
+
     std::atomic<bool> done = false;
     std::thread blocked([&] {
-        Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK);
+        Require(sceNgs2SystemLock(system) == SCE_NGS2_OK);
         done = true;
+        RenderI16(system);
+        Require(sceNgs2SystemUnlock(system) == SCE_NGS2_OK);
     });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!done);
+    Require(sceNgs2SystemUnlock(system) == SCE_NGS2_OK);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     Require(!done);
     Require(sceNgs2SystemUnlock(system) == SCE_NGS2_OK);
     blocked.join();
     Require(done);
+    Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK && info.render_count == 2);
+
+    Require(sceNgs2SystemLock(system) == SCE_NGS2_OK);
+    std::thread unlocker([&] { Require(sceNgs2SystemUnlock(system) == SCE_NGS2_OK); });
+    unlocker.join();
+    std::thread renderer([&] { RenderI16(system); });
+    renderer.join();
+    Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK && info.render_count == 3);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -862,6 +1380,60 @@ static void TestUnsetMatrix() {
     Require(sceNgs2SystemDestroy(stereoSystem, nullptr) == SCE_NGS2_OK);
 }
 
+template <typename TSample>
+static void TestRenderCapacity(std::uint32_t waveformType, std::uint32_t channels) {
+    const auto system = CreateSystem();
+    const auto samples = Grain * channels;
+    const TSample sentinel = 123;
+    std::vector<TSample> out(samples * 3, sentinel);
+    const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(TSample), waveformType, channels};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    Require(std::all_of(out.begin(), out.begin() + samples, [](TSample value) { return value == 0; }));
+    Require(std::all_of(out.begin() + samples, out.end(), [sentinel](TSample value) { return value == sentinel; }));
+
+    const auto master = Mastering(system, channels);
+    const std::vector<std::int16_t> pcm(Grain, 16384);
+    const auto sampler = Sampler(system, pcm, 0);
+    Patch(sampler, master);
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    std::fill(out.begin(), out.end(), sentinel);
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    Require(std::all_of(out.begin(), out.begin() + samples, [sentinel](TSample value) { return value > 0 && value != sentinel; }));
+    Require(std::all_of(out.begin() + samples, out.end(), [sentinel](TSample value) { return value == sentinel; }));
+
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    Require(std::all_of(out.begin(), out.begin() + samples, [](TSample value) { return value == 0; }));
+    Require(std::all_of(out.begin() + samples, out.end(), [sentinel](TSample value) { return value == sentinel; }));
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestSilentRenderValidation() {
+    const auto system = CreateSystem();
+    std::vector<float> out(Grain, 123.0f);
+    Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float) - 1, SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+    const auto invalid = [&] {
+        bool rejected = false;
+        try { sceNgs2SystemRender(system, &info, 1); } catch (const std::invalid_argument&) { rejected = true; }
+        Require(rejected);
+        Require(std::all_of(out.begin(), out.end(), [](float value) { return value == 123.0f; }));
+    };
+    invalid();
+    info.buffer_size++;
+    info.num_channels = 0;
+    invalid();
+    info.num_channels = 9;
+    invalid();
+    info.num_channels = 1;
+    info.waveform_type = UINT32_MAX;
+    bool unsupported = false;
+    try { sceNgs2SystemRender(system, &info, 1); } catch (const std::runtime_error&) { unsupported = true; }
+    Require(unsupported);
+    Require(std::all_of(out.begin(), out.end(), [](float value) { return value == 123.0f; }));
+    info = {};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestAllocator() {
     const Ngs2BufferAllocator allocator{Allocate, Release, 9};
     uintptr_t system = 0;
@@ -887,6 +1459,7 @@ int main() {
     Require(std::atexit(RenderAfterStaticTeardown) == 0);
     TestErrorsAndInfo();
     TestPcmBlockEnd();
+    TestPatchToRackHandle();
     TestPan();
     TestPitchAndRepeat();
     TestSubmixerMatrix();
@@ -894,12 +1467,28 @@ int main() {
     TestReverbSetup();
     TestSampleRate();
     TestUserData();
+    TestPcmCallbackReset();
+    TestPcmCallbackRefill();
+    TestPcmCallbackSetup();
+    TestSetupClearsCallback();
     TestMasteringGain();
     TestMatrixLevelClamp();
     TestStereoIntoSurround();
     TestLock();
+    TestRackLockLeavesQueries();
+    TestVoiceCallbackLeavesQueries();
+    TestRackLockWaitsForRender();
+    TestCallbacksLockEachOthersSystem();
+    TestRackLocksAcrossSystemsAndRender();
+    TestRackDestroyWaitsForLock();
+    TestDestroyDuringOwnRenderThrows();
     TestDefaultChannelMap();
     TestUnsetMatrix();
+    TestRenderCapacity<float>(SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1);
+    TestRenderCapacity<float>(SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 2);
+    TestRenderCapacity<std::int16_t>(SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1);
+    TestRenderCapacity<std::int16_t>(SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2);
+    TestSilentRenderValidation();
     TestAllocator();
     exitSystem = CreateSystem();
     return 0;

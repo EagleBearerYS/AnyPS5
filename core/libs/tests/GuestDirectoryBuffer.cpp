@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 
 extern "C" {
@@ -17,9 +18,11 @@ int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
 int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelGetdents(int, char*, int);
 int APS5_VABI sceKernelGetdirentries(int, char*, int, std::int64_t*);
-int APS5_VABI getdents_nid_postfix(int, char*, int);
-int APS5_VABI getdirentries_nid_postfix(int, char*, int, std::int64_t*);
-int* APS5_VABI __error_nid_postfix();
+int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
+int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
+int APS5_VABI sceKernelMprotect(void*, std::size_t, int);
+int APS5_VABI sceKernelMunmap(void*, std::size_t);
+int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
 }
 
 static void Check(bool value, int line) {
@@ -68,7 +71,7 @@ static void CheckName(const std::u8string& utf8Name) {
     Require(sceKernelGetdents(directory, buffer.data(), 8) == 0);
     Require(sceKernelGetdents(directory, buffer.data(), 256) == 0);
     Require(sceKernelClose(directory) == 0);
-    Require(sceKernelGetdents(-1, buffer.data(), 256) == SCE_KERNEL_ERROR_ENOTDIR);
+    Require(sceKernelGetdents(-1, buffer.data(), 256) == SCE_KERNEL_ERROR_EBADF);
     std::filesystem::remove_all(root);
 }
 
@@ -82,24 +85,44 @@ static void CheckOversizedName() {
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     std::array<char, 512> buffer;
-    buffer.fill('x');
-    Require(sceKernelGetdents(directory, buffer.data(), static_cast<int>(buffer.size())) == 24);
-    Require(std::strcmp(buffer.data() + 8, ".") == 0);
-    Require(std::strcmp(buffer.data() + 20, "..") == 0);
-    Require(std::all_of(buffer.begin() + 24, buffer.end(), [](char byte) { return byte == 'x'; }));
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        buffer.fill('x');
-        Require(sceKernelGetdents(directory, buffer.data(), static_cast<int>(buffer.size())) == SCE_KERNEL_ERROR_ENAMETOOLONG);
-        Require(std::all_of(buffer.begin(), buffer.end(), [](char byte) { return byte == 'x'; }));
+    bool threw = false;
+    try {
+        sceKernelGetdents(directory, buffer.data(), static_cast<int>(buffer.size()));
+    } catch (const std::runtime_error&) {
+        threw = true;
     }
-    *__error_nid_postfix() = 0;
-    Require(getdents_nid_postfix(directory, buffer.data(), static_cast<int>(buffer.size())) == -1);
-    Require(*__error_nid_postfix() == 63);
-    *__error_nid_postfix() = 0;
+    Require(threw);
+    Require(sceKernelClose(directory) == 0);
+    std::filesystem::remove_all(root);
+}
+
+static void CheckReadOnlyDestination() {
+    constexpr std::size_t page = 0x4000;
+    const auto root = std::filesystem::temp_directory_path() /
+        ("anyps5-directory-readonly-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    { std::ofstream file(root / "entry.bin"); Require(static_cast<bool>(file)); }
+    int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page, 3, 0, physical, 0) == 0 && mapping != nullptr);
     std::int64_t base = -1;
-    Require(getdirentries_nid_postfix(directory, buffer.data(), static_cast<int>(buffer.size()), &base) == -1);
-    Require(*__error_nid_postfix() == 63);
-    Require(std::all_of(buffer.begin(), buffer.end(), [](char byte) { return byte == 'x'; }));
+    Require(sceKernelGetdirentries(directory, static_cast<char*>(mapping), 4096, &base) > 0);
+    Require(sceKernelClose(directory) == 0);
+    directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    Require(sceKernelMprotect(mapping, page, 1) == 0);
+    Require(sceKernelGetdirentries(directory, static_cast<char*>(mapping), 4096, &base) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetdirentries(12345, static_cast<char*>(mapping), 4096, &base) == SCE_KERNEL_ERROR_EBADF);
+    std::array<char, 512> buffer{};
+    Require(sceKernelGetdirentries(directory, buffer.data(), static_cast<int>(buffer.size()),
+        static_cast<std::int64_t*>(mapping)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelMprotect(mapping, page, 3) == 0);
+    Require(sceKernelGetdirentries(directory, buffer.data(), static_cast<int>(buffer.size()), &base) > 0);
+    Require(sceKernelMunmap(mapping, page) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page) == 0);
     Require(sceKernelClose(directory) == 0);
     std::filesystem::remove_all(root);
 }
@@ -113,4 +136,5 @@ int main() {
     for (int i = 0; i < 85; ++i) longest += u8"\u30bb";
     CheckName(longest);
     CheckOversizedName();
+    CheckReadOnlyDestination();
 }

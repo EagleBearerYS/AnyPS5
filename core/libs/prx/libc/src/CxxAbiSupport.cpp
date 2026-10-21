@@ -18,6 +18,8 @@
 #include <regex>
 #include <functional>
 #include <mutex>
+#include <condition_variable>
+#include <unordered_set>
 #include <memory>
 
 #include "prx/libc/include/General.hpp"
@@ -62,6 +64,9 @@ void* APS5_VABI __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::
 }
 
 int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso) {
+#ifdef _WIN32
+    dso = nullptr;
+#endif
     struct ThreadAtexitContext {
         void (APS5_VABI *destructor)(void*);
         void* object;
@@ -83,13 +88,12 @@ int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(void (APS5_VABI *func)(void*)
     return result;
 }
 
+int APS5_VABI __cxa_thread_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso) {
+    return __cxa_thread_atexit_impl_nid_postfix(func, arg, dso);
+}
+
 int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *destructor)(void*), void* object, void* module_id) {
-#ifdef _WIN32
-    (void)module_id;
-    return __cxa_thread_atexit_impl_nid_postfix(destructor, object, nullptr);
-#else
     return __cxa_thread_atexit_impl_nid_postfix(destructor, object, module_id);
-#endif
 }
 
 const std::error_category* _ZSt17iostream_categoryv_nid_postfix() { return &std::iostream_category(); }
@@ -97,12 +101,28 @@ const std::error_category* _ZSt17iostream_categoryv_nid_postfix() { return &std:
 int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(
     int* flag, int (APS5_VABI *callback)(void*, void*, void**), void* arg
 ) {
-    static std::recursive_mutex mutex;
-    std::lock_guard lock(mutex);
+    static std::mutex mutex;
+    static std::condition_variable changed;
+    static std::unordered_set<int*> running;
+    std::unique_lock lock(mutex);
+    changed.wait(lock, [&] { return *flag != 0 || !running.contains(flag); });
     if (*flag != 0) return 1;
-    if (callback(nullptr, arg, nullptr) == 0) return 0;
-    *flag = 1;
-    return 1;
+    running.insert(flag);
+    lock.unlock();
+    bool initialized;
+    try {
+        initialized = callback(nullptr, arg, nullptr) != 0;
+    } catch (...) {
+        lock.lock();
+        running.erase(flag);
+        changed.notify_all();
+        throw;
+    }
+    lock.lock();
+    if (initialized) *flag = 1;
+    running.erase(flag);
+    changed.notify_all();
+    return initialized ? 1 : 0;
 }
 
 }
