@@ -608,7 +608,7 @@ std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     const auto format = target.format == VK_FORMAT_D16_UNORM ? 7u : 22u;
     const auto count = static_cast<std::uint32_t>(std::countr_zero(target.samples));
     const auto width = target.extent.width - 1u, height = target.extent.height - 1u;
-    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (1u << 19u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
+    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (target.htilePipeAligned ? 1u << 19u : 0u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
 bool DepthSupported(const Context& context, VkFormat format, std::uint32_t fragments) {
@@ -1125,9 +1125,9 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
     std::printf("Native depth-stencil samples=%u clear=%u fill=%u: imported, stencil-tested, sampled%s\n", fragments, one, filling, filling ? " and refilled three times" : "");
 }
 
-enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil };
+enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord };
 
-void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool one, bool filling, PlaneFault fault = PlaneFault::None) {
+void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool one, bool filling, PlaneFault fault = PlaneFault::None, bool pipeAligned = true) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
     const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
@@ -1136,6 +1136,7 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     const std::uint32_t clearWord = one ? 0xfffffff0u : 0u;
     const auto setWords = [&] { for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &clearWord, 4u); };
     setWords();
+    if (fault == PlaneFault::HtileWord) metadata.Data()[metadataBytes - 4u] ^= std::byte{0x10};
     const std::uint8_t clearStencil = one ? 0x5au : 0u;
     std::memset(stencil.Data(), clearStencil, stencilBytes);
     if (fault == PlaneFault::StencilByte) stencil.Data()[stencilBytes / 2u] ^= std::byte{0x01};
@@ -1144,7 +1145,8 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, one ? 1.0f : 0.0f, clearStencil, metadata.Address(), false, fragments};
     target.depthSwizzle = 24u;
     target.pipeBankXor = one ? 0x8c00u : 0u;
-    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    target.iterate256 = target.htilePipeAligned = pipeAligned;
+    target.htileDepthOnly = true;
     Recorder recorder(context);
     recorder.Activate();
     struct Cleanup {
@@ -1223,7 +1225,7 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     Require(std::equal(imported.begin(), imported.end(), stencil.Data()), "native depth sampling with a separate stencil plane changed the guest stencil plane");
     bare.reset();
     texture.reset();
-    std::printf("Native depth with a separate stencil plane samples=%u clear=%u fill=%u: imported, stencil-tested and sampled with and without HTILE%s; other metadata and XOR refused\n", fragments, one, filling, filling ? " across a depth-only HTILE fill" : "");
+    std::printf("Native depth with a separate stencil plane samples=%u clear=%u fill=%u pipeAligned=%u: imported, stencil-tested and sampled with and without HTILE%s; other metadata and XOR refused\n", fragments, one, filling, pipeAligned, filling ? " across a depth-only HTILE fill" : "");
 }
 
 void CheckEligibility(Context context) {
@@ -1570,9 +1572,11 @@ int main(int argc, char** argv) {
             Require(supported(4u), "the native separate stencil regression requires sampled D32S8 with four samples");
             std::uint32_t checked = 0u, unavailable = 0u;
             for (const auto samples : {2u, 4u, 8u}) {
-                if (!supported(samples)) { unavailable += 4u; continue; }
+                if (!supported(samples)) { unavailable += 8u; continue; }
                 for (const bool one : {false, true}) {
-                    for (const bool filling : {false, true}) { CheckSeparateStencilTarget(context, samples, one, filling); ++checked; }
+                    for (const bool filling : {false, true}) {
+                        for (const bool pipeAligned : {true, false}) { CheckSeparateStencilTarget(context, samples, one, filling, PlaneFault::None, pipeAligned); ++checked; }
+                    }
                 }
             }
             for (const auto& [fault, expected] : std::array{
@@ -1580,6 +1584,11 @@ int main(int argc, char** argv) {
                      std::pair{PlaneFault::StencilWrite, "guest writes over native multisample depth"},
                      std::pair{PlaneFault::UnwatchedStencil, "watched accessible guest memory"}}) {
                 TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, false, false, fault); }, expected);
+                std::printf("Native depth with a separate stencil plane fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
+            }
+            for (const auto& [fault, expected] : std::array{
+                     std::pair{PlaneFault::HtileWord, "native multisample depth HTILE that is not pipe-aligned holds more than one word"}}) {
+                TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, false, false, fault, false); }, expected);
                 std::printf("Native depth with a separate stencil plane fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
             std::printf("Native depth with a separate stencil plane cases checked=%u unavailable=%u\n", checked, unavailable);

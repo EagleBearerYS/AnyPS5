@@ -112,7 +112,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     if (stencil != (target.stencilAddress != 0u) || (!stencil && target.htileStencil)) return refuse("native multisample stencil import is not implemented");
     if (stencil && !stencilPlane && (!target.htileStencil || target.htileDepthOnly)) return refuse("native multisample stencil import requires HTILE stencil metadata");
     if (stencil && (target.stencilAddress & 65535u) != 0u) return refuse("native multisample stencil base is not aligned");
-    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || !target.htilePipeAligned || target.htileVrsEncoding != 0u) return refuse("native multisample depth initial import requires pipe-aligned HTILE without VRS");
+    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || (!target.htilePipeAligned && !target.htileDepthOnly) || target.htileVrsEncoding != 0u) return refuse("native multisample depth initial import requires pipe-aligned or depth-only HTILE without VRS");
     if (target.clearDepth != 0.0f && target.clearDepth != 1.0f) return refuse("native multisample depth initial clear value is not implemented");
     state.initial = {{target.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(target.extent, target.format == VK_FORMAT_D16_UNORM ? 2u : 4u, target.samples)), 0u}, {target.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(target.extent)), 0u}};
     if (stencil) state.initial.push_back({target.stencilAddress, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(target.extent, 1u, target.samples)), 0u});
@@ -138,6 +138,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     }
     std::vector<std::uint32_t> metadata(htile.bytes / sizeof(std::uint32_t));
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(metadata)), 256u);
+    if (!target.htilePipeAligned && std::adjacent_find(metadata.begin(), metadata.end(), [](std::uint32_t first, std::uint32_t second) { return first != second; }) != metadata.end()) return refuse("native multisample depth HTILE that is not pipe-aligned holds more than one word");
     for (const auto word : metadata) {
         if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
         if (stencil && !stencilPlane && !htileProvesStencilClear(word)) return refuse("native multisample stencil initial HTILE does not prove its clear value");
