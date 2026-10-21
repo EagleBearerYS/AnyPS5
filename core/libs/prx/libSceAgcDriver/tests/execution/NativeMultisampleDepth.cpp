@@ -1253,8 +1253,8 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     std::printf("Native depth with a separate stencil plane samples=%u clear=%u fill=%u pipeAligned=%u: imported, stencil-tested and sampled with and without HTILE; other metadata and XOR refused\n", fragments, one, static_cast<std::uint32_t>(fill), pipeAligned);
 }
 
-enum class GhostFill { Stored, QueuedAfterNote, QueuedBeforeNote };
-enum class GhostFault { None, LaterStencilWrite, OtherHtileWord, PartialHtileFill, CreationRefused };
+enum class GhostFill { Stored, QueuedAfterNote, QueuedBeforeNote, QueuedNotedTwice };
+enum class GhostFault { None, LaterStencilWrite, OtherHtileWord, PartialHtileFill, CreationRefused, RepeatedStencilNote };
 
 void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path, GhostFault fault = GhostFault::None) {
     const VkExtent2D extent{5u, 3u};
@@ -1280,9 +1280,14 @@ void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path
     for (const auto& range : {std::pair{target.htileAddress, metadataBytes}, std::pair{target.stencilAddress, stencilBytes}}) {
         const auto address = range.first;
         const auto size = range.second;
+        const bool htile = address == target.htileAddress;
         if (path == GhostFill::QueuedBeforeNote) QueueTargetWordFill(context, recorder, address, size, 0u);
         NoteDepthMetadataFill(address, size, 0u);
-        const bool htile = address == target.htileAddress;
+        if (!htile && fault == GhostFault::RepeatedStencilNote) NoteDepthMetadataFill(address, size, 0u);
+        if (path == GhostFill::QueuedNotedTwice) {
+            QueueTargetWordFill(context, recorder, address, size, 0u);
+            NoteDepthMetadataFill(address, size, 0u);
+        }
         if (path == GhostFill::QueuedAfterNote) QueueTargetWordFill(context, recorder, address, htile && fault == GhostFault::PartialHtileFill ? size - 4u : size, htile && fault == GhostFault::OtherHtileWord ? 0xfffffff0u : 0u);
         if (path == GhostFill::Stored) AgcDriver::GuestMemory::StoreOwnBytes(address, size, [&] { std::memset(reinterpret_cast<void*>(address), 0, size); });
     }
@@ -1697,12 +1702,16 @@ int main(int argc, char** argv) {
                 std::printf("Native depth with a separate stencil plane fill fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
             for (const auto samples : {2u, 4u, 8u}) {
-                if (!supported(samples)) { unavailable += 3u; continue; }
-                for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote, GhostFill::QueuedBeforeNote}) { CheckGhostSequence(context, samples, path); ++checked; }
+                if (!supported(samples)) { unavailable += 4u; continue; }
+                for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote, GhostFill::QueuedBeforeNote, GhostFill::QueuedNotedTwice}) { CheckGhostSequence(context, samples, path); ++checked; }
             }
             for (const auto fault : {GhostFault::LaterStencilWrite, GhostFault::OtherHtileWord, GhostFault::PartialHtileFill}) {
                 TargetRefuses([&] { CheckGhostSequence(context, 4u, GhostFill::QueuedAfterNote, fault); }, "external GPU writes over native multisample depth are not implemented");
                 std::printf("Native depth after HTILE and stencil plane fills fault=%u refused: external GPU writes over native multisample depth are not implemented\n", static_cast<std::uint32_t>(fault));
+            }
+            for (const auto path : {GhostFill::Stored, GhostFill::QueuedNotedTwice}) {
+                TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::RepeatedStencilNote); }, "overlapping native multisample stencil plane fills are not implemented");
+                std::printf("Native depth after HTILE and stencil plane fills path=%u refused a stencil plane fill noted twice without a write between: overlapping native multisample stencil plane fills are not implemented\n", static_cast<std::uint32_t>(path));
             }
             for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote}) {
                 TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::CreationRefused); }, "native multisample depth HTILE that is not pipe-aligned holds more than one word");
