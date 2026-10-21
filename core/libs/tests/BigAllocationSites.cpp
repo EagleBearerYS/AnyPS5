@@ -7,7 +7,15 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <chrono>
+#include <thread>
+#endif
+
 namespace {
+
+#ifndef _WIN32
 
 void* allocate(std::size_t bytes) {
     void* block = std::malloc(bytes != 0 ? bytes : 1);
@@ -36,7 +44,11 @@ void release(void* block) noexcept {
     return vectors;
 }
 
+#endif
+
 }
+
+#ifndef _WIN32
 
 [[gnu::noinline]] void* operator new(std::size_t bytes) {
     if (void* block = allocate(bytes)) return block;
@@ -122,6 +134,91 @@ void release(void* block) noexcept {
     release(block);
 }
 
+#endif
+
+#ifdef _WIN32
+
+[[gnu::noinline]] void* MallocMegabyte() {
+    auto* block = static_cast<std::uint8_t*>(std::malloc(std::size_t{1} << 20));
+    if (block != nullptr) block[0] = 1;
+    return block;
+}
+
+[[gnu::noinline]] void* NewMegabyte() {
+    auto* block = static_cast<std::uint8_t*>(::operator new(std::size_t{1} << 20));
+    block[0] = 2;
+    return block;
+}
+
+namespace {
+
+bool hooksInstalled() {
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+        const auto text = BigAllocationsReport_nid_no_patch("hooks");
+        const auto at = text.find("; hooked ");
+        if (at != std::string::npos && text.compare(at, 11, "; hooked 0 ") != 0) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
+std::string moduleName() {
+    std::string path(MAX_PATH, '\0');
+    const auto length = GetModuleFileNameA(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    path.resize(length);
+    const auto slash = path.find_last_of("\\/");
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+const char* framedAs(const std::string& text, const std::string& module, std::uintptr_t function) {
+    const auto start = function - reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    const auto token = module + "+0x";
+    std::size_t lineStart = 0;
+    while (lineStart < text.size()) {
+        auto lineEnd = text.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = text.size();
+        const auto line = text.substr(lineStart, lineEnd - lineStart);
+        lineStart = lineEnd + 1;
+        const auto frames = line.find(" frames ");
+        if (line.rfind("[bigalloc] #", 0) != 0 || frames == std::string::npos) continue;
+        for (auto at = line.find(token, frames); at != std::string::npos; at = line.find(token, at + 1)) {
+            const auto offset = std::strtoull(line.c_str() + at + token.size(), nullptr, 16);
+            if (offset > start && offset <= start + 0x100) return line.find(" scanned frames ") != std::string::npos ? "scanned" : "unwound";
+        }
+    }
+    return nullptr;
+}
+
+}
+
+int main() {
+    if (!BigAllocationsEnabled_nid_no_patch()) {
+        std::fputs("big allocation sites: run with APS5_PROFILE_BIG_ALLOCS=1\n", stderr);
+        return 1;
+    }
+    if (!hooksInstalled()) {
+        std::fputs("big allocation sites: the heap imports were not hooked within 10 s\n", stderr);
+        return 1;
+    }
+    void* first = MallocMegabyte();
+    void* second = NewMegabyte();
+    const auto text = BigAllocationsReport_nid_no_patch("test");
+    std::fputs(text.c_str(), stdout);
+    std::free(first);
+    ::operator delete(second);
+    const auto module = moduleName();
+    const auto* malloced = framedAs(text, module, reinterpret_cast<std::uintptr_t>(&MallocMegabyte));
+    const auto* created = framedAs(text, module, reinterpret_cast<std::uintptr_t>(&NewMegabyte));
+    if (malloced == nullptr || created == nullptr) {
+        std::fprintf(stderr, "big allocation sites: no stack has a frame in %s:\n%s", malloced == nullptr ? "MallocMegabyte" : "NewMegabyte", text.c_str());
+        return 1;
+    }
+    std::printf("big allocation sites tests passed (MallocMegabyte %s, NewMegabyte %s)\n", malloced, created);
+    return 0;
+}
+
+#else
+
 int main() {
     if (!BigAllocationsEnabled_nid_no_patch()) {
         std::fputs("big allocation sites: run with APS5_PROFILE_BIG_ALLOCS=1\n", stderr);
@@ -132,7 +229,7 @@ int main() {
     vectors.erase(vectors.begin());
     const auto text = BigAllocationsReport_nid_no_patch("test");
     std::fputs(text.c_str(), stdout);
-    const auto stack = text.find(" live 2.0 MiB in 2 (+3 -1) sizes 1MiB 2 2MiB 0 other 0 frames ");
+    const auto stack = text.find(" live 2.0 MiB in 2 (+3 -1) sizes 1MiB 2 2MiB 0 other 0 unwound frames ");
     if (stack == std::string::npos) {
         std::fprintf(stderr, "big allocation sites: no stack holds 2 live 1 MiB blocks of 3 allocated and 1 freed:\n%s", text.c_str());
         return 1;
@@ -144,3 +241,5 @@ int main() {
     std::puts("big allocation sites tests passed");
     return 0;
 }
+
+#endif
