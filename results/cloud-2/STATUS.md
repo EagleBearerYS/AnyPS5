@@ -1,5 +1,3 @@
-BUSY PM-083
-since: 2026-10-21T18:27:46Z (claimed)
-claimed: tasks/claimed/PM-083.md
-step: fetching upstream main and the six PR heads
-previous: BF-115 done, results/cloud-2/BF-115.md
+READY
+since: 2026-10-21T19:16:32Z
+previous: PM-083 done, results/cloud-2/PM-083.md (test/village-speed-stack d7c302cee3)
