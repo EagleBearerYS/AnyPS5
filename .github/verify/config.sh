@@ -1,0 +1,4 @@
+BASE=b00235dda0bdf5101c6af181416e57529e5fa2ba
+REPEAT=5
+EXTRA_TESTS='agc_unit_shadow|agc_idle_publish_wait|agc_driver_bda_reads_shadowed_results|agc_driver_bda_reads_shadowed_results_per_build|agc_unit_shadow_completion_store'
+NO_BEFORE=1
