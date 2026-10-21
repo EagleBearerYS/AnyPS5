@@ -47,7 +47,7 @@ constexpr int SaNodefer = 0x10;
 constexpr int SaSiginfo = 0x40;
 constexpr int SaDefinedFlags = 0x7f;
 std::atomic<GuestHandler> handlers[MaxSignal + 1]{};
-std::atomic<std::uint32_t> handlerMasks[MaxSignal + 1]{};
+std::atomic<std::uint32_t> handlerMasks[MaxSignal + 1][4]{};
 std::atomic<int> handlerFlags[MaxSignal + 1]{};
 std::atomic<bool> handlerReset[MaxSignal + 1]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
@@ -163,12 +163,17 @@ void ResetToDefault(int guest) {
 }
 void RunHandler(int guest, GuestHandler handler) {
     const int flags = handlerFlags[guest].load();
-    std::uint32_t mask = handlerMasks[guest].load();
-    if ((flags & SaNodefer) == 0 && guest <= 32) mask |= SignalBit(guest);
+    std::uint32_t mask[4];
+    for (int word = 0; word < 4; ++word) mask[word] = handlerMasks[guest][word].load();
+    if ((flags & SaNodefer) == 0) mask[SignalWord(guest)] |= SignalBit(guest);
+    mask[0] &= ~UnblockableSignals;
     if ((flags & SaResethand) != 0) ResetToDefault(guest);
-    const std::uint32_t added = mask & ~blockedMask.fetch_or(mask);
+    std::uint32_t added[4];
+    added[0] = mask[0] & ~blockedMask.fetch_or(mask[0]);
+    for (int word = 1; word < 4; ++word) added[word] = mask[word] & ~blockedMaskExtra[word - 1].fetch_or(mask[word]);
     handler(guest);
-    blockedMask.fetch_and(~added);
+    blockedMask.fetch_and(~added[0]);
+    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_and(~added[word]);
 }
 void Dispatch(int native) {
     int guest = 0;
@@ -191,7 +196,7 @@ bool Delivered(const GuestSigaction& action) {
 }
 bool Install(int guest, const GuestSigaction& action) {
     handlerReset[guest].store(false);
-    handlerMasks[guest].store(action.mask.bits[0]);
+    for (int word = 0; word < 4; ++word) handlerMasks[guest][word].store(action.mask.bits[word]);
     handlerFlags[guest].store(action.flags);
     const int native = NativeSignal(guest);
     if (!native) return true;

@@ -21,6 +21,7 @@ struct GuestSigaction {
     GuestSignalSet mask;
 };
 
+static constexpr int SigKill = 9;
 static constexpr int SigTerm = 15;
 static constexpr int SigUsr1 = 30;
 static constexpr int SigUsr2 = 31;
@@ -71,6 +72,13 @@ static void APS5_VABI BlockFromOtherThread(int) {
     }).join();
 }
 
+static GuestSignalSet setInHandler{};
+
+static void APS5_VABI RecordMask(int) {
+    ++calls;
+    Require(sigprocmask_nid_postfix(SigBlock, nullptr, &setInHandler) == 0);
+}
+
 static void Install(int signal, void (APS5_VABI* handler)(int), int flags, std::uint32_t mask) {
     GuestSigaction action{reinterpret_cast<std::uintptr_t>(handler), flags, {{mask, 0, 0, 0}}};
     Require(sigaction_nid_postfix(signal, &action, nullptr) == 0);
@@ -119,6 +127,18 @@ static void CheckOtherThreadKept() {
     Require(CurrentMask() == 0);
 }
 
+static void CheckUpperMaskWords() {
+    calls = 0;
+    const GuestSigaction action{reinterpret_cast<std::uintptr_t>(RecordMask), SaRestart, {{Bit(SigKill), 1u << 7, 0, 1u << 31}}};
+    Require(sigaction_nid_postfix(SigUsr1, &action, nullptr) == 0);
+    Require(raise_nid_postfix(SigUsr1) == 0);
+    Require(calls == 1);
+    Require(setInHandler.bits[0] == Bit(SigUsr1) && setInHandler.bits[1] == 1u << 7 && setInHandler.bits[2] == 0 && setInHandler.bits[3] == 1u << 31);
+    GuestSignalSet after{};
+    Require(sigprocmask_nid_postfix(SigBlock, nullptr, &after) == 0);
+    Require(after.bits[0] == 0 && after.bits[1] == 0 && after.bits[2] == 0 && after.bits[3] == 0);
+}
+
 static void CheckLeftWithLongjmp() {
     calls = 0;
     Install(SigUsr1, LeaveWithLongjmp, SaRestart, Bit(SigUsr2));
@@ -138,6 +158,7 @@ int main() {
     CheckNodefer();
     CheckResethand();
     CheckOtherThreadKept();
+    CheckUpperMaskWords();
     CheckLeftWithLongjmp();
     return 0;
 }
