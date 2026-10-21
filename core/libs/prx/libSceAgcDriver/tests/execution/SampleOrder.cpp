@@ -703,6 +703,51 @@ std::vector<std::uint32_t> SwapSampleCounts(const Context& context) {
     return counts;
 }
 
+struct RecordedBarrier {
+    VkImageAspectFlags aspects;
+    VkImageLayout from;
+    VkImageLayout to;
+};
+
+PFN_vkCmdPipelineBarrier forwardBarrier = nullptr;
+std::vector<RecordedBarrier> recordedBarriers;
+
+VKAPI_ATTR void VKAPI_CALL RecordBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags dependencies, std::uint32_t memoryCount, const VkMemoryBarrier* memory, std::uint32_t bufferCount, const VkBufferMemoryBarrier* buffers, std::uint32_t imageCount, const VkImageMemoryBarrier* images) {
+    for (std::uint32_t index = 0; index < imageCount; ++index) recordedBarriers.push_back({images[index].subresourceRange.aspectMask, images[index].oldLayout, images[index].newLayout});
+    forwardBarrier(commands, source, destination, dependencies, memoryCount, memory, bufferCount, buffers, imageCount, images);
+}
+
+int DepthCopyBarriers(AgcDriver::VulkanDevice& device) {
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!context.sampleRateShading) {
+        std::printf("skipped, the device lacks sampleRateShading\n");
+        return VulkanTestSkipped;
+    }
+    static AgcDriver::Graphics::DeviceFunctions functions{};
+    if (context.functions != nullptr) functions = *context.functions;
+    forwardBarrier = functions.cmdPipelineBarrier != nullptr ? functions.cmdPipelineBarrier : context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+    functions.cmdPipelineBarrier = RecordBarrier;
+    context.functions = &functions;
+    std::uint32_t swapped = 0;
+    for (const auto samples : SwapSampleCounts(context)) {
+        for (const auto format : {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT}) {
+            recordedBarriers.clear();
+            if (!DepthSwaps(context, format, samples, SampleOrderMethod::Depth)) continue;
+            ++swapped;
+            for (const auto& barrier : recordedBarriers) {
+                if ((barrier.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) == 0u) continue;
+                Require((barrier.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0u, "the " + std::to_string(samples) + "x depth format " + std::to_string(format) + " through a depth pass: an image barrier from layout " + std::to_string(barrier.from) + " to " + std::to_string(barrier.to) + " names the depth aspect but not the stencil aspect of its depth/stencil format");
+            }
+        }
+    }
+    if (swapped == 0u) {
+        std::printf("skipped, no depth/stencil format can be sampled at a multisampled count here\n");
+        return VulkanTestSkipped;
+    }
+    std::printf("every image barrier of %u depth passes over depth/stencil formats names both aspects\n", swapped);
+    return 0;
+}
+
 std::uint32_t SwapPasses(const Context& context) {
     std::uint32_t swapped = 0;
     for (const auto samples : SwapSampleCounts(context)) {
@@ -1554,6 +1599,7 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         if (mode == "--grid-reference") return GridReference(*device);
         if (mode == "--recipe-depth-locations") return RecipeDepthLocations(*device);
+        if (mode == "--depth-copy-barriers") return DepthCopyBarriers(*device);
         if (mode == "--bench") {
             VkExtent2D extent{1920u, 2160u};
             if (argc > 2) Require(std::sscanf(argv[2], "%ux%u", &extent.width, &extent.height) == 2, "--bench takes WIDTHxHEIGHT");
