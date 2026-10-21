@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T12:19:20Z
+BUSY BF-112
+since: 2026-10-21T12:26:53Z
 previous: BF-110 done, results/cloud-5/BF-110.md: on main d099bc6cd8 with vulkan-validationlayers 1.3.275 (core, sync, GPU-AV) on lavapipe 4x, one message in the pass: VUID-VkImageMemoryBarrier-image-03320 (the sample order copy UNDEFINED->GENERAL barrier names only depth for D32S8 under the depth-only method); fixed on fix/agc-sample-order-depth-copy-aspects = 5a9d89179c with agc_driver_sample_order_depth_copy_barriers (red 20/20, green 20/20) and the map-index check agc_driver_sample_order_map_indices (3,003 orders pass); step 2 setups all valid; lavapipe has no 2x and no sample locations, so the reporter's located 2x D32 path was not reachable; suggestions listed. Before that: BF-109 done, results/cloud-5/BF-109.md.
 
 RESULT (setup):
