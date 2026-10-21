@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -227,6 +228,15 @@ void Driver::execute(const Submission& submission) {
         ~ClearAhead() { clearResolvedAhead(); }
     } clearAhead;
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+        struct PacketSplit {
+            GuestMemory::SplitLap lap;
+            bool draw = false;
+            ~PacketSplit() {
+                static const auto drawSlot = GuestMemory::SplitClock("w.packet: draw");
+                static const auto otherSlot = GuestMemory::SplitClock("w.packet: other");
+                lap.Mark(draw ? drawSlot : otherSlot);
+            }
+        } packetSplit;
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
         CheckFailure();
         const auto header = submission.commands[cursor];
@@ -287,7 +297,10 @@ void Driver::execute(const Submission& submission) {
         }
 
         const auto flushStart = profilePackets ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        GuestMemory::SplitLap flushLap;
         flushBetweenPackets(submission.queue, header, opcode == 0x49 || opcode == 0x37);
+        static const auto flushSlot = GuestMemory::SplitClock("w.flush between packets");
+        flushLap.Mark(flushSlot);
         timing.Mark("flush_between_packets");
         PacketTimer packetTimer{profilePackets, header == FlipPacketHeader ? 0xffffu : opcode, submission.queue, packetProfile, std::chrono::steady_clock::now()};
 
@@ -420,6 +433,7 @@ void Driver::execute(const Submission& submission) {
                 }
             }
         } else if (drawPacket) {
+            packetSplit.draw = true;
             landPendingWaits(submission.queue);
             packetCounters.CountDraw();
             drawnSinceSeal() = true;

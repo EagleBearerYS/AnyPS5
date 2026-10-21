@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
@@ -2035,9 +2036,17 @@ LookupOutcomes& ThreadLookupOutcomes() {
 bool StorageTexture::Refresh() {
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    GuestMemory::SplitLap refreshLap;
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (descriptor.dccAddress != 0) CompletePendingCpuWrites(context, descriptor.dccAddress, DccKeyBytes(guestBytes));
-    if (refreshProved()) {
+    static const auto completeSlot = GuestMemory::SplitClock("c.refresh: CompletePendingCpuWrites");
+    refreshLap.Mark(completeSlot);
+    const bool proved = refreshProved();
+    static const auto provedSlot = GuestMemory::SplitClock("c.refresh: refreshProved");
+    static const auto provedCount = GuestMemory::SplitClock("c.refresh: count of proved refreshes (x1000)");
+    refreshLap.Mark(provedSlot);
+    if (proved) GuestMemory::AddSplitClock(provedCount, 1000);
+    if (proved) {
         NoteProved();
         refreshesProved.fetch_add(1, std::memory_order_relaxed);
         if (profile) LookupOutcomes::Add(LookupOutcomes::RefreshProved, start);
@@ -2076,12 +2085,19 @@ bool StorageTexture::Refresh() {
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr ? clearHandOver() : std::nullopt;
+    static const auto aliasSlot = GuestMemory::SplitClock("c.full: proof reset, alias, hand-over");
+    refreshLap.Mark(aliasSlot);
     const bool flushed = !handOverKeys.has_value() && FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias.get(), "storage refresh", PublishScope::None);
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
+    static const auto flushSlot = GuestMemory::SplitClock("c.full: FlushPending");
+    refreshLap.Mark(flushSlot);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
     // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
     // since `generation` need no comparison.
     const auto current = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    static const auto collectSlot = GuestMemory::SplitClock("c.full: CollectWrites");
+    refreshLap.Mark(collectSlot);
+    if (current == 0 && GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.full: CollectWrites returned 0 (x1000)"), 1000);
     // Per tracked layer: changed since its generation (a keys change makes every layer stale).
     std::vector<bool> changed(trackedLayers, false);
     // Per 64 KiB block of the surface (blockGenerations): stamped since its layer's generation, and
@@ -2106,12 +2122,17 @@ bool StorageTexture::Refresh() {
             return GuestMemory::EqualsCommitted(descriptor.baseAddress, original);
         };
         const auto scanBlocks = [&] {
+            GuestMemory::SplitLap scanLap;
             blockGenerations(generations);
+            { static const auto slot = GuestMemory::SplitClock("c.scan: blockGenerations"); scanLap.Mark(slot); }
             stampedBlocks.assign(generations.size(), 0);
             cpuBlocks.assign(generations.size(), 0);
             tracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks);
+            { static const auto slot = GuestMemory::SplitClock("c.scan: ChangedBlocks"); scanLap.Mark(slot); }
             if (!tracked) awaitStoredSave(nullptr);
+            { static const auto slot = GuestMemory::SplitClock("c.scan: awaitStoredSave"); scanLap.Mark(slot); }
             compared = !tracked && compareUntracked(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), stampedBlocks, true);
+            { static const auto slot = GuestMemory::SplitClock("c.scan: compareUntracked"); scanLap.Mark(slot); }
             if (compared) {
                 for (const auto& [from, unitGeneration] : keptAtUnwatch) {
                     const auto unit = static_cast<std::uint32_t>((from - descriptor.baseAddress) / trackedLayerBytes);
@@ -2123,6 +2144,8 @@ bool StorageTexture::Refresh() {
         const auto keysStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         keys = handOverKeys.has_value() ? *handOverKeys : ProvedKeys();
         if (profile && descriptor.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, keysStart);
+        static const auto keysSlot = GuestMemory::SplitClock("c.full: ProvedKeys");
+        refreshLap.Mark(keysSlot);
         if (keys != uploadedKeys) {
             changed.assign(trackedLayers, true);
             unchanged = false;
@@ -2172,10 +2195,14 @@ bool StorageTexture::Refresh() {
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (changed[layer] && layerPending[layer]) pendingChanged = true;
         }
+        static const auto changeSlot = GuestMemory::SplitClock("c.full: unchanged-since and block scan");
+        refreshLap.Mark(changeSlot);
         if (!unchanged && !keysChanged && !pendingChanged && originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) && equalsOriginal()) {
             unchanged = true;
             stamped = false;
         }
+        static const auto compareSlot = GuestMemory::SplitClock("c.full: compare with original");
+        refreshLap.Mark(compareSlot);
         // Only the direct path uploads the selected layers alone (see upload); the others replace
         // the whole image, so every pending layer's results are stored first.
         direct = keys == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
@@ -2202,11 +2229,16 @@ bool StorageTexture::Refresh() {
             }
         }
     }
+    static const auto restSlot = GuestMemory::SplitClock("c.full: direct and alias checks");
+    refreshLap.Mark(restSlot);
     if (unchanged) {
         ++Profile().storageReused;
         layerGeneration.assign(trackedLayers, current);
         refreshGeneration();
         takeRefreshProof(alias != nullptr);
+        static const auto takeSlot = GuestMemory::SplitClock("c.full: generation and takeRefreshProof");
+        refreshLap.Mark(takeSlot);
+        if (GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.full: unchanged (x1000)"), 1000);
         if (profile) LookupOutcomes::Add(stamped ? LookupOutcomes::RefreshUnchanged : LookupOutcomes::RefreshCompared, start);
         return true;
     }
@@ -2334,12 +2366,26 @@ bool StorageTexture::otherPendingOverlaps() const {
 }
 
 bool StorageTexture::refreshProved() {
-    if (refreshProof.generation == 0) return false;
-    if (generation != refreshProof.generation || uploadedKeys != refreshProof.keys || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    if (refreshProof.generation == 0) {
+        if (GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.why: no proof taken (x1000)"), 1000);
+        return false;
+    }
+    if (generation != refreshProof.generation || uploadedKeys != refreshProof.keys || !GuestMemory::GpuMutex().HeldByThisThread()) {
+        if (GuestMemory::SplitClocks()) {
+            if (generation != refreshProof.generation) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.why: generation moved (x1000)"), 1000);
+            else if (uploadedKeys != refreshProof.keys) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.why: keys moved (x1000)"), 1000);
+            else GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.why: GPU lock not held (x1000)"), 1000);
+        }
+        return false;
+    }
     const auto bytes = static_cast<std::size_t>(guestBytes);
     std::array<GuestMemory::UnchangedQuery, 2> queries{};
     std::size_t used = 0;
-    if (GuestMemory::CollectWrites(descriptor.baseAddress, bytes) == 0) return false;
+    GuestMemory::SplitLap provedLap;
+    const auto collected = GuestMemory::CollectWrites(descriptor.baseAddress, bytes);
+    static const auto collectSlot = GuestMemory::SplitClock("c.proved: CollectWrites");
+    provedLap.Mark(collectSlot);
+    if (collected == 0) return false;
     queries[used++] = {descriptor.baseAddress, bytes, generation};
     if (descriptor.dccAddress != 0) {
         const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
@@ -2347,10 +2393,18 @@ bool StorageTexture::refreshProved() {
         if (GuestMemory::CollectWrites(descriptor.dccAddress, keyCount) == 0) return false;
         queries[used++] = {descriptor.dccAddress, keyCount, keyProof.generation};
     }
-    if (!GuestMemory::UnchangedSinceAll(std::span(queries.data(), used))) return false;
+    const bool unchangedAll = GuestMemory::UnchangedSinceAll(std::span(queries.data(), used));
+    static const auto unchangedSlot = GuestMemory::SplitClock("c.proved: UnchangedSinceAll");
+    provedLap.Mark(unchangedSlot);
+    if (!unchangedAll) return false;
     const auto serial = PendingSerial();
     if (serial != refreshProof.pendingSerial) {
-        if (otherPendingOverlaps()) return false;
+        static const auto overlapCount = GuestMemory::SplitClock("c.proved: count of pending overlap checks (x1000)");
+        GuestMemory::AddSplitClock(overlapCount, 1000);
+        const bool overlaps = otherPendingOverlaps();
+        static const auto overlapSlot = GuestMemory::SplitClock("c.proved: otherPendingOverlaps");
+        provedLap.Mark(overlapSlot);
+        if (overlaps) return false;
         refreshProof.pendingSerial = serial;
     }
     return true;
@@ -2358,10 +2412,24 @@ bool StorageTexture::refreshProved() {
 
 void StorageTexture::takeRefreshProof(bool aliased) {
     refreshProof = {};
-    if (aliased || generation == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return;
-    if (descriptor.dccAddress != 0 && (keyProof.generation == 0 || keyProof.keys != uploadedKeys)) return;
+    if (aliased || generation == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) {
+        if (GuestMemory::SplitClocks()) {
+            if (aliased) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.take: aliased (x1000)"), 1000);
+            else if (generation == 0) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.take: generation 0 (x1000)"), 1000);
+            else GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.take: GPU lock not held (x1000)"), 1000);
+        }
+        return;
+    }
+    if (descriptor.dccAddress != 0 && (keyProof.generation == 0 || keyProof.keys != uploadedKeys)) {
+        if (GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.take: DCC key proof (x1000)"), 1000);
+        return;
+    }
     const auto serial = PendingSerial();
-    if (otherPendingOverlaps()) return;
+    if (otherPendingOverlaps()) {
+        if (GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.take: other pending overlaps (x1000)"), 1000);
+        return;
+    }
+    if (GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.take: taken (x1000)"), 1000);
     refreshProof = {generation, serial, keyProof.generation, uploadedKeys};
 }
 
@@ -2438,7 +2506,9 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     refreshing = this;
     Require(address >= descriptor.baseAddress && bytes <= guestBytes && address - descriptor.baseAddress <= guestBytes - bytes, "texture comparison exceeds its snapshot");
     Require(original.size() == guestBytes, "texture comparison has no complete snapshot");
+    GuestMemory::SplitLap compareLap;
     GuestMemory::FlushGpuWrites(address, bytes);
+    { static const auto slot = GuestMemory::SplitClock("c.compare: FlushGpuWrites"); compareLap.Mark(slot); }
     if (!originalHolds(address, bytes)) return false;
     constexpr std::uint64_t blockBytes = 65536;
     const auto end = address + bytes;
@@ -2448,12 +2518,19 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     const auto epoch = GuestMemory::CollectEpoch();
     const bool whole = address == descriptor.baseAddress && bytes == guestBytes;
     const auto hint = memoize && epoch != 0 && whole ? GuestMemory::UntrackedHint(address, bytes) : 0;
-    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetSerial(), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    { static const auto slot = GuestMemory::SplitClock("c.compare: hint and epoch"); compareLap.Mark(slot); }
+    const auto newestStamp = GuestMemory::NewestStamp(address, bytes);
+    { static const auto slot = GuestMemory::SplitClock("c.compare: NewestStamp"); compareLap.Mark(slot); }
+    const auto newestNote = recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0;
+    { static const auto slot = GuestMemory::SplitClock("c.compare: NewestWriteNote"); compareLap.Mark(slot); }
+    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, newestStamp, GuestMemory::ForgetSerial(), newestNote};
     const bool cacheable = memoize && epoch != 0 && (stamp[3] & 1u) == 0 && whole;
     if (cacheable && comparedGuestBytes == stamp) {
         std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
+        if (GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock("c.compare: memo hits (x1000)"), 1000);
         return true;
     }
+    if (GuestMemory::SplitClocks()) GuestMemory::AddSplitClock(GuestMemory::SplitClock(cacheable ? "c.compare: memo misses, cacheable (x1000)" : "c.compare: not cacheable (x1000)"), 1000);
     untrackedCompares.fetch_add(1, std::memory_order_relaxed);
     const auto saved = std::span(original).subspan(static_cast<std::size_t>(address - descriptor.baseAddress), bytes);
     if (GuestMemory::EqualsCommittedUnsynced(address, saved)) {
@@ -2461,6 +2538,7 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
         if (cacheable) comparedGuestBytes = stamp;
         return true;
     }
+    { static const auto slot = GuestMemory::SplitClock("c.compare: whole compare"); compareLap.Mark(slot); }
     comparedGuestBytes = {};
     for (std::size_t index = 0; index < changed.size(); ++index) {
         const auto begin = std::max(address, (first + index) * blockBytes);

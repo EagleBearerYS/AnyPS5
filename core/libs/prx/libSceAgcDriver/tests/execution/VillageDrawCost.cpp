@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -427,20 +428,32 @@ void Cost(const Layout& layout, std::uint32_t frames) {
     std::vector<double> totalCpu;
     std::vector<double> rasterCpu;
     std::map<std::string, std::vector<double>> held;
+    std::vector<double> cpuSum(threads.size(), 0.0);
 #endif
+    std::vector<std::map<std::string, double>> splitFrames;
+    std::vector<std::string> splitOrder;
     for (std::uint32_t frame = 0; frame < frames; ++frame) {
 #ifdef __linux__
         std::vector<std::uint64_t> cpuBefore;
         for (const auto& thread : threads) cpuBefore.push_back(ThreadCpuNs(thread.first));
         const auto heldBefore = HeldNs();
 #endif
+        const auto splitBefore = AgcDriver::GuestMemory::SplitClockTotals();
         perDraw.push_back(Submit(commandSets[frame % commandSets.size()]) / draws);
+        const auto splitAfter = AgcDriver::GuestMemory::SplitClockTotals();
+        auto& splitFrame = splitFrames.emplace_back();
+        for (std::size_t slot = 0; slot < splitAfter.size(); ++slot) {
+            const auto before = slot < splitBefore.size() ? splitBefore[slot].second : 0;
+            if (std::find(splitOrder.begin(), splitOrder.end(), splitAfter[slot].first) == splitOrder.end()) splitOrder.push_back(splitAfter[slot].first);
+            splitFrame[splitAfter[slot].first] = static_cast<double>(splitAfter[slot].second - before);
+        }
 #ifdef __linux__
         double sum = 0.0;
         double raster = 0.0;
         for (std::size_t t = 0; t < threads.size(); ++t) {
             const auto value = static_cast<double>(ThreadCpuNs(threads[t].first) - cpuBefore[t]) / 1e3 / draws;
             cpu[t].push_back(value);
+            cpuSum[t] += value;
             (rasterizer(threads[t].second) ? raster : sum) += value;
         }
         totalCpu.push_back(sum);
@@ -484,7 +497,47 @@ void Cost(const Layout& layout, std::uint32_t frames) {
         split += text;
     }
     std::printf("village split: us per draw, median of %u frames:%s\n", frames, split.c_str());
+    const auto medianDraw = Median(perDraw);
+    std::vector<bool> normal(frames, false);
+    std::uint32_t normalFrames = 0;
+    for (std::uint32_t frame = 0; frame < frames; ++frame) {
+        normal[frame] = perDraw[frame] <= 2.0 * medianDraw;
+        if (normal[frame]) ++normalFrames;
+    }
+    std::string means;
+    for (std::size_t t = 0; t < threads.size(); ++t) {
+        double sum = 0.0;
+        for (std::uint32_t frame = 0; frame < frames; ++frame) {
+            if (normal[frame]) sum += cpu[t][frame];
+        }
+        std::snprintf(text, sizeof(text), " %s cpu %.2f", threads[t].second.c_str(), sum / normalFrames);
+        means += text;
+    }
+    std::printf("village cpu means: us per draw, mean of the %u frames within twice the median frame time:%s\n", normalFrames, means.c_str());
+#else
+    const auto medianDraw = Median(perDraw);
+    std::vector<bool> normal(frames, false);
+    std::uint32_t normalFrames = 0;
+    for (std::uint32_t frame = 0; frame < frames; ++frame) {
+        normal[frame] = perDraw[frame] <= 2.0 * medianDraw;
+        if (normal[frame]) ++normalFrames;
+    }
 #endif
+    if (!splitOrder.empty()) {
+        std::sort(splitOrder.begin(), splitOrder.end());
+        std::printf("village phases: us per draw, mean of the %u frames within twice the median frame time (APS5_PROFILE_DRAW clock pairs)\n", normalFrames);
+        for (const auto& name : splitOrder) {
+            double sum = 0.0;
+            for (std::uint32_t frame = 0; frame < frames; ++frame) {
+                if (!normal[frame]) continue;
+                const auto found = splitFrames[frame].find(name);
+                if (found != splitFrames[frame].end()) sum += found->second;
+            }
+            const auto us = sum / 1e3 / (static_cast<double>(normalFrames) * draws);
+            if (us >= 0.005) std::printf("  %-56s %8.2f\n", name.c_str(), us);
+        }
+    }
+    std::fflush(stdout);
 }
 
 }

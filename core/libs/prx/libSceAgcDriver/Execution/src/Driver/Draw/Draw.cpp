@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -118,16 +119,21 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     if (FloorReuse() && pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
         auto current = decodeDraw(queue, submission, localDevice->graphicsContext());
         phaseTiming.Phase(DrawRowDecode);
+        GuestMemory::SplitLap floorLap;
         std::shared_ptr<const FloorDraw> floor;
         {
             std::lock_guard floorLock(FloorMutex());
             const auto found = FloorDraws().find(FloorKey(*current, localDevice->Serial()));
             if (found != FloorDraws().end()) floor = found->second;
         }
+        static const auto floorLookupSlot = GuestMemory::SplitClock("w.floor lookup");
+        floorLap.Mark(floorLookupSlot);
         if (floor != nullptr && !current->state.stages.mesh) {
             auto recipe = floor->recipeStages.empty() ? nullptr : findDrawRecipe(floor->drawKey, floor->recipeStages);
             auto writes = drawWriteRanges(current->state, floor->stages);
             auto reads = QueuedDrawReadRanges(drawParameters, floor->stages);
+            static const auto floorRangesSlot = GuestMemory::SplitClock("w.write and read ranges");
+            floorLap.Mark(floorRangesSlot);
             const auto commitQueue = submission.queue;
             const auto commitPacket = (packet[0] >> 8u) & 0xffu;
             const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
@@ -136,6 +142,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
                 commitDraw(localDevice, commitQueue, current->state, drawParameters, floor->stages, floor->snapshots, recipe, floor->recipeStages, floor->drawKey);
             }, std::move(writes), 0, {}, std::move(reads));
+            static const auto floorEnqueueSlot = GuestMemory::SplitClock("w.enqueue");
+            floorLap.Mark(floorEnqueueSlot);
             phaseTiming.Phase(DrawRowLockWait);
             return drawn();
         }
@@ -702,11 +710,14 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     if (pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
         phaseTiming.Phase(DrawRowVectors);
+        GuestMemory::SplitLap enqueueLap;
         auto writes = drawWriteRanges(graphics, stages);
         const auto commitQueue = submission.queue;
         const auto commitPacket = (packet[0] >> 8u) & 0xffu;
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         auto reads = QueuedDrawReadRanges(drawParameters, stages);
+        static const auto rangesSlot = GuestMemory::SplitClock("w.write and read ranges");
+        enqueueLap.Mark(rangesSlot);
         std::shared_ptr<FloorDraw> floorFill;
         std::vector<std::uint64_t> floorKey;
         if (FloorReuse() && !graphics.stages.mesh) {
@@ -728,7 +739,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             std::lock_guard floorLock(FloorMutex());
             FloorDraws().try_emplace(std::move(floorKey), std::move(floorFill));
         }
+        static const auto closureSlot = GuestMemory::SplitClock("w.commit closure");
+        enqueueLap.Mark(closureSlot);
         DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads));
+        static const auto enqueueSlot = GuestMemory::SplitClock("w.enqueue");
+        enqueueLap.Mark(enqueueSlot);
         phaseTiming.Phase(DrawRowLockWait);
         timing.Mark("draw_enqueued");
         return drawn();
@@ -755,24 +770,49 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
 }
 
 void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey) {
+    GuestMemory::SplitLap commitLap;
+    struct UnlockSplit {
+        GuestMemory::SplitLap& lap;
+        ~UnlockSplit() {
+            static const auto slot = GuestMemory::SplitClock("c.commit: GPU unlock");
+            lap.Mark(slot);
+        }
+    } unlockSplit{commitLap};
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    static const auto lockSlot = GuestMemory::SplitClock("c.commit: GPU lock");
+    commitLap.Mark(lockSlot);
     if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
     struct SubmitDue {
         Driver& driver;
         const std::shared_ptr<VulkanDevice>& device;
+        GuestMemory::SplitLap& lap;
         ~SubmitDue() noexcept(false) {
+            static const auto beforeSlot = GuestMemory::SplitClock("c.commit: recipe attach and return");
+            static const auto slot = GuestMemory::SplitClock("c.commit: submit due");
+            lap.Mark(beforeSlot);
             if (std::uncaught_exceptions() == 0) driver.submitDueAfterCommit(device.get());
+            lap.Mark(slot);
         }
-    } submitDue{*this, localDevice};
+    } submitDue{*this, localDevice, commitLap};
     recordLabelsForPacket(localDevice.get(), queue);
+    static const auto labelsSlot = GuestMemory::SplitClock("c.commit: labels for packet");
+    commitLap.Mark(labelsSlot);
     noteDrawWriters(stages, queue);
+    static const auto writersSlot = GuestMemory::SplitClock("c.commit: draw writers");
+    commitLap.Mark(writersSlot);
     if (recipe != nullptr) {
-        if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe) == RecipeOutcome::Recorded) return;
+        if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe) == RecipeOutcome::Recorded) {
+            static const auto recipeSlot = GuestMemory::SplitClock("c.commit: DrawFromRecipe");
+            commitLap.Mark(recipeSlot);
+            return;
+        }
         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
     }
     std::shared_ptr<const DrawRecipe> built;
     localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built);
+    static const auto drawSlot = GuestMemory::SplitClock("c.commit: VulkanDevice::Draw");
+    commitLap.Mark(drawSlot);
     if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built));
 }
 

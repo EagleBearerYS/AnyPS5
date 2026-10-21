@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
@@ -163,6 +164,7 @@ void DrawPipeline::run() {
             commit = stopped ? nullptr : &items.front().commit;
         }
         const auto start = std::chrono::steady_clock::now();
+        GuestMemory::SplitLap loopLap;
         std::exception_ptr fatal;
         bool failed = false;
         bool shutdown = false;
@@ -177,19 +179,33 @@ void DrawPipeline::run() {
         } catch (...) {
             fatal = std::current_exception();
         }
+        static const auto commitSlot = GuestMemory::SplitClock("c.loop: commit call");
+        loopLap.Mark(commitSlot);
         const auto spent = elapsedNs(start);
         if (fatal != nullptr && !stopped) {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);
         }
-        std::lock_guard lock(mutex);
-        items.pop_front();
-        ++commits;
-        commitNs += spent;
-        if (failed) ++commitErrors;
-        if (fatal != nullptr && failure == nullptr) failure = fatal;
-        outstanding.fetch_sub(1, std::memory_order_release);
-        if (idleWaiters != 0) idle.notify_all();
+        {
+            std::lock_guard lock(mutex);
+            static const auto mutexSlot = GuestMemory::SplitClock("c.loop: pipeline mutex");
+            loopLap.Mark(mutexSlot);
+            items.pop_front();
+            static const auto destroySlot = GuestMemory::SplitClock("c.loop: item destruction");
+            loopLap.Mark(destroySlot);
+            ++commits;
+            commitNs += spent;
+            if (failed) ++commitErrors;
+            if (fatal != nullptr && failure == nullptr) failure = fatal;
+            outstanding.fetch_sub(1, std::memory_order_release);
+            if (idleWaiters != 0) {
+                static const auto notifyCount = GuestMemory::SplitClock("c.loop: count of idle notifies (x1000)");
+                GuestMemory::AddSplitClock(notifyCount, 1000);
+                idle.notify_all();
+            }
+        }
+        static const auto popSlot = GuestMemory::SplitClock("c.loop: counters, notify and unlock");
+        loopLap.Mark(popSlot);
     }
     runningCommitters.fetch_sub(1, std::memory_order_acq_rel);
 }

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
@@ -3102,6 +3103,16 @@ std::uint64_t Recorder::NewestWriteNote(std::uint64_t address, std::size_t bytes
     };
     if (open != nullptr) scan(*open);
     for (const auto& batch : inFlight) scan(*batch);
+    if (GuestMemory::SplitClocks()) {
+        std::size_t entries = open != nullptr ? open->writes.size() : 0;
+        for (const auto& batch : inFlight) entries += batch->writes.size();
+        static const auto callSlot = GuestMemory::SplitClock("c.notes: NewestWriteNote calls (x1000)");
+        static const auto entrySlot = GuestMemory::SplitClock("c.notes: entries scanned (x1000)");
+        static const auto batchSlot = GuestMemory::SplitClock("c.notes: in-flight batches seen (x1000)");
+        GuestMemory::AddSplitClock(callSlot, 1000);
+        GuestMemory::AddSplitClock(entrySlot, entries * 1000);
+        GuestMemory::AddSplitClock(batchSlot, inFlight.size() * 1000);
+    }
     return newest;
 }
 

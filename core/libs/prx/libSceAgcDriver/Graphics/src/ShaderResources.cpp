@@ -22,6 +22,7 @@
 #include <exception>
 #include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -1113,8 +1114,11 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     if (viewed.baseAddress != requested.baseAddress) guestBytes = 0;
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
     RequireNoMultisampleTarget(viewed.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a storage image access");
+    GuestMemory::SplitLap entryLap;
     if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     const auto viewedBytes = guestBytes != 0 ? guestBytes : DescribeSurface(viewed).guestBytes;
+    static const auto entrySlot = GuestMemory::SplitClock("c.storage: depth surface check and DescribeSurface");
+    entryLap.Mark(entrySlot);
     if (viewedBytes >= (1ull << 30u)) {
         static std::atomic<std::uint64_t> large{0};
         const auto count = large.fetch_add(1) + 1;
@@ -1135,8 +1139,11 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto& counters = TextureCounts();
+    GuestMemory::SplitLap storageLap;
     const auto resource = StorageSurface(context, viewed);
     const StorageKey key{context.device, SurfaceKey(context, resource)};
+    static const auto keySlot = GuestMemory::SplitClock("c.storage: StorageSurface and SurfaceKey");
+    storageLap.Mark(keySlot);
     auto& cache = StorageTextures();
     std::vector<std::shared_ptr<StorageTexture>> evicted;
     std::shared_ptr<StorageTexture> texture;
@@ -1154,7 +1161,11 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             it = cache.entries.end();
         }
         if (it != cache.entries.end()) {
+            static const auto findSlot = GuestMemory::SplitClock("c.storage: cache lock and find");
+            storageLap.Mark(findSlot);
             it->texture->Refresh();
+            static const auto refreshSlot = GuestMemory::SplitClock("c.storage: Refresh");
+            storageLap.Mark(refreshSlot);
             cache.entries.splice(cache.entries.begin(), cache.entries, it);
             texture = it->texture;
             counters.storageHits.fetch_add(1, std::memory_order_relaxed);

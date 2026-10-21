@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawTiming.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
+#include <string>
 
 namespace AgcDriver::DriverDetail {
 
@@ -10,6 +12,16 @@ PendingDrawPhases& Driver::pendingDrawPhases() {
 }
 
 void Driver::addDrawPhases(const std::array<double, DrawDriverPhaseCount>& ms, bool drawn, std::uint64_t captures) {
+    static const auto splitSlots = [] {
+        static std::array<std::string, DrawDriverPhaseCount> names;
+        std::array<std::size_t, DrawDriverPhaseCount> slots{};
+        for (std::size_t i = 0; i < DrawDriverPhaseCount; ++i) {
+            names[i] = std::string("w.") + DrawDriverPhaseNames[i];
+            slots[i] = GuestMemory::SplitClock(names[i].c_str());
+        }
+        return slots;
+    }();
+    for (std::size_t i = 0; i < DrawDriverPhaseCount; ++i) GuestMemory::AddSplitClock(splitSlots[i], static_cast<std::uint64_t>(ms[i] * 1e6));
     std::lock_guard lock(drawPhasesMutex);
     auto& totals = drawPhaseTotals;
     for (std::size_t i = 0; i < DrawDriverPhaseCount; ++i) totals.ms[i] += ms[i];

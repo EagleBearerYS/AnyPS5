@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "ThreadOwned.hpp"
@@ -906,8 +907,18 @@ struct DrawTimer {
     explicit DrawTimer(bool profile) : profile(profile), phaseStart(std::chrono::steady_clock::now()) {}
     void phase(DrawPhase which) {
         if (!profile) return;
+        static const auto splitSlots = [] {
+            static std::array<std::string, PhaseCount> names;
+            std::array<std::size_t, PhaseCount> slots{};
+            for (std::size_t i = 0; i < PhaseCount; ++i) {
+                names[i] = std::string("c.draw: ") + DrawPhaseNames[i];
+                slots[i] = GuestMemory::SplitClock(names[i].c_str());
+            }
+            return slots;
+        }();
         const auto now = std::chrono::steady_clock::now();
         us[which] += std::chrono::duration<double, std::micro>(now - phaseStart).count();
+        GuestMemory::AddSplitClock(splitSlots[which], static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - phaseStart).count()));
         phaseStart = now;
     }
 };
@@ -1375,9 +1386,14 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
     const auto lookupStart = std::chrono::steady_clock::now();
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
     std::shared_ptr<StorageTexture> resident;
+    GuestMemory::SplitLap targetLap;
     try {
         resident = lookup();
+        static const auto lookupSlot = GuestMemory::SplitClock("c.target: storage image lookup");
+        targetLap.Mark(lookupSlot);
         if (resident != nullptr) materializeRegisterClear(context, color, *resident);
+        static const auto registerSlot = GuestMemory::SplitClock("c.target: register clear");
+        targetLap.Mark(registerSlot);
     } catch (const std::exception& error) {
         static std::mutex reportMutex;
         static std::set<std::uint64_t> reported;
@@ -1385,6 +1401,8 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         if (reported.insert(color.address).second) std::fprintf(stderr, "[gpu] color target 0x%llx stays non-resident: %s\n", static_cast<unsigned long long>(color.address), error.what());
     }
     if (resident != nullptr) materializeCmaskClear(context, color, resident);
+    static const auto cmaskSlot = GuestMemory::SplitClock("c.target: CMASK clear");
+    targetLap.Mark(cmaskSlot);
     if (profile) {
         const auto lookupUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - lookupStart).count();
         ++outcome.targetLookups;
@@ -1674,6 +1692,7 @@ struct Kept {
 // the GPU write notes, the copied-buffer write-back (listed in DrawCopiedWriters or run as a
 // completion action) and the targets marked dirty.
 void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, std::shared_ptr<Pipeline> pipeline, std::shared_ptr<Framebuffer> framebuffer, DrawInputs& inputs, std::vector<std::shared_ptr<StorageTexture>> targets, std::vector<std::pair<std::uint32_t, std::uint32_t>> slices, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome) {
+    GuestMemory::SplitLap keepLap;
     auto kept = std::make_shared<Kept>();
     kept->resources = resources;
     kept->pipeline = std::move(pipeline);
@@ -1694,8 +1713,12 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     // finishes the recorder up to the open batch, which holds the kept resources and gets the
     // next serial), or waited for by the caller (any wait releases it at once).
     if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1);
+    static const auto keptSlot = GuestMemory::SplitClock("c.keep: kept object and bytes");
+    keepLap.Mark(keptSlot);
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
+    static const auto writesSlot = GuestMemory::SplitClock("c.keep: MarkGpuWrites");
+    keepLap.Mark(writesSlot);
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
     // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
     if (listed && resources->HasCopiedWrites()) {
@@ -1721,6 +1744,8 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
         if (resident == nullptr || resident->Descriptor().tileMode != TextureTileMode::kLinear) continue;
         StorageTexture::FlushPending(resident->Descriptor().baseAddress, static_cast<std::size_t>(resident->GuestBytes()), nullptr, "linear target");
     }
+    static const auto dirtySlot = GuestMemory::SplitClock("c.keep: completion and dirty targets");
+    keepLap.Mark(dirtySlot);
 }
 
 // What recordDraw records from: the recorder, the resources, the pipeline and framebuffer, the
@@ -1911,6 +1936,11 @@ bool WriteOnlyPasses() {
 }
 
 void recordDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawInputs& inputs, RecordedDraw& record, DrawOutcome& outcome, DrawTimer& timer, double& ownWaitedMs) {
+    GuestMemory::SplitLap recordLap;
+    if (recordLap.on) {
+        static const auto setupSlot = GuestMemory::SplitClock("c.record: RecordedDraw setup");
+        GuestMemory::AddSplitClock(setupSlot, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(recordLap.at - timer.phaseStart).count()));
+    }
     auto* recorder = record.recorder;
     auto& resources = *record.resources;
     const auto* args = record.indirect != nullptr ? record.indirect->args : nullptr;
@@ -1941,7 +1971,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         recorder->FlushStores();
         outcome.storesFlushed = true;
     }
+    static const auto flushSlot = GuestMemory::SplitClock("c.record: pass key and queued store flushes");
+    recordLap.Mark(flushSlot);
     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
+    static const auto bindingsSlot = GuestMemory::SplitClock("c.record: descriptor sets (PrepareDrawBindings)");
+    recordLap.Mark(bindingsSlot);
     const bool capture = CaptureInputsEnabled();
     const bool meshIndirect = state.stages.mesh && args != nullptr;
     const bool addressBased = resources.HoldsLease();
@@ -1991,7 +2025,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    static const auto accessSlot = GuestMemory::SplitClock("c.record: pass access lists");
+    recordLap.Mark(accessSlot);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect, fenced, passAccess);
+    static const auto startSlot = GuestMemory::SplitClock("c.record: StartDrawPass");
+    recordLap.Mark(startSlot);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
     outcome.passContinued = continued;
@@ -2021,6 +2059,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
     if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
+    static const auto timingSlot = GuestMemory::SplitClock("c.record: sample slot, GPU timing, validation");
+    recordLap.Mark(timingSlot);
     if (continued) {
         record.pipeline->Continue(commands, state);
     } else {
@@ -2050,6 +2090,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         record.pipeline->Begin(commands, *record.framebuffer, state.renderExtent, state);
     }
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
+    static const auto beginSlot = GuestMemory::SplitClock("c.record: pass begin or continue");
+    recordLap.Mark(beginSlot);
     if (drawBindings != nullptr) {
         const auto set = drawBindings->allocation.set;
         const auto fragmentSet = drawBindings->fragmentAllocation.set;
@@ -2059,8 +2101,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     }
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
+    static const auto bindSlot = GuestMemory::SplitClock("c.record: bind descriptor sets");
+    recordLap.Mark(bindSlot);
     pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
+    static const auto pushSlot = GuestMemory::SplitClock("c.record: push constants");
+    recordLap.Mark(pushSlot);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -2078,6 +2124,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (args != nullptr) CountIndirectDraw(record.indirect->path, record.indirect->readMs, rewritten);
     auto checkRecords = indirectRecordCheck(record.indirect);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
+    static const auto commandsSlot = GuestMemory::SplitClock("c.record: draw commands");
+    recordLap.Mark(commandsSlot);
     std::function<void(VkCommandBuffer)> storeProxies;
     if (!continued && !record.proxies.empty()) {
         storeProxies = [proxies = record.proxies](VkCommandBuffer passCommands) {
@@ -2088,6 +2136,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         };
     }
     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
+    static const auto leaveSlot = GuestMemory::SplitClock("c.record: LeaveRenderPassOpen");
+    recordLap.Mark(leaveSlot);
     timer.phase(PhaseRecord);
     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome);
     timer.phase(PhaseKeep);
@@ -2169,10 +2219,13 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         recipeOut = nullptr;
     }
     if (state.quadList) recipeOut = nullptr;
+    GuestMemory::SplitLap entryLap;
     if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
     PerformanceTimer timing("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static const auto entrySlot = GuestMemory::SplitClock("c.draw: entry (stencil scan, kept bytes bound)");
+    entryLap.Mark(entrySlot);
     DrawTimer timer(profile);
     // APS5_TRACE_DRAWS (together with APS5_PROFILE_DRAW; alone it only enables Driver.cpp's own
     // [draw] lines) additionally prints one line per draw with its phases and, for synchronous
@@ -2264,7 +2317,11 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                     Require(resident->Attachable(), "storage format cannot be a color attachment");
                     return resident;
                 }
-                auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
+                GuestMemory::SplitLap surfaceLap;
+                const auto surface = SurfaceForTarget(color);
+                static const auto surfaceSlot = GuestMemory::SplitClock("c.target: SurfaceForTarget");
+                surfaceLap.Mark(surfaceSlot);
+                auto resident = CachedStorageSurface(context, surface);
                 Require(resident->Attachable(), "storage format cannot be a color attachment");
                 Require(color.mipCount > 1 || color.depth > 1 || resident->GuestBytes() == colorLayout.Bytes(), "resident image layout differs from the color layout");
                 return resident;
@@ -2272,8 +2329,11 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         }
         if (binding.resident != nullptr) {
             timer.phase(PhaseReadTarget);
+            GuestMemory::SplitLap viewLap;
             binding.proxied = AttachmentProxyFormat(context, color.format) != VK_FORMAT_UNDEFINED;
             targetViews.push_back(binding.proxied ? binding.resident->AttachmentProxyView() : binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice));
+            static const auto viewSlot = GuestMemory::SplitClock("c.target: attachment view (in prepare)");
+            viewLap.Mark(viewSlot);
             continue;
         }
         materializeCmaskClear(context, color, nullptr);
@@ -2565,6 +2625,10 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         }
         timing.Mark("draw_and_resource_release");
         report(outcome.waited ? (outcome.reason == SyncLease ? " recorded then waited (lease)" : " recorded then waited (copied writes)") : completion ? " recorded with completion" : " recorded");
+        if (timer.profile) {
+            static const auto exitSlot = GuestMemory::SplitClock("c.draw: exit (floor store, recipe, report)");
+            GuestMemory::AddSplitClock(exitSlot, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - timer.phaseStart).count()));
+        }
         return;
     }
     APS5_LOG_CHARS_OUT_DEBUG("Creating CommandBatch");

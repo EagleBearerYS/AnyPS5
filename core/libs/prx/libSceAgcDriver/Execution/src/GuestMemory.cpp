@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SplitClocks.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WriteWatchCoverage.hpp"
@@ -2238,6 +2239,50 @@ void MarkPresenterThread() {
 
 void MarkCommitterThread() {
     LockStats().holderColumn = CommitterColumn;
+}
+
+namespace {
+
+struct SplitClockTable {
+    std::mutex mutex;
+    std::array<const char*, 160> names{};
+    std::array<std::atomic<std::uint64_t>, 160> ns{};
+    std::size_t count = 0;
+};
+
+SplitClockTable& SplitClockSlots() {
+    static auto* table = new SplitClockTable();
+    return *table;
+}
+
+}
+
+bool SplitClocks() {
+    static const bool on = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    return on;
+}
+
+std::size_t SplitClock(const char* name) {
+    auto& table = SplitClockSlots();
+    std::lock_guard lock(table.mutex);
+    for (std::size_t slot = 0; slot < table.count; ++slot) {
+        if (std::strcmp(table.names[slot], name) == 0) return slot;
+    }
+    if (table.count == table.names.size()) throw std::runtime_error("split clock table full");
+    table.names[table.count] = name;
+    return table.count++;
+}
+
+void AddSplitClock(std::size_t slot, std::uint64_t ns) {
+    SplitClockSlots().ns[slot].fetch_add(ns, std::memory_order_relaxed);
+}
+
+std::vector<std::pair<std::string, std::uint64_t>> SplitClockTotals() {
+    auto& table = SplitClockSlots();
+    std::lock_guard lock(table.mutex);
+    std::vector<std::pair<std::string, std::uint64_t>> totals;
+    for (std::size_t slot = 0; slot < table.count; ++slot) totals.emplace_back(table.names[slot], table.ns[slot].load(std::memory_order_relaxed));
+    return totals;
 }
 
 std::vector<GpuHoldTotal> GpuHoldTotals() {
