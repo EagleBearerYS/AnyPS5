@@ -1,0 +1,4 @@
+BASE=af0821dddb64a413f764516e3a6b490fea03fd8f
+REPEAT=3
+EXTRA_TESTS='agc_driver_graphics|agc_driver_bda_device'
+NO_BEFORE=1
