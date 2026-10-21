@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T12:12Z (finished BF-108: bound the draw cache by bytes, result results/cloud-4/BF-108.md)
+BUSY BF-119
+since: 2026-10-21T21:26Z (claimed BF-119: #6191's family on top of #8939)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
