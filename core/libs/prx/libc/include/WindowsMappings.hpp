@@ -186,10 +186,11 @@ public:
         }
     }
 
-    void CompareWhenShared(std::uintptr_t address, std::size_t bytes) {
+    void CompareWhenShared(std::uintptr_t address, std::size_t bytes, bool residentOnly = false) {
         std::lock_guard lock(mutex);
         collectableRanges.clear();
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
+            if (residentOnly && !it->second.resident) continue;
             auto& page = *it->second.page;
             page.comparedWhenShared = true;
             for (const auto alias : page.aliases) {

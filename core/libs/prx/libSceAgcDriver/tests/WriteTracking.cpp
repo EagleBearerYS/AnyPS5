@@ -692,6 +692,46 @@ void CheckRewatchedDirectMemoryComparedWhenShared() {
     std::cout << "rewatched direct memory: compared once shared, not armed; other shared direct memory still collected\n";
 }
 
+void CheckImportedDirectMemoryComparedWhenShared() {
+    constexpr std::size_t bytes = 2 * Block;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * bytes, Block));
+    Require(memory != nullptr, "cannot reserve the imported sharing fixture");
+    struct Cleanup {
+        std::uint8_t* memory;
+        HANDLE section = nullptr;
+        ~Cleanup() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, 2 * bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, 2 * bytes);
+            if (section == nullptr) return;
+            GuestArena::GuestArenaForgetSection_nid_postfix(section);
+            CloseHandle(section);
+        }
+    } cleanup{memory};
+    cleanup.section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(cleanup.section != nullptr, "cannot create the imported sharing backing");
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto native = [](const std::uint8_t* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "cannot query the imported sharing fixture");
+        return info;
+    };
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_PRIVATE && Watched(base, bytes), "the imported direct memory is not resident and watched");
+    Require(ImportWatched(base, Block, [] { return true; }), "the watched import of resident direct memory failed");
+    Require(Watched(base, Block), "a watched import of resident direct memory left the write watch");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) != 0, "imported resident direct memory is not collected");
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + bytes, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_MAPPED && native(memory + bytes).Type == MEM_MAPPED, "a second mapping kept the imported direct memory resident");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) == 0 && CollectWritesUncached(base + bytes, Block) == 0, "imported direct memory was collected once shared");
+    Require(native(memory).Protect == PAGE_READWRITE && native(memory + bytes).Protect == PAGE_READWRITE, "imported direct memory was armed once shared");
+    memory[8] = 0x5a;
+    Require(memory[bytes + 8] == 0x5a, "the second mapping does not see a store into the imported first");
+    Require(CollectWritesUncached(base + Block, Block) != 0, "shared direct memory that was never imported stopped being collected");
+    std::cout << "imported direct memory: compared once shared, not armed; unimported shared direct memory still collected\n";
+}
+
 void CheckResidentDirectMappingReuse() {
     constexpr std::size_t bytes = 5 * Block;
     auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
@@ -1458,6 +1498,7 @@ int main() {
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(RewatchedSharedMode)) {
             CheckRewatchedDirectMemoryComparedWhenShared();
+            CheckImportedDirectMemoryComparedWhenShared();
             return 0;
         }
 #endif

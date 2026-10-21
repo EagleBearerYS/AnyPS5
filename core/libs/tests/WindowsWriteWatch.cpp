@@ -256,6 +256,37 @@ void CheckComparedWhenShared() {
     mappings.ForgetSection(section);
     CloseHandle(section);
 }
+
+void CheckResidentOnlyComparedWhenShared() {
+    {
+        Region region;
+        Mappings::Get().CompareWhenShared(reinterpret_cast<std::uintptr_t>(region.first), Bytes, true);
+        Require(region.Collect(Collection::All, 0, 1) == Pages(0, 1), "marking only resident pages changed a shared view");
+        Require(region.Protection(0) == PAGE_READONLY, "a shared view outside a resident-only mark was not armed");
+    }
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* second = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(section && first && second, "cannot allocate resident-only sharing test memory");
+    mappings.Map(first, Bytes, section, 0, PAGE_READWRITE, true, true);
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(first), Bytes, true);
+    mappings.Map(second, Bytes, section, 0, PAGE_READWRITE, true, true);
+    std::array<void*, 32> pages{};
+    std::size_t count = pages.size();
+    Require(!mappings.Collect(reinterpret_cast<std::uintptr_t>(first), Bytes, pages.data(), &count, true), "a resident page marked to be compared was collected once shared");
+    const auto before = faults.load();
+    first[8] = 0x3c;
+    Require(faults.load() == before && second[8] == 0x3c, "a store into a resident page marked to be compared faulted once shared");
+    mappings.Reset(first, Bytes);
+    mappings.Reset(second, Bytes);
+    for (auto* reserved : {first, second}) {
+        VirtualFree(reserved, Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+        VirtualFree(reserved, 0, MEM_RELEASE);
+    }
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
 }
 
 int main() {
@@ -271,6 +302,7 @@ int main() {
         CheckConcurrentWrites();
         CheckForgottenSectionKeepsNoPages();
         CheckComparedWhenShared();
+        CheckResidentOnlyComparedWhenShared();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
