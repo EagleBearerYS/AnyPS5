@@ -387,7 +387,7 @@ void Driver::execute(const Submission& submission) {
             if (opcode == 0x49) {
                 if (!wroteOnGpu) {
                     Pm4::Execute(packet, queue);
-                    if (const auto label = Pm4::DecodeLabelWrite(packet)) noteLabelStore(label->address, label->Bytes(), ++eventSerial, submission.queue);
+                    if (const auto label = Pm4::DecodeLabelWrite(packet)) noteLabelStore(label->address, label->Bytes(), ++eventSerial, submission.queue, opcode);
                 }
                 if (endOfPipeInterrupt && !interruptDeferred) deliverGuestEopInterrupt(submission.queue);
             }
@@ -445,7 +445,7 @@ void Driver::execute(const Submission& submission) {
         } else if (opcode == 0x3c || opcode == 0x93) {
             static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
             const auto waitStart = traceGpu ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-            timed(&WorkerProfile::waitMs, [&] { waitMemory(packet, submission.queue, recent, submission.received, submission.heldAtSubmit.contains(cursor)); });
+            timed(&WorkerProfile::waitMs, [&] { waitMemory(packet, submission.queue, recent, submission.received, submission.heldAtSubmit.contains(cursor), false, findSubmitCheck(submission, cursor)); });
             gateOpened() = true;
             if (traceGpu && std::chrono::steady_clock::now() - waitStart > std::chrono::milliseconds(200)) {
 
@@ -547,7 +547,7 @@ void Driver::execute(const Submission& submission) {
                     Pm4::Execute(packet, queue);
                 }
                 if (opcode == 0x49 || opcode == 0x37) {
-                    if (const auto label = Pm4::DecodeLabelWrite(packet)) noteLabelStore(label->address, label->Bytes(), ++eventSerial, submission.queue);
+                    if (const auto label = Pm4::DecodeLabelWrite(packet)) noteLabelStore(label->address, label->Bytes(), ++eventSerial, submission.queue, opcode);
                 }
             }
             if (endOfPipeInterrupt && !interruptDeferred) deliverGuestEopInterrupt(submission.queue);
