@@ -1164,6 +1164,18 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     const auto count = extent.width * extent.height * fragments;
     Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, fragments, false, true));
+    auto bareWords = words;
+    bareWords[6] &= ~((0xffu << 24u) | (1u << 21u) | (1u << 19u));
+    bareWords[7] = 0u;
+    auto bare = CachedSampledTexture(context, bareWords);
+    Require(bare != nullptr && bare != texture && CachedSampledTexture(context, bareWords) == bare, "native depth sampled through a descriptor without HTILE was not given its own reused view");
+    const Fetch bareFetch(context, *bare, output, FetchShader(extent.width, extent.height, fragments, false, true));
+    auto xorWords = bareWords;
+    xorWords[0] ^= 0x04u;
+    TargetRefuses([&] { CachedSampledTexture(context, xorWords); }, "native multisample depth sampled metadata or XOR mismatch");
+    auto otherWords = words;
+    otherWords[7] += 1u;
+    TargetRefuses([&] { CachedSampledTexture(context, otherWords); }, "native multisample depth sampled metadata or XOR mismatch");
     const auto sample = [&](const Fetch& reader, const DepthRaster* raster, float offset, std::optional<float> drawn) {
         std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
         if (raster != nullptr) {
@@ -1186,11 +1198,13 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         }
     };
     sample(fetch, nullptr, 0.0f, std::nullopt);
+    sample(bareFetch, nullptr, 0.0f, std::nullopt);
     {
         const DepthRaster miss(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, static_cast<std::uint8_t>(clearStencil + 1u)});
         sample(fetch, &miss, 0.375f, std::nullopt);
         const DepthRaster hit(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, clearStencil});
         sample(fetch, &hit, 0.25f, 0.25f);
+        sample(bareFetch, nullptr, 0.0f, 0.25f);
     }
     if (filling) {
         const DepthRaster replace(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0xc3u});
@@ -1204,10 +1218,12 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         sample(fetch, &kept, 0.25f, 0.25f);
         const DepthRaster cleared(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, clearStencil});
         sample(fetch, &cleared, 0.375f, 0.25f);
+        sample(bareFetch, nullptr, 0.0f, 0.25f);
     }
     Require(std::equal(imported.begin(), imported.end(), stencil.Data()), "native depth sampling with a separate stencil plane changed the guest stencil plane");
+    bare.reset();
     texture.reset();
-    std::printf("Native depth with a separate stencil plane samples=%u clear=%u fill=%u: imported, stencil-tested and sampled%s\n", fragments, one, filling, filling ? " across a depth-only HTILE fill" : "");
+    std::printf("Native depth with a separate stencil plane samples=%u clear=%u fill=%u: imported, stencil-tested and sampled with and without HTILE%s; other metadata and XOR refused\n", fragments, one, filling, filling ? " across a depth-only HTILE fill" : "");
 }
 
 void CheckEligibility(Context context) {
