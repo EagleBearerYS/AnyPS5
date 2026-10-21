@@ -1,0 +1,4 @@
+BASE=86b84244fbf0dc0a0e70c3368c630d0c5bb7fee2
+REPEAT=3
+EXTRA_TESTS='agc_driver_host_write_pending_storage|agc_driver_host_write_hook|agc_driver_storage_file_write|agc_driver_graphics'
+NO_BEFORE=1
