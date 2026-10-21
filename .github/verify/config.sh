@@ -1,0 +1,4 @@
+BASE=98145b48d8ed7496ceb700ddf2dacbd87ff6e48d
+REPEAT=10
+EXTRA_TESTS='agc_driver_image_table_cache_bounds'
+BEFORE_REPEAT=3
