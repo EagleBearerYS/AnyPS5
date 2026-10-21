@@ -1,6 +1,6 @@
-BUSY BF-120
-since: 2026-10-21T21:52:00Z
-previous: PM-084 done, results/cloud-5/PM-084.md. Before that: BF-112 done, results/cloud-5/BF-112.md.
+READY
+since: 2026-10-21T22:27:10Z
+previous: BF-120 done, results/cloud-5/BF-120.md: fix/agc-address-copy-evict-main = 307bf8157a on upstream main a6dcea9279 (fix 7d6c475b95, test 6fcf7b6573, perf 307bf8157a). Ported the 10-16 port (bf3390e0a0/fee10f45f3) plus 1a6972f781's Windows unwatch; eviction uses main's in-process cap; the remembered test was re-staged because #6646 now keeps the refused heap's mirror. Red 40/40 FATAL (outside the write-watched arena), green until-fail:20; mirror 1824 tests, 4 failed (sgpr load flake, 3 IPv6 baseline); normal-path bench equal on main and head. Before that: PM-084 done, results/cloud-5/PM-084.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
