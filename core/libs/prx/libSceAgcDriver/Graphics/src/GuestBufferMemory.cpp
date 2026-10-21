@@ -277,6 +277,7 @@ struct HostImports {
     bool allocationFailed = false;
     std::uint8_t reportNoted = 0;
     std::map<std::uint64_t, std::uint64_t> spaceUses;
+    std::uint64_t budgetRefusals = 0;
 };
 
 HostImports& Imports() {
@@ -1584,6 +1585,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         ++counts.refused;
         counts.refusedBytes += lease[index]->bytes;
         ++counts.remembered;
+        ++state.budgetRefusals;
         return nullptr;
     }
     auto run = importRun(lease, address, largest, budget);
@@ -1683,6 +1685,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         if (evict) state.evictingRefusals.insert_or_assign(std::pair{base, bytes}, EvictingRefusal{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end()), state.epoch, state.liveBytes, budget, room, importWindow.load(std::memory_order_relaxed), state.buildFloor, ready, readyHeld, joined});
         if (stepDown && containing != run.ranges.end() && room >= (*containing)->bytes) return importAllocation(context, state, address, lease, requester, end, evict, std::min(bytes / 2, room));
         if (containing != run.ranges.end() && run.ranges.size() > 1) remember((*containing)->address, (*containing)->bytes, GuestAllocations::Mapped{*containing});
+        ++state.budgetRefusals;
         return nullptr;
     }
     for (auto it = first; it != state.imports.end() && it->first < base + bytes;) {
@@ -2500,6 +2503,11 @@ bool heapMirrorWatched(ImageMirror& mirror) {
 
 bool importsNow(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t address) {
     return context.hostImportAlignment != 0 && (importsStale(context, state) || importAllocation(context, state, address, lease, ImportRequester::Build, 0, false) != nullptr);
+}
+
+const char* heapCopyReason(bool overBudget, bool watched) {
+    if (overBudget) return watched ? "import over the host import budget, heap mirror refused" : "import over the host import budget, heap not fully write-watched";
+    return watched ? "heap mirror refused" : "heap not fully write-watched";
 }
 
 // The mirror for a leased image range: the existing one, or a new one when none exists or the
@@ -3634,22 +3642,32 @@ void GuestBufferMemory::AcquireRegistered() {
         // The import lock is taken per range: a mirror's preparation may wait for recorded work, which
         // must not happen under it.
         regions.reserve(lease.size());
+        static const std::uint64_t copyLimit = [] {
+            const char* value = std::getenv("APS5_ADDRESS_COPY_MAX_MIB");
+            return (value ? std::strtoull(value, nullptr, 10) : 64ull) << 20u;
+        }();
+        const auto limit = addressCopyLimitOverride.load(std::memory_order_relaxed);
+        const auto cap = limit != 0 ? limit : copyLimit;
         std::vector<AddressCopy> copies;
         std::vector<std::uint64_t> imported;
         const HostImport* covering = nullptr;
         std::uint64_t coveredBegin = 0;
         std::uint64_t coveredEnd = 0;
+        std::uint64_t copiedBytes = 0;
         for (const auto& range : lease) {
             if (!range->readable || !range->gpu) continue;
             validate(range->address, range->bytes);
             Region region{range->address, range->address + range->bytes, range->writable, {}, nullptr};
             const HostImport* entry = nullptr;
+            bool overBudget = false;
             if (importable && covering != nullptr && range->address >= coveredBegin && range->address + range->bytes <= coveredEnd) {
                 entry = covering;
             } else if (importable) {
                 auto& state = Imports();
                 std::lock_guard lock(state.mutex);
+                const auto refusals = state.budgetRefusals;
                 entry = importAllocation(context, state, range->address, lease, ImportRequester::Build, 0, false);
+                overBudget = state.budgetRefusals != refusals;
                 covering = entry;
                 if (entry != nullptr) {
                     coveredBegin = entry->base;
@@ -3687,17 +3705,36 @@ void GuestBufferMemory::AcquireRegistered() {
                 committed = 0;
                 for (const auto& [first, last] : copied.backed) committed += last - first;
             }
-            const char* reason = !mirrorsEnabled() ? "mirrors disabled by APS5_NO_LEASE_MIRROR" : copied.sparse ? "unreadable pages" : !range->releasable ? "image mirror refused" : "outside the write-watched arena";
+            if (overBudget && copiedBytes + committed > cap) {
+                auto& state = Imports();
+                std::lock_guard lock(state.mutex);
+                entry = importAllocation(context, state, range->address, lease, ImportRequester::Build, 0, true);
+                if (entry != nullptr) {
+                    covering = entry;
+                    coveredBegin = entry->base;
+                    coveredEnd = entry->base + entry->bytes;
+                }
+                static auto lastReport = std::chrono::steady_clock::now() - std::chrono::seconds(60);
+                if (entry != nullptr && std::chrono::steady_clock::now() - lastReport > std::chrono::seconds(10)) {
+                    lastReport = std::chrono::steady_clock::now();
+                    std::fprintf(stderr, "[gpu] host import budget: 0x%llx+0x%llx imported by evicting idle imports, as copying it would pass APS5_ADDRESS_COPY_MAX_MIB\n", static_cast<unsigned long long>(range->address), static_cast<unsigned long long>(range->bytes));
+                }
+            }
+            if (entry != nullptr) {
+                regions.pop_back();
+                region.hostBacked = true;
+                region.direct = entry;
+                regions.push_back(std::move(region));
+                imported.push_back(range->address);
+                continue;
+            }
+            copiedBytes += committed;
+            const char* reason = !mirrorsEnabled() ? "mirrors disabled by APS5_NO_LEASE_MIRROR" : copied.sparse ? "unreadable pages" : !range->releasable ? "image mirror refused" : heapCopyReason(overBudget, GuestMemory::Watched(range->address, range->bytes));
             copies.push_back({copied.begin, copied.end, committed, reason});
         }
         releaseImportedMirrors(context, imported);
         regionsSorted = sortedLookup;
-        static const std::uint64_t copyLimit = [] {
-            const char* value = std::getenv("APS5_ADDRESS_COPY_MAX_MIB");
-            return (value ? std::strtoull(value, nullptr, 10) : 64ull) << 20u;
-        }();
-        const auto limit = addressCopyLimitOverride.load(std::memory_order_relaxed);
-        if (const auto overflow = AddressCopyOverflow(std::move(copies), limit != 0 ? limit : copyLimit); !overflow.empty()) {
+        if (const auto overflow = AddressCopyOverflow(std::move(copies), cap); !overflow.empty()) {
             std::fprintf(stderr, "FATAL: %s\n", overflow.c_str());
             std::fflush(stderr);
             std::abort();
