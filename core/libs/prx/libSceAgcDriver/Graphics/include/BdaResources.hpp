@@ -50,6 +50,7 @@ public:
         std::uint64_t firstDiffersHeap = 0;
         std::uint64_t firstSameHash = 0;
         std::uint64_t firstEmpty = 0;
+        std::uint64_t imageTablesWrittenUnchanged = 0;
     };
     static TableCacheStats TableCacheCounters();
 

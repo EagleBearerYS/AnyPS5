@@ -80,6 +80,11 @@ void classifyFirstEntry(TableCache& cache, std::uint64_t hash, const std::vector
     ++(begin < 0x10000000ull ? classes.firstDiffersLow : classes.firstDiffersHeap);
 }
 
+std::atomic<std::uint64_t>& ImageTablesWrittenUnchanged() {
+    static std::atomic<std::uint64_t> count{0};
+    return count;
+}
+
 TableCache& Tables() {
     static TableCache cache;
     return cache;
@@ -220,6 +225,7 @@ BdaResources::TableCacheStats BdaResources::TableCacheCounters() {
     stats.hits = cache.hits;
     stats.misses = cache.misses;
     stats.held = cache.entries.size();
+    stats.imageTablesWrittenUnchanged = ImageTablesWrittenUnchanged().load(std::memory_order_relaxed);
     return stats;
 }
 
@@ -344,6 +350,7 @@ void BdaResources::markWrittenPages() const {
     Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) {
         const auto end = begin + bytes;
         for (std::size_t index = 0; index < imageTableRanges.size(); ++index) {
@@ -357,6 +364,7 @@ void BdaResources::markWrittenPages() const {
                 message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
                 Require(false, message.str());
             }
+            if (profile) ImageTablesWrittenUnchanged().fetch_add(1, std::memory_order_relaxed);
         }
         GuestMemory::MarkWritten(begin, bytes);
     }), "invalid BDA written-page record");
