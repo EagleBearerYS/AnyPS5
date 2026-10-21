@@ -380,6 +380,10 @@ struct TextureCounters {
     std::atomic<std::uint64_t> tablesReused{0};
     std::atomic<std::uint64_t> tablesReplayed{0};
     std::atomic<std::uint64_t> tablesResolved{0};
+    std::atomic<std::uint64_t> tableRefusedView{0};
+    std::atomic<std::uint64_t> tableRefusedKeys{0};
+    std::atomic<std::uint64_t> tableRefusedGeneration{0};
+    std::atomic<std::uint64_t> tableRefusedObject{0};
     std::atomic<std::uint64_t> tableWritesKept{0};
     std::atomic<std::uint64_t> tableWritesMade{0};
     // Snapshot hits over memory outside the write watch: kept by an unchanged UntrackedHint key, or
@@ -402,7 +406,7 @@ void reportTextureCounters() {
     auto last = counters.lastReport.load();
     if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
-    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.untrackedKept), count(counters.untrackedCompared));
+    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved (refused at their first entry: view %llu, keys %llu, generation 0 %llu, last lookup not this texture %llu); untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.tableRefusedView), count(counters.tableRefusedKeys), count(counters.tableRefusedGeneration), count(counters.tableRefusedObject), count(counters.untrackedKept), count(counters.untrackedCompared));
 }
 
 // What the sampled-texture lookups on this thread proved their returned objects current against,
@@ -5055,6 +5059,11 @@ void ShaderResources::resolveImageTables() {
                 const auto& log = lookupLog();
                 const auto* looked = log.empty() ? nullptr : &log.back();
                 reusable = looked != nullptr && looked->object == texture.get() && (looked->source == nullptr || (!depthCompare && !texture->RefreshedPerUse() && !texture->IsDepthCopy())) && looked->generation != 0 && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0;
+                static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+                if (profile && !reusable) {
+                    auto& refused = looked == nullptr || looked->object != texture.get() ? counters.tableRefusedObject : looked->source != nullptr && (depthCompare || texture->RefreshedPerUse() || texture->IsDepthCopy()) ? counters.tableRefusedView : looked->generation == 0 ? counters.tableRefusedGeneration : counters.tableRefusedKeys;
+                    refused.fetch_add(1, std::memory_order_relaxed);
+                }
                 if (reusable) {
                     fresh.elements.push_back({MakeTextureKey(context.device, sampledWords, components, depthCompare), texture, resource, guestBytes, firstLayer, false, {}});
                     fresh.queries.push_back({resource.baseAddress, static_cast<std::size_t>(guestBytes), looked->generation});
