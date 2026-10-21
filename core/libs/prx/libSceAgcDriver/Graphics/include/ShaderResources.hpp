@@ -68,6 +68,7 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
 bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv);
 void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
+bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t set, std::uint32_t binding);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.
@@ -608,6 +609,7 @@ private:
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
     bool usesBda = false;
     bool bdaReadOnly = true;
+    bool faultReportOnly = true;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
     bool faultChecks = false;

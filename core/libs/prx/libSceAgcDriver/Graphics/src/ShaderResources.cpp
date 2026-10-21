@@ -2472,8 +2472,8 @@ void ShaderResources::buildComplete() {
         timing.bindingsMs += phase(BuildPhase::Images);
         guestMemory.UploadFinish(usesBda);
         timing.uploadMs += phase(BuildPhase::Upload);
-        if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory);
-        else if (usesFaultBuffer) bda = std::make_unique<BdaResources>(context);
+        if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory, faultReportOnly);
+        else if (usesFaultBuffer) bda = std::make_unique<BdaResources>(context, faultReportOnly);
         if (bda) bda->SetSrtGuards(std::move(srtGuardFaults));
         finishImageTables();
         phase(BuildPhase::Bda);

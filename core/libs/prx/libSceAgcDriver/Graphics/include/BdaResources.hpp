@@ -19,8 +19,8 @@ struct BdaFaultChunk;
 
 class BdaResources {
 public:
-    explicit BdaResources(const Context& context);
-    BdaResources(const Context& context, const GuestBufferMemory& memory);
+    explicit BdaResources(const Context& context, bool reportOnly = false);
+    BdaResources(const Context& context, const GuestBufferMemory& memory, bool reportOnly = false);
     ~BdaResources();
     BdaResources(const BdaResources&) = delete;
     BdaResources& operator=(const BdaResources&) = delete;
@@ -84,6 +84,7 @@ private:
     VkDevice faultDevice = VK_NULL_HANDLE;
     std::shared_ptr<BdaFaultChunk> faultChunk;
     VkDeviceSize faultOffset = 0;
+    bool reportOnly = false;
     std::uint64_t lastUse = 0;
     std::size_t tableBytes = 0;
     std::vector<ImageTableFaults> imageTables;
