@@ -1,0 +1,4 @@
+BASE=a6dcea9279b53b3a39c13695eac66f7c8b5b503c
+REPEAT=10
+EXTRA_TESTS='agc_address_copy_cap|agc_address_copy_cap_remembered|agc_driver_graphics|agc_heap_mirror_unwatch|agc_heap_mirror_run_unwatch|agc_heap_mirror_unwatched_import|agc_driver_graphics_maps_fallback'
+BEFORE_REPEAT=3
