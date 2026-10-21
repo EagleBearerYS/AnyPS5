@@ -1,0 +1,4 @@
+BASE=6696def6e65efa54a184367a5c8a6bac9a6712f9
+REPEAT=5
+EXTRA_TESTS='agc_driver_address_draw_reuse|agc_driver_graphics|agc_driver_address_space_teardown|agc_sparse_buffer_holes|agc_driver_host_import_lifetime|agc_host_import_retirement|agc_import_watch'
+NO_BEFORE=1
