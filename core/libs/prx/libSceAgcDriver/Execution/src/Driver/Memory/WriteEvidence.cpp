@@ -7,6 +7,18 @@
 
 namespace AgcDriver::DriverDetail {
 
+namespace {
+
+bool LabelOver(std::uint64_t first, std::uint64_t limit) {
+    if (Graphics::Recorder::WideLabelIn(first, static_cast<std::size_t>(limit - first))) return true;
+    for (std::uint64_t dword = first; dword < limit; dword += 4) {
+        if (Graphics::Recorder::LookupLabelValue(dword, 4, 0).has_value()) return true;
+    }
+    return false;
+}
+
+}
+
 SampledReadScope::SampledReadScope(std::atomic<std::uint64_t>& reads) : previous(Driver::sampledRead()) {
     Driver::sampledRead() = Driver::writeEvidenceEnabled() && reads.fetch_add(1, std::memory_order_relaxed) % Driver::writeEvidenceSampleEvery() == 0;
 }
@@ -170,6 +182,8 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
         reason = &ValidateCounters::syncedLabel;
         return Policy::Sync;
     }
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile && LabelOver(first, limit)) labelSyncsSkipped.fetch_add(1, std::memory_order_relaxed);
     if (writer->value && writer->begin <= address && limit <= writer->end && (known.empty() || known.size() == bytes) && knownValueCurrent(*writer)) {
         if (!known.empty()) {
             std::memcpy(known.data(), writer->value->data() + (address - writer->begin), bytes);
