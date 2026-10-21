@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T04:17:19Z
+BUSY PRM-047
+since: 2026-10-21T04:17:31Z
 previous: PRM-046 done, results/cloud-5/PRM-046.md: pm/6636-review = 084de35d85 + fc9c5416f (test only: agc_driver_address_draw_reuse_watched_imports with APS5_WRITE_WATCH_IMPORTS=watch, non-Windows, plus a non-address ThrowingProof case); no reproduction at 084de35d85 because main's 67575aae8 (merged there, absent from 28433ba132) refuses the case before either proof; reproduces with that line removed ("...was reused"); red without it, green 20/20; ^agc 850 tests, 1 failed (agc_driver_sgpr_pattern_fill_keys load flake, also on main). Before that: BF-095 done, results/cloud-5/BF-095.md.
 
 RESULT (setup):
