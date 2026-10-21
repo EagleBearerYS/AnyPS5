@@ -2,6 +2,8 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_BUFFERPOOL_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -9,10 +11,44 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace AgcDriver::Graphics {
+
+enum class HostOwner : std::uint8_t { Other = 0, HeapMirror, ImageMirror, Copy, Staging, WriteBack, DeviceSpill, ShaderData, Count };
+const char* HostOwnerName(HostOwner owner);
+HostOwner SetHostOwner(HostOwner owner);
+HostOwner CurrentHostOwner();
+class HostOwnerScope {
+public:
+    explicit HostOwnerScope(HostOwner owner) : previous(SetHostOwner(owner)) {}
+    ~HostOwnerScope() { SetHostOwner(previous); }
+    HostOwnerScope(const HostOwnerScope&) = delete;
+    HostOwnerScope& operator=(const HostOwnerScope&) = delete;
+
+private:
+    HostOwner previous;
+};
+
+struct HostMemoryUse {
+    std::uint64_t bytes = 0;
+    std::uint64_t buffers = 0;
+};
+
+struct HostVisibleCounts {
+    std::array<HostMemoryUse, static_cast<std::size_t>(HostOwner::Count)> owners{};
+    HostMemoryUse retained;
+    std::uint64_t slabBlocks = 0;
+    std::uint64_t slabFreeBytes = 0;
+    std::uint64_t allocations = 0;
+    const HostMemoryUse& Owner(HostOwner owner) const { return owners[static_cast<std::size_t>(owner)]; }
+    std::uint64_t PoolBytes() const { return retained.bytes + slabFreeBytes; }
+    std::uint64_t Bytes() const;
+};
+
+std::string FormatHostVisible(const HostVisibleCounts& counts);
 
 struct BufferAllocation {
     VkBuffer buffer;
@@ -77,6 +113,10 @@ public:
     SlabSlot TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable);
     VkDeviceSize PutSlot(VkDeviceMemory memory, VkDeviceSize offset) noexcept;
     std::size_t SlabBlocks();
+    static bool CountsHost();
+    void CountHost(HostOwner owner, VkDeviceSize bytes, bool slab, bool live) noexcept;
+    HostVisibleCounts HostVisible();
+    void ReportHost(bool now);
 
 private:
     struct SlabBlock {
@@ -170,6 +210,10 @@ private:
     std::mutex slabMutex;
     std::unordered_map<std::uint64_t, Slab> slabs;
     std::unordered_map<VkDeviceMemory, std::unique_ptr<SlabBlock>> slabBlocks;
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HostOwner::Count)> hostBytes{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HostOwner::Count)> hostBuffers{};
+    std::atomic<std::uint64_t> hostMemories{0};
+    std::atomic<std::int64_t> lastHostReport{0};
     static constexpr VkDeviceSize budget = 512ull * 1024 * 1024;
     // The small tier's own budget (slots of at most half a MiB each): pinned host memory the large
     // tier's budget does not count.

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
@@ -947,7 +948,10 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
             return copy;
         }
     }
-    copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    {
+        const HostOwnerScope owner(HostOwner::Copy);
+        copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    }
     GuestMemory::Read(address, copy.buffer->Bytes(), alignment);
     return copy;
 }
@@ -956,7 +960,10 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
     Require(validBytes <= bytes, "the valid bytes of a vertex fetch exceed the fetch");
     GuestMemory::FlushGpuWrites(address, bytes);
     DrawInputCopy copy;
-    copy.buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    {
+        const HostOwnerScope owner(HostOwner::Copy);
+        copy.buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    }
     const auto span = copy.buffer->Bytes();
     auto readable = validBytes;
     if (stride != 0 && !GuestMemory::Accessible(reinterpret_cast<const void*>(address), validBytes)) {
@@ -2257,6 +2264,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(color.layers == 1, "layered rendering into a 2D array color target needs the resident image of its array");
         Require(color.arraySlice == 0 || !ColorTileModeIsXor(color.tileMode), "rendering into a slice of a 2D array color target with an XOR tile mode needs the resident image of its array");
         if (binding.gpuTiling) {
+            const HostOwnerScope owner(HostOwner::Staging);
             binding.mip = color.mipTail ? ComputeColorTargetMipLayout(color.tileMode, color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount, color.mip) : ColorTargetMip(color, colorLayout);
             binding.tiled = std::make_unique<Buffer>(context, colorLayout.Bytes(), copies);
             binding.tiledDevice = std::make_unique<DeviceBuffer>(context, colorLayout.Bytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -2265,6 +2273,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             GuestMemory::Read(color.address, binding.original, colorLayout.Alignment());
             std::memcpy(binding.tiled->Bytes().data(), binding.original.data(), binding.original.size());
         } else {
+            const HostOwnerScope owner(HostOwner::Staging);
             binding.transfer = std::make_unique<Buffer>(context, colorLayout.LinearBytes(), copies);
             ReadColorTarget(color, binding.transfer->Bytes());
         }

@@ -391,6 +391,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 // Entries may also be extents ("3840x2160"), since heap addresses change between runs.
                 dumpWanted = dumpList.find(address) != std::string::npos || dumpList.find(extent) != std::string::npos;
             }
+            const HostOwnerScope owner(HostOwner::Staging);
             auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(staging->Bytes().data(), snapshot.data(), snapshot.size());
             auto tiled = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -2696,6 +2697,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     original.resize(static_cast<std::size_t>(guestBytes));
     GuestMemory::ReadCommitted(descriptor.baseAddress, original);
     {
+            const HostOwnerScope owner(HostOwner::Staging);
             Buffer staging(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(staging.Bytes().data(), original.data(), original.size());
             else ReadTextureSurface(descriptor, uploadedKeys, staging.Bytes().first(original.size()));
@@ -3861,7 +3863,10 @@ std::vector<std::uint32_t> StorageTexture::prepareStoredSave(const std::vector<b
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
         if (layers[unit] && !skippedLayer[unit]) units.push_back(unit);
     }
-    if (!units.empty() && !savedBytes) savedBytes = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    if (!units.empty() && !savedBytes) {
+        const HostOwnerScope owner(HostOwner::WriteBack);
+        savedBytes = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    }
     return units;
 }
 
@@ -5471,6 +5476,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     }
     DeviceBuffer linear(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const HostOwnerScope owner(HostOwner::WriteBack);
     Buffer host(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     if (profile) Profile().storageAlloc += timer.lap();
     // Start from the uploaded bytes so padding and untouched texels keep their guest values.

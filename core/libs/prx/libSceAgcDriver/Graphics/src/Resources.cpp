@@ -63,6 +63,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
                 throw;
             }
         }
+        countHost();
         ready = true;
         return;
     }
@@ -92,6 +93,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, offset), "vkBindBufferMemory slab");
             initializeAddress(usage);
             mapping = slot.mapping;
+            countHost();
             ready = true;
             return;
         }
@@ -99,6 +101,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
         initializeAddress(usage);
         if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");
+        countHost();
         ready = true;
     } catch (...) {
         release();
@@ -110,7 +113,18 @@ Buffer::~Buffer() {
     release();
 }
 
+void Buffer::countHost() noexcept {
+    if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 || !BufferPool::CountsHost()) return;
+    owner = CurrentHostOwner();
+    hostCounted = true;
+    cache->CountHost(owner, allocationBytes, slab, true);
+}
+
 void Buffer::release() noexcept {
+    if (hostCounted) {
+        hostCounted = false;
+        cache->CountHost(owner, allocationBytes, slab, false);
+    }
     if (ready && cache) {
         cache->Put({buffer, memory, mapping, deviceAddress, allocationBytes, capacity, usage, properties, offset, slab, size});
         return;
@@ -183,6 +197,10 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
         memory = cache->AllocateMemory(allocation, "vkAllocateMemory device buffer", context.RefusedDeviceMemoryFallback(requirements.memoryTypeBits, allocation.memoryTypeIndex), &allocatedType);
         hostPlaced = allocatedType != deviceType;
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory device");
+        if (hostPlaced && BufferPool::CountsHost()) {
+            hostCounted = true;
+            cache->CountHost(HostOwner::DeviceSpill, allocationBytes, false, true);
+        }
         ready = true;
     } catch (...) {
         release();
@@ -195,6 +213,10 @@ DeviceBuffer::~DeviceBuffer() {
 }
 
 void DeviceBuffer::release() noexcept {
+    if (hostCounted) {
+        hostCounted = false;
+        cache->CountHost(HostOwner::DeviceSpill, allocationBytes, false, false);
+    }
     if (ready && buffer && memory && cache && !hostPlaced) {
         cache->Put({buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size});
         return;

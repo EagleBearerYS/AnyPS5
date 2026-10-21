@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
@@ -2736,6 +2737,7 @@ Recorder::UploadSlice Recorder::DrawUpload(std::size_t bytes) {
     const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16);
     auto offset = (drawUploadUsed + alignment - 1) & ~(alignment - 1);
     if (drawUpload == nullptr || offset + bytes > drawUpload->Bytes().size()) {
+        const HostOwnerScope owner(HostOwner::Staging);
         drawUpload = std::make_shared<Buffer>(context, std::max(DrawUploadChunk, bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         offset = 0;
     }
