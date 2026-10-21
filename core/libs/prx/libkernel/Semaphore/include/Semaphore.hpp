@@ -17,6 +17,7 @@ constexpr int KERNEL_SEMA_OK = 0;
 struct KernelSemaWaiter {
     std::int32_t need;
     bool released = false;
+    int priority = 0;
 };
 
 struct KernelSemaPrivate {
@@ -29,6 +30,7 @@ struct KernelSemaPrivate {
     std::int32_t initCount;
     std::int32_t maxCount;
     bool isFifo;
+    bool priorityQueue = false;
     bool deleted = false;
     std::int32_t waiterCount = 0;
     std::list<KernelSemaWaiter*> queue;

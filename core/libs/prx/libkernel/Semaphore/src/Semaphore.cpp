@@ -1,5 +1,6 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,9 @@
 KernelSemaPrivate::KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCount, std::string name, bool isFifo)
  : name(std::move(name)), tokenCount(initCount), initCount(initCount), maxCount(maxCount), isFifo(isFifo) {
 }
+
+extern "C" Pthread APS5_VABI scePthreadSelf();
+extern "C" int APS5_VABI scePthreadGetprio(Pthread thread, int* prio);
 
 static bool TraceSync() {
  static const bool enabled = std::getenv("APS5_TRACE_SYNC") != nullptr;
@@ -26,6 +30,7 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
  }
 
  *sem = new KernelSemaPrivate(init, max, std::string(name), attr == 1);
+ (*sem)->priorityQueue = attr == 2;
  if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(*sem), name, attr, init, max);
  return KERNEL_SEMA_OK;
 }
@@ -87,7 +92,12 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  }
  const std::uint64_t generation = sem->cancelGeneration;
  KernelSemaWaiter waiter{need};
- sem->queue.push_back(&waiter);
+ if (sem->priorityQueue && scePthreadGetprio(scePthreadSelf(), &waiter.priority) == 0) {
+  const auto lower = std::find_if(sem->queue.begin(), sem->queue.end(), [&](const KernelSemaWaiter* queued) { return queued->priority > waiter.priority; });
+  sem->queue.insert(lower, &waiter);
+ } else {
+  sem->queue.push_back(&waiter);
+ }
  ++sem->waiterCount;
  struct WaiterGuard {
   KernelSemaPrivate* sem;
@@ -164,4 +174,10 @@ int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
  return KERNEL_SEMA_OK;
 }
 
+}
+
+extern "C" int APS5_Test_GetSemaWaiterCount(KernelSema sem) {
+ if (sem == nullptr) return -1;
+ std::lock_guard<std::mutex> lock(sem->mutex);
+ return static_cast<int>(sem->queue.size());
 }
