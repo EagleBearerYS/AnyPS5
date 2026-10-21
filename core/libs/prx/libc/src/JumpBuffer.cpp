@@ -46,8 +46,8 @@ void APS5_VABI JumpBufferRestoreMask_nid_no_patch(const unsigned char* buffer) {
 // return address, rbx, rsp, rbp, r12-r15, MXCSR, the x87 control word and, as FreeBSD's do, the
 // signal mask at 72 with the flag sigsetjmp keeps at 88, once libkernel has registered sigprocmask.
 
-#ifdef _WIN32
-#define APS5_JUMP_ASM_CALL(name) "    call " name "\n"
+#if defined(_WIN32) || defined(__APPLE__)
+#define APS5_JUMP_ASM_CALL(name) "    call " APS5_ASM_SYMBOL(name) "\n"
 #else
 #define APS5_JUMP_ASM_CALL(name) "    call " name "@PLT\n"
 #endif
