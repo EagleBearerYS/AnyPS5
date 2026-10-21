@@ -1,3 +1,5 @@
-READY
-since: 2026-10-21T16:42:07Z
-previous: BF-115 done, results/cloud-2/BF-115.md (his f911c70a00 vs #7642 05502ba6a5)
+BUSY PM-083
+since: 2026-10-21T18:27:46Z (claimed)
+claimed: tasks/claimed/PM-083.md
+step: fetching upstream main and the six PR heads
+previous: BF-115 done, results/cloud-2/BF-115.md
