@@ -73,6 +73,7 @@ private:
         std::shared_ptr<Framebuffer> framebuffer;
     };
     void release() noexcept;
+    void forgetCounted() noexcept;
     void setLibraryState(VkCommandBuffer commands, const State& state) const;
     Context context;
     std::vector<VkShaderModule> _modules;

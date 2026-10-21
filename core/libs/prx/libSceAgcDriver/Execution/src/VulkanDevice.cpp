@@ -771,6 +771,7 @@ struct VulkanDevice::State {
             }
             Graphics::DestroyShadows(device);
             recorder.reset();
+            if (Graphics::CountsPipelines()) Graphics::ReportPipelineCounts(true);
             // Cached graphics pipelines (with their framebuffers, modules, render passes and layouts)
             // belong to this device and must be destroyed while it lives.
             Graphics::ClearCachedPipelines(device);

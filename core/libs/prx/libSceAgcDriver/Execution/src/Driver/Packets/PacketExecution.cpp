@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -288,6 +289,7 @@ void Driver::execute(const Submission& submission) {
 
         const auto flushStart = profilePackets ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         flushBetweenPackets(submission.queue, header, opcode == 0x49 || opcode == 0x37);
+        if (Graphics::CountsPipelines()) Graphics::ReportPipelineCounts(false);
         timing.Mark("flush_between_packets");
         PacketTimer packetTimer{profilePackets, header == FlipPacketHeader ? 0xffffu : opcode, submission.queue, packetProfile, std::chrono::steady_clock::now()};
 

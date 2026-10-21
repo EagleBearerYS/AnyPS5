@@ -1,9 +1,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <functional>
@@ -45,6 +48,7 @@ struct DeviceLibraries {
     std::map<Key, VkPipelineLayout> layouts;
     std::array<std::map<Key, VkPipeline>, 4> parts;
     PipelineLibraryCounters counters;
+    std::uint64_t prebuilt = 0;
 };
 
 struct LibraryStore {
@@ -60,6 +64,14 @@ struct LibraryStore {
 };
 
 std::atomic<unsigned> runningWorkers{0};
+
+constexpr auto pipelineKinds = static_cast<std::size_t>(PipelineKind::Count);
+std::array<std::atomic<std::uint64_t>, pipelineKinds> livePipelines{};
+std::array<std::atomic<std::uint64_t>, pipelineKinds> createdPipelines{};
+std::atomic<std::uint64_t> queuedPrebuilds{0};
+std::atomic<std::int64_t> lastPipelineReport{0};
+std::mutex reportMutex;
+PipelineCounts reportedCounts;
 
 LibraryStore& Libraries() {
     static auto* store = new LibraryStore();
@@ -241,6 +253,13 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             continue;
         }
         cache.emplace(key, handle);
+        if (CountsPipelines()) {
+            CountPipeline(static_cast<PipelineKind>(part), true);
+            if (partsOnly) {
+                CountPipeline(PipelineKind::Prebuilt, true);
+                ++device.prebuilt;
+            }
+        }
         if (optimize) {
             for (std::uint32_t stage = 0; stage < create.stageCount; ++stage) {
                 for (auto& module : modules) {
@@ -268,6 +287,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     }
     lock.lock();
     ++device.counters.linked;
+    if (CountsPipelines()) CountPipeline(PipelineKind::FastLinked, true);
     if (optimize && optimized != nullptr) {
         auto slot = std::make_shared<OptimizedPipeline>();
         slot->device = context.device;
@@ -291,9 +311,13 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
                 return createPipelines(slot->device, cache, 1, &create, nullptr, &result);
             }();
             if (pipelineCreationResult != VK_SUCCESS) return;
+            if (CountsPipelines()) CountPipeline(PipelineKind::Optimized, true);
             slot->handle.store(result);
             if (slot->released.load()) {
-                if (const auto handle = slot->handle.exchange(VK_NULL_HANDLE)) slot->destroy(slot->device, handle, nullptr);
+                if (const auto handle = slot->handle.exchange(VK_NULL_HANDLE)) {
+                    slot->destroy(slot->device, handle, nullptr);
+                    if (CountsPipelines()) CountPipeline(PipelineKind::Optimized, false);
+                }
             }
             std::lock_guard lock(store.mutex);
             ++devicePointer->counters.optimized;
@@ -310,7 +334,10 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
 
 void OptimizedPipeline::Release() noexcept {
     released.store(true);
-    if (const auto pipeline = handle.exchange(VK_NULL_HANDLE)) destroy(device, pipeline, nullptr);
+    if (const auto pipeline = handle.exchange(VK_NULL_HANDLE)) {
+        destroy(device, pipeline, nullptr);
+        if (CountsPipelines()) CountPipeline(PipelineKind::Optimized, false);
+    }
 }
 
 void OptimizedPipeline::Schedule() {
@@ -335,9 +362,11 @@ void ClearPipelineLibraries(VkDevice device) {
     const auto found = store.devices.find(device);
     if (found == store.devices.end()) return;
     auto& libraries = found->second;
-    for (auto& part : libraries.parts) {
-        for (const auto& [key, handle] : part) libraries.destroyPipeline(device, handle, nullptr);
+    for (std::size_t part = 0; part < libraries.parts.size(); ++part) {
+        for (const auto& [key, handle] : libraries.parts[part]) libraries.destroyPipeline(device, handle, nullptr);
+        if (CountsPipelines()) ForgetPipelines(static_cast<PipelineKind>(part), libraries.parts[part].size());
     }
+    if (CountsPipelines()) ForgetPipelines(PipelineKind::Prebuilt, libraries.prebuilt);
     for (const auto& [key, handle] : libraries.layouts) libraries.destroyLayout(device, handle, nullptr);
     for (const auto module : libraries.modules) libraries.destroyModule(device, module, nullptr);
     store.devices.erase(found);
@@ -369,6 +398,80 @@ PipelineLibraryCounters PipelineLibraryCountersOf(VkDevice device) {
     std::lock_guard lock(store.mutex);
     const auto found = store.devices.find(device);
     return found == store.devices.end() ? PipelineLibraryCounters{} : found->second.counters;
+}
+
+const char* PipelineKindName(PipelineKind kind) {
+    switch (kind) {
+    case PipelineKind::VertexInput: return "vertex input";
+    case PipelineKind::PreRasterization: return "pre-rasterization";
+    case PipelineKind::FragmentShader: return "fragment shader";
+    case PipelineKind::FragmentOutput: return "fragment output";
+    case PipelineKind::Prebuilt: return "prebuilt libraries";
+    case PipelineKind::FastLinked: return "fast-linked";
+    case PipelineKind::Optimized: return "optimized";
+    case PipelineKind::Whole: return "whole";
+    case PipelineKind::Count: break;
+    }
+    return "?";
+}
+
+bool CountsPipelines() {
+    static const bool counted = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    return counted;
+}
+
+void CountPipeline(PipelineKind kind, bool live) noexcept {
+    const auto index = static_cast<std::size_t>(kind);
+    if (!live) {
+        livePipelines[index].fetch_sub(1, std::memory_order_relaxed);
+        return;
+    }
+    livePipelines[index].fetch_add(1, std::memory_order_relaxed);
+    createdPipelines[index].fetch_add(1, std::memory_order_relaxed);
+}
+
+void ForgetPipelines(PipelineKind kind, std::uint64_t count) noexcept {
+    livePipelines[static_cast<std::size_t>(kind)].fetch_sub(count, std::memory_order_relaxed);
+}
+
+void CountQueuedPrebuild(bool queued) noexcept {
+    if (queued) queuedPrebuilds.fetch_add(1, std::memory_order_relaxed);
+    else queuedPrebuilds.fetch_sub(1, std::memory_order_relaxed);
+}
+
+PipelineCounts PipelineCountTotals() {
+    PipelineCounts counts;
+    for (std::size_t kind = 0; kind < pipelineKinds; ++kind) {
+        counts.kinds[kind].live = livePipelines[kind].load(std::memory_order_relaxed);
+        counts.kinds[kind].created = createdPipelines[kind].load(std::memory_order_relaxed);
+    }
+    counts.queuedPrebuilds = queuedPrebuilds.load(std::memory_order_relaxed);
+    auto& store = Libraries();
+    std::lock_guard lock(store.mutex);
+    counts.queuedLinks = store.jobs.size();
+    return counts;
+}
+
+std::string FormatPipelineCounts(const PipelineCounts& counts, const PipelineCounts& previous) {
+    char line[768];
+    auto used = static_cast<std::size_t>(std::snprintf(line, sizeof(line), "live (created since the last line):"));
+    for (std::size_t kind = 0; kind < pipelineKinds && used < sizeof(line); ++kind) {
+        const auto& count = counts.kinds[kind];
+        used += static_cast<std::size_t>(std::snprintf(line + used, sizeof(line) - used, " %s %llu (+%llu),", PipelineKindName(static_cast<PipelineKind>(kind)), static_cast<unsigned long long>(count.live), static_cast<unsigned long long>(count.created - previous.kinds[kind].created)));
+    }
+    if (used < sizeof(line)) std::snprintf(line + used, sizeof(line) - used, " queued: %llu background links, %llu prebuilds", static_cast<unsigned long long>(counts.queuedLinks), static_cast<unsigned long long>(counts.queuedPrebuilds));
+    return line;
+}
+
+void ReportPipelineCounts(bool now) {
+    const auto time = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto last = lastPipelineReport.load(std::memory_order_relaxed);
+    if (!now && last != 0 && time - last < std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(10)).count()) return;
+    if (!lastPipelineReport.compare_exchange_strong(last, time, std::memory_order_relaxed) && !now) return;
+    const auto counts = PipelineCountTotals();
+    std::lock_guard lock(reportMutex);
+    AgcDriver::ProfilePrint_nid_no_patch("[pipelines] %s\n", FormatPipelineCounts(counts, reportedCounts).c_str());
+    reportedCounts = counts;
 }
 
 }

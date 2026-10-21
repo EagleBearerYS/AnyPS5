@@ -577,16 +577,19 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         else {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
+            if (CountsPipelines()) CountPipeline(PipelineKind::Whole, true);
         }
         if (alternateAlpha) {
             blend.pAttachments = secondChannels.data();
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &secondChannel), "vkCreateGraphicsPipelines");
+            if (CountsPipelines()) CountPipeline(PipelineKind::Whole, true);
         }
         if (state.depthBiasPerFace) {
             raster.cullMode = VK_CULL_MODE_FRONT_BIT;
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &backFaces), "vkCreateGraphicsPipelines");
+            if (CountsPipelines()) CountPipeline(PipelineKind::Whole, true);
         }
         for (const auto module : _modules) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
         _modules.clear();
@@ -615,6 +618,7 @@ Pipeline::~Pipeline() {
 
 void Pipeline::release() noexcept {
     framebuffers.clear();
+    if (CountsPipelines()) forgetCounted();
     if (optimized != nullptr) optimized->Release();
     optimized.reset();
     if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
@@ -634,6 +638,10 @@ void Pipeline::release() noexcept {
 }
 
 void Pipeline::Abandon() noexcept {
+    if (CountsPipelines()) {
+        forgetCounted();
+        if (optimized != nullptr && optimized->handle.load() != VK_NULL_HANDLE) CountPipeline(PipelineKind::Optimized, false);
+    }
     if (optimized != nullptr) optimized->released.store(true);
     optimized.reset();
     for (auto& entry : framebuffers) entry.framebuffer->Abandon();
@@ -644,6 +652,12 @@ void Pipeline::Abandon() noexcept {
     renderPass = VK_NULL_HANDLE;
     layout = VK_NULL_HANDLE;
     _modules.clear();
+}
+
+void Pipeline::forgetCounted() noexcept {
+    if (pipeline) CountPipeline(libraries ? PipelineKind::FastLinked : PipelineKind::Whole, false);
+    if (backFaces) CountPipeline(PipelineKind::Whole, false);
+    if (secondChannel) CountPipeline(PipelineKind::Whole, false);
 }
 
 void Framebuffer::Abandon() noexcept {
@@ -1016,6 +1030,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
 
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
+    if (CountsPipelines()) ReportPipelineCounts(false);
     if (created != nullptr) *created = false;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
