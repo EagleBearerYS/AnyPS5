@@ -128,6 +128,8 @@ struct GuestBufferMemory::AddressSpace {
 
 namespace {
 
+std::atomic<std::uint64_t> importSetGeneration{1};
+
 struct RetiredImport;
 
 struct AddressSpaceCache {
@@ -380,6 +382,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     // size); the holder below outlives the batch that copies them.
     RetireShadow(device, it->second, [&lease, joined = it->second.joined](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end) || (joined && joinedCovers(lease, begin, end)); });
     ++state.epoch;
+    importSetGeneration.fetch_add(1, std::memory_order_release);
     state.liveBytes -= it->second.pinnedBytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
 #ifdef _WIN32
@@ -501,6 +504,7 @@ void retireOrTrim(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     }
     RetireShadow(device, entry, [&lease](std::uint64_t from, std::uint64_t to) { return runCovers(lease, from, to); });
     ++state.epoch;
+    importSetGeneration.fetch_add(1, std::memory_order_release);
     auto node = state.imports.extract(it);
     auto& kept = node.mapped();
     std::shared_ptr<void> holder(nullptr, [device = state.device, destroy = state.destroyBuffer, buffer = std::exchange(kept.buffer, VK_NULL_HANDLE)](void*) { destroy(device, buffer, nullptr); });
@@ -1908,6 +1912,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
 #endif
     const auto inserted = state.imports.emplace(base, entry);
+    importSetGeneration.fetch_add(1, std::memory_order_release);
     owner.armed = false;
     return &inserted.first->second;
 }
@@ -1996,6 +2001,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
         state.refreshedGeneration = 0;
         ++state.epoch;
+        importSetGeneration.fetch_add(1, std::memory_order_release);
     }
     if (state.destroyBuffer == nullptr) state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
     if (state.freeMemory == nullptr) state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
@@ -2016,6 +2022,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         }
         node.key() = node.mapped().base;
         ++state.epoch;
+        importSetGeneration.fetch_add(1, std::memory_order_release);
         state.imports.insert(std::move(node));
     }
     const auto budget = effectiveBudget(context, state);
@@ -3157,6 +3164,7 @@ void ClearHostImports(VkDevice device) {
     state.device = VK_NULL_HANDLE;
     state.refreshedGeneration = 0;
     ++state.epoch;
+    importSetGeneration.fetch_add(1, std::memory_order_release);
 }
 
 namespace {
@@ -3572,6 +3580,10 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address) {
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     const auto* range = containingRange(lease, address, address + 1);
     return range != nullptr ? range->address + range->bytes : 0;
+}
+
+std::uint64_t HostImportSetGeneration() {
+    return importSetGeneration.load(std::memory_order_acquire);
 }
 
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
