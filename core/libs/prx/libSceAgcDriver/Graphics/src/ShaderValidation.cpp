@@ -488,6 +488,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         for (const auto& [name, operands] : module.modes) Require(operands.empty() && (name == spv::ExecutionModeOriginUpperLeft || name == spv::ExecutionModeEarlyFragmentTests || name == spv::ExecutionModeDepthReplacing || name == spv::ExecutionModeDepthLess || name == spv::ExecutionModeDepthGreater || name == spv::ExecutionModePixelInterlockOrderedEXT || name == spv::ExecutionModeStencilRefReplacingEXT), "unsupported fragment execution mode");
     } else Require(module.modes.empty(), "unsupported vertex execution mode");
     std::set<std::pair<std::uint32_t, std::uint32_t>> descriptors;
+    std::set<std::pair<std::uint32_t, std::uint32_t>> deviceDescriptors;
     std::map<std::pair<std::uint32_t, std::uint32_t>, bool> bufferViews;
     bool push = false;
     for (const auto& [id, variable] : module.variables) {
@@ -563,6 +564,15 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(stride.has_value() && *stride == 4, "push constant array must have an ArrayStride of 4");
         } else if (variable.storage == spv::StorageClassWorkgroup) {
             Require(mesh, "workgroup memory outside a mesh shader");
+        } else if (shader.deviceImageTables && decoration.set && (*decoration.set == ShaderRecompiler::RuntimeAbi::DeviceHeapSet || *decoration.set == ShaderRecompiler::RuntimeAbi::DeviceTableSet)) {
+            Require(decoration.binding.has_value() && deviceDescriptors.insert({*decoration.set, *decoration.binding}).second, "unbound or duplicate device image table resource");
+            if (*decoration.set == ShaderRecompiler::RuntimeAbi::DeviceTableSet) {
+                Require(variable.storage == spv::StorageClassStorageBuffer && (*decoration.binding == ShaderRecompiler::RuntimeAbi::DeviceTableBucketsBinding || *decoration.binding == ShaderRecompiler::RuntimeAbi::DeviceTableRingBinding), "the device image table's set holds its bucket and miss ring buffers only");
+            } else {
+                const auto kind = *decoration.binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
+                const auto count = type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray ? module.constants.find(type[3]) : module.constants.end();
+                Require(variable.storage == spv::StorageClassUniformConstant && kind >= ShaderRecompiler::RuntimeAbi::FirstImageBinding && kind < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding && count != module.constants.end() && count->second == ShaderRecompiler::RuntimeAbi::GpuImageHeapSlots, "a device image heap resource is not a sampled image array of the heap's length");
+            }
         } else if (variable.storage == spv::StorageClassUniformConstant) {
             Require(decoration.set && decoration.binding, "unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
@@ -578,11 +588,17 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding->binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
             const auto capacity = ShaderRecompiler::RuntimeAbi::HeapCapacity(heap);
             const auto count = module.constants.find(type[3]);
-            Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
+            if (shader.gpuResolvedImages && binding->kind != ShaderRecompiler::DescriptorKind::StorageImage) {
+                const auto slots = binding->kind == ShaderRecompiler::DescriptorKind::Sampler ? ShaderRecompiler::RuntimeAbi::GpuSamplerHeapSlots : ShaderRecompiler::RuntimeAbi::GpuImageHeapSlots;
+                Require(binding->count != 0u && count != module.constants.end() && count->second == slots, "GPU-mode heap array length disagrees with the global heap");
+            } else {
+                Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
+            }
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
-            const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
+            const bool gpuData = shader.gpuResolvedImages && key.first == ShaderRecompiler::RuntimeAbi::GpuDataSet;
+            const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return (gpuData || item.descriptorSet == key.first) && item.binding == key.second; });
             const bool array = binding != shader.bindings.end() && binding->role == ShaderRecompiler::DescriptorRole::GuestBuffers;
             const auto [view, first] = bufferViews.emplace(key, decoration.aliased);
             Require(descriptors.insert(key).second || (!first && view->second && decoration.aliased && array), "duplicate SPIR-V resource binding");
@@ -682,7 +698,7 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         const auto expected = state.rectList || patches ? (i == 0 ? Stage::Vertex : tessStages[i]) : tessellation ? tessStages[i] : geometry && i == 1 ? Stage::Geometry : i == shaders.size() - 1 ? Stage::Fragment : state.stages.path == ShaderPath::Geometry ? Stage::Mesh : Stage::Vertex;
         Require(shaders[i].program != nullptr, "missing compiled shader");
         Require(shaders[i].stage == expected, "graphics stage order disagrees");
-        for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "graphics resource uses a descriptor set other than its stage's");
+        for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || ((shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment || shaders[i].program->gpuResolvedImages) && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "graphics resource uses a descriptor set other than its stage's");
         const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation, primitiveLocations);
         if (i != 0) {
             for (const auto& [location, signature] : current.inputs) {

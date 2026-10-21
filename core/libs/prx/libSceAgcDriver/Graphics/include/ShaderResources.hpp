@@ -48,6 +48,7 @@ std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second);
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
+bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.
@@ -67,6 +68,10 @@ struct PipelineSetLayouts {
     bool split = false;
     std::span<const std::uint32_t> mainKey;
     std::span<const std::uint32_t> fragmentKey;
+    VkDescriptorSetLayout data = VK_NULL_HANDLE;
+    VkDescriptorSetLayout deviceGap = VK_NULL_HANDLE;
+    VkDescriptorSetLayout deviceHeap = VK_NULL_HANDLE;
+    VkDescriptorSetLayout deviceTable = VK_NULL_HANDLE;
 };
 
 struct TableDescriptors {
@@ -174,8 +179,11 @@ public:
     std::span<const VkDescriptorBindingFlags> LayoutBindingFlags() const { return layoutBindingFlags; }
     VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
     bool SplitSets() const { return splitSets; }
-    PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
+    PipelineSetLayouts SetLayouts() const;
+    bool HeapStage() const { return heapStage; }
+    void RefreshHeapStage(std::span<const CompiledShader> shaders);
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
+    void BindHeap(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
         DrawBindings(const DrawBindings&) = delete;
@@ -224,8 +232,14 @@ public:
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool SpaceReuse() const { return spaceReuse; }
+    static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
+    bool RetakeSpace() { return guestMemory.RetakeSpace(); }
+    bool SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
+    std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
     bool UsesAddressTable() const { return usesBda; }
+    bool UsesDeviceImages() const { return deviceImages; }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
@@ -291,6 +305,7 @@ public:
         ProofFailure failure = ProofFailure::None;
     };
     bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
+    static bool EpochProofs();
     bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report); }
     // The proof a recipe hit runs on its template (design_cpu_final M4): Revalidate by that name.
     bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) { return Revalidate(shaders, report); }
@@ -380,12 +395,15 @@ private:
         std::vector<std::size_t> imageAllocations;
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
+        bool heap = false;
+        ShaderRecompiler::DescriptorRole role = ShaderRecompiler::DescriptorRole::GuestBuffers;
     };
 
     struct TableStage {
         ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Compute;
         const ShaderRecompiler::RecompileResult* program = nullptr;
         const ShaderRecompiler::DescriptorBinding* images = nullptr;
+        std::span<const std::uint32_t> imageWords;
         std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
         std::vector<std::uint32_t> map;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
@@ -404,9 +422,9 @@ private:
     std::array<std::uint32_t, 2> tableElements{};
     std::array<std::size_t, 2> storageTableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     TableStage& tableStage(const CompiledShader& shader);
-    static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
+    static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage, std::span<const std::uint32_t>& words);
     std::uint32_t rejectTableElement(TableStage& table, std::span<const std::uint32_t> words, const std::string& message);
-    void addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags, TableStage& table);
+    void addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> guest, VkShaderStageFlags flags, TableStage& table);
     void resolveImageTables();
     void finishImageTables();
 
@@ -438,7 +456,7 @@ private:
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
-    void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
+    void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> guest, VkShaderStageFlags flags);
     // Stage A: one record per planned image element (ImageRecord), in plan order: the decoded
     // descriptor and its surface size (computed once for the build), the write watch walked so stage
     // B's collects are memo hits (APS5_NO_PRECOLLECT=1 skips the pass entirely), and for a sampled
@@ -479,7 +497,7 @@ private:
     // Stage B: the record's texture when the fastRevalidate predicate proves it current under the
     // lock and the cache still holds it; null sends the element to cachedTexture.
     std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
-    void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
+    void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> guest, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
     void applyAnisoOverride();
     void forgetDeferredInputs();
     void release() noexcept;
@@ -549,6 +567,7 @@ private:
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
     bool usesBda = false;
     bool bdaReadOnly = true;
+    bool spaceReuse = false;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
@@ -567,6 +586,30 @@ private:
         DescriptorCache::SetAllocation cacheAllocation;
     };
     bool splitSets = false;
+    bool heapStage = false;
+    bool deviceImages = false;
+    std::array<std::uint32_t, 4> heapOffsets{};
+    void writeHeapStage(const CompiledShader& shader);
+    struct HeapLookupMemo {
+        std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::GpuLookupKeyDwords> key{};
+        std::uint32_t slot = 0;
+        std::uint32_t word = 0;
+        bool valid = false;
+    };
+    struct HeapStageState {
+        std::vector<std::uintptr_t> key;
+        std::array<std::vector<std::uint32_t>, static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::Binding::Count)> slots;
+        std::vector<std::uint32_t> slotGenerations;
+        std::vector<std::uint32_t> samplerSlots;
+        std::vector<std::uint32_t> samplerGenerations;
+        std::uint64_t slotSerial = 0;
+        std::vector<const Sampler*> samplerObjects;
+        std::vector<HeapLookupMemo> lookupMemo;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> dataPatches;
+    };
+    std::array<HeapStageState, 2> heapStages;
+    static constexpr std::int64_t HeapRingDataVertex = -2;
+    static constexpr std::int64_t HeapRingDataFragment = -3;
     std::vector<std::uint32_t> fragmentLayoutKey;
     SetObjects fragment;
     struct TableWrites {
@@ -631,6 +674,10 @@ private:
     // no image other than the object's own sources has results pending over its surfaces and
     // regions, so those checks are skipped (see fastRevalidate).
     std::uint64_t pendingSerialSeen = 0;
+    std::uint64_t provedEpoch = 0;
+    std::uint64_t provedProof = 0;
+    std::uint64_t provedPending = 0;
+    bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
@@ -648,6 +695,7 @@ private:
     std::vector<std::uint32_t> refreshResourceKey;
     struct DeferredImages {
         const ShaderRecompiler::DescriptorBinding* binding;
+        std::span<const std::uint32_t> words;
         std::size_t index;
         std::size_t firstSampler = 0;
         std::size_t samplerCount = 0;
@@ -720,8 +768,25 @@ private:
     void noteUse(const Key& key);
     struct KeyHash {
         std::size_t operator()(const Key& key) const noexcept {
-            std::uint64_t hash = 14695981039346656037ull;
-            for (const auto word : key) hash = (hash ^ word) * 1099511628211ull;
+            constexpr std::uint64_t Prime = 0x9e3779b97f4a7c15ull;
+            std::uint64_t lanes[4] = {0x243f6a8885a308d3ull, 0x13198a2e03707344ull, 0xa4093822299f31d0ull, 0x082efa98ec4e6c89ull};
+            const auto* words = key.data();
+            const auto count = key.size();
+            std::size_t at = 0;
+            for (; at + 8u <= count; at += 8u) {
+                for (std::size_t lane = 0; lane < 4u; ++lane) {
+                    const auto value = static_cast<std::uint64_t>(words[at + lane * 2u]) | static_cast<std::uint64_t>(words[at + lane * 2u + 1u]) << 32u;
+                    lanes[lane] = (lanes[lane] ^ value) * Prime;
+                    lanes[lane] ^= lanes[lane] >> 29u;
+                }
+            }
+            std::uint64_t hash = lanes[0] ^ (lanes[1] << 17u | lanes[1] >> 47u) ^ (lanes[2] << 31u | lanes[2] >> 33u) ^ (lanes[3] << 47u | lanes[3] >> 17u) ^ count;
+            for (; at < count; ++at) hash = (hash ^ words[at]) * Prime;
+            hash ^= hash >> 33u;
+            hash *= 0xff51afd7ed558ccdull;
+            hash ^= hash >> 33u;
+            hash *= 0xc4ceb9fe1a85ec53ull;
+            hash ^= hash >> 33u;
             return static_cast<std::size_t>(hash);
         }
     };

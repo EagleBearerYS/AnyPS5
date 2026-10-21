@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include <algorithm>
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -34,6 +35,25 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
     if (metadata || expand) {
         require(!metadata || !drawParameters.indirect, "indirect CB metadata passes are unsupported");
         if (expand && !drawParameters.indirect && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
+        if (metadata && DrawPipeline::Active() && DrawPipeline::MetadataPassesPipelined() && deferredLabels().labels.empty()) {
+            auto writes = Graphics::PipelinedColorMetadataPassWrites(*metadata);
+            const auto localDevice = device.Load();
+            if (!writes.empty() && localDevice != nullptr) {
+                const auto queueId = submission.queue;
+                const auto opcode = (packet[0] >> 8u) & 0xffu;
+                DrawPipeline::Queue0().Enqueue([this, localDevice, queueId, opcode, pass = *metadata] {
+                    GuestMemory::SetCurrentPacket(opcode, queueId);
+                    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
+                    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                    auto current = device.Load();
+                    const auto& target = current != nullptr ? current : localDevice;
+                    recordLabelsForPacket(target.get(), queueId);
+                    target->ColorMetadataPass(pass);
+                }, std::move(writes));
+                DrawPipeline::CountPipelinedMetadataPass();
+                return DrawVerdict::Drawn;
+            }
+        }
         if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
         if (expand && drawParameters.indirect) {
             recordQueuedLabelsBeforeRead(submission.queue);

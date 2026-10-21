@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "ShaderDiskCache.hpp"
@@ -940,6 +941,10 @@ private:
         }
     }
 
+    bool served(const ShaderRecompiler::RecompileResult& result) const {
+        return !result.deviceImageTables || DeviceImageTable::Existing(context) != nullptr;
+    }
+
     void replay(const LoadedEntry& entry) {
         struct Replaying {
             Replaying() { replayingHere = true; }
@@ -948,7 +953,7 @@ private:
         auto& counters = replayCounters();
         if (entry.kind == ComputeRecord) {
             const auto module = loaded.modules.find(entry.compute);
-            if (module == loaded.modules.end() || module->second.stage != ShaderRecompiler::ShaderStage::Compute || !hooks.compute) {
+            if (module == loaded.modules.end() || module->second.stage != ShaderRecompiler::ShaderStage::Compute || !hooks.compute || !served(*module->second.result)) {
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
@@ -958,7 +963,7 @@ private:
         std::vector<CompiledShader> shaders;
         for (const auto& stage : entry.graphics.stages) {
             const auto module = loaded.modules.find(stage.identity);
-            if (module == loaded.modules.end() || module->second.stage != stage.stage) {
+            if (module == loaded.modules.end() || module->second.stage != stage.stage || !served(*module->second.result)) {
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
                 return;
             }

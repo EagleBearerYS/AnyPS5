@@ -188,7 +188,9 @@ function(add_shader_recompiler target runtimeTarget)
     get_target_property(shaderCacheCompiledSources ${target} SOURCES)
     list(APPEND shaderCacheRecompilerSources ${shaderCacheCompiledSources})
     list(REMOVE_DUPLICATES shaderCacheRecompilerSources)
-    set(shaderCacheKeySources "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp")
+    set(shaderCacheKeySources
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp"
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/general/AtomicSharedPtr.hpp")
     foreach(source IN LISTS shaderCacheKeySources)
         if(NOT EXISTS "${source}")
             message(FATAL_ERROR "Shader disk cache key source does not exist: ${source}")
@@ -234,11 +236,14 @@ function(add_shader_recompiler target runtimeTarget)
             BdaAbi::RangesOrdered
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
+            HeapFragmentEligible
+            CompleteHeapDataWords
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources
             DebugProbeActive
             DepthBitsTextureWidth
+            DescriptorBindingForImage
             HashBytes
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
@@ -270,6 +275,11 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::MaterializeNanoseconds
             ReleaseUndrawnResourcePlan
             ResourceMaterializer::SpecializationNanoseconds
+            ResourceMaterializer::FindDeviceImageInterface
+            ResourceMaterializer::ExpectedDeviceImages
+            ResourceMaterializer::TryRuntimeImageMode
+            ImageShapeForResource
+            ReducesBetweenTexels
             RuntimeAbi::RequireVersion
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass

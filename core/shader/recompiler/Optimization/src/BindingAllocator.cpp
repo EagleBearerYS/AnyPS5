@@ -68,7 +68,7 @@ bool usesGds(const IrProgram& program) {
 
 }
 
-BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay) const {
+BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay, bool gpuResolvedImages) const {
     IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.shaderInfoComplete || metadata.bindingLayoutComplete) {
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
@@ -113,8 +113,12 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
     }
+    if (gpuResolvedImages) {
+        next.samplerSlotDwords = static_cast<std::uint32_t>(info.samplers.size()) * 2u;
+        next.gpuResolvedImages = true;
+    }
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
-    next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
+    next.pushDataStartDword = !gpuResolvedImages && next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
     if (stencilReplay) {
         const auto offset = next.UsesPushData() ? next.ShaderDataDwords() : 0u;
         if (offset >= pushSize) fail("stencil replay requires an unused push constant dword");
@@ -153,6 +157,12 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
 
+    if (gpuResolvedImages && !registrationModules) {
+        for (const auto& descriptor : next.descriptors) {
+            if (ImageBindingResourceClass(descriptor.kind) == ImageResourceClass::Sampled) next.imageSlotDwords += static_cast<std::uint32_t>(descriptor.resources.size());
+        }
+    }
+
     std::vector<std::uint32_t> samplers;
     for (std::uint32_t i = 0; i < info.samplers.size(); i++) {
         if (info.samplers[i].table == NoTable) {
@@ -176,7 +186,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (!program.Resources().srtReads.empty()) {
         addBinding(next, DescriptorBindingKind::FlattenedSrt);
     }
-    const bool imageTables = std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable; });
+    const bool imageTables = std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable && !image.deviceTable; });
     const bool samplerTables = std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; });
     if (samplerTables) {
         addBinding(next, DescriptorBindingKind::SamplerTable);

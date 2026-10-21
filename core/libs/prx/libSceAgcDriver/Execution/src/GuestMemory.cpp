@@ -35,7 +35,9 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <fstream>
+#ifdef __linux__
 #include <link.h>
+#endif
 #include <pthread.h>
 #include <sstream>
 #include <sys/ioctl.h>
@@ -90,6 +92,7 @@ std::atomic<std::uint64_t> forgetBytes{0};
 std::atomic<std::uint64_t> collectMemoHits{0};
 std::atomic<std::uint64_t> collectEpochBumps{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
+std::atomic<std::uint64_t> ownWriteSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
 // tracker mutex acquisitions that had to wait (APS5_PROFILE_DRAW; see lockTracker).
 std::atomic<std::uint64_t> collectDirty{0};
@@ -1438,8 +1441,29 @@ void AdoptLatestCollectEpoch() {
     if (latest > threadCollectEpoch) threadCollectEpoch = latest;
 }
 
+std::uint64_t OwnWriteSerial() {
+    return ownWriteSerial.load(std::memory_order_acquire);
+}
+
 std::uint64_t CollectEpochBumps() {
     return collectEpochBumps.load(std::memory_order_relaxed);
+}
+
+namespace {
+std::atomic<std::uint64_t> proofSerial{1};
+thread_local bool proofThread = false;
+}
+
+std::uint64_t ProofSerial() {
+    return proofSerial.load(std::memory_order_acquire);
+}
+
+void BreakProofs() {
+    proofSerial.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void MarkProofThread() {
+    proofThread = true;
 }
 
 std::uint64_t CollectEpoch() {
@@ -1656,8 +1680,10 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 
 std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, const std::function<std::pair<std::uint64_t, std::uint64_t>()>& store) {
     if (bytes == 0) return 0;
+    BreakProofs();
     const auto stampStored = [](WriteTracker& tracker, std::pair<std::uint64_t, std::uint64_t> stored) -> std::uint64_t {
         if (stored.second <= stored.first) return 0;
+        ownWriteSerial.fetch_add(1, std::memory_order_release);
         ++tracker.generation;
         if (!tracker.watched || !tracker.covers(stored.first, static_cast<std::size_t>(stored.second - stored.first))) {
             tracker.noteUnstampedStore(stored.first, stored.second);
@@ -1700,10 +1726,12 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
+    BreakProofs();
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
     tracker.initialize();
     if (bytes == 0) return 0;
+    ownWriteSerial.fetch_add(1, std::memory_order_release);
     ++tracker.generation;
     if (!tracker.watched || !tracker.covers(address, bytes)) {
         tracker.noteUnstampedStore(address, address + bytes);
@@ -2054,7 +2082,10 @@ std::atomic<std::uint64_t> gpuHoldSerial{0};
 
 void GpuMutexType::acquired() {
     owner.store(ThreadToken(), std::memory_order_relaxed);
-    if (++depth == 1) gpuHoldSerial.fetch_add(1, std::memory_order_relaxed);
+    if (++depth == 1) {
+        gpuHoldSerial.fetch_add(1, std::memory_order_relaxed);
+        if (!proofThread) BreakProofs();
+    }
 }
 
 bool GpuMutexType::try_lock() {
@@ -2409,6 +2440,7 @@ void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> cur
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
+    BreakProofs();
     if (current.empty()) return;
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
     // site above it was doing (the [hooksync] line counts stores apart).

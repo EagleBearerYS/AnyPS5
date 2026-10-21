@@ -84,6 +84,7 @@ struct SpirvTableAccess {
     std::uint32_t samplerElement = 0;
     bool active = false;
     bool uniform = false;
+    bool device = false;
 };
 
 struct SpirvEmitterState {
@@ -108,6 +109,10 @@ struct SpirvEmitterState {
     bool depthRangeRemap = false;
     std::uint32_t depthRemapClipIndex = 0;
     bool registrationModules = false;
+    bool gpuResolvedImages = false;
+    bool bdaRangeCache = false;
+    std::unordered_map<const IrValue*, std::uint32_t> gpuConstantChecks;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> bdaRangeCacheVariables;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool robustBufferAccess2 = false;
@@ -190,6 +195,7 @@ struct SpirvEmitterState {
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;
     std::uint32_t shaderDataStorageVariable = 0;
+    std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
     std::uint32_t ldsVariable = 0;
     std::uint32_t ldsBufferVariable = 0;
@@ -205,6 +211,10 @@ struct SpirvEmitterState {
     std::vector<SpirvTableImageVariable> tableImageVariables;
     std::uint32_t tableSamplerVariable = 0;
     std::uint32_t tableMapVariable = 0;
+    std::vector<SpirvTableImageVariable> deviceHeapVariables;
+    std::uint32_t deviceTableBucketsVariable = 0;
+    std::uint32_t deviceTableRingVariable = 0;
+    std::uint32_t deviceImageLookupFunction = 0;
     std::uint32_t mainFunc = 0;
     std::uint32_t meshGuestFunc = 0;
     std::uint32_t pixelGuestFunc = 0;

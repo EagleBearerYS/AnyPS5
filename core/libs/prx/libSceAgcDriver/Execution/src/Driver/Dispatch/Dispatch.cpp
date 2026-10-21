@@ -158,6 +158,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         localDevice->ComputeTarget((packet[4] & 0x8000u) != 0 ? 32u : 64u),
         {0, 0, 0, threadGroup != std::array<std::uint32_t, 3>{} ? 0u : 128u}
     };
+    if (request.target.deviceImageTables) request.target.deviceImageTables = localDevice->DeviceImagesServe(address);
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static double captureMs = 0, keyMs = 0, recompileMs = 0, deviceMs = 0;
     static std::uint64_t cacheHits = 0;
@@ -200,6 +201,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     };
     mix(address);
     mix(packet[4] & 0x8000u);
+    mix(request.target.deviceImageTables);
     for (const auto threads : compute.partialThreads) mix(threads);
     for (const auto word : userData) mix(word);
 
@@ -362,6 +364,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
             static double totalMs = 0;
             totalMs += elapsed;
+            NoteDeviceImageModule(snapshot, codeOffset, request, *compiledResult);
             if (profile && elapsed > 200) std::fprintf(stderr, "[gpu] compute shader 0x%llx recompile took %.0f ms (%zu SPIR-V words, %zu captured regions, total %.1f s)\n", static_cast<unsigned long long>(address), elapsed, compiledResult->spirv.size(), captured.size(), totalMs / 1000);
         } catch (const std::exception& error) {
             std::string dump;
@@ -414,6 +417,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     phaseTiming.Phase(PhaseQueuedLabels);
     const auto& compiled = *compiledResult;
+    localDevice->NoteDeviceImageProgram(compiled, address);
+    if (!expectDeviceImages(localDevice, userData, address, compiled, true)) {
+        dispatch(queue, packet, submission, indirectArguments);
+        return;
+    }
     std::vector<Graphics::GuestMemorySnapshot> snapshots;
     for (const auto& region : captured) snapshots.push_back({region.guestAddress, region.bytes});
     std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
@@ -620,6 +628,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         pending.phases = true;
         pending.hit = cached;
         pending.validated = validated;
+        pending.deviceImages = compiled.deviceImageTables;
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
     }

@@ -218,9 +218,16 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, shader.pushConstantOffset);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
-            for (const auto& binding : shader.program->bindings) {
-                Require(binding.descriptorSet < 2u, "split pipeline library descriptor set exceeds two slots");
-                sets |= 1u << binding.descriptorSet;
+            if (shader.program->gpuResolvedImages) {
+                sets |= 6u;
+                for (const auto& binding : shader.program->bindings) {
+                    if (binding.descriptorSet == 0u) sets |= 1u;
+                }
+            } else {
+                for (const auto& binding : shader.program->bindings) {
+                    Require(binding.descriptorSet < 2u, "split pipeline library descriptor set exceeds two slots");
+                    sets |= 1u << binding.descriptorSet;
+                }
             }
         }
     }
@@ -228,6 +235,10 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         const auto unused = 3u & ~(keys.preRasterizationSets | keys.fragmentSets);
         keys.preRasterizationSets |= unused & 1u;
         keys.fragmentSets |= unused & 2u;
+    }
+    if (resources.split && resources.deviceTable != VK_NULL_HANDLE) {
+        keys.preRasterizationSets |= 12u;
+        keys.fragmentSets |= 12u;
     }
     for (const auto& binding : input.bindings) {
         appendKey(keys.vertexInput, binding.binding);
@@ -286,6 +297,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     if (!resources.split) {
         appendKey(keys.layout, pushStagesOf(context));
         for (const auto word : resources.mainKey) appendKey(keys.layout, word);
+        if (resources.deviceTable != VK_NULL_HANDLE) appendKey(keys.layout, 0x44455649u);
         keys.preRasterizationLayout = keys.fragmentLayout = keys.layout;
         return true;
     }
@@ -301,8 +313,10 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             appendKey(key, resources.fragmentKey.size());
             for (const auto word : resources.fragmentKey) appendKey(key, word);
         }
+        if ((sets & 4u) != 0u) appendKey(key, resources.deviceTable != VK_NULL_HANDLE ? 0x48454150u : 0x44415441u);
+        if ((sets & 8u) != 0u) appendKey(key, 0x5441424cu);
     };
-    splitKey(keys.layout, 3u);
+    splitKey(keys.layout, resources.deviceTable != VK_NULL_HANDLE ? 15u : resources.data != VK_NULL_HANDLE ? 7u : 3u);
     splitKey(keys.preRasterizationLayout, keys.preRasterizationSets);
     splitKey(keys.fragmentLayout, keys.fragmentSets);
     return true;
@@ -377,12 +391,13 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         }
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
-        const std::array<VkDescriptorSetLayout, 2> setLayouts{resources.main, resources.fragment};
+        const bool deviceSets = resources.deviceTable != VK_NULL_HANDLE;
+        const std::array<VkDescriptorSetLayout, 4> setLayouts{resources.main, deviceSets && resources.fragment == VK_NULL_HANDLE ? resources.deviceGap : resources.fragment, deviceSets ? resources.deviceHeap : resources.data, resources.deviceTable};
         const VkPushConstantRange push{pushStages, 0, PipelinePushSlotBytes};
         const std::array<VkPushConstantRange, 2> slots{{{pushStagesOf(context), 0, PipelinePushSlotBytes}, {VK_SHADER_STAGE_FRAGMENT_BIT, PipelinePushSlotBytes, PipelinePushSlotBytes}}};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutInfo.flags = resources.split ? VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT : 0;
-        layoutInfo.setLayoutCount = resources.split ? 2u : 1u;
+        layoutInfo.flags = resources.split && context.graphicsPipelineLibrary ? VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT : 0;
+        layoutInfo.setLayoutCount = deviceSets ? 4u : resources.data != VK_NULL_HANDLE ? 3u : resources.split ? 2u : 1u;
         layoutInfo.pSetLayouts = setLayouts.data();
         layoutInfo.pushConstantRangeCount = dynamicRendering ? static_cast<std::uint32_t>(slots.size()) : pushStages != 0 ? 1 : 0;
         layoutInfo.pPushConstantRanges = dynamicRendering ? slots.data() : pushStages != 0 ? &push : nullptr;

@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
+#include "SpirvBackend/SpirvImageEmitter.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include "PipelineSpecialization.hpp"
@@ -1442,6 +1443,7 @@ void EmitProgram(SpirvEmitterState& state) {
         state.labels.emplace(block, label);
     }
     DefineGetBdaPointer(state);
+    DefineDeviceImageLookup(state);
     DefineDot2F32F16Function(state);
     for (const IrBlock* block : program.BlockOrder()) {
         const bool needsScratch = std::any_of(block->Instructions().begin(), block->Instructions().end(), [](const IrValue* inst) {
@@ -1507,12 +1509,14 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.pixelValidMaskVariable != 0u) {
         state.module.AddFunction(spv::OpStore, state.pixelValidMaskVariable, ConstantU32(state, 1u));
     }
+    for (const auto& [variable, zero] : state.bdaRangeCacheVariables) state.module.AddFunction(spv::OpStore, variable, zero);
     if (AlphaToCoverage(state)) StoreCoverage(state, ConstantI32(state, -1));
     EmitBdaAnchors(state);
     if (OrderedPixelShader(state)) {
         state.module.AddFunction(spv::OpBeginInvocationInterlockEXT);
     }
     EmitMemoryOffsets(state);
+    EmitHeapSlotPreload(state);
     if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->QuadMasked()) {
         const auto& pixel = *state.inputInfo.pixel;
         const auto quad = EmitQuadPixel(state);

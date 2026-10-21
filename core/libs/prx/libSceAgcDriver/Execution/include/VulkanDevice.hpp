@@ -3,6 +3,7 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include "DeviceImageTableAbi.hpp"
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
@@ -206,6 +207,12 @@ public:
     VkShaderStageFlags SubgroupStages() const;
     bool ProvokingVertexLast() const;
     bool GraphicsPipelineLibraries() const;
+    bool DeviceImagePath() const;
+    bool DeviceImagesServe(std::uint64_t codeAddress) const;
+    void NoteDeviceImageProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress) const;
+    std::optional<std::string> ExpectDeviceImages(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) const;
+    void FallBackDeviceImages(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress, const std::string& reason) const;
+    void NoteDeviceImageExpectation(bool memoHit, std::uint64_t nanoseconds) const;
     // A presentation is a few steps so the presenter holds GuestMemory::GpuMutex only while it
     // touches the queue. Presentations are slots (FlipInFlight() + 1, each with its own command
     // buffer, fence, kept resident image and dump buffer): RetirePresents(keep) (no mutex) retires
@@ -317,7 +324,7 @@ public:
     static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
-    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const std::function<std::vector<Graphics::CompiledShader>()>& cpuTableStages = {});
     bool DrawInputsInPlace() const;
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
@@ -336,6 +343,7 @@ public:
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
     bool PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
+    Graphics::Context GraphicsContext() const { return graphicsContext(); }
 
 public:
     // The device's Graphics::Context: a copy of the one built at setup (its instance functions

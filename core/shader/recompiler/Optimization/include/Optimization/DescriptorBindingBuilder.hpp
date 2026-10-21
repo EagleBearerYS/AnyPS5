@@ -6,9 +6,13 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Recompiler.hpp"
 #include <cstdint>
+#include <span>
 
 namespace ShaderRecompiler {
 
+bool ReducesBetweenTexels(std::uint32_t word0, std::uint32_t filter);
+DescriptorImageShape ImageShapeForResource(const ImageResource& image);
+std::uint32_t DeviceSamplerClass(std::span<const std::uint32_t, 4> words, bool integerBorder);
 std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter);
 struct PreparedDescriptorBinding {
     DescriptorBinding descriptor;
@@ -32,6 +36,7 @@ struct DescriptorBindingPlan {
     std::vector<PreparedImageMetadata> imageMetadata;
     std::vector<PipelineSpecializationConstant> specialization;
     std::vector<std::uint32_t> runtimeState;
+    std::vector<RuntimeAbi::HeapSlotWord> heapSlotWords;
     bool storageData = false;
 };
 

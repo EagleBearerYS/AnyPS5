@@ -8,11 +8,16 @@
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace AgcDriver::Graphics {
 
 struct HostImport;
+
+struct UnrecordedDeviceImageDraw : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
@@ -127,6 +132,9 @@ void CountDrawSkip(DrawSkip kind, double us);
 std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>> DrawCopiedWriters();
 
 void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
+bool DrawPipelineEnabled();
+bool CommitTrims();
 
 }
 

@@ -20,6 +20,7 @@ struct DrawPhaseTotals {
 
 struct PendingDrawPhases {
     bool phases = false;
+    bool deviceImages = false;
     std::uint64_t captures = 0;
     std::array<double, DrawDriverPhaseCount> ms{};
     std::chrono::steady_clock::time_point tailAt{};

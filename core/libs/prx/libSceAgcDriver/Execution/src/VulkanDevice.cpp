@@ -9,6 +9,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -89,6 +91,11 @@ void check(VkResult result, const char* operation) {
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("Vulkan presentation: ") + reason);
+}
+
+void reportDeviceImagePathRefusal(const std::string& reason) {
+    static std::atomic<bool> reported{false};
+    if (!reported.exchange(true)) std::fprintf(stderr, "[device-images] APS5_GPU_PATH stays off on this device: %s\n", reason.c_str());
 }
 
 bool CoreVulkanCapability(std::uint32_t capability) {
@@ -332,6 +339,8 @@ struct VulkanDevice::State {
     bool storageBufferUpdateAfterBind = false;
     bool sampledImageUpdateAfterBind = false;
     bool descriptorBindingPartiallyBound = false;
+    bool bindlessHeapFeatures = false;
+    bool deviceImagePath = false;
     bool descriptorBindingVariableDescriptorCount = false;
     bool runtimeDescriptorArray = false;
     VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorIndexingProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES_EXT};
@@ -786,6 +795,8 @@ struct VulkanDevice::State {
             resourceCache.Clear();
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
+            Graphics::DeviceImageTable::Release(device);
+            Graphics::BindlessHeap::Release(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
@@ -1702,11 +1713,24 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->descriptorBindingPartiallyBound = descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE;
         state->descriptorBindingVariableDescriptorCount = descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount == VK_TRUE;
         state->runtimeDescriptorArray = descriptorIndexingFeatures.runtimeDescriptorArray == VK_TRUE;
-        if (state->storageBufferUpdateAfterBind || state->sampledImageUpdateAfterBind) {
+        const bool heapFeatures = descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE && descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE && descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
+        if (state->storageBufferUpdateAfterBind || state->sampledImageUpdateAfterBind || Graphics::GpuPathEnabled()) {
             VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &state->descriptorIndexingProperties};
             state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
         }
+        if (Graphics::GpuPathEnabled()) {
+            const auto& indexed = state->descriptorIndexingProperties;
+            const Graphics::DeviceImagePathFeatures pathFeatures{heapFeatures, state->descriptorIndexing, std::min(indexed.maxPerStageDescriptorUpdateAfterBindSampledImages, indexed.maxDescriptorSetUpdateAfterBindSampledImages), std::min(indexed.maxPerStageDescriptorUpdateAfterBindSamplers, indexed.maxDescriptorSetUpdateAfterBindSamplers)};
+            const auto refusal = Graphics::DeviceImagePathRefusal(state->properties.limits, pathFeatures);
+            state->deviceImagePath = !refusal.has_value();
+            if (refusal.has_value()) reportDeviceImagePathRefusal(*refusal);
+        }
+        state->bindlessHeapFeatures = (Graphics::BindlessTexturesEnabled() || state->deviceImagePath) && heapFeatures;
+        if (state->bindlessHeapFeatures) state->descriptorBindingPartiallyBound = true;
+    } else if (Graphics::GpuPathEnabled()) {
+        reportDeviceImagePathRefusal("the device lacks VK_EXT_descriptor_indexing, which the image heap needs");
     }
+    if (Graphics::GpuHeapEnabled() && !state->bindlessHeapFeatures) throw std::runtime_error("APS5_GPU_HEAP needs descriptorBindingSampledImageUpdateAfterBind, descriptorBindingPartiallyBound and descriptorBindingUpdateUnusedWhilePending; this device lacks one, so unset APS5_GPU_HEAP");
     descriptorIndexingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT};
     if (state->descriptorIndexing || state->storageBufferUpdateAfterBind || state->sampledImageUpdateAfterBind || state->descriptorBindingPartiallyBound || state->descriptorBindingVariableDescriptorCount || state->runtimeDescriptorArray) deviceExtensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
     if (state->descriptorIndexing) {
@@ -1722,6 +1746,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     descriptorIndexingFeatures.descriptorBindingPartiallyBound = state->descriptorBindingPartiallyBound ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = state->descriptorBindingVariableDescriptorCount ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.runtimeDescriptorArray = state->runtimeDescriptorArray ? VK_TRUE : VK_FALSE;
+    if (state->bindlessHeapFeatures) {
+        descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+    }
     if (state->runtimeDescriptorArray) {
         state->capabilities.push_back(spv::CapabilityRuntimeDescriptorArray);
         if (!state->descriptorIndexing) state->spirvExtensions.push_back("SPV_EXT_descriptor_indexing");
@@ -2007,6 +2035,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->recorder->Activate();
     state->context = buildContext();
     state->contextReady = true;
+    if (state->deviceImagePath) Graphics::DeviceImageTable::Create(state->context, ShaderRecompiler::ResourceMaterializer::FindDeviceImageInterface);
     if (window != nullptr) {
         require(window->getDrawableSize != nullptr, "missing window drawable size query");
         std::uint32_t drawableWidth = 0;
@@ -3335,6 +3364,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     APS5_LOG_OUT_DEBUG("Presentation command buffer begin commands=%p image=%p", reinterpret_cast<void*>(commands), reinterpret_cast<void*>(state->images[index]));
     using CommandClass = Graphics::Recorder::CommandClass;
     Graphics::Recorder::CountPresent();
+    if (Graphics::GpuHeapEnabled()) Graphics::BindlessHeap::SweepIfDue();
     if (Graphics::Recorder::GpuTimingEnabled()) {
         if (slot.queries == VK_NULL_HANDLE) {
             VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -3645,6 +3675,10 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     auto target = state->shaderProfile->Target();
     target.float32FlushToZero = state->float32FlushToZero;
     target.float32DenormPreserve = state->float32DenormPreserve;
+    target.gpuConstants = Graphics::GpuConstantsEnabled();
+    target.deviceImageTables = state->deviceImagePath;
+    static const bool verifyGpuConstants = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+    target.gpuConstantsVerify = target.gpuConstants && verifyGpuConstants;
     return target;
 }
 
@@ -3707,6 +3741,37 @@ bool VulkanDevice::ProvokingVertexLast() const {
 
 bool VulkanDevice::GraphicsPipelineLibraries() const {
     return state->graphicsPipelineLibrary;
+}
+
+bool VulkanDevice::DeviceImagePath() const {
+    return state->deviceImagePath;
+}
+
+bool VulkanDevice::DeviceImagesServe(std::uint64_t codeAddress) const {
+    if (!state->deviceImagePath) return false;
+    const auto* table = Graphics::DeviceImageTable::Existing(state->context);
+    return table != nullptr && table->ServesProgram(codeAddress);
+}
+
+void VulkanDevice::NoteDeviceImageProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress) const {
+    if (!result.deviceImageTables) return;
+    if (auto* table = Graphics::DeviceImageTable::Existing(state->context)) table->NoteProgram(result, codeAddress);
+}
+
+std::optional<std::string> VulkanDevice::ExpectDeviceImages(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) const {
+    auto* table = Graphics::DeviceImageTable::Existing(state->context);
+    require(table != nullptr && state->recorder != nullptr, "expected device images need the device's table and its recorder");
+    return table->Expect(graphicsContext(), *state->recorder, images);
+}
+
+void VulkanDevice::NoteDeviceImageExpectation(bool memoHit, std::uint64_t nanoseconds) const {
+    if (auto* table = Graphics::DeviceImageTable::Existing(state->context)) table->NoteExpectation(memoHit, nanoseconds);
+}
+
+void VulkanDevice::FallBackDeviceImages(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress, const std::string& reason) const {
+    auto* table = Graphics::DeviceImageTable::Existing(state->context);
+    require(table != nullptr, "a device image fallback needs the device's table");
+    table->FallBackProgram(result.Identity(), codeAddress, reason);
 }
 
 Graphics::Context VulkanDevice::graphicsContext() const {
@@ -3870,7 +3935,7 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
     return Graphics::Pipeline::Prebuild(context, state, Graphics::VertexInputLayout{}, layouts.View(), group);
 }
 
-void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe) {
+void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const std::function<std::vector<Graphics::CompiledShader>()>& cpuTableStages) {
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -3881,7 +3946,17 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
     static const bool trace = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     if (trace) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
     const auto context = graphicsContext();
-    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe);
+    try {
+        Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe);
+    } catch (const Graphics::UnrecordedDeviceImageDraw&) {
+        if (!cpuTableStages) throw;
+        const auto stages = cpuTableStages();
+        for (const auto& shader : stages) {
+            require(shader.program != nullptr && !shader.program->deviceImageTables, "a CPU table stage of a draw outside the recorder reads the device image table");
+            ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
+        }
+        Graphics::Draw(context, graphics, draw, stages, snapshots, nullptr);
+    }
     if (trace) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
 }
 
@@ -4730,6 +4805,13 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     };
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
+    if (resources.UsesDeviceImages()) {
+        auto* table = Graphics::DeviceImageTable::Existing(context);
+        Graphics::Require(table != nullptr, "a dispatch reading images through the device image table needs the device's table");
+        const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{record.shader->program->Identity()};
+        if (const auto unserved = table->Expect(context, recorder, record.shader->program->deviceImages)) Graphics::Require(false, "a dispatch recorded without the driver's expectation cannot take the CPU table path: " + *unserved);
+        table->Prepare(context, recorder, programs);
+    }
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     recordStep(PhaseRecordCommands);
@@ -4916,10 +4998,18 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->destroyPipeline = state->DeviceFunction<PFN_vkDestroyPipeline>("vkDestroyPipeline");
     objects->module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
     objects->resourcesLayout = setLayout;
-    const std::array<VkDescriptorSetLayout, 2> setLayouts{setLayout, shader.workgroupMemoryDwords != 0 ? state->workgroupMemoryLayout : VK_NULL_HANDLE};
+    std::array<VkDescriptorSetLayout, 4> setLayouts{setLayout, shader.workgroupMemoryDwords != 0 ? state->workgroupMemoryLayout : VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
+    const bool deviceSets = shader.deviceImageTables;
+    if (deviceSets) {
+        auto* table = Graphics::DeviceImageTable::Existing(context);
+        require(table != nullptr, "a compute stage reading images through the device image table needs the device's table");
+        if (shader.workgroupMemoryDwords == 0) setLayouts[ShaderRecompiler::WorkgroupMemoryDescriptorSet] = table->EmptyLayout();
+        setLayouts[ShaderRecompiler::RuntimeAbi::DeviceHeapSet] = Graphics::DeviceImageHeap::Layout(context);
+        setLayouts[ShaderRecompiler::RuntimeAbi::DeviceTableSet] = table->Layout();
+    }
     const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    layoutInfo.setLayoutCount = shader.workgroupMemoryDwords != 0 ? ShaderRecompiler::WorkgroupMemoryDescriptorSet + 1 : 1;
+    layoutInfo.setLayoutCount = deviceSets ? ShaderRecompiler::RuntimeAbi::DeviceTableSet + 1u : shader.workgroupMemoryDwords != 0 ? ShaderRecompiler::WorkgroupMemoryDescriptorSet + 1 : 1;
     layoutInfo.pSetLayouts = setLayouts.data();
     layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
     layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;

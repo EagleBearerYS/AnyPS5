@@ -25,8 +25,10 @@
 #include "CacheKey.hpp"
 #include "CompiledVariant.hpp"
 #include "BdaAbi.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "ShaderDiskCache.hpp"
+#include "MeshGeometryFixture.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -2914,6 +2916,279 @@ bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, co
     return std::any_of(regions.begin(), regions.end(), [&](const ShaderRecompiler::MemoryRegion& region) { return region.guestAddress < address + bytes && address < region.guestAddress + region.bytes.size(); });
 }
 
+ShaderRecompiler::RecompileRequest DeviceTableRequest(const std::vector<std::uint32_t>& code, std::span<const std::uint32_t> userData, bool pixel, bool deviceTables) {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    for (const auto word : code) hash = (hash ^ word) * 0x100000001b3ull;
+    RecompileRequest request{};
+    request.shader = {pixel ? ShaderStage::Fragment : ShaderStage::Compute, 0x200000u + (hash & 0xffffu) * 0x100u, code, 0, {}};
+    request.context.waveSize = pixel ? 32u : 64u;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    if (pixel) {
+        request.context.pixel = ShaderPixelStageInfo{};
+        request.context.pixel->inputAddr = PixelInputBit(PixelInput::PositionX);
+        request.context.pixel->posX = true;
+        request.context.pixel->targetOutputMode[0] = 9u;
+        request.context.pixel->targetExportMapping.fill(0xe4u);
+    } else {
+        request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    }
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32u;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.target.deviceImageTables = deviceTables;
+    request.layout.pushConstantSizeBytes = 128;
+    return request;
+}
+
+struct DeviceTableSpirvScan {
+    bool lookup = false;
+    bool buckets = false;
+    bool ring = false;
+    std::vector<std::uint32_t> heapBindings;
+    std::vector<std::array<std::uint32_t, 4>> lookupKeys;
+};
+
+DeviceTableSpirvScan ScanDeviceTableSpirv(std::span<const std::uint32_t> words) {
+    DeviceTableSpirvScan result;
+    std::map<std::uint32_t, std::uint32_t> sets;
+    std::map<std::uint32_t, std::uint32_t> bindings;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::map<std::uint32_t, std::vector<std::uint32_t>> composites;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> calls;
+    std::uint32_t lookup = 0;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0 && count <= words.size() - cursor, "device image tables: truncated SPIR-V instruction");
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpName && count > 2u) {
+            const auto* text = reinterpret_cast<const char*>(words.data() + cursor + 2u);
+            if (std::string_view(text, std::min<std::size_t>(std::strlen(text), (count - 2u) * 4u)) == "device_image_lookup") lookup = words[cursor + 1];
+        }
+        if (op == spv::OpDecorate && count == 4u && words[cursor + 2] == spv::DecorationDescriptorSet) sets[words[cursor + 1]] = words[cursor + 3];
+        if (op == spv::OpDecorate && count == 4u && words[cursor + 2] == spv::DecorationBinding) bindings[words[cursor + 1]] = words[cursor + 3];
+        if (op == spv::OpConstant && count == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+        if ((op == spv::OpCompositeConstruct || op == spv::OpConstantComposite) && count > 3u) composites[words[cursor + 2]] = std::vector<std::uint32_t>(words.begin() + cursor + 3, words.begin() + cursor + count);
+        if (op == spv::OpFunctionCall && count >= 7u) calls.emplace_back(words[cursor + 3], words[cursor + 6]);
+        cursor += count;
+    }
+    result.lookup = lookup != 0u;
+    for (const auto& [callee, extra] : calls) {
+        const auto composite = composites.find(extra);
+        if (callee != lookup || composite == composites.end() || composite->second.size() != 4u) continue;
+        std::array<std::uint32_t, 4> values{};
+        bool known = true;
+        for (std::size_t component = 0; component < 4u; ++component) {
+            const auto constant = constants.find(composite->second[component]);
+            known = known && constant != constants.end();
+            if (known) values[component] = constant->second;
+        }
+        if (known) result.lookupKeys.push_back(values);
+    }
+    for (const auto& [id, set] : sets) {
+        const auto binding = bindings.find(id);
+        if (binding == bindings.end()) continue;
+        if (set == ShaderRecompiler::RuntimeAbi::DeviceTableSet && binding->second == ShaderRecompiler::RuntimeAbi::DeviceTableBucketsBinding) result.buckets = true;
+        if (set == ShaderRecompiler::RuntimeAbi::DeviceTableSet && binding->second == ShaderRecompiler::RuntimeAbi::DeviceTableRingBinding) result.ring = true;
+        if (set == ShaderRecompiler::RuntimeAbi::DeviceHeapSet) result.heapBindings.push_back(binding->second);
+    }
+    return result;
+}
+
+const std::vector<std::uint32_t> DeviceTableComputeCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0xbe900302u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+const std::vector<std::uint32_t> DeviceTablePixelCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x7e020300u, 0xbe900302u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xf800180fu, 0x03020100u, 0xbf810000u};
+
+void verifyDeviceImageTables() {
+    using namespace ShaderRecompiler;
+    namespace Abi = DeviceImageTableAbi;
+    constexpr std::uint32_t Entries = 2000;
+    static TableTexture textures[2];
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, Entries> heap{};
+    alignas(4096) static std::array<std::uint32_t, 16> srt{};
+    static std::array<std::uint32_t, 4> output{};
+    for (std::uint32_t entry = 0; entry < Entries; ++entry) heap[entry] = TableT(textures[entry % 2u].bytes.data(), TableFormat8888UNorm, TableType2D);
+    const auto heapV = TableV(heap.data(), 32u, Entries);
+    const auto outputV = TableV(output.data(), 0u, 16u);
+    std::copy(heapV.begin(), heapV.end(), srt.begin());
+    srt[4] = 6u;
+    srt[5] = 0u;
+    srt[6] = 0u;
+    srt[7] = 1u << 30u;
+    std::copy(outputV.begin(), outputV.end(), srt.begin() + 12);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 3> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 7u};
+    constexpr std::uint32_t samplerClass = Abi::SamplerOpaqueBlackBorder | Abi::SamplerFloatBorder;
+    for (const bool pixel : {false, true}) {
+        const auto& code = pixel ? DeviceTablePixelCode : DeviceTableComputeCode;
+        const auto request = DeviceTableRequest(code, userData, pixel, true);
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable, "device image tables: the V# table column is not read at run time");
+        require(!plan->requiresSpecializationMemory, "device image tables: a program whose only table is a device table still needs specialization memory");
+        const auto compiled = CompileTable(request);
+        require(!TableTouched(compiled.regions, heap.data(), sizeof(heap)), "device image tables: the capture read the table records");
+        const auto& result = *compiled.result;
+        require(result.deviceImageTables, "device image tables: the result does not ask for the device sets");
+        require(TableBinding(result, DescriptorRole::ImageTable) == nullptr && TableBinding(result, DescriptorRole::ImageTableMap) == nullptr && TableBinding(result, DescriptorRole::SamplerTable) == nullptr && result.imageTableRanges.empty(), "device image tables: a device-table program bound CPU table resources");
+        const auto scan = ScanDeviceTableSpirv(result.spirv.Words());
+        require(scan.lookup && scan.buckets && scan.ring, "device image tables: the module has no lookup, bucket buffer or miss ring");
+        const auto& modes = plan->info.runtimeImageModes.at(0);
+        require(!scan.lookupKeys.empty() && !scan.heapBindings.empty(), "device image tables: the lookup is not keyed by constants or the heap set is empty");
+        for (const auto& key : scan.lookupKeys) {
+            require(key[2] == samplerClass, "device image tables: the lookup's sampler class is not the S#'s");
+            const auto registered = ResourceMaterializer::FindDeviceImageInterface(key[0] | (static_cast<std::uint64_t>(key[1]) << 32u));
+            require(registered != nullptr && registered->modes.size() == modes.size() && registered->image.deviceTable, "device image tables: the module's image interface was not registered with its modes");
+            for (const auto binding : scan.heapBindings) {
+                require(std::ranges::any_of(registered->modes, [&](const ImageResource& mode) { return binding == RuntimeAbi::BindingNumber(RuntimeAbi::Stage::Fragment, static_cast<RuntimeAbi::Binding>(DescriptorBindingForImage(mode))); }), "device image tables: a heap array is not at a mode's fragment heap binding");
+            }
+        }
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
+        require(plan->info.deviceImageUses.size() == 1u && plan->info.deviceImageUses[0].image == 0u && plan->info.deviceImageUses[0].sampler == 0u, "device image tables: the plan does not record the device column's sampled use");
+        SrtRuntime runtime;
+        runtime.userData = userData;
+        runtime.shaderBase = request.shader.codeAddress;
+        bool complete = false;
+        auto expected = ResourceMaterializer::ExpectedDeviceImages(*plan, runtime, complete);
+        require(complete && expected.size() == 1u && !expected[0].candidate && std::equal(heap[7].begin(), heap[7].end(), expected[0].key.begin()), "device image tables: the pre-pass did not expect the T# at key 7 of the 2,000-entry table");
+        const auto sample = static_cast<std::uint32_t>(std::distance(code.begin(), std::find(code.begin(), code.end(), 0xf09c0f08u)) * 4u);
+        require(expected[0].pc == sample && expected[0].sampler == 0u, "device image tables: the expected use does not name its first pc and its S#");
+        require(result.deviceSamplerClasses.size() == 1u && result.deviceSamplerClasses[expected[0].sampler] == samplerClass, "device image tables: the result does not carry the S#'s device sampler class");
+        require(result.deviceImagePlan == plan && result.deviceImageInterfaces.size() == 1u, "device image tables: the result does not carry its plan and interface ids");
+        Abi::NameInterfaces(expected, result.deviceImageInterfaces);
+        Abi::NameSamplerClasses(expected, result.deviceSamplerClasses);
+        require(std::ranges::any_of(scan.lookupKeys, [&](const std::array<std::uint32_t, 4>& key) { return key[0] == expected[0].key[Abi::InterfaceWord] && key[1] == expected[0].key[Abi::InterfaceWord + 1u] && key[2] == expected[0].key[Abi::SamplerClassWord]; }), "device image tables: the expected key names another interface or sampler class than the module's lookup");
+        auto readLane = code;
+        *std::find(readLane.begin(), readLane.end(), 0xbe900302u) = 0x7e200500u;
+        const auto lanePlan = GetResourcePlan(DeviceTableRequest(readLane, userData, pixel, true));
+        require(lanePlan->info.images.size() == 1u && lanePlan->info.images[0].deviceTable, "device image tables: a key read from a lane is not a device column");
+        static_cast<void>(ResourceMaterializer::ExpectedDeviceImages(*lanePlan, runtime, complete));
+        require(!complete, "device image tables: the pre-pass called a key read from a lane complete");
+
+        const auto offRequest = DeviceTableRequest(code, userData, pixel, false);
+        const auto offPlan = GetResourcePlan(offRequest);
+        require(offPlan->info.images.size() == 1u && offPlan->info.images[0].table != NoTable && !offPlan->info.images[0].deviceTable && offPlan->requiresSpecializationMemory, "device image tables: the table column left the CPU path with the option off");
+        const auto off = CompileTable(offRequest);
+        const auto offScan = ScanDeviceTableSpirv(off.result->spirv.Words());
+        require(!off.result->deviceImageTables && !offScan.lookup && !offScan.buckets && !offScan.ring && offScan.heapBindings.empty(), "device image tables: the option off still emitted the device lookup");
+        require(TableBinding(*off.result, DescriptorRole::ImageTable) != nullptr && TableBinding(*off.result, DescriptorRole::ImageTableMap) != nullptr, "device image tables: the option off does not bind the CPU table");
+    }
+    const std::array<std::uint32_t, 11> meshUserData{0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, userData[0], userData[1], userData[2]};
+    for (const auto stage : {ShaderStage::Vertex, ShaderStage::Mesh, ShaderStage::TessellationEvaluation}) {
+        const bool mesh = stage == ShaderStage::Mesh;
+        auto code = DeviceTablePixelCode;
+        *std::find(code.begin(), code.end(), 0x7e020300u) = 0xbf800000u;
+        *std::find(code.begin(), code.end(), 0x00450000u) = mesh ? 0x00860401u : 0x00450401u;
+        *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
+        *std::find(code.begin(), code.end(), 0x03020100u) = 0x07060504u;
+        if (mesh) {
+            *std::find(code.begin(), code.end(), 0xf4080100u) = 0xf4080304u;
+            *std::find(code.begin(), code.end(), 0xf4080200u) = 0xf4080404u;
+            *std::find(code.begin(), code.end(), 0xbe900302u) = 0xbe94030au;
+            *std::find(code.begin(), code.end(), 0x8f108510u) = 0x8f148514u;
+            *std::find(code.begin(), code.end(), 0xf42c0502u) = 0xf42c0606u;
+            *std::find(code.begin(), code.end(), 0x20000000u) = 0x28000000u;
+        }
+        auto request = DeviceTableRequest(code, mesh ? std::span<const std::uint32_t>(meshUserData) : std::span<const std::uint32_t>(userData), false, true);
+        request.shader.stage = stage;
+        request.shader.codeAddress += 0x10u * static_cast<std::uint32_t>(stage);
+        request.context.compute.reset();
+        request.context.vertex = ShaderVertexStageInfo{};
+        if (stage == ShaderStage::TessellationEvaluation) request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {}};
+        if (mesh) request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 1u, 3u, 3u, 1u, 64u, 128u, 0u, 4u}, std::nullopt, {}};
+        const bool device = stage == ShaderStage::Vertex || mesh;
+        const std::string name = stage == ShaderStage::Vertex ? "vertex" : mesh ? "mesh" : "domain";
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable == device, ("device image tables: the " + name + " stage's table column " + (device ? "is not read at run time" : "left the CPU path, but the heap and table sets are visible to vertex, pixel, compute and mesh stages only")).c_str());
+        require(device != plan->requiresSpecializationMemory, ("device image tables: the " + name + " stage's CPU table path does not match its column").c_str());
+    }
+    {
+        const auto& base = AgcDriver::Test::MeshGeometryCode;
+        constexpr std::size_t insert = 101;
+        constexpr std::size_t branch = 92;
+        constexpr std::array<std::uint32_t, 14> sample{0xf4080508u, 0xfa000000u, 0xf4080608u, 0xfa000010u, 0xbf8cc07fu, 0x8f1c8512u, 0xf42c080au, 0x38000000u, 0xbf8cc07fu, 0x7e6802f0u, 0x7e6a02f0u, 0xf09c0f08u, 0x00c83034u, 0xbf8c0000u};
+        std::vector<std::uint32_t> code(base.begin(), base.begin() + insert);
+        code.insert(code.end(), sample.begin(), sample.end());
+        code.insert(code.end(), base.begin() + insert, base.end());
+        code[branch] += static_cast<std::uint32_t>(sample.size());
+        alignas(256) static std::array<float, 64 * 8> vertices{};
+        std::array<std::uint32_t, 19> meshData{};
+        const auto vertexV = TableV(vertices.data(), 32u, 64u);
+        std::copy(vertexV.begin(), vertexV.end(), meshData.begin() + 8);
+        meshData[16] = userData[0];
+        meshData[17] = userData[1];
+        meshData[18] = userData[2];
+        static constexpr std::array<std::uint32_t, 5> meshCapabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityMeshShadingEXT};
+        static constexpr std::array<std::string_view, 3> meshExtensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"};
+        const auto meshRequest = [&](bool deviceTables, std::uint32_t subgroup) {
+            auto request = DeviceTableRequest(code, meshData, false, deviceTables);
+            request.shader.stage = ShaderStage::Mesh;
+            request.shader.codeAddress += 0x40u;
+            request.context.compute.reset();
+            request.context.vertex = ShaderVertexStageInfo{};
+            request.context.waveSize = 64u;
+            request.target.spirvVersion = 0x00010400u;
+            request.target.subgroupSize = subgroup;
+            request.target.supportedCapabilities = meshCapabilities;
+            request.target.supportedExtensions = meshExtensions;
+            request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+            request.target.maxWorkgroupInvocations = 1024u;
+            request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+            request.target.mesh = MeshTargetLimits{{128u, 1u, 1u}, 128u, 32768u, 256u, 256u, 128u, 32768u, 1u, 1u};
+            request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}};
+            return request;
+        };
+        for (const std::uint32_t subgroup : {64u, 32u}) {
+            std::array<std::size_t, 2> words{};
+            for (const bool deviceTables : {false, true}) {
+                const auto request = meshRequest(deviceTables, subgroup);
+                const auto plan = GetResourcePlan(request);
+                require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable == deviceTables, deviceTables ? "device image tables: the mesh program's T# from a 2,000-entry V# table is not read at run time" : "device image tables: the mesh program's table column left the CPU path with the option off");
+                require(deviceTables != plan->requiresSpecializationMemory, "device image tables: the mesh program's CPU table path does not match its column");
+                const auto compiled = CompileTable(request);
+                const auto& result = *compiled.result;
+                const auto scan = ScanDeviceTableSpirv(result.spirv.Words());
+                if (deviceTables) {
+                    require(result.deviceImageTables && scan.lookup && scan.buckets && scan.ring && !scan.heapBindings.empty(), "device image tables: the mesh module has no device lookup, bucket buffer, miss ring or heap array");
+                    require(!TableTouched(compiled.regions, heap.data(), sizeof(heap)), "device image tables: the mesh program's capture read the table records");
+                    require(TableBinding(result, DescriptorRole::ImageTable) == nullptr && TableBinding(result, DescriptorRole::ImageTableMap) == nullptr, "device image tables: the mesh program bound CPU table resources");
+                } else {
+                    require(!result.deviceImageTables && !scan.lookup && !scan.buckets && !scan.ring && TableBinding(result, DescriptorRole::ImageTable) != nullptr, "device image tables: the mesh program with the option off is not on the CPU table path");
+                }
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+                static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
+                words[deviceTables ? 1u : 0u] = result.spirv.Words().size();
+            }
+            std::cout << "device image tables: the mesh program reading a T# from a 2,000-entry table, host subgroup " << subgroup << ": " << words[0] << " words on the CPU table path, " << words[1] << " on the device path\n";
+        }
+    }
+
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    guest.heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    FillTableSrt(guest, guest.heap.data(), 32u, 4u);
+    const auto guestData = TableUserData(guest);
+    const std::vector<std::uint32_t> storeCode{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0200f08u, 0x00050200u, 0xbf810000u};
+    const std::vector<std::uint32_t> compareCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0fc0108u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    const std::vector<std::uint32_t> samplerTableCode{0xf4080100u, 0xfa000000u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x7e240500u, 0x8f118412u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf4280206u, 0x22000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    const std::vector<std::uint32_t> unnormalizedCode{0xf4080100u, 0xfa000000u, 0xbe8803ffu, 0x00008000u, 0xbe890380u, 0xbe8a0380u, 0xbe8b0380u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    for (const auto* code : {&storeCode, &compareCode, &samplerTableCode, &unnormalizedCode}) {
+        auto request = TableRequest(*code, guestData);
+        request.target.deviceImageTables = true;
+        const auto plan = GetResourcePlan(request);
+        require(!plan->info.images.empty() && plan->info.images[0].table != NoTable && !plan->info.images[0].deviceTable, "device image tables: a column with a storage write, a depth compare, a sampler table or an unnormalized sampler left the CPU path");
+        require(code != &samplerTableCode || (plan->info.samplers.size() == 1u && plan->info.samplers[0].table != NoTable), "device image tables: the sampler table program has no sampler table");
+    }
+}
+
 void verifyScalarAddressRule() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     require(Abi::ScalarAddressDword(0x1000u, 0x23u, 0x41u) == 0x1060u && Abi::ScalarAddressDword(0x1001u, 0x20u, 0u) == 0x1021u, "scalar address rule: the offset and immediate are not dword-aligned on their own");
@@ -2985,6 +3260,10 @@ void verifyPointerImageTable() {
         if (memory.kind == ResourceKind::ScalarAddress && memory.offset >= Palette && memory.offset < Palette + 32u && memory.planningOnly) planningOnly++;
     }
     require(planningOnly == 8u && !plan->info.usesDma, "pointer image table: the descriptor loads still read through BDA");
+    auto deviceMasked = request(maskedCode, 0x31000u);
+    deviceMasked.target.deviceImageTables = true;
+    const auto devicePlan = GetResourcePlan(deviceMasked);
+    require(devicePlan->info.images.size() == 1u && devicePlan->info.images[0].table == 0u && !devicePlan->info.images[0].deviceTable && devicePlan->requiresSpecializationMemory, "pointer image table: a pointer table was read through the device image table");
 
     const auto compiled = CompileTable(masked);
     const auto& tables = compiled.capture->snapshot.tables;
@@ -4390,6 +4669,33 @@ void verifySingleLaneVertexWave() {
     request.target.vertexSubgroups = true;
     RecompileCacheKey::Build(request, withKey);
     require(withoutKey != withKey, "single-lane vertex wave: vertex subgroup support did not change the cache key");
+}
+
+void verifyExtensionKey() {
+    using namespace ShaderRecompiler;
+    RecompileRequest request{};
+    request.shader.stage = ShaderStage::Compute;
+    const std::array<std::string_view, 2> first{"VK_KHR_a", "VK_KHR_bb"};
+    const std::string copied[2] = {"VK_KHR_a", "VK_KHR_bb"};
+    const std::array<std::string_view, 2> same{copied[0], copied[1]};
+    const std::array<std::string_view, 2> second{"VK_KHR_a", "VK_KHR_bc"};
+    std::vector<std::uint64_t> firstKey, againKey, sameKey, secondKey, backKey;
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, firstKey);
+    RecompileCacheKey::BuildInterface(request, againKey);
+    request.target.supportedExtensions = same;
+    RecompileCacheKey::BuildInterface(request, sameKey);
+    request.target.supportedExtensions = second;
+    RecompileCacheKey::BuildInterface(request, secondKey);
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, backKey);
+    require(firstKey == againKey && firstKey == sameKey && firstKey == backKey, "extension key: the same extension names built different keys");
+    require(firstKey != secondKey, "extension key: a changed extension name kept the key");
+    std::vector<std::uint64_t> expected{2u, 8u};
+    for (const char byte : std::string_view("VK_KHR_a")) expected.push_back(static_cast<unsigned char>(byte));
+    expected.push_back(9u);
+    for (const char byte : std::string_view("VK_KHR_bb")) expected.push_back(static_cast<unsigned char>(byte));
+    require(std::search(firstKey.begin(), firstKey.end(), expected.begin(), expected.end()) != firstKey.end(), "extension key: the names no longer enter the key byte by byte");
 }
 
 void verifyMeshConfiguration() {
@@ -7464,6 +7770,11 @@ int main(int argc, char** argv) {
             std::cout << "Direct samplers count toward the sampled pair limit beside selected image-table records\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--device-image-tables") {
+            verifyDeviceImageTables();
+            std::cout << "Device image tables read V# table columns at run time and leave the other columns on the CPU path\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
             verifySrtReadPatching();
             std::cout << "SRT read patching replaces repeated and multiple uses\n";
@@ -7490,6 +7801,7 @@ int main(int argc, char** argv) {
         verifyImageTableKeys();
         verifyImageTables();
         verifyImageTableRegistration();
+        verifyDeviceImageTables();
         verifyScalarAddressRule();
         verifyPointerImageTable();
         verifyPointerTableOffsetCarry();
@@ -7504,6 +7816,7 @@ int main(int argc, char** argv) {
         verifyHalfWaveReduction();
         verifyNarrowVertexWave();
         verifySingleLaneVertexWave();
+        verifyExtensionKey();
         verifyMeshConfiguration();
         verifyPixelInputs();
         verifyCanonicalVersion20And21Requests();

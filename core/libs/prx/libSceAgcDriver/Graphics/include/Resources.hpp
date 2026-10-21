@@ -111,6 +111,7 @@ private:
     VkFence fence = VK_NULL_HANDLE;
     bool pending = false;
     bool submitted = false;
+    std::shared_ptr<void> heapResolve;
 };
 
 }

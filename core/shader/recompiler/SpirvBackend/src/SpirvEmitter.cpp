@@ -266,6 +266,9 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float64DenormPreserve = target.float64DenormPreserve;
     state.depthRangeRemap = target.depthRangeRemap;
     state.registrationModules = target.registrationModules;
+    state.gpuResolvedImages = target.gpuResolvedImages;
+    state.bdaRangeCache = target.bdaRangeCache;
+    for (const auto& [value, slot] : program.Metadata().gpuConstantChecks) state.gpuConstantChecks.emplace(value, slot);
     state.fragmentDescriptorSet = target.fragmentDescriptorSet;
     state.meshBarycentricPixel = target.meshBarycentricPixel;
     state.meshBarycentricVertex = target.meshBarycentricVertex;
