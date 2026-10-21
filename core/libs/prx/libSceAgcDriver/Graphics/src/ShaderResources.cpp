@@ -5776,8 +5776,10 @@ std::shared_ptr<ShaderResources::DispatchUse> ShaderResources::BeginDispatchUse(
             }
         }
         if (spare.record == nullptr) {
-            spare.record = BdaResources::FaultRecord(context);
-            spare.bindings = faultRecordBindings(*spare.record);
+            spare.record = bda->FaultRecord(context);
+            spare.bindings = faultRecordBindings(spare.record->Descriptor());
+        } else {
+            spare.record->Unpark();
         }
         use->record = std::move(spare.record);
         use->bindings = std::move(spare.bindings);
@@ -5790,6 +5792,7 @@ std::shared_ptr<ShaderResources::DispatchUse> ShaderResources::BeginDispatchUse(
 ShaderResources::DispatchUse::~DispatchUse() {
     if (ownRecord != nullptr) ownRecord->store(false, std::memory_order_release);
     if (spares == nullptr) return;
+    record->Park();
     std::lock_guard lock(spares->mutex);
     spares->idle.push_back({std::move(record), std::move(bindings)});
 }
@@ -5821,7 +5824,7 @@ void ShaderResources::BindUse(VkCommandBuffer commands, VkPipelineLayout layout,
     context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, nullptr);
 }
 
-std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::faultRecordBindings(const Buffer& record) const {
+std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::faultRecordBindings(const VkDescriptorBufferInfo& fault) const {
     Require(context.descriptorCache != nullptr && _set != VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE, "a dispatch's own fault record needs the descriptor cache and one descriptor set");
     std::map<VkDescriptorType, std::uint32_t> counts;
     for (const auto& binding : bindings) counts[binding.layout.descriptorType] += (binding.flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) != 0 ? std::max(1u, static_cast<std::uint32_t>(binding.imageAllocations.size())) : binding.layout.descriptorCount;
@@ -5837,7 +5840,6 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::faultRecordBindi
     Require(result->allocation.set != VK_NULL_HANDLE, "dispatch fault record descriptor allocation failed");
     auto buffers = descriptorBuffers;
     auto writes = descriptorWrites;
-    const auto fault = BdaResources::FaultRecordDescriptor(record);
     bool bound = false;
     auto nextWrite = writes.begin();
     for (const auto& binding : bindings) {

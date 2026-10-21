@@ -198,7 +198,7 @@ public:
         ~DrawBindings();
     };
     struct SpareRecord {
-        std::shared_ptr<Buffer> record;
+        std::unique_ptr<BdaFaultRecord> record;
         std::shared_ptr<DrawBindings> bindings;
     };
     struct SpareRecords {
@@ -212,7 +212,7 @@ public:
         ~DispatchUse();
         std::shared_ptr<const void> hold;
         std::shared_ptr<DrawBindings> bindings;
-        std::shared_ptr<Buffer> record;
+        std::unique_ptr<BdaFaultRecord> record;
         std::shared_ptr<std::atomic<bool>> ownRecord;
         std::shared_ptr<SpareRecords> spares;
     };
@@ -668,7 +668,7 @@ private:
     std::shared_ptr<std::atomic<std::uint32_t>> usesInFlight = std::make_shared<std::atomic<std::uint32_t>>(0u);
     std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     std::shared_ptr<SpareRecords> spareRecords = std::make_shared<SpareRecords>();
-    std::shared_ptr<DrawBindings> faultRecordBindings(const Buffer& record) const;
+    std::shared_ptr<DrawBindings> faultRecordBindings(const VkDescriptorBufferInfo& fault) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> addressWrites;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;

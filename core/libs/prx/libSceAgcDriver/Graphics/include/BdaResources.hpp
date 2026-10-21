@@ -17,6 +17,24 @@ bool LoopGuardTripped();
 
 struct BdaFaultChunk;
 
+class BdaFaultRecord {
+public:
+    BdaFaultRecord(const Context& context, bool reportOnly);
+    ~BdaFaultRecord();
+    BdaFaultRecord(const BdaFaultRecord&) = delete;
+    BdaFaultRecord& operator=(const BdaFaultRecord&) = delete;
+    VkDescriptorBufferInfo Descriptor() const;
+    std::span<std::byte> Bytes() const;
+    void Park();
+    void Unpark();
+
+private:
+    VkDevice device = VK_NULL_HANDLE;
+    std::shared_ptr<BdaFaultChunk> chunk;
+    VkDeviceSize offset = 0;
+    bool parked = false;
+};
+
 class BdaResources {
 public:
     explicit BdaResources(const Context& context, bool reportOnly = false);
@@ -27,9 +45,9 @@ public:
     VkDescriptorBufferInfo Table() const;
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
-    static std::shared_ptr<Buffer> FaultRecord(const Context& context);
-    static VkDescriptorBufferInfo FaultRecordDescriptor(const Buffer& record);
-    void CheckFault(Buffer& record) const;
+    std::unique_ptr<BdaFaultRecord> FaultRecord(const Context& context) const;
+    void CheckFault(BdaFaultRecord& record) const;
+    static bool SharedFaultSlots();
     void NoteUse(std::uint64_t serial);
     bool TakeFaultSlot(const Context& context);
     bool HoldsFaultSlot() const { return faultChunk != nullptr; }
@@ -40,6 +58,10 @@ public:
         std::uint64_t held = 0;
         std::uint64_t reclaimed = 0;
         std::uint64_t retaken = 0;
+        std::uint64_t records = 0;
+        std::uint64_t recordBytes = 0;
+        std::uint64_t parked = 0;
+        std::uint64_t bytes = 0;
     };
     static FaultSlotCounts FaultSlots(VkDevice device);
     struct ImageTableFaults {

@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <span>
 #include <sstream>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -133,6 +134,7 @@ struct BdaFaultChunk {
     std::vector<VkDeviceSize> free;
     std::size_t slots = 0;
     VkDeviceSize slotBytes = 0;
+    VkDeviceSize bytes = 0;
 };
 
 namespace {
@@ -190,13 +192,66 @@ void clearFaultSlot(std::span<std::byte> bytes) {
     std::memset(bytes.data() + Abi::SrtGuardWord * sizeof(std::uint32_t), 0, sizeof(std::uint32_t));
 }
 
+void uncountChunk(FaultArena& arena, const BdaFaultChunk& chunk) {
+    arena.counts.slots -= chunk.slots;
+    arena.counts.bytes -= chunk.bytes;
+    --arena.counts.chunks;
+}
+
 void dropChunk(FaultArena& arena, const std::shared_ptr<BdaFaultChunk>& chunk, std::vector<std::shared_ptr<BdaFaultChunk>>& dropped) {
     const auto found = std::find(arena.chunks.begin(), arena.chunks.end(), chunk);
     if (found == arena.chunks.end()) return;
-    arena.counts.slots -= (*found)->slots;
-    --arena.counts.chunks;
+    uncountChunk(arena, **found);
     dropped.push_back(std::move(*found));
     arena.chunks.erase(found);
+}
+
+bool hasFreeSlot(const FaultArena& arena, VkDeviceSize slotBytes) {
+    return std::any_of(arena.chunks.begin(), arena.chunks.end(), [&](const std::shared_ptr<BdaFaultChunk>& chunk) { return chunk->slotBytes == slotBytes && !chunk->free.empty(); });
+}
+
+std::pair<std::shared_ptr<BdaFaultChunk>, VkDeviceSize> takeFreeSlot(FaultArena& arena, const Context& context, VkDeviceSize slotBytes, bool shared) {
+    const auto source = shared ? std::find_if(arena.chunks.rbegin(), arena.chunks.rend(), [&](const std::shared_ptr<BdaFaultChunk>& chunk) { return chunk->slotBytes == slotBytes && !chunk->free.empty(); }) : arena.chunks.rend();
+    std::shared_ptr<BdaFaultChunk> chunk;
+    if (source != arena.chunks.rend()) {
+        chunk = *source;
+    } else {
+        const auto stride = shared ? faultStride(context, slotBytes) : slotBytes;
+        const auto slots = shared ? std::max<VkDeviceSize>(1, FaultChunkBytes / stride) : 1;
+        chunk = std::make_shared<BdaFaultChunk>();
+        chunk->buffer = std::make_unique<Buffer>(context, static_cast<std::size_t>(stride * slots), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memset(chunk->buffer->Bytes().data(), 0, chunk->buffer->Bytes().size());
+        chunk->slots = static_cast<std::size_t>(slots);
+        chunk->slotBytes = slotBytes;
+        chunk->bytes = stride * slots;
+        for (auto slot = slots; slot-- > 0;) chunk->free.push_back(slot * stride);
+        if (shared) arena.chunks.push_back(chunk);
+        arena.counts.slots += chunk->slots;
+        arena.counts.bytes += chunk->bytes;
+        ++arena.counts.chunks;
+    }
+    const auto offset = chunk->free.back();
+    chunk->free.pop_back();
+    return {std::move(chunk), offset};
+}
+
+void giveSlot(FaultArena& arena, std::shared_ptr<BdaFaultChunk> chunk, VkDeviceSize offset, std::vector<std::shared_ptr<BdaFaultChunk>>& dropped) {
+    const auto bytes = chunk->buffer->Bytes().subspan(static_cast<std::size_t>(offset), static_cast<std::size_t>(chunk->slotBytes));
+    if (!faultSlotClean(bytes)) clearFaultSlot(bytes);
+    if (!sharedFaultSlots()) {
+        uncountChunk(arena, *chunk);
+    } else {
+        chunk->free.push_back(offset);
+        if (chunk->free.size() == chunk->slots) dropChunk(arena, chunk, dropped);
+    }
+    dropped.push_back(std::move(chunk));
+}
+
+void dropIdleArena(FaultArenas& arenas, std::unordered_map<VkDevice, FaultArena>::iterator found, std::vector<std::shared_ptr<BdaFaultChunk>>& dropped) {
+    auto& arena = found->second;
+    if (!arena.holders.empty() || arena.counts.records != 0) return;
+    while (!arena.chunks.empty()) dropChunk(arena, arena.chunks.back(), dropped);
+    arenas.devices.erase(found);
 }
 
 }
@@ -212,26 +267,16 @@ BdaResources::~BdaResources() {
     auto& arenas = faultArenas();
     std::lock_guard lock(arenas.mutex);
     if (faultChunk == nullptr) return;
-    const auto bytes = faultBytes();
-    if (!faultSlotClean(bytes)) clearFaultSlot(bytes);
-    const auto chunk = faultChunk;
-    dropped.push_back(std::move(faultChunk));
     const auto found = arenas.devices.find(faultDevice);
-    if (found == arenas.devices.end()) return;
+    if (found == arenas.devices.end()) {
+        dropped.push_back(std::move(faultChunk));
+        return;
+    }
     auto& arena = found->second;
     arena.holders.erase(this);
     --arena.counts.held;
-    if (!sharedFaultSlots()) {
-        arena.counts.slots -= chunk->slots;
-        --arena.counts.chunks;
-    } else {
-        chunk->free.push_back(faultOffset);
-        if (chunk->free.size() == chunk->slots) dropChunk(arena, chunk, dropped);
-    }
-    if (arena.holders.empty()) {
-        while (!arena.chunks.empty()) dropChunk(arena, arena.chunks.back(), dropped);
-        arenas.devices.erase(found);
-    }
+    giveSlot(arena, std::move(faultChunk), faultOffset, dropped);
+    dropIdleArena(arenas, found, dropped);
 }
 
 std::span<std::byte> BdaResources::faultBytes() const {
@@ -269,10 +314,8 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
     faultDevice = context.device;
     const bool shared = sharedFaultSlots();
     const auto slotBytes = shared ? faultSlotBytes(reportOnly) : VkDeviceSize{ShaderRecompiler::BdaAbi::FaultBufferBytes};
-    const auto withFree = [&] { return std::find_if(arena.chunks.rbegin(), arena.chunks.rend(), [&](const std::shared_ptr<BdaFaultChunk>& chunk) { return chunk->slotBytes == slotBytes && !chunk->free.empty(); }); };
-    auto source = shared ? withFree() : arena.chunks.rend();
     bool reclaimed = false;
-    if (shared && source == arena.chunks.rend() && GuestMemory::GpuMutex().HeldByThisThread()) {
+    if (shared && !hasFreeSlot(arena, slotBytes) && GuestMemory::GpuMutex().HeldByThisThread()) {
         std::vector<BdaResources*> idle;
         for (auto* holder : arena.holders) {
             if (holder->faultChunk->slotBytes == slotBytes && holder->lastUse <= arena.finished && faultSlotClean(holder->faultBytes())) idle.push_back(holder);
@@ -289,28 +332,9 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
                 ++arena.counts.reclaimed;
             }
             reclaimed = true;
-            source = withFree();
         }
     }
-    std::shared_ptr<BdaFaultChunk> chunk;
-    if (source != arena.chunks.rend()) {
-        chunk = *source;
-    } else {
-        const auto stride = shared ? faultStride(context, slotBytes) : slotBytes;
-        const auto slots = shared ? std::max<VkDeviceSize>(1, FaultChunkBytes / stride) : 1;
-        chunk = std::make_shared<BdaFaultChunk>();
-        chunk->buffer = std::make_unique<Buffer>(context, static_cast<std::size_t>(stride * slots), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        std::memset(chunk->buffer->Bytes().data(), 0, chunk->buffer->Bytes().size());
-        chunk->slots = static_cast<std::size_t>(slots);
-        chunk->slotBytes = slotBytes;
-        for (auto slot = slots; slot-- > 0;) chunk->free.push_back(slot * stride);
-        if (shared) arena.chunks.push_back(chunk);
-        arena.counts.slots += chunk->slots;
-        ++arena.counts.chunks;
-    }
-    faultOffset = chunk->free.back();
-    chunk->free.pop_back();
-    faultChunk = chunk;
+    std::tie(faultChunk, faultOffset) = takeFreeSlot(arena, context, slotBytes, shared);
     arena.holders.insert(this);
     ++arena.counts.held;
     if (retake) ++arena.counts.retaken;
@@ -320,23 +344,66 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
             ++it;
             continue;
         }
-        arena.counts.slots -= (*it)->slots;
-        --arena.counts.chunks;
+        uncountChunk(arena, **it);
         dropped.push_back(std::move(*it));
         it = arena.chunks.erase(it);
     }
     return true;
 }
 
-std::shared_ptr<Buffer> BdaResources::FaultRecord(const Context& context) {
-    auto record = std::make_shared<Buffer>(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    std::memset(record->Bytes().data(), 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
-    std::memset(record->Bytes().data() + ShaderRecompiler::BdaAbi::SrtGuardWord * sizeof(std::uint32_t), 0, sizeof(std::uint32_t));
-    return record;
+BdaFaultRecord::BdaFaultRecord(const Context& context, bool reportOnly) : device(context.device) {
+    auto& arenas = faultArenas();
+    std::lock_guard lock(arenas.mutex);
+    auto& arena = arenas.devices[device];
+    const bool shared = sharedFaultSlots();
+    std::tie(chunk, offset) = takeFreeSlot(arena, context, shared ? faultSlotBytes(reportOnly) : VkDeviceSize{ShaderRecompiler::BdaAbi::FaultBufferBytes}, shared);
+    ++arena.counts.records;
+    arena.counts.recordBytes += chunk->slotBytes;
 }
 
-VkDescriptorBufferInfo BdaResources::FaultRecordDescriptor(const Buffer& record) {
-    return {record.Handle(), 0, ShaderRecompiler::BdaAbi::FaultBufferBytes};
+BdaFaultRecord::~BdaFaultRecord() {
+    std::vector<std::shared_ptr<BdaFaultChunk>> dropped;
+    auto& arenas = faultArenas();
+    std::lock_guard lock(arenas.mutex);
+    const auto found = arenas.devices.find(device);
+    if (found == arenas.devices.end()) return;
+    auto& arena = found->second;
+    --arena.counts.records;
+    arena.counts.recordBytes -= chunk->slotBytes;
+    if (parked) --arena.counts.parked;
+    giveSlot(arena, std::move(chunk), offset, dropped);
+    dropIdleArena(arenas, found, dropped);
+}
+
+VkDescriptorBufferInfo BdaFaultRecord::Descriptor() const {
+    return {chunk->buffer->Handle(), offset, chunk->slotBytes};
+}
+
+std::span<std::byte> BdaFaultRecord::Bytes() const {
+    return chunk->buffer->Bytes().subspan(static_cast<std::size_t>(offset), static_cast<std::size_t>(chunk->slotBytes));
+}
+
+void BdaFaultRecord::Park() {
+    if (!faultSlotClean(Bytes())) clearFaultSlot(Bytes());
+    auto& arenas = faultArenas();
+    std::lock_guard lock(arenas.mutex);
+    const auto found = arenas.devices.find(device);
+    if (found != arenas.devices.end() && !std::exchange(parked, true)) ++found->second.counts.parked;
+}
+
+void BdaFaultRecord::Unpark() {
+    auto& arenas = faultArenas();
+    std::lock_guard lock(arenas.mutex);
+    const auto found = arenas.devices.find(device);
+    if (found != arenas.devices.end() && std::exchange(parked, false)) --found->second.counts.parked;
+}
+
+std::unique_ptr<BdaFaultRecord> BdaResources::FaultRecord(const Context& context) const {
+    return std::make_unique<BdaFaultRecord>(context, reportOnly);
+}
+
+bool BdaResources::SharedFaultSlots() {
+    return sharedFaultSlots();
 }
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, bool reportOnly) : BdaResources(context, reportOnly) {
@@ -454,8 +521,8 @@ void BdaResources::CheckFault() const {
     checkFault(faultBytes(), reportOnly);
 }
 
-void BdaResources::CheckFault(Buffer& record) const {
-    checkFault(record.Bytes(), false);
+void BdaResources::CheckFault(BdaFaultRecord& record) const {
+    checkFault(record.Bytes(), record.Bytes().size() < ShaderRecompiler::BdaAbi::FaultBufferBytes);
 }
 
 void BdaResources::checkFault(std::span<std::byte> faults, bool onlyReport) const {

@@ -2205,6 +2205,32 @@ void faultSlotTests(const Context& shared, const BdaTestAccess& access) {
     writeUnmappedFault(slotBytes(access, reports[1]->Fault()), 0x7fff66660000ULL);
     reject([&] { reports[0]->CheckFault(); }, "address=0x7fff55550000");
     reject([&] { reports[1]->CheckFault(); }, "address=0x7fff66660000");
+    {
+        const auto before = BdaResources::FaultSlots(context.device);
+        std::vector<std::unique_ptr<BdaFaultRecord>> records;
+        for (std::size_t index = 0; index < 7; ++index) records.push_back(reports.front()->FaultRecord(context));
+        const auto during = BdaResources::FaultSlots(context.device);
+        const auto shared = std::all_of(records.begin(), records.end(), [&](const std::unique_ptr<BdaFaultRecord>& record) { return record->Descriptor().buffer == reports.front()->Fault().buffer && record->Descriptor().range == sizeof(ShaderRecompiler::BdaAbi::Fault); });
+        std::snprintf(message, sizeof(message), "7 spare records of a report-only build hold %llu arena records of %llu bytes and grew the arena by %llu chunks", static_cast<unsigned long long>(during.records - before.records), static_cast<unsigned long long>(during.recordBytes - before.recordBytes), static_cast<unsigned long long>(during.chunks - before.chunks));
+        Require(shared && during.records - before.records == 7 && during.recordBytes - before.recordBytes == 7 * sizeof(ShaderRecompiler::BdaAbi::Fault) && during.chunks == before.chunks, message);
+        Require(!sameFaultMemory(records[1]->Descriptor(), records[4]->Descriptor()) && !sameFaultMemory(records[1]->Descriptor(), reports.front()->Fault()), "two spare records of a report-only build share fault memory");
+        writeUnmappedFault(records[1]->Bytes(), 0x7fff88880000ULL);
+        writeUnmappedFault(records[4]->Bytes(), 0x7fff99990000ULL);
+        reject([&] { reports.front()->CheckFault(*records[1]); }, "address=0x7fff88880000");
+        reject([&] { reports.front()->CheckFault(*records[4]); }, "address=0x7fff99990000");
+        reports.front()->CheckFault(*records[0]);
+        reject([&] { reports.front()->CheckFault(); }, "address=0x7fff55550000");
+        records[1]->Park();
+        records[2]->Park();
+        const auto parked = BdaResources::FaultSlots(context.device);
+        Require(parked.parked == before.parked + 2 && parked.records == during.records && parked.recordBytes == during.recordBytes, "two parked spare records of a report-only build were not counted as parked records that keep their slots");
+        reports.front()->CheckFault(*records[1]);
+        records[1]->Unpark();
+        Require(BdaResources::FaultSlots(context.device).parked == before.parked + 1, "a spare record taken back out of its pool was still counted as parked");
+        records.clear();
+        const auto after = BdaResources::FaultSlots(context.device);
+        Require(after.records == before.records && after.recordBytes == before.recordBytes && after.parked == before.parked && after.chunks == before.chunks, "released spare records of a report-only build kept their arena slots");
+    }
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::RecompileResult fragment;
     const std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityTessellation};

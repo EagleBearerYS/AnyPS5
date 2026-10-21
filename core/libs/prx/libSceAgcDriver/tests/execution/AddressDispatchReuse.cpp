@@ -34,6 +34,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -61,6 +62,16 @@ alignas(256) constexpr std::array<std::uint32_t, 10> ReaderCode{
     0xdc308000u, 0x017d0002u,
     0xbf8c3f70u,
     0xdc708008u, 0x00000100u,
+    0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> ReportReaderCode{
+    0x7e000280u,
+    0xdc348000u, 0x02000000u,
+    0xbf8c3f70u,
+    0xdc308000u, 0x017d0002u,
+    0xbf8c3f70u,
+    0xe0701000u, 0x80010100u,
     0xbf810000u,
 };
 
@@ -430,6 +441,76 @@ void OwnFaults(Fixture& fixture) {
     fixture.Wait();
 }
 
+void SpareSlots(Fixture& fixture) {
+    using Slots = AgcDriver::Graphics::BdaResources;
+    if (!Slots::SharedFaultSlots()) {
+        std::puts("APS5_NO_SHARED_FAULT_SLOTS=1: spare fault records from the shared arena not tested");
+        return;
+    }
+    const auto quiet = [&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        auto counts = Slots::FaultSlots(fixture.device.Device());
+        while (counts.parked != counts.records && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            counts = Slots::FaultSlots(fixture.device.Device());
+        }
+        return counts;
+    };
+    constexpr std::size_t Uses = 8;
+    constexpr std::uint32_t OutputBytes = 256;
+    Pages output{BlockBytes};
+    output.Register(0, BlockBytes, true);
+    output.Store(0, Sentinel, sizeof(Sentinel));
+    std::vector<std::unique_ptr<Block>> blocks;
+    for (std::size_t use = 0; use < Uses; ++use) blocks.push_back(std::make_unique<Block>(0x6000u + static_cast<std::uint32_t>(use)));
+    auto userData = Pointers({blocks[0]->pages.Address()});
+    const auto target = output.Address();
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u) & 0xffffu, OutputBytes, 0x31016facu};
+    std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4);
+    const auto compiled = Compile(fixture.device, ReportReaderCode, userData, Threads);
+    std::vector<ShaderRecompiler::RecompileResult> results(Uses, compiled);
+    for (std::size_t use = 0; use < Uses; ++use) {
+        const auto address = blocks[use]->pages.Address();
+        std::memcpy(results[use].pushConstants.data(), &address, sizeof(address));
+    }
+    const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 1> snapshot{{{AddressOf(ReportReaderCode.data()), std::as_bytes(std::span(ReportReaderCode))}}};
+    const auto dispatch = [&](std::size_t use) {
+        fixture.device.Dispatch(results[use], 1, 1, 1, snapshot, AddressOf(ReportReaderCode.data()));
+    };
+    for (std::size_t warm = 0; warm < 2; ++warm) {
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            dispatch(0);
+        }
+        fixture.Wait();
+    }
+    const auto before = quiet();
+    const auto reuse = AgcDriver::Graphics::AddressReuseCounters();
+    const auto built = Builds();
+    auto pooled = before;
+    for (std::size_t round = 0; round < 2; ++round) {
+        Slots::FaultSlotCounts during;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            for (std::size_t use = 0; use < Uses; ++use) dispatch(use);
+            during = Slots::FaultSlots(fixture.device.Device());
+        }
+        fixture.Wait();
+        const auto after = quiet();
+        const auto spares = during.records - during.parked;
+        const auto added = during.records - pooled.records;
+        const auto addedBytes = during.recordBytes - pooled.recordBytes;
+        Require((spares == Uses - 1 || spares == Uses) && added <= spares && addedBytes == added * sizeof(ShaderRecompiler::BdaAbi::Fault) && during.chunks <= before.chunks && during.bytes <= before.bytes, "address dispatch reuse: in round " + std::to_string(round) + ", " + std::to_string(Uses) + " concurrent uses of a report-only build held " + std::to_string(spares) + " spare arena records, " + std::to_string(added) + " of them new (" + std::to_string(addedBytes) + " bytes), and the arena went from " + std::to_string(before.chunks) + " chunks (" + std::to_string(before.bytes) + " bytes) to " + std::to_string(during.chunks) + " (" + std::to_string(during.bytes) + ")");
+        Require(after.records == during.records && after.recordBytes == during.recordBytes && after.parked == after.records && after.chunks <= before.chunks && after.bytes <= before.bytes, "address dispatch reuse: after round " + std::to_string(round) + ", " + std::to_string(after.parked) + " of " + std::to_string(after.records) + " arena records (" + std::to_string(after.recordBytes) + " bytes) were parked, against " + std::to_string(during.records) + " records (" + std::to_string(during.recordBytes) + " bytes) during the batch");
+        Require(round == 0 || added <= 1, "address dispatch reuse: the second batch of a report-only build took " + std::to_string(added) + " new arena records instead of its parked spares");
+        pooled = after;
+    }
+    const auto reused = Counted(AgcDriver::Graphics::AddressReuseCounters(), AddressReuse::Reused) - Counted(reuse, AddressReuse::Reused);
+    Require(Builds() == built && reused == 2 * Uses, "address dispatch reuse: two batches of " + std::to_string(Uses) + " dispatches of one report-only program were not all reused (" + std::to_string(reused) + " reuses, " + std::to_string(Builds() - built) + " builds)");
+    const auto stored = static_cast<std::uint32_t>(output.Load(0, sizeof(std::uint32_t)));
+    Require(stored >= 0x6000u && stored < 0x6000u + Uses, "address dispatch reuse: no use of the report-only build stored the value it read through the BDA table");
+}
+
 void PendingSrtWrites(Fixture& fixture) {
     const auto writer = Compile(fixture.device, WriterCode, Pointers({fixture.first.pages.Address(PointerOffset), fixture.second.pages.Address(ValueOffset)}), Threads);
     std::array<std::uint64_t, 1> captured{fixture.first.Pointer()};
@@ -606,6 +687,7 @@ int main(int argc, char** argv) {
             if (runs("repeated")) Repeated(fixture);
             if (runs("snapshot")) ChangedSnapshot(fixture);
             if (runs("faults")) OwnFaults(fixture);
+            if (runs("spares")) SpareSlots(fixture);
             if (runs("srt")) PendingSrtWrites(fixture);
             if (runs("free")) GuestFree(fixture);
             if (runs("unaligned")) UnalignedAtomic(fixture);
