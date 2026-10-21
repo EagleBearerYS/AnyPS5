@@ -2728,6 +2728,15 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_pipelined_dispatch_item PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    foreach(drainStudy IN ITEMS dma dispatch)
+        string(TOUPPER "${drainStudy}" drainStudySwitch)
+        add_test(NAME agc_driver_packet_drain_study_${drainStudy} COMMAND agc_driver_packet_drain_study_tests)
+        set_tests_properties(agc_driver_packet_drain_study_${drainStudy} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINE_${drainStudySwitch}=1" TIMEOUT 120 SKIP_RETURN_CODE 77)
+        if(WIN32)
+            set_tests_properties(agc_driver_packet_drain_study_${drainStudy} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     set_tests_properties(agc_driver_queued_index_read_order PROPERTIES TIMEOUT 60)
 
     foreach(agcTest IN ITEMS agc_spirv_narrow_constant_store_tests agc_spirv13_image_tests agc_spirv_optimizer_tests agc_driver_constant_store_tests)
