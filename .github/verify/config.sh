@@ -1,0 +1,4 @@
+BASE=6c1f63674e24295d089fa014491c3ef5e4e75b82
+REPEAT=3
+EXTRA_TESTS='windows_write_watch|agc_private_collect|windows_mappings_release|guest_memory|guest_memory_lifetime|guest_mmap_fixed_anonymous|agc_import_watch|agc_driver_host_import_lifetime|guest_kernel_sys|guest_kernel_sync|windows_shared_map_cost'
+BENCH=windows_shared_map_cost
