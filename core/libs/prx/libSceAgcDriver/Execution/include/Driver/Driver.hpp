@@ -447,6 +447,7 @@ private:
 
     std::atomic<std::uint64_t> observationsNoWait{0};
     std::atomic<std::uint64_t> observationsNotReached{0};
+    std::atomic<std::uint64_t> labelSyncsSkipped{0};
 
     std::mutex validateMutex;
     ValidateCounters validateCounters;
