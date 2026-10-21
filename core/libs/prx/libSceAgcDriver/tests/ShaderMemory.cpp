@@ -602,18 +602,141 @@ void verifyPlanConditionPruning() {
     resources.controlFlow.push_back({&equal(load, constant(0)), {1, 2}, {}, {}});
     resources.controlFlow.push_back({&equal(low, constant(7)), {3, 4}, {}, {}});
     resources.controlFlow.push_back({&equal(read, constant(5)), {5, 6}, {}, {}});
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&equal(userData(4), constant(0)));
+    choice.AddArgument(&load);
+    choice.AddArgument(&constant(1));
+    resources.controlFlow.push_back({&equal(choice, constant(1)), {7, 8}, {}, {}});
     const auto plan = ResourceMaterializer{}.ExtractPlan(program);
     const auto copied = std::ranges::count_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::IAdd32; });
     require(copied == 0, "plan pruning: the address computation under a load the evaluator cannot read was copied");
+    require(plan.controlFlow[0].condition == nullptr && plan.controlFlow[3].condition == nullptr, "plan pruning: a condition the evaluator can never read was kept");
+    require(plan.controlFlow[1].condition != nullptr && plan.controlFlow[2].condition != nullptr, "plan pruning: a condition the evaluator can read was dropped");
     const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::LoadBufferU32; });
     require(copiedLoad != plan.valueStorage.end() && copiedLoad->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
+    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == value.ArgumentCount(); }), "plan compaction: a plan value keeps use lists or spare operand capacity");
     const std::array<std::uint32_t, 4> data{0x100u, 7u, static_cast<std::uint32_t>(wordAddress), static_cast<std::uint32_t>(wordAddress >> 32u)};
     SrtRuntime runtime{data};
     Detail::Evaluator evaluator(plan, runtime);
     std::uint32_t result = 0;
-    require(plan.controlFlow[0].condition == nullptr, "plan pruning: a condition on a vector load was kept");
     require(evaluator.Evaluate(Detail::IrNode(plan.controlFlow[1].condition), result) && result == 1u, "plan pruning: a condition read through an extracted pair was not evaluated");
     require(evaluator.Evaluate(Detail::IrNode(plan.controlFlow[2].condition), result) && result == 1u, "plan pruning: a condition on a raw read lost its handle");
+}
+
+struct PlanWalk {
+    std::vector<ShaderRecompiler::DescriptorValue> results;
+    std::vector<std::uint32_t> flat;
+    std::vector<std::uint8_t> active;
+};
+
+PlanWalk walkPlan(const ShaderRecompiler::IrResourcePlan& plan, std::span<const std::uint32_t> sources, std::span<const std::uint8_t> cleanFlatSlots, const ShaderRecompiler::SrtRuntime& runtime) {
+    PlanWalk walk;
+    ShaderRecompiler::SrtWalker{}.EvaluateRuntimeSources(plan, sources, runtime, walk.results, walk.flat, cleanFlatSlots, walk.active);
+    return walk;
+}
+
+bool readFive(void*, std::uint64_t, std::uint32_t* value) {
+    *value = 5u;
+    return true;
+}
+
+void verifyPlanRetention() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t ids = 0;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t value) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(value);
+        return immediate;
+    };
+    const auto userData = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto binary = [&](IrOpcode opcode, IrType type, IrValue& left, IrValue& right) -> IrValue& {
+        auto& value = make(opcode, type);
+        value.AddArgument(&left);
+        value.AddArgument(&right);
+        return value;
+    };
+    constexpr std::uint32_t Chain = 64;
+    IrValue* address = &userData(4);
+    for (std::uint32_t step = 0; step < Chain; ++step) address = &binary(IrOpcode::IAdd32, IrType::U32, *address, constant(1));
+    auto& load = make(IrOpcode::LoadBufferU32, IrType::U32);
+    load.AddArgument(address);
+    auto& low = binary(IrOpcode::CompositeExtractU32x2, IrType::U32, binary(IrOpcode::CompositeConstructU32x2, IrType::U32x2, userData(1), load), constant(0));
+    auto& mask = binary(IrOpcode::IEqual32, IrType::Bool, userData(5), constant(0));
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&mask);
+    choice.AddArgument(&userData(6));
+    choice.AddArgument(&load);
+    auto& offset = binary(IrOpcode::ReadFirstLane, IrType::U32, choice, mask);
+    auto& read = binary(IrOpcode::LoadAddressU32, IrType::U32, binary(IrOpcode::CompositeConstructU64, IrType::U64, userData(2), userData(3)), offset);
+    read.SetFlags(MemoryFlags{0, 0});
+    IrProgram program;
+    auto& resources = program.Resources();
+    resources.srtPlanComplete = true;
+    resources.resourceTrackingComplete = true;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    resources.memoryInfo.push_back(memory);
+    for (std::uint32_t source = 0; source < 2u; ++source) {
+        DescriptorSource descriptor;
+        descriptor.dwordCount = 4;
+        for (std::uint32_t dword = 0; dword < 4u; ++dword) descriptor.dwords[dword] = &userData(10u + source * 4u + dword);
+        resources.descriptorSources.push_back(descriptor);
+        BufferResource buffer;
+        buffer.source = source;
+        resources.info.buffers.push_back(buffer);
+    }
+    resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, low, constant(7)), {1, 2}, {0}, {}});
+    resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, read, constant(5)), {3, 4}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {1}, {}});
+    const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+    constexpr std::size_t Read = 40;
+    require(plan.valueStorage.Size() == Read, ("plan retention: the plan keeps " + std::to_string(plan.valueStorage.Size()) + " values; its conditions and descriptor sources read " + std::to_string(Read)).c_str());
+    require(std::ranges::none_of(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::IAdd32; }), "plan retention: the address under a vector load was copied");
+    const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::LoadBufferU32; });
+    require(copiedLoad != plan.valueStorage.end() && copiedLoad->ArgumentCount() == 0u, "plan retention: the vector load was not kept as a leaf");
+    std::array<std::uint32_t, 18> userWords{};
+    userWords[1] = 7u;
+    userWords[2] = 0x1000u;
+    userWords[6] = 8u;
+    for (std::uint32_t word = 10; word < userWords.size(); ++word) userWords[word] = 0x100u + word;
+    SrtRuntime runtime{userWords};
+    runtime.readMemory = readFive;
+    runtime.readSpecializationMemory = readFive;
+    const auto copiedWalk = walkPlan(plan, plan.materializationSources, plan.cleanFlatSlots, runtime);
+    const std::array<std::uint32_t, 2> sources{0u, 1u};
+    const auto wholeWalk = walkPlan(program.Resources(), sources, {}, runtime);
+    require(wholeWalk.active == std::vector<std::uint8_t>{1u, 0u}, "plan retention: the program's walk did not decide both conditions");
+    require(copiedWalk.active == wholeWalk.active && copiedWalk.results == wholeWalk.results && copiedWalk.flat == wholeWalk.flat, "plan retention: the plan's walk differs from the program's");
+}
+
+void verifyPlanRetentionChains() {
+    using namespace ShaderRecompiler;
+    std::vector<std::size_t> kept;
+    std::vector<std::size_t> conditions;
+    for (const std::uint32_t chain : {1u, 16u, 64u}) {
+        std::vector<std::uint32_t> code{0xf4080600u, 0xfa000060u, 0xbf8cc07fu, 0x7e140300u};
+        code.insert(code.end(), chain, 0x4a141481u);
+        code.insert(code.end(), {0x34141482u, 0xe0301000u, 0x80060b0au, 0xbf8c0000u, 0x7e28050bu, 0xf4000540u, 0x28000000u, 0xf4080700u, 0xfa000020u, 0xbf8c0000u, 0xbf078015u, 0xbf840002u, 0xe0700000u, 0x80070000u, 0xbf810000u});
+        const std::array<std::uint32_t, 2> userData{0x10000u, 0u};
+        const auto plan = GetResourcePlan(FrontendRequest(code, userData));
+        kept.push_back(plan->valueStorage.Size());
+        conditions.push_back(static_cast<std::size_t>(std::ranges::count_if(plan->controlFlow, [](const ResourceBlock& block) { return block.condition != nullptr; })));
+    }
+    require(conditions.front() != 0u, "plan retention: the program's plan keeps no branch condition, so the test does not reach the condition's values");
+    require(kept[0] == kept[1] && kept[1] == kept[2], ("plan retention: the plan keeps " + std::to_string(kept[0]) + ", " + std::to_string(kept[1]) + " and " + std::to_string(kept[2]) + " values for vector chains of 1, 16 and 64 steps before the scalar load its branch condition reads; it must keep only what the condition's evaluation can reach").c_str());
 }
 
 void verifySignedMinimum() {
@@ -7561,6 +7684,8 @@ int main(int argc, char** argv) {
         verifyMayEvaluate();
         verifyPureFlatSlots();
         verifyPlanConditionPruning();
+        verifyPlanRetention();
+        verifyPlanRetentionChains();
         verifyGuardedDescriptorSources();
         verifySrtTape();
         verifyImageTableKeys();
