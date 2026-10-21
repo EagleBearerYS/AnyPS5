@@ -1125,6 +1125,91 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
     std::printf("Native depth-stencil samples=%u clear=%u fill=%u: imported, stencil-tested, sampled%s\n", fragments, one, filling, filling ? " and refilled three times" : "");
 }
 
+enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil };
+
+void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool one, bool filling, PlaneFault fault = PlaneFault::None) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
+    TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    const std::uint32_t clearWord = one ? 0xfffffff0u : 0u;
+    const auto setWords = [&] { for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &clearWord, 4u); };
+    setWords();
+    const std::uint8_t clearStencil = one ? 0x5au : 0u;
+    std::memset(stencil.Data(), clearStencil, stencilBytes);
+    if (fault == PlaneFault::StencilByte) stencil.Data()[stencilBytes / 2u] ^= std::byte{0x01};
+    if (fault == PlaneFault::UnwatchedStencil) AgcDriver::GuestMemory::Unwatch(stencil.Address(), stencilBytes);
+    const std::vector<std::byte> imported(stencil.Data(), stencil.Data() + stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, one ? 1.0f : 0.0f, clearStencil, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = one ? 0x8c00u : 0u;
+    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    const auto words = DepthSampleWords(target);
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr && CachedSampledTexture(context, words) == texture, "native depth with a separate stencil plane: sampled view was not reused");
+    if (fault == PlaneFault::StencilWrite) {
+        stencil.Data()[stencilBytes - 1u] ^= std::byte{0x01};
+        CachedSampledTexture(context, words);
+    }
+    recorder.Sync();
+    const auto count = extent.width * extent.height * fragments;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, fragments, false, true));
+    const auto sample = [&](const Fetch& reader, const DepthRaster* raster, float offset, std::optional<float> drawn) {
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        if (raster != nullptr) {
+            CommandBatch rasterBatch(context);
+            raster->Run(rasterBatch.Handle(), offset);
+            rasterBatch.SubmitAndWait();
+            Require(CachedSampledTexture(context, words) == texture, "native depth with a separate stencil plane: sampled view changed after a raster write");
+            recorder.Sync();
+        }
+        CommandBatch batch(context);
+        reader.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            const auto expected = drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth;
+            Require(result == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "native depth with a separate stencil plane: a sampled fetch lost a depth sample or a stencil test outcome");
+        }
+    };
+    sample(fetch, nullptr, 0.0f, std::nullopt);
+    {
+        const DepthRaster miss(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, static_cast<std::uint8_t>(clearStencil + 1u)});
+        sample(fetch, &miss, 0.375f, std::nullopt);
+        const DepthRaster hit(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, clearStencil});
+        sample(fetch, &hit, 0.25f, 0.25f);
+    }
+    if (filling) {
+        const DepthRaster replace(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0xc3u});
+        sample(fetch, &replace, 0.125f, 0.125f);
+        NoteDepthMetadataFill(target.htileAddress, metadataBytes, clearWord);
+        AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, setWords);
+        Require(CachedSampledTexture(context, words) == texture, "a depth-only HTILE fill replaced the sampled view of a target with a separate stencil plane");
+        recorder.Sync();
+        sample(fetch, nullptr, 0.0f, std::nullopt);
+        const DepthRaster kept(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, 0xc3u});
+        sample(fetch, &kept, 0.25f, 0.25f);
+        const DepthRaster cleared(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, clearStencil});
+        sample(fetch, &cleared, 0.375f, 0.25f);
+    }
+    Require(std::equal(imported.begin(), imported.end(), stencil.Data()), "native depth sampling with a separate stencil plane changed the guest stencil plane");
+    texture.reset();
+    std::printf("Native depth with a separate stencil plane samples=%u clear=%u fill=%u: imported, stencil-tested and sampled%s\n", fragments, one, filling, filling ? " across a depth-only HTILE fill" : "");
+}
+
 void CheckEligibility(Context context) {
     constexpr VkExtent2D extent{129u, 67u};
     constexpr std::uint32_t samples = 4u;
@@ -1462,6 +1547,26 @@ int main(int argc, char** argv) {
                 std::printf("Native depth-stencil fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
             std::printf("Native depth-stencil cases checked=%u unavailable=%u\n", checked, unavailable);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--separate-stencil") {
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u; };
+            Require(supported(4u), "the native separate stencil regression requires sampled D32S8 with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { unavailable += 4u; continue; }
+                for (const bool one : {false, true}) {
+                    for (const bool filling : {false, true}) { CheckSeparateStencilTarget(context, samples, one, filling); ++checked; }
+                }
+            }
+            for (const auto& [fault, expected] : std::array{
+                     std::pair{PlaneFault::StencilByte, "native multisample stencil plane does not hold its clear value"},
+                     std::pair{PlaneFault::StencilWrite, "guest writes over native multisample depth"},
+                     std::pair{PlaneFault::UnwatchedStencil, "watched accessible guest memory"}}) {
+                TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, false, false, fault); }, expected);
+                std::printf("Native depth with a separate stencil plane fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
+            }
+            std::printf("Native depth with a separate stencil plane cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
         Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--retirement"), "invalid native depth fixture arguments");

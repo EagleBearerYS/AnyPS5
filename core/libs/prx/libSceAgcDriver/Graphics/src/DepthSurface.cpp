@@ -104,12 +104,13 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     };
     if (target.samples != 2u && target.samples != 4u && target.samples != 8u) return refuse("unsupported native depth sample count");
     const bool stencil = target.format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+    const bool stencilPlane = stencil && !target.htileStencil && target.htileDepthOnly;
     if (target.format != VK_FORMAT_D16_UNORM && target.format != VK_FORMAT_D32_SFLOAT && !stencil) return refuse("native multisample stencil or depth format import is not implemented");
     if (target.depthSwizzle != 24u || target.firstSlice != 0u || target.lastSlice != 0u) return refuse("native multisample depth arrays or non-Z_X layout are not implemented");
     if ((target.pipeBankXor & ~0xcf00u) != 0u) return refuse("unsupported native multisample depth XOR");
     if (target.address == 0u || (target.address & 65535u) != 0u) return refuse("native multisample depth base is not aligned");
     if (stencil != (target.stencilAddress != 0u) || (!stencil && target.htileStencil)) return refuse("native multisample stencil import is not implemented");
-    if (stencil && (!target.htileStencil || target.htileDepthOnly)) return refuse("native multisample stencil import requires HTILE stencil metadata");
+    if (stencil && !stencilPlane && (!target.htileStencil || target.htileDepthOnly)) return refuse("native multisample stencil import requires HTILE stencil metadata");
     if (stencil && (target.stencilAddress & 65535u) != 0u) return refuse("native multisample stencil base is not aligned");
     if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || !target.htilePipeAligned || target.htileVrsEncoding != 0u) return refuse("native multisample depth initial import requires pipe-aligned HTILE without VRS");
     if (target.clearDepth != 0.0f && target.clearDepth != 1.0f) return refuse("native multisample depth initial clear value is not implemented");
@@ -139,7 +140,12 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(metadata)), 256u);
     for (const auto word : metadata) {
         if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
-        if (stencil && !htileProvesStencilClear(word)) return refuse("native multisample stencil initial HTILE does not prove its clear value");
+        if (stencil && !stencilPlane && !htileProvesStencilClear(word)) return refuse("native multisample stencil initial HTILE does not prove its clear value");
+    }
+    if (stencilPlane) {
+        std::vector<std::uint8_t> plane(state.initial[2].bytes);
+        GuestMemory::Read(target.stencilAddress, std::as_writable_bytes(std::span(plane)));
+        if (std::any_of(plane.begin(), plane.end(), [&](std::uint8_t value) { return value != target.clearStencil; })) return refuse("native multisample stencil plane does not hold its clear value");
     }
     for (const auto& range : state.initial) GuestMemory::CollectWritesUncached(range.address, range.bytes);
     if (!GuestMemory::UnchangedSinceAll(state.initial)) return refuse("guest writes raced native multisample depth import");
@@ -2453,7 +2459,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
             else if (surface->clearGeneration != 0u) surface->sampling.Refuse("overlapping native multisample depth clear transitions are not implemented");
             else {
                 surface->clearGeneration = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
-                surface->clearAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0u ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+                surface->clearAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
                 surface->clearPattern = pattern;
                 const auto* recorder = RecorderFor(surface->context);
                 surface->clearFillNote = recorder != nullptr ? recorder->LastWriteNote(address, bytes) : 0u;
