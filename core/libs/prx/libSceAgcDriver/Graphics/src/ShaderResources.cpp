@@ -2742,6 +2742,7 @@ constexpr std::array<const char*, static_cast<std::size_t>(OwnRefreshFallback::C
 struct RevalidateProfile {
     std::atomic<std::uint64_t> calls{0};
     std::atomic<std::uint64_t> nanoseconds{0};
+    std::atomic<std::uint64_t> collectNanoseconds{0};
     std::atomic<std::uint64_t> fast{0};
     std::atomic<std::uint64_t> full{0};
     std::atomic<std::uint64_t> failed{0};
@@ -2882,7 +2883,7 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
     const auto reasons = byReason(profile.fastFails, FastFailNames);
     const auto fullReasons = byReason(profile.fullByReason, FastFailNames);
     const auto fallbacks = byReason(profile.ownFallbacks, OwnRefreshFallbackNames);
-    AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate (10 s): %llu calls %.1f ms (full walks %.1f ms, their image tables %.1f ms): fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; lookup log: %llu builds and full walks kept their records past the bound\n", static_cast<unsigned long long>(profile.calls.exchange(0, std::memory_order_relaxed)), profile.nanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, profile.fullNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, profile.tableNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6,static_cast<unsigned long long>(profile.fast.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.full.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.failed.exchange(0, std::memory_order_relaxed)), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownStorageRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownViewRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownSourceViews.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refreshedOverlaps.exchange(0, std::memory_order_relaxed)), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingForeign.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingSnapshot.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingT1Eligible.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.keysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.storageKeysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.serialSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.importSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(lookupBuildsPastBound.exchange(0, std::memory_order_relaxed)));
+    AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate (10 s): %llu calls %.1f ms (full walks %.1f ms, their image tables %.1f ms, collect %.1f ms): fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; lookup log: %llu builds and full walks kept their records past the bound\n", static_cast<unsigned long long>(profile.calls.exchange(0, std::memory_order_relaxed)), profile.nanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, profile.fullNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, profile.tableNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, profile.collectNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(profile.fast.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.full.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.failed.exchange(0, std::memory_order_relaxed)), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownStorageRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownViewRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownSourceViews.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refreshedOverlaps.exchange(0, std::memory_order_relaxed)), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingForeign.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingSnapshot.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingT1Eligible.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.keysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.storageKeysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.serialSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.importSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(lookupBuildsPastBound.exchange(0, std::memory_order_relaxed)));
 }
 
 // APS5_NO_EPOCH_REVALIDATE=1: the per-element registry, cache and stamp checks and the per-region
@@ -2903,6 +2904,19 @@ std::chrono::steady_clock::duration TemplateAuditInterval() {
 bool TemplateAuditDue(std::chrono::steady_clock::time_point last) {
     const auto interval = TemplateAuditInterval();
     return interval.count() != 0 && std::chrono::steady_clock::now() - last >= interval;
+}
+
+bool SkipImageProof() {
+    static const bool skip = std::getenv("APS5_DIAG_SKIP_IMAGE_PROOF") != nullptr;
+    return skip;
+}
+
+std::uint64_t TimedCollectWrites(std::uint64_t address, std::size_t bytes) {
+    if (!BuildProfiled()) return GuestMemory::CollectWrites(address, bytes);
+    const auto start = std::chrono::steady_clock::now();
+    const auto generation = GuestMemory::CollectWrites(address, bytes);
+    Revalidations().collectNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+    return generation;
 }
 
 }
@@ -2954,6 +2968,22 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         return false;
     };
     if (validatedTextures.size() != textures.size()) return fail(FastFail::NoRecord);
+    if (SkipImageProof()) {
+        for (std::size_t i = 0; i < textures.size(); ++i) {
+            auto& surface = validatedTextures[i];
+            if (!surface.valid) return fail(FastFail::NoRecord);
+            if (surface.depth) continue;
+            surface.collected = TimedCollectWrites(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes));
+            if (surface.collected == 0) return fail(FastFail::Collect);
+        }
+        for (std::size_t i = 0; i < storageTextures.size(); ++i) {
+            if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
+            const auto* image = storageTextures[i].get();
+            if (image == nullptr) return fail(FastFail::NoRecord);
+            if (TimedCollectWrites(image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes())) == 0) return fail(FastFail::Collect);
+        }
+        return true;
+    }
     const bool unchanged = pendingSerialSeen != 0 && pendingSerialSeen == serialBefore;
     const bool keyProofs = KeyFastPath();
     thread_local std::vector<GuestMemory::UnchangedQuery>* queriesSlot = nullptr;
@@ -2987,7 +3017,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         if (!FlushDepthPlanes(address, bytes).empty()) return fail(FastFail::Changed);
-        surface.collected = GuestMemory::CollectWrites(address, bytes);
+        surface.collected = TimedCollectWrites(address, bytes);
         if (surface.collected == 0) return fail(FastFail::Collect);
         const auto* source = surface.source;
         if (!keyProofs) {
@@ -3044,7 +3074,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
             return fail(FastFail::Depth);
         }
-        if (GuestMemory::CollectWrites(address, bytes) == 0) return fail(FastFail::Collect);
+        if (TimedCollectWrites(address, bytes) == 0) return fail(FastFail::Collect);
         if (own.dccAddress != 0) {
             // Refresh's unchanged branch (its key compare against the keys the content was
             // uploaded under, through the image's proof; the memory query below), minus its
@@ -3319,6 +3349,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         ElapsedInto walkTime(profile ? &Revalidations().fullNanoseconds : nullptr);
         lastFullWalk = std::chrono::steady_clock::now();
         lookupLog().clear();
+        if (SkipImageProof()) return true;
         BuildLookups lookups;
         std::size_t textureIndex = 0;
         std::size_t storageIndex = 0;
