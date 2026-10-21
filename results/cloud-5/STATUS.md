@@ -1,6 +1,6 @@
-READY
-since: 2026-10-21T18:55:18Z
-previous: PM-084 done, results/cloud-5/PM-084.md: read-only study of queue 0's packet drains on upstream main b3c0f48bdd. 0x50 DMA_DATA is about 80% of the packet-drain time and already has an ordered-item path on main behind APS5_PIPELINE_DMA (opt-in since bf47f840ef, no stated reason); the 0x15 gate drain at PacketExecution.cpp:396 precedes a resolveGroupAhead that returns at once on queue 0. Harness exp/packet-drain-study = d50a51eb01 (3 ctests, 15/15 runs pass on lavapipe); table, PR check (#1896, #6946, #8735, #8366, #7963 and others) and first-piece recommendation in the result. Before that: BF-112 done, results/cloud-5/BF-112.md.
+BUSY BF-120
+since: 2026-10-21T21:52:00Z
+previous: PM-084 done, results/cloud-5/PM-084.md. Before that: BF-112 done, results/cloud-5/BF-112.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
