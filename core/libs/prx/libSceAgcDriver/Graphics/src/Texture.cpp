@@ -1059,10 +1059,13 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
     }
 }
 
-Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType, std::uint32_t baseLayer, std::shared_ptr<OwnedImage> owner) : context(context), owned(std::move(owner)) {
+Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType, std::uint32_t baseLayer, std::shared_ptr<OwnedImage> owner, VkImageUsageFlags usage) : context(context), owned(std::move(owner)) {
     Require(owned == nullptr || (owned->image == depthImage && owned->context.device == context.device), "a depth sampled view must retain its own device and image");
     layout = VK_IMAGE_LAYOUT_GENERAL;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+    viewUsage.usage = usage;
+    if (usage != 0) viewInfo.pNext = &viewUsage;
     viewInfo.image = depthImage;
     viewInfo.viewType = viewType;
     viewInfo.format = depthFormat;
@@ -3135,6 +3138,10 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     }
     if (runs.empty()) return 0;
     auto windows = sliceWindows(runs);
+    // A kept unit can lie outside every window: the tracking grid is flat over the guest range
+    // while the slices of a 3D surface taper in depth with the level (HasLayer), so the upper
+    // depth slices' higher-level blocks belong to no window. There is no tiled data to retile.
+    if (windows.empty()) return 0;
     // The linear rows and the tiled bytes of every window, each at a 256-byte position; the tail
     // levels of a layer retile into one scratch region (their block is shared).
     std::vector<std::uint64_t> linearPositions, scratchPositions;
@@ -3667,6 +3674,18 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
     return false;
 }
 
+namespace {
+
+void waitForIdlePublish(const char* reason) {
+    if (reason == nullptr || std::strcmp(reason, "idle") != 0 || Recorder::InCompletion()) return;
+    if (auto* recorder = Recorder::Active()) {
+        Recorder::CountSync(0);
+        recorder->Sync();
+    }
+}
+
+}
+
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
@@ -3760,6 +3779,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     // import, so they are published under the same hold, after every store.
     if (scope != PublishScope::None) {
         const auto units = PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited);
+        if (units != 0) waitForIdlePublish(reason);
         if (published != nullptr) *published = units != 0;
     }
     return true;
@@ -3925,7 +3945,9 @@ void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
 bool StorageTexture::PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason, bool waited) {
     if (scope == PublishScope::None || !AnyShadowedOverlaps(address, bytes)) return false;
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    return PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited) != 0;
+    if (PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited) == 0) return false;
+    waitForIdlePublish(reason);
+    return true;
 }
 
 namespace {
