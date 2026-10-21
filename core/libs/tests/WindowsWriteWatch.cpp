@@ -228,6 +228,31 @@ void CheckPrivateAllocations() {
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
+void CheckVerifiedDirectCollect() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 64> pages{};
+    std::size_t available = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &available, true), "a verified collect over a private allocation failed");
+    static_cast<volatile unsigned char*>(memory)[Small] = 1;
+    available = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &available, true) && available == 1 && reinterpret_cast<std::uintptr_t>(pages[0]) == address + Small, "a verified collect over a proven private allocation lost its write");
+    Require(VirtualFree(memory + 2 * Small, Small, MEM_DECOMMIT) != 0, "cannot decommit a private page in place");
+    bool collected = false;
+    try {
+        available = pages.size();
+        collected = mappings.Collect(address, Bytes, pages.data(), &available, true);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("APS5_VERIFY_DIRECT_COLLECT") != std::string::npos, error.what());
+    }
+    Require(!collected, "a collect over a proven range with a page decommitted in place succeeded under APS5_VERIFY_DIRECT_COLLECT");
+    mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
 void CheckForgottenSectionKeepsNoPages() {
     auto& mappings = Mappings::Get();
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
@@ -274,10 +299,16 @@ void CheckConcurrentWrites() {
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
         Require(handler != nullptr, "cannot install test handler");
+        if (argc > 1 && std::string(argv[1]) == "--verify-direct") {
+            CheckVerifiedDirectCollect();
+            std::cout << "Windows verified direct collect tests passed\n";
+            RemoveVectoredExceptionHandler(handler);
+            return 0;
+        }
         CheckArmed();
         CheckFresh();
         CheckAliasesAndCapacity();
