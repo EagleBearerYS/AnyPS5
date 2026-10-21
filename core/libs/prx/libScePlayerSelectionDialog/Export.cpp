@@ -39,7 +39,17 @@ int APS5_VABI scePlayerSelectionDialogOpen(const void* param) {
  return 0;
 }
 
+int APS5_VABI scePlayerSelectionDialogClose(void) {
+ if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+ g_status = COMMON_DIALOG_STATUS_FINISHED;
+ return 0;
+}
+
 int APS5_VABI scePlayerSelectionDialogUpdateStatus(void) {
+ return g_status.load();
+}
+
+int APS5_VABI scePlayerSelectionDialogGetStatus(void) {
  return g_status.load();
 }
 
@@ -51,6 +61,11 @@ int APS5_VABI scePlayerSelectionDialogGetResult(void* result) {
  const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
  std::memcpy(result, &canceled, sizeof(canceled));
  return 0;
+}
+
+int APS5_VABI scePlayerSelectionDialogParamInitialize(void* param) {
+ if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+ NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI scePlayerSelectionDialogTerminate(void) {

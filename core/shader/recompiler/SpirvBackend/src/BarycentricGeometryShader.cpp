@@ -20,41 +20,14 @@ void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error("Barycentric geometry SPIR-V: " + message);
 }
 
-struct PerVertexParameter {
-    std::uint32_t sourceLocation;
-    std::uint32_t location;
-};
-
-struct EmulatedInterface {
-    std::vector<std::uint32_t> passed;
-    std::vector<bool> passedFlat;
-    std::vector<PerVertexParameter> perVertex;
-    BarycentricEmulationLayout layout;
-    std::uint32_t barycentrics = 0;
-    std::uint32_t sources = 0;
-};
+using PerVertexParameter = EmulatedPerVertexParameter;
 
 EmulatedInterface CollectEmulatedInterface(const RecompileResult& vertex, const RecompileResult& fragment) {
     require(fragment.barycentricEmulation.active, "the fragment shader does not emulate barycentrics");
-    const auto exported = [&](std::uint32_t location) { return std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(), location) != vertex.parameterExports.end(); };
-    EmulatedInterface emulated;
-    emulated.layout = LayoutBarycentricEmulation(fragment.fragmentParameters, fragment.barycentricEmulation);
     for (const auto& parameter : fragment.fragmentParameters) {
-        require(exported(parameter.sourceLocation), "fragment parameter " + std::to_string(parameter.location) + " is not exported by the vertex shader");
-        if (!parameter.perVertex) {
-            emulated.passed.push_back(parameter.sourceLocation);
-            emulated.passedFlat.push_back(parameter.flat);
-            continue;
-        }
-        const auto relocated = std::find_if(emulated.layout.perVertexLocations.begin(), emulated.layout.perVertexLocations.end(), [&](const auto& entry) { return entry.first == parameter.location; });
-        require(relocated != emulated.layout.perVertexLocations.end(), "per-vertex parameter " + std::to_string(parameter.location) + " has no emulated location");
-        emulated.perVertex.push_back({parameter.sourceLocation, relocated->second});
+        require(std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(), parameter.sourceLocation) != vertex.parameterExports.end(), "fragment parameter " + std::to_string(parameter.location) + " is not exported by the vertex shader");
     }
-    emulated.barycentrics = (emulated.layout.smoothLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u) + (emulated.layout.linearLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u);
-    std::set<std::uint32_t> sources(emulated.passed.begin(), emulated.passed.end());
-    for (const auto& parameter : emulated.perVertex) sources.insert(parameter.sourceLocation);
-    emulated.sources = static_cast<std::uint32_t>(sources.size());
-    return emulated;
+    return DescribeEmulatedInterface(fragment.fragmentParameters, fragment.barycentricEmulation);
 }
 
 class BarycentricGeometryEmitter {
@@ -188,13 +161,17 @@ public:
         functionType = builder.Type(spv::OpTypeFunction, voidType);
         if (clipDistances != 0u) {
             clipArrayType = builder.Type(spv::OpTypeArray, floatType, constant(uintType, clipDistances));
-            perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpMemberDecorate, {1u, spv::DecorationBuiltIn, spv::BuiltInClipDistance}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType, clipArrayType);
-            ptrInputClip = builder.Type(spv::OpTypePointer, spv::StorageClassInput, clipArrayType);
-            ptrOutputClip = builder.Type(spv::OpTypePointer, spv::StorageClassOutput, clipArrayType);
-        } else {
-            perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType);
+            controlInputClipType = builder.Type(spv::OpTypeArray, clipArrayType, constant(uintType, 3u));
+            ptrControlInputClip = builder.Type(spv::OpTypePointer, spv::StorageClassInput, clipArrayType);
+            ptrControlOutputClip = builder.Type(spv::OpTypePointer, spv::StorageClassOutput, clipArrayType);
+            ptrEvaluationInputClip = builder.Type(spv::OpTypePointer, spv::StorageClassInput, clipArrayType);
+            ptrEvaluationOutputClip = builder.Type(spv::OpTypePointer, spv::StorageClassOutput, clipArrayType);
         }
+        perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType);
         perVertexArrayType = builder.Type(spv::OpTypeArray, perVertexType, constant(uintType, 3u));
+        stageVertexType = perVertexType;
+        if (clipDistances != 0u) stageVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpMemberDecorate, {1u, spv::DecorationBuiltIn, spv::BuiltInClipDistance}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType, clipArrayType);
+        stageVertexArrayType = builder.Type(spv::OpTypeArray, stageVertexType, constant(uintType, 3u));
         ptrInputVec4 = builder.Type(spv::OpTypePointer, spv::StorageClassInput, vec4FloatType);
         ptrOutputVec4 = builder.Type(spv::OpTypePointer, spv::StorageClassOutput, vec4FloatType);
     }
@@ -206,7 +183,12 @@ public:
         const auto invocationId = addInterface(spv::StorageClassInput, intType);
         decorate(invocationId, spv::DecorationBuiltIn, spv::BuiltInInvocationId);
         const auto glIn = addInterface(spv::StorageClassInput, perVertexArrayType);
-        const auto glOut = addInterface(spv::StorageClassOutput, perVertexArrayType);
+        const auto glOut = addInterface(spv::StorageClassOutput, stageVertexArrayType);
+        std::uint32_t clipIn = 0u;
+        if (clipDistances != 0u) {
+            clipIn = addInterface(spv::StorageClassInput, controlInputClipType);
+            decorate(clipIn, spv::DecorationBuiltIn, spv::BuiltInClipDistance);
+        }
         const auto floatArray = [&](std::uint32_t size) { return builder.Type(spv::OpTypeArray, floatType, constant(uintType, size)); };
         const auto outer = addInterface(spv::StorageClassOutput, floatArray(4u));
         decorate(outer, spv::DecorationBuiltIn, spv::BuiltInTessLevelOuter);
@@ -239,7 +221,7 @@ public:
         builder.AddFunction(spv::OpBranch, afterLevels);
         builder.AddFunction(spv::OpLabel, afterLevels);
         store(result(spv::OpAccessChain, ptrOutputVec4, glOut, invocation, constant(intType, 0u)), load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, invocation, constant(intType, 0u))));
-        if (clipDistances != 0u) store(result(spv::OpAccessChain, ptrOutputClip, glOut, invocation, constant(intType, 1u)), load(clipArrayType, result(spv::OpAccessChain, ptrInputClip, glIn, invocation, constant(intType, 1u))));
+        if (clipDistances != 0u) store(result(spv::OpAccessChain, ptrControlOutputClip, glOut, invocation, constant(intType, 1u)), load(clipArrayType, result(spv::OpAccessChain, ptrControlInputClip, clipIn, invocation)));
         for (const auto& [input, output] : parameters) store(result(spv::OpAccessChain, ptrOutputVec4, output, invocation), load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, input, invocation)));
         return finish();
     }
@@ -249,13 +231,13 @@ public:
         addDomain();
         const auto tessCoord = addInterface(spv::StorageClassInput, vec3FloatType);
         decorate(tessCoord, spv::DecorationBuiltIn, spv::BuiltInTessCoord);
-        const auto glIn = addInterface(spv::StorageClassInput, perVertexArrayType);
+        const auto glIn = addInterface(spv::StorageClassInput, stageVertexArrayType);
         std::array<std::uint32_t, ParameterLocations> inputs {};
         for (const auto location : sources) {
             inputs[location] = addInterface(spv::StorageClassInput, vertexArrayType);
             decorate(inputs[location], spv::DecorationLocation, location);
         }
-        const auto glOut = addInterface(spv::StorageClassOutput, perVertexType);
+        const auto glOut = addInterface(spv::StorageClassOutput, stageVertexType);
         std::vector<std::uint32_t> passedOutputs;
         for (const auto location : passed) {
             passedOutputs.push_back(addInterface(spv::StorageClassOutput, vec4FloatType));
@@ -289,7 +271,7 @@ public:
         const auto weights = result(spv::OpCompositeConstruct, vec3FloatType, weight(0u), weight(1u), weight(2u));
 
         store(result(spv::OpAccessChain, ptrOutputVec4, glOut, constant(intType, 0u)), load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, index, constant(intType, 0u))));
-        if (clipDistances != 0u) store(result(spv::OpAccessChain, ptrOutputClip, glOut, constant(intType, 1u)), load(clipArrayType, result(spv::OpAccessChain, ptrInputClip, glIn, index, constant(intType, 1u))));
+        if (clipDistances != 0u) store(result(spv::OpAccessChain, ptrEvaluationOutputClip, glOut, constant(intType, 1u)), load(clipArrayType, result(spv::OpAccessChain, ptrEvaluationInputClip, glIn, index, constant(intType, 1u))));
         for (std::size_t i = 0; i < passed.size(); ++i) store(passedOutputs[i], load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, inputs[passed[i]], passedFlat[i] ? constant(intType, 0u) : index)));
         if (smooth != 0u) store(smooth, weights);
         if (linear != 0u) store(linear, weights);
@@ -316,10 +298,15 @@ private:
     std::uint32_t perVertexType = 0;
     std::uint32_t perVertexArrayType = 0;
     std::uint32_t clipArrayType = 0;
+    std::uint32_t controlInputClipType = 0;
     std::uint32_t ptrInputVec4 = 0;
     std::uint32_t ptrOutputVec4 = 0;
-    std::uint32_t ptrInputClip = 0;
-    std::uint32_t ptrOutputClip = 0;
+    std::uint32_t ptrControlInputClip = 0;
+    std::uint32_t ptrControlOutputClip = 0;
+    std::uint32_t ptrEvaluationInputClip = 0;
+    std::uint32_t ptrEvaluationOutputClip = 0;
+    std::uint32_t stageVertexType = 0;
+    std::uint32_t stageVertexArrayType = 0;
 
     void begin() {
         builder.EmitCapability(spv::CapabilityShader);
@@ -364,7 +351,7 @@ private:
 
 }
 
-BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation) {
+BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation, bool meshPositions) {
     BarycentricEmulationLayout layout;
     if (!emulation.active) return layout;
     std::array<bool, ParameterLocations> used {};
@@ -382,10 +369,31 @@ BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentPa
     };
     if (emulation.smooth) layout.smoothLocation = take(1u);
     if (emulation.linear) layout.linearLocation = take(1u);
+    if (meshPositions) layout.positionsLocation = take(3u);
     for (const auto& parameter : parameters) {
         if (parameter.perVertex) layout.perVertexLocations.emplace_back(parameter.location, take(3u));
     }
     return layout;
+}
+
+EmulatedInterface DescribeEmulatedInterface(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation, bool meshPositions) {
+    EmulatedInterface emulated;
+    emulated.layout = LayoutBarycentricEmulation(parameters, emulation, meshPositions);
+    for (const auto& parameter : parameters) {
+        if (!parameter.perVertex) {
+            emulated.passed.push_back(parameter.sourceLocation);
+            emulated.passedFlat.push_back(parameter.flat);
+            continue;
+        }
+        const auto relocated = std::find_if(emulated.layout.perVertexLocations.begin(), emulated.layout.perVertexLocations.end(), [&](const auto& entry) { return entry.first == parameter.location; });
+        require(relocated != emulated.layout.perVertexLocations.end(), "per-vertex parameter " + std::to_string(parameter.location) + " has no emulated location");
+        emulated.perVertex.push_back({parameter.sourceLocation, relocated->second});
+    }
+    emulated.barycentrics = (emulated.layout.smoothLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u) + (emulated.layout.linearLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u);
+    std::set<std::uint32_t> sources(emulated.passed.begin(), emulated.passed.end());
+    for (const auto& parameter : emulated.perVertex) sources.insert(parameter.sourceLocation);
+    emulated.sources = static_cast<std::uint32_t>(sources.size());
+    return emulated;
 }
 
 RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits) {
