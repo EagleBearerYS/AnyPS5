@@ -1,0 +1,4 @@
+BASE=09283b6e3fd6a23921dbe2318cd953cd04b5daae
+REPEAT=10
+EXTRA_TESTS='agc_address_copy_cap|agc_address_copy_cap_remembered'
+BEFORE_REPEAT=3
