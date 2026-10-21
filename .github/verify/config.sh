@@ -1,0 +1,4 @@
+BASE=af0821dddb64a413f764516e3a6b490fea03fd8f
+REPEAT=3
+EXTRA_TESTS='agc_pipeline_counts|agc_pipeline_counts_off|agc_pipeline_counts_fast_only|agc_driver_recorder_tests'
+NO_BEFORE=1
