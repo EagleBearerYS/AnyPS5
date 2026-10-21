@@ -1,0 +1,4 @@
+BASE=1ff5c8ac5c3050d71360957c5ff1be38aaac7114
+REPEAT=1
+EXTRA_TESTS='agc_driver_retired_import_rewatch_cost|agc_driver_retired_import_rewatch_cost_paged'
+NO_BEFORE=1
