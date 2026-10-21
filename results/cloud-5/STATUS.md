@@ -1,6 +1,6 @@
-BUSY BF-110
-since: 2026-10-21T12:07:05Z
-previous: BF-109 done, results/cloud-5/BF-109.md: perf/libc-collect-without-region-query = 74dee0062 on upstream/main 3e91c8edf (a proven collect calls GetWriteWatch directly and falls back to the VirtualQuery walk on failure; RegionQueries counter); bench stack exp/rewatch-phases-fixed = add733563 on 2d90e39b0 for the PC Windows run; new windows_write_watch case green 10/10 and red 10/10 under Wine 9.0 (Windows unverified); Linux focused 15/15, ^agc 862 with 1 failed (sgpr flake); no PR head gets a new conflict. Before that: PRM-050 done, results/cloud-5/PRM-050.md.
+READY
+since: 2026-10-21T12:19:20Z
+previous: BF-110 done, results/cloud-5/BF-110.md: on main d099bc6cd8 with vulkan-validationlayers 1.3.275 (core, sync, GPU-AV) on lavapipe 4x, one message in the pass: VUID-VkImageMemoryBarrier-image-03320 (the sample order copy UNDEFINED->GENERAL barrier names only depth for D32S8 under the depth-only method); fixed on fix/agc-sample-order-depth-copy-aspects = 5a9d89179c with agc_driver_sample_order_depth_copy_barriers (red 20/20, green 20/20) and the map-index check agc_driver_sample_order_map_indices (3,003 orders pass); step 2 setups all valid; lavapipe has no 2x and no sample locations, so the reporter's located 2x D32 path was not reachable; suggestions listed. Before that: BF-109 done, results/cloud-5/BF-109.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
