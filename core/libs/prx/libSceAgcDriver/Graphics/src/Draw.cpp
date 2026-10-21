@@ -805,7 +805,7 @@ void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarg
                 const auto address = descriptor.Base48();
                 auto size = descriptor.GetSize();
                 if (size == 0 || address == 0) continue;
-                if (const std::uint64_t stride = descriptor.Stride(); stride != 0 && address < target.address && address + size > target.address && address + size - target.address < stride) size = target.address - address;
+                size = ShaderResources::BytesUpToTarget(address, size, descriptor.Stride(), &target);
                 const auto element = offset / 4;
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                 Require(!overlap(address, size, target.address, target.bytes), "shader buffer aliases the render target");
@@ -1432,7 +1432,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             const bool valid = cached->Revalidate(shaders);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 resolved.resources = std::move(cached);
