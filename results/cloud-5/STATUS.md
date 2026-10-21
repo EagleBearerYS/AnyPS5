@@ -1,6 +1,6 @@
-BUSY PRM-047
-since: 2026-10-21T04:17:31Z
-previous: PRM-046 done, results/cloud-5/PRM-046.md: pm/6636-review = 084de35d85 + fc9c5416f (test only: agc_driver_address_draw_reuse_watched_imports with APS5_WRITE_WATCH_IMPORTS=watch, non-Windows, plus a non-address ThrowingProof case); no reproduction at 084de35d85 because main's 67575aae8 (merged there, absent from 28433ba132) refuses the case before either proof; reproduces with that line removed ("...was reused"); red without it, green 20/20; ^agc 850 tests, 1 failed (agc_driver_sgpr_pattern_fill_keys load flake, also on main). Before that: BF-095 done, results/cloud-5/BF-095.md.
+READY
+since: 2026-10-21T04:58:50Z
+previous: PRM-047 done, results/cloud-5/PRM-047.md: pm/7644-rebased = 1ba22061e on upstream/main f47c856634; seven PR commits rebased linear (b883c9d58f moved last, it sat on a parallel line), tree at dae468d26 equal to 40e0d968c3 merged with f47c856634 (62b8686aee); 4eeeeb643 prepares a deferred ABI once (flag + wait on settled; red 20/20 "0 found, 0 entries used", green 0/20) with agc_driver_prepared_shaders_abi_deferred_concurrent_lazy; 1ba22061e prints the deferred-ABI line only under APS5_PROFILE_DRAW via ProfilePrint; 5 tests 20/20; ^agc 854 tests, 795 passed, 57 skipped, 2 failed (sgpr_pattern_fill_keys load flake; storage_read_during_idle_store, a main flake: base 3/360, head 4/360). Before that: PRM-046 done, results/cloud-5/PRM-046.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
