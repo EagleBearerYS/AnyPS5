@@ -1,0 +1,4 @@
+BASE=27bcd6a29e2fd69aba0626610b2350eb8f2847f6
+REPEAT=10
+EXTRA_TESTS='windows_write_watch|agc_rewatched_direct_shared|agc_write_tracking|agc_write_tracking_metadata_commit|agc_resident_direct_remap'
+NO_BEFORE=1
