@@ -216,6 +216,46 @@ void CheckConcurrentWrites() {
     region.Collect(Collection::Armed);
     Require(region.Collect(Collection::Armed).empty(), "concurrent writes did not settle");
 }
+
+void CheckComparedWhenShared() {
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, 2 * Bytes, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    auto* second = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(section && first && second, "cannot allocate compared sharing test memory");
+    const auto collect = [&](unsigned char* address, std::size_t bytes) {
+        std::array<void*, 32> pages{};
+        std::size_t count = pages.size();
+        return mappings.Collect(reinterpret_cast<std::uintptr_t>(address), bytes, pages.data(), &count, true);
+    };
+    const auto protection = [](unsigned char* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "compared sharing protection query failed");
+        return info;
+    };
+    mappings.Map(first, 2 * Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(protection(first).Type == MEM_PRIVATE, "the compared sharing test memory is not resident");
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(first), Bytes);
+    Require(collect(first, 2 * Bytes), "a resident page to be compared when shared stopped being collected");
+    mappings.Map(second, 2 * Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(protection(first).Type == MEM_MAPPED && protection(second).Type == MEM_MAPPED, "a second mapping kept the first resident");
+    Require(!collect(first, Bytes) && !collect(second, Bytes), "a page to be compared when shared was collected once shared");
+    Require(!collect(first, 2 * Bytes), "a collect over a page to be compared when shared succeeded once shared");
+    Require(protection(first).Protect == PAGE_READWRITE && protection(second).Protect == PAGE_READWRITE, "a page to be compared when shared was armed once shared");
+    const auto before = faults.load();
+    first[8] = 0x5a;
+    second[Small + 8] = 0xa5;
+    Require(faults.load() == before && second[8] == 0x5a && first[Small + 8] == 0xa5, "a store into a page to be compared when shared faulted once shared");
+    Require(collect(first + Bytes, Bytes), "a shared page that was never to be compared stopped being collected");
+    mappings.Reset(first, 2 * Bytes);
+    mappings.Reset(second, 2 * Bytes);
+    for (auto* reserved : {first, second}) {
+        VirtualFree(reserved, 2 * Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+        VirtualFree(reserved, 0, MEM_RELEASE);
+    }
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
 }
 
 int main() {
@@ -230,6 +270,7 @@ int main() {
         CheckPrivate();
         CheckConcurrentWrites();
         CheckForgottenSectionKeepsNoPages();
+        CheckComparedWhenShared();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
