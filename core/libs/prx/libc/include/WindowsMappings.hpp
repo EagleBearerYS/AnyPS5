@@ -365,7 +365,6 @@ public:
                     if (!watchResident) return false;
                     continue;
                 }
-                if (it->second.page->comparedWhenShared) return false;
                 if (it->second.protection != PAGE_NOACCESS) continue;
                 for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
                     if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
@@ -512,7 +511,7 @@ private:
         for (auto cursor = address; cursor < end;) {
             const auto base = cursor & ~(pageBytes - 1);
             if (const auto found = viewAt(base, position); found != views.end()) {
-                if (found->second.protection == PAGE_NOACCESS || (found->second.resident ? !watchResident : found->second.page->comparedWhenShared)) return false;
+                if (found->second.protection == PAGE_NOACCESS || (found->second.resident && !watchResident)) return false;
                 cursor = std::min(end, base + pageBytes);
                 continue;
             }
