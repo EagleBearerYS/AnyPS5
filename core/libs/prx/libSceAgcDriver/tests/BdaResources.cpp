@@ -7,6 +7,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -24,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -2113,6 +2115,7 @@ void faultSlotTests(const Context& shared, const BdaTestAccess& access) {
     disabled.bufferDeviceAddress = false;
     ShaderResources resources(disabled, stages, ColorTarget{}, 0, 0, 0, {});
     const auto built = access.descriptor(5);
+    Require(built.range == ShaderRecompiler::BdaAbi::FaultBufferBytes, "a build whose program could not be read was bound less than a full fault buffer");
     BdaResources::NoteFinished(context.device, 1);
     std::vector<std::unique_ptr<BdaResources>> pressure;
     const auto reclaimedBefore = BdaResources::FaultSlots(context.device).reclaimed;
@@ -2126,6 +2129,35 @@ void faultSlotTests(const Context& shared, const BdaTestAccess& access) {
     writeUnmappedFault(slotBytes(access, rebound), 0x7fff44440000ULL);
     reject([&] { resources.CheckFaults(); }, "address=0x7fff44440000");
     reject([&] { pressure.back()->CheckFault(); }, "address=0x7fff33330000");
+    std::vector<std::unique_ptr<BdaResources>> reports;
+    std::set<VkBuffer> reportChunks;
+    for (std::size_t index = 0; index < 64; ++index) {
+        reports.push_back(std::make_unique<BdaResources>(context, true));
+        reportChunks.insert(reports.back()->Fault().buffer);
+    }
+    std::snprintf(message, sizeof(message), "64 report-only BdaResources hold %zu fault chunks with %llu-byte slots", reportChunks.size(), static_cast<unsigned long long>(reports.front()->Fault().range));
+    Require(reportChunks.size() == 1 && reports.front()->Fault().range == sizeof(ShaderRecompiler::BdaAbi::Fault), message);
+    Require(!sameFaultMemory(reports[0]->Fault(), reports[1]->Fault()), "two report-only BdaResources share fault memory");
+    writeUnmappedFault(slotBytes(access, reports[0]->Fault()), 0x7fff55550000ULL);
+    writeUnmappedFault(slotBytes(access, reports[1]->Fault()), 0x7fff66660000ULL);
+    reject([&] { reports[0]->CheckFault(); }, "address=0x7fff55550000");
+    reject([&] { reports[1]->CheckFault(); }, "address=0x7fff66660000");
+    ShaderRecompiler::RecompileResult vertex;
+    ShaderRecompiler::RecompileResult fragment;
+    const std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityTessellation};
+    ShaderRecompiler::SpirvTarget target{};
+    target.vulkanVersion = VK_API_VERSION_1_1;
+    target.spirvVersion = 0x00010300u;
+    target.supportedCapabilities = capabilities;
+    target.tessellation = ShaderRecompiler::TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
+    const auto rectList = ShaderRecompiler::BuildRectListShaders(vertex, fragment, target);
+    const std::array<CompiledShader, 1> rectStages{{{ShaderRecompiler::ShaderStage::TessellationControl, &rectList.control, 0}}};
+    ShaderResources rectResources(disabled, rectStages, ColorTarget{}, 0, 0, 0, {});
+    const auto rectSlot = access.descriptor(rectList.control.bindings.front().binding);
+    std::snprintf(message, sizeof(message), "the rect-list check, which writes only the fault report, was bound %llu bytes of fault buffer", static_cast<unsigned long long>(rectSlot.range));
+    Require(rectSlot.range == sizeof(ShaderRecompiler::BdaAbi::Fault), message);
+    writeUnmappedFault(slotBytes(access, rectSlot), 0x7fff77770000ULL);
+    reject([&] { rectResources.CheckFaults(); }, "address=0x7fff77770000");
 }
 
 }
