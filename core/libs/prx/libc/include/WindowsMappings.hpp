@@ -111,7 +111,7 @@ public:
             const auto shared = slot.page.lock();
             return resident && !slot.stored && (!shared || shared->aliases.empty());
         };
-        const bool perPage = !resident && sectionBytes == SIZE_MAX;
+        const bool perPage = !resident;
         if (perPage) commitSection(section, offset, bytes);
         for (std::size_t done = 0; done < bytes;) {
             const auto base = cursor + done;
