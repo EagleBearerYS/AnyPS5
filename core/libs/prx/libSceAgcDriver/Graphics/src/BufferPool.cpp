@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace AgcDriver::Graphics {
 
@@ -36,6 +37,52 @@ bool systemMemoryHeap(const VkPhysicalDeviceMemoryProperties& memory, std::uint3
 
 constexpr VkBufferUsageFlags deviceUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
+thread_local HostOwner currentHostOwner = HostOwner::Other;
+
+double mebibytes(std::uint64_t bytes) {
+    return static_cast<double>(bytes) / 1048576.0;
+}
+
+}
+
+const char* HostOwnerName(HostOwner owner) {
+    switch (owner) {
+    case HostOwner::Other: return "other";
+    case HostOwner::HeapMirror: return "heap mirrors";
+    case HostOwner::ImageMirror: return "image mirrors";
+    case HostOwner::Copy: return "copies";
+    case HostOwner::Staging: return "staging";
+    case HostOwner::WriteBack: return "write-back";
+    case HostOwner::DeviceSpill: return "device spill";
+    case HostOwner::ShaderData: return "shader data";
+    case HostOwner::Count: break;
+    }
+    return "?";
+}
+
+HostOwner SetHostOwner(HostOwner owner) {
+    return std::exchange(currentHostOwner, owner);
+}
+
+HostOwner CurrentHostOwner() {
+    return currentHostOwner;
+}
+
+std::uint64_t HostVisibleCounts::Bytes() const {
+    std::uint64_t bytes = PoolBytes();
+    for (const auto& owner : owners) bytes += owner.bytes;
+    return bytes;
+}
+
+std::string FormatHostVisible(const HostVisibleCounts& counts) {
+    char line[1024];
+    auto used = static_cast<std::size_t>(std::snprintf(line, sizeof(line), "host-visible memory: %.1f MiB in %llu allocations;", mebibytes(counts.Bytes()), static_cast<unsigned long long>(counts.allocations)));
+    for (std::size_t owner = 0; owner < counts.owners.size() && used < sizeof(line); ++owner) {
+        const auto& use = counts.owners[owner];
+        used += static_cast<std::size_t>(std::snprintf(line + used, sizeof(line) - used, " %s %.1f MiB (%llu),", HostOwnerName(static_cast<HostOwner>(owner)), mebibytes(use.bytes), static_cast<unsigned long long>(use.buffers)));
+    }
+    if (used < sizeof(line)) std::snprintf(line + used, sizeof(line) - used, " BufferPool %.1f MiB (%llu retained, %.1f MiB free in %llu slab blocks)", mebibytes(counts.PoolBytes()), static_cast<unsigned long long>(counts.retained.buffers), mebibytes(counts.slabFreeBytes), static_cast<unsigned long long>(counts.slabBlocks));
+    return line;
 }
 
 BufferPool::BufferPool(const Context& context) : maxSlots(std::max<std::size_t>(1, std::min<std::size_t>(MaxSlots(), context.limits.maxMemoryAllocationCount / 6u))), cacheReclaim(context.cacheReclaim), device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), allocateMemory(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")), mapMemory(context.Function<PFN_vkMapMemory>("vkMapMemory")), physical(context.physical), memoryProperties(context.memory), memoryProperties2(context.memoryProperties2) {
@@ -319,6 +366,62 @@ std::size_t BufferPool::SlabBlocks() {
     return slabBlocks.size();
 }
 
+bool BufferPool::CountsHost() {
+    static const bool counted = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    return counted;
+}
+
+void BufferPool::CountHost(HostOwner owner, VkDeviceSize bytes, bool slab, bool live) noexcept {
+    const auto index = static_cast<std::size_t>(owner);
+    if (live) {
+        hostBytes[index].fetch_add(bytes, std::memory_order_relaxed);
+        hostBuffers[index].fetch_add(1, std::memory_order_relaxed);
+        if (!slab) hostMemories.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    hostBytes[index].fetch_sub(bytes, std::memory_order_relaxed);
+    hostBuffers[index].fetch_sub(1, std::memory_order_relaxed);
+    if (!slab) hostMemories.fetch_sub(1, std::memory_order_relaxed);
+}
+
+HostVisibleCounts BufferPool::HostVisible() {
+    HostVisibleCounts counts;
+    for (std::size_t owner = 0; owner < counts.owners.size(); ++owner) {
+        counts.owners[owner].bytes = hostBytes[owner].load(std::memory_order_relaxed);
+        counts.owners[owner].buffers = hostBuffers[owner].load(std::memory_order_relaxed);
+    }
+    counts.allocations = hostMemories.load(std::memory_order_relaxed);
+    {
+        std::lock_guard lock(mutex);
+        for (const auto* tier : {&smallTier, &largeTier, &deviceTier}) {
+            for (const auto& [key, slots] : tier->free) {
+                if ((key.properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0) continue;
+                for (const auto& slot : slots) {
+                    counts.retained.bytes += slot.allocation.allocationBytes;
+                    ++counts.retained.buffers;
+                    if (!slot.allocation.slab) ++counts.allocations;
+                }
+            }
+        }
+    }
+    std::lock_guard lock(slabMutex);
+    for (const auto& [memory, block] : slabBlocks) {
+        if (block->mapping == nullptr) continue;
+        ++counts.slabBlocks;
+        ++counts.allocations;
+        counts.slabFreeBytes += static_cast<std::uint64_t>(block->free.size()) * block->slotBytes;
+    }
+    return counts;
+}
+
+void BufferPool::ReportHost(bool now) {
+    const auto time = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto last = lastHostReport.load(std::memory_order_relaxed);
+    if (!now && last != 0 && time - last < std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(10)).count()) return;
+    if (!lastHostReport.compare_exchange_strong(last, time, std::memory_order_relaxed) && !now) return;
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] %s\n", FormatHostVisible(HostVisible()).c_str());
+}
+
 bool BufferPool::DeviceTierEnabled() {
     static const bool enabled = [] {
         const char* value = std::getenv("APS5_STAGING_POOL_MIB");
@@ -390,6 +493,7 @@ BufferPool::Tier& BufferPool::tierFor(std::size_t capacity, VkMemoryPropertyFlag
 
 std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile) ReportHost(false);
     const auto capacity = Capacity(bytes, properties);
     std::lock_guard lock(mutex);
     ++clock;

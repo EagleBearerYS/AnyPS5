@@ -758,6 +758,7 @@ struct VulkanDevice::State {
                 slot.dumpBuffer.reset();
                 slot.dumpScaler.reset();
             }
+            if (bufferPool && Graphics::BufferPool::CountsHost()) bufferPool->ReportHost(true);
             // Results still in the unit shadows reach guest memory before the device goes; the
             // slabs (kept by the publishing batch) are freed by the recorder's teardown.
             if (recorder) {

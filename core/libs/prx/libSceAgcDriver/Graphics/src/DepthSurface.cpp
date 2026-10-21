@@ -1065,6 +1065,7 @@ public:
                 held.generation = current.generation;
                 continue;
             }
+            const HostOwnerScope owner(HostOwner::Staging);
             auto upload = std::make_shared<Buffer>(context, static_cast<std::size_t>(geometry.layerBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
             GuestMemory::ReadCommitted(current.address, upload->Bytes().first(static_cast<std::size_t>(geometry.layerBytes)));
             uploads.push_back(std::move(upload));
