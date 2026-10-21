@@ -32,6 +32,7 @@ constexpr std::size_t Block = 65536;
 #ifdef _WIN32
 constexpr wchar_t HostHoleMode[] = L"--host-hole";
 constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
+constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
 #endif
 
 void Require(bool condition, const std::string& message) {
@@ -647,6 +648,48 @@ void CheckRewatch() {
     Require(!Watched(base + 2 * Block, Block), "a block with uncommitted pages returned to the write watch");
     GuestArena::GuestArenaReset_nid_postfix(memory, 4 * Block);
     GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
+}
+
+void CheckRewatchedDirectMemoryComparedWhenShared() {
+    constexpr std::size_t bytes = 2 * Block;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * bytes, Block));
+    Require(memory != nullptr, "cannot reserve the compared sharing fixture");
+    struct Cleanup {
+        std::uint8_t* memory;
+        HANDLE section = nullptr;
+        ~Cleanup() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, 2 * bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, 2 * bytes);
+            if (section == nullptr) return;
+            GuestArena::GuestArenaForgetSection_nid_postfix(section);
+            CloseHandle(section);
+        }
+    } cleanup{memory};
+    cleanup.section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(cleanup.section != nullptr, "cannot create the compared sharing backing");
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto native = [](const std::uint8_t* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "cannot query the compared sharing fixture");
+        return info;
+    };
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_PRIVATE && Watched(base, bytes), "the direct memory is not resident and watched");
+    Unwatch(base, Block);
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> imported{{{base, base + Block}}};
+    Rewatch(imported);
+    Require(Watched(base, Block), "the rewatched direct memory is not watched");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) != 0, "rewatched resident direct memory is not collected");
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + bytes, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_MAPPED && native(memory + bytes).Type == MEM_MAPPED, "a second mapping kept the direct memory resident");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) == 0 && CollectWritesUncached(base + bytes, Block) == 0, "rewatched direct memory was collected once shared");
+    Require(native(memory).Protect == PAGE_READWRITE && native(memory + bytes).Protect == PAGE_READWRITE, "rewatched direct memory was armed once shared");
+    memory[8] = 0x5a;
+    Require(memory[bytes + 8] == 0x5a, "the second mapping does not see a store into the first");
+    Require(CollectWritesUncached(base + Block, Block) != 0, "shared direct memory that never left the watch stopped being collected");
+    std::cout << "rewatched direct memory: compared once shared, not armed; other shared direct memory still collected\n";
 }
 
 void CheckResidentDirectMappingReuse() {
@@ -1411,6 +1454,10 @@ int main() {
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(ResidentRemapMode)) {
             CheckResidentDirectMappingReuse();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(RewatchedSharedMode)) {
+            CheckRewatchedDirectMemoryComparedWhenShared();
             return 0;
         }
 #endif
