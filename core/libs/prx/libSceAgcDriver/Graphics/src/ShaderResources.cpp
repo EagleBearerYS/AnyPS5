@@ -3299,7 +3299,24 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     if (!reusable) return refuse(AddressReuse::NotReusable);
     if (InUse()) return refuse(AddressReuse::InUse);
     CompleteSnapshotWrites(snapshots);
-    if (!guestMemory.SameSnapshots(snapshots)) return refuse(AddressReuse::Snapshots);
+    if (profile) {
+        CountSnapshotProof(snapshots);
+        std::string detail;
+        if (const auto mismatch = guestMemory.SnapshotDifference(snapshots, SnapshotDetailWanted() ? &detail : nullptr); mismatch != SnapshotMismatch::None) {
+            if (!detail.empty()) {
+                detail += "; draw stages:";
+                for (const auto& shader : shaders) {
+                    char stage[64];
+                    std::snprintf(stage, sizeof(stage), " %s variant 0x%llx", SnapshotStageName(static_cast<std::uint8_t>(shader.stage)), static_cast<unsigned long long>(shader.program != nullptr ? shader.program->PipelineVariantId() : 0));
+                    detail += stage;
+                }
+            }
+            CountSnapshotMismatch(mismatch, detail);
+            return refuse(AddressReuse::Snapshots);
+        }
+    } else if (!guestMemory.SameSnapshots(snapshots)) {
+        return refuse(AddressReuse::Snapshots);
+    }
     struct Suspend {
         GuestBufferMemory& memory;
         bool armed = true;

@@ -20,9 +20,13 @@ namespace AgcDriver::Graphics {
 
 void ShutdownGuestBufferWorkers();
 
+enum class SnapshotSource : std::uint8_t { Unknown, ProgramCode, StageCapture, CachedStage, DrawDecode };
+
 struct GuestMemorySnapshot {
     std::uint64_t address;
     std::span<const std::byte> bytes;
+    SnapshotSource source = SnapshotSource::Unknown;
+    std::uint8_t stage = 0xffu;
 };
 
 // A guest allocation imported with VK_EXT_external_memory_host, usable by the GPU in place.
@@ -253,6 +257,23 @@ void CountAddressReuse(AddressReuse outcome, std::uint64_t proofNs = 0);
 void HoldReusedSpace(bool held);
 AddressReuseStats AddressReuseCounters();
 
+enum class SnapshotMismatch : std::uint8_t { None, Count, Address, Size, LiveBytes, CopiedBytes, Region, Kinds };
+inline constexpr std::size_t SnapshotHistogramBuckets = 9;
+struct SnapshotMismatchStats {
+    std::uint64_t proofs = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(SnapshotMismatch::Kinds)> refusals{};
+    std::array<std::uint64_t, SnapshotHistogramBuckets> snapshotsPerProof{};
+    std::array<std::uint64_t, SnapshotHistogramBuckets> bytesPerSnapshot{};
+};
+const char* SnapshotMismatchName(SnapshotMismatch mismatch);
+const char* SnapshotStageName(std::uint8_t stage);
+void CountSnapshotProof(std::span<const GuestMemorySnapshot> snapshots);
+bool SnapshotDetailWanted();
+void CountSnapshotMismatch(SnapshotMismatch mismatch, const std::string& detail);
+SnapshotMismatchStats SnapshotMismatchCounters();
+std::string FormatSnapshotMismatches(const SnapshotMismatchStats& counts, const SnapshotMismatchStats& previous);
+void ReportSnapshotMismatches();
+
 struct MirrorStats {
     std::uint64_t heapMirrors = 0;
     std::uint64_t heapBytes = 0;
@@ -386,6 +407,7 @@ public:
     std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> SpaceRegions() const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DirectWrites() const;
     bool SameSnapshots(std::span<const GuestMemorySnapshot> snapshots) const;
+    SnapshotMismatch SnapshotDifference(std::span<const GuestMemorySnapshot> snapshots, std::string* detail = nullptr) const;
     void SuspendSpace() noexcept;
     bool ResumeSpace();
     bool SpaceImportsCurrent();

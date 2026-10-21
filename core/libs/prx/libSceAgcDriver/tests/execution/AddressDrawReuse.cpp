@@ -39,6 +39,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -774,10 +775,79 @@ void DecodeCacheHit() {
     Require(Builds() == built, "address draw reuse: a submitted draw that hit the decode cache built its resources again after a decode miss of the same draw");
 }
 
+void SnapshotReasons(Scene& scene) {
+    using AgcDriver::Graphics::SnapshotMismatch;
+    Require(std::getenv("APS5_PROFILE_DRAW") != nullptr, "address draw reuse: the snapshot refusal reasons are only counted with APS5_PROFILE_DRAW set");
+    constexpr std::size_t MovedBy = 64;
+    const std::array<std::uint64_t, 1> captured{scene.guest.Address(ValueOffset)};
+    const std::array<std::uint64_t, 1> stale{captured[0] ^ 0xff00u};
+    std::memcpy(scene.guest.Data() + PointerOffset + MovedBy, captured.data(), sizeof(captured));
+    std::array<AgcDriver::Graphics::GuestMemorySnapshot, 3> snapshots{{
+        scene.snapshots[0],
+        scene.snapshots[1],
+        {scene.guest.Address(PointerOffset), std::as_bytes(std::span(captured))},
+    }};
+    const auto draw = [&] {
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            const AgcDriver::Pm4::DrawParameters parameters{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+            scene.device.Draw(scene.state, parameters, scene.shaders, snapshots);
+        }
+        scene.Wait();
+    };
+    const auto refused = [](SnapshotMismatch kind) { return AgcDriver::Graphics::SnapshotMismatchCounters().refusals[static_cast<std::size_t>(kind)]; };
+    const auto refusedOnce = [&](SnapshotMismatch kind, const auto& change, std::initializer_list<const char*> expected) {
+        const auto before = refused(kind);
+        const auto reused = Counted(AgcDriver::Graphics::AddressReuseCounters(), AgcDriver::Graphics::AddressReuse::Reused);
+        StderrCapture capture;
+        change();
+        draw();
+        const auto text = capture.Finish();
+        Require(refused(kind) == before + 1, std::string("address draw reuse: one draw did not count one snapshot refusal for ") + AgcDriver::Graphics::SnapshotMismatchName(kind));
+        Require(Counted(AgcDriver::Graphics::AddressReuseCounters(), AgcDriver::Graphics::AddressReuse::Reused) == reused, std::string("address draw reuse: a draw refused for ") + AgcDriver::Graphics::SnapshotMismatchName(kind) + " was reused");
+        const auto line = text.find("[snapshots] refusal");
+        Require(line != std::string::npos, std::string("address draw reuse: a refusal for ") + AgcDriver::Graphics::SnapshotMismatchName(kind) + " printed no [snapshots] detail line:\n" + text);
+        const auto detail = text.substr(line, text.find('\n', line) - line);
+        for (const auto* part : expected) Require(detail.find(part) != std::string::npos, std::string("address draw reuse: the [snapshots] detail line lacks \"") + part + "\":\n" + detail);
+        std::printf("%s\n", detail.c_str());
+    };
+    AgcDriver::Graphics::ReportSnapshotMismatches();
+    draw();
+    draw();
+    refusedOnce(SnapshotMismatch::CopiedBytes, [&] { scene.pixelProgram[1] ^= 0x100u; }, {"copied bytes at snapshot 1 of 3 old / 3 new", "first difference at +0x5, 1 of 0x", "build[+0x0]:", "this draw[+0x0]:", "the build serves it from a copied snapshot"});
+    scene.pixelProgram = PixelCode;
+    draw();
+    draw();
+    refusedOnce(SnapshotMismatch::Address, [&] { snapshots[2].address = scene.guest.Address(PointerOffset + MovedBy); }, {"address at snapshot 2 of 3 old / 3 new", "address delta +0x40, size delta 0", "in registered guest allocation"});
+    draw();
+    refusedOnce(SnapshotMismatch::LiveBytes, [&] { snapshots[2].bytes = std::as_bytes(std::span(stale)); }, {"live bytes at snapshot 2 of 3 old / 3 new", "read live", "first difference at +0x1, 1 of 0x8 bytes differ", "memory now[+0x0]:", "captured[+0x0]:"});
+    StderrCapture capture;
+    AgcDriver::Graphics::ReportSnapshotMismatches();
+    const auto text = capture.Finish();
+    for (const auto* part : {"[snapshots] (10 s)", "refused; by the first failing check: count", ", copied bytes ", ", region lookup ", "snapshots per proof: 0-1 ", "bytes per snapshot: <=16 "}) Require(text.find(part) != std::string::npos, std::string("address draw reuse: the [snapshots] counts line lacks \"") + part + "\":\n" + text);
+    std::printf("%s", text.c_str());
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string_view(argv[1]) == "--snapshot-reasons") {
+            {
+                const auto device = OpenVulkanTestDevice();
+                if (!device) return VulkanTestSkipped;
+                Scene scene(*device, 1);
+                if (!Imported(scene)) {
+                    std::puts("skipped, host imports are unavailable: a store through the BDA table needs one");
+                    return VulkanTestSkipped;
+                }
+                SnapshotReasons(scene);
+                scene.Wait();
+            }
+            AgcDriverShutdown_nid_postfix();
+            std::puts("address draw reuse snapshot refusal reasons passed");
+            return 0;
+        }
         const std::size_t ranges = argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 512;
         const std::size_t draws = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 64;
         {
