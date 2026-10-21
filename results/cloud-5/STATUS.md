@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T03:58:57Z
+BUSY PRM-046
+since: 2026-10-21T03:59:13Z
 previous: BF-095 done, results/cloud-5/BF-095.md: fork perf/shader-plan-retention e20ec3f02, 5 commits on upstream main e0e57a327 (3728570f6 and cca1f5a8d cherry-picked with conflicts resolved, our tests with fablevoid credit, our exactness fix for phi and null-base answers, 6d2ad7ee8 clean but unused on main); cb13fecfe superseded by main's MayEvaluate; no FormatVersion bump (SourceVersion changes); red 'plan retention: the plan keeps 170 values; its conditions and descriptor sources read 40'; suite plans 113,034 -> 112,588 values with identical tapes and 0 walk differences vs main's whole copy; ownPlanValues median 4.9 -> 7.0 us; mirror 1778 tests, 7 failed vs main's 6 (6 network, plus agc_driver_sgpr_pattern_fill_keys, a load flake that main shows too)
 
 RESULT (setup):
