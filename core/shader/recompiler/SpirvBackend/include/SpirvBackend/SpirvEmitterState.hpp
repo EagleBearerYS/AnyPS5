@@ -94,7 +94,7 @@ struct SpirvEmitterState {
     SpirvModule module;
     const IrProgram& program;
     ShaderStageInputInfo inputInfo;
-    std::array<std::uint32_t, 9> tessVariables {};
+    std::array<std::uint32_t, 10> tessVariables {};
     std::uint32_t tessInnerVariable = 0;
 
     SpirvRequirements requirements;
@@ -112,6 +112,7 @@ struct SpirvEmitterState {
     bool float16DenormPreserve = false;
     bool robustBufferAccess2 = false;
     bool float32FlushToZero = false;
+    bool float32DenormPreserve = false;
     bool meshBarycentricPixel = false;
     bool meshBarycentricVertex = false;
     std::uint32_t barycentricSmoothLocation = 0xffffffffu;
