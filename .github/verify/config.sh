@@ -1,0 +1,4 @@
+BASE=1ff5c8ac5c3050d71360957c5ff1be38aaac7114
+REPEAT=10
+EXTRA_TESTS='agc_driver_graphics|agc_heap_mirror_unwatch|agc_heap_mirror_unwatched_import|agc_heap_mirror_run_unwatch'
+BEFORE_REPEAT=3
