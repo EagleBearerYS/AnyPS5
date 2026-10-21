@@ -348,7 +348,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto& indirect = *drawParameters.indirect;
         auto& pipeline = DrawPipeline::Queue0();
         const bool overlaps = pipeline.Busy() && (pipeline.Overlaps(indirect.arguments, static_cast<std::size_t>(std::max<std::uint64_t>(indirect.RangeBytes(), indirect.recordBytes))) || (indirect.countIndirect && pipeline.Overlaps(indirect.countAddress, 4)));
-        if (!pipelinedIndirect || overlaps) pipeline.Drain(DrawPipeline::DrainReason::Indirect);
+        if (!pipelinedIndirect || overlaps) {
+            phaseTiming.Phase(DrawRowPrecheck);
+            pipeline.Drain(DrawPipeline::DrainReason::Indirect);
+            phaseTiming.Phase(DrawRowDrain);
+        }
     }
     auto& traceIndirect = tail.traceIndirect;
     if (const auto verdict = precheckDraw(queue, submission, packetOffset, packet, drawParameters, rejected, traceIndirect)) {
@@ -779,7 +783,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     const bool pipelined = tail.pipelined;
     static const bool pipelinedIndirect = std::getenv("APS5_NO_PIPELINED_INDIRECT") == nullptr;
     const auto drainBeforeInline = [&] {
-        if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+        if (!pipelined || !DrawPipeline::Queue0().Busy()) return;
+        phaseTiming.Phase(DrawRowVectors);
+        DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+        phaseTiming.Phase(DrawRowDrain);
     };
     auto& traceIndirect = tail.traceIndirect;
     const auto dumpTarget = tail.dumpTarget;
@@ -996,7 +1003,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         for (const auto& read : reads) memory.push_back({read.address, read.Bytes()});
     }
 
-    if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
+    if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) {
+        phaseTiming.Phase(DrawRowVectors);
+        DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
+        phaseTiming.Phase(DrawRowDrain);
+    }
     if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(*tail.queue, packet, submission, packetOffset, rejected);
 
     bool rectListBuilt = false;
@@ -1097,12 +1108,14 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             }
             programResults[i] = &results[resultIndex[i]];
         }
+        phaseTiming.Phase(DrawRowVectors);
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
         const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
         std::vector<Pm4::DrawArguments> records;
         for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(indirect, record));
         Graphics::CountIndirectDraw(*indirectCpu, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+        phaseTiming.Phase(DrawRowIndirectRead);
         const auto baseVertexWords = UserDataWords(programs, roles, indirect.baseVertexLocation);
         const auto startInstanceWords = UserDataWords(programs, roles, indirect.startInstanceLocation);
         const auto drawIndexWords = indirect.drawIndexEnabled ? UserDataWords(programs, roles, indirect.drawIndexLocation) : std::vector<std::pair<std::size_t, std::size_t>>{};
