@@ -44,7 +44,9 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <optional>
+#include <random>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -85,6 +87,58 @@ SampleOrder OrderFor(std::uint32_t samples) {
 
 std::uint32_t Pick(std::uint32_t word, std::uint32_t index) {
     return (word >> (index * 4u)) & 7u;
+}
+
+void RequireHostSamples(std::uint32_t word, std::uint32_t samples, const std::string& what) {
+    std::uint32_t read = 0;
+    for (std::uint32_t sample = 0; sample < samples; ++sample) {
+        const auto source = Pick(word, sample);
+        Require(source < samples, what + ": host sample " + std::to_string(sample) + " reads sample " + std::to_string(source) + " of " + std::to_string(samples));
+        read |= 1u << source;
+    }
+    Require(read == (1u << samples) - 1u, what + ": the samples do not read every sample once");
+}
+
+void RequireMapReadsHostSamples(const SampleOrder& order, std::uint32_t samples, const std::string& what) {
+    for (const bool toHost : {true, false}) {
+        for (std::uint32_t pixel = 0; pixel < order.size(); ++pixel) {
+            const auto word = order[pixel] == 0u ? KeptSampleOrder : order[pixel];
+            RequireHostSamples(toHost ? word : AgcDriver::Graphics::InvertSampleOrder(word), samples, what + (toHost ? " into the host's order" : " into the guest's order") + ", pixel " + std::to_string(pixel));
+        }
+    }
+}
+
+int MapIndices() {
+    std::uint32_t checked = 0;
+    for (const std::uint32_t samples : {2u, 4u, 8u}) {
+        RequireMapReadsHostSamples(OrderFor(samples), samples, "the " + std::to_string(samples) + "x test order");
+        ++checked;
+    }
+    std::mt19937 random(6683u);
+    for (const std::uint32_t samples : {2u, 4u, 8u}) {
+        for (std::uint32_t trial = 0; trial < 1000u; ++trial) {
+            AgcDriver::Graphics::State state{};
+            state.samples = samples;
+            state.customSampleLocations = true;
+            state.sampleLocationGrid = true;
+            std::uniform_int_distribution<std::uint32_t> position(0u, trial % 4u == 0u ? 3u : 255u);
+            std::array<std::uint8_t, 8> positions{};
+            for (std::uint32_t sample = 0; sample < samples; ++sample) positions[sample] = static_cast<std::uint8_t>(position(random));
+            for (std::uint32_t pixel = 0; pixel < 4u; ++pixel) {
+                std::array<std::uint32_t, 8> placed{};
+                std::iota(placed.begin(), placed.end(), 0u);
+                std::shuffle(placed.begin(), placed.begin() + samples, random);
+                for (std::uint32_t sample = 0; sample < samples; ++sample) state.sampleLocations[pixel * 8u + placed[sample]] = positions[sample];
+            }
+            const auto order = AgcDriver::Graphics::SameSetSampleOrder(state);
+            const auto what = "the " + std::to_string(samples) + "x random location set " + std::to_string(trial);
+            Require(order.has_value(), what + " holds one set of positions in every pixel but was not taken as a reordering of it");
+            RequireMapReadsHostSamples(*order, samples, what);
+            ++checked;
+        }
+    }
+    std::printf("every sample order map word reads only the target's samples: %u orders checked in both directions\n", checked);
+    return 0;
 }
 
 std::uint32_t Quad(std::uint32_t x, std::uint32_t y) {
@@ -1495,6 +1549,7 @@ int Bench(AgcDriver::VulkanDevice& device, VkExtent2D extent, std::uint32_t samp
 int main(int argc, char** argv) {
     try {
         const std::string_view mode = argc > 1 ? std::string_view(argv[1]) : std::string_view();
+        if (mode == "--map-indices") return MapIndices();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (mode == "--grid-reference") return GridReference(*device);
