@@ -839,6 +839,16 @@ std::optional<ShaderRecompiler::ShaderFloatMode> DispatchFloatMode(const ShaderS
     return DecodeFloatMode(live, snapshot.type);
 }
 
+namespace {
+
+std::atomic<std::uint64_t> pushlessPixelVariantsSkipped{0};
+
+}
+
+std::uint64_t PushlessPixelVariantsSkipped() {
+    return pushlessPixelVariantsSkipped.load(std::memory_order_relaxed);
+}
+
 std::vector<ShaderRecompiler::RecompileRequest> RegistrationRequests(const ShaderRecompiler::RecompileRequest& request) {
     std::vector<ShaderRecompiler::RecompileRequest> requests{request};
     if (request.context.compute) {
@@ -1050,6 +1060,8 @@ void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Gra
 std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& plan) {
     const auto& request = *plan.request;
     const auto requests = RegistrationRequests(request);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile && request.context.pixel && request.target.fixedPushSlots) pushlessPixelVariantsSkipped.fetch_add(1, std::memory_order_relaxed);
     std::vector<PreparedShaders::Entry> entries;
     ShaderRecompiler::ShaderPreparationContext preparation;
     const auto append = [&](const ShaderRecompiler::RecompileRequest& variant) {
