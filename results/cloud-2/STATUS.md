@@ -1,3 +1,5 @@
-READY
-since: 2026-10-21T19:16:32Z
-previous: PM-083 done, results/cloud-2/PM-083.md (test/village-speed-stack d7c302cee3)
+BUSY BF-118
+since: 2026-10-21T20:37:19Z (claimed)
+claimed: tasks/claimed/BF-118.md
+step: fetching #5404 and main
+previous: PM-083 done, results/cloud-2/PM-083.md
