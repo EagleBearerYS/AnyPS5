@@ -1,0 +1,4 @@
+BASE=e0e57a3270d3de4466266c06254a516cfe1cd7e2
+REPEAT=5
+EXTRA_TESTS='agc_shader_memory|agc_shader_disk_cache'
+NO_BEFORE=1
