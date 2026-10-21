@@ -1,0 +1,4 @@
+BASE=a07e985c8f6ef94c364b9fbc90cfc755cf03a0c6
+REPEAT=10
+EXTRA_TESTS='agc_driver_graphics|agc_driver_bda_device|agc_shader_srt_read_patching'
+BEFORE_REPEAT=3
