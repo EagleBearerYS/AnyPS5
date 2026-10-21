@@ -1,0 +1,4 @@
+BASE=8704f73b798d58ac1e76bd7d590e14847b0266d1
+REPEAT=10
+EXTRA_TESTS='agc_driver_pointer_hop_table|agc_driver_pointer_vsharp_fixed_table|agc_driver_pointer_vsharp_fixed_offset_table'
+BEFORE_REPEAT=3
