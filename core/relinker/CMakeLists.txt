@@ -481,7 +481,7 @@ if(BUILD_TESTING)
         foreach(opcode IN ITEMS add or adc sbb and sub xor cmp)
             list(APPEND tlsCoverageGroups alu_${opcode})
         endforeach()
-        list(APPEND tlsCoverageGroups gs_traps)
+        list(APPEND tlsCoverageGroups gs_traps gs_traps_implicit)
         foreach(group IN LISTS tlsCoverageGroups)
             add_test(NAME tls_function_coverage_${group} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_function_coverage.py $<TARGET_FILE:relinker> ${group})
@@ -489,6 +489,9 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME tls_diagnostics COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_diagnostics.py $<TARGET_FILE:relinker>)
+        add_test(NAME call_zero_padding COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_call_zero_padding.py $<TARGET_FILE:relinker>)
+        set_tests_properties(call_zero_padding PROPERTIES TIMEOUT 60)
         add_test(NAME macos_tls_alu COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_tls_alu.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_tls_alu PROPERTIES TIMEOUT 60)

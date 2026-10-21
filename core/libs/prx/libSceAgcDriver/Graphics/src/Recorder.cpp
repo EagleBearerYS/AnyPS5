@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
@@ -4005,6 +4006,10 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             // false hit, never a miss) rather than terminating.
             try {
                 recorder.publishPendingWrites();
+            } catch (...) {
+            }
+            try {
+                BdaResources::NoteFinished(recorder.context.device, batch->serial);
             } catch (...) {
             }
         }
