@@ -849,7 +849,7 @@ private:
     VkDeviceSize drawUploadUsed = 0;
     // Command buffers and fences of completed batches, reused by later ones (hundreds of batches per
     // frame would otherwise allocate and free their objects each time).
-    std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
+    std::vector<VkFence> spare;
     std::vector<VkQueryPool> sparePools;
     mutable std::mutex completedMutex;
     std::array<Completed, CompletedRingSize> completed;
