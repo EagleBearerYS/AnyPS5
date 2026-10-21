@@ -5686,7 +5686,8 @@ std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferM
         const bool snapshotCopy = region.buffer != nullptr && region.direct == nullptr && region.mirror == nullptr && !region.hostBacked && !region.writable && !region.sparse && !region.gpuCopy;
         if (snapshotCopy) continue;
         const bool fixedMirror = region.mirror != nullptr && !region.mirror->writable && !region.mirror->heap;
-        if (region.direct == nullptr && !fixedMirror) return std::nullopt;
+        const bool staged = region.gpuCopy && region.deviceLocal;
+        if (region.direct == nullptr && !fixedMirror && !staged) return std::nullopt;
         result.emplace_back(region.begin, region.end);
     }
     return result;
