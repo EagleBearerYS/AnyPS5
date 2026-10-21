@@ -142,6 +142,24 @@ public:
                 done += runBytes;
                 continue;
             }
+            if (sectionBytes != SIZE_MAX) {
+                const auto slot = slotOf(done);
+                const auto shared = pageOf(*slot);
+                const auto aliases = shared->aliases;
+                for (const auto alias : aliases) {
+                    if (views.at(alias).resident) demote(alias);
+                }
+                const auto viewBytes = std::min(pageBytes, sectionBytes - done);
+                split(base, pageBytes);
+                mapShared(base, section, offset + done, protection, viewProtection, viewBytes);
+                slot->stored = true;
+                shared->aliases.push_back(base);
+                views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot, hostPages(viewBytes)});
+                remember(freshRanges, base, base + pageBytes);
+                invalidate(*shared);
+                done += pageBytes;
+                continue;
+            }
             std::vector<std::pair<std::shared_ptr<Physical>, std::shared_ptr<SharedPage>>> pages;
             pages.reserve((bytes - done) / pageBytes);
             auto runBytes = std::size_t{0};
