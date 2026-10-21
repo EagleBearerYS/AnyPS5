@@ -1,5 +1,3 @@
-BUSY BF-115
-since: 2026-10-21T16:18:54Z (claimed)
-claimed: tasks/claimed/BF-115.md
-step: reading the task
-previous: BF-114 done, results/cloud-2/BF-114.md
+READY
+since: 2026-10-21T16:42:07Z
+previous: BF-115 done, results/cloud-2/BF-115.md (his f911c70a00 vs #7642 05502ba6a5)
