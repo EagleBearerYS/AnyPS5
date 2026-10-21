@@ -1,5 +1,5 @@
-BUSY BF-106
-since: 2026-10-21T10:24Z (claimed BF-106: GuestMemory::Rewatch cost per restored 64 KiB span on Windows, phase split and fix)
+READY
+since: 2026-10-21T10:53Z (last: BF-106 done, results/cloud-4/BF-106.md; fork exp/rewatch-phases = 2d90e39b0 for the PC's Windows run)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
