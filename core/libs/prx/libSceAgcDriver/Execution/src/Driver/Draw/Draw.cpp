@@ -40,17 +40,24 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     static const bool pipelinedIndirect = std::getenv("APS5_NO_PIPELINED_INDIRECT") == nullptr;
     const bool pipelineIndirect = pipelined && drawParameters.indirect && DrawPipeline::PipelineIndirect();
     const bool deferIndirectDrain = pipelineIndirect && pipelinedIndirect;
-    const auto drainIndirectArguments = [&] {
+    const auto drainIndirectArguments = [&](DrawDriverPhase before) {
         if (!pipelined || !drawParameters.indirect) return false;
         const auto& indirect = *drawParameters.indirect;
         auto& pipeline = DrawPipeline::Queue0();
         const bool overlaps = pipeline.Busy() && (pipeline.Overlaps(indirect.arguments, static_cast<std::size_t>(std::max<std::uint64_t>(indirect.RangeBytes(), indirect.recordBytes))) || (indirect.countIndirect && pipeline.Overlaps(indirect.countAddress, 4)));
-        if (!pipelinedIndirect || overlaps) pipeline.Drain(DrawPipeline::DrainReason::Indirect);
+        if (!pipelinedIndirect || overlaps) {
+            phaseTiming.Phase(before);
+            pipeline.Drain(DrawPipeline::DrainReason::Indirect);
+            phaseTiming.Phase(DrawRowDrain);
+        }
         return overlaps;
     };
-    if (!deferIndirectDrain) drainIndirectArguments();
+    if (!deferIndirectDrain) drainIndirectArguments(DrawRowPrecheck);
     const auto drainBeforeInline = [&] {
-        if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+        if (!pipelined || !DrawPipeline::Queue0().Busy()) return;
+        phaseTiming.Phase(DrawRowVectors);
+        DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+        phaseTiming.Phase(DrawRowDrain);
     };
     bool traceIndirect = false;
     if (const auto verdict = precheckDraw(queue, submission, packet, drawParameters, rejected, traceIndirect)) return *verdict;
@@ -447,7 +454,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
 
     const auto regionBounds = [](const ShaderRecompiler::MemoryRegion& region) { return DrawPipeline::Range{region.guestAddress, region.guestAddress + region.bytes.size()}; };
     if (pipelineIndirect && DrawPipeline::Queue0().DrainIfOverlaps(memory, regionBounds, DrawPipeline::DrainReason::Capture)) return draw(queue, packet, submission, rejected);
-    if (pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
+    if (pipelined && !deferredLabels().labels.empty()) {
+        phaseTiming.Phase(DrawRowVectors);
+        DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
+        phaseTiming.Phase(DrawRowDrain);
+    }
     if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(queue, packet, submission, rejected);
 
     bool rectListBuilt = false;
@@ -528,7 +539,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         phaseTiming.Phase(DrawRowLabels);
     };
     if (drawParameters.indirect && indirectCpu) {
-        if (deferIndirectDrain && drainIndirectArguments()) DrawPipeline::Queue0().Note(DrawPipeline::Event::IndirectArgsDrain);
+        if (deferIndirectDrain && drainIndirectArguments(DrawRowVectors)) DrawPipeline::Queue0().Note(DrawPipeline::Event::IndirectArgsDrain);
         const auto indirect = *drawParameters.indirect;
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (programResults[i] == nullptr) continue;
@@ -539,12 +550,14 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
             programResults[i] = &results[resultIndex[i]];
         }
+        phaseTiming.Phase(DrawRowVectors);
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
         const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
         std::vector<Pm4::DrawArguments> records;
         for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(indirect, record));
         Graphics::CountIndirectDraw(*indirectCpu, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+        phaseTiming.Phase(DrawRowIndirectRead);
         const auto baseVertexWords = UserDataWords(programs, roles, indirect.baseVertexLocation);
         const auto startInstanceWords = UserDataWords(programs, roles, indirect.startInstanceLocation);
         const auto drawIndexWords = indirect.drawIndexEnabled ? UserDataWords(programs, roles, indirect.drawIndexLocation) : std::vector<std::pair<std::size_t, std::size_t>>{};
