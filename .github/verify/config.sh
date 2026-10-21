@@ -1,0 +1,3 @@
+BASE=199455895474aab4bd33ded6b9ac6abac78067ab
+REPEAT=10
+EXTRA_TESTS='guest_formatting'
