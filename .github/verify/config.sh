@@ -1,0 +1,4 @@
+BASE=9f4ddf7cf985d80e2885ee3942fe48871e4a5e5a
+REPEAT=5
+EXTRA_TESTS='agc_driver_sgpr_pattern_fill_keys|agc_driver_pipelined_fill'
+NO_BEFORE=1
