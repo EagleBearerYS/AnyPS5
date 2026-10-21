@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketHistory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCacheBypass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchTiming.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawTiming.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferCopy.hpp"
@@ -136,7 +137,7 @@ private:
     static bool verifyDrawDataHits();
     static bool drawStageDataHits();
     bool drawCacheBypassed();
-    void noteDrawCacheOutcome(bool hit);
+    void noteDrawCacheOutcome(bool hit, std::uint32_t stageHits);
     static bool verifyDrawEntries();
     static bool registerKeyEnabled();
     static bool verifyDrawRecipe();
@@ -386,7 +387,7 @@ private:
     std::unordered_map<std::uint64_t, DrawRelocationTrial> drawRelocationTrials;
     DrawRelocationCounters drawRelocationCounters;
     std::mutex drawCacheMutex;
-    std::atomic<std::uint32_t> drawCacheProbeLookups{0}, drawCacheProbeHits{0}, drawCacheBypassLeft{0};
+    DrawCacheBypassWindow drawCacheBypass;
     std::atomic<std::uint64_t> drawCacheBypassedDraws{0};
     std::uint64_t drawCacheHits = 0, drawCacheEvictions = 0, drawCacheVariants = 0, drawCacheVariantBytes = 0;
     std::optional<DrawKeySightings> drawKeySightings;
