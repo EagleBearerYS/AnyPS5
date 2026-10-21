@@ -5639,25 +5639,247 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::DirectWr
     return result;
 }
 
+namespace {
+
+constexpr std::uint32_t SnapshotDetailLines = 16;
+
+struct SnapshotMismatchCounts {
+    std::atomic<std::uint64_t> proofs{0};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(SnapshotMismatch::Kinds)> refusals{};
+    std::array<std::atomic<std::uint64_t>, SnapshotHistogramBuckets> snapshotsPerProof{};
+    std::array<std::atomic<std::uint64_t>, SnapshotHistogramBuckets> bytesPerSnapshot{};
+    std::atomic<std::uint32_t> detailed{0};
+    std::mutex reportMutex;
+    SnapshotMismatchStats reported;
+};
+
+SnapshotMismatchCounts& SnapshotRefusals() {
+    static SnapshotMismatchCounts counts;
+    return counts;
+}
+
+std::size_t snapshotCountBucket(std::size_t count) {
+    std::size_t bucket = 0;
+    while (bucket + 1 < SnapshotHistogramBuckets && count > (std::size_t{1} << bucket)) ++bucket;
+    return bucket;
+}
+
+std::size_t snapshotBytesBucket(std::size_t bytes) {
+    std::size_t bucket = 0;
+    while (bucket + 1 < SnapshotHistogramBuckets && bytes > (std::size_t{16} << (2 * bucket))) ++bucket;
+    return bucket;
+}
+
+const char* snapshotSourceName(SnapshotSource source) {
+    switch (source) {
+    case SnapshotSource::ProgramCode: return "the program's code or header (AppendProgramMemory)";
+    case SnapshotSource::StageCapture: return "the stage's resource capture (CaptureInvocation through ShaderMemory)";
+    case SnapshotSource::CachedStage: return "a draw-cache stage hit's captured words (appendEntryRegions)";
+    case SnapshotSource::DrawDecode: return "the draw's vertex decode reads (DecodeVertexStageInfo)";
+    case SnapshotSource::Unknown: break;
+    }
+    return "unknown (the snapshots VulkanDevice::Draw was given)";
+}
+
+void appendFormat(std::string& text, const char* format, auto... args) {
+    char buffer[256];
+    const auto written = std::snprintf(buffer, sizeof(buffer), format, args...);
+    if (written > 0) text.append(buffer, std::min<std::size_t>(static_cast<std::size_t>(written), sizeof(buffer) - 1));
+}
+
+void appendBytes(std::string& text, const char* name, const std::byte* bytes, std::size_t size, std::size_t start) {
+    appendFormat(text, "; %s[+0x%zx]:", name, start);
+    for (std::size_t offset = start; offset < std::min(size, start + 16); ++offset) appendFormat(text, " %02x", static_cast<unsigned>(bytes[offset]));
+}
+
+void appendDifference(std::string& text, const std::byte* old, const char* oldName, const std::byte* now, const char* newName, std::size_t size) {
+    std::size_t first = 0;
+    while (first < size && old[first] == now[first]) ++first;
+    std::size_t differing = 0;
+    for (std::size_t offset = first; offset < size; ++offset) differing += old[offset] != now[offset] ? 1u : 0u;
+    const auto start = first & ~std::size_t{15};
+    appendFormat(text, "; first difference at +0x%zx, %zu of 0x%zx bytes differ", first, differing, size);
+    appendBytes(text, oldName, old, size, start);
+    appendBytes(text, newName, now, size, start);
+}
+
+void appendReference(std::string& text, std::span<const GuestMemorySnapshot> snapshots, std::size_t index) {
+    const auto address = snapshots[index].address;
+    for (std::size_t other = 0; other < snapshots.size(); ++other) {
+        if (other == index) continue;
+        const auto bytes = snapshots[other].bytes;
+        for (std::size_t offset = 0; offset + 8 <= bytes.size(); offset += 4) {
+            std::uint32_t low = 0;
+            std::uint32_t high = 0;
+            std::memcpy(&low, bytes.data() + offset, 4);
+            std::memcpy(&high, bytes.data() + offset + 4, 4);
+            if (low != static_cast<std::uint32_t>(address)) continue;
+            if (high == static_cast<std::uint32_t>(address >> 32u)) {
+                appendFormat(text, "; a 64-bit pointer to it is at snapshot %zu +0x%zx (a pointer or descriptor table)", other, offset);
+                return;
+            }
+            if ((high & 0xffffu) == static_cast<std::uint32_t>((address >> 32u) & 0xffffu)) {
+                appendFormat(text, "; a V# base names it at snapshot %zu +0x%zx (a data range a buffer descriptor reads)", other, offset);
+                return;
+            }
+        }
+    }
+    text += "; no other snapshot of the draw points at it (the user data or the SRT names it)";
+}
+
+void appendAllocation(std::string& text, std::uint64_t address) {
+    if (const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), false); range != nullptr && range->address <= address && address < range->address + range->bytes) {
+        appendFormat(text, "; in registered guest allocation 0x%llx+0x%zx (%s)", static_cast<unsigned long long>(range->address), range->bytes, range->writable ? "writable" : "read-only");
+    } else {
+        text += "; not in a registered guest allocation";
+    }
+}
+
+}
+
+const char* SnapshotStageName(std::uint8_t stage) {
+    static constexpr std::array<const char*, 8> names{"compute", "vertex", "hull", "domain", "geometry", "pixel", "local", "mesh"};
+    return stage < names.size() ? names[stage] : "no";
+}
+
+const char* SnapshotMismatchName(SnapshotMismatch mismatch) {
+    switch (mismatch) {
+    case SnapshotMismatch::Count: return "count";
+    case SnapshotMismatch::Address: return "address";
+    case SnapshotMismatch::Size: return "size";
+    case SnapshotMismatch::LiveBytes: return "live bytes";
+    case SnapshotMismatch::CopiedBytes: return "copied bytes";
+    case SnapshotMismatch::Region: return "region lookup";
+    case SnapshotMismatch::None:
+    case SnapshotMismatch::Kinds: break;
+    }
+    return "none";
+}
+
+void CountSnapshotProof(std::span<const GuestMemorySnapshot> snapshots) {
+    auto& counts = SnapshotRefusals();
+    counts.proofs.fetch_add(1, std::memory_order_relaxed);
+    counts.snapshotsPerProof[snapshotCountBucket(snapshots.size())].fetch_add(1, std::memory_order_relaxed);
+    for (const auto& snapshot : snapshots) counts.bytesPerSnapshot[snapshotBytesBucket(snapshot.bytes.size())].fetch_add(1, std::memory_order_relaxed);
+}
+
+bool SnapshotDetailWanted() {
+    return SnapshotRefusals().detailed.load(std::memory_order_relaxed) < SnapshotDetailLines;
+}
+
+void CountSnapshotMismatch(SnapshotMismatch mismatch, const std::string& detail) {
+    auto& counts = SnapshotRefusals();
+    counts.refusals[static_cast<std::size_t>(mismatch)].fetch_add(1, std::memory_order_relaxed);
+    if (detail.empty()) return;
+    const auto line = counts.detailed.fetch_add(1, std::memory_order_relaxed);
+    if (line < SnapshotDetailLines) std::fprintf(stderr, "[snapshots] refusal %u of the first %u in this window: %s\n", line + 1, SnapshotDetailLines, detail.c_str());
+}
+
+SnapshotMismatchStats SnapshotMismatchCounters() {
+    const auto& counts = SnapshotRefusals();
+    const auto load = [](const std::atomic<std::uint64_t>& counter) { return counter.load(std::memory_order_relaxed); };
+    SnapshotMismatchStats stats;
+    stats.proofs = load(counts.proofs);
+    for (std::size_t index = 0; index < stats.refusals.size(); ++index) stats.refusals[index] = load(counts.refusals[index]);
+    for (std::size_t index = 0; index < SnapshotHistogramBuckets; ++index) {
+        stats.snapshotsPerProof[index] = load(counts.snapshotsPerProof[index]);
+        stats.bytesPerSnapshot[index] = load(counts.bytesPerSnapshot[index]);
+    }
+    return stats;
+}
+
+std::string FormatSnapshotMismatches(const SnapshotMismatchStats& counts, const SnapshotMismatchStats& previous) {
+    std::string text;
+    std::uint64_t refused = 0;
+    for (std::size_t kind = 1; kind < counts.refusals.size(); ++kind) refused += counts.refusals[kind] - previous.refusals[kind];
+    appendFormat(text, "%llu proofs checked their snapshots, %llu refused; by the first failing check:", static_cast<unsigned long long>(counts.proofs - previous.proofs), static_cast<unsigned long long>(refused));
+    for (std::size_t kind = 1; kind < counts.refusals.size(); ++kind) appendFormat(text, "%s %s %llu", kind == 1 ? "" : ",", SnapshotMismatchName(static_cast<SnapshotMismatch>(kind)), static_cast<unsigned long long>(counts.refusals[kind] - previous.refusals[kind]));
+    text += "; snapshots per proof:";
+    for (std::size_t bucket = 0; bucket < SnapshotHistogramBuckets; ++bucket) {
+        const auto low = bucket == 0 ? std::size_t{0} : (std::size_t{1} << (bucket - 1)) + 1;
+        if (bucket + 1 == SnapshotHistogramBuckets) appendFormat(text, " %zu+ %llu", low, static_cast<unsigned long long>(counts.snapshotsPerProof[bucket] - previous.snapshotsPerProof[bucket]));
+        else appendFormat(text, " %zu-%zu %llu", low, std::size_t{1} << bucket, static_cast<unsigned long long>(counts.snapshotsPerProof[bucket] - previous.snapshotsPerProof[bucket]));
+    }
+    text += "; bytes per snapshot:";
+    for (std::size_t bucket = 0; bucket < SnapshotHistogramBuckets; ++bucket) {
+        const auto count = static_cast<unsigned long long>(counts.bytesPerSnapshot[bucket] - previous.bytesPerSnapshot[bucket]);
+        if (bucket + 1 == SnapshotHistogramBuckets) appendFormat(text, " >%zu %llu", std::size_t{16} << (2 * (bucket - 1)), count);
+        else appendFormat(text, " <=%zu %llu", std::size_t{16} << (2 * bucket), count);
+    }
+    return text;
+}
+
+void ReportSnapshotMismatches() {
+    auto& counts = SnapshotRefusals();
+    std::lock_guard lock(counts.reportMutex);
+    const auto current = SnapshotMismatchCounters();
+    counts.detailed.store(0, std::memory_order_relaxed);
+    if (current.proofs == counts.reported.proofs) return;
+    std::fprintf(stderr, "[snapshots] (10 s) %s\n", FormatSnapshotMismatches(current, counts.reported).c_str());
+    counts.reported = current;
+}
+
 bool GuestBufferMemory::SameSnapshots(std::span<const GuestMemorySnapshot> snapshots) const {
-    if (snapshots.size() != snapshotUses.size()) return false;
+    return SnapshotDifference(snapshots) == SnapshotMismatch::None;
+}
+
+SnapshotMismatch GuestBufferMemory::SnapshotDifference(std::span<const GuestMemorySnapshot> snapshots, std::string* detail) const {
+    const auto describe = [&](SnapshotMismatch mismatch, std::size_t index, const char* why) {
+        if (detail == nullptr) return mismatch;
+        auto& text = *detail;
+        text.clear();
+        appendFormat(text, "%s at snapshot %zu of %zu old / %zu new", SnapshotMismatchName(mismatch), index, snapshotUses.size(), snapshots.size());
+        const bool hasOld = index < snapshotUses.size();
+        const bool hasNew = index < snapshots.size();
+        if (hasOld) appendFormat(text, "; old 0x%llx+0x%zx (%s)", static_cast<unsigned long long>(snapshotUses[index].address), snapshotUses[index].bytes, snapshotUses[index].live ? "read live" : "copied");
+        if (hasNew) appendFormat(text, "; new 0x%llx+0x%zx", static_cast<unsigned long long>(snapshots[index].address), snapshots[index].bytes.size());
+        if (hasOld && hasNew) {
+            const auto delta = static_cast<std::int64_t>(snapshots[index].address - snapshotUses[index].address);
+            appendFormat(text, ", address delta %s0x%llx, size delta %lld", delta < 0 ? "-" : "+", static_cast<unsigned long long>(delta < 0 ? -delta : delta), static_cast<long long>(snapshots[index].bytes.size()) - static_cast<long long>(snapshotUses[index].bytes));
+        }
+        if (why != nullptr) appendFormat(text, "; %s", why);
+        if (hasNew) {
+            appendFormat(text, "; from %s, %s stage", snapshotSourceName(snapshots[index].source), SnapshotStageName(snapshots[index].stage));
+            appendReference(text, snapshots, index);
+            appendAllocation(text, snapshots[index].address);
+        }
+        const auto address = hasNew ? snapshots[index].address : hasOld ? snapshotUses[index].address : 0;
+        if (address != 0) {
+            const auto found = std::find_if(regions.begin(), regions.end(), [&](const Region& region) { return region.begin <= address && address < region.end; });
+            if (found == regions.end()) text += suspendedSpace != 0 ? "; the build reads it through its address space (an import or a mirror), not a region of its own" : "; no region of the build covers it";
+            else appendFormat(text, "; the build serves it from %s 0x%llx+0x%llx", found->direct != nullptr ? "an import" : found->mirror != nullptr ? "a mirror" : found->hostBacked ? "host-backed memory" : found->writable ? "a writable copy" : "a copied snapshot", static_cast<unsigned long long>(found->begin), static_cast<unsigned long long>(found->end - found->begin));
+        }
+        return mismatch;
+    };
+    const auto differs = [&](SnapshotMismatch mismatch, std::size_t index, const std::byte* old, const char* oldName, const std::byte* now, const char* newName) {
+        describe(mismatch, index, nullptr);
+        if (detail != nullptr) appendDifference(*detail, old, oldName, now, newName, snapshots[index].bytes.size());
+        return mismatch;
+    };
+    if (snapshots.size() != snapshotUses.size()) {
+        std::size_t index = 0;
+        while (index < std::min(snapshots.size(), snapshotUses.size()) && snapshots[index].address == snapshotUses[index].address && snapshots[index].bytes.size() == snapshotUses[index].bytes) ++index;
+        return describe(SnapshotMismatch::Count, index, "the first snapshot that differs in address or size");
+    }
     for (std::size_t index = 0; index < snapshots.size(); ++index) {
         const auto& snapshot = snapshots[index];
         const auto& use = snapshotUses[index];
-        if (snapshot.address != use.address || snapshot.bytes.size() != use.bytes) return false;
+        if (snapshot.address != use.address) return describe(SnapshotMismatch::Address, index, nullptr);
+        if (snapshot.bytes.size() != use.bytes) return describe(SnapshotMismatch::Size, index, nullptr);
         if (use.live) {
-            if (liveSnapshotCompared(snapshot.address, snapshot.bytes.size()) && std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) != 0) return false;
+            if (liveSnapshotCompared(snapshot.address, snapshot.bytes.size()) && std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) != 0) return differs(SnapshotMismatch::LiveBytes, index, reinterpret_cast<const std::byte*>(snapshot.address), "memory now", snapshot.bytes.data(), "captured");
             continue;
         }
         const auto found = std::upper_bound(regions.begin(), regions.end(), snapshot.address, [](std::uint64_t value, const Region& region) { return value < region.begin; });
-        if (found == regions.begin()) return false;
+        if (found == regions.begin()) return describe(SnapshotMismatch::Region, index, "no region begins at or below it");
         const auto& region = *std::prev(found);
-        if (region.buffer == nullptr || region.direct != nullptr || region.mirror != nullptr || snapshot.address + snapshot.bytes.size() > region.end) return false;
+        if (region.buffer == nullptr || region.direct != nullptr || region.mirror != nullptr || snapshot.address + snapshot.bytes.size() > region.end) return describe(SnapshotMismatch::Region, index, region.buffer == nullptr ? "the region below it has no buffer" : region.direct != nullptr || region.mirror != nullptr ? "the region below it is an import or a mirror, not a copy" : "it runs past the region below it");
         const auto bytes = region.buffer->Bytes();
         const auto offset = static_cast<std::size_t>(snapshot.address - region.begin);
-        if (offset + snapshot.bytes.size() > bytes.size() || std::memcmp(bytes.data() + offset, snapshot.bytes.data(), snapshot.bytes.size()) != 0) return false;
+        if (offset + snapshot.bytes.size() > bytes.size()) return describe(SnapshotMismatch::Region, index, "it runs past the region's buffer");
+        if (std::memcmp(bytes.data() + offset, snapshot.bytes.data(), snapshot.bytes.size()) != 0) return differs(SnapshotMismatch::CopiedBytes, index, bytes.data() + offset, "build", snapshot.bytes.data(), "this draw");
     }
-    return true;
+    return SnapshotMismatch::None;
 }
 
 void GuestBufferMemory::SuspendSpace() noexcept {

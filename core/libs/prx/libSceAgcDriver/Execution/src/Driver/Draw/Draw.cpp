@@ -501,6 +501,19 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         snapshots.reserve(memory.size());
         for (const auto& region : memory) snapshots.push_back({region.guestAddress, region.bytes});
         std::sort(snapshots.begin(), snapshots.end(), [](const Graphics::GuestMemorySnapshot& left, const Graphics::GuestMemorySnapshot& right) { return left.address != right.address ? left.address < right.address : left.bytes.size() < right.bytes.size(); });
+        if (!profile) return;
+        for (auto& entry : snapshots) {
+            const auto* data = entry.bytes.data();
+            const auto holds = [&](std::span<const ShaderRecompiler::MemoryRegion> regions) { return std::any_of(regions.begin(), regions.end(), [&](const ShaderRecompiler::MemoryRegion& region) { return region.bytes.data() == data; }); };
+            for (std::size_t i = 0; i < programs.size() && entry.source == Graphics::SnapshotSource::Unknown; ++i) {
+                const auto stage = static_cast<std::uint8_t>(programs[i].binary.stage);
+                if (holds(programs[i].memory)) entry.source = Graphics::SnapshotSource::ProgramCode;
+                else if (matched[i] != nullptr && holds(matchedRegions[i])) entry.source = Graphics::SnapshotSource::CachedStage;
+                else if (holds(stageCaptures[i].regions)) entry.source = Graphics::SnapshotSource::StageCapture;
+                else if (std::any_of(decodeReads[i].begin(), decodeReads[i].end(), [&](const Graphics::DecodeRead& read) { return read.Bytes().data() == data; })) entry.source = Graphics::SnapshotSource::DrawDecode;
+                if (entry.source != Graphics::SnapshotSource::Unknown) entry.stage = stage;
+            }
+        }
     };
     snapshot();
     timing.Mark("post_compile_prepare");
