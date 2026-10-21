@@ -326,7 +326,7 @@ public:
     // milliseconds (zero when not profiling), so the draw path can total them separately from
     // dispatches. bindingsMs covers the binding plan (stage A) and the image lookups (stage B);
     // prepareMs/completeMs are the two stages' totals.
-    enum class BuildPhase : std::size_t { Bindings, Precollect, Upload, Descriptors, StageA, Images, Bda, StageB, Count };
+    enum class BuildPhase : std::size_t { Bindings, Precollect, Upload, Descriptors, StageA, Images, Bda, StageB, Tables, TableFinish, Count };
     struct BuildTiming {
         double bindingsMs = 0;
         double uploadMs = 0;
