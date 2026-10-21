@@ -76,6 +76,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Interfaces.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HeapDiagnostics.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/BigAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mspace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationProcessParameters.cpp
@@ -111,6 +112,9 @@ target_include_directories(libc PRIVATE
 )
 
 target_link_libraries(libc PRIVATE zarchive)
+if(UNIX)
+    target_link_libraries(libc PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPoint.cpp)
 
@@ -129,6 +133,15 @@ endif()
 
 if(WIN32)
     target_link_libraries(libc PRIVATE advapi32 ws2_32 iphlpapi)
+endif()
+
+if(BUILD_TESTING AND NOT WIN32 AND Python3_Interpreter_FOUND)
+    add_test_executable(big_allocation_sites_tests ${LIBS_INCLUDE_DIR}/tests/BigAllocationSites.cpp)
+    target_include_directories(big_allocation_sites_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(big_allocation_sites_tests PRIVATE libc)
+    add_test(NAME big_allocation_sites COMMAND ${Python3_EXECUTABLE} ${LIBS_INCLUDE_DIR}/tests/test_big_allocation_sites.py
+            $<TARGET_FILE:big_allocation_sites_tests> ${CMAKE_SOURCE_DIR}/tools/resolve_bigalloc.py)
+    set_tests_properties(big_allocation_sites PROPERTIES TIMEOUT 60)
 endif()
 
 if(BUILD_TESTING)
