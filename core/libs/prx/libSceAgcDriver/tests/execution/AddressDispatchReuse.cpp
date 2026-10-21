@@ -78,6 +78,19 @@ alignas(256) constexpr std::array<std::uint32_t, 9> SpreadCode{
     0xbf810000u,
 };
 
+constexpr std::size_t OverlayOffset = 16384;
+constexpr std::uint32_t OverlayBytes = 16384;
+constexpr std::size_t OverlayOutput = 64;
+
+alignas(256) constexpr std::array<std::uint32_t, 8> OverlayCode{
+    0x7e000280u,
+    0xdc308000u, 0x01000000u,
+    0xbf8c3f70u,
+    0x4a020281u,
+    0xe0700040u, 0x80010100u,
+    0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 10> AtomicReaderCode{
     0x7e000280u,
     0xdc348000u, 0x02000000u,
@@ -550,6 +563,51 @@ void UnalignedAtomic(Fixture& fixture) {
     Require(block.Stored() == block.value && Builds() == built + 1, "address dispatch reuse: a build whose dispatch reported an unaligned atomic served the next dispatch");
 }
 
+std::string Hex(std::uint64_t value) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%llx", static_cast<unsigned long long>(value));
+    return text;
+}
+
+void OverlayReuse(Fixture& fixture) {
+    Pages pages{BlockBytes};
+    pages.Register(0, BlockBytes, true);
+    const auto element = pages.Address(OverlayOffset);
+    const auto counter = element + OverlayOutput;
+    std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(counter), static_cast<std::uint32_t>(counter >> 32u), 0u, 0u, static_cast<std::uint32_t>(element), static_cast<std::uint32_t>((element >> 32u) & 0xffffu), OverlayBytes, 0x31016facu};
+    const auto program = Compile(fixture.device, OverlayCode, userData, 1);
+    const auto dispatch = [&] {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        fixture.device.Dispatch(program, 1, 1, 1, {}, AddressOf(OverlayCode.data()));
+    };
+    const auto value = [&] { return pages.Load(OverlayOffset + OverlayOutput, sizeof(std::uint32_t)); };
+    const auto staged = "[staging] 0x" + Hex(element) + "+0x" + Hex(OverlayBytes) + " ";
+    pages.Store(OverlayOffset + OverlayOutput, 0x100u, sizeof(std::uint32_t));
+    const auto before = AgcDriver::Graphics::AddressReuseCounters();
+    const auto built = Builds();
+    std::string text;
+    {
+        StderrCapture log;
+        dispatch();
+        fixture.Wait();
+        text = log.Finish();
+    }
+    Require(text.find(staged) != std::string::npos, "address dispatch reuse: the written element of the address-based build was not staged as an overlay of its import:\n" + text);
+    Require(value() == 0x101u, "address dispatch reuse: the staged element's first dispatch left 0x" + Hex(value()) + " in guest memory, expected 0x101");
+    pages.Store(OverlayOffset + OverlayOutput, 0x200u, sizeof(std::uint32_t));
+    dispatch();
+    fixture.Wait();
+    auto after = AgcDriver::Graphics::AddressReuseCounters();
+    Require(Builds() == built + 1 && Counted(after, AddressReuse::Reused) == Counted(before, AddressReuse::Reused) + 1, "address dispatch reuse: the second dispatch of the build with a staged element was not reused (" + std::to_string(Counted(after, AddressReuse::Reused) - Counted(before, AddressReuse::Reused)) + " reuses, " + std::to_string(Builds() - built) + " builds)");
+    Require(value() == 0x201u, "address dispatch reuse: the reused dispatch of a staged element left 0x" + Hex(value()) + " in guest memory, expected 0x201 (0x102: its copy-in was not repeated; 0x200: its write was not copied back)");
+    dispatch();
+    dispatch();
+    fixture.Wait();
+    after = AgcDriver::Graphics::AddressReuseCounters();
+    Require(Builds() == built + 1 && Counted(after, AddressReuse::Reused) == Counted(before, AddressReuse::Reused) + 3, "address dispatch reuse: two dispatches in one batch of the build with a staged element were not both reused");
+    Require(value() == 0x203u, "address dispatch reuse: two reused dispatches in one batch of a staged element left 0x" + Hex(value()) + " in guest memory, expected 0x203 (0x202: the second copy-in did not follow the first copy-back)");
+}
+
 void Overflow(AgcDriver::VulkanDevice& device) {
     Pages spread{SpreadSpans * SpanBytes};
     spread.Register(0, spread.Bytes(), true);
@@ -592,6 +650,11 @@ int main(int argc, char** argv) {
         std::puts("skipped, APS5_NO_ADDRESS_DISPATCH_REUSE=1 turns address-based dispatch reuse off");
         return VulkanTestSkipped;
     }
+#ifdef _WIN32
+    _putenv_s("APS5_TRACE_STAGING", "1");
+#else
+    setenv("APS5_TRACE_STAGING", "1", 1);
+#endif
     const std::string only = argc > 1 ? argv[1] : "";
     const auto runs = [&](const char* name) { return only.empty() || only == name; };
     try {
@@ -609,6 +672,7 @@ int main(int argc, char** argv) {
             if (runs("srt")) PendingSrtWrites(fixture);
             if (runs("free")) GuestFree(fixture);
             if (runs("unaligned")) UnalignedAtomic(fixture);
+            if (runs("overlay")) OverlayReuse(fixture);
             fixture.Wait();
         }
         if (runs("overflow")) Overflow(*device);
