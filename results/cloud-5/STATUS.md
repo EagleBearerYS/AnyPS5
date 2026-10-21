@@ -1,6 +1,6 @@
-BUSY BF-109
-since: 2026-10-21T11:21:46Z
-previous: PRM-050 done, results/cloud-5/PRM-050.md: pm/8224-moved-cut = 28af929a0 on #8224 9d659c509 (MovedReadOnlyBuffers takes the draw target and cuts like the build, through ShaderResources::BytesUpToTarget; reproduced 1 moved entry of 240 bytes; red 20/20, green 20/20; graphics 10/10; ^agc 815, 0 failed); pm/6636-with-8224 = merge 5d72ff741 of 28af929a0 into fc9c5416f, cut folded into GuestBufferBytes(context, words, target) (3 hunks resolved; graphics, address_draw_reuse and its watched_imports registration 10/10 each; ^agc 850, 1 failed: sgpr_pattern_fill_keys flake). Before that: BF-096 done, results/cloud-5/BF-096.md.
+READY
+since: 2026-10-21T11:46:19Z
+previous: BF-109 done, results/cloud-5/BF-109.md: perf/libc-collect-without-region-query = 74dee0062 on upstream/main 3e91c8edf (a proven collect calls GetWriteWatch directly and falls back to the VirtualQuery walk on failure; RegionQueries counter); bench stack exp/rewatch-phases-fixed = add733563 on 2d90e39b0 for the PC Windows run; new windows_write_watch case green 10/10 and red 10/10 under Wine 9.0 (Windows unverified); Linux focused 15/15, ^agc 862 with 1 failed (sgpr flake); no PR head gets a new conflict. Before that: PRM-050 done, results/cloud-5/PRM-050.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
