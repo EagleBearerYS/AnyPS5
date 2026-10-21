@@ -581,9 +581,16 @@ private:
     std::shared_ptr<const TableDescriptors> keptTable(std::size_t set, std::shared_ptr<const std::vector<std::weak_ptr<Texture>>>& held) noexcept;
     std::uint32_t setOf(const Binding& binding) const;
     std::vector<Allocation> allocations;
-    std::vector<VkDescriptorBufferInfo> descriptorBuffers;
+    mutable std::vector<VkDescriptorBufferInfo> descriptorBuffers;
     std::vector<VkDescriptorImageInfo> descriptorImages;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
+    struct FaultDescriptor {
+        std::size_t write;
+        std::size_t buffer;
+        std::uint32_t element;
+    };
+    std::vector<FaultDescriptor> faultDescriptors;
+    void prepareFaultSlot() const;
     struct MovedWordBuffer {
         std::size_t allocation;
         std::vector<std::uint32_t> words;
