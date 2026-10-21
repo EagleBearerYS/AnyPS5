@@ -815,7 +815,7 @@ void CheckBufferAliases(const Context& context, std::span<const CompiledShader> 
             for (std::size_t offset = 0; offset + 4 <= words.size(); offset += 4) {
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[offset], words[offset + 1], words[offset + 2], words[offset + 3]}};
                 const auto address = descriptor.Base48();
-                const auto size = ShaderResources::GuestBufferBytes(context, std::span<const std::uint32_t>(words).subspan(offset, 4));
+                const auto size = ShaderResources::GuestBufferBytes(context, std::span<const std::uint32_t>(words).subspan(offset, 4), &target);
                 if (size == 0 || address == 0) continue;
                 const auto element = offset / 4;
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
@@ -1459,7 +1459,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             const bool valid = cached->Revalidate(shaders, nullptr, snapshots);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
             if (moved.has_value()) {
                 resolved.resources = std::move(cached);
                 resolved.use.resources = resolved.resources;

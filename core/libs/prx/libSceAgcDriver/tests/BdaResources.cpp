@@ -3213,12 +3213,13 @@ void addressMovedBufferTests(const Context& context) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     Recorder recorder(context);
     {
-        ShaderResources resources(context, built, ColorTarget{}, 0, 0, 0, {});
+        const ColorTarget target{};
+        ShaderResources resources(context, built, target, 0, 0, 0, {});
         Require(resources.UsesAddressTable(), "a draw build with a BDA table stage does not use the BDA table");
-        const auto unchanged = resources.MovedReadOnlyBuffers(built, recorder);
+        const auto unchanged = resources.MovedReadOnlyBuffers(built, recorder, &target);
         Require(unchanged.has_value() && unchanged->empty(), "an address-based draw build found a buffer moved in the stages it was built from");
-        Require(!resources.MovedReadOnlyBuffers(movedStages, recorder).has_value(), "an address-based draw build would serve a draw whose read-only buffer moved, which it cannot bind per draw");
-        Require(!resources.MovedReadOnlyBuffers(rewrittenStages, recorder).has_value(), "an address-based draw build would serve a draw with other data words, which it cannot bind per draw");
+        Require(!resources.MovedReadOnlyBuffers(movedStages, recorder, &target).has_value(), "an address-based draw build would serve a draw whose read-only buffer moved, which it cannot bind per draw");
+        Require(!resources.MovedReadOnlyBuffers(rewrittenStages, recorder, &target).has_value(), "an address-based draw build would serve a draw with other data words, which it cannot bind per draw");
         resources.WriteBack();
     }
     recorder.Sync();
