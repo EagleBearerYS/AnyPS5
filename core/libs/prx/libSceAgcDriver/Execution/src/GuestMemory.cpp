@@ -1589,6 +1589,9 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     auto unwatchedFrom = first;
     for (const auto& [begin, end] : spans) {
         if (!walkWrites(tracker, begin, end, StampKind::Cpu, true, &window)) continue;
+#ifdef _WIN32
+        GuestArena::GuestArenaCompareResidentWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin));
+#endif
         if (unwatchedFrom < begin) unwatchLocked(tracker, unwatchedFrom, static_cast<std::size_t>(begin - unwatchedFrom));
         unwatchedFrom = end;
     }
