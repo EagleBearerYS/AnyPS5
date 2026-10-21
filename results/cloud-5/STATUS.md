@@ -1,5 +1,5 @@
-READY
-since: 2026-10-21T11:46:19Z
+BUSY BF-110
+since: 2026-10-21T12:07:05Z
 previous: BF-109 done, results/cloud-5/BF-109.md: perf/libc-collect-without-region-query = 74dee0062 on upstream/main 3e91c8edf (a proven collect calls GetWriteWatch directly and falls back to the VirtualQuery walk on failure; RegionQueries counter); bench stack exp/rewatch-phases-fixed = add733563 on 2d90e39b0 for the PC Windows run; new windows_write_watch case green 10/10 and red 10/10 under Wine 9.0 (Windows unverified); Linux focused 15/15, ^agc 862 with 1 failed (sgpr flake); no PR head gets a new conflict. Before that: PRM-050 done, results/cloud-5/PRM-050.md.
 
 RESULT (setup):
