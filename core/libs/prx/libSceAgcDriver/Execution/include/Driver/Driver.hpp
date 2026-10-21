@@ -217,9 +217,12 @@ private:
     static std::chrono::steady_clock::time_point& packetStartedAt();
     static PendingDrawPhases& pendingDrawPhases();
     void addDrawPhases(const std::array<double, DrawDriverPhaseCount>& ms, bool drawn, std::uint64_t captures);
-    void noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
+    void noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, std::uint32_t opcode);
     void noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue);
+    std::string describeLabelStores(std::uint64_t address, std::size_t bytes);
+    static std::string describeSubmitCheck(const SubmitWaitCheck* check);
+    static const SubmitWaitCheck* findSubmitCheck(const Submission& submission, std::size_t cursor);
     bool storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer = nullptr);
     static void traceLabel(std::span<const std::uint32_t> packet, std::uint32_t queue);
     static std::array<WriteRecord, 16384>& writeHistory();
@@ -289,7 +292,7 @@ private:
     bool enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue);
     bool enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state);
     void commitDmaStore(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes);
-    void commitLabel(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes, bool endOfPipeInterrupt);
+    void commitLabel(std::uint32_t queue, std::uint32_t opcode, std::uint64_t address, std::span<const std::byte> bytes, bool endOfPipeInterrupt);
     void submitDueAfterCommit(VulkanDevice* localDevice);
     std::optional<WrittenBuffer> newestWriterLocked(std::uint64_t begin, std::uint64_t end) const;
     std::optional<WrittenBuffer> newestWriter(std::uint64_t begin, std::uint64_t end);
@@ -308,7 +311,7 @@ private:
     static bool pollReapAll();
     static bool pollTryEach();
     static bool traceLateLabels();
-    void waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory = false);
+    void waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory = false, const SubmitWaitCheck* check = nullptr);
     struct PendingWait {
         std::array<std::uint32_t, 8> words;
         std::size_t count;

@@ -15,9 +15,19 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::DriverDetail {
+
+enum class SubmitCheck : std::uint8_t { NotMemory, Inaccessible, EarlierWrite, UnfinishedWrite, Checked, Held };
+
+struct SubmitWaitCheck {
+    SubmitCheck outcome = SubmitCheck::NotMemory;
+    std::uint32_t writerQueue = 0;
+    std::uint64_t writerSerial = 0;
+    std::uint64_t value = 0;
+};
 
 struct Submission {
     std::uint64_t serial;
@@ -37,6 +47,7 @@ struct Submission {
     std::uint64_t received = 0;
     std::vector<std::uint64_t> labelWrites;
     std::set<std::size_t> heldAtSubmit;
+    std::vector<std::pair<std::size_t, SubmitWaitCheck>> waitChecks;
     std::chrono::steady_clock::time_point receivedAt{};
     std::chrono::steady_clock::time_point copiedAt{};
     std::chrono::steady_clock::time_point validatedAt{};
@@ -55,6 +66,8 @@ struct QueueWorker {
     std::unordered_map<std::uint64_t, std::uint32_t> unfinishedWrites;
     std::uint64_t executingWaitFree = 0;
     bool executingWaits = false;
+    std::uint64_t runningSerial = 0;
+    std::vector<std::uint64_t> runningWrites;
     std::thread thread;
 };
 

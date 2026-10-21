@@ -2,13 +2,15 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
-void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
+void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, std::uint32_t opcode) {
     if (!KeepsLabelStore(address, bytes.size())) return;
     std::lock_guard lock(labelStoresMutex);
     for (std::size_t offset = 0; offset < bytes.size(); offset += 4) {
@@ -16,6 +18,7 @@ void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> by
         std::shift_right(history.begin(), history.end(), 1);
         history[0].stamp = stamp;
         history[0].queue = queue;
+        history[0].opcode = opcode;
         std::memcpy(&history[0].value, bytes.data() + offset, 4);
     }
 }
@@ -61,6 +64,51 @@ void Driver::noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t
     if (stores.empty()) return;
     std::lock_guard lock(labelStoresMutex);
     for (const auto& store : stores) take(store.address, store.bytes);
+}
+
+std::string Driver::describeLabelStores(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard lock(labelStoresMutex);
+    std::string text;
+    for (std::size_t offset = 0; offset < bytes; offset += 4) {
+        if (offset != 0) text += "; stores at +" + std::to_string(offset) + " newest first:";
+        const auto found = labelStores.find(address + offset);
+        bool any = false;
+        if (found != labelStores.end()) {
+            for (const auto& store : found->second) {
+                if (store.stamp == 0) continue;
+                char item[96];
+                std::snprintf(item, sizeof(item), "%s stamp %llu value 0x%x queue 0x%x opcode 0x%x", any ? "," : "", static_cast<unsigned long long>(store.stamp), store.value, store.queue, store.opcode);
+                text += item;
+                any = true;
+            }
+        }
+        if (!any) text += " none recorded";
+    }
+    return text;
+}
+
+std::string Driver::describeSubmitCheck(const SubmitWaitCheck* check) {
+    if (check == nullptr) return "no check at submission recorded";
+    char text[128];
+    switch (check->outcome) {
+    case SubmitCheck::NotMemory:
+        return "not checked at submission (not a memory wait)";
+    case SubmitCheck::Inaccessible:
+        return "not checked at submission (misaligned or inaccessible)";
+    case SubmitCheck::EarlierWrite:
+        return "not checked at submission (written earlier in the same submission)";
+    case SubmitCheck::UnfinishedWrite:
+        if (check->writerSerial != 0) std::snprintf(text, sizeof(text), "not checked at submission (queue 0x%x serial %llu writes it)", check->writerQueue, static_cast<unsigned long long>(check->writerSerial));
+        else std::snprintf(text, sizeof(text), "not checked at submission (an unfinished queue 0x%x submission writes it)", check->writerQueue);
+        return text;
+    case SubmitCheck::Checked:
+        std::snprintf(text, sizeof(text), "checked at submission: value 0x%llx", static_cast<unsigned long long>(check->value));
+        return text;
+    case SubmitCheck::Held:
+        std::snprintf(text, sizeof(text), "held at submission: value 0x%llx", static_cast<unsigned long long>(check->value));
+        return text;
+    }
+    return "unknown check at submission";
 }
 
 bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer) {

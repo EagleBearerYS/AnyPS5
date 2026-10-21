@@ -618,20 +618,43 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
         }
         return;
     }
-    if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return;
+    if (opcode != 0x3c && opcode != 0x93) return;
+    auto& check = submission.waitChecks.emplace_back(cursor, SubmitWaitCheck{}).second;
+    if (packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return;
     const auto wait = Pm4::DecodeWait(packet);
     const auto address = wait.address;
     const std::size_t bytes = wait.bytes;
+    check.outcome = SubmitCheck::Inaccessible;
     if (address % 4 != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return;
     const auto worker = workers.find(submission.queue);
     for (std::size_t offset = 0; offset < bytes; offset += 4) {
         const auto dword = address + offset;
-        if (std::find(submission.labelWrites.begin(), submission.labelWrites.end(), dword) != submission.labelWrites.end()) return;
-        if (worker != workers.end() && worker->second.unfinishedWrites.contains(dword)) return;
+        if (std::find(submission.labelWrites.begin(), submission.labelWrites.end(), dword) != submission.labelWrites.end()) {
+            check.outcome = SubmitCheck::EarlierWrite;
+            return;
+        }
+        if (worker != workers.end() && worker->second.unfinishedWrites.contains(dword)) {
+            check.outcome = SubmitCheck::UnfinishedWrite;
+            check.writerQueue = submission.queue;
+            const auto writer = std::find_if(worker->second.pending.begin(), worker->second.pending.end(), [&](const Submission& pending) { return std::find(pending.labelWrites.begin(), pending.labelWrites.end(), dword) != pending.labelWrites.end(); });
+            if (writer != worker->second.pending.end()) check.writerSerial = writer->serial;
+            else if (std::find(worker->second.runningWrites.begin(), worker->second.runningWrites.end(), dword) != worker->second.runningWrites.end()) check.writerSerial = worker->second.runningSerial;
+            return;
+        }
     }
     std::uint64_t value = *reinterpret_cast<const volatile std::uint32_t*>(address);
     if (bytes == 8) value |= static_cast<std::uint64_t>(*reinterpret_cast<const volatile std::uint32_t*>(address + 4)) << 32u;
-    if (Pm4::WaitComparesValue(packet, value)) submission.heldAtSubmit.insert(cursor);
+    check.value = value;
+    check.outcome = SubmitCheck::Checked;
+    if (Pm4::WaitComparesValue(packet, value)) {
+        check.outcome = SubmitCheck::Held;
+        submission.heldAtSubmit.insert(cursor);
+    }
+}
+
+const SubmitWaitCheck* Driver::findSubmitCheck(const Submission& submission, std::size_t cursor) {
+    const auto found = std::lower_bound(submission.waitChecks.begin(), submission.waitChecks.end(), cursor, [](const std::pair<std::size_t, SubmitWaitCheck>& entry, std::size_t key) { return entry.first < key; });
+    return found != submission.waitChecks.end() && found->first == cursor ? &found->second : nullptr;
 }
 
 void Driver::forgetUnfinishedWrites(QueueWorker& worker, const Submission& submission) {
