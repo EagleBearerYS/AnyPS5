@@ -3575,7 +3575,13 @@ void VulkanDevice::PrepareDisplayRead(const DisplayBuffer& buffer) const {
         std::uint32_t layer = 0;
         if (PresentableResident(graphicsContext(), buffer, filter, pending, convert, layer) != nullptr) return;
     }
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto before = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     GuestMemory::FlushGpuWrites(buffer.address, DisplayBufferSize(buffer));
+    if (const auto waited = profile ? Graphics::Recorder::ThreadWaitedMs() - before : 0.0; waited > 0.0) {
+        ++presentCounters.displayWriterWaits;
+        presentCounters.displayWriterWaitMs += waited;
+    }
 }
 
 void VulkanDevice::FlipBatches(std::uint64_t& submissions, std::uint64_t& unsignaled) const {
