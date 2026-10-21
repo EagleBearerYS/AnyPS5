@@ -186,6 +186,21 @@ public:
         }
     }
 
+    void CompareWhenShared(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        collectableRanges.clear();
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
+            auto& page = *it->second.page;
+            page.comparedWhenShared = true;
+            for (const auto alias : page.aliases) {
+                auto& view = views.at(alias);
+                if (view.resident || view.armed == 0) continue;
+                protectSubpages(alias, view.armed, view.protection, "stop arming a compared shared page", view.viewBytes);
+                view.armed = 0;
+            }
+        }
+    }
+
     bool HandleWrite(std::uintptr_t address) {
         std::lock_guard lock(mutex);
         const auto base = address & ~(pageBytes - 1);
@@ -350,6 +365,7 @@ public:
                     if (!watchResident) return false;
                     continue;
                 }
+                if (it->second.page->comparedWhenShared) return false;
                 if (it->second.protection != PAGE_NOACCESS) continue;
                 for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
                     if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
@@ -496,7 +512,7 @@ private:
         for (auto cursor = address; cursor < end;) {
             const auto base = cursor & ~(pageBytes - 1);
             if (const auto found = viewAt(base, position); found != views.end()) {
-                if (found->second.protection == PAGE_NOACCESS || (found->second.resident && !watchResident)) return false;
+                if (found->second.protection == PAGE_NOACCESS || (found->second.resident ? !watchResident : found->second.page->comparedWhenShared)) return false;
                 cursor = std::min(end, base + pageBytes);
                 continue;
             }
@@ -522,6 +538,7 @@ private:
         }();
         std::vector<std::uintptr_t> aliases;
         std::uint32_t pins = 0;
+        bool comparedWhenShared = false;
     };
     struct Section {
         HANDLE handle;
