@@ -33,6 +33,10 @@ public:
         return regionQueries.load(std::memory_order_relaxed);
     }
 
+    static std::uint64_t FailedDirectCollects() {
+        return failedDirectCollects.load(std::memory_order_relaxed);
+    }
+
     void* Reserve(void* address, std::size_t bytes) {
         return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
     }
@@ -41,6 +45,7 @@ public:
         std::vector<std::pair<std::uintptr_t, std::size_t>> created;
         std::lock_guard lock(mutex);
         collectableRanges.clear();
+        directRefusals.clear();
         const auto end = reinterpret_cast<std::uintptr_t>(address) + bytes;
         for (auto cursor = reinterpret_cast<std::uintptr_t>(address); cursor < end;) {
             const auto memory = query(cursor);
@@ -85,6 +90,7 @@ public:
         if (sectionBytes < bytes && (resident || sectionBytes == 0 || bytes - sectionBytes >= pageBytes)) throw std::runtime_error("shared guest mapping extends a whole page past its section");
         std::lock_guard lock(mutex);
         collectableRanges.clear();
+        directRefusals.clear();
         auto cursor = reinterpret_cast<std::uintptr_t>(address);
         if (createdPrivate != nullptr) createdPrivate->reserve(createdPrivate->size() + bytes / pageBytes);
         reset(cursor, bytes);
@@ -160,6 +166,7 @@ public:
     void SetProtection(std::uintptr_t address, std::size_t bytes, DWORD protection) {
         std::lock_guard lock(mutex);
         collectableRanges.clear();
+        directRefusals.clear();
         for (auto it = views.lower_bound(address); it != views.end() && it->first < address + bytes; ++it) {
             it->second.protection = protection;
             it->second.armed = 0;
@@ -482,11 +489,13 @@ public:
                     auto stop = end;
                     if (const auto next = views.lower_bound(cursor); next != views.end()) stop = std::min(stop, next->first);
                     if (nextClean != cleanRanges.end()) stop = std::min(stop, nextClean->first);
-                    if (watchPrivate(cursor, stop, pages, count, capacity, clear)) {
+                    const bool refused = refusedDirect(cursor, stop);
+                    if (!refused && watchPrivate(cursor, stop, pages, count, capacity, clear)) {
                         if (*count == capacity) return true;
                         cursor = stop;
                         continue;
                     }
+                    if (!refused) refuseDirect(cursor, stop);
                     direct = false;
                 }
                 const auto memory = query(cursor);
@@ -515,6 +524,19 @@ private:
     bool proved(std::uintptr_t address, std::uintptr_t end) const {
         const auto proven = collectableRanges.upper_bound(address);
         return proven != collectableRanges.begin() && std::prev(proven)->second >= end;
+    }
+
+    bool refusedDirect(std::uintptr_t address, std::uintptr_t end) const {
+        for (auto it = directRefusals.lower_bound(address); it != directRefusals.end() && it->first < end; ++it) {
+            if (it->second <= end) return true;
+        }
+        return false;
+    }
+
+    void refuseDirect(std::uintptr_t address, std::uintptr_t end) {
+        failedDirectCollects.fetch_add(1, std::memory_order_relaxed);
+        const auto [refusal, inserted] = directRefusals.emplace(address, end);
+        if (!inserted) refusal->second = std::min(refusal->second, end);
     }
 
     bool collectable(std::uintptr_t address, std::uintptr_t end) {
@@ -937,6 +959,7 @@ private:
 
     void reset(std::uintptr_t address, std::size_t bytes) {
         collectableRanges.clear();
+        directRefusals.clear();
         const auto end = address + bytes;
         forgetClean(address, end);
         breakRun(address);
@@ -1031,8 +1054,10 @@ private:
     }
 
     static inline std::atomic<std::uint64_t> regionQueries{0};
+    static inline std::atomic<std::uint64_t> failedDirectCollects{0};
     Ranges cleanRanges;
     Ranges collectableRanges;
+    Ranges directRefusals;
     Ranges freshRanges;
     std::map<std::uintptr_t, View> views;
 
