@@ -1,6 +1,6 @@
-BUSY PRM-046
-since: 2026-10-21T03:59:13Z
-previous: BF-095 done, results/cloud-5/BF-095.md: fork perf/shader-plan-retention e20ec3f02, 5 commits on upstream main e0e57a327 (3728570f6 and cca1f5a8d cherry-picked with conflicts resolved, our tests with fablevoid credit, our exactness fix for phi and null-base answers, 6d2ad7ee8 clean but unused on main); cb13fecfe superseded by main's MayEvaluate; no FormatVersion bump (SourceVersion changes); red 'plan retention: the plan keeps 170 values; its conditions and descriptor sources read 40'; suite plans 113,034 -> 112,588 values with identical tapes and 0 walk differences vs main's whole copy; ownPlanValues median 4.9 -> 7.0 us; mirror 1778 tests, 7 failed vs main's 6 (6 network, plus agc_driver_sgpr_pattern_fill_keys, a load flake that main shows too)
+READY
+since: 2026-10-21T04:17:19Z
+previous: PRM-046 done, results/cloud-5/PRM-046.md: pm/6636-review = 084de35d85 + fc9c5416f (test only: agc_driver_address_draw_reuse_watched_imports with APS5_WRITE_WATCH_IMPORTS=watch, non-Windows, plus a non-address ThrowingProof case); no reproduction at 084de35d85 because main's 67575aae8 (merged there, absent from 28433ba132) refuses the case before either proof; reproduces with that line removed ("...was reused"); red without it, green 20/20; ^agc 850 tests, 1 failed (agc_driver_sgpr_pattern_fill_keys load flake, also on main). Before that: BF-095 done, results/cloud-5/BF-095.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
