@@ -490,7 +490,7 @@ public:
                     auto stop = end;
                     if (const auto next = views.lower_bound(cursor); next != views.end()) stop = std::min(stop, next->first);
                     if (nextClean != cleanRanges.end()) stop = std::min(stop, nextClean->first);
-                    const bool refused = refusedDirect(cursor, stop);
+                    const bool refused = false;
                     const bool committed = refused || !verifyDirect() || committedPrivate(cursor, stop);
                     if (!refused && watchPrivate(cursor, stop, pages, count, capacity, clear)) {
                         if (!committed) staleProof(cursor, stop);
