@@ -31,6 +31,7 @@
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "ImageTableAbi.hpp"
+#include <bit>
 #include <cstring>
 #include <limits>
 #include <list>
@@ -410,28 +411,26 @@ void reportTextureCounters() {
 // then repeats the proof from write stamps on its next Revalidate. The lookups run inside one build
 // on one thread; records nobody takes (a build that threw, a resident target looked up outside a
 // build, a thread that never captures) are dropped by the next capture or by the bound below.
-struct LookupRecord {
-    const void* object;
-    GuestTextureResource resource;
-    std::uint64_t bytes;
-    DccKeys keys;
-    std::uint64_t generation;
-    const StorageTexture* source;
-    bool depth = false;
-};
-
-thread_local std::vector<LookupRecord>* lookupLogSlot = nullptr;
+thread_local std::vector<TextureLookupRecord>* lookupLogSlot = nullptr;
 constexpr std::size_t LookupLogBound = 1024;
 constexpr std::size_t NoBuildLookups = std::numeric_limits<std::size_t>::max();
 thread_local std::size_t buildLookupsStart = NoBuildLookups;
 thread_local bool buildLookupsPastBound = false;
 std::atomic<std::uint64_t> lookupBuildsPastBound{0};
 
-std::vector<LookupRecord>& lookupLog() {
+struct NewestRecord {
+    const void* object;
+    std::size_t index;
+};
+
+thread_local std::vector<NewestRecord>* newestRecordsSlot = nullptr;
+constexpr std::size_t Unrecorded = std::numeric_limits<std::size_t>::max();
+
+std::vector<TextureLookupRecord>& lookupLog() {
     return ShaderRecompiler::ThreadOwned(lookupLogSlot);
 }
 
-void logLookup(const LookupRecord& record) {
+void logLookup(const TextureLookupRecord& record) {
     auto& log = lookupLog();
     if (log.size() >= LookupLogBound) {
         const auto dropped = std::min(LookupLogBound / 2, buildLookupsStart);
@@ -2889,18 +2888,35 @@ bool TemplateAuditDue(std::chrono::steady_clock::time_point last) {
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
 void ShaderResources::captureValidation() {
-    const auto record = [](const void* object) -> const LookupRecord* {
-        const auto& log = lookupLog();
-        for (auto it = log.rbegin(); it != log.rend(); ++it) {
-            if (it->object == object) return &*it;
-        }
-        return nullptr;
-    };
-    validatedTextures.assign(textures.size(), {});
-    for (std::size_t i = 0; i < textures.size(); ++i) {
-        if (const auto* found = record(textures[i].get())) validatedTextures[i] = {found->resource, found->bytes, found->keys, found->generation, 0, found->source, found->depth, true};
-    }
+    captureValidation(lookupLog(), textures, validatedTextures);
     lookupLog().clear();
+}
+
+void ShaderResources::captureValidation(std::span<const TextureLookupRecord> log, std::span<const std::shared_ptr<Texture>> sampled, std::vector<ValidatedSurface>& validated) {
+    auto& newest = ShaderRecompiler::ThreadOwned(newestRecordsSlot);
+    const auto slots = std::bit_ceil(std::max<std::size_t>(log.size() * 2u, 16u));
+    const auto shift = 64 - std::countr_zero(slots);
+    const auto slotOf = [&](const void* object) {
+        auto slot = static_cast<std::size_t>((static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(object)) * 0x9e3779b97f4a7c15ull) >> shift);
+        while (newest[slot].index != Unrecorded && newest[slot].object != object) slot = (slot + 1u) & (slots - 1u);
+        return slot;
+    };
+    newest.assign(slots, {nullptr, Unrecorded});
+    for (auto index = log.size(); index-- > 0;) {
+        auto& entry = newest[slotOf(log[index].object)];
+        if (entry.index == Unrecorded) entry = {log[index].object, index};
+    }
+    validated.assign(sampled.size(), {});
+    for (std::size_t i = 0; i < sampled.size(); ++i) {
+        const auto index = newest[slotOf(sampled[i].get())].index;
+        if (index == Unrecorded) continue;
+        const auto& found = log[index];
+        validated[i] = {found.resource, found.bytes, found.keys, found.generation, 0, found.source, found.depth, true};
+    }
+    if (newest.capacity() > 4u * LookupLogBound) {
+        newest.clear();
+        newest.shrink_to_fit();
+    }
 }
 
 std::size_t ShaderResources::LookupLogCapacity() {

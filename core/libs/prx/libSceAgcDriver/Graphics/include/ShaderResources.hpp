@@ -152,6 +152,16 @@ struct PresyncSurface {
     bool dccKeys;
 };
 
+struct TextureLookupRecord {
+    const void* object;
+    GuestTextureResource resource;
+    std::uint64_t bytes;
+    DccKeys keys;
+    std::uint64_t generation;
+    const StorageTexture* source;
+    bool depth = false;
+};
+
 class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
@@ -335,6 +345,7 @@ public:
 
 private:
     friend class AgcDriver::VulkanDevice;
+    friend struct ShaderResourcesTestAccess;
     bool refreshData(VkCommandBuffer commands, const CompiledShader& shader, Recorder* recorder);
     std::optional<std::size_t> shaderDataAllocation(const CompiledShader& shader) const;
     VkBuffer shaderDataBuffer(const CompiledShader& shader) const;
@@ -508,6 +519,7 @@ private:
         bool valid = false;
     };
     void captureValidation();
+    static void captureValidation(std::span<const TextureLookupRecord> log, std::span<const std::shared_ptr<Texture>> sampled, std::vector<ValidatedSurface>& validated);
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
     // the full walk's lookup (refreshOwnObjects). `viewUncompressed`: a storage-sourced view under
