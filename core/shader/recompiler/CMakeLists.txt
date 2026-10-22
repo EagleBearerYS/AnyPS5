@@ -273,7 +273,9 @@ function(add_shader_recompiler target runtimeTarget)
             MaterializeShader
             RegistrationResult
             ResolveSource
+            DescriptorBindingForImage
             ResourceMaterializer::EvaluateNanoseconds
+            ResourceMaterializer::TryRuntimeImageMode
             ResourceMaterializer::MaterializeNanoseconds
             ReleaseUndrawnResourcePlan
             ResourceMaterializer::SpecializationNanoseconds
