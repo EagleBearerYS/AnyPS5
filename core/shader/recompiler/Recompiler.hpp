@@ -329,6 +329,7 @@ struct SpirvTarget {
     bool deviceScopeLdsMemoryBarriers = false;
     bool gpuResolvedImages = false;
     bool descriptorMemory = false;
+    bool deviceImageTables = false;
 };
 
 struct BindingLayout {
@@ -709,6 +710,7 @@ struct CompiledShaderArtifact {
     std::uint32_t bufferAddressCount = 0;
     bool dataAddressPush = false;
     bool bdaStores = false;
+    bool deviceImageTables = false;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t windowLaneGuards = 0;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
