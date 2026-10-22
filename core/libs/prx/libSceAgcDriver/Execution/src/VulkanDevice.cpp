@@ -134,6 +134,11 @@ void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("Vulkan presentation: ") + reason);
 }
 
+void reportDeviceImagePathRefusal(const std::string& reason) {
+    static std::atomic<bool> reported{false};
+    if (!reported.exchange(true)) std::fprintf(stderr, "[device-images] APS5_GPU_PATH stays off on this device: %s\n", reason.c_str());
+}
+
 bool CoreVulkanCapability(std::uint32_t capability) {
     switch (capability) {
         case spv::CapabilityMatrix:
@@ -487,6 +492,7 @@ struct VulkanDevice::State {
     bool contextReady = false;
     std::unique_ptr<Graphics::TextureDetiler> detiler;
     bool descriptorHeap = false;
+    bool deviceImagePath = false;
     VkPhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     std::unique_ptr<Graphics::Recorder> recorder;
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
@@ -910,6 +916,7 @@ struct VulkanDevice::State {
             resourceCache.Clear();
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
+            Graphics::DeviceImageTable::Release(device);
             Graphics::BindlessHeap::Release(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
@@ -2151,6 +2158,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     Graphics::PrepareImportWatch(graphicsContext());
     Graphics::SetDescriptorHeapDevice(state->descriptorHeap && state->descriptorHeapProperties.maxPushDataSize >= Graphics::PipelinePushConstantBytes);
     Graphics::BufferPool::SetForceAddresses(Graphics::DescriptorHeapEnabled());
+    if (Graphics::GpuPathEnabled()) {
+        const auto refusal = Graphics::DeviceImagePathRefusal({Graphics::GpuHeapEnabled(), Graphics::DescriptorHeapEnabled()});
+        state->deviceImagePath = !refusal.has_value();
+        if (refusal.has_value()) reportDeviceImagePathRefusal(*refusal);
+    }
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     if (state->descriptorHeap && Graphics::DescriptorHeapEnabled()) APS5_LOG_OUT("Vulkan descriptor heap: %s", "GPU-mode draws and dispatches bind from VK_EXT_descriptor_heap");
@@ -2171,6 +2183,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->recorder->Activate();
     state->context = buildContext();
     state->contextReady = true;
+    if (state->deviceImagePath) Graphics::DeviceImageTable::Create(state->context, ShaderRecompiler::ResourceMaterializer::FindDeviceImageInterface);
     if (window != nullptr) {
         require(window->getDrawableSize != nullptr, "missing window drawable size query");
         std::uint32_t drawableWidth = 0;
@@ -3766,7 +3779,12 @@ void VulkanDevice::QueuePresent() {
     APS5_LOG_OUT_DEBUG("vkQueuePresentKHR queued imageIndex=%u", index);
 }
 
+bool VulkanDevice::DeviceImagePath() const {
+    return state->deviceImagePath;
+}
+
 bool VulkanDevice::DeviceImagesServe(std::uint64_t codeAddress) const {
+    if (!state->deviceImagePath) return false;
     const auto* table = Graphics::DeviceImageTable::Existing(state->context);
     return table != nullptr && table->ServesProgram(codeAddress);
 }
@@ -3848,6 +3866,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.fusedExactArithmetic = state->fusedExactArithmetic;
     target.float32DenormPreserve = state->float32DenormPreserve;
     target.descriptorMemory = Graphics::DescriptorHeapEnabled();
+    target.deviceImageTables = state->deviceImagePath;
     return target;
 }
 
