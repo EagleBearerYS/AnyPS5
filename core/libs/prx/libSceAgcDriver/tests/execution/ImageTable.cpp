@@ -561,7 +561,7 @@ std::vector<std::array<std::uint32_t, 4>> SamplerWords(const std::vector<std::ui
     return result;
 }
 
-Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize) {
+Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize, std::span<const AgcDriver::Graphics::GuestMemorySnapshot> snapshots = {}) {
     const auto rootAddress = reinterpret_cast<std::uintptr_t>(root);
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
     std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
@@ -588,7 +588,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     }
     StderrCapture capture;
     try {
-        device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
+        device.Dispatch(result, groups, 1, 1, snapshots, reinterpret_cast<std::uintptr_t>(span.data()));
         device.WaitIdle();
     } catch (...) {
         static_cast<void>(capture.Finish());
@@ -682,6 +682,10 @@ std::vector<std::uint32_t> Group(const Outcome& outcome, std::uint32_t group, st
 
 bool Faulted(const Outcome& outcome) {
     return outcome.log.find("image table:") != std::string::npos;
+}
+
+bool AddressFaulted(const Outcome& outcome) {
+    return outcome.log.find("BDA access failed") != std::string::npos;
 }
 
 bool Holds(const std::vector<std::array<std::uint32_t, 4>>& samplers, const std::array<std::uint32_t, 4>& sampler) {
@@ -1461,7 +1465,7 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     }
     auto phi = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
     phi.insert(phi.begin() + 17u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
-    const auto run = [&](std::span<const std::uint32_t> code = NestedRecordCode, std::uint32_t waveSize = 64u) {
+    const auto run = [&](std::span<const std::uint32_t> code = NestedRecordCode, std::uint32_t waveSize = 64u, std::span<const AgcDriver::Graphics::GuestMemorySnapshot> snapshots = {}) {
         auto table = Buffer(Table.data(), rootBytes);
         if (!wideRoots.empty()) {
             table = Buffer(wideRoots.data(), static_cast<std::uint32_t>(wideRoots.size() / 4u));
@@ -1490,7 +1494,7 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
         const auto inputPalettes = palettes;
         const auto inputExtra = extra;
         const auto inputRoots = wideRoots;
-        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, waveSize);
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, waveSize, snapshots);
         Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes && extra == inputExtra && wideRoots == inputRoots, "nested image table: dispatch modified its input memory");
         Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), "nested image table: dispatch wrote past its output");
         return result;
@@ -1577,6 +1581,23 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     for (std::uint32_t parent = 0; parent < 2u; ++parent) {
         Require(covers(records[parent].data() + 40u, 16u) && covers(palettes[parent].data(), 64u), "nested image table: a V# or its palette is absent from the write-overlap ranges");
     }
+    auto consumer = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
+    consumer.insert(consumer.begin() + 30u, 0x7e0e0225u);
+    const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 2> live{{
+        {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+        {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+    }};
+    const auto consumed = run(consumer, 64u, live);
+    Require(!Faulted(consumed) && !AddressFaulted(consumed), "nested image table: a T# with another consumer faulted:\n" + consumed.log);
+    Require(consumed.imageTableCount == original.imageTableCount, "nested image table: a T# with another consumer was not bound through the image table");
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        const auto words = Group(consumed, group);
+        const auto expected = Group(original, group);
+        const auto& image = images[keys[group * 2u] + keys[group * 2u + 1u]];
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            Require(std::equal(words.begin() + lane * 4u, words.begin() + lane * 4u + 3u, expected.begin() + lane * 4u) && words[lane * 4u + 3u] == image[1], "nested image table: a T# with another consumer: group " + std::to_string(group) + " lane " + std::to_string(lane) + " alpha is " + Hex(words[lane * 4u + 3u]) + ", expected the T#'s dword 1 " + Hex(image[1]));
+        }
+    }
     auto loop = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end() - 1u);
     const auto secondLow = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(records[1].data()));
     loop.insert(loop.end(), {0xbf06ff2cu, secondLow, 0xbf850003u, 0xbeac03ffu, secondLow, 0xbf82ffe7u, 0xbf810000u});
@@ -1630,9 +1651,10 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     shared.insert(shared.begin() + 21u, {0xf4200c8cu, 0xfa000000u});
     std::fprintf(stderr, "nested image table: checking shared V# refusal\n");
     refused(shared, "a V# with another buffer consumer");
-    auto consumer = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
-    consumer.insert(consumer.begin() + 30u, 0x7e0e0225u);
-    refused(consumer, "a T# with another consumer");
+    auto tableVsharp = consumer;
+    tableVsharp[17] = 0xf4280602u;
+    tableVsharp[18] = 0x24000000u;
+    refused(tableVsharp, "a T# with another consumer whose V# only the table snapshot holds");
     rootBytes = 0u;
     const auto empty = run();
     Require(Faulted(empty) && empty.log.find("unmapped") != std::string::npos, "nested image table: an empty pointer dictionary did not fault");
@@ -1733,7 +1755,7 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
         Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
     }
     const auto image = Image(FloatTexels.data(), Format32Float);
-    const auto run = [&](std::span<const std::uint32_t> code = NestedSamplerCode, std::uint32_t waveSize = 64u) {
+    const auto run = [&](std::span<const std::uint32_t> code = NestedSamplerCode, std::uint32_t waveSize = 64u, std::span<const AgcDriver::Graphics::GuestMemorySnapshot> snapshots = {}) {
         const auto table = Buffer(Table.data(), 64u);
         const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
         const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
@@ -1756,7 +1778,7 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
         const auto inputRecords = records;
         const auto inputPalettes = palettes;
         const auto inputExtra = extra;
-        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, waveSize);
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, waveSize, snapshots);
         Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes && extra == inputExtra, "nested sampler table: dispatch modified its input memory");
         Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), "nested sampler table: dispatch wrote past its output");
         return result;
@@ -1806,7 +1828,20 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
     refused(shared, "a V# with another buffer consumer");
     auto consumer = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
     consumer.insert(consumer.begin() + 31u, 0x7e0e0221u);
-    refused(consumer, "an S# with another consumer");
+    const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 2> live{{
+        {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+        {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+    }};
+    const auto consumed = run(consumer, 64u, live);
+    Require(!Faulted(consumed) && !AddressFaulted(consumed), "nested sampler table: an S# with another consumer faulted:\n" + consumed.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        const auto words = Group(consumed, group);
+        const auto expected = Group(original, group);
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            const auto sampler = samplers[keys[group * 2u] % 2u][keys[group * 2u + 1u]];
+            Require(std::equal(words.begin() + lane * 4u, words.begin() + lane * 4u + 3u, expected.begin() + lane * 4u) && words[lane * 4u + 3u] == sampler[1], "nested sampler table: an S# with another consumer: group " + std::to_string(group) + " lane " + std::to_string(lane) + " alpha is " + Hex(words[lane * 4u + 3u]) + ", expected the S#'s dword 1 " + Hex(sampler[1]));
+        }
+    }
     auto phi = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
     phi.insert(phi.begin() + 17u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
     for (std::uint32_t group = 0; group < 4u; ++group) Keys[group * 2u] = 1u;
@@ -2418,8 +2453,17 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
         Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
     };
     for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
+    std::array<std::array<std::uint32_t, 1>, 2> behind{{{0x7b000000u}, {0x7b000001u}}};
+    const auto behindAddress = [&](std::uint32_t image) { return ((static_cast<std::uint64_t>(images[image][1]) << 32u | images[image][0]) & ~std::uint64_t{3}) + 0x10u; };
+    const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 4> live{{
+        {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+        {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+        {behindAddress(0u), std::as_bytes(std::span(behind[0]))},
+        {behindAddress(1u), std::as_bytes(std::span(behind[1]))},
+    }};
     const std::string name = reuse ? "pointer V# table with two T#s whose second T#'s words also reach the record pointer's registers" : "pointer V# table with two T#s read through one V#";
-    const auto run = [&] {
+    const std::span<const std::uint32_t> shader = reuse ? std::span<const std::uint32_t>(PointerSharedVsharpReuseCode) : std::span<const std::uint32_t>(PointerSharedVsharpCode);
+    const auto run = [&](std::span<const std::uint32_t> code) {
         const auto table = Buffer(Table.data(), 64u);
         const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
         const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
@@ -2428,7 +2472,6 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
         std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
         std::copy(output.begin(), output.end(), Srt.begin() + 8u);
         std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
-        const std::span<const std::uint32_t> code = reuse ? std::span<const std::uint32_t>(PointerSharedVsharpReuseCode) : std::span<const std::uint32_t>(PointerSharedVsharpCode);
         const std::vector<ShaderRecompiler::MemoryRegion> memory{
             {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
             {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
@@ -2441,8 +2484,9 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
         const auto inputKeys = Keys;
         const auto inputRecords = records;
         const auto inputPalettes = palettes;
-        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u);
-        Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes, name + ": dispatch modified its input memory");
+        const auto inputBehind = behind;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u, reuse ? std::span<const AgcDriver::Graphics::GuestMemorySnapshot>(live) : std::span<const AgcDriver::Graphics::GuestMemorySnapshot>());
+        Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes && behind == inputBehind, name + ": dispatch modified its input memory");
         Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
         return result;
     };
@@ -2450,43 +2494,52 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     for (std::uint32_t group = 0; group < 4u; ++group) {
         Keys[group * 4u] = keys[group][0];
         Keys[group * 4u + 1u] = keys[group][1];
-    }
-    if (reuse) {
-        std::string message;
-        try { static_cast<void>(run()); }
-        catch (const std::runtime_error& error) { message = error.what(); }
-        Require(message.find("not a valid runtime value") != std::string::npos, name + ": was not refused by resource planning: " + message);
-        std::puts((name + ": refused by resource planning, the T# words stay runtime reads through a V# only the snapshot holds").c_str());
-        return;
+        if (reuse) Keys[group * 4u + 3u] = group % 2u;
     }
     std::array<std::uint32_t, 3> paletteOf{0u, 1u, 0u};
+    std::array<std::uint32_t, 3> targetOf{0u, 1u, 0u};
     const auto check = [&](const Outcome& outcome, const std::string& what) {
         for (std::uint32_t group = 0; group < 4u; ++group) {
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-                const auto palette = paletteOf[keys[group][lane < 32u ? 0u : 1u]];
+                const auto record = keys[group][lane < 32u ? 0u : 1u];
+                const auto palette = paletteOf[record];
                 const auto x = lane % Width;
-                const std::array<std::uint32_t, 4> expected{std::bit_cast<std::uint32_t>(palette != 0u ? OtherFloatTexels[x] : FloatTexels[x]), std::bit_cast<std::uint32_t>(palette != 0u ? FloatTexels[x] : OtherFloatTexels[x]), 0u, 0x3f800000u};
+                const auto blue = !reuse ? 0u : Keys[group * 4u + 3u] != 0u ? behind[1u - palette][0] : records[targetOf[record]][4];
+                const std::array<std::uint32_t, 4> expected{std::bit_cast<std::uint32_t>(palette != 0u ? OtherFloatTexels[x] : FloatTexels[x]), std::bit_cast<std::uint32_t>(palette != 0u ? FloatTexels[x] : OtherFloatTexels[x]), blue, 0x3f800000u};
                 const auto* actual = outcome.words.data() + (group * Lanes + lane) * 4u;
-                Require(std::equal(expected.begin(), expected.end(), actual), name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual[0]) + " " + Hex(actual[1]) + " " + Hex(actual[2]) + " " + Hex(actual[3]) + ", expected " + Hex(expected[0]) + " " + Hex(expected[1]) + " 0x00000000 0x3f800000");
+                Require(std::equal(expected.begin(), expected.end(), actual), name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual[0]) + " " + Hex(actual[1]) + " " + Hex(actual[2]) + " " + Hex(actual[3]) + ", expected " + Hex(expected[0]) + " " + Hex(expected[1]) + " " + Hex(expected[2]) + " 0x3f800000");
             }
         }
     };
-    const auto taken = run();
-    Require(!Faulted(taken), name + ": the T#s read through the V# behind the record's pointer faulted:\n" + taken.log);
+    const auto taken = run(shader);
+    Require(!Faulted(taken) && !AddressFaulted(taken), name + ": the T#s read through the V# behind the record's pointer faulted:\n" + taken.log);
     check(taken, "the T#s at offsets 0 and 0x4c0 of the V# behind the record's pointer in a waterfall loop");
     link(1u, 0u);
     paletteOf[1] = 0u;
-    const auto moved = run();
-    Require(!Faulted(moved), name + ": the T#s behind a moved record pointer faulted:\n" + moved.log);
+    targetOf[1] = 0u;
+    const auto moved = run(shader);
+    Require(!Faulted(moved) && !AddressFaulted(moved), name + ": the T#s behind a moved record pointer faulted:\n" + moved.log);
     Require(moved.artifactId == taken.artifactId, name + ": moving a record's pointer recompiled the shader");
     check(moved, "the T#s after record 1's pointer moved to the other V#");
     point(0u, 1u);
     paletteOf = {1u, 1u, 1u};
-    const auto repointed = run();
-    Require(!Faulted(repointed), name + ": the T#s behind a moved V# faulted:\n" + repointed.log);
+    const auto repointed = run(shader);
+    Require(!Faulted(repointed) && !AddressFaulted(repointed), name + ": the T#s behind a moved V# faulted:\n" + repointed.log);
     Require(repointed.artifactId == taken.artifactId, name + ": moving the V# behind a record's pointer recompiled the shader");
     check(repointed, "the T#s after the V# behind records 0 and 1 moved to the other palette");
-    std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values").c_str());
+    if (reuse) {
+        std::puts((name + ": both T#s sampled at their own offsets, and T#2's dwords 0 and 1 re-read through the guest's V# as the later pointer, checked by the records' values").c_str());
+        return;
+    }
+    auto data = std::vector<std::uint32_t>(PointerSharedVsharpCode.begin(), PointerSharedVsharpCode.end());
+    data.insert(data.begin() + 43u, {0xf420101au, 0xfa000010u});
+    data.insert(data.begin() + 52u, 0x7e0c0240u);
+    data[54] = 0xbf89ffe1u;
+    std::string message;
+    try { static_cast<void>(run(data)); }
+    catch (const std::runtime_error& error) { message = error.what(); }
+    Require(message.find("not a valid runtime value") != std::string::npos, name + ": a data read through a third handle on the V#'s words was not refused by resource planning: " + message);
+    std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values; a data read through the V# refused").c_str());
 }
 
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
