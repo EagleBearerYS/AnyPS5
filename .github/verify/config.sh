@@ -1,0 +1,4 @@
+BASE=ff4412c7e6f155fed50689109cf17490ef791749
+REPEAT=3
+EXTRA_TESTS='guest_sce_net|guest_net_boolean_readback'
+NO_BEFORE=1
