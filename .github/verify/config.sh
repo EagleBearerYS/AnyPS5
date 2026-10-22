@@ -1,0 +1,4 @@
+BASE=df2569d2c5fc6adb68f6eb8b56ad0d0ddf35686b
+REPEAT=5
+EXTRA_TESTS='guest_kernel_sys_pthread_np_names|guest_kernel_sys_pthread_np_rwlockattr|guest_kernel_sys_pthread_np_isowned|guest_kernel_sys_pthread_np_kind'
+BEFORE_REPEAT=2
