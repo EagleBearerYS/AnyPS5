@@ -1747,12 +1747,17 @@ private:
         const auto reads = m_tablePlanningReads;
         const auto memory = m_tablePlanningMemory;
         PlanTableColumnPass();
-        while (!PlannedWithinLimits()) {
-            const auto group = LargestSelectedGroup();
-            if (group.empty()) {
-                return;
+        for (auto planned = PlannedResources(); !planned.WithinLimits(); planned = PlannedResources()) {
+            const auto heap = planned.samplers > ShaderInfo::MaxSamplers ? LargestDirectSamplerHeap() : std::vector<const IrValue*>{};
+            if (!heap.empty()) {
+                m_tabledSamplers.insert(m_tabledSamplers.end(), heap.begin(), heap.end());
+            } else {
+                const auto group = planned.images > ShaderInfo::MaxImages || planned.pairs > ShaderInfo::MaxSampledPairs ? LargestSelectedGroup() : std::vector<const IrValue*>{};
+                if (group.empty()) {
+                    return;
+                }
+                m_unselectedHandles.insert(m_unselectedHandles.end(), group.begin(), group.end());
             }
-            m_unselectedHandles.insert(m_unselectedHandles.end(), group.begin(), group.end());
             m_sources = sources;
             m_tableColumns = columns;
             m_tablePlanningReads = reads;
@@ -1761,9 +1766,20 @@ private:
         }
     }
 
-    bool PlannedWithinLimits() {
+    struct PlannedCounts {
+        std::size_t images = 0;
+        std::size_t pairs = 0;
+        std::size_t samplers = 0;
+
+        bool WithinLimits() const {
+            return images <= ShaderInfo::MaxImages && pairs <= ShaderInfo::MaxSampledPairs && samplers <= ShaderInfo::MaxSamplers;
+        }
+    };
+
+    PlannedCounts PlannedResources() {
         std::vector<ImageResource> images;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> pairs;
+        std::vector<std::uint32_t> samplers;
         std::vector<const IrValue*> directImages;
         std::vector<std::pair<const IrValue*, bool>> directSamplers;
         const auto direct = std::numeric_limits<std::uint32_t>::max() / 2u;
@@ -1809,10 +1825,40 @@ private:
                     sampler = direct + static_cast<std::uint32_t>(found - directSamplers.begin());
                     if (found == directSamplers.end()) directSamplers.emplace_back(samplerHandle, sampleAdjust);
                 }
+                if (std::ranges::find(samplers, sampler) == samplers.end()) samplers.push_back(sampler);
                 if (std::ranges::find(pairs, std::pair{imageIndex, sampler}) == pairs.end()) pairs.emplace_back(imageIndex, sampler);
             }
         }
-        return images.size() <= ShaderInfo::MaxImages && pairs.size() <= ShaderInfo::MaxSampledPairs;
+        return {images.size(), pairs.size(), samplers.size()};
+    }
+
+    std::vector<const IrValue*> LargestDirectSamplerHeap() {
+        const auto sources = m_sources;
+        std::vector<std::pair<std::uint32_t, std::vector<const IrValue*>>> heaps;
+        for (auto& block : m_program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (!ImageOpcodeInfoOf(inst->Opcode()).needsSampler || inst->ArgumentCount() < 2u) {
+                    continue;
+                }
+                IrValue& handle = *inst->Argument(1)->Resolve();
+                if (!DirectSampler(handle) || std::ranges::find(m_tabledSamplers, &handle) != m_tabledSamplers.end()) {
+                    continue;
+                }
+                TableColumnPlan plan;
+                if (!TryMakeTableColumn(handle, true, false, plan)) {
+                    continue;
+                }
+                const auto heap = std::ranges::find_if(heaps, [&](const auto& entry) { return entry.first == plan.source; });
+                if (heap == heaps.end()) {
+                    heaps.push_back({plan.source, {&handle}});
+                } else if (std::ranges::find(heap->second, &handle) == heap->second.end()) {
+                    heap->second.push_back(&handle);
+                }
+            }
+        }
+        m_sources = sources;
+        const auto largest = std::ranges::max_element(heaps, {}, [](const auto& entry) { return entry.second.size(); });
+        return largest == heaps.end() || largest->second.size() < 2u ? std::vector<const IrValue*>{} : largest->second;
     }
 
     std::vector<const IrValue*> LargestSelectedGroup() const {
@@ -1871,7 +1917,7 @@ private:
                 if (std::ranges::none_of(directImages, [&](const IrValue* handle) { return SameHandle(*handle, image); })) {
                     static_cast<void>(PlanTableColumn(image, false, memory.imageR128));
                 }
-                if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
+                if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && (!DirectSampler(*inst->Argument(1)->Resolve()) || std::ranges::find(m_tabledSamplers, inst->Argument(1)->Resolve()) != m_tabledSamplers.end())) {
                     static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
                 }
             }
@@ -2448,6 +2494,7 @@ private:
     std::vector<const IrValue*> m_tablePlanningReads;
     std::vector<std::uint32_t> m_tablePlanningMemory;
     std::vector<const IrValue*> m_unselectedHandles;
+    std::vector<const IrValue*> m_tabledSamplers;
     struct EdgeSelectorEntry {
         IrBlock* block = nullptr;
         std::vector<bool> edges;

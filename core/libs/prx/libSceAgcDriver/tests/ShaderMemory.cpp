@@ -2790,6 +2790,91 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
     require(twoHeaps->info.images.size() == 31u && selectedTables(*twoHeaps) == 30u && unselected != twoHeaps->info.images.end() && columnOf(*twoHeaps, *unselected).keyDomains.size() == 40u, (name + ": the larger heap was not merged first, or the smaller one lost its split").c_str());
 }
 
+struct TableSamplerGuest {
+    std::array<std::array<std::uint32_t, 8>, 64> heap{};
+    std::array<std::array<std::uint32_t, 4>, 64> samplers{};
+    std::array<std::uint32_t, 4> output{};
+    std::array<std::uint32_t, 256> srt{};
+};
+
+constexpr std::uint32_t TableSamplerDirectWord = 64u;
+
+std::vector<std::uint32_t> TableHeapSamplerCode(std::uint32_t reads, bool direct) {
+    std::vector<std::uint32_t> code{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000030u, 0xf4080a00u, 0xfa000040u, 0x7e100280u};
+    for (std::uint32_t read = 0; read < reads; read++) {
+        code.insert(code.end(), {0xf4000400u, 0xfa000050u + read * 4u, 0x8f128410u, 0x8f108510u, 0xf42c0502u, 0x20000000u});
+        if (direct) {
+            code.insert(code.end(), {0xf4080200u, 0xfa000000u | ((TableSamplerDirectWord + read * 4u) * 4u)});
+        } else {
+            code.insert(code.end(), {0xf4280214u, 0x24000000u});
+        }
+        code.insert(code.end(), {0xf09c0f08u, 0x00450400u, 0x06100908u});
+    }
+    code.insert(code.end(), {0xe0700000u, 0x80070800u, 0xbf810000u});
+    return code;
+}
+
+void verifyHeapSamplersWithinLimit(bool direct) {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[4];
+    alignas(4096) static TableSamplerGuest guest;
+    for (std::uint32_t record = 0; record < guest.heap.size(); record++) {
+        guest.heap[record] = TableT(textures[record % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, record + 1u);
+        guest.samplers[record] = {0x92u, record << 12u, 0u, 0u};
+    }
+    const auto heapV = TableV(guest.heap.data(), 32u, static_cast<std::uint32_t>(guest.heap.size()));
+    const auto samplerV = TableV(guest.samplers.data(), 16u, static_cast<std::uint32_t>(guest.samplers.size()));
+    const auto outputV = TableV(guest.output.data(), 0u, 16u);
+    guest.srt = {};
+    std::copy(heapV.begin(), heapV.end(), guest.srt.begin());
+    std::copy(outputV.begin(), outputV.end(), guest.srt.begin() + 12);
+    std::copy(samplerV.begin(), samplerV.end(), guest.srt.begin() + 16);
+    for (std::uint32_t read = 0; 20u + read < TableSamplerDirectWord; read++) guest.srt[20u + read] = read + 1u;
+    for (std::uint32_t read = 0; TableSamplerDirectWord + read * 4u + 4u <= guest.srt.size(); read++) {
+        const std::array<std::uint32_t, 4> sampler{0x92u, (read + 1u) << 12u, 0u, 0u};
+        std::copy(sampler.begin(), sampler.end(), guest.srt.begin() + TableSamplerDirectWord + read * 4u);
+    }
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const auto selectedTables = [](const IrResourcePlan& plan) {
+        return static_cast<std::uint32_t>(std::count_if(plan.info.images.begin(), plan.info.images.end(), [&](const ImageResource& image) { return image.table != NoTable && plan.descriptorSources.at(image.source).tableColumn->selected; }));
+    };
+    const auto directSamplers = [](const IrResourcePlan& plan) {
+        return static_cast<std::uint32_t>(std::count_if(plan.info.samplers.begin(), plan.info.samplers.end(), [&](const SamplerResource& sampler) { return sampler.table == NoTable && !plan.descriptorSources.at(sampler.source).tableColumn.has_value(); }));
+    };
+    const std::string name = direct ? "direct samplers past the sampler limit" : "heap samplers past the sampler limit";
+    const auto limit = ShaderInfo::MaxSamplers;
+    const auto fittingCode = TableHeapSamplerCode(limit, direct);
+    const auto fitting = GetResourcePlan(TableRequest(fittingCode, userData));
+    require(fitting->info.samplers.size() == limit && directSamplers(*fitting) == limit && fitting->info.images.size() == limit && selectedTables(*fitting) == limit && fitting->info.sampledPairs.size() == limit, (name + ": reads within the sampler limit did not keep their direct samplers and selected records").c_str());
+    if (direct) {
+        const auto past = TableHeapSamplerCode(limit + 1u, true);
+        expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(past, userData))); }, "sampler resource limit exceeded", (name + ": distinct direct samplers past the limit were accepted").c_str());
+        std::cout << name << ": " << limit + 1u << " distinct direct samplers still refused\n";
+        return;
+    }
+    const auto reads = 40u;
+    const auto pastCode = TableHeapSamplerCode(reads, false);
+    const auto request = TableRequest(pastCode, userData);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.samplers.size() == 1u && plan->info.samplers[0].table != NoTable && plan->info.images.size() == reads && selectedTables(*plan) == reads && plan->info.sampledPairs.size() == reads, (name + ": the heap's sampler reads were not shared through one sampler table beside the selected records").c_str());
+    const auto column = *plan->descriptorSources.at(plan->info.samplers[0].source).tableColumn;
+    require(column.sampler && !column.selected && !column.unkeyed && column.keyDomains.size() == reads, (name + ": the sampler table is not the union of the reads' keys").c_str());
+    const auto compiled = CompileTable(request);
+    const auto& tables = compiled.capture->snapshot.tables;
+    const auto& snapshot = tables.tables.at(plan->info.samplers[0].table);
+    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
+    for (const auto key : {1u, reads / 2u, reads}) {
+        require(key < snapshot.codes.size() && (snapshot.codes[key] & Abi::PoisonFlag) == 0u, (name + ": a key does not bind its sampler record").c_str());
+        const auto& words = snapshot.words.at(snapshot.codes[key]).dwords;
+        require(std::equal(guest.samplers[key].begin(), guest.samplers[key].end(), words.begin()), (name + ": a key binds another sampler record").c_str());
+    }
+    const auto unread = TableSamplerDirectWord - 20u + 1u;
+    require(snapshot.codes.size() == guest.samplers.size() && snapshot.codes.at(unread) == outside && snapshot.codes.back() == outside, (name + ": a key no read selects was bound").c_str());
+    std::cout << name << ": " << reads << " heap sampler reads share 1 sampler table beside " << selectedTables(*plan) << " selected records, " << plan->info.sampledPairs.size() << " pairs\n";
+}
+
 void verifyImageTableSrtKey() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -7681,6 +7766,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--selected-records-direct-image-limit") {
             verifySelectedRecordsWithinLimits(false, true);
             std::cout << "Direct images count toward the image limit beside selected image-table records\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--heap-sampler-limit") {
+            verifyHeapSamplersWithinLimit(false);
+            std::cout << "Heap sampler reads past the sampler limit share one sampler table\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--direct-sampler-limit") {
+            verifyHeapSamplersWithinLimit(true);
+            std::cout << "Distinct direct samplers past the sampler limit are still refused\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--selected-records-direct-pair-limit") {
