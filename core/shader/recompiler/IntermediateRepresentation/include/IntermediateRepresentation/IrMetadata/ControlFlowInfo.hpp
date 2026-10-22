@@ -42,6 +42,7 @@ struct PointerChase {
     std::uint32_t immediate = 0;
     std::uint32_t readOffset = 0;
     std::uint32_t readImmediate = 0;
+    std::uint32_t readHighImmediate = 0;
 
     bool operator==(const PointerChase& other) const = default;
 };

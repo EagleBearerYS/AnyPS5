@@ -1098,6 +1098,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
             chases.Value(chase.immediate);
             chases.Value(chase.readOffset);
             chases.Value(chase.readImmediate);
+            chases.Value(chase.readHighImmediate);
         });
         out.Value(column.pointerChaseDepth);
         out.Value(column.foldedAddend);
@@ -1269,6 +1270,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             chases.Value(chase.immediate);
             chases.Value(chase.readOffset);
             chases.Value(chase.readImmediate);
+            chases.Value(chase.readHighImmediate);
         });
         in.Value(column.pointerChaseDepth);
         in.Value(column.foldedAddend);
@@ -1318,6 +1320,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         if (parent.has_value() && (column.buffer || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
         if (column.pointerKeyed && (!column.indirect || column.buffer || parent.has_value())) return false;
         if (column.pointerChases.empty() != (column.pointerChaseDepth == 0u) || column.pointerChaseDepth > MaxPointerChaseDepth || (column.pointerChaseDepth != 0u && !column.pointerKeyed)) return false;
+        if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return chase.readHighImmediate % sizeof(std::uint32_t) != 0u || chase.readHighImmediate == chase.readImmediate; })) return false;
     }
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;

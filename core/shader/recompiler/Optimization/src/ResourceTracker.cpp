@@ -934,11 +934,13 @@ private:
         return true;
     }
 
-    bool ChaseHighRead(IrValue& read, const IrValue& handle, std::uint32_t readOffset, std::uint32_t readImmediate) const {
+    std::optional<std::uint32_t> ChaseHighRead(IrValue& read, const IrValue& handle, std::uint32_t readOffset, std::uint32_t readImmediate) const {
         IrValue* highHandle = nullptr;
         std::uint32_t highOffset = 0;
         std::uint32_t highImmediate = 0;
-        return ChaseRead(read, highHandle, highOffset, highImmediate) && (highHandle == &handle || EquivalentValue(m_program.Resources(), &handle, highHandle)) && highOffset == readOffset && highImmediate == readImmediate + static_cast<std::uint32_t>(sizeof(std::uint32_t));
+        if (!ChaseRead(read, highHandle, highOffset, highImmediate) || (highHandle != &handle && !EquivalentValue(m_program.Resources(), &handle, highHandle))) return std::nullopt;
+        if (highOffset != readOffset || highImmediate % sizeof(std::uint32_t) != 0u || highImmediate == readImmediate) return std::nullopt;
+        return highImmediate;
     }
 
     bool PointerRecordPairs(IrValue* low, IrValue* high, std::vector<IrValue*>& lowReads, std::vector<IrValue*>& highReads, std::vector<PointerChase>& chases, std::uint32_t& chaseDepth) const {
@@ -981,7 +983,9 @@ private:
                         for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
                         continue;
                     }
-                    if (!ChaseHighRead(*highWord, *handle, chase.readOffset, chase.readImmediate)) return false;
+                    const auto highImmediate = ChaseHighRead(*highWord, *handle, chase.readOffset, chase.readImmediate);
+                    if (!highImmediate.has_value()) return false;
+                    chase.readHighImmediate = *highImmediate;
                     const auto index = site(*handle, *pointer, chase);
                     if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
                     continue;

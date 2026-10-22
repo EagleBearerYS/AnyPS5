@@ -963,7 +963,7 @@ private:
         const auto buffer = decodeBufferDescriptor(descriptor);
         if (buffer.Type() != 0u) return std::nullopt;
         const auto low = ImageTableAbi::ScalarBufferDword(chase.readOffset, chase.readImmediate, buffer.GetSize());
-        const auto high = ImageTableAbi::ScalarBufferDword(chase.readOffset, chase.readImmediate + 4u, buffer.GetSize());
+        const auto high = ImageTableAbi::ScalarBufferDword(chase.readOffset, chase.readHighImmediate, buffer.GetSize());
         if (!low.has_value() || !high.has_value() || !AddressAccessible(buffer.Base48() + *low) || !AddressAccessible(buffer.Base48() + *high)) return std::nullopt;
         tables.ranges.emplace_back(buffer.Base48() + *low, sizeof(std::uint32_t));
         tables.ranges.emplace_back(buffer.Base48() + *high, sizeof(std::uint32_t));
