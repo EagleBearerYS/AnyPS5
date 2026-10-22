@@ -1587,15 +1587,6 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         case NET_SO_RCVTIMEO: value = socket.native->receiveTimeout; break;
         case NET_SO_SNDTIMEO: value = socket.native->sendTimeout; break;
         case NET_SO_ONESBCAST: value = socket.onesbcast; break;
-        case NET_SO_REUSEADDR:
-        case NET_SO_BROADCAST: {
-            int enabled = 0;
-            NativeLength size = sizeof(enabled);
-            if (::getsockopt(socket.native->value, SOL_SOCKET, optname == NET_SO_REUSEADDR ? SO_REUSEADDR : SO_BROADCAST, reinterpret_cast<char*>(&enabled), &size) != 0)
-                return fail(native_error());
-            value = enabled != 0 ? optname : 0;
-            break;
-        }
         case NET_SO_ERROR: {
             int pending = 0;
             NativeLength size = sizeof(pending);
