@@ -976,11 +976,6 @@ int APS5_VABI sceShellCoreUtilGetFsckProgress(const char* titleId, std::uint32_t
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 bool APS5_VABI sceShellCoreUtilGetGnmCompositorOnScreenProfilerFlag() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1096,17 +1091,7 @@ int APS5_VABI sceShellCoreUtilGetPsnAccountInfo(ShellCorePsnAccountInfoFirst* fi
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilGetRemotePlayStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilGetRunLevel() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1232,11 +1217,6 @@ bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress() {
 }
 
 int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2032,11 +2012,6 @@ int APS5_VABI sceSystemServiceGetRecentLotusPushedButton(std::uint32_t timeout, 
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetRenderingMode() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2093,11 +2068,6 @@ int APS5_VABI sceSystemServiceIsBgmPlaying() {
 }
 
 int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -11,6 +11,12 @@ extern "C" int APS5_VABI sceLncUtilEnableSuspendNotification();
 extern "C" int APS5_VABI sceLncUtilDisableSuspendNotification();
 extern "C" int APS5_VABI sceSystemServiceEnableSuspendNotification();
 extern "C" int APS5_VABI sceSystemServiceDisableSuspendNotification();
+extern "C" int APS5_VABI sceShellCoreUtilGetRemotePlayStatus(bool* active);
+extern "C" int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active);
+extern "C" int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active);
+extern "C" int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active);
+extern "C" bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir();
+extern "C" bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir();
 
 namespace {
 
@@ -63,11 +69,29 @@ void TestSuspend() {
     });
 }
 
+template<typename TCall>
+bool ReportsInactive(TCall call) {
+    bool active = true;
+    return call(&active) == SYSTEM_SERVICE_OK && !active && call(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER;
+}
+
+void TestSessions() {
+    Case("sceShellCoreUtilGetRemotePlayStatus", [] { return ReportsInactive(sceShellCoreUtilGetRemotePlayStatus); });
+    Case("sceSystemServiceGetRemoteplayStatus", [] { return ReportsInactive(sceSystemServiceGetRemoteplayStatus); });
+    Case("sceShellCoreUtilGetSharePlayStatus", [] { return ReportsInactive(sceShellCoreUtilGetSharePlayStatus); });
+    Case("sceShellCoreUtilGetGameLiveStreamingStatus", [] { return ReportsInactive(sceShellCoreUtilGetGameLiveStreamingStatus); });
+    Case("sceShellCoreUtilIsGameLiveStreamingOnAir", [] { return !sceShellCoreUtilIsGameLiveStreamingOnAir(); });
+    Case("sceSystemServiceIsGameLiveStreamingOnAir", [] {
+        return !sceSystemServiceIsGameLiveStreamingOnAir() && sceSystemServiceIsGameLiveStreamingOnAir() == sceShellCoreUtilIsGameLiveStreamingOnAir();
+    });
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "suspend") TestSuspend();
+    else if (mode == "sessions") TestSessions();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
     return failures == 0 ? 0 : 1;
