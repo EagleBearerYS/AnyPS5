@@ -1,0 +1,4 @@
+BASE=0def01bcb5c71044675390e4d9cf11b35d068967
+REPEAT=3
+EXTRA_TESTS='agc_import_settle_initial_dcc|agc_driver_msaa_dcc_compared_import_2|agc_driver_msaa_dcc_compared_import_4|agc_driver_msaa_dcc_compared_import_8|agc_driver_msaa_dcc_clear_2|agc_driver_msaa_dcc_clear_4|agc_driver_msaa_dcc_clear_8|^agc_import|^agc_driver_msaa'
+NO_BEFORE=1
