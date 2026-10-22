@@ -1,5 +1,5 @@
-READY
-since: 2026-10-22T20:25:16Z
+BUSY BF-156
+since: 2026-10-22T20:25:30Z
 previous: PRM-057 stopped after part 2 (fix moves the refusal to CheckCurrent; no commit, no push), results/cloud-5/PRM-057.md. Before that: BF-154 done, results/cloud-5/BF-154.md; BF-152 done, results/cloud-5/BF-152.md; PRM-054 done, results/cloud-5/PRM-054.md.
 
 RESULT (setup):
