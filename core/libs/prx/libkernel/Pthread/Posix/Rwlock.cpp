@@ -113,4 +113,9 @@ int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock) {
     return toPosix(scePthreadRwlockWrlock(rwlock));
 }
 
+
+int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name) {
+    return PosixThread::AcceptObjectName(rwlock, name, __func__);
+}
+
 }

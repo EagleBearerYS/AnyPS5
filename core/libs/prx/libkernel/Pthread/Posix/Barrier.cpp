@@ -1,4 +1,5 @@
 #include "prx/libc/include/General.hpp"
+#include "Common.hpp"
 #include <climits>
 #include <condition_variable>
 #include <cstdint>
@@ -101,6 +102,11 @@ int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrie
     delete value;
     *barrier = nullptr;
     return 0;
+}
+
+
+int APS5_VABI pthread_barrier_setname_np_nid_postfix(PthreadBarrierPrivate** barrier, const char* name) {
+    return PosixThread::AcceptObjectName(barrier, name, __func__);
 }
 
 }

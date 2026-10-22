@@ -117,6 +117,10 @@ int APS5_VABI sem_post_nid_postfix(void* sem) {
     return 0;
 }
 
+int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
+    return PosixThread::AcceptObjectName(sem, name, __func__);
+}
+
 int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
     auto* semaphore = Get(sem);
     if (!semaphore || !value) return Fail(PosixThread::GUEST_EINVAL);

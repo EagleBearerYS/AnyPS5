@@ -80,4 +80,9 @@ int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* att
     return 0;
 }
 
+
+int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char* name) {
+    return PosixThread::AcceptObjectName(cond, name, __func__);
+}
+
 }

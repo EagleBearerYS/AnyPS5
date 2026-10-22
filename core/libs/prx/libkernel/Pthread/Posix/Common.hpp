@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <chrono>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include "SceTypes.hpp"
 
 extern "C" int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
@@ -18,6 +20,12 @@ constexpr int GUEST_ETIMEDOUT = 60;
 
 inline int ToErrno(int sceResult) {
     return sceResult == 0 ? 0 : static_cast<int>(static_cast<std::uint32_t>(sceResult) & 0xFFFFu);
+}
+
+inline int AcceptObjectName(const void* object, const char* name, const char* function) {
+    if (!object) throw std::invalid_argument(std::string(function) + ": null object");
+    if (!name) throw std::invalid_argument(std::string(function) + ": null name");
+    return 0;
 }
 
 // Converts an absolute deadline on the guest clock into a relative wait, clamped to what the sce layer accepts.

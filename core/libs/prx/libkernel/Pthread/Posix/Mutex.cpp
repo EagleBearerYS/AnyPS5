@@ -169,4 +169,9 @@ int APS5_VABI pthread_mutexattr_gettype_nid_postfix(const PthreadMutexattr* attr
     return 0;
 }
 
+
+int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {
+    return PosixThread::AcceptObjectName(mutex, name, __func__);
+}
+
 }

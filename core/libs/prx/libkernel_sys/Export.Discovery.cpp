@@ -383,16 +383,6 @@ int APS5_VABI pthread_attr_setstackaddr_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_barrier_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_cond_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_get_specificarray_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -424,11 +414,6 @@ int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_mutex_init_for_mono_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_mutex_setname_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -469,11 +454,6 @@ int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlock_setname_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2494,11 +2474,6 @@ int APS5_VABI sem_close_nid_postfix(void) {
 }
 
 int APS5_VABI sem_open_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sem_setname_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
