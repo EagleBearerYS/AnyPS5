@@ -146,6 +146,14 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
     return 0;
 }
 
+int APS5_VABI scePthreadMutexattrSetkind(PthreadMutexattr* attr, int kind) {
+    if (!attr || !*attr)
+        throw std::invalid_argument("Mutex attribute is null or uninitialized");
+    if (kind < 1 || kind > 4)
+        throw std::invalid_argument("Mutex kind is outside 1 to 4");
+    return scePthreadMutexattrSettype(attr, kind);
+}
+
 int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
