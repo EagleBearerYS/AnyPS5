@@ -620,6 +620,18 @@ std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (target.htilePipeAligned ? 1u << 19u : 0u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
+void NoteRenderControl(const DepthTarget& target, std::uint32_t control) {
+    AgcDriver::QueueState queue;
+    queue.context[0x000] = control;
+    queue.context[0x010] = (target.format == VK_FORMAT_D16_UNORM ? 1u : 3u) | (static_cast<std::uint32_t>(std::countr_zero(target.samples)) << 2u);
+    queue.context[0x011] = target.stencilAddress != 0u ? 1u : 0u;
+    queue.context[0x012] = static_cast<std::uint32_t>((target.address | target.pipeBankXor) >> 8u);
+    queue.context[0x01a] = static_cast<std::uint32_t>((target.address >> 40u) & 0xffu);
+    const auto decoded = DecodeDepthRenderControl(queue);
+    Require(decoded.has_value() && decoded->address == target.address && decoded->samples == target.samples && decoded->control == control, "a DB_RENDER_CONTROL draw over the native depth target was not decoded");
+    NoteDepthRenderControl(*decoded);
+}
+
 bool DepthSupported(const Context& context, VkFormat format, std::uint32_t fragments) {
     VkImageFormatProperties properties{};
     const auto result = context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0u, &properties);
@@ -1179,6 +1191,7 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     auto bareWords = words;
     bareWords[6] &= ~((0xffu << 24u) | (1u << 21u) | (1u << 19u));
     bareWords[7] = 0u;
+    NoteRenderControl(target, 0x60u);
     auto bare = CachedSampledTexture(context, bareWords);
     Require(bare != nullptr && bare != texture && CachedSampledTexture(context, bareWords) == bare, "native depth sampled through a descriptor without HTILE was not given its own reused view");
     const Fetch bareFetch(context, *bare, output, FetchShader(extent.width, extent.height, fragments, false, true));
@@ -1407,6 +1420,92 @@ void CheckAliasedStencil(Context context, std::uint32_t fragments, AliasCase whi
     Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0xa5}; }), "native depth over an aliased stencil plane read or wrote the guest stencil plane");
     texture.reset();
     std::printf("Native depth over a stencil plane aliased by a cleared R8 colour target samples=%u: imported from the colour target's clear, refilled from its fill, refused once the colour target drew\n", fragments);
+}
+
+void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
+    TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::memset(metadata.Data(), 0, metadataBytes);
+    std::memset(stencil.Data(), 0, stencilBytes);
+    DepthTarget target{memory.Address(), stencilPlane ? stencil.Address() : 0u, extent, stencilPlane ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    const auto words = DepthSampleWords(target);
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "native depth for the in-place expand gate was not imported");
+    auto bareWords = words;
+    bareWords[6] &= ~((0xffu << 24u) | (1u << 21u) | (1u << 19u));
+    bareWords[7] = 0u;
+    const auto refused = [&] { TargetRefuses([&] { CachedSampledTexture(context, bareWords); }, "native multisample depth sampled metadata or XOR mismatch"); };
+    const std::uint32_t expand = stencilPlane ? 0x60u : 0x40u;
+    refused();
+    if (stencilPlane) {
+        NoteRenderControl(target, 0x40u);
+        refused();
+    }
+    NoteRenderControl(target, expand);
+    auto bare = CachedSampledTexture(context, bareWords);
+    Require(bare != nullptr && bare != texture && CachedSampledTexture(context, bareWords) == bare, "native depth sampled without metadata after an in-place expand was not given its own reused view");
+    recorder.Sync();
+    const auto count = extent.width * extent.height * fragments;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *bare, output, FetchShader(extent.width, extent.height, fragments, false, true));
+    const auto sample = [&](const DepthRaster* raster, float offset, std::optional<float> drawn) {
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        if (raster != nullptr) {
+            CommandBatch rasterBatch(context);
+            raster->Run(rasterBatch.Handle(), offset);
+            rasterBatch.SubmitAndWait();
+            Require(CachedSampledTexture(context, bareWords) == bare, "native depth sampled without metadata changed its view after a raster write");
+            recorder.Sync();
+        }
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            const auto expected = drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth;
+            Require(result == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "native depth sampled without metadata after an in-place expand lost a depth sample");
+        }
+    };
+    sample(nullptr, 0.0f, std::nullopt);
+    const DepthRaster raster(context, target, view);
+    sample(&raster, 0.25f, 0.25f);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] { std::memset(metadata.Data(), 0, metadataBytes); });
+    refused();
+    NoteRenderControl(target, expand);
+    Require(CachedSampledTexture(context, bareWords) == bare, "native depth sampled without metadata was not accepted again after another in-place expand");
+    NoteRenderControl(target, 0x1u);
+    refused();
+    NoteRenderControl(target, expand);
+    Require(CachedSampledTexture(context, bareWords) == bare, "native depth sampled without metadata was not accepted again after another in-place expand");
+    if (stencilPlane) {
+        NoteDepthMetadataFill(stencil.Address(), stencilBytes, 0u);
+        AgcDriver::GuestMemory::StoreOwnBytes(stencil.Address(), stencilBytes, [&] { std::memset(stencil.Data(), 0, stencilBytes); });
+    } else {
+        if (NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes)) ArmHtileDepthClear(target.htileAddress, metadataBytes);
+        AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] { std::memset(metadata.Data(), 0, metadataBytes); });
+    }
+    refused();
+    bare.reset();
+    texture.reset();
+    std::printf("Native depth in-place expand gate samples=%u stencil=%u: sampled without metadata only after an expand draw, refused again after an HTILE fill, a clear draw and %s\n", fragments, stencilPlane, stencilPlane ? "a stencil plane fill" : "an HTILE mask clear");
 }
 
 void CheckEligibility(Context context) {
@@ -1822,6 +1921,20 @@ int main(int argc, char** argv) {
                 }
             }
             std::printf("Native depth with an aliased stencil plane cases checked=%u unavailable=%u\n", checked, unavailable);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--expand-gate") {
+            const auto supported = [&](std::uint32_t samples, bool stencilPlane) { return DepthSupported(context, stencilPlane ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT, samples) && (!stencilPlane || (context.limits.framebufferStencilSampleCounts & samples) != 0u); };
+            Require(supported(4u, true), "the in-place expand gate regression requires sampled D32S8 with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                for (const bool stencilPlane : {false, true}) {
+                    if (!supported(samples, stencilPlane)) { ++unavailable; continue; }
+                    CheckExpandGate(context, samples, stencilPlane);
+                    ++checked;
+                }
+            }
+            std::printf("Native depth in-place expand gate cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
         Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--retirement"), "invalid native depth fixture arguments");
