@@ -1,0 +1,4 @@
+BASE=a6dcea9279b53b3a39c13695eac66f7c8b5b503c
+REPEAT=10
+EXTRA_TESTS='windows_write_watch|windows_write_watch_verify_direct|agc_private_collect|guest_memory|agc_write_watch_coverage|agc_driver_committed_imports|agc_write_guards|agc_import_watch'
+NO_BEFORE=1
