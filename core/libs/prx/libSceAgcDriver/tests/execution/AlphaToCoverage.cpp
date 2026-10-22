@@ -946,9 +946,11 @@ const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_
     };
     const Color written{0.25f, 0.25f, 0.25f, 0.25f};
     const Color initial{0.0f, 0.0f, 0.0f, 1.0f};
+    constexpr std::string_view deviceLimit = "AGC graphics: the device cannot render color with the target's sample count";
     for (const auto samples : {2u, 4u, 8u}) {
         if (selectedSamples != 0 && samples != selectedSamples) continue;
-        for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
+        for (const auto mode : {7u, 8u, 9u, 10u, 11u, 0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
+            if (mode >= 7 && samples != 8) continue;
             const bool watchedImports = mode == 5;
             AgcDriver::Graphics::SetImportWatch(context, watchedImports ? AgcDriver::Graphics::ImportWatch::Watch : decided);
             blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
@@ -967,29 +969,53 @@ const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_
             target.cmaskAddress = cmask.Address();
             target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
             target.cmaskFastClear = true;
+            Block* fmask = nullptr;
+            if (mode >= 7) {
+                blocks.push_back(std::make_unique<Block>(2u * BlockBytes));
+                fmask = blocks.back().get();
+                std::memset(fmask->data, 0x11, fmask->bytes);
+                target.fmaskAddress = fmask->Address();
+                target.fmaskPipeBankXor = 0;
+            }
             const std::array<std::pair<const Block*, std::size_t>, 3> planes{{{&source, static_cast<std::size_t>(AgcDriver::Graphics::MultisampledColorBytes(target))}, {&metadata, AgcDriver::Graphics::MultisampledDccBytes(target)}, {&cmask, static_cast<std::size_t>(target.cmaskBytes)}}};
             if (mode == 4) {
                 AgcDriver::GuestMemory::Unwatch(source.Address(), source.bytes);
+            } else if (mode == 11) {
+                AgcDriver::GuestMemory::Unwatch(fmask->Address(), fmask->bytes);
             } else {
                 std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
                 for (std::size_t plane = 0; plane < planes.size(); ++plane) {
-                    if (mode == 6 && plane != 1) continue;
+                    if ((mode == 6 && plane != 1) || mode == 8) continue;
                     const auto* import = AgcDriver::Graphics::HostImportFor(context, planes[plane].first->Address(), planes[plane].first->bytes);
                     Require(import != nullptr, "the host import of a multisampled DCC plane failed");
                     Require(import->unwatched != watchedImports && AgcDriver::GuestMemory::Watched(planes[plane].first->Address(), planes[plane].second) == watchedImports, "a host import of a multisampled DCC plane did not take the write-watch mode the test set");
                 }
+                if (fmask != nullptr) {
+                    const auto* import = AgcDriver::Graphics::HostImportFor(context, fmask->Address(), fmask->bytes);
+                    Require(import != nullptr && import->unwatched && !AgcDriver::GuestMemory::Watched(fmask->Address(), fmask->bytes), "the host import of the FMASK plane was not compared");
+                }
+                if (mode == 8) {
+                    for (const auto& [block, bytes] : planes) Require(AgcDriver::GuestMemory::Watched(block->Address(), bytes), "the FMASK plane's import took a color or metadata plane out of the write watch");
+                }
             }
-            const std::string_view refusal = mode == 4 ? "initial multisampled DCC contents require watched" : "";
+            const char* fmaskCase = mode == 7 ? "color, DCC, CMASK and FMASK compared" : mode == 8 ? "only the FMASK compared" : mode == 9 ? "a CPU store of a new byte into a compared FMASK" : mode == 10 ? "a same-value driver store into a compared FMASK" : "an explicitly unwatched FMASK";
+            const std::string_view refusal = mode == 4 ? "initial multisampled DCC contents require watched" : mode == 11 ? "native FMASK contents require watched guest memory" : "";
             bool refused = false;
             try {
                 device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
                 Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
             } catch (const std::runtime_error& error) {
+                if (mode >= 7 && mode != 11 && std::string_view(error.what()) == deviceLimit) {
+                    std::printf("8 samples, %s: the FMASK passed the initial import checks, then %s, so its reuse is not tested\n", fmaskCase, error.what());
+                    programCount = 0;
+                    continue;
+                }
                 if (refusal.empty()) throw;
                 refused = std::string_view(error.what()).find(refusal) != std::string_view::npos;
             }
             if (!refusal.empty()) {
-                Require(refused, "an explicitly unwatched multisampled DCC color range was not refused at its initial import");
+                Require(refused, mode == 11 ? "an explicitly unwatched FMASK range was not refused at its initial import" : "an explicitly unwatched multisampled DCC color range was not refused at its initial import");
+                if (mode == 11) std::printf("8 samples, %s: refused at the initial import\n", fmaskCase);
                 programCount = 0;
                 continue;
             }
@@ -1013,27 +1039,35 @@ const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_
                 }
             };
             resolve();
-            if (mode == 0 || mode >= 5) {
+            if (mode == 0 || (mode >= 5 && mode <= 8)) {
                 Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
                 resolve();
+                if (mode >= 7) std::printf("8 samples, %s: imported and reused\n", fmaskCase);
                 programCount = 0;
                 continue;
             }
-            const char* plane = mode == 1 ? "color" : mode == 2 ? "DCC" : "CMASK";
-            const auto& [block, bytes] = planes[mode - 1u];
+            const char* plane = mode == 1 ? "color" : mode == 2 ? "DCC" : mode == 3 ? "CMASK" : "FMASK";
+            const auto& [block, bytes] = mode >= 9 ? std::pair<const Block*, std::size_t>{fmask, fmask->bytes} : planes[mode - 1u];
             if (mode == 1) static_cast<volatile std::uint8_t*>(source.data)[0] = 0x5au;
             if (mode == 2) static_cast<volatile std::uint8_t*>(metadata.data)[0] = 0x00u;
             if (mode == 3) {
                 const std::array<std::byte, 1> same{std::byte{0xcc}};
                 AgcDriver::GuestMemory::Write(cmask.Address(), same);
             }
+            if (mode == 9) static_cast<volatile std::uint8_t*>(fmask->data)[0] = 0x5au;
+            if (mode == 10) {
+                const std::array<std::byte, 1> same{std::byte{0x11}};
+                AgcDriver::GuestMemory::Write(fmask->Address(), same);
+            }
+            const std::string_view storeRefusal = mode >= 9 ? "writes to a resident native FMASK" : "writes to a resident multisampled DCC";
             try {
                 Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
             } catch (const std::runtime_error& error) {
-                refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                refused = std::string_view(error.what()).find(storeRefusal) != std::string_view::npos;
                 if (refused) expectRange(error.what(), plane, block->Address(), bytes, samples);
             }
-            Require(refused, mode == 3 ? "a same-value driver store over a compared CMASK range did not invalidate multisampled DCC residency" : "a CPU store of new bytes over a compared multisampled DCC plane did not invalidate its residency");
+            Require(refused, mode == 3 ? "a same-value driver store over a compared CMASK range did not invalidate multisampled DCC residency" : mode == 10 ? "a same-value driver store over a compared FMASK range did not invalidate its residency" : mode == 9 ? "a CPU store of a new byte over a compared FMASK range did not invalidate its residency" : "a CPU store of new bytes over a compared multisampled DCC plane did not invalidate its residency");
+            if (mode >= 9) std::printf("8 samples, %s: refused at reuse\n", fmaskCase);
             programCount = 0;
         }
     }

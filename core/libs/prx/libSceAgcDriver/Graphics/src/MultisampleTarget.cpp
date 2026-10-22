@@ -334,6 +334,7 @@ public:
         dccRanges.clear();
         dccCopies.clear();
         fmaskRange.reset();
+        fmaskCopy = {};
         metadataValid = std::make_shared<std::atomic<bool>>(true);
         const auto initial = initialDccClear(use);
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
@@ -542,6 +543,7 @@ private:
         std::array<std::uint64_t, 2> checked{};
     };
     mutable std::vector<DccCopy> dccCopies;
+    mutable DccCopy fmaskCopy;
     std::optional<std::uint32_t> dccFill;
     std::optional<std::uint32_t> cmaskFill;
 
@@ -549,14 +551,11 @@ private:
         return index < dccCopies.size() && dccCopies[index].compared;
     }
 
-    DccCopy comparedCopy(std::size_t index, std::vector<std::byte> bytes) const {
-        const auto& range = dccRanges[index];
+    static DccCopy comparedCopy(const GuestMemory::UnchangedQuery& range, std::vector<std::byte> bytes) {
         return {true, std::move(bytes), GuestMemory::NewestStamp(range.address, range.bytes), {}};
     }
 
-    bool copyCurrent(std::size_t index) const {
-        const auto& range = dccRanges[index];
-        auto& copy = dccCopies[index];
+    static bool copyCurrent(const GuestMemory::UnchangedQuery& range, DccCopy& copy) {
         if (GuestMemory::NewestStamp(range.address, range.bytes) != copy.stamp) return false;
         const auto epoch = GuestMemory::CollectEpoch();
         const std::array<std::uint64_t, 2> seen{epoch, GuestMemory::ForgetSerial()};
@@ -576,7 +575,7 @@ private:
         if (dccRanges.size() > 2) {
             const auto& range = dccRanges[2];
             auto* recorder = Recorder::Active();
-            const bool unchanged = compared(2) ? copyCurrent(2) : GuestMemory::UnchangedSince(range.address, range.bytes, range.generation);
+            const bool unchanged = compared(2) ? copyCurrent(range, dccCopies[2]) : GuestMemory::UnchangedSince(range.address, range.bytes, range.generation);
             const bool written = !unchanged || (recorder != nullptr && recorder->PendingWriteOverlaps(range.address, range.bytes));
             const auto landed = LandedUniformMetadataByte(range.address, range.bytes);
             if (!landed || (written && (!cmaskPattern || *cmaskPattern != *landed * 0x01010101u))) return false;
@@ -599,7 +598,7 @@ private:
         clear = MultisampledDccClear(use, landedBytes[0], landedBytes[1]);
         std::copy(metadata.begin(), metadata.end(), dccRanges.begin() + 1);
         dccCopies.resize(dccRanges.size());
-        for (std::size_t index = 0; index < metadata.size(); ++index) dccCopies[index + 1] = comparedMetadata[index] ? comparedCopy(index + 1, std::move(landedBytes[index])) : DccCopy{};
+        for (std::size_t index = 0; index < metadata.size(); ++index) dccCopies[index + 1] = comparedMetadata[index] ? comparedCopy(dccRanges[index + 1], std::move(landedBytes[index])) : DccCopy{};
         return true;
     }
 
@@ -640,9 +639,12 @@ private:
             fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(DescribeSurface(resource).guestBytes), 0};
             auto& range = *fmaskRange;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 65536u);
-            Require(GuestMemory::Watched(range.address, range.bytes), "native FMASK contents require watched guest memory");
-            range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
-            Require(range.generation != 0, "native FMASK contents have no write generation");
+            fmaskCopy.compared = !GuestMemory::Watched(range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes);
+            Require(fmaskCopy.compared || GuestMemory::Watched(range.address, range.bytes), "native FMASK contents require watched guest memory");
+            if (!fmaskCopy.compared) {
+                range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                Require(range.generation != 0, "native FMASK contents have no write generation");
+            }
             for (const auto& other : dccRanges) Require(range.address >= other.address + other.bytes || other.address >= range.address + range.bytes, "native FMASK overlaps its color or metadata planes");
         }
         std::array<std::vector<std::byte>, 3> bytes{};
@@ -651,11 +653,14 @@ private:
             bytes[index].resize(dccRanges[index].bytes);
             GuestMemory::Read(dccRanges[index].address, bytes[index]);
         }
+        std::vector<std::byte> fmaskBytes(fmaskCopy.compared ? fmaskRange->bytes : 0u);
+        if (fmaskCopy.compared) GuestMemory::Read(fmaskRange->address, fmaskBytes);
         const auto clear = MultisampledDccClear(use, bytes[1], bytes[2]);
-        Require((watched.empty() || GuestMemory::UnchangedSinceAll(watched)) && (!fmaskRange || GuestMemory::UnchangedSinceAll(std::span(&*fmaskRange, 1u))), "initial multisampled DCC contents changed during import");
+        Require((watched.empty() || GuestMemory::UnchangedSinceAll(watched)) && (!fmaskRange || fmaskCopy.compared || GuestMemory::UnchangedSinceAll(std::span(&*fmaskRange, 1u))), "initial multisampled DCC contents changed during import");
         for (std::size_t index = 0; index < dccRanges.size(); ++index) {
-            if (compared(index)) dccCopies[index] = comparedCopy(index, std::move(bytes[index]));
+            if (compared(index)) dccCopies[index] = comparedCopy(dccRanges[index], std::move(bytes[index]));
         }
+        if (fmaskCopy.compared) fmaskCopy = comparedCopy(*fmaskRange, std::move(fmaskBytes));
         return clear;
     }
 
@@ -680,7 +685,7 @@ private:
         for (std::size_t index = 0; index < ranges; ++index) {
             const auto& range = dccRanges[index];
             if (compared(index)) {
-                requireDccRange(copyCurrent(index), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
+                requireDccRange(copyCurrent(range, dccCopies[index]), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             } else {
                 GuestMemory::CollectWritesUncached(range.address, range.bytes);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
@@ -690,9 +695,13 @@ private:
         if (fmaskRange) {
             Require(use.fmaskAddress == target.fmaskAddress && use.fmaskPipeBankXor == target.fmaskPipeBankXor, "native FMASK target layout changed");
             const auto& range = *fmaskRange;
-            requireDccRange(GuestMemory::Watched(range.address, range.bytes), range, "native FMASK sampling requires watched guest memory");
-            GuestMemory::CollectWritesUncached(range.address, range.bytes);
-            requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
+            requireDccRange(fmaskCopy.compared || GuestMemory::Watched(range.address, range.bytes), range, "native FMASK sampling requires watched guest memory");
+            if (fmaskCopy.compared) {
+                requireDccRange(copyCurrent(range, fmaskCopy), range, "writes to a resident native FMASK are not implemented");
+            } else {
+                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
+            }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident native FMASK are not implemented");
         }
     }
