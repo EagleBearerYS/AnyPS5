@@ -7605,6 +7605,21 @@ void verifySrgbDepthCompareModes() {
     }
 }
 
+void verifyRegistrationImageTables() {
+    using namespace ShaderRecompiler;
+    const std::vector<std::uint32_t> code{0x7e040f00u, 0x2c04049fu, 0x4a040404u, 0x7e080502u, 0x8f058404u, 0xf4280300u, 0x0a000000u, 0x7e140280u,
+        0x7e160280u, 0xbf8cc07fu, 0xf0008f08u, 0x0003100au, 0xbf8c3f70u, 0xf800180fu, 0x13121110u, 0xbf810000u};
+    const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 128u, 0x31016facu, 3u, 0u, 0u, 0u};
+    const auto request = LayoutPairRequest(code, userData, true, SpirvTarget{}.registrationWordLimit);
+    const auto handle = PrepareShader(request);
+    require(handle != nullptr && handle->artifact != nullptr && handle->artifact->artifact.registrationModule, "registration image tables: the pixel program did not compile to a registration module");
+    const auto& info = handle->artifact->info.info;
+    require(std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable; }), "registration image tables: the image read through a T# table has no static image table in registration form");
+    const auto result = RegistrationResult(request, *handle);
+    require(result != nullptr, "registration image tables: the registration form gave no registration result");
+    require(std::ranges::any_of(result->bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::ImageTableMap; }), "registration image tables: the registration result binds no image table map");
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -7626,6 +7641,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--layout-pair") {
             verifyLayoutPair();
             std::cout << "Both push-constant layouts of a pixel shader compile from one program unchanged\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--registration-image-tables") {
+            verifyRegistrationImageTables();
+            std::cout << "A registration result carries the static image tables of its program\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--entry-lane-proof-budget") {
