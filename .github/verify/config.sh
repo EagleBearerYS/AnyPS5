@@ -1,0 +1,4 @@
+BASE=a6dcea9279b53b3a39c13695eac66f7c8b5b503c
+REPEAT=3
+EXTRA_TESTS='agc_driver_draw_finisher_trace|agc_driver_draw_finisher_trace_disabled|agc_driver_draw_cache_relocation|agc_driver_draw_cache_relocation_draw_pipeline|agc_driver_draw_pipeline_trace'
+NO_BEFORE=1
