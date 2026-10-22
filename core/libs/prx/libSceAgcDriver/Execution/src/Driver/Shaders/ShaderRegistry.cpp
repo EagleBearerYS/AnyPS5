@@ -854,7 +854,7 @@ std::vector<ShaderRecompiler::RecompileRequest> RegistrationRequests(const Shade
     if (request.context.compute) {
         requests.push_back(request);
         requests.back().context.compute->partialThreads = {1, 1, 1};
-    } else if (request.context.pixel) {
+    } else if (request.context.pixel && !request.target.fixedPushSlots) {
         requests.push_back(request);
         requests.back().layout.pushConstantSizeBytes = 0;
     }
