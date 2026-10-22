@@ -1,9 +1,11 @@
 #include "prx/libSceHmd/Hmd.hpp"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 
 namespace {
 
@@ -40,34 +42,92 @@ void CheckHandleQueries(std::int32_t expected) {
     unsigned char right[16];
     unsigned char fieldOfView[16];
     unsigned char sensor[64];
-    unsigned char descriptor[64] = {};
-    unsigned char commands[16];
     std::memset(left, 0x5a, sizeof(left));
     std::memset(right, 0x5a, sizeof(right));
     std::memset(fieldOfView, 0x5a, sizeof(fieldOfView));
     std::memset(sensor, 0x5a, sizeof(sensor));
-    std::memset(commands, 0x5a, sizeof(commands));
-    const auto* distortion = reinterpret_cast<const HmdDistortionCommandParameter*>(descriptor);
-    const auto* wideNear = reinterpret_cast<const HmdWideNearDistortionCommandParameter*>(descriptor);
-    const auto* vr2d = reinterpret_cast<const Hmd2dVrCommandParameter*>(descriptor);
-    auto* commandBuffer = reinterpret_cast<HmdCommandBuffer*>(commands);
     for (const auto handle : {0, -1, 1, 0x0f000000}) {
         Require(sceHmdGetFieldOfView(handle, nullptr) == Hmd::ParameterNull, "null field of view accepted");
         Require(sceHmdGetFieldOfView(handle, reinterpret_cast<HmdFieldOfView*>(fieldOfView)) == expected, "field of view without a headset");
         Require(sceHmdGet2DEyeOffset(handle, reinterpret_cast<HmdEyeOffset*>(left), reinterpret_cast<HmdEyeOffset*>(right)) == expected, "eye offset without a headset");
         Require(sceHmdGet2DEyeOffset(handle, nullptr, nullptr) == expected, "eye offset with null outputs");
         Require(sceHmdGetInertialSensorData(handle, reinterpret_cast<HmdInertialSensorData*>(sensor), 1) == expected, "sensor data without a headset");
-        Require(sceHmdGetDistortionCorrectionCommand(handle, distortion, commandBuffer) == expected, "distortion command without a headset");
-        Require(sceHmdDistortionGetCorrectionCommand(handle, distortion, commandBuffer) == expected, "aliased distortion command without a headset");
-        Require(sceHmdGetWideNearDistortionCorrectionCommand(handle, wideNear, commandBuffer) == expected, "wide-near distortion command without a headset");
-        Require(sceHmdDistortionGetWideNearCorrectionCommand(handle, wideNear, commandBuffer) == expected, "aliased wide-near distortion command without a headset");
-        Require(sceHmdGet2dVrCommand(handle, vr2d, commandBuffer) == expected, "2D VR command without a headset");
-        Require(sceHmdDistortionGet2dVrCommand(handle, vr2d, commandBuffer) == expected, "aliased 2D VR command without a headset");
     }
-    for (const auto* bytes : {left, right, fieldOfView, commands}) {
+    for (const auto* bytes : {left, right, fieldOfView}) {
         for (std::size_t index = 0; index < 16; ++index) Require(bytes[index] == 0x5a, "a refused query wrote its output");
     }
     for (const auto byte : sensor) Require(byte == 0x5a, "a refused sensor query wrote its output");
+}
+
+template <typename Call>
+bool Unimplemented(Call call) {
+    try {
+        static_cast<void>(call());
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckCommandQueries(bool afterInitialize) {
+    unsigned char zeroed[64] = {};
+    unsigned char vr2dBytes[64] = {};
+    unsigned char commands[16];
+    std::memset(commands, 0x5a, sizeof(commands));
+    for (const std::size_t offset : {0x00u, 0x08u, 0x20u}) std::memset(vr2dBytes + offset, 0x11, 8);
+    const auto* distortion = reinterpret_cast<const HmdDistortionCommandParameter*>(zeroed);
+    const auto* wideNear = reinterpret_cast<const HmdWideNearDistortionCommandParameter*>(zeroed);
+    const auto* zeroedVr2d = reinterpret_cast<const Hmd2dVrCommandParameter*>(zeroed);
+    const auto* vr2d = reinterpret_cast<const Hmd2dVrCommandParameter*>(vr2dBytes);
+    auto* commandBuffer = reinterpret_cast<HmdCommandBuffer*>(commands);
+    const auto vr2dWith = [&](std::size_t offset, unsigned char value, std::size_t bytes, auto check) {
+        unsigned char changed[64];
+        std::memcpy(changed, vr2dBytes, sizeof(changed));
+        std::memset(changed + offset, value, bytes);
+        check(reinterpret_cast<const Hmd2dVrCommandParameter*>(changed));
+    };
+    for (const auto handle : {-1, 1, 0x0f000000}) {
+        Require(sceHmdGetDistortionCorrectionCommand(handle, distortion, commandBuffer) == Hmd::InvalidHandle, "distortion command accepted a handle sceHmdOpen never issued");
+        Require(sceHmdDistortionGetCorrectionCommand(handle, distortion, commandBuffer) == Hmd::InvalidHandle, "aliased distortion command accepted a handle sceHmdOpen never issued");
+        Require(sceHmdGetWideNearDistortionCorrectionCommand(handle, wideNear, commandBuffer) == Hmd::InvalidHandle, "wide-near distortion command accepted a handle sceHmdOpen never issued");
+        Require(sceHmdDistortionGetWideNearCorrectionCommand(handle, wideNear, commandBuffer) == Hmd::InvalidHandle, "aliased wide-near distortion command accepted a handle sceHmdOpen never issued");
+        Require(sceHmdGet2dVrCommand(handle, vr2d, commandBuffer) == Hmd::InvalidHandle, "2D VR command accepted a handle sceHmdOpen never issued");
+        Require(sceHmdDistortionGet2dVrCommand(handle, vr2d, commandBuffer) == Hmd::InvalidHandle, "aliased 2D VR command accepted a handle sceHmdOpen never issued");
+    }
+    for (const auto handle : {0, -1, 1, 0x0f000000}) {
+        for (const auto query : {sceHmdGet2dVrCommand, sceHmdDistortionGet2dVrCommand}) {
+            Require(query(handle, zeroedVr2d, commandBuffer) == Hmd::ParameterNull, "2D VR command took a parameter with null pointers");
+            Require(query(handle, nullptr, commandBuffer) == Hmd::ParameterNull, "2D VR command took a null parameter");
+            Require(query(handle, vr2d, nullptr) == Hmd::ParameterNull, "2D VR command took a null command buffer");
+            for (const std::size_t offset : {0x00u, 0x08u, 0x20u}) {
+                vr2dWith(offset, 0, 8, [&](const Hmd2dVrCommandParameter* changed) {
+                    Require(query(handle, changed, commandBuffer) == Hmd::ParameterNull, "2D VR command took a null pointer in its parameter");
+                });
+            }
+            vr2dWith(0x34, 0x01, 4, [&](const Hmd2dVrCommandParameter* changed) {
+                Require(query(handle, changed, commandBuffer) == Hmd::ParameterInvalid, "2D VR command took a non-zero field at 0x34");
+            });
+            vr2dWith(0x38, 0x01, 8, [&](const Hmd2dVrCommandParameter* changed) {
+                Require(query(handle, changed, commandBuffer) == Hmd::ParameterInvalid, "2D VR command took a non-zero field at 0x38");
+            });
+        }
+    }
+    if (afterInitialize) {
+        Require(Unimplemented([&] { return sceHmdGetDistortionCorrectionCommand(0, distortion, commandBuffer); }), "distortion command answered handle 0 after initialize");
+        Require(Unimplemented([&] { return sceHmdDistortionGetCorrectionCommand(0, distortion, commandBuffer); }), "aliased distortion command answered handle 0 after initialize");
+        Require(Unimplemented([&] { return sceHmdGetWideNearDistortionCorrectionCommand(0, wideNear, commandBuffer); }), "wide-near distortion command answered handle 0 after initialize");
+        Require(Unimplemented([&] { return sceHmdDistortionGetWideNearCorrectionCommand(0, wideNear, commandBuffer); }), "aliased wide-near distortion command answered handle 0 after initialize");
+        Require(Unimplemented([&] { return sceHmdGet2dVrCommand(0, vr2d, commandBuffer); }), "2D VR command answered handle 0 after initialize");
+        Require(Unimplemented([&] { return sceHmdDistortionGet2dVrCommand(0, vr2d, commandBuffer); }), "aliased 2D VR command answered handle 0 after initialize");
+    } else {
+        Require(sceHmdGetDistortionCorrectionCommand(0, distortion, commandBuffer) == Hmd::NotInitialized, "distortion command before initialize");
+        Require(sceHmdDistortionGetCorrectionCommand(0, distortion, commandBuffer) == Hmd::NotInitialized, "aliased distortion command before initialize");
+        Require(sceHmdGetWideNearDistortionCorrectionCommand(0, wideNear, commandBuffer) == Hmd::NotInitialized, "wide-near distortion command before initialize");
+        Require(sceHmdDistortionGetWideNearCorrectionCommand(0, wideNear, commandBuffer) == Hmd::NotInitialized, "aliased wide-near distortion command before initialize");
+        Require(sceHmdGet2dVrCommand(0, vr2d, commandBuffer) == Hmd::NotInitialized, "2D VR command before initialize");
+        Require(sceHmdDistortionGet2dVrCommand(0, vr2d, commandBuffer) == Hmd::NotInitialized, "aliased 2D VR command before initialize");
+    }
+    for (const auto byte : commands) Require(byte == 0x5a, "a refused command query wrote its output");
 }
 
 void CheckAssyError(std::int32_t expected) {
@@ -95,6 +155,7 @@ int main() {
     Require(sceHmdGetDeviceInformation(&info) == Hmd::NotInitialized, "query before initialize");
     Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "failed query modified output");
     CheckHandleQueries(Hmd::NotInitialized);
+    CheckCommandQueries(false);
     CheckAssyError(Hmd::NotInitialized);
     Require(sceHmdGetDeviceInformationByHandle(0, &info) == Hmd::NotInitialized,
             "handle query before initialize");
@@ -133,6 +194,7 @@ int main() {
             Require(std::memcmp(&info, &expected, sizeof(info)) == 0, "invalid handle modified output");
         }
         CheckHandleQueries(Hmd::InvalidHandle);
+        CheckCommandQueries(true);
         CheckAssyError(Hmd::DeviceDisconnected);
         Require(sceHmdGetDeviceInformationByHandle(0, nullptr) == Hmd::InvalidHandle,
                 "null query accepted invalid handle");
