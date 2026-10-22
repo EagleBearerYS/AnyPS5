@@ -1,0 +1,4 @@
+BASE=a6dcea9279b53b3a39c13695eac66f7c8b5b503c
+REPEAT=3
+EXTRA_TESTS='agc_driver_label_wait_timeout_reason|agc_driver_label_wait_history'
+NO_BEFORE=1
