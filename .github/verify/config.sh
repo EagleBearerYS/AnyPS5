@@ -1,0 +1,4 @@
+BASE=001d132f4752b21e018bda0da86e2ab3f411e7a5
+REPEAT=1
+EXTRA_TESTS='ir_dump_memory|agc_shader_frontend_pair|agc_shader_frontend_pair_off|agc_shader_memory|scalar_call|scalar_swappc|agc_validate_program|agc_driver_image_table_vouched_lookups|agc_driver_msaa_dcc_clear_4'
+VALIDATION=1
