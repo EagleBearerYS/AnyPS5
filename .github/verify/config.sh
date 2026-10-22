@@ -1,0 +1,4 @@
+BASE=d6eafa54d0464258574fd2f71889754d05a5bc93
+REPEAT=20
+EXTRA_TESTS='agc_driver_pipelined_fill|agc_driver_pipelined_prefetch|agc_driver_pipelined_indirect_draw|agc_driver_image_table_vouch_queued_draws'
+NO_BEFORE=1
