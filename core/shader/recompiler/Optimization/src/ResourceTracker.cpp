@@ -613,6 +613,14 @@ private:
         return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
     }
 
+    static bool DescriptorWordReads(const IrValue& buffer) {
+        return std::ranges::all_of(buffer.Uses(), [](const IrValue* read) {
+            return read->Opcode() == IrOpcode::ReadConstBuffer && !read->Uses().empty() && std::ranges::all_of(read->Uses(), [](const IrValue* user) {
+                return user->Opcode() == IrOpcode::GetImageResource || user->Opcode() == IrOpcode::GetSamplerResource;
+            });
+        });
+    }
+
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
         const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler || buffer ? 4u : 8u;
@@ -734,7 +742,9 @@ private:
             if (parent.parentPointer == nullptr) return false;
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return user->Opcode() == IrOpcode::GetBufferResource && std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); });
+                    if (user->Opcode() != IrOpcode::GetBufferResource) return false;
+                    if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
+                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user);
                 });
             })) return false;
             heapIndex = parent.source;

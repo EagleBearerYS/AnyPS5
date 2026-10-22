@@ -443,6 +443,27 @@ alignas(256) constexpr std::array<std::uint32_t, 50> PointerFixedVsharpOffsetCod
     0x8afe3032u, 0xbf89ffeeu, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u,
     0x80070408u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 60> PointerSharedVsharpCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf068012u, 0xbf850002u, 0xbeac03ffu, 0x000000eau, 0xf4080d16u, 0xfa000000u, 0xbf8cc07fu, 0xf42c091au,
+    0xfa000000u, 0xf42c0e1au, 0xfa0004c0u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0xf09c0f08u, 0x010e0b01u,
+    0xbf8c3f70u, 0x7e0a030bu, 0x8afe3032u, 0xbf89ffe4u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u,
+    0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 68> PointerSharedVsharpReuseCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf068012u, 0xbf850002u, 0xbeac03ffu, 0x000000eau, 0xf4080d16u, 0xfa000000u, 0xbf8cc07fu, 0xf42c091au,
+    0xfa000000u, 0xf42c0e1au, 0xfa0004c0u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0xf09c0f08u, 0x010e0b01u,
+    0xbf8c3f70u, 0x7e0a030bu, 0xbf068013u, 0xbf850002u, 0xbeac0338u, 0xbead0339u, 0xf4001016u, 0xfa000010u,
+    0xbf8cc07fu, 0x7e0c0240u, 0x8afe3032u, 0xbf89ffdcu, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u,
+    0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
 
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
@@ -2374,6 +2395,100 @@ void RunPointerFixedVsharpTests(AgcDriver::VulkanDevice& device, std::uint32_t d
     std::puts((name + ": a T# read at a fixed offset of a V# loaded through a record pointer checked, by the records' values").c_str());
 }
 
+void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+    alignas(256) std::array<std::array<std::uint32_t, 320>, 2> palettes{};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    const auto point = [&](std::uint32_t record, std::uint32_t palette) {
+        const auto descriptor = Buffer(palettes[palette].data(), static_cast<std::uint32_t>(sizeof(palettes[palette])));
+        std::copy(descriptor.begin(), descriptor.end(), records[record].begin());
+    };
+    for (std::uint32_t palette = 0; palette < 2u; ++palette) {
+        std::copy(images[palette].begin(), images[palette].end(), palettes[palette].begin());
+        std::copy(images[1u - palette].begin(), images[1u - palette].end(), palettes[palette].begin() + 0x4c0u / 4u);
+        point(palette, palette);
+        records[palette][4] = 0x51000000u + palette;
+    }
+    const auto link = [&](std::uint32_t record, std::uint32_t target) {
+        const auto pointer = reinterpret_cast<std::uintptr_t>(records[target].data());
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    };
+    for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
+    const std::string name = reuse ? "pointer V# table with two T#s whose second T#'s words also reach the record pointer's registers" : "pointer V# table with two T#s read through one V#";
+    const auto run = [&] {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
+        const std::span<const std::uint32_t> code = reuse ? std::span<const std::uint32_t>(PointerSharedVsharpReuseCode) : std::span<const std::uint32_t>(PointerSharedVsharpCode);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+            {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+        };
+        const auto inputTable = Table;
+        const auto inputKeys = Keys;
+        const auto inputRecords = records;
+        const auto inputPalettes = palettes;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u);
+        Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes, name + ": dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        return result;
+    };
+    const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = keys[group][0];
+        Keys[group * 4u + 1u] = keys[group][1];
+    }
+    if (reuse) {
+        std::string message;
+        try { static_cast<void>(run()); }
+        catch (const std::runtime_error& error) { message = error.what(); }
+        Require(message.find("not a valid runtime value") != std::string::npos, name + ": was not refused by resource planning: " + message);
+        std::puts((name + ": refused by resource planning, the T# words stay runtime reads through a V# only the snapshot holds").c_str());
+        return;
+    }
+    std::array<std::uint32_t, 3> paletteOf{0u, 1u, 0u};
+    const auto check = [&](const Outcome& outcome, const std::string& what) {
+        for (std::uint32_t group = 0; group < 4u; ++group) {
+            for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+                const auto palette = paletteOf[keys[group][lane < 32u ? 0u : 1u]];
+                const auto x = lane % Width;
+                const std::array<std::uint32_t, 4> expected{std::bit_cast<std::uint32_t>(palette != 0u ? OtherFloatTexels[x] : FloatTexels[x]), std::bit_cast<std::uint32_t>(palette != 0u ? FloatTexels[x] : OtherFloatTexels[x]), 0u, 0x3f800000u};
+                const auto* actual = outcome.words.data() + (group * Lanes + lane) * 4u;
+                Require(std::equal(expected.begin(), expected.end(), actual), name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual[0]) + " " + Hex(actual[1]) + " " + Hex(actual[2]) + " " + Hex(actual[3]) + ", expected " + Hex(expected[0]) + " " + Hex(expected[1]) + " 0x00000000 0x3f800000");
+            }
+        }
+    };
+    const auto taken = run();
+    Require(!Faulted(taken), name + ": the T#s read through the V# behind the record's pointer faulted:\n" + taken.log);
+    check(taken, "the T#s at offsets 0 and 0x4c0 of the V# behind the record's pointer in a waterfall loop");
+    link(1u, 0u);
+    paletteOf[1] = 0u;
+    const auto moved = run();
+    Require(!Faulted(moved), name + ": the T#s behind a moved record pointer faulted:\n" + moved.log);
+    Require(moved.artifactId == taken.artifactId, name + ": moving a record's pointer recompiled the shader");
+    check(moved, "the T#s after record 1's pointer moved to the other V#");
+    point(0u, 1u);
+    paletteOf = {1u, 1u, 1u};
+    const auto repointed = run();
+    Require(!Faulted(repointed), name + ": the T#s behind a moved V# faulted:\n" + repointed.log);
+    Require(repointed.artifactId == taken.artifactId, name + ": moving the V# behind a record's pointer recompiled the shader");
+    check(repointed, "the T#s after the V# behind records 0 and 1 moved to the other palette");
+    std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values").c_str());
+}
+
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -2649,6 +2764,14 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-fixed-offset") == 0) {
             RunPointerFixedVsharpTests(*device, 0x40u);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-shared") == 0) {
+            RunPointerSharedVsharpTests(*device, false);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-shared-reuse") == 0) {
+            RunPointerSharedVsharpTests(*device, true);
             return 0;
         }
         RunTests(*device);
