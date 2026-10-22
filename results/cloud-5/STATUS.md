@@ -1,6 +1,6 @@
-BUSY PRM-057
-since: 2026-10-22T20:09:54Z
-previous: BF-154 done, results/cloud-5/BF-154.md. Before that: BF-152 done, results/cloud-5/BF-152.md; PRM-054 done, results/cloud-5/PRM-054.md; PRM-052 done, results/cloud-5/PRM-052.md; BF-137 done, results/cloud-5/BF-137.md.
+READY
+since: 2026-10-22T20:25:16Z
+previous: PRM-057 stopped after part 2 (fix moves the refusal to CheckCurrent; no commit, no push), results/cloud-5/PRM-057.md. Before that: BF-154 done, results/cloud-5/BF-154.md; BF-152 done, results/cloud-5/BF-152.md; PRM-054 done, results/cloud-5/PRM-054.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
