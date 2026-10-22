@@ -1,0 +1,4 @@
+BASE=57bf4870212d627b170485b2457b62b969442ab0
+REPEAT=10
+EXTRA_TESTS='agc_driver_pointer_vsharp_child_key_table|agc_driver_pointer_vsharp_child_key_arm_table|^agc_driver_pointer|^agc_driver_nested|^agc_driver_image_table|^agc_shader_disk_cache'
+BEFORE_REPEAT=3
