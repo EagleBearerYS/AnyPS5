@@ -1,5 +1,3 @@
-BUSY BF-149
-since: 2026-10-22T12:56:20Z
-claimed: 2026-10-22T12:56:20Z
-step: commit 53523163d2 on 0e78959001 (red/green done); until-fail:10, CI mirror, composition with 7ab0765c37 running
-previous: BF-147 done, fix/agc-msaa-d32s8-queued-dma-fill at dd7ad4638a, results/cloud-2/BF-147.md
+READY
+since: 2026-10-22T13:48:30Z
+previous: BF-149 done, fix/shader-nested-table-shared-vsharp-reuse at 53523163d2 (one commit on 0e78959001; red "GetImageResource dword 0 is not a valid runtime value; chain: ReadConstBuffer@pc=0x0000009c(...", green 4/4), results/cloud-2/BF-149.md
