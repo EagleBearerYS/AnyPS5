@@ -1,0 +1,4 @@
+BASE=df2569d2c5fc6adb68f6eb8b56ad0d0ddf35686b
+REPEAT=10
+EXTRA_TESTS='agc_write_tracking|windows_write_watch|agc_write_watch_coverage|guest_memory'
+BEFORE_REPEAT=3
