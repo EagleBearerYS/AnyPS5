@@ -1,0 +1,3 @@
+BASE=4777caca343bf09a3fe245830acd9e9f433e8e18
+REPEAT=10
+EXTRA_TESTS='guest_sce_net|guest_net_ctl'
