@@ -1,0 +1,4 @@
+BASE=c00cb0f875201a771403eddfd864ad2e5ac21b07
+REPEAT=3
+EXTRA_TESTS='agc_driver_pointer_chase_table|agc_driver_pointer_hop_table'
+VALIDATION=1
