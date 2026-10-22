@@ -45,6 +45,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         {0, 0, pushOffset, (graphics.stages.mesh ? ShaderRecompiler::MeshDrawPushOffsetBytes : graphics.stages.tessellation && pushOffset < Graphics::PipelinePushSlotBytes ? ShaderRecompiler::TessellationLevelPushOffsetBytes : graphics.depthRemap.mode != 0u ? ShaderRecompiler::DepthRemapPushOffsetBytes : Graphics::PipelinePushSlotBytes) - pushOffset % Graphics::PipelinePushSlotBytes},
         ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, graphics.stages.mesh, graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}, program.binary.stage == Stage::Mesh ? meshBarycentrics : std::nullopt}
     };
+    if (request.target.deviceImageTables) request.target.deviceImageTables = localDevice->DeviceImagesServe(program.binary.codeAddress);
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     const bool heapCandidate = heapPartners && (program.binary.stage == Stage::Fragment || HeapPreRasterStage(program.binary.stage)) && HeapFragmentsEnabled();
     const auto fragmentOnHeap = [&] {
