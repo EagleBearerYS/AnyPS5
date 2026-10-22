@@ -1,0 +1,4 @@
+BASE=0c6a5bd5938fde7bbc0bf720927c4584bd3e4700
+REPEAT=1
+EXTRA_TESTS='agc_driver_pointer_vsharp_child_key_table|agc_driver_pointer_vsharp_child_key_arm_table'
+NO_BEFORE=1
