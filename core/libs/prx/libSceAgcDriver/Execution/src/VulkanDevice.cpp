@@ -156,20 +156,22 @@ public:
             std::lock_guard lock(mutex);
             stopping = true;
         }
-        changed.notify_one();
+        changed.notify_all();
         if (worker.joinable()) worker.join();
     }
 
     void Enqueue(int index, std::uint32_t width, std::uint32_t height, std::uint32_t scale, bool screenshot, std::vector<std::byte> pixels) {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex);
         require(!stopping, "frame dump writer has stopped");
-        require(pixels.size() <= maxBytes - queuedBytes, "frame dump queue exceeded 64 MiB");
         if (!screenshot && !frameDumpOutput.Enabled_nid_no_patch()) return;
+        require(pixels.size() <= maxBytes, "a frame dump exceeds the 64 MiB queue");
+        changed.wait(lock, [&] { return stopping || pixels.size() <= maxBytes - queuedBytes; });
+        require(!stopping, "frame dump writer has stopped");
         if (!worker.joinable()) worker = std::thread([this] { run(); });
         const auto bytes = pixels.size();
         pending.push_back({index, width, height, scale, screenshot, std::move(pixels)});
         queuedBytes += bytes;
-        changed.notify_one();
+        changed.notify_all();
     }
 
     bool Idle() {
@@ -202,6 +204,7 @@ private:
                     else WriteFrameBmp(frame.index, frame.width, frame.height, frame.pixels, frame.scale);
                     std::lock_guard lock(mutex);
                     queuedBytes -= frame.pixels.size();
+                    changed.notify_all();
                 }
             }
         } catch (const std::exception& error) {
