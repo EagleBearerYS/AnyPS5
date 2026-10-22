@@ -233,6 +233,12 @@ void DrawFinisher::Drain() {
     if (failure != nullptr) std::rethrow_exception(std::exchange(failure, nullptr));
 }
 
+void DrawFinisher::ReleaseRan() {
+    std::vector<Job> done;
+    std::lock_guard lock(mutex);
+    std::swap(done, ran);
+}
+
 DrawPipeline& DrawPipeline::Queue0() {
     static DrawPipeline* pipeline = new DrawPipeline();
     return *pipeline;
@@ -425,6 +431,12 @@ void DrawPipeline::Stop() {
     if (!committer.joinable()) return;
     if (committer.get_id() == std::this_thread::get_id()) committer.detach();
     else committer.join();
+}
+
+void DrawPipeline::ReleaseRetired() {
+    std::vector<Item> done;
+    std::lock_guard lock(mutex);
+    std::swap(done, retired);
 }
 
 void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
