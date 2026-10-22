@@ -316,6 +316,7 @@ private:
         append(key, value.float32DenormPreserve);
         append(key, value.gpuResolvedImages);
         append(key, value.descriptorMemory);
+        append(key, value.deviceImageTables);
     }
 };
 
