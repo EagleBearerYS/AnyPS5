@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <map>
@@ -487,11 +488,13 @@ public:
                 DWORD granularity = 0;
                 ++collectSystemCalls;
                 collectPieces += (stop + pageBytes - 1) / pageBytes - cursor / pageBytes;
+                const bool committed = !verifyDirect() || committedPrivate(cursor, stop);
                 if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) {
                     const auto memory = query(cursor);
                     if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
                     fail("collect private guest writes");
                 }
+                if (!committed) staleProof(cursor, stop);
                 *count += available;
                 if (*count == capacity) return true;
                 cursor = stop;
@@ -519,6 +522,26 @@ private:
         }
         remember(collectableRanges, address, end);
         return true;
+    }
+
+    static bool verifyDirect() {
+        static const bool verify = std::getenv("APS5_VERIFY_DIRECT_COLLECT") != nullptr;
+        return verify;
+    }
+
+    static bool committedPrivate(std::uintptr_t address, std::uintptr_t end) {
+        for (auto cursor = address; cursor < end;) {
+            const auto memory = query(cursor);
+            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+            cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+        }
+        return true;
+    }
+
+    [[noreturn]] static void staleProof(std::uintptr_t address, std::uintptr_t end) {
+        char text[192];
+        std::snprintf(text, sizeof(text), "a private collect of guest writes succeeded over 0x%llx+0x%llx, which is no longer committed private memory (APS5_VERIFY_DIRECT_COLLECT)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(end - address));
+        throw std::runtime_error(text);
     }
 
     std::uintptr_t privateAllocationEnd(std::uintptr_t address) const {
