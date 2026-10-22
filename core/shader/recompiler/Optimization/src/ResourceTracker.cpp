@@ -947,7 +947,7 @@ private:
         std::vector<ChaseSite> sites;
         std::vector<const IrValue*> looseHandles;
         const auto site = [&](IrValue& handle, IrValue& pointer, const PointerChase& chase) {
-            const auto found = std::ranges::find_if(sites, [&](const ChaseSite& known) { return known.handle == &handle || EquivalentValue(m_program.Resources(), known.handle, &handle); });
+            const auto found = std::ranges::find_if(sites, [&](const ChaseSite& known) { return known.chase == chase && (known.handle == &handle || EquivalentValue(m_program.Resources(), known.handle, &handle)); });
             if (found != sites.end()) return static_cast<std::size_t>(found - sites.begin());
             sites.push_back(ChaseSite{&handle, &pointer, chase, {}});
             return sites.size() - 1u;
