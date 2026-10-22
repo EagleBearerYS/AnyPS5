@@ -1,0 +1,4 @@
+BASE=b7d1d47a5f9f32c9c388ad8d47a0055a90ae6e33
+REPEAT=10
+EXTRA_TESTS='agc_driver_prepared_shaders|agc_driver_graphics'
+VALIDATION=1
