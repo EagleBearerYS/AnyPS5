@@ -2958,20 +2958,26 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     };
     if (validatedTextures.size() != textures.size()) return fail(FastFail::NoRecord);
     if (SkipImageProof()) {
-        for (std::size_t i = 0; i < textures.size(); ++i) {
-            auto& surface = validatedTextures[i];
-            if (!surface.valid) return fail(FastFail::NoRecord);
-            if (surface.depth) continue;
-            surface.collected = TimedCollectWrites(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes));
-            if (surface.collected == 0) return fail(FastFail::Collect);
-        }
-        for (std::size_t i = 0; i < storageTextures.size(); ++i) {
-            if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
-            const auto* image = storageTextures[i].get();
-            if (image == nullptr) return fail(FastFail::NoRecord);
-            if (TimedCollectWrites(image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes())) == 0) return fail(FastFail::Collect);
-        }
-        return true;
+        const bool timed = BuildProfiled();
+        const auto start = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const auto collected = [&] {
+            for (std::size_t i = 0; i < textures.size(); ++i) {
+                auto& surface = validatedTextures[i];
+                if (!surface.valid) return fail(FastFail::NoRecord);
+                if (surface.depth) continue;
+                surface.collected = GuestMemory::CollectWrites(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes));
+                if (surface.collected == 0) return fail(FastFail::Collect);
+            }
+            for (std::size_t i = 0; i < storageTextures.size(); ++i) {
+                if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
+                const auto* image = storageTextures[i].get();
+                if (image == nullptr) return fail(FastFail::NoRecord);
+                if (GuestMemory::CollectWrites(image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes())) == 0) return fail(FastFail::Collect);
+            }
+            return true;
+        }();
+        if (timed) Revalidations().collectNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+        return collected;
     }
     const bool unchanged = pendingSerialSeen != 0 && pendingSerialSeen == serialBefore;
     const bool keyProofs = KeyFastPath();
