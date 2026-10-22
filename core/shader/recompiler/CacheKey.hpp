@@ -322,6 +322,7 @@ private:
         append(key, value.fusedExactArithmetic);
         append(key, value.gpuResolvedImages);
         append(key, value.descriptorMemory);
+        append(key, value.deviceImageTables);
     }
 };
 
