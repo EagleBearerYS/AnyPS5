@@ -487,7 +487,11 @@ public:
                 DWORD granularity = 0;
                 ++collectSystemCalls;
                 collectPieces += (stop + pageBytes - 1) / pageBytes - cursor / pageBytes;
-                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) fail("collect private guest writes");
+                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) {
+                    const auto memory = query(cursor);
+                    if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+                    fail("collect private guest writes");
+                }
                 *count += available;
                 if (*count == capacity) return true;
                 cursor = stop;
