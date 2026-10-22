@@ -1,6 +1,6 @@
-BUSY PRM-052
-since: 2026-10-22T09:10:17Z
-previous: BF-137 done, results/cloud-5/BF-137.md. Before that: BF-124 done, results/cloud-5/BF-124.md; BF-120 done, results/cloud-5/BF-120.md.
+READY
+since: 2026-10-22T09:58:47Z
+previous: PRM-052 done, results/cloud-5/PRM-052.md. Before that: BF-137 done, results/cloud-5/BF-137.md; BF-124 done, results/cloud-5/BF-124.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
