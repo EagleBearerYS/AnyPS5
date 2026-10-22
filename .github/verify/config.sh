@@ -1,0 +1,4 @@
+BASE=23b2a3fc2d2ab1201699e84668c692b117479df3
+REPEAT=10
+EXTRA_TESTS='agc_driver_device_image_table|agc_driver_device_image_table_heap|agc_driver_device_image_path|agc_driver_device_image_path_gpu_path|agc_driver_device_image_path_without_heap'
+BEFORE_REPEAT=1
