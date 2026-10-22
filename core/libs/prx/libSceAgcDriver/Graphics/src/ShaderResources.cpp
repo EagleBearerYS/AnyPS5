@@ -6031,8 +6031,7 @@ void ShaderResources::writeHeapTableMap(const CompiledShader& shader, std::size_
     auto& map = HostThreadLocal<std::vector<std::uint32_t>, MapStorage>();
     map.assign(table->map.begin(), table->map.end());
     const auto elements = table->images != nullptr ? static_cast<std::size_t>(table->images->count) : std::size_t{0};
-    const auto base = static_cast<std::uint32_t>(map.size());
-    map[TableAbi::HeaderElementBase] = base;
+    const auto base = TableAbi::AppendTrailer(map, {});
     const auto sampledAbsent = heap.AbsentSlot(Abi::FirstImageBinding, context.nullDescriptors ? VK_NULL_HANDLE : context.placeholderImages->View(Abi::FirstImageBinding));
     const auto storageAbsent = heap.AbsentSlot(Abi::FirstStorageImageBinding, context.nullDescriptors ? VK_NULL_HANDLE : context.placeholderImages->View(Abi::FirstStorageImageBinding));
     for (std::size_t element = 0; element < elements; ++element) {
