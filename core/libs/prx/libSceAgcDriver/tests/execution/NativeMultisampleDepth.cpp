@@ -705,7 +705,7 @@ void CheckDrawFeedback() {
     std::puts("Native depth feedback refused through the draw resource path");
 }
 
-enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite };
+enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite, FillDuringClear };
 enum class ClearSource { HtileDispatch, Fill, QueuedFill };
 
 void CheckClearDispatch() {
@@ -905,6 +905,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                             for (std::size_t i = 0u; i < metadataBytes / 4u; ++i) std::memcpy(metadata.Data() + i * 4u, &clearPattern, 4u);
                         }
                         const bool completionCandidate = NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes);
+                        if (fault == ClearFault::FillDuringClear) NoteDepthMetadataFill(target.htileAddress, static_cast<std::size_t>(metadataBytes), clearPattern);
                         if (fault == ClearFault::ImportWindowWrite) {
                             const auto beforeImport = AgcDriver::GuestMemory::TrackerGeneration();
                             Require(AgcDriver::GuestMemory::ImportWatched(target.htileAddress, static_cast<std::size_t>(metadataBytes), [&] {
@@ -1815,7 +1816,8 @@ int main(int argc, char** argv) {
                      std::pair{ClearFault::PossibleStore, "no complete tracked HTILE store"},
                      std::pair{ClearFault::UnprovenDispatch, "incomplete or unproven"},
                      std::pair{ClearFault::PendingWrite, "external GPU writes"},
-                     std::pair{ClearFault::Overlap, "overlapping native multisample depth"}}) {
+                     std::pair{ClearFault::Overlap, "overlapping native multisample depth"},
+                     std::pair{ClearFault::FillDuringClear, "metadata fill over a pending HTILE clear dispatch"}}) {
                 TargetRefuses([&] { CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, fault, ClearSource::HtileDispatch, lock); }, expected);
                 std::printf("Native depth clear fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
