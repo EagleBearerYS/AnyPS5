@@ -26,6 +26,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -355,7 +356,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     ExpectWrites(before, 0, 1, "a kept table whose textures were destroyed");
 }
 
-void RunImportedTable(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+void RunImportedTable(AgcDriver::VulkanDevice& device, const GuestBlock& block, bool watchedImports) {
     for (std::uint32_t texture = 0; texture < Records; ++texture) {
         Fill(block, texture, 0.75f);
         SetRecord(block, texture, texture);
@@ -373,6 +374,7 @@ void RunImportedTable(AgcDriver::VulkanDevice& device, const GuestBlock& block) 
     Require(Dispatch(device, result, 8) == Row(block.Texels(8)), "image table reuse: a dispatch reusing a table of storage views sampled the wrong entry");
     Require(Dispatch(device, result, 6) == Row(block.Texels(6)), "image table reuse: the third dispatch over imported memory sampled the wrong entry");
     if (!AgcDriver::GuestMemory::Watched(AddressOf(block.Table()), BlockBytes)) {
+        Require(!watchedImports, "image table reuse: the imported block left the write watch under APS5_WRITE_WATCH_IMPORTS=watch");
         std::puts("imported memory is not write-watched: table reuse over storage views is not tested");
         return;
     }
@@ -381,7 +383,7 @@ void RunImportedTable(AgcDriver::VulkanDevice& device, const GuestBlock& block) 
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
@@ -389,7 +391,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         RunTests(*device, block, stores);
-        RunImportedTable(*device, imported);
+        RunImportedTable(*device, imported, argc == 2 && std::string_view(argv[1]) == "--watched-imports");
         std::puts("image table reuse tests passed");
         return 0;
     } catch (const std::exception& error) {
