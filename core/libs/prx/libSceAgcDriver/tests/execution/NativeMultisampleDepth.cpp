@@ -1330,6 +1330,85 @@ void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path
     std::printf("Native depth after HTILE and stencil plane fills samples=%u path=%u: imported, sampled the cleared depth and stencil-tested the filled stencil\n", fragments, static_cast<std::uint32_t>(path));
 }
 
+enum class AliasCase { Cleared, DrawnAfterClear, OtherFormat, OtherSamples };
+
+void CheckAliasedStencil(Context context, std::uint32_t fragments, AliasCase which, std::uint32_t colorFragments = 0u) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
+    TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0u, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    ColorTarget color{};
+    color.address = color.surfaceAddress = stencil.Address();
+    color.extent = color.surfaceExtent = extent;
+    color.format = which == AliasCase::OtherFormat ? VK_FORMAT_R8G8_UNORM : VK_FORMAT_R8_UNORM;
+    color.elementBytes = which == AliasCase::OtherFormat ? 2u : 1u;
+    color.tileMode = ColorTileMode::RenderTarget;
+    color.samples = which == AliasCase::OtherSamples ? colorFragments : fragments;
+    color.bytes = static_cast<std::size_t>(extent.width) * extent.height * color.elementBytes;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto absorb = [&](std::uint8_t value) {
+        const std::uint32_t pattern = value * 0x01010101u;
+        Require(MultisampledColorFillAbsorbs(color.address, stencilBytes, pattern), "the colour target over the stencil plane did not absorb its fill");
+        NoteDepthMetadataFill(color.address, stencilBytes, pattern);
+        NoteColorMetadataFill(color.address, stencilBytes, pattern);
+    };
+    constexpr std::uint8_t cleared = 0x5au, refilled = 0x33u;
+    MultisampleTargetView(context, color);
+    absorb(cleared);
+    if (which == AliasCase::DrawnAfterClear) MultisampleTargetView(context, color);
+    const auto view = DepthSurfaceView(context, target);
+    const auto words = DepthSampleWords(target);
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "native depth over a stencil plane aliased by a cleared colour target was not imported");
+    recorder.Sync();
+    const auto count = extent.width * extent.height * fragments;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, fragments, false, true));
+    const auto sample = [&](const DepthRaster& raster, float offset, std::optional<float> drawn) {
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        CommandBatch rasterBatch(context);
+        raster.Run(rasterBatch.Handle(), offset);
+        rasterBatch.SubmitAndWait();
+        Require(CachedSampledTexture(context, words) == texture, "native depth over an aliased stencil plane changed its view after a raster write");
+        recorder.Sync();
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            const auto expected = drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth;
+            Require(result == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "native depth over an aliased stencil plane lost a depth sample or a stencil test outcome");
+        }
+    };
+    sample(DepthRaster(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, static_cast<std::uint8_t>(cleared + 1u)}), 0.375f, std::nullopt);
+    sample(DepthRaster(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, cleared}), 0.25f, 0.25f);
+    absorb(refilled);
+    Require(CachedSampledTexture(context, words) == texture, "a fill of the colour target over an aliased stencil plane replaced the sampled view");
+    recorder.Sync();
+    sample(DepthRaster(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, cleared}), 0.375f, 0.25f);
+    sample(DepthRaster(context, target, view, StencilUse{VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, refilled}), 0.125f, 0.125f);
+    MultisampleTargetView(context, color);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample stencil plane aliases a multisampled colour target whose samples are only on the host");
+    Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0xa5}; }), "native depth over an aliased stencil plane read or wrote the guest stencil plane");
+    texture.reset();
+    std::printf("Native depth over a stencil plane aliased by a cleared R8 colour target samples=%u: imported from the colour target's clear, refilled from its fill, refused once the colour target drew\n", fragments);
+}
+
 void CheckEligibility(Context context) {
     constexpr VkExtent2D extent{129u, 67u};
     constexpr std::uint32_t samples = 4u;
@@ -1718,6 +1797,31 @@ int main(int argc, char** argv) {
                 std::printf("Native depth after HTILE and stencil plane fills path=%u kept its creation refusal: native multisample depth HTILE that is not pipe-aligned holds more than one word\n", static_cast<std::uint32_t>(path));
             }
             std::printf("Native depth with a separate stencil plane cases checked=%u unavailable=%u\n", checked, unavailable);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--aliased-stencil") {
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u && (context.limits.framebufferColorSampleCounts & samples) != 0u; };
+            Require(supported(4u), "the aliased stencil plane regression requires sampled D32S8 and multisampled colour with four samples");
+            constexpr std::string_view refusal = "native multisample stencil plane aliases a multisampled colour target whose samples are only on the host";
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { unavailable += 5u; continue; }
+                CheckAliasedStencil(context, samples, AliasCase::Cleared);
+                ++checked;
+                for (const auto which : {AliasCase::DrawnAfterClear, AliasCase::OtherFormat}) {
+                    TargetRefuses([&] { CheckAliasedStencil(context, samples, which); }, refusal);
+                    std::printf("Native depth with an aliased stencil plane samples=%u case=%u refused: %s\n", samples, static_cast<std::uint32_t>(which), refusal.data());
+                    ++checked;
+                }
+                for (const auto colorSamples : {2u, 4u, 8u}) {
+                    if (colorSamples == samples) continue;
+                    if ((context.limits.framebufferColorSampleCounts & colorSamples) == 0u) { ++unavailable; continue; }
+                    TargetRefuses([&] { CheckAliasedStencil(context, samples, AliasCase::OtherSamples, colorSamples); }, refusal);
+                    std::printf("Native depth with an aliased stencil plane samples=%u colour samples=%u refused: %s\n", samples, colorSamples, refusal.data());
+                    ++checked;
+                }
+            }
+            std::printf("Native depth with an aliased stencil plane cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
         Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--retirement"), "invalid native depth fixture arguments");
