@@ -1,7 +1,10 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceUserService/UserService.hpp"
+#include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <initializer_list>
 #include <stdexcept>
 #include <string_view>
 
@@ -17,6 +20,15 @@ extern "C" int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active);
 extern "C" int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active);
 extern "C" bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir();
 extern "C" bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir();
+extern "C" bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode();
+extern "C" bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode();
+extern "C" bool APS5_VABI sceShellCoreUtilIsImposeScreenOverlaid();
+extern "C" bool APS5_VABI sceShellCoreUtilIsScreenSaverOn();
+extern "C" bool APS5_VABI sceSystemServiceIsScreenSaverOn();
+extern "C" bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress();
+extern "C" int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active);
+extern "C" int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted);
+extern "C" int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted);
 
 namespace {
 
@@ -86,12 +98,42 @@ void TestSessions() {
     });
 }
 
+template<typename TCall>
+bool ReportsNotAdjusted(TCall call) {
+    const auto user = static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID);
+    std::uint8_t adjusted = 0xff;
+    if (call(user, &adjusted) != SYSTEM_SERVICE_OK || adjusted != 0) return false;
+    if (call(user, nullptr) != SYSTEM_SERVICE_ERROR_PARAMETER) return false;
+    for (const auto other : {0u, user + 1, static_cast<std::uint32_t>(USER_SERVICE_USER_ID_INVALID)}) {
+        adjusted = 0xff;
+        if (!Throws<std::invalid_argument>([&] { return call(other, &adjusted); }) || adjusted != 0xff) return false;
+    }
+    return true;
+}
+
+void TestShell() {
+    Case("sceLncUtilIsShellUiFgAndGameBgCpuMode", [] { return !sceLncUtilIsShellUiFgAndGameBgCpuMode(); });
+    Case("sceSystemServiceIsShellUiFgAndGameBgCpuMode", [] {
+        return !sceSystemServiceIsShellUiFgAndGameBgCpuMode() && sceSystemServiceIsShellUiFgAndGameBgCpuMode() == sceLncUtilIsShellUiFgAndGameBgCpuMode();
+    });
+    Case("sceShellCoreUtilIsImposeScreenOverlaid", [] { return !sceShellCoreUtilIsImposeScreenOverlaid(); });
+    Case("sceShellCoreUtilIsScreenSaverOn", [] { return !sceShellCoreUtilIsScreenSaverOn(); });
+    Case("sceSystemServiceIsScreenSaverOn", [] {
+        return !sceSystemServiceIsScreenSaverOn() && sceSystemServiceIsScreenSaverOn() == sceShellCoreUtilIsScreenSaverOn();
+    });
+    Case("sceSystemStateMgrIsShellUIShutdownInProgress", [] { return !sceSystemStateMgrIsShellUIShutdownInProgress(); });
+    Case("sceShellCoreUtilGetSocialScreenStatus", [] { return ReportsInactive(sceShellCoreUtilGetSocialScreenStatus); });
+    Case("sceShellCoreUtilIsEyeToEyeDistanceAdjusted", [] { return ReportsNotAdjusted(sceShellCoreUtilIsEyeToEyeDistanceAdjusted); });
+    Case("sceSystemServiceIsEyeToEyeDistanceAdjusted", [] { return ReportsNotAdjusted(sceSystemServiceIsEyeToEyeDistanceAdjusted); });
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "suspend") TestSuspend();
     else if (mode == "sessions") TestSessions();
+    else if (mode == "shell") TestShell();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
     return failures == 0 ? 0 : 1;

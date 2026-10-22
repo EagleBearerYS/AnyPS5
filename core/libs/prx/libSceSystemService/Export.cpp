@@ -27,6 +27,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
@@ -357,6 +358,47 @@ bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir() {
 
 int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active) {
     return WriteStatus(active, sceShellCoreUtilIsGameLiveStreamingOnAir());
+}
+
+bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode() {
+    return sceLncUtilIsShellUiFgAndGameBgCpuMode();
+}
+
+bool APS5_VABI sceShellCoreUtilIsImposeScreenOverlaid() {
+    return false;
+}
+
+bool APS5_VABI sceShellCoreUtilIsScreenSaverOn() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsScreenSaverOn() {
+    return sceShellCoreUtilIsScreenSaverOn();
+}
+
+bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
+    return false;
+}
+
+int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
+    return WriteStatus(active, false);
+}
+
+int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
+    if (adjusted == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+    if (userId != static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID)) {
+        throw std::invalid_argument("sceShellCoreUtilIsEyeToEyeDistanceAdjusted: a user other than the logged-in user");
+    }
+    *adjusted = 0;
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
+    return sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, adjusted);
 }
 
 int APS5_VABI sceSystemServiceHideSplashScreen(void) {

@@ -481,11 +481,6 @@ int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated) {
     return 0;
 }
 
-bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1096,11 +1091,6 @@ int APS5_VABI sceShellCoreUtilGetRunLevel() {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilGetSplashScreenState(std::int32_t appId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1216,17 +1206,7 @@ bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress() {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilIsIDUState() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsImposeScreenOverlaid() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1257,11 +1237,6 @@ bool APS5_VABI sceShellCoreUtilIsPowerSaveAlertRequested() {
 }
 
 bool APS5_VABI sceShellCoreUtilIsRemotePlayCpuBudgetAcquired() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsScreenSaverOn() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2067,21 +2042,6 @@ int APS5_VABI sceSystemServiceIsBgmPlaying() {
     return 0;
 }
 
-int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemServiceIsScreenSaverOn() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceKillLocalProcess(std::int32_t appId, std::int32_t processId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2416,11 +2376,6 @@ bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
 }
 
 int APS5_VABI sceSystemStateMgrIsGpuPerformanceNormal() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
