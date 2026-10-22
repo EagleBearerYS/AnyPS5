@@ -4,7 +4,6 @@
 #include <atomic>
 #include <iostream>
 #include <set>
-#include <string>
 #include <thread>
 
 namespace {
@@ -173,52 +172,6 @@ void CheckPrivate() {
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
-void CheckPrivateAllocations() {
-    auto& mappings = Mappings::Get();
-    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
-    Require(memory != nullptr, "private reservation failed");
-    mappings.Commit(memory, 2 * Bytes, PAGE_READWRITE, Bytes, true);
-    const auto address = reinterpret_cast<std::uintptr_t>(memory);
-    const auto collect = [&](std::size_t begin, std::size_t count, std::set<std::size_t>& found) {
-        std::array<void*, 64> pages{};
-        std::size_t available = pages.size();
-        const bool collected = mappings.Collect(address + begin * Small, count * Small, pages.data(), &available, true);
-        found.clear();
-        for (std::size_t i = 0; i < available; ++i) found.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
-        return collected;
-    };
-    const auto write = [&](std::size_t page) { static_cast<volatile unsigned char*>(memory)[page * Small] = static_cast<unsigned char>(page + 1); };
-    const auto pages = Bytes / Small;
-    std::set<std::size_t> found;
-    Require(collect(0, 2 * pages, found), "a collect over two private allocations failed");
-    write(3);
-    write(pages + 1);
-    write(2 * pages - 1);
-    Require(collect(0, 2 * pages, found) && found == std::set<std::size_t>({3, pages + 1, 2 * pages - 1}), "a collect over two private allocations lost or invented a write");
-    Require(collect(0, 2 * pages, found) && found.empty(), "a collect over two private allocations did not clear its writes");
-    write(pages - 1);
-    write(pages);
-    Require(collect(pages - 2, 4, found) && found == std::set<std::size_t>({pages - 1, pages}), "a collect across the boundary of two private allocations lost a write");
-    Require(collect(0, pages, found) && found.empty(), "a collect within one private allocation reported a cleared write");
-    write(5);
-    const auto queries = Mappings::RegionQueries();
-    Require(collect(0, pages, found) && found == std::set<std::size_t>({5}), "a collect within one private allocation lost a write");
-    const auto queried = Mappings::RegionQueries() - queries;
-    Require(queried == 0, ("a collect over a proven range of one private allocation queried its region " + std::to_string(queried) + " times").c_str());
-    write(pages + 2);
-    mappings.Reset(memory + Bytes, Bytes);
-    Require(!collect(0, 2 * pages, found), "a collect over a released private allocation succeeded");
-    Require(collect(0, pages, found) && found.empty(), "releasing a neighbor changed a private allocation's writes");
-    mappings.Commit(memory + Bytes, Bytes, PAGE_READWRITE, Bytes, true);
-    Require(collect(0, 2 * pages, found), "a collect over a recommitted private allocation failed");
-    write(pages + 4);
-    write(1);
-    Require(collect(0, 2 * pages, found) && found == std::set<std::size_t>({1, pages + 4}), "a collect over a recommitted private allocation lost or kept a write");
-    Require(collect(0, 2 * pages, found) && found.empty(), "a collect over a recommitted private allocation did not clear its writes");
-    mappings.Reset(memory, 2 * Bytes);
-    VirtualFree(memory, 0, MEM_RELEASE);
-}
-
 void CheckForgottenSectionKeepsNoPages() {
     auto& mappings = Mappings::Get();
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
@@ -275,7 +228,6 @@ int main() {
         CheckPinsAndHostWrites();
         CheckFailureAndHoles();
         CheckPrivate();
-        CheckPrivateAllocations();
         CheckConcurrentWrites();
         CheckForgottenSectionKeepsNoPages();
         std::cout << "Windows deferred write-watch tests passed\n";

@@ -450,6 +450,10 @@ void GuestArenaCollectPhases_nid_no_patch(std::uint64_t* values, std::size_t cou
     }
 }
 
+void GuestArenaCollectWork_nid_postfix(std::uint64_t* systemCalls, std::uint64_t* pieces) {
+    WindowsMappings::Get().CollectWork(systemCalls, pieces);
+}
+
 bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes) {
     return Arena::Get().OverlapsHostRegion(address, bytes);
 }
