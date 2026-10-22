@@ -1,0 +1,4 @@
+BASE=eb8dcfebaa015115bc054cfb37001a334b8e4f61
+REPEAT=1
+EXTRA_TESTS='agc_driver_msaa_dcc_clear_4|agc_driver_alpha_to_coverage|agc_driver_native_fmask'
+VALIDATION=1
