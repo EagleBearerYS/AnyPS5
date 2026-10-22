@@ -738,6 +738,27 @@ private:
         std::vector<std::uint32_t> values{0u};
         std::vector<std::pair<std::uint64_t, std::uint64_t>> scanned;
         for (const auto& domain : column.keyDomains) {
+            if (domain.child) {
+                if (!plan.descriptorSources.at(column.heapSource).tableColumn.has_value()) {
+                    skip(NarrowSkip::Value);
+                    return;
+                }
+                std::uint32_t word = 0u;
+                if (const auto dword = ImageTableAbi::ScalarBufferDword(domain.offset, 0u, records.size)) {
+                    const auto address = records.base + *dword;
+                    if (!PageAccessible(address, records.base, records.base + records.size)) {
+                        skip(NarrowSkip::Unmapped);
+                        return;
+                    }
+                    if (runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, address, sizeof(std::uint32_t))) {
+                        skip(NarrowSkip::Pending);
+                        return;
+                    }
+                    word = Read(address);
+                }
+                values.push_back((word >> domain.shift) & domain.mask);
+                continue;
+            }
             if (domain.value) {
                 DescriptorValue key;
                 try {
