@@ -1,0 +1,66 @@
+function	class	basis
+sceRegMgrBackupNeedMem	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrBackupNeedMemForPS4	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrBackupPullData	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrBackupPullDataForPS4	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrBackupPullDataGkp	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrBackupPushData	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrBackupPushDataForPS4	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrBackupPushDataGkp	D	unknown signature (debt); registry backup/restore blob format not public
+sceRegMgrCheckError	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrCheckIntVal	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrCntSetInitReinst	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrCntlDeleteReg	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrCntlGetFileName	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrCntlGetFilesCount	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrCntlStart	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrCntlStopHdd	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrDrvDataCheckGet	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrDrvDataClose	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrDrvDataOpen	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrDrvGetEntCnt	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrDrvGetUpdateCnt	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrEvtGetCnt	D	unknown signature (debt); registry change-event internals not public
+sceRegMgrEvtGetCntForPS4	D	unknown signature (debt); registry change-event internals not public
+sceRegMgrEvtGetRegId	D	unknown signature (debt); registry change-event internals not public
+sceRegMgrEvtGetRegIdForPS4	D	unknown signature (debt); registry change-event internals not public
+sceRegMgrGetBin	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrGetBinInitVal	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrGetInitError	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrGetInt	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrGetIntInitVal	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrGetStr	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrGetStrInitVal	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrGetVersion	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrGetVersionForPS4	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrIsChange	D	unknown signature (debt); registry change-event internals not public
+sceRegMgrIsInitOK	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrLogPull	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrMemset	D	unknown signature (debt); name suggests a libc-style helper but argument order and return are unverified
+sceRegMgrNonSysCheckError	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrNonSysGetBin	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrNonSysGetInt	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrNonSysGetStr	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrNonSysSetBin	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrNonSysSetInt	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrNonSysSetStr	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrPrintInfo	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrRecoverRegNvs	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrResetVal	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrSetBin	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrSetInitLevel	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrSetInt	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrSetStr	D	registry entry IDs, value types, defaults and REGMGR error codes are not in the tree or public; no registry model exists
+sceRegMgrSetbin	D	unknown signature (debt); depends on registry defaults and error codes that are not public
+sceRegMgrSrvCnvRegionInt	D	unknown signature (debt); machine type and region codes not public
+sceRegMgrSrvCnvRegionStr	D	unknown signature (debt); machine type and region codes not public
+sceRegMgrSrvGetMachineType	D	unknown signature (debt); machine type and region codes not public
+sceRegMgrSrvGetQAFforReg	D	unknown signature (debt); machine type and region codes not public
+sceRegMgrSrvGetRealMachineType	D	unknown signature (debt); machine type and region codes not public
+sceRegMgrSrvGetRegion	D	unknown signature (debt); machine type and region codes not public
+sceRegMgrSrvGetRegionStr	D	unknown signature (debt); machine type and region codes not public
+sceRegMgrStrncpy	D	unknown signature (debt); name suggests a libc-style helper but argument order and return are unverified
+sceRegMgrToolDataCheckGet	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrToolGetEntryCnt	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrToolGetInfo	D	unknown signature (debt); registry file maintenance/debug internals
+sceRegMgrToolGetUpdateCnt	D	unknown signature (debt); registry file maintenance/debug internals

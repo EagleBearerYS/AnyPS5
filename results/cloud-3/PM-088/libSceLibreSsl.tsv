@@ -1,0 +1,400 @@
+function	class	basis
+AES_cbc_encrypt_nid_postfix	B-S	mbedtls_aes_crypt_cbc on whole blocks + CRYPTO_cbc128 tail rule (partial block zero-padded), ivec updated
+AES_cfb128_encrypt_nid_postfix	B-S	mbedtls_aes_crypt_cfb128 with *num as iv_off, encrypt schedule both ways as LibreSSL
+AES_ctr128_encrypt_nid_postfix	B-S	mbedtls_aes_crypt_ctr with ecount_buf/num as stream_block/nc_off
+AES_decrypt_nid_postfix	B-S	one block via mbedtls_aes_crypt_ecb (decrypt schedule) over the guest AES_KEY
+AES_ecb_encrypt_nid_postfix	B-S	AES_encrypt/AES_decrypt by the enc flag (LibreSSL aes_ecb.c)
+AES_encrypt_nid_postfix	B-S	one block via mbedtls_aes_crypt_ecb over the guest AES_KEY schedule
+AES_set_decrypt_key_nid_postfix	B-S	mbedtls_aes_setkey_dec (equivalent inverse cipher) into the public AES_KEY; 0/-1/-2 as LibreSSL
+AES_set_encrypt_key_nid_postfix	B-S	mbedtls_aes_setkey_enc, schedule kept in the public 244-byte AES_KEY (u32 rd_key[60], int rounds); 0/-1/-2 as LibreSSL
+ASN1_INTEGER_get_nid_postfix	B-S	LibreSSL a_int.c over the public asn1_string_st {length,type,data,flags}: big-endian, V_ASN1_NEG_INTEGER, -1 if wider than long
+ASN1_STRING_data_nid_postfix	B-S	returns x->data of the public asn1_string_st
+ASN1_STRING_length_nid_postfix	B-S	returns x->length of the public asn1_string_st
+ASN1_STRING_print_nid_postfix	B-L	prints to a BIO: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+ASN1_STRING_to_UTF8_nid_postfix	B-M	LibreSSL a_mbstr semantics: BMP (UCS-2BE)/Universal (UCS-4BE)/UTF8/Latin-1 types to an OPENSSL_malloc'ed UTF-8 copy, length or -1
+ASN1_STRING_type_nid_postfix	B-S	returns x->type of the public asn1_string_st
+ASN1_TIME_print_nid_postfix	B-L	'Mon DD HH:MM:SS YYYY GMT' to a BIO: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_ctrl_nid_postfix	B-L	needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls); guest BIO_METHODs need APS5_VABI thunks
+BIO_f_ssl_nid_postfix	B-L	SSL filter BIO: BIO tier + SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+BIO_free_nid_postfix	B-L	refcount/destroy/chain: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_new_fp_nid_postfix	B-L	file BIO over a guest FILE* (libc FileStream, not a host FILE): needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_new_mem_buf_nid_postfix	B-L	read-only memory BIO: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_new_nid_postfix	B-L	guest-defined BIO_METHOD tables called through APS5_VABI thunks: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_new_socket_nid_postfix	B-L	socket BIO over a guest socket number (libkernel/libSceNet table, as libSceSsl's KernelSocketPoll): needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_printf_nid_postfix	B-L	printf formatting into a BIO: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_puts_nid_postfix	B-L	needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_s_file_nid_postfix	B-L	file method with guest paths via libc ResolvePath: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_s_mem_nid_postfix	B-L	memory method (BUF_MEM, BIO_get_mem_data via BIO_ctrl): needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_write_nid_postfix	B-L	needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BN_CTX_end_nid_postfix	B-S	releases the frame's temporaries
+BN_CTX_free_nid_postfix	B-S	frees the opaque scratch pool and its BIGNUMs
+BN_CTX_new_nid_postfix	B-S	opaque scratch pool for temporaries (host allocation)
+BN_CTX_start_nid_postfix	B-S	opens a frame in the scratch pool (LibreSSL bn_ctx.c)
+BN_add_word_nid_postfix	B-S	mbedtls_mpi_add_int through the bignum_st bridge; 1/0
+BN_bin2bn_nid_postfix	B-S	mbedtls_mpi_read_binary semantics into a new or given BIGNUM
+BN_bn2bin_nid_postfix	B-S	big-endian magnitude, returns BN_num_bytes (mbedtls_mpi_write_binary)
+BN_free_nid_postfix	B-S	frees d and the bignum_st per BN_FLG_MALLOCED/BN_FLG_STATIC_DATA (LibreSSL bn_lib.c)
+BN_hex2bn_nid_postfix	B-S	LibreSSL hex parse ('-' prefix, returns characters consumed, allocates *a when NULL)
+BN_mod_inverse_nid_postfix	B-S	mbedtls_mpi_inv_mod; NULL + BN_R_NO_INVERSE when none (LibreSSL bn_gcd.c)
+BN_mul_nid_postfix	B-S	mbedtls_mpi_mul_mpi through the bignum_st bridge; ctx is scratch only
+BN_new_nid_postfix	B-S	public 2.x bignum_st {d,top,dmax,neg,flags} (BN_is_zero/BN_is_odd macros read it) in guest memory; arithmetic through an mbedtls_mpi bridge
+BN_num_bits_nid_postfix	B-S	bit length from top limb (mbedtls_mpi_bitlen semantics)
+BN_print_nid_postfix	B-L	hex to a BIO: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BN_set_word_nid_postfix	B-S	one-limb store with top normalised (LibreSSL bn_lib.c)
+BN_sub_word_nid_postfix	B-S	mbedtls_mpi_sub_int through the bignum_st bridge, sign as LibreSSL; 1/0
+CMAC_CTX_free_nid_postfix	B-S	frees the CMAC_CTX and its mbedtls context
+CMAC_CTX_new_nid_postfix	B-S	opaque CMAC_CTX holding an mbedtls_cipher_context (MBEDTLS_CMAC_C enabled)
+CMAC_Final_nid_postfix	B-S	mbedtls_cipher_cmac_finish, *poutlen = block size; length query with NULL out
+CMAC_Init_nid_postfix	B-S	mbedtls_cipher_cmac_starts for the EVP_CIPHER descriptor's cipher; NULL key/cipher restart as LibreSSL cmac.c
+CMAC_Update_nid_postfix	B-S	mbedtls_cipher_cmac_update
+CONF_modules_free_nid_postfix	B-S	unloads config modules; nothing to unload until CONF_modules_load_file exists
+CONF_modules_load_file_nid_postfix	B-L	OpenSSL config parser + module runner over a guest path; LibreSSL conf/ (no mbedtls equivalent)
+CRYPTO_THREADID_set_callback_nid_postfix	B-S	stores it, 1 (0 if already set) as OpenSSL 1.0; host identifies threads itself and never calls it
+CRYPTO_THREADID_set_numeric_nid_postfix	B-S	fills the public CRYPTO_THREADID {ptr=NULL, val}
+CRYPTO_cleanup_all_ex_data_nid_postfix	B-S	drops ex_data class registrations (none outside the SSL tier yet)
+CRYPTO_free_nid_postfix	B-S	frees CRYPTO_malloc memory (guest-visible libc heap so a title's free() also works)
+CRYPTO_malloc_nid_postfix	B-S	malloc wrapper (LibreSSL malloc-wrapper.c) on the guest-visible libc heap
+CRYPTO_num_locks_nid_postfix	B-S	returns CRYPTO_NUM_LOCKS (41 in LibreSSL's public crypto.h)
+CRYPTO_set_add_lock_callback_nid_postfix	B-S	stores the callback; host state uses its own atomics, never calls it
+CRYPTO_set_locking_callback_nid_postfix	B-S	stores the callback; host state uses its own locks, never calls it
+CRYPTO_set_mem_functions_nid_postfix	B-S	LibreSSL malloc-wrapper.c ignores custom allocators and returns 0
+DES_ecb_encrypt_nid_postfix	B-S	mbedtls_des_crypt_ecb (MBEDTLS_DES_C on) over the 128-byte DES_key_schedule; decrypt with the reversed subkeys
+DES_set_key_nid_postfix	B-S	mbedtls_des_setkey_enc into DES_key_schedule; parity/weak checks only with DES_check_key (off), returns 0
+DES_set_odd_parity_nid_postfix	B-S	mbedtls_des_key_set_parity
+DTLSv1_client_method_nid_postfix	B-L	DTLS 1.0 method: mbedtls 3 has DTLS 1.2 only; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+DTLSv1_server_method_nid_postfix	B-L	DTLS 1.0 method: mbedtls 3 has DTLS 1.2 only; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+ECDH_compute_key_nid_postfix	B-S	mbedtls_ecdh_compute_shared on the EC_KEY/EC_POINT; guest KDF via APS5_VABI or truncation to outlen
+ECDSA_sign_nid_postfix	B-S	mbedtls_ecdsa_write_signature (DER) on the EC_KEY; type ignored as LibreSSL
+ECDSA_size_nid_postfix	B-S	maximum DER signature size from the group order (LibreSSL ecs_lib.c)
+ECDSA_verify_nid_postfix	B-S	mbedtls_ecdsa_read_signature; 1/0/-1 as LibreSSL
+EC_GROUP_free_nid_postfix	B-S	frees the opaque group (EC objects are opaque in LibreSSL 2.x)
+EC_GROUP_get_degree_nid_postfix	B-S	field size in bits (mbedtls_ecp_group.pbits)
+EC_GROUP_new_by_curve_name_nid_postfix	B-S	public NIDs (415 prime256v1, 715 secp384r1, 716 secp521r1, 714 secp256k1, brainpool) to mbedtls_ecp_group_load
+EC_KEY_check_key_nid_postfix	B-S	mbedtls_ecp_check_pubkey/check_privkey and pub = priv*G
+EC_KEY_free_nid_postfix	B-S	refcounted opaque EC_KEY
+EC_KEY_generate_key_nid_postfix	B-S	mbedtls_ecp_gen_keypair with host entropy
+EC_KEY_get0_group_nid_postfix	B-S	returns the key's group
+EC_KEY_get0_private_key_nid_postfix	B-S	returns the key's private BIGNUM
+EC_KEY_get0_public_key_nid_postfix	B-S	returns the key's public EC_POINT
+EC_KEY_new_by_curve_name_nid_postfix	B-S	EC_KEY_new + EC_GROUP_new_by_curve_name
+EC_KEY_new_nid_postfix	B-S	opaque refcounted EC_KEY
+EC_KEY_set_group_nid_postfix	B-S	copies the group into the key
+EC_KEY_set_private_key_nid_postfix	B-S	copies the BIGNUM into the key
+EC_KEY_set_public_key_nid_postfix	B-S	copies the point into the key
+EC_POINT_free_nid_postfix	B-S	frees an opaque mbedtls_ecp_point holder
+EC_POINT_mul_nid_postfix	B-S	n*G + m*Q via mbedtls_ecp_muladd/mbedtls_ecp_mul
+EC_POINT_new_nid_postfix	B-S	opaque point bound to a group
+EC_POINT_oct2point_nid_postfix	B-M	mbedtls_ecp_point_read_binary for uncompressed; compressed/hybrid forms need a square root mod p by hand (mbedtls 3 cannot)
+EC_POINT_point2oct_nid_postfix	B-S	mbedtls_ecp_point_write_binary (uncompressed/compressed), length query with NULL buf
+ENGINE_by_id_nid_postfix	C	NULL + ENGINE_R_NO_SUCH_ENGINE: no ENGINE exists here (no crypto hardware engine on a PC; LibreSSL 3.9 cut the API to such stubs); real behaviour
+ENGINE_cleanup_nid_postfix	C	no-op: the engine list is empty; real behaviour
+ENGINE_ctrl_cmd_nid_postfix	C	no ENGINE can exist: NULL gives 0 + ERR_R_PASSED_NULL_PARAMETER as LibreSSL, any other pointer throws
+ENGINE_ctrl_nid_postfix	C	no ENGINE can exist: NULL gives 0 + ERR_R_PASSED_NULL_PARAMETER as LibreSSL, any other pointer throws
+ENGINE_finish_nid_postfix	C	no ENGINE can exist: NULL gives 0 + ERR_R_PASSED_NULL_PARAMETER as LibreSSL, any other pointer throws
+ENGINE_free_nid_postfix	C	no ENGINE can exist: NULL gives 0 + ERR_R_PASSED_NULL_PARAMETER as LibreSSL, any other pointer throws
+ENGINE_get_first_nid_postfix	C	NULL: the engine list is empty (no hardware engine on a PC); real behaviour
+ENGINE_get_id_nid_postfix	D	no valid call: no ENGINE can exist and LibreSSL dereferences even NULL (crash on console), so it stays a throw (moved from C by cloud-3)
+ENGINE_get_next_nid_postfix	C	NULL: the engine list is empty, so only NULL can be passed; real behaviour
+ENGINE_init_nid_postfix	C	no ENGINE can exist: NULL gives 0 + ERR_R_PASSED_NULL_PARAMETER as LibreSSL, any other pointer throws
+ENGINE_load_builtin_engines_nid_postfix	C	no-op: no built-in engine to register on a PC; real behaviour
+ENGINE_load_private_key_nid_postfix	C	no ENGINE can exist: NULL gives NULL + ERR_R_PASSED_NULL_PARAMETER as LibreSSL, any other pointer throws
+ENGINE_set_default_nid_postfix	D	no valid call: no ENGINE can exist and LibreSSL dereferences even NULL (crash on console), so it stays a throw (moved from C by cloud-3)
+ERR_clear_error_nid_postfix	B-S	empties the calling thread's error queue (thread-local, LibreSSL err.c)
+ERR_error_string_n_nid_postfix	B-M	'error:%08lX:%s:%s:%s' with lib/func/reason names (lib(%lu) fallbacks); needs LibreSSL's public string tables for the codes raised
+ERR_error_string_nid_postfix	B-S	ERR_error_string_n into buf or a static 256-byte buffer
+ERR_free_strings_nid_postfix	B-S	drops the string tables; static here, nothing observable
+ERR_get_error_nid_postfix	B-S	pops the oldest ERR_PACK(lib,func,reason) code (public values in LibreSSL err.h and per-library headers)
+ERR_peek_error_nid_postfix	B-S	oldest queued code without removing it
+ERR_remove_thread_state_nid_postfix	B-S	frees the given (NULL: current) thread's error queue
+EVP_CIPHER_CTX_cleanup_nid_postfix	B-S	frees cipher_data (mbedtls context) and zeroes the ctx; returns 1
+EVP_CIPHER_CTX_ctrl_nid_postfix	B-M	EVP_CTRL_GCM_SET_IVLEN/GET_TAG/SET_TAG/SET_IV_FIXED (public evp.h codes) on mbedtls_gcm
+EVP_CIPHER_CTX_free_nid_postfix	B-S	cleanup + free
+EVP_CIPHER_CTX_init_nid_postfix	B-S	zeroes the guest-allocated public 2.x EVP_CIPHER_CTX
+EVP_CIPHER_CTX_new_nid_postfix	B-S	allocates and initialises an EVP_CIPHER_CTX
+EVP_CIPHER_CTX_set_padding_nid_postfix	B-S	toggles EVP_CIPH_NO_PADDING in ctx->flags, returns 1
+EVP_CIPHER_block_size_nid_postfix	B-S	descriptor block_size (16 for CBC, 1 for CTR/CFB8/GCM)
+EVP_CipherFinal_ex_nid_postfix	B-M	PKCS#7 pad/strip with EVP_R_BAD_DECRYPT/DATA_NOT_MULTIPLE_OF_BLOCK_LENGTH as LibreSSL evp_enc.c; GCM tag
+EVP_CipherInit_ex_nid_postfix	B-M	cipher/key/iv/enc setup where NULL arguments keep earlier ones (LibreSSL evp_enc.c); mbedtls_aes/mbedtls_gcm in cipher_data
+EVP_CipherUpdate_nid_postfix	B-M	LibreSSL block buffering (buf_len/final_used, outl as LibreSSL), GCM AAD with NULL out; raw modes from mbedtls
+EVP_DecryptFinal_ex_nid_postfix	B-S	EVP_CipherFinal_ex for decryption
+EVP_DecryptInit_ex_nid_postfix	B-S	EVP_CipherInit_ex with enc 0
+EVP_DecryptUpdate_nid_postfix	B-S	EVP_CipherUpdate for decryption
+EVP_DigestFinal_ex_nid_postfix	B-S	mbedtls_md_finish, *s = md_size
+EVP_DigestInit_ex_nid_postfix	B-S	mbedtls_md_setup/starts for the descriptor; ENGINE argument unused (none exist)
+EVP_DigestUpdate_nid_postfix	B-S	mbedtls_md_update
+EVP_DigestVerifyFinal_nid_postfix	B-M	finishes the digest and verifies with the EVP_PKEY (RSA PKCS#1/PSS, ECDSA); 1/0/-1
+EVP_DigestVerifyInit_nid_postfix	B-M	digest + EVP_PKEY verify context (pctx for padding) on mbedtls_rsa/mbedtls_ecdsa; key-object tier
+EVP_Digest_nid_postfix	B-S	one-shot mbedtls_md
+EVP_EncryptFinal_ex_nid_postfix	B-S	EVP_CipherFinal_ex for encryption
+EVP_EncryptInit_ex_nid_postfix	B-S	EVP_CipherInit_ex with enc 1
+EVP_EncryptUpdate_nid_postfix	B-S	EVP_CipherUpdate for encryption
+EVP_MD_CTX_cleanup_nid_postfix	B-S	frees md_data (mbedtls_md context), zeroes, returns 1
+EVP_MD_CTX_create_nid_postfix	B-S	allocates and initialises an EVP_MD_CTX
+EVP_MD_CTX_destroy_nid_postfix	B-S	cleanup + free
+EVP_MD_CTX_init_nid_postfix	B-S	zeroes the guest-allocated public 2.x EVP_MD_CTX (48 bytes: digest, engine, flags, md_data, pctx, update)
+EVP_MD_size_nid_postfix	B-S	descriptor md_size
+EVP_PKEY_copy_parameters_nid_postfix	B-S	copies EC group parameters; 0 + EVP_R_DIFFERENT_KEY_TYPES on mismatch
+EVP_PKEY_free_nid_postfix	B-S	refcount; frees the held RSA/EC_KEY
+EVP_PKEY_get1_EC_KEY_nid_postfix	B-S	pkey.ec up-ref'd, or NULL + EVP_R_EXPECTING_A_EC_KEY
+EVP_PKEY_get1_RSA_nid_postfix	B-S	pkey.rsa up-ref'd, or NULL + EVP_R_EXPECTING_AN_RSA_KEY
+EVP_PKEY_id_nid_postfix	B-S	pkey->type of the public 2.x evp_pkey_st
+EVP_PKEY_new_nid_postfix	B-S	public 2.x evp_pkey_st {type,save_type,references,ameth,engine,pkey union,...} in guest memory
+EVP_PKEY_set1_RSA_nid_postfix	B-S	type EVP_PKEY_RSA (6), RSA up-ref'd
+EVP_PKEY_type_nid_postfix	B-S	alias NIDs (EVP_PKEY_RSA2 ...) to the base type, NID_undef otherwise (public obj_mac.h NIDs)
+EVP_aes_128_cbc_nid_postfix	B-S	static public 2.x EVP_CIPHER descriptor (NID 419, block 16, key 16, iv 16) on mbedtls_aes
+EVP_aes_128_cfb8_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 653) on mbedtls_aes_crypt_cfb8
+EVP_aes_128_ctr_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 904) on mbedtls_aes_crypt_ctr
+EVP_aes_128_gcm_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 895) on mbedtls_gcm
+EVP_aes_192_cbc_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 423) on mbedtls_aes
+EVP_aes_192_cfb8_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 654) on mbedtls_aes_crypt_cfb8
+EVP_aes_192_ctr_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 905) on mbedtls_aes_crypt_ctr
+EVP_aes_192_gcm_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 898) on mbedtls_gcm
+EVP_aes_256_cbc_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 427) on mbedtls_aes
+EVP_aes_256_cfb8_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 655) on mbedtls_aes_crypt_cfb8
+EVP_aes_256_ctr_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 906) on mbedtls_aes_crypt_ctr
+EVP_aes_256_gcm_nid_postfix	B-S	static EVP_CIPHER descriptor (NID 901) on mbedtls_gcm
+EVP_cleanup_nid_postfix	B-S	drops name-lookup tables; static descriptors, nothing observable
+EVP_md5_nid_postfix	B-S	static public 2.x EVP_MD descriptor (NID 4, size 16, block 64) on mbedtls_md
+EVP_sha256_nid_postfix	B-S	static EVP_MD descriptor (NID 672, size 32, block 64) on mbedtls_md
+EVP_sha384_nid_postfix	B-S	static EVP_MD descriptor (NID 673, size 48, block 128) on mbedtls_md
+EVP_sha512_nid_postfix	B-S	static EVP_MD descriptor (NID 674, size 64, block 128) on mbedtls_md
+GENERAL_NAMES_free_nid_postfix	B-L	X509v3 GENERAL_NAME objects from X509_get_ext_d2i; X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+GENERAL_NAME_free_nid_postfix	B-L	X509v3 GENERAL_NAME objects from X509_get_ext_d2i; X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+HMAC_CTX_cleanup_nid_postfix	B-S	frees the mbedtls_md context held in the HMAC_CTX, zeroes it
+HMAC_CTX_init_nid_postfix	B-S	zeroes the guest-allocated public 2.x HMAC_CTX (md, md_ctx, i_ctx, o_ctx, key_length, key[128]; 288 bytes)
+HMAC_Final_nid_postfix	B-S	mbedtls_md_hmac_finish, *len
+HMAC_Init_ex_nid_postfix	B-M	mbedtls_md_hmac_starts/reset kept in the guest HMAC_CTX; NULL key reuses, NULL md keeps the previous (LibreSSL hmac.c)
+HMAC_Init_nid_postfix	B-S	HMAC_CTX_init when key and md are given, then HMAC_Init_ex (LibreSSL hmac.c)
+HMAC_Update_nid_postfix	B-S	mbedtls_md_hmac_update
+HMAC_nid_postfix	B-S	one-shot mbedtls_md_hmac; static output buffer when md is NULL
+MD4_Final_nid_postfix	B-S	RFC 1320 padding over the public MD4_CTX (A-D, Nl/Nh, data[16], num; 92 bytes)
+MD4_Init_nid_postfix	B-S	RFC 1320 initial state into the public MD4_CTX (mbedtls 3 removed MD4)
+MD4_Update_nid_postfix	B-M	RFC 1320 compression + md32 buffering by hand (mbedtls 3 has no MD4)
+MD5_Final_nid_postfix	B-S	mbedtls_md5 finish bridged from the public MD5_CTX (A-D, Nl/Nh bit count, data[16], num; 92 bytes)
+MD5_Init_nid_postfix	B-S	RFC 1321 initial state into the public MD5_CTX
+MD5_Update_nid_postfix	B-S	mbedtls_md5_update bridged to the public MD5_CTX fields
+OBJ_cleanup_nid_postfix	B-S	frees the objects added by OBJ_create
+OBJ_create_nid_postfix	B-M	adds a dynamic NID for an OID text with sn/ln (LibreSSL obj_dat.c); needs the NID table
+OBJ_nid2sn_nid_postfix	B-M	short name from LibreSSL's public objects.txt NID table (generated header like Cp949.hpp, or the LibreSSL submodule)
+OBJ_obj2nid_nid_postfix	B-M	nid field or OID-bytes lookup in the objects.txt NID table
+OBJ_sn2nid_nid_postfix	B-M	short-name lookup in the objects.txt NID table
+OCSP_BASICRESP_free_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_RESPONSE_free_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_basic_add1_cert_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_basic_verify_nid_postfix	B-L	responder signature and chain against an X509_STORE; OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_cert_status_str_nid_postfix	B-S	table good/revoked/unknown (LibreSSL ocsp_prn.c)
+OCSP_check_validity_nid_postfix	B-M	thisUpdate/nextUpdate GeneralizedTime vs host time with nsec/maxsec (LibreSSL ocsp_cl.c); inputs from the OCSP tier
+OCSP_crl_reason_str_nid_postfix	B-S	RFC 5280 CRLReason name table (LibreSSL ocsp_prn.c)
+OCSP_resp_count_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_resp_get0_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_response_get1_basic_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_response_status_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_response_status_str_nid_postfix	B-S	RFC 6960 OCSPResponseStatus name table (LibreSSL ocsp_prn.c)
+OCSP_single_get0_status_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OPENSSL_add_all_algorithms_noconf_nid_postfix	B-S	registers cipher/digest names; static descriptors need nothing
+OPENSSL_load_builtin_modules_nid_postfix	B-S	registers CONF modules; observable only through CONF_modules_load_file
+PEM_X509_INFO_read_bio_nid_postfix	B-L	PEM bundle to an X509_INFO stack: BIO tier + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+PEM_read_RSAPrivateKey_nid_postfix	B-M	guest FILE* (libc FileStream) read + mbedtls_pk_parse_key (encrypted PEM with the guest pem_password_cb via thunk) into the rsa_st key object
+PEM_read_X509_nid_postfix	B-L	guest FILE* + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+PEM_read_bio_PrivateKey_nid_postfix	B-L	needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls) (mbedtls_pk_parse_key could decode the key)
+PEM_read_bio_X509_AUX_nid_postfix	B-L	BIO tier + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+PEM_read_bio_X509_nid_postfix	B-L	BIO tier + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+PEM_write_bio_X509_nid_postfix	B-L	BIO tier + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+PKCS12_PBE_add_nid_postfix	B-S	no-op in OpenSSL 1.0+/LibreSSL (PBE algorithms live in a static table)
+PKCS12_free_nid_postfix	B-L	PKCS#12 ASN.1 object: mbedtls has PBE but no PFX/SafeBag parser; LibreSSL pkcs12/
+PKCS12_parse_nid_postfix	B-L	MAC check, PBE decrypt, key/cert/CA extraction: LibreSSL pkcs12/ + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+RAND_add_nid_postfix	B-S	ignored, as LibreSSL rand_lib.c (arc4random-backed)
+RAND_bytes_nid_postfix	B-S	HostEntropy_nid_no_patch (libc/src/HostEntropy.cpp, as sceRandomGetRandomNumber), returns 1
+RAND_file_name_nid_postfix	B-S	copies '/dev/urandom', NULL if it does not fit (LibreSSL randfile.c)
+RAND_load_file_nid_postfix	B-S	reads nothing, returns 2048 for -1 else bytes (LibreSSL randfile.c)
+RAND_status_nid_postfix	B-S	returns 1 (LibreSSL rand_lib.c)
+RSA_flags_nid_postfix	B-S	rsa->meth->flags of the default RSA_METHOD (public 2.x rsa_meth_st)
+RSA_free_nid_postfix	B-S	refcount, frees the BIGNUM members (LibreSSL rsa_lib.c)
+RSA_generate_key_ex_nid_postfix	B-M	mbedtls_rsa_gen_key with e from the BIGNUM; BN_GENCB progress callback into the guest
+RSA_new_nid_postfix	B-S	public 2.x rsa_st (pad, version, meth, engine, n, e, d, p, q, dmp1, dmq1, iqmp...) in guest LP64 layout; titles set rsa->n directly
+RSA_padding_add_PKCS1_PSS_nid_postfix	B-M	EMSA-PSS encode (RFC 8017 9.1.1) by hand with mbedtls_md for MGF1 (mbedtls keeps it internal)
+RSA_private_decrypt_nid_postfix	B-M	mbedtls_rsa context built from the rsa_st BIGNUMs; PKCS1/OAEP(SHA-1)/NO padding
+RSA_private_encrypt_nid_postfix	B-M	PKCS#1 type-1 padding of raw data (mbedtls_rsa_pkcs1_sign with MBEDTLS_MD_NONE) or no padding
+RSA_public_decrypt_nid_postfix	B-M	raw mbedtls_rsa_public + type-1 unpadding by hand (mbedtls has no recover API)
+RSA_public_encrypt_nid_postfix	B-M	mbedtls_rsa from the rsa_st BIGNUMs; PKCS1/OAEP(SHA-1)/NO padding
+RSA_sign_nid_postfix	B-S	DigestInfo for the NID via mbedtls_rsa_pkcs1_sign; NID_md5_sha1 (114) without DigestInfo
+RSA_size_nid_postfix	B-S	BN_num_bytes(rsa->n)
+RSA_verify_PKCS1_PSS_nid_postfix	B-M	EMSA-PSS verify (RFC 8017 9.1.2) with LibreSSL's sLen -1/-2 rules
+RSA_verify_nid_postfix	B-S	mbedtls_rsa_pkcs1_verify for the NID; 1/0
+SHA1_Final_nid_postfix	B-S	mbedtls_sha1 finish bridged from the public SHA_CTX (h0-h4, Nl/Nh, data[16], num; 96 bytes)
+SHA1_Init_nid_postfix	B-S	FIPS 180-4 initial state into the public SHA_CTX
+SHA1_Update_nid_postfix	B-S	mbedtls_sha1_update bridged to the public SHA_CTX
+SHA224_Final_nid_postfix	B-S	mbedtls_sha256 (is224) finish from the public SHA256_CTX (md_len 28)
+SHA224_Init_nid_postfix	B-S	FIPS 180-4 SHA-224 state into the public SHA256_CTX (112 bytes)
+SHA224_Update_nid_postfix	B-S	mbedtls_sha256_update bridged to SHA256_CTX
+SHA256_Final_nid_postfix	B-S	mbedtls_sha256 finish from the public SHA256_CTX (h[8], Nl/Nh, data[16], num, md_len; 112 bytes)
+SHA256_Init_nid_postfix	B-S	FIPS 180-4 initial state into the public SHA256_CTX
+SHA256_Update_nid_postfix	B-S	mbedtls_sha256_update bridged to SHA256_CTX
+SHA256_nid_postfix	B-S	one-shot mbedtls_sha256; static buffer when md is NULL
+SHA384_Final_nid_postfix	B-S	mbedtls_sha512 (is384) finish from the public SHA512_CTX (md_len 48)
+SHA384_Init_nid_postfix	B-S	FIPS 180-4 SHA-384 state into the public SHA512_CTX (216 bytes)
+SHA384_Update_nid_postfix	B-S	mbedtls_sha512_update bridged to SHA512_CTX
+SHA512_Final_nid_postfix	B-S	mbedtls_sha512 finish from the public SHA512_CTX (h[8], Nl/Nh, u[128], num, md_len; 216 bytes)
+SHA512_Init_nid_postfix	B-S	FIPS 180-4 initial state into the public SHA512_CTX
+SHA512_Update_nid_postfix	B-S	mbedtls_sha512_update bridged to SHA512_CTX
+SSL_CIPHER_get_bits_nid_postfix	B-L	cipher objects with OpenSSL names/bits (not mbedtls IANA names); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CIPHER_get_name_nid_postfix	B-L	OpenSSL cipher names (ECDHE-RSA-AES128-GCM-SHA256), not mbedtls IANA names; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CIPHER_get_version_nid_postfix	B-L	protocol version string of the cipher; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_add_client_CA_nid_postfix	B-L	server CA name list (X509_NAME); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_callback_ctrl_nid_postfix	B-L	guest callbacks through APS5_VABI thunks; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_check_private_key_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_ctrl_nid_postfix	B-L	SSL_CTRL_* (options, mode, cache, extra certs, tlsext); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_free_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_get_cert_store_nid_postfix	B-L	context X509_STORE (verify tier); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_get_ex_data_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_get_ex_new_index_nid_postfix	B-L	ex_data index with guest new/dup/free callbacks; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_get_verify_mode_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_load_verify_locations_nid_postfix	B-L	CAfile/CApath on guest paths into the X509_STORE; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_load_verify_mem_nid_postfix	B-L	LibreSSL-only: PEM CAs from memory; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_new_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_sess_set_new_cb_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set1_groups_list_nid_postfix	B-L	group-name list parsing (P-256:X25519...); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_alpn_protos_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_alpn_select_cb_nid_postfix	B-L	server ALPN selection callback (no mbedtls hook); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_cert_store_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_cert_verify_callback_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_cipher_list_nid_postfix	B-L	OpenSSL cipher-string syntax; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_client_cert_cb_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_default_passwd_cb_nid_postfix	B-L	PEM password callback for the file loaders; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_default_passwd_cb_userdata_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_ex_data_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_info_callback_nid_postfix	B-L	handshake state callback (SSL_CB_*), no mbedtls equivalent; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_msg_callback_nid_postfix	B-L	per-message protocol callback, no mbedtls equivalent; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_next_proto_select_cb_nid_postfix	B-L	NPN, which mbedtls lacks; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_quiet_shutdown_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_session_id_context_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_verify_nid_postfix	B-L	verify mode + guest callback taking X509_STORE_CTX*; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_use_PrivateKey_ASN1_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_use_PrivateKey_file_nid_postfix	B-L	guest path + PEM tier; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_use_PrivateKey_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_use_certificate_ASN1_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_use_certificate_chain_file_nid_postfix	B-L	guest path + PEM tier; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_use_certificate_file_nid_postfix	B-L	guest path + PEM tier; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_use_certificate_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_SESSION_free_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_accept_nid_postfix	B-L	server handshake over the SSL's BIOs; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_alert_desc_string_long_nid_postfix	B-S	alert-description string table (LibreSSL ssl_stat.c, RFC 5246 codes)
+SSL_check_private_key_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_connect_nid_postfix	B-L	client handshake over the SSL's BIOs/guest socket; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_ctrl_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_free_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get0_alpn_selected_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get0_param_nid_postfix	B-L	X509_VERIFY_PARAM of the SSL (verify tier); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get1_session_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_SSL_CTX_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_certificate_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_current_cipher_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_error_nid_postfix	B-L	SSL_ERROR_* from the last return, rwstate and the error queue; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_ex_data_X509_STORE_CTX_idx_nid_postfix	B-L	ex_data index for the SSL* on the verify context; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_ex_data_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_ex_new_index_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_fd_nid_postfix	B-L	guest socket of the socket BIO; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_peer_cert_chain_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_peer_certificate_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_privatekey_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_rbio_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_servername_nid_postfix	B-L	SNI host name; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_session_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_shutdown_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_verify_result_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_wbio_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_library_init_nid_postfix	B-S	registers algorithms, returns 1
+SSL_load_error_strings_nid_postfix	B-S	loads error strings; static here, nothing observable
+SSL_new_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_peek_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_pending_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_read_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_select_next_proto_nid_postfix	B-S	pure wire-format protocol list match (LibreSSL ssl_lib.c), OPENSSL_NPN_NEGOTIATED/NO_OVERLAP
+SSL_set_SSL_CTX_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_set_bio_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_set_connect_state_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_set_ex_data_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_set_fd_nid_postfix	B-L	socket BIO over a guest socket (KernelSocketPoll as libSceSsl); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_set_session_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_set_verify_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_shutdown_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_use_PrivateKey_ASN1_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_use_certificate_ASN1_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_version_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_want_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_write_nid_postfix	B-L	SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSLeay_nid_postfix	B-S	returns SSLEAY_VERSION_NUMBER, fixed at 0x20000000 by every LibreSSL release
+SSLv23_client_method_nid_postfix	B-L	version-flexible TLS 1.0-1.2 (mbedtls 3 speaks 1.2 only); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSLv23_server_method_nid_postfix	B-L	version-flexible TLS 1.0-1.2 (mbedtls 3 speaks 1.2 only); SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+TLS_client_method_nid_postfix	B-L	version-flexible client method; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+UI_OpenSSL_nid_postfix	B-S	returns LibreSSL's default (tty) UI_METHOD; its reader runs only from PEM password prompts (PEM tier)
+UI_create_method_nid_postfix	B-S	allocates an opaque UI_METHOD with a copy of the name (LibreSSL ui_lib.c)
+UI_destroy_method_nid_postfix	B-S	frees the UI_METHOD and its name
+UI_get0_user_data_nid_postfix	B-S	user data of the UI (LibreSSL ui_lib.c)
+UI_get_input_flags_nid_postfix	B-S	input_flags of the UI_STRING (UI_INPUT_FLAG_*)
+UI_get_string_type_nid_postfix	B-S	type of the UI_STRING (UIT_PROMPT/VERIFY/BOOLEAN/INFO/ERROR)
+UI_method_get_closer_nid_postfix	B-S	closer field of the opaque UI_METHOD (LibreSSL ui_lib.c)
+UI_method_get_opener_nid_postfix	B-S	opener field of the opaque UI_METHOD (LibreSSL ui_lib.c)
+UI_method_get_reader_nid_postfix	B-S	reader field of the opaque UI_METHOD (LibreSSL ui_lib.c)
+UI_method_get_writer_nid_postfix	B-S	writer field of the opaque UI_METHOD (LibreSSL ui_lib.c)
+UI_method_set_closer_nid_postfix	B-S	stores the guest closer (called via APS5_VABI), returns 0
+UI_method_set_opener_nid_postfix	B-S	stores the guest opener (called via APS5_VABI), returns 0
+UI_method_set_reader_nid_postfix	B-S	stores the guest reader (called via APS5_VABI), returns 0
+UI_method_set_writer_nid_postfix	B-S	stores the guest writer (called via APS5_VABI), returns 0
+UI_set_result_nid_postfix	B-S	copies the answer into the UI_STRING buffer with min/max checks (UI_R_RESULT_TOO_SMALL/LARGE)
+X509V3_EXT_print_nid_postfix	B-L	decoded extension to a BIO: BIO tier + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+X509_EXTENSION_get_critical_nid_postfix	B-S	ex->critical of the public 2.x x509_extension_st {object, critical, value}
+X509_EXTENSION_get_data_nid_postfix	B-S	ex->value of the public x509_extension_st
+X509_EXTENSION_get_object_nid_postfix	B-S	ex->object of the public x509_extension_st
+X509_INFO_free_nid_postfix	B-L	X509_INFO (cert, crl, key, enc data) of the PEM tier; X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+X509_LOOKUP_file_nid_postfix	B-L	file lookup method for X509_STORE (guest paths); X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_NAME_ENTRY_get_data_nid_postfix	B-S	ne->value of the public 2.x x509_name_entry_st
+X509_NAME_get_entry_nid_postfix	B-S	sk_value of the public X509_NAME entries stack, NULL out of range
+X509_NAME_get_index_by_NID_nid_postfix	B-S	scans entries after lastpos with OBJ_obj2nid; -1/-2 as LibreSSL x509name.c
+X509_NAME_get_text_by_NID_nid_postfix	B-S	first matching entry's data copied with NUL, returns its length (LibreSSL x509name.c)
+X509_NAME_oneline_nid_postfix	B-M	'/SN=value' with LibreSSL escaping (\xHH) and short names from the NID table; NULL buf allocates
+X509_NAME_print_ex_nid_postfix	B-L	RFC 2253/oneline flag printer to a BIO: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+X509_STORE_CTX_get1_chain_nid_postfix	B-S	copy of ctx->chain with each X509 up-ref'd (public 2.x x509_store_ctx_st)
+X509_STORE_CTX_get_chain_nid_postfix	B-S	ctx->chain of the public 2.x x509_store_ctx_st
+X509_STORE_CTX_get_current_cert_nid_postfix	B-S	ctx->current_cert of the public 2.x x509_store_ctx_st
+X509_STORE_CTX_get_error_depth_nid_postfix	B-S	ctx->error_depth of the public 2.x x509_store_ctx_st
+X509_STORE_CTX_get_error_nid_postfix	B-S	ctx->error of the public 2.x x509_store_ctx_st
+X509_STORE_CTX_get_ex_data_nid_postfix	B-S	sk_value of ctx->ex_data (public CRYPTO_EX_DATA)
+X509_STORE_CTX_set_error_nid_postfix	B-S	sets ctx->error
+X509_STORE_add_cert_nid_postfix	B-L	trusted object stack with duplicate check; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_add_crl_nid_postfix	B-L	CRL into the store; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_add_lookup_nid_postfix	B-L	lookup method list of the store; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_free_nid_postfix	B-L	X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_new_nid_postfix	B-L	X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_set_flags_nid_postfix	B-L	X509_V_FLAG_* into the store's verify param; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_VERIFY_PARAM_set1_host_nid_postfix	B-L	host name matching config for verification; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_VERIFY_PARAM_set1_ip_asc_nid_postfix	B-L	IP literal matching config; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_VERIFY_PARAM_set_hostflags_nid_postfix	B-L	X509_CHECK_FLAG_* for host matching; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_check_issued_nid_postfix	B-L	name/AKID/keyUsage issuer check returning X509_V_ERR_*; X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+X509_free_nid_postfix	B-L	frees the 2.x X509 object graph; X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+X509_get_ext_d2i_nid_postfix	B-L	X509v3 extension decoders (GENERAL_NAMES, BASIC_CONSTRAINTS...); X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+X509_get_issuer_name_nid_postfix	B-S	x->cert_info->issuer of the public 2.x x509_st/x509_cinf_st
+X509_get_pubkey_nid_postfix	B-L	SubjectPublicKeyInfo to an EVP_PKEY cached in X509_PUBKEY: X509-to-key boundary; X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+X509_get_serialNumber_nid_postfix	B-S	x->cert_info->serialNumber of the public 2.x x509_cinf_st
+X509_get_subject_name_nid_postfix	B-S	x->cert_info->subject of the public 2.x x509_cinf_st
+X509_load_crl_file_nid_postfix	B-L	CRLs from a guest path into an X509_LOOKUP; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_print_ex_nid_postfix	B-L	certificate text to a BIO: BIO tier + X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+X509_verify_cert_error_string_nid_postfix	B-M	X509_V_ERR_* string table (LibreSSL x509_txt.c), 'error number %ld' fallback
+X509_verify_cert_nid_postfix	B-L	chain building and verification with callbacks; X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+d2i_OCSP_RESPONSE_nid_postfix	B-L	OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+d2i_PKCS12_bio_nid_postfix	B-L	BIO tier + PKCS#12 ASN.1 (no mbedtls PFX parser); LibreSSL pkcs12/
+d2i_PKCS12_fp_nid_postfix	B-L	guest FILE* + PKCS#12 ASN.1 (no mbedtls PFX parser); LibreSSL pkcs12/
+d2i_RSA_PUBKEY_nid_postfix	B-M	SubjectPublicKeyInfo via mbedtls_pk_parse_public_key into the rsa_st key object; d2i advance/reuse rules
+d2i_X509_nid_postfix	B-L	DER to the full 2.x X509 graph (ASN1_STRING/X509_NAME/stack objects a title may read); X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+i2a_ASN1_OBJECT_nid_postfix	B-L	OID text to a BIO: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+i2d_X509_PUBKEY_nid_postfix	B-L	DER of an X509_PUBKEY object of the X509 tier; X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+i2t_ASN1_OBJECT_nid_postfix	B-M	long/short name from the NID table or dotted OID (OBJ_obj2txt rules)
+sceLibreSslGetMemoryPoolStats	D	Sony-specific: stats struct layout not in tree or a public source (neighbour sceSslGetMemoryPoolStats, unverified to match)
+sceLibreSslInit	D	Sony-specific: prototype and pool semantics not in tree or a public source (neighbour sceSslInit takes a pool size)
+sceLibreSslInitEx	D	Sony-specific: prototype and extra arguments not in tree or a public source
+sceLibreSslInitEx2	D	Sony-specific: prototype and extra arguments not in tree or a public source
+sceLibreSslTerm	D	Sony-specific: prototype/handle semantics not in tree or a public source (neighbour sceSslTerm)
+sk_num_nid_postfix	B-S	st->num of the public 2.x _STACK {num, data, sorted, num_alloc, comp}, -1 for NULL
+sk_pop_free_nid_postfix	B-S	calls the guest free function (APS5_VABI) on each element, then frees the _STACK
+sk_pop_nid_postfix	B-S	removes and returns the last element of the public _STACK
+sk_value_nid_postfix	B-S	st->data[i] of the public _STACK, NULL out of range

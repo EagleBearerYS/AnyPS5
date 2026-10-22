@@ -1,0 +1,147 @@
+function	class	basis
+sceHmdDistortionGet2dVrCommand	C	InvalidHandle 0x81110003 after init, NotInitialized 0x81110002 before (Hmd.hpp:12-13) as sceHmdGetFieldOfView (Export.cpp:484): sceHmdOpen never yields a handle; ELF alias of sceHmdGet2dVrCommand (debt); real behaviour, null-arg order to confirm
+sceHmdDistortionGetCorrectionCommand	C	InvalidHandle 0x81110003 after init, NotInitialized 0x81110002 before (Hmd.hpp:12-13) as sceHmdGetFieldOfView (Export.cpp:484): sceHmdOpen never yields a handle; ELF alias of sceHmdGetDistortionCorrectionCommand (debt); real behaviour, null-arg order to confirm
+sceHmdDistortionGetWideNearCorrectionCommand	C	InvalidHandle 0x81110003 after init, NotInitialized 0x81110002 before (Hmd.hpp:12-13) as sceHmdGetFieldOfView (Export.cpp:484): sceHmdOpen never yields a handle; ELF alias of sceHmdGetWideNearDistortionCorrectionCommand (debt); real behaviour, null-arg order to confirm
+sceHmdDistortionInitialize	D	distortion work-memory init; answer without a headset not in tree or a public source
+sceHmdDistortionSetOutputMinColor	D	output colour floor for HMD distortion; answer without init/headset unknown
+sceHmdGet2dVrCommand	C	InvalidHandle 0x81110003 after init, NotInitialized 0x81110002 before (Hmd.hpp:12-13) as sceHmdGetFieldOfView (Export.cpp:484): sceHmdOpen never yields a handle; real behaviour, null-arg order to confirm
+sceHmdGetDistortionCorrectionCommand	C	InvalidHandle 0x81110003 after init, NotInitialized 0x81110002 before (Hmd.hpp:12-13) as sceHmdGetFieldOfView (Export.cpp:484): sceHmdOpen never yields a handle; real behaviour, null-arg order to confirm
+sceHmdGetDistortionParams	D	76-byte distortion parameter layout unresolved; no-headset answer unknown
+sceHmdGetWideNearDistortionCorrectionCommand	C	InvalidHandle 0x81110003 after init, NotInitialized 0x81110002 before (Hmd.hpp:12-13) as sceHmdGetFieldOfView (Export.cpp:484): sceHmdOpen never yields a handle; real behaviour, null-arg order to confirm
+sceHmdInternal3dAudioClose	D	HMD 3D-audio port of the processor unit (private)
+sceHmdInternal3dAudioOpen	D	HMD 3D-audio port of the processor unit (private)
+sceHmdInternal3dAudioSendData	D	HMD 3D-audio port of the processor unit (private)
+sceHmdInternalAnotherScreenClose	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalAnotherScreenGetAudioStatus	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalAnotherScreenGetFadeState	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalAnotherScreenGetVideoStatus	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalAnotherScreenOpen	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalAnotherScreenSendAudio	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalAnotherScreenSendVideo	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalAnotherScreenSetFadeAndSwitch	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalBindDeviceWithUserId	D	system device binding; handle namespace and result unknown
+sceHmdInternalCheckDeviceModelMk3	D	device-model query; no-device answer (error vs false) unknown
+sceHmdInternalCheckS3dPassModeAvailable	D	S3D pass-mode availability; no-device answer unknown
+sceHmdInternalCrashReportCancel	D	headset crash-report/dump service (system/debug)
+sceHmdInternalCrashReportClose	D	headset crash-report/dump service (system/debug)
+sceHmdInternalCrashReportOpen	D	headset crash-report/dump service (system/debug)
+sceHmdInternalCrashReportReadData	D	headset crash-report/dump service (system/debug)
+sceHmdInternalCrashReportReadDataSize	D	headset crash-report/dump service (system/debug)
+sceHmdInternalCreateSharedMemory	D	VR2D shared-memory IPC with the system (private)
+sceHmdInternalDfuCheckAfterPvt	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuCheckPartialUpdateAvailable	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuClose	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuGetStatus	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuOpen	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuReset	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuSend	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuSendSize	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuSetMode	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalDfuStart	D	headset firmware update (system-only); no-device status codes unknown
+sceHmdInternalEventInitialize	D	HMD event service; event bits unknown
+sceHmdInternalGetBrightness	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalGetCrashDumpInfo	D	headset crash-report/dump service (system/debug)
+sceHmdInternalGetDebugMode	D	debug-only interface
+sceHmdInternalGetDebugSocialScreenMode	D	debug-only interface
+sceHmdInternalGetDebugTextMode	D	debug-only interface
+sceHmdInternalGetDefaultLedData	D	headset/tracker LED control; handle unused per debt (GetDefaultLedData), payload semantics unresolved
+sceHmdInternalGetDemoMode	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalGetDeviceInformation	D	64-byte internal device-info layout unresolved (debt)
+sceHmdInternalGetDeviceInformationByHandle	D	64-byte internal device-info layout unresolved; internal handle validation unverified
+sceHmdInternalGetEyeStatus	D	internal eye-status query; handle validation and output semantics unknown
+sceHmdInternalGetHmuOpticalParam	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetHmuPowerStatusForDebug	D	debug-only interface
+sceHmdInternalGetHmuSerialNumber	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetIPD	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalGetIpdSettingEnableForSystemService	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalGetPUSerialNumber	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetPUVersion	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetPuBuildNumber	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetPuPositionParam	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetPuRevision	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetRequiredPUPVersion	D	processor-unit/HMU hardware info; no-device error not in tree
+sceHmdInternalGetStatusReport	D	status report layout unresolved; internal handle validation unverified
+sceHmdInternalGetTv4kCapability	D	TV 4K capability query for PU output; semantics unknown
+sceHmdInternalGetVirtualDisplayDepth	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalGetVirtualDisplayHeight	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalGetVirtualDisplaySize	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalGetVr2dData	D	VR2D shared-memory IPC with the system (private)
+sceHmdInternalIsCommonDlgMiniAppVr2d	C	false: nothing runs in VR2D without a headset; measured sceHmd2 counterpart answers 0 (debt libSceHmd2.md); real behaviour
+sceHmdInternalIsCommonDlgVr2d	C	false: nothing runs in VR2D without a headset; measured sceHmd2 counterpart answers 0 (debt libSceHmd2.md); real behaviour
+sceHmdInternalIsGameVr2d	C	false: nothing runs in VR2D without a headset; measured sceHmd2 counterpart answers 0 (debt libSceHmd2.md); real behaviour
+sceHmdInternalIsMiniAppVr2d	C	false: nothing runs in VR2D without a headset; measured sceHmd2 counterpart answers 0 (debt libSceHmd2.md); real behaviour
+sceHmdInternalMapSharedMemory	D	VR2D shared-memory IPC with the system (private)
+sceHmdInternalMirroringModeSetAspect	D	mirroring aspect system setting; scalar meanings unresolved (debt)
+sceHmdInternalMirroringModeSetAspectDebug	D	debug-only interface
+sceHmdInternalMmapGetCount	D	mmap sensor/calibration channel (private); semantics unknown
+sceHmdInternalMmapGetModeId	D	mmap sensor/calibration channel (private); semantics unknown
+sceHmdInternalMmapGetSensorCalibrationData	D	mmap sensor/calibration channel (private); semantics unknown
+sceHmdInternalPushVr2dData	D	VR2D shared-memory IPC with the system (private)
+sceHmdInternalRegisterEventCallback	D	HMD event service; event bits unknown
+sceHmdInternalResetInertialSensor	D	headset sensor reset; no-device answer unknown
+sceHmdInternalResetLedForVrTracker	D	headset/tracker LED control; handle unused per debt (GetDefaultLedData), payload semantics unresolved
+sceHmdInternalResetLedForVsh	D	headset/tracker LED control; handle unused per debt (GetDefaultLedData), payload semantics unresolved
+sceHmdInternalSeparateModeClose	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSeparateModeGetAudioStatus	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSeparateModeGetVideoStatus	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSeparateModeOpen	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSeparateModeSendAudio	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSeparateModeSendVideo	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSetBrightness	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetCrashReportCommand	D	headset crash-report/dump service (system/debug)
+sceHmdInternalSetDebugGpo	D	debug-only interface
+sceHmdInternalSetDebugMode	D	debug-only interface
+sceHmdInternalSetDebugSocialScreenMode	D	debug-only interface
+sceHmdInternalSetDebugTextMode	D	debug-only interface
+sceHmdInternalSetDefaultLedData	D	headset/tracker LED control; handle unused per debt (GetDefaultLedData), payload semantics unresolved
+sceHmdInternalSetDemoMode	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetDeviceConnection	D	system connection-state setter of the VR service
+sceHmdInternalSetForcedCrash	D	headset crash-report/dump service (system/debug)
+sceHmdInternalSetHmuPowerControl	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetHmuPowerControlForDebug	D	debug-only interface
+sceHmdInternalSetIPD	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetIpdSettingEnableForSystemService	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetLedOn	D	headset/tracker LED control; handle unused per debt (GetDefaultLedData), payload semantics unresolved
+sceHmdInternalSetM2LedBrightness	D	headset/tracker LED control; handle unused per debt (GetDefaultLedData), payload semantics unresolved
+sceHmdInternalSetM2LedOn	D	headset/tracker LED control; handle unused per debt (GetDefaultLedData), payload semantics unresolved
+sceHmdInternalSetPortConnection	D	system connection-state setter of the VR service
+sceHmdInternalSetPortStatus	D	system connection-state setter of the VR service
+sceHmdInternalSetS3dPassMode	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetSidetone	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetUserType	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetVRMode	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetVirtualDisplayDepth	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetVirtualDisplayHeight	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSetVirtualDisplaySize	D	headset system setting (system-only); answer without a headset unknown
+sceHmdInternalSocialScreenGetFadeState	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSocialScreenSetFadeAndSwitch	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdInternalSocialScreenSetOutput	D	PS VR processor-unit social/separate screen output (system-only); status layouts unresolved
+sceHmdReprojectionAddDisplayBuffer	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionClearUserEventEnd	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionClearUserEventStart	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionDebugGetLastInfo	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionDebugGetLastInfoMultilayer	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionFinalize	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionFinalizeCapture	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionInitialize	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionInitializeCapture	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionSetCallback	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionSetDisplayBuffers	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionSetOutputMinColor	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionSetUserEventEnd	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionSetUserEventStart	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStart	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStart2dVr	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStartCapture	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStartLiveCapture	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStartMultilayer	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStartMultilayer2	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStartWideNear	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStartWideNearWithOverlay	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStartWithOverlay	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStop	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStopCapture	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionStopLiveCapture	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionUnsetCallback	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdReprojectionUnsetDisplayBuffers	D	reprojection service: answer without headset/init unmeasured; real support needs timewarp with unresolved frame/pose layouts (debt)
+sceHmdSetVr2dEnable	D	VR2D switch; semantics and no-headset answer unknown

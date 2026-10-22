@@ -1,0 +1,160 @@
+function	class	basis
+sceNetAddrConfig6GetInfo	D	NetAddress6Info layout incomplete (debt)
+sceNetAddrConfig6Start	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetAddrConfig6Stop	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetAllocateAllRouteInfo	D	NetRouteInfo layout incomplete (debt)
+sceNetAllocateAllRouteInfo6	D	NetRouteInfo layout incomplete (debt)
+sceNetBandwidthControlGetDataTraffic	D	bandwidth-control parameter/traffic layouts incomplete
+sceNetBandwidthControlGetDefaultParam	D	bandwidth-control parameter/traffic layouts incomplete
+sceNetBandwidthControlSetDefaultParam	D	bandwidth-control parameter/traffic layouts incomplete
+sceNetConfigAddArp	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigAddArpWithInterface	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigAddIfaddr	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigAddIfaddr6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigAddMRoute	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigAddRoute	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigAddRoute6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigAddRouteWithInterface	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigCleanUpAllInterfaces	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelArp	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelArpWithInterface	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelDefaultRoute	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelDefaultRoute6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelDefaultRouteDev	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelIfaddr	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelIfaddr6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelMRoute	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelRoute	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDelRoute6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigDownInterface	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigEtherGetLinkMode	D	link-mode constants are Sony-specific, not public
+sceNetConfigEtherPostPlugInOutEvent	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigEtherSetLinkMode	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigFlushRoute	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigFlushRoute6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigGetDefaultRoute	B-S	IPv4 gateway of the NetCtl host interface (sceNetCtlGetInfo DEFAULT_ROUTE, core/libs/prx/libSceNetCtl/Export.cpp:471), network order; no-route error unknown -> throw
+sceNetConfigGetDefaultRoute6	B-M	host IPv6 default gateway; NetCtl has no IPv6 model yet (sceNetCtlGetInfoV6 throws), so host discovery for Linux/Windows/macOS is needed
+sceNetConfigGetIfFlags	B-M	FreeBSD net/if.h IFF_* values (UP 0x1, BROADCAST 0x2, LOOPBACK 0x8, RUNNING 0x40, MULTICAST 0x8000) for the interface id of the sceNetGetIfName table, from host interface state (NetCtl)
+sceNetConfigGetIfaddr	D	debt: copies up to two 16-byte interface-address records whose fields are incomplete
+sceNetConfigGetIfaddr6	D	count/record semantics of NetIpv6InterfaceAddress output unverified
+sceNetConfigRoutingShowRoutingConfig	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetConfigRoutingShowtCtlVar	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetConfigRoutingStart	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetConfigRoutingStop	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetConfigSetDefaultRoute	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetDefaultRoute6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetDefaultRouteDev	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetDefaultScope	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetIfFlags	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetIfLinkLocalAddr6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetIfaddr	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetIfaddr6	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetIfaddr6WithFlags	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigSetIfmtu	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigUnsetIfFlags	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigUpInterface	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigUpInterfaceWithFlags	D	system network configuration (private kernel ioctl/route payloads, debt); host network must not be reconfigured and the console result for an app process is unmeasured
+sceNetConfigWlanAdhocClearWakeOnWlan	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocCreate	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocGetWakeOnWlanInfo	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocJoin	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocLeave	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocPspEmuClearWakeOnWlan	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocPspEmuGetWakeOnWlanInfo	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocPspEmuSetWakeOnWlan	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocScanJoin	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocSetExtInfoElement	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanAdhocSetWakeOnWlan	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanApStart	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanApStop	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanBackgroundScanQuery	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanBackgroundScanStart	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanBackgroundScanStop	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanDiagGetDeviceInfo	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanDiagSetAntenna	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanDiagSetTxFixedRate	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanGetDeviceConfig	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanInfraGetRssiInfo	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanInfraLeave	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanInfraScanJoin	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanScan	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetConfigWlanSetDeviceConfig	D	system-only WLAN management; parameter layouts incomplete (debt) and the console result for an app is unmeasured
+sceNetControl	D	private per-interface control commands; command codes and payloads unknown
+sceNetDbgInit	D	debug-only facility; NetDebugParameter layout unknown
+sceNetDhcpGetAutoipInfo	D	NetAutoIpInfo layout incomplete
+sceNetDhcpGetInfo	D	NetDhcpInfo layout incomplete (debt)
+sceNetDhcpGetInfoEx	D	DHCP option lease data is not available from the host and option semantics are unverified
+sceNetDhcpStart	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetDhcpStop	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetDhcpdStart	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetDhcpdStop	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetDumpAbort	D	packet-capture debug facility; filter/record layouts unknown
+sceNetDumpCreate	D	packet-capture debug facility; filter/record layouts unknown
+sceNetDumpDestroy	D	packet-capture debug facility; filter/record layouts unknown
+sceNetDumpRead	D	packet-capture debug facility; filter/record layouts unknown
+sceNetDumpSetFilterParam	D	packet-capture debug facility; filter/record layouts unknown
+sceNetDuplicateIpStart	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetDuplicateIpStop	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetEmulationDebugSettingsGet	D	network emulation (devkit debug) parameter layout unknown, retail result unmeasured
+sceNetEmulationDebugSettingsSet	D	network emulation (devkit debug) parameter layout unknown, retail result unmeasured
+sceNetEmulationGet	D	network emulation (devkit debug) parameter layout unknown, retail result unmeasured
+sceNetEmulationSet	D	network emulation (devkit debug) parameter layout unknown, retail result unmeasured
+sceNetEtherStrton	B-S	FreeBSD ether_aton(3); inverse of sceNetEtherNtostr (core/libs/prx/libSceNet/Export.cpp:1983); (str, addr) per SharpProspero (debt); NET_EINVAL on null/garbage
+sceNetEventCallbackCreate	D	interface event callback mechanism; event bits, wait semantics and errors unknown
+sceNetEventCallbackDestroy	D	interface event callback mechanism; event bits, wait semantics and errors unknown
+sceNetEventCallbackGetError	D	interface event callback mechanism; event bits, wait semantics and errors unknown
+sceNetEventCallbackWaitCB	D	interface event callback mechanism; event bits, wait semantics and errors unknown
+sceNetFreeAllRouteInfo	D	frees the AllocateAllRouteInfo array (D); allocator unknown
+sceNetGetAppMemInfo	D	NetAppMemoryInfo layout incomplete
+sceNetGetArpInfo	D	NetArpInfo layout incomplete
+sceNetGetDns6Info	B-M	as sceNetGetDnsInfo (core/libs/prx/libSceNet/Export.cpp:2336) with the 32-byte NetDns6Info in the tree; needs host IPv6 DNS discovery in NetCtl (V6 info throws today)
+sceNetGetIfList	D	NetInterfaceInfo layout incomplete (debt)
+sceNetGetIfListEx	D	NetInterfaceInfo layout incomplete (debt)
+sceNetGetIfListOnce	D	NetInterfaceStatistics layout incomplete (debt)
+sceNetGetIfnameNumList	B-S	list interface numbers of the sceNetGetIfName table (core/libs/prx/libSceNet/Export.cpp:2360) present on the host (lo0, eth0 via NetCtl host interface); flags != 0 throw
+sceNetGetInterfaceStats	D	NetInterfaceStats layout incomplete (debt)
+sceNetGetNameToIndex	D	restored signature takes a uint32 interface id, not a name (if_nametoindex(3)); meaning unsettled
+sceNetGetRouteInfo	D	debt: record buffer layout incomplete
+sceNetGetSockInfo6	D	NetSockInfo6 layout incomplete (debt); IPv4 neighbour sceNetGetSockInfo (core/libs/prx/libSceNet/Export.cpp:1720)
+sceNetGetStatisticsInfo	D	NetStatisticsInfo layout incomplete (debt)
+sceNetGetStatisticsInfoInternal	D	debt: internal statistics output is 16 bytes, fields incomplete
+sceNetGetSystemMemInfo	D	NetSystemMemoryInfo layout incomplete
+sceNetGetsockoptEx	B-S	getsockopt(2); same arguments as sceNetGetsockopt (core/libs/prx/libSceNet/Export.cpp:1530), forward; Ex difference unverified
+sceNetInetNtopWithScopeId	B-S	sceNetInetNtop (core/libs/prx/libSceNet/Export.cpp:1955) plus RFC 4007 section 11 '%zone' suffix for AF_INET6; numeric zone vs interface name on the console unverified
+sceNetInetPtonWithScopeId	B-S	sceNetInetPton (core/libs/prx/libSceNet/Export.cpp:1935) plus RFC 4007 '%zone' parsing into *scopeId; zone names map through the sceNetGetIfName table
+sceNetInfoDumpStart	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetInfoDumpStop	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetInitParam	B-S	initialize as sceNetInit_nid_postfix (core/libs/prx/libSceNet/Export.cpp:941); NetInitializeParameter layout unknown, so only a null check; pool size not modelled (guest heap)
+sceNetIoctl	B-S	FreeBSD sys/filio.h FIONBIO 0x8004667e / FIONREAD 0x4004667f on sceNet sockets, as libkernel ioctl (core/libs/prx/libkernel/Socket/src/Udp.cpp:1333) via SO_NBIO setter; other commands throw (debt: SIOC* payloads unknown)
+sceNetPppoeStart	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetPppoeStop	D	system network daemon start/stop (debt: argument widths recovered, layouts and thread-parameter meaning unresolved); console result for an app unmeasured
+sceNetResolverConnect	D	NetResolverConnection layout incomplete (debt)
+sceNetResolverConnectAbort	D	NetResolverConnection layout incomplete (debt)
+sceNetResolverConnectCreate	D	NetResolverConnection layout incomplete (debt)
+sceNetResolverConnectDestroy	D	NetResolverConnection layout incomplete (debt)
+sceNetSetDns6Info	D	sets resolver IPv6 DNS servers; host resolver cannot adopt them, console result for an app unmeasured
+sceNetSetDns6InfoToKernel	D	kernel-side DNS configuration; private, result for an app unmeasured
+sceNetSetDnsInfo	D	sets resolver DNS servers; lookups use the host resolver (debt sceNetGetDnsInfo/ClearDnsCache), console result for an app unmeasured; honouring it would need a DNS client (B-L)
+sceNetSetDnsInfoToKernel	D	kernel-side DNS configuration; private, result for an app unmeasured
+sceNetSetsockoptEx	B-S	setsockopt(2); same arguments as sceNetSetsockopt (core/libs/prx/libSceNet/Export.cpp:1465), forward; Ex difference unverified
+sceNetShowIfconfigForBuffer	D	writes console-formatted diagnostic text into a caller buffer; format and return value unknown
+sceNetShowIfconfigWithMemory	D	same formatting gap as sceNetShowIfconfig, which throws once initialized (debt Silent stubs entry)
+sceNetShowNetstatEx	D	same formatting gap as sceNetShowNetstat (throws once initialized); flag meanings unknown
+sceNetShowNetstatExForBuffer	D	writes console-formatted diagnostic text into a caller buffer; format and return value unknown
+sceNetShowNetstatForBuffer	D	writes console-formatted diagnostic text into a caller buffer; format and return value unknown
+sceNetShowPolicy	D	content of the network policy table is not public
+sceNetShowPolicyWithMemory	D	content of the network policy table is not public
+sceNetShowRoute6ForBuffer	D	writes console-formatted diagnostic text into a caller buffer; format and return value unknown
+sceNetShowRoute6WithMemory	C	0 without printing as sceNetShowRoute6 (core/libs/prx/libSceNet/Export.cpp:2272); unknown pool -> NET_EBADF as sceNetShowNetstatWithMemory; silent stub (debt Silent stubs)
+sceNetShowRouteForBuffer	D	writes console-formatted diagnostic text into a caller buffer; format and return value unknown
+sceNetShowRouteWithMemory	C	0 without printing as sceNetShowRoute (core/libs/prx/libSceNet/Export.cpp:2233); unknown pool -> NET_EBADF as sceNetShowNetstatWithMemory (:1759); silent stub (debt Silent stubs)
+sceNetSocketInternal	B-S	BSD socket(2); same argument list as sceNetSocket (core/libs/prx/libSceNet/Export.cpp:970), forward to it; how Internal differs on the console is unverified
+sceNetSyncCreate	D	NetSyncObject layout is in the tree but signal/wait semantics (consume, mask, timeout units) are not public
+sceNetSyncDestroy	D	NetSync semantics not public
+sceNetSyncGet	D	index-to-object table semantics not public
+sceNetSyncSignal	D	NetSync semantics not public
+sceNetSyncWait	D	NetSync semantics not public
+sceNetSysctl	B-S	FreeBSD sysctl(3) argument list; forward to libkernel sysctl_nid_postfix (core/libs/prx/libkernel/System/src/SystemConfiguration.cpp:236), errno -> NET_ERROR_BASE|errno as fail()
+sceNetThreadCreate	D	NetThreadParameter layout incomplete (debt); neighbour scePthreadCreate
+sceNetThreadExit	B-S	debt: native is zero-argument noreturn void; scePthreadExit(nullptr) (core/libs/prx/libkernel/Pthread/src/Thread.cpp:986)
+sceNetThreadJoin	D	thread handle type from sceNetThreadCreate (D) unknown

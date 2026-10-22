@@ -1,0 +1,114 @@
+function	class	basis
+Hmd2BeforeInitializeError0004	C	0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeError002C	C	0x8a72002c; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeError1002	C	0x8a721002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeError1003	C	0x8a721003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeMinusOne	C	-1; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeNotInitialized	C	NotInitialized 0x8a720002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeParameterInvalid	C	ParameterInvalid 0x8a720009; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeParameterNull	C	ParameterNull 0x8a720008; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeReprojectionNotInitialized	C	ReprojectionNotInitialized 0x8a72000b; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeValue0400	C	0x400; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeValue20000	C	0x20000; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2BeforeInitializeZero	C	0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckAllSixThenZero	C	ParameterNull if any of 6 args null, else 0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstAndThirdThenError1003	C	ParameterNull if arg0/2 null, else 0x8a721003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstAndThirdThenZero	C	ParameterNull if arg0/2 null, else 0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenError0004	C	ParameterNull if arg0 null, else 0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenError1002	C	ParameterNull if arg0 null, else 0x8a721002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenError1003	C	ParameterNull if arg0 null, else 0x8a721003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenError1010	C	ParameterNull if arg0 null, else 0x8a721010; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenError800d0203	C	ParameterNull if arg0 null, else 0x800d0203; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenMinusOne	C	ParameterNull if arg0 null, else -1; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenParameterInvalid	C	ParameterNull if arg0 null, else 0x8a720009; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstThenZero	C	ParameterNull if arg0 null, else 0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstTwoThenError1002	C	ParameterNull if arg0/1 null, else 0x8a721002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstTwoThenError1003	C	ParameterNull if arg0/1 null, else 0x8a721003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckFirstTwoThenParameterInvalid	C	ParameterNull if arg0/1 null, else 0x8a720009; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckSecondThenError002C	C	ParameterNull if arg1 null, else 0x8a72002c; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckSecondThenError1002	C	ParameterNull if arg1 null, else 0x8a721002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckSecondThenInvalidHandle	C	ParameterNull if arg1 null, else InvalidHandle 0x8a720003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2CheckSecondThenParameterInvalid	C	ParameterNull if arg1 null, else 0x8a720009; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2IndexZeroCheckSecondThenZero	C	ParameterNull for null arg1, 0x8a72100f for index!=0, else 0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo1CheckSecondThenError1002	C	ParameterNull for null arg1, ParameterInvalid for slot>1, else 0x8a721002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo1ThenError1002	C	ParameterInvalid for slot>1, else 0x8a721002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo1ThenMinusOne	C	ParameterInvalid for slot>1, else -1; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo2CheckSecondThenError002C	C	ParameterNull for null arg1, ParameterInvalid for slot>2, else 0x8a72002c; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo2ThenError1002	C	ParameterInvalid for slot>2, else 0x8a721002; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo2ThenError1003	C	ParameterInvalid for slot>2, else 0x8a721003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo2ThenMinusOne	C	ParameterInvalid for slot>2, else -1; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2SlotUpTo3CheckSecondThirdThenZero	C	ParameterNull for null arg1/2, ParameterInvalid for slot>3, else 0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2WriteFourConstants	C	writes four measured floats (~0.01495) and returns 0 (ParameterNull if null); only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2WriteSixHalvesThenInvalidHandle	C	writes measured 24 bytes to arg1, returns InvalidHandle 0x8a720003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2WriteSize0x2000Align0x100	C	writes 0x2000/0x100 and returns 0 (ParameterNull if null); only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2WriteStateTwo	C	writes 02 00 00 00 00 to arg0 and returns 0 (ParameterNull if null); only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+Hmd2WriteTwelveHalvesThenInvalidHandle	C	writes measured 48 bytes to arg1, returns InvalidHandle 0x8a720003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeActivateGazeTracking	C	0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeGetCalibrationData	C	ParameterNull 0x8a720008; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeGetCalibrationDataMaxSize	C	ParameterNull if size null, else ParameterInvalid 0x8a720009; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeGetDeviceStatus	C	ParameterNull if null, else 0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeGetResult	D	pre-init answer not in the hmd2n probe (debt); 56-byte result semantics incomplete
+sceHmd2GazeGetResultForFoveatedRendering	D	pre-init answer not in the hmd2n probe (debt); 56-byte result semantics incomplete
+sceHmd2GazeGetUserCalibrationStatus	C	ParameterNull if null, else 0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeInsertRawDataWithHandle	C	ParameterNull if data null, else InvalidHandle 0x8a720003; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeObjectSelectionGetSelectedObject	C	ParameterNull if either null, else ParameterInvalid 0x8a720009; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeObjectSelectionInitialize	C	ParameterNull 0x8a720008; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeObjectSelectionQueryMemory	C	ParameterNull if either null, else ParameterInvalid 0x8a720009; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeObjectSelectionTerminate	C	0x8a72002c; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeSetEnabledEye	C	0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeSetUserCalibrationData	C	ParameterNull 0x8a720008; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeSetUserCalibrationPoint	C	0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeStartUserCalibration	C	0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2GazeStopUserCalibration	C	0x8a720004; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2InternalDfuSend	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalGetDeviceId	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalGetVr2dData	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalImageCloseBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalImageOpenBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalImageStartBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalImageStopBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalLedDetectorCloseBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalLedDetectorOpenBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalLedDetectorStartBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalLedDetectorStopBySlot	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetBrightness	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetCameraSeeThroughMode	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetDeviceConnection	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetFakeLensSeparationDistance	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetPortConnection	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetPortStatus	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetSidetone	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2InternalSetVibrationMode	D	unknown signature (debt libSceHmd2.md); pre-init answer unmeasured
+sceHmd2ReprojectionBeginFrame	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionClear	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2ReprojectionClearUserEventEnd	C	ReprojectionNotInitialized 0x8a72000b; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2ReprojectionClearUserEventStart	C	ReprojectionNotInitialized 0x8a72000b; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2ReprojectionDisableMirroring	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionDisableVrMode	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionEnableMirroring	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionEnableVrMode	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionGetCurrentOutput	C	ReprojectionNotInitialized 0x8a72000b; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2ReprojectionGetPredictedDisplayTime	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionGetStatus	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionInitialize	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionQueryBufferSizeAlign	D	result depends on runtime state per debt; pre-init answer unmeasured
+sceHmd2ReprojectionSeeThroughDraw	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2ReprojectionSeeThroughIC	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2ReprojectionSet	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2ReprojectionSetAllowPositionalReprojection	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetEventGpuEnd	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetEventGpuStart	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetMirroringOption	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetParam	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetParamWithBuffer	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetRenderConfig	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetTiming	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionSetUserEventEnd	C	ReprojectionNotInitialized 0x8a72000b; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2ReprojectionSetUserEventStart	C	ReprojectionNotInitialized 0x8a72000b; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2ReprojectionTerminate	D	pre-init answer not measured (only 5 reprojection siblings probed); post-init needs PS VR2 runtime
+sceHmd2ReprojectionVideoOutEq	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2ReprojectionWaitShader	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2RpeorjectionSetParam	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2SeeThroughCallbackGetPoseDataFunc	D	legacy export with no symbol or caller in system modules; signature unresolved (debt)
+sceHmd2SetFieldOfView	C	ParameterNull if null, else 0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour
+sceHmd2SetIpdOffset	C	0; only reachable state: sceHmd2Initialize always fails 0x81110016 (Export.cpp:259); measured pre-init (debt), real behaviour

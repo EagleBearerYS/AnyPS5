@@ -1,0 +1,114 @@
+function	class	basis
+sceMbusAcquireControl	D	device-control arbitration in the private mbus service; control values/status layout unresolved (debt)
+sceMbusAcquireControlWithState	D	device-control arbitration in the private mbus service; control values/status layout unresolved (debt)
+sceMbusAcquireControlWithState2	D	device-control arbitration in the private mbus service; control values/status layout unresolved (debt)
+sceMbusAcquireControlWithStateFlag	D	device-control arbitration in the private mbus service; control values/status layout unresolved (debt)
+sceMbusAddHandle	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusAddHandleByDeviceId	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusAddHandleByUserId	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusAddHandleByVidPid	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusAddHandleWithModuleId	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusAttachToApplicationByPid	D	app/process focus in the mbus service (system-only)
+sceMbusBindDeviceWithUserId	D	user/device binding in the mbus service (system-only)
+sceMbusChangeAppModuleState	D	app/process focus in the mbus service (system-only)
+sceMbusCheckDriverCallback	D	driver registration/notification protocol (private)
+sceMbusConvertToLocalDeviceId	D	mbus/local device-id encoding unknown
+sceMbusConvertToLocalDeviceId2	D	mbus/local device-id encoding unknown
+sceMbusConvertToMbusDeviceId	D	mbus/local device-id encoding unknown
+sceMbusDebugAcquireControl	D	debug-only interface of the private mbus service
+sceMbusDebugAcquireControlWithState	D	debug-only interface of the private mbus service
+sceMbusDebugAcquireControlWithState2	D	debug-only interface of the private mbus service
+sceMbusDebugAcquireControlWithStateFlag	D	debug-only interface of the private mbus service
+sceMbusDebugAddProcess	D	debug-only interface of the private mbus service
+sceMbusDebugCheckProcessResume	D	debug-only interface of the private mbus service
+sceMbusDebugDisableBgmForShellUi	D	debug-only interface of the private mbus service
+sceMbusDebugGetApplicationStartupInfo	D	debug-only interface of the private mbus service
+sceMbusDebugGetControlStatus	D	debug-only interface of the private mbus service
+sceMbusDebugGetDeviceInfo	D	debug-only interface of the private mbus service
+sceMbusDebugGetInternalInfo	D	debug-only interface of the private mbus service
+sceMbusDebugGetPriorityInfo	D	debug-only interface of the private mbus service
+sceMbusDebugReenableBgmForShellUi	D	debug-only interface of the private mbus service
+sceMbusDebugReleaseControl	D	debug-only interface of the private mbus service
+sceMbusDebugRemoveCameraAppModuleFocus	D	debug-only interface of the private mbus service
+sceMbusDebugResumeApplication	D	debug-only interface of the private mbus service
+sceMbusDebugSetApplicationFocusByAppId	D	debug-only interface of the private mbus service
+sceMbusDebugSetCameraAppModuleFocus	D	debug-only interface of the private mbus service
+sceMbusDebugSetControllerFocusByAppId	D	debug-only interface of the private mbus service
+sceMbusDebugSetOtherProcessExcludedAction	D	debug-only interface of the private mbus service
+sceMbusDebugSetPriority	D	debug-only interface of the private mbus service
+sceMbusDebugStartApplication	D	debug-only interface of the private mbus service
+sceMbusDebugStartApplication2	D	debug-only interface of the private mbus service
+sceMbusDebugStartApplicationNull	D	debug-only interface of the private mbus service
+sceMbusDebugSuspendApplication	D	debug-only interface of the private mbus service
+sceMbusDebugTerminateApplication	D	debug-only interface of the private mbus service
+sceMbusDebugTerminateProcess	D	debug-only interface of the private mbus service
+sceMbusDetachFromApplicationByPid	D	app/process focus in the mbus service (system-only)
+sceMbusDisableBgmForShellUi	D	ShellUI BGM arbitration (system-only)
+sceMbusDisableChat	D	audio routing in the mbus service (system-only)
+sceMbusDisconnectDevice	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusDumpAppInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpDeviceInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpHandleStatusInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpHandleStatusInfoAll	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpModuleStateInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpModuleStateInfoAll	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpPlayerInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpPortHandleInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpProcMediaInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpProcMediaInfoAll	D	debug dump of mbus service state to the log; output not public
+sceMbusDumpUserMediaInfo	D	debug dump of mbus service state to the log; output not public
+sceMbusEnableChat	D	audio routing in the mbus service (system-only)
+sceMbusEnterAudioOutAutoAttenuation	D	audio routing in the mbus service (system-only)
+sceMbusEventBusStatusChangeSubscribe	D	mbus event queue; event record and dispatch unresolved (debt)
+sceMbusEventBusStatusChangeUnsubscribe	D	mbus event queue; event record and dispatch unresolved (debt)
+sceMbusEventCallbackFuncsInit_	B-S	debt: only clears memory (16-byte MbusEventCallbacks, PendingExports.cpp:23), no defined return value; memset of the table
+sceMbusEventCreate_	D	mbus event queue; event record and dispatch unresolved (debt)
+sceMbusEventDestroy	D	mbus event queue; event record and dispatch unresolved (debt)
+sceMbusEventReceive	D	mbus event queue; event record and dispatch unresolved (debt)
+sceMbusGetControlStatus	D	device-control arbitration in the private mbus service; control values/status layout unresolved (debt)
+sceMbusGetDeviceDescription	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetDeviceInfoByBusId_	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetDeviceInfoByConditionForDeviceService	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetDeviceInfoByCondition_	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetDeviceInfo_	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetSimulatedBusUsableStatusByBusType	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetSimulatedHandleStatusInfo	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetSimulatedHandleStatusInfo2	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusGetSparkState	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusInit	D	connects to the private mbus service; answer in a game process unmeasured
+sceMbusIsBgmProhibited	D	ShellUI BGM arbitration (system-only)
+sceMbusIsUsingDevice	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusLeaveAudioOutAutoAttenuation	D	audio routing in the mbus service (system-only)
+sceMbusNotifyBtDisconnection	D	driver registration/notification protocol (private)
+sceMbusNotifyDriverEvent	D	driver registration/notification protocol (private)
+sceMbusReenableBgmForShellUi	D	ShellUI BGM arbitration (system-only)
+sceMbusRegisterDriver	D	driver registration/notification protocol (private)
+sceMbusReleaseControl	D	device-control arbitration in the private mbus service; control values/status layout unresolved (debt)
+sceMbusRemoveCameraAppModuleFocus	D	app/process focus in the mbus service (system-only)
+sceMbusRemoveHandle	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusRemoveProxy	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusResolveByDeviceId	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusResolveByHandle	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusResolveByPlayerId	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusResolveByUserId	D	handle registration with the private mbus service; registration fields unresolved (debt)
+sceMbusSetAutoLoginMode	D	user/device binding in the mbus service (system-only)
+sceMbusSetCameraAppModuleFocus	D	app/process focus in the mbus service (system-only)
+sceMbusSetDeviceFunctionState	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusSetDuckingSetting	D	audio routing in the mbus service (system-only)
+sceMbusSetProxy	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusSetRoutingMode	D	audio routing in the mbus service (system-only)
+sceMbusSetScratchData	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusSetScratchDataUpdatedEventMask	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusSetSocialScreenAudioMode	D	audio routing in the mbus service (system-only)
+sceMbusSetTestFlag	D	mbus service-internal setting
+sceMbusSetThreadParam	D	mbus service-internal setting
+sceMbusSetUsbPowerBlackList	D	device database of the mbus service; record layouts unresolved (debt)
+sceMbusSetUserMuteStatus	D	user/device binding in the mbus service (system-only)
+sceMbusSetVolumeDown	D	audio routing in the mbus service (system-only)
+sceMbusStartAudioOutAuxBroadcast	D	audio routing in the mbus service (system-only)
+sceMbusStartAudioOutSharePlay	D	audio routing in the mbus service (system-only)
+sceMbusStopAudioOutAuxBroadcast	D	audio routing in the mbus service (system-only)
+sceMbusStopAudioOutSharePlay	D	audio routing in the mbus service (system-only)
+sceMbusUnregisterDriver	D	driver registration/notification protocol (private)
+sceMbusUserLogin	D	user/device binding in the mbus service (system-only)
+sceMbusUserLogout	D	user/device binding in the mbus service (system-only)

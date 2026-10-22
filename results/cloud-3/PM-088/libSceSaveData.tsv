@@ -1,0 +1,67 @@
+function	class	basis
+sceSaveDataAbort	A	savedata::abort_internal (core/libs/prx/libSceSaveData/SaveDataCore.hpp:1209) cancels this library's pending events; zero-arg as declared, signature unverified (debt)
+sceSaveDataBindPsnAccount	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataBindPsnAccountForSystemBackup	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataChangeDatabase	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataChangeInternal	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataCheckBackupData	B-M	check block {userId, titleId*, dirName*, param*, icon*} per shadPS4's PS4 binding (PS5 layout unverified); needs a backup copy, which backup_internal (core/libs/prx/libSceSaveData/SaveDataCore.hpp:1098) does not keep yet; NOT_FOUND 0x809F0008 when none
+sceSaveDataCheckBackupDataForCdlg	D	common-dialog/internal/light variant of the backup calls; its parameter block is not in the tree or a public source
+sceSaveDataCheckBackupDataInternal	D	common-dialog/internal/light variant of the backup calls; its parameter block is not in the tree or a public source
+sceSaveDataCheckBackupDataLight	D	common-dialog/internal/light variant of the backup calls; its parameter block is not in the tree or a public source
+sceSaveDataCheckCloudData	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataCheckSaveDataBroken	D	signature and meaning unknown (debt); no tree state or public source settles them
+sceSaveDataCheckSaveDataVersion	D	signature and meaning unknown (debt); no tree state or public source settles them
+sceSaveDataCheckSaveDataVersionLatest	D	signature and meaning unknown (debt); no tree state or public source settles them
+sceSaveDataClearProgress	B-S	zero-arg as declared and in shadPS4's PS4 binding; resets the progress state that sceSaveDataGetProgress reads, NOT_INITIALIZED before init
+sceSaveDataCreateUploadData	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataDebugGetThreadId	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataDeleteAllUser	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataDeleteBackupData	D	common-dialog/internal/light variant of the backup calls; its parameter block is not in the tree or a public source
+sceSaveDataDeleteCloudData	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataDeleteProspero	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataDeleteTitle	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataDeleteUser	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataDirNameSearchInternal	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataDownload	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataGetAllSize	D	signature unverified (debt); helper get_all_size_internal (core/libs/prx/libSceSaveData/SaveDataCore.hpp:1314) sums only save-data-memory slots, so what the export totals is not established
+sceSaveDataGetAppLaunchedUser	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataGetAutoUploadConditions	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataGetAutoUploadRequestInfo	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataGetAutoUploadSetting	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataGetBoundPsnAccountCount	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataGetClientThreadPriority	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataGetCloudQuotaInfo	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataGetEventInfo	D	signature unknown (debt); State::event_callback/event_callback_userdata and SD_ERROR_NOT_REGIST_CALLBACK exist (core/libs/prx/libSceSaveData/SaveDataCore.hpp:151, :62) but the callback contract does not
+sceSaveDataGetMountedSaveDataCount	D	signature/return convention unverified (debt); helper count_mounted_internal (core/libs/prx/libSceSaveData/SaveDataCore.hpp:844) counts SaveDataCore slots, not the libSceSaveData.native slots Mount3 fills
+sceSaveDataGetProgress	B-S	float* out as in shadPS4's PS4 binding and the sibling sceSaveDataGetConvertProgress (core/libs/prx/libSceSaveData.native/Export.cpp:975); backups complete synchronously (backup_internal SaveDataCore.hpp:1098), PARAMETER/NOT_INITIALIZED from SaveDataCore.hpp:44-45
+sceSaveDataGetSaveDataCount	D	signature and meaning unknown (debt); no tree state or public source settles them
+sceSaveDataGetSaveDataRootDir	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataGetSaveDataRootPath	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataGetSaveDataRootUsbPath	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataGetSavePoint	D	signature and meaning unknown (debt); no tree state or public source settles them
+sceSaveDataGetUpdatedDataCount	D	signature and meaning unknown (debt); no tree state or public source settles them
+sceSaveDataInitialize2	A	same as sceSaveDataInitialize3 (core/libs/prx/libSceSaveData/Export.cpp:31) via savedata::initialize_internal (SaveDataCore.hpp:404), which ignores the init block
+sceSaveDataInitializeForCdlg	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataIsDeletingUsbDb	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataIsMounted	D	signature unverified (debt); helper is_mounted_internal (core/libs/prx/libSceSaveData/SaveDataCore.hpp:833) reads SaveDataCore slots, but sceSaveDataMount3 mounts live in libSceSaveData.native (SaveData.hpp:55), so it is not a drop-in
+sceSaveDataManualDelete	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataManualDownload	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataManualUpload	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataMount5	D	SaveDataMount5 layout not in the tree (only SaveDataMount3, core/libs/SceTypes.hpp:1684); neighbour sceSaveDataMount3 (core/libs/prx/libSceSaveData.native/Export.cpp:661)
+sceSaveDataMountInternal	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataMountSys	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataRebuildDatabase	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataRegisterEventCallback	D	signature unknown (debt); State::event_callback/event_callback_userdata and SD_ERROR_NOT_REGIST_CALLBACK exist (core/libs/prx/libSceSaveData/SaveDataCore.hpp:151, :62) but the callback contract does not
+sceSaveDataRestoreBackupData	B-M	restore block {userId, titleId*, dirName*, fingerprint*} per shadPS4's PS4 binding (PS5 layout unverified); copies the backup store back over the save, BUSY when mounted (constants core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataRestoreBackupDataForCdlg	D	common-dialog/internal/light variant of the backup calls; its parameter block is not in the tree or a public source
+sceSaveDataRestoreLoadSaveDataMemory	D	signature and meaning unknown (debt); no tree state or public source settles them
+sceSaveDataSetAutoUploadSetting	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataSetEventInfo	D	signature unknown (debt); State::event_callback/event_callback_userdata and SD_ERROR_NOT_REGIST_CALLBACK exist (core/libs/prx/libSceSaveData/SaveDataCore.hpp:151, :62) but the callback contract does not
+sceSaveDataSetSaveDataLibraryUser	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataShutdownStart	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataSupportedFakeBrokenStatus	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataSyncCloudList	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)
+sceSaveDataUmountSys	D	system/internal save-data administration (shell, USB database, other users or titles); signature and contract unpublished
+sceSaveDataUmountWithBackup	B-S	(const SaveDataMountPoint*) as in shadPS4's PS4 binding; unmount through libSceSaveData.native's slots (sceSaveDataUmount2 core/libs/prx/libSceSaveData.native/Export.cpp:911) and queue SD_EVENT_UMOUNT_BACKUP_END as umount_internal does (SaveDataCore.hpp:534)
+sceSaveDataUnregisterEventCallback	D	signature unknown (debt); State::event_callback/event_callback_userdata and SD_ERROR_NOT_REGIST_CALLBACK exist (core/libs/prx/libSceSaveData/SaveDataCore.hpp:151, :62) but the callback contract does not
+sceSaveDataUpload	D	PSN cloud-save service; the 'no PSN/cloud' result is not in the tree or a public source (no cloud code among the 0x809F00xx constants, core/libs/prx/libSceSaveData/SaveDataCore.hpp:44-65)

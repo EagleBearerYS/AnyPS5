@@ -1,0 +1,157 @@
+function	class	basis
+sceNpAsmAbort	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientAbortRequest	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientClearNpTitleToken	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientClearNpTitleTokenA	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientCreateRequest2	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientCreateResourceContext	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientCreateResourceContext2	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientDeleteRequest	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientDeleteResourceContext	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientDeleteResourceContext2	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetAppId	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetCacheControlMaxAge	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetGameNpTitleInfo	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetGameNpTitleToken	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetGameTitleBanInfo	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpComInfo2	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpComInfo2A	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpComInfo3	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpComInfo4	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpTitleId	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpTitleToken	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpTitleToken2	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetNpTitleTokenA	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetRelatedGameNpTitleIds	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetRelatedGameNpTitleIdsA	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetRelatedGameNpTitleIdsResult	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetServiceBaseUrl	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetServiceBaseUrlA	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetServiceBaseUrlWithNpTitleId	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetServiceIdInfo	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientGetServiceIdInfoA	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientInitialize	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientSetNpTitleId	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmClientTerminate	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmCreateConnection	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmCreateRequest	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmDeleteConnection	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmDeleteRequest	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmGenerateNpTitleToken	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmGenerateNpTitleToken2	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmGetNpCommInfo	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmGetNpCommInfo2	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmGetRelatedGameNpTitleIds	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmGetServiceBaseUrl	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmGetServiceIdInfo	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmInitialize	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpAsmTerminate	D	private NP ASM client (service URLs, title tokens, comm info); signature, structs and its error codes are not in the tree or a public source
+sceNpCheckCallbackForLib	C	0: no ForLib/ForToolkit callback can be registered in the tree, so nothing is pending; parameterless as sceNpCheckCallback (core/libs/prx/libSceNpManager/Export.cpp:669); real behaviour
+sceNpCheckNpAvailabilityA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: signed-out user, as A-form sceNpGetAccountCountryA (core/libs/prx/libSceNpManager/Export.cpp:780); reqId 0 -> INVALID_ARGUMENT as sceNpCheckNpAvailability (:686); (reqId,userId) per shadPS4; real behaviour
+sceNpGetAccountDateOfBirthA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006, null output -> SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003, as sceNpGetAccountCountryA (core/libs/prx/libSceNpManager/Export.cpp:780); (userId,date*) per shadPS4; real behaviour
+sceNpGetAccountLanguageA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006, null output -> SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003, as sceNpGetAccountCountryA (core/libs/prx/libSceNpManager/Export.cpp:780) and sceNpGetAccountLanguage2 (:909); real behaviour
+sceNpGetGamePresenceStatus	C	SCE_NP_ERROR_USER_NOT_FOUND 0x80550007: no signed-in user owns the online id, as sceNpGetAccountCountry (core/libs/prx/libSceNpManager/Export.cpp:727); null -> SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003; real behaviour
+sceNpGetGamePresenceStatusA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006, null output -> SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003, as sceNpGetAccountCountryA (core/libs/prx/libSceNpManager/Export.cpp:780); real behaviour
+sceNpGetParentalControlInfoA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006, null age/info -> SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003, as sceNpGetParentalControlInfo (:743) for the user-id form; (reqId,userId,age*,info*) per shadPS4; real behaviour
+sceNpGetSandboxInfo	D	debt: 0x50-byte output read as a string by PPSA28416; returned string, struct and errors unknown
+sceNpIdMapperAbortRequest	B-S	neighbour sceNpAbortRequest (core/libs/prx/libSceNpManager/Export.cpp:664)
+sceNpIdMapperAccountIdToNpId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: id mapping needs PSN, as sceNpGetUserIdByAccountId (core/libs/prx/libSceNpManager/Export.cpp:952); no argument read (argument list unverified); real behaviour
+sceNpIdMapperAccountIdToOnlineId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: id mapping needs PSN, as sceNpGetUserIdByAccountId (core/libs/prx/libSceNpManager/Export.cpp:952); no argument read; real behaviour
+sceNpIdMapperCreateRequest	B-S	NP request convention; neighbour sceNpCreateRequest/AddRequest (core/libs/prx/libSceNpManager/Export.cpp:710,:32); signature not in a public header
+sceNpIdMapperDeleteRequest	B-S	neighbour sceNpDeleteRequest (core/libs/prx/libSceNpManager/Export.cpp:714) over liveRequests
+sceNpIdMapperNpIdToAccountId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: id mapping needs PSN, as sceNpGetAccountId (core/libs/prx/libSceNpManager/Export.cpp:765); no argument read; real behaviour
+sceNpIdMapperOnlineIdToAccountId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: id mapping needs PSN, as sceNpGetAccountId (core/libs/prx/libSceNpManager/Export.cpp:765); no argument read; real behaviour
+sceNpInGameMessageAbortHandle	D	handles/pool come from sceNpInGameMessageInitialize/CreateHandle, which the tree does not export; signature and NOT_INITIALIZED/handle errors not in the tree
+sceNpInGameMessageCheckCallback	D	handles/pool come from sceNpInGameMessageInitialize/CreateHandle, which the tree does not export; signature and NOT_INITIALIZED/handle errors not in the tree
+sceNpInGameMessageGetMemoryPoolStatistics	D	handles/pool come from sceNpInGameMessageInitialize/CreateHandle, which the tree does not export; signature and NOT_INITIALIZED/handle errors not in the tree
+sceNpInGameMessagePrepareA	D	handles/pool come from sceNpInGameMessageInitialize/CreateHandle, which the tree does not export; signature and NOT_INITIALIZED/handle errors not in the tree
+sceNpInGameMessageSendDataA	D	handles/pool come from sceNpInGameMessageInitialize/CreateHandle, which the tree does not export; signature and NOT_INITIALIZED/handle errors not in the tree
+sceNpIntGetAppType	D	internal; signature and app-type values not public
+sceNpIntGetGamePresenceStatus	D	internal twin of sceNpGetGamePresenceStatus(A); argument form (online id or user id) unknown, so SIGNED_OUT vs USER_NOT_FOUND is not settled
+sceNpIntGetNpTitleId	D	getter over state sceNpSetNpTitleId does not keep (core/libs/prx/libSceNpManager/Export.cpp:879); signature unknown
+sceNpIntGetNpTitleIdSecret	D	getter over state sceNpSetNpTitleId does not keep (core/libs/prx/libSceNpManager/Export.cpp:879); signature unknown
+sceNpIntRegisterCheckCallback	D	internal callback registration; prototype, limit and delivery unknown
+sceNpIntRegisterGamePresenceCallback	D	internal twin of sceNpRegisterGamePresenceCallback; return type and prototype unknown
+sceNpIsPlusMember	D	signature and return type unknown (may be a bool, so returning SIGNED_OUT could read as true); sceNpCheckPlus is the async form
+sceNpManagerIntAbortRequest	B-S	neighbour sceNpAbortRequest (core/libs/prx/libSceNpManager/Export.cpp:664); (reqId) by NP request convention
+sceNpManagerIntAddActiveSigninStateCallback	D	callback registration; prototype, slot limit, initial event and errors unknown (no Remove counterpart exported)
+sceNpManagerIntAddOnlineIdChangeCallback	D	callback registration; prototype, slot limit and errors unknown
+sceNpManagerIntAddPlusMemberTypeCallback	D	callback registration; prototype, slot limit and errors unknown
+sceNpManagerIntAddSigninStateCallback	D	callback registration; prototype, slot limit and initial event unknown (sceNpRegisterStateCallbackA rules are public-API only)
+sceNpManagerIntAuthGetAuthorizationCode	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as sceNpAuthGetAuthorizationCode (core/libs/prx/libSceNpAuth/Export.cpp:116); no argument read; real behaviour
+sceNpManagerIntAuthGetIdToken	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as sceNpAuthGetIdToken (core/libs/prx/libSceNpAuth/Export.cpp:120); no argument read; real behaviour
+sceNpManagerIntCheckNpAvailability	D	twin sceNpCheckNpAvailability also clears an optional output byte; Int argument list unknown
+sceNpManagerIntCheckNpAvailabilityByPid	D	per-process availability check; signature unknown
+sceNpManagerIntCheckNpState	D	twin sceNpGetState writes SIGNED_OUT (1) with result 0; Int output layout unknown
+sceNpManagerIntCheckNpStateA	D	twin sceNpGetState writes SIGNED_OUT (1) with result 0; Int output layout unknown
+sceNpManagerIntClearGameAccessToken	D	whether a signed-out clear returns 0 or SIGNED_OUT is unknown
+sceNpManagerIntClearOnlineIdChangeFlag	D	whether a signed-out clear returns 0 or SIGNED_OUT is unknown
+sceNpManagerIntClearTicket	D	whether a signed-out clear returns 0 or SIGNED_OUT is unknown
+sceNpManagerIntClearUsedFlag	D	meaning of the flag and result unknown
+sceNpManagerIntClearVshAccessToken	D	whether a signed-out clear returns 0 or SIGNED_OUT is unknown
+sceNpManagerIntCreateAuthenticationTicket	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: an authentication ticket needs a signed-in PSN user (NP model: online queries fail signed out, core/libs/prx/libSceNpManager/Export.cpp:11); no argument read; real behaviour
+sceNpManagerIntCreateLoginContext	D	system sign-in flow (login context); private, layout and results unknown
+sceNpManagerIntCreateLoginRequest	D	system sign-in flow; private, results unknown
+sceNpManagerIntCreateRequest	B-S	neighbour sceNpCreateRequest/AddRequest (core/libs/prx/libSceNpManager/Export.cpp:710)
+sceNpManagerIntDeleteLoginContext	D	system sign-in flow; private, results unknown
+sceNpManagerIntDeleteRequest	B-S	neighbour sceNpDeleteRequest (core/libs/prx/libSceNpManager/Export.cpp:714)
+sceNpManagerIntGetAccessTokenViaImplicitFlow	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: a user access token needs a signed-in PSN user (NP model: online queries fail signed out, core/libs/prx/libSceNpManager/Export.cpp:11); no argument read; real behaviour
+sceNpManagerIntGetAccountAge	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetAccountAge (core/libs/prx/libSceNpManager/Export.cpp:720); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetAccountCountry	D	public twins disagree by argument form (online-id form USER_NOT_FOUND, user-id form SIGNED_OUT) and the Int argument list is unknown
+sceNpManagerIntGetAccountCountryA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetAccountCountryA (core/libs/prx/libSceNpManager/Export.cpp:780); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetAccountCountrySdk	D	public twins disagree by argument form (online-id form USER_NOT_FOUND, user-id form SIGNED_OUT) and the Int argument list is unknown
+sceNpManagerIntGetAccountDateOfBirthSdk	D	public twins disagree by argument form (online-id form USER_NOT_FOUND, user-id form SIGNED_OUT) and the Int argument list is unknown
+sceNpManagerIntGetAccountId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetAccountIdA/sceNpGetAccountId (core/libs/prx/libSceNpManager/Export.cpp:786,:765); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetAccountIdSdk	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetAccountIdA/sceNpGetAccountId (core/libs/prx/libSceNpManager/Export.cpp:786,:765); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetAccountLanguage	D	public twins disagree by argument form (online-id form USER_NOT_FOUND, user-id form SIGNED_OUT) and the Int argument list is unknown
+sceNpManagerIntGetAccountLanguageA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetAccountLanguage2 (core/libs/prx/libSceNpManager/Export.cpp:909); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetAccountNpEnv	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetAccountType	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetActiveSigninState	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetAuthServerErrorFlag	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetAuthorizationCode	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as sceNpAuthGetAuthorizationCode (core/libs/prx/libSceNpAuth/Export.cpp:116); no argument read; real behaviour
+sceNpManagerIntGetAuthorizationCodeWithPsnoUri	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as sceNpAuthGetAuthorizationCodeV3 (core/libs/prx/libSceNpAuth/Export.cpp:79); no argument read; real behaviour
+sceNpManagerIntGetClientCredentialAccessToken	D	client-credential token is not user-scoped, so the offline error is a network/server one whose value is unknown
+sceNpManagerIntGetCommunicationRestrictionStatus	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetGameAccessToken	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: a game access token needs a signed-in PSN user (NP model: online queries fail signed out, core/libs/prx/libSceNpManager/Export.cpp:11); no argument read; real behaviour
+sceNpManagerIntGetIssuerId	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetNpEnv	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetNpId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetNpId (core/libs/prx/libSceNpManager/Export.cpp:792); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetNpIdByOnlineId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetUserIdByOnlineId (core/libs/prx/libSceNpManager/Export.cpp:749); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetNpIdSdk	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetNpId (core/libs/prx/libSceNpManager/Export.cpp:792); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetOfflineAccountId	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetOnlineId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetOnlineId (core/libs/prx/libSceNpManager/Export.cpp:805); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetOnlineIdChangeFlag	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetOnlineIdSdk	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetOnlineId (core/libs/prx/libSceNpManager/Export.cpp:805); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetParentalControlFlag	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetParentalControlInfo	D	public twins disagree by argument form (online-id form USER_NOT_FOUND, user-id form SIGNED_OUT) and the Int argument list is unknown
+sceNpManagerIntGetPlusMemberType	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetPlusMemberTypeNB	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetServerError	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetSigninState	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetSigninTelemetryInfo	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetTicket	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: an NP ticket needs a signed-in PSN user (NP model: online queries fail signed out, core/libs/prx/libSceNpManager/Export.cpp:11); no argument read; real behaviour
+sceNpManagerIntGetTicketA	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: an NP ticket needs a signed-in PSN user (NP model: online queries fail signed out, core/libs/prx/libSceNpManager/Export.cpp:11); no argument read; real behaviour
+sceNpManagerIntGetTitleToken	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: a title token needs a signed-in PSN user (NP model: online queries fail signed out, core/libs/prx/libSceNpManager/Export.cpp:11); no argument read; real behaviour
+sceNpManagerIntGetTitleTokenWithCheck	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006: a title token needs a signed-in PSN user (NP model: online queries fail signed out, core/libs/prx/libSceNpManager/Export.cpp:11); no argument read; real behaviour
+sceNpManagerIntGetUserIdByAccountId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetUserIdByAccountId (core/libs/prx/libSceNpManager/Export.cpp:952); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetUserIdByNpId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetUserIdByOnlineId (core/libs/prx/libSceNpManager/Export.cpp:749); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetUserIdByOnlineId	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetUserIdByOnlineId (core/libs/prx/libSceNpManager/Export.cpp:749); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetUserIdByOnlineIdSdk	C	SCE_NP_ERROR_SIGNED_OUT 0x80550006 as public twin sceNpGetUserIdByOnlineId (core/libs/prx/libSceNpManager/Export.cpp:749); no argument read (Int signature unverified, debt pending-export convention); real behaviour
+sceNpManagerIntGetUserList	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetUserNum	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntGetVshAccessToken	D	system-shell token; signature and offline result unknown
+sceNpManagerIntGetVshAccessTokenWithCheck	D	system-shell token; signature and offline result unknown
+sceNpManagerIntGetVshClientId	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public
+sceNpManagerIntIsSubAccount	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public; Is* may return a bool
+sceNpManagerIntIsTemporarySignout	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public; Is* may return a bool
+sceNpManagerIntIsUnregisteredClientError	D	internal state/flag query that returns 0 and writes an output; output layout and the offline value are not public; Is* may return a bool
+sceNpManagerIntLoginAuthenticate	D	system sign-in flow (would sign a user in); private, results unknown
+sceNpManagerIntLoginBind	D	system sign-in flow; private, results unknown
+sceNpManagerIntLoginCreateAuthenticationTicket	D	system sign-in flow; private, results unknown
+sceNpManagerIntLoginGetAccessToken	D	system sign-in flow; private, results unknown
+sceNpNotifyPlusFeature	D	debt: parameter block and the signed-out console result unknown; sibling sceNpNotifyPremiumFeature returns 0 but that is not this call's answer
+sceNpSetContentRestriction	C	0 after a null check (SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003); the restriction only feeds online parental checks, which never run while signed out; (const SceNpContentRestriction*) per shadPS4; real behaviour
+sceNpUnknown_8weiQyIdI3A	D	debt: original name unknown; native wrapper sends a 20-byte online-ID record through private IPC
+sceNpUnknown_WxLcN76q19o	D	debt: original name unknown; status from a private IPC request

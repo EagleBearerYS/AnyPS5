@@ -1,0 +1,536 @@
+function	class	basis
+sceAppMessagingClearEventFlag	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceAppMessagingReceiveMsg	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceAppMessagingSendMsg	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceAppMessagingSendMsgToShellCore	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceAppMessagingSendMsgToShellUI	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceAppMessagingSetEventFlag	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceAppMessagingTryGetEventFlag	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceAppMessagingTryReceiveMsg	D	inter-app messaging over ShellCore IPC; one app means no peer, and no-message/no-peer errors are not in the tree
+sceCoredumpSequenceHandlerCancelCoredump	D	unknown signature (debt); crash-report sequence handler internals
+sceCoredumpSequenceHandlerGetCoredumpStatus	D	unknown signature (debt); crash-report sequence handler internals
+sceCoredumpSequenceHandlerGetCoredumpStatusByAppId	D	unknown signature (debt); crash-report sequence handler internals
+sceCoredumpSequenceHandlerGetEventCache	D	unknown signature (debt); crash-report sequence handler internals
+sceCoredumpSequenceHandlerGetWorkingEventSummary	D	unknown signature (debt); crash-report sequence handler internals
+sceCoredumpSequenceHandlerUpdateEventCache	D	unknown signature (debt); crash-report sequence handler internals
+sceCsbMgrCreateLocalSandbox	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrDestroyLocalSandbox	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrGetCurrentLocalSandboxId	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrGetLocalSandboxIdList	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrGetLocalSandboxInfo	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrInitialize	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrIssueStreamingSandboxInfo	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrSetLocalSandboxInfo	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrSwitchLocalSandbox	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceCsbMgrTerminate	D	unknown signature (debt); cloud streaming sandbox manager internals
+sceLncUtilAcquireCpuBudgetOfExtraAudioDevices	D	system CPU budget reservation; grant rules and errors not public
+sceLncUtilAcquireCpuBudgetOfImeForBigApp	D	system CPU budget reservation; grant rules and errors not public
+sceLncUtilAcquireCpuBudgetOfInGameStore	D	system CPU budget reservation; grant rules and errors not public
+sceLncUtilActivateCdlg	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilAddLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceLncUtilBlockAppSuspend	C	0: nothing ever suspends the title, so the block has no effect; real behaviour
+sceLncUtilBlockingGetEventForDaemon	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilContinueApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilCrashSyscore	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilDeactivateCdlg	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilDeclareReadyForSuspend	D	answers a suspend event AnyPS5 never sends; result when called unprompted not public
+sceLncUtilDisableSuspendNotification	C	0: AnyPS5 never suspends the title, so no notification is ever due; real behaviour
+sceLncUtilEnableSuspendNotification	C	0: AnyPS5 never suspends the title, so no notification is ever due; real behaviour
+sceLncUtilExportSpmemConfigJson	D	unknown signature (debt); SysCore memory-config/launcher internals
+sceLncUtilFinishSpecialResume	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilForceKillApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilForceKillLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceLncUtilGetAppCategory	D	4-byte category string for a PS5 title (param.json has no PS4 category) not public; AppMetadata keeps no category
+sceLncUtilGetAppCategoryType	D	category type enum values not public
+sceLncUtilGetAppFocusedAppStatus	D	LncAppStatus field names known but appType/attr/boot-mode values not public
+sceLncUtilGetAppId	B-S	running title ID from GetAppTitleId_nid_postfix (libkernel/AppMetadata/src/AppMetadata.cpp:131) -> SYSTEM_SERVICE_RUNNING_APP_ID 1 (SystemService.hpp:17); other title IDs throw
+sceLncUtilGetAppIdListOfBigApp	B-S	one entry, SYSTEM_SERVICE_RUNNING_APP_ID 1 (SystemService.hpp:17), as sceSystemServiceGetAppIdOfRunningBigApp (Export.cpp:434); zero capacity/null throw
+sceLncUtilGetAppIdOfRunningBigApp	A	core/libs/prx/libSceSystemService/Export.cpp:434 sceSystemServiceGetAppIdOfRunningBigApp: same no-argument query of the running big app's ID
+sceLncUtilGetAppLaunchedUser	B-S	app ID 1 -> USER_SERVICE_INITIAL_USER_ID (libSceUserService/UserService.hpp:20), as sceUserServiceGetInitialUser; other app IDs throw
+sceLncUtilGetAppStatus	D	LncAppStatus field names known but appType/attr/boot-mode values not public
+sceLncUtilGetAppStatusList	D	LncAppStatus values not public; whether daemons/system apps are listed unknown
+sceLncUtilGetAppStatusListForShellUIReboot	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilGetAppTitleId	B-S	app ID 1 -> GetAppTitleId_nid_postfix (libkernel/AppMetadata/src/AppMetadata.cpp:131) into the 16-byte title-ID output (debt); other app IDs throw
+sceLncUtilGetAppType	D	app type enum values not public
+sceLncUtilGetCdlgExec	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilGetCdlgType	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilGetCoredumpState	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilGetDbgExecutablePath	D	debug path protocol and 64-bit selector unresolved (debt)
+sceLncUtilGetEventForDaemon	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilGetEventForShellUI	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilGetGpuCrashFullDumpAppStatus	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilGetLocalProcessStatusList	D	whether the caller's own process is listed is not public
+sceLncUtilGetParentSocket	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceLncUtilGetResultKillApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilGetResultLaunchAppByTitleId	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilGetSpmemAllocatorConfigValue	D	unknown signature (debt); SysCore memory-config/launcher internals
+sceLncUtilGetSpmemConfigJson	D	unknown signature (debt); SysCore memory-config/launcher internals
+sceLncUtilGetVideoFinalizeState	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilImportSpmemConfigJson	D	unknown signature (debt); SysCore memory-config/launcher internals
+sceLncUtilInitialize	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilIsActiveCdlg	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilIsAppLaunched	B-S	true for the running title ID (GetAppTitleId_nid_postfix (libkernel/AppMetadata/src/AppMetadata.cpp:131)), false for any other: only one title runs
+sceLncUtilIsAppSuspended	B-S	app ID 1 -> false: AnyPS5 never suspends the title (neighbour GetAppIdOfRunningBigApp); other app IDs throw
+sceLncUtilIsCdlgActivated	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilIsCpuBudgetOfExtraAudioDevicesAvailable	D	system CPU budget reservation; grant rules and errors not public
+sceLncUtilIsHostBoot	D	devkit host-boot flag; what the console reports for a retail-style launch is not public
+sceLncUtilIsPs2Emu	C	0 with *emulated=false: the running process is a PS5 title, not the PS2 emulator; real behaviour
+sceLncUtilIsShellUiFgAndGameBgCpuMode	C	false: no ShellUI ever takes the foreground from the title; real behaviour
+sceLncUtilIsSpeculativeLaunch	B-S	app ID 1 -> false: the title is always launched normally (LncLaunchParam.isSpeculativeLaunch, PendingExports.cpp:87); other IDs throw
+sceLncUtilKickCoredumpOnlyProcMem	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilKillApp	D	running-title path done (Export.cpp:448); other app IDs need the console's no-such-app error, not public
+sceLncUtilKillAppWithReason	D	running-title path done (Export.cpp:455); nonzero reasons and other app IDs undocumented (debt)
+sceLncUtilKillLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceLncUtilLaunchApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilLoadExec	A	core/libs/prx/libSceSystemService/Export.cpp:238 sceSystemServiceLoadExec: same (path, null-terminated argv) load-exec; the SystemService wrapper forwards LncUtil's argument list (debt)
+sceLncUtilNotifyCoredumpRequestEnd	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilNotifyCoredumpRequestProgress	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilNotifyVshReady	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilRaiseException	D	SysCore crash/coredump control; payload meanings and results not public
+sceLncUtilRaiseExceptionLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceLncUtilRegisterCallEntries	D	unknown signature (debt); SysCore memory-config/launcher internals
+sceLncUtilRegisterCdlgSharedMemoryName	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilRegisterDaemon	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilRegisterShellUI	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilReleaseCpuBudgetOfExtraAudioDevices	D	system CPU budget reservation; grant rules and errors not public
+sceLncUtilReleaseCpuBudgetOfImeForBigApp	D	system CPU budget reservation; grant rules and errors not public
+sceLncUtilReleaseCpuBudgetOfInGameStore	D	system CPU budget reservation; grant rules and errors not public
+sceLncUtilResumeApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilResumeLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceLncUtilSetAppFocus	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilSetCdlgExec	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilSetControllerFocus	D	controller focus hand-over between apps; values and errors not public
+sceLncUtilSetControllerFocusPermission	D	controller focus permission values not public
+sceLncUtilStartKillApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilStartLaunchAppByTitleId	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilSuspendApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilSuspendBackgroundApp	D	no other app exists in AnyPS5; flag values and console errors not public (debt)
+sceLncUtilSuspendLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceLncUtilTerminate	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilTryBlockAppSuspend	D	result encoding of a refused try-block not public
+sceLncUtilUnblockAppSuspend	C	0: nothing ever suspends the title, so the block has no effect; real behaviour
+sceLncUtilUnregisterCdlgSharedMemoryName	D	common-dialog process control inside SysCore; states and errors not public
+sceLncUtilUnregisterDaemon	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceLncUtilUnregisterShellUI	D	SysCore launcher registration/event IPC for system processes; event layouts unresolved (debt)
+sceReportSequenceHandlerCancelReport	D	unknown signature (debt); crash-report sequence handler internals
+sceReportSequenceHandlerExistsEvent	D	unknown signature (debt); crash-report sequence handler internals
+sceReportSequenceHandlerGetEventCache	D	unknown signature (debt); crash-report sequence handler internals
+sceReportSequenceHandlerRequestReport	D	unknown signature (debt); crash-report sequence handler internals
+sceReportSequenceHandlerUpdateEventCache	D	unknown signature (debt); crash-report sequence handler internals
+sceShellCoreUtilAccessibilityZoomLock	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilAccessibilityZoomUnlock	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilAcquireBgmCpuBudget	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilAcquireRemotePlayCpuBudget	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilAcquireSharePlayCpuBudget	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilActivateGetStatus	D	activation service; status/result values not public (Start/Abort/Term are silent stubs)
+sceShellCoreUtilActivateInit	D	activation service; status/result values not public (Start/Abort/Term are silent stubs)
+sceShellCoreUtilActivateIsActivated	D	activation service; status/result values not public (Start/Abort/Term are silent stubs)
+sceShellCoreUtilChangePbtcMode	D	unknown signature (debt); PSN/cloud account internals of ShellCore
+sceShellCoreUtilChangeRunLevel	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilChangeToStaffModeForIDU	D	in-store demo unit (IDU) mode internals; values not public
+sceShellCoreUtilCheckerAbort	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilCleanupCrashReport	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilClearAppData	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilClearPs4AppCategoryDefaultsListUpdate	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilClearPsnAccountInfo	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilCrashReportRequestCancel	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilDebugGetCffInfo	D	unknown signature (debt); server-downloaded system configuration files
+sceShellCoreUtilDebugGetNumberOfCffItems	D	unknown signature (debt); server-downloaded system configuration files
+sceShellCoreUtilDebugSetCffStatus	D	unknown signature (debt); server-downloaded system configuration files
+sceShellCoreUtilDeclareBeginOfExternalStorageAppMove	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilDeclareEndOfExternalStorageAppMove	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilDeleteDiscInstalledTitleWorkaroundFile	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilDeleteDownloadedHidConfigFile	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilDeleteDownloadedNetEvConfigFile	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilDeleteDownloadedTitleWorkaroundFile	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilDoFsck	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilDownloadHidConfigFileFromServer	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilDownloadNetEvConfigFileFromServer	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilDownloadTitleWorkaroundFileFromServer	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilEndUmmDictation	D	microphone/voice-command internals; state values not public
+sceShellCoreUtilEnterPowerLockSection	C	0 no-op: the host never enters rest mode, nothing to lock out (as PowerTick); silent stub
+sceShellCoreUtilExecuteCrashReport	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilExfatFormatExternalHdd	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilExitApp	D	whether it ends the caller or the focused app, with which status and handlers, is not public
+sceShellCoreUtilExitAppWithValue	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilExitMiniApp	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilExitMiniAppWithValue	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilFormatExternalHdd	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilFormatHddForRestore	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilGetAppData	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetAppEnableTTS	D	per-app TTS setting source not public
+sceShellCoreUtilGetAppEnterButtonAssign	B-S	app ID 1 -> SYSTEM_SERVICE_PARAM_ENTER_BUTTON_CROSS, the value sceSystemServiceParamGetInt param 1000 returns (Export.cpp:313); other IDs throw
+sceShellCoreUtilGetAppLaunchTypeInfo	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilGetAppLaunchedParamInt	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilGetAppLaunchedParamIntByBudgetType	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilGetAppLaunchedParamString	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilGetAppLaunchedParamStringByBudgetType	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilGetAutoPowerDownRemainingSeconds	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetAvailableSizeM2	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetBasicProductShape	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetCdlgEnabledFreezeRendering	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetCffConfig	D	unknown signature (debt); server-downloaded system configuration files
+sceShellCoreUtilGetCheckerString	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetCheckerStringEx	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetCloudClientStatus	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetConsoleToken	D	unknown signature (debt); PSN/cloud account internals of ShellCore
+sceShellCoreUtilGetCrashReportCoreFileSetSize	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetCrashReportFilterInfoStart	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetCrashReportInfoForBoot	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetCrashReportInfoForBootStart	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetCrashReportInfoStart	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetCrashReportResult	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetCrashReportStatus	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetCrashReportUploadStatus	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilGetDeviceIdByDeviceUniqueId	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetDeviceIndexBehavior	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetDeviceIndexBehaviorWithTimeout	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetDeviceUniqueIdByDeviceId	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition	D	'effective' size definition and unit not public
+sceShellCoreUtilGetFreeSizeOfAvContentsTmp	D	av-contents tmp location and unit not public
+sceShellCoreUtilGetFreeSizeOfUserPartition	D	unit and partition (internal vs extended) not public; neighbour would be sceAppContent*GetAvailableSpaceKb
+sceShellCoreUtilGetFsckProgress	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilGetGameLiveStreamingStatus	C	0 with *active=false: no broadcast runs (libSceGameLiveStreaming); null throws; real behaviour
+sceShellCoreUtilGetGnmCompositorOnScreenProfilerFlag	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetGpuLoadEmulationMode	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetGpuLoadEmulationModeByAppId	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetHidConfigFileInfoString	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetHidConfigFileString	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetHidConfigName	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetHidConfigNum	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetIDUMode	D	in-store demo unit (IDU) mode internals; values not public
+sceShellCoreUtilGetImposeMenuFlagForPs2Emu	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetManifestFileStatus	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetNeedSizeOfAppContent	D	which content's needed size is reported is not public
+sceShellCoreUtilGetNetEvConfigFileInfoString	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetNoticeScreenSkipFlagByAppId	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetNpTitleId	D	unknown signature (debt); PSN/cloud account internals of ShellCore
+sceShellCoreUtilGetOutOfVrPlayZoneWarning	D	int() result encoding not public
+sceShellCoreUtilGetPapcGamePcl	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetPasscodeDisplayInfo	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetPasscodeInputType	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetPbtcUserInfoList	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilGetPeripheralConnectionSessionId	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetPlatformPrivacyDefinitionEventData	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetProgressOfFormatExternalHdd	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilGetProgressOfFsck	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilGetPs4AppCategoryDefaultsListId	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetPs4AppCategoryForTitleId	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetPsStoreIconLayout	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetPsStoreIconState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetPsnAccountInfo	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilGetRemotePlayStatus	C	0 with *active=false: no Remote Play session (libSceRemoteplay/Export.cpp:12 reports DISCONNECT); null throws; real behaviour
+sceShellCoreUtilGetRunLevel	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetSharePlayStatus	C	0 with *active=false: no Share Play session (libSceSharePlay/Export.cpp:31 reports no host or visitor); null throws; real behaviour
+sceShellCoreUtilGetSocialScreenStatus	C	0 with *active=false: no PS VR, so no social screen; null throws; real behaviour
+sceShellCoreUtilGetSplashScreenState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetStreamingClientInfo	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetSupportSiteURL	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetSuspendConfirmationDialogFlag	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetSystemBGState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetSystemBGWaveColor	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetSystemBGWaveState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGetTelemetryToken	D	system telemetry/logging internals; layouts unresolved (debt)
+sceShellCoreUtilGetTitleWorkaroundFileInfoString	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetTitleWorkaroundFileString	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilGetUIStatus	D	64-bit UI status bit meanings not public
+sceShellCoreUtilGetUmmStatus	D	UMM (universal mic mute) state values not public
+sceShellCoreUtilGetUserFocus	B-S	app ID 1 -> USER_SERVICE_INITIAL_USER_ID (libSceUserService/UserService.hpp:20), as sceUserServiceGetForegroundUser (libSceUserService/Export.cpp:194); other IDs throw
+sceShellCoreUtilGetUserIdOfMorpheusUser	D	PS VR (Morpheus) user query; no-HMD error value not public
+sceShellCoreUtilGetVMStatsForTelemetry	D	system telemetry/logging internals; layouts unresolved (debt)
+sceShellCoreUtilGetVRBaseMatRectangles	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilGetVersionNumberOfCameraCalibrationData	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilGoBackToKratosCurrentSessionGame	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilHideBlocksFromUser	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilIncrementVersionNumberOfCameraCalibrationData	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilIsAccessibilityZoomLocked	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilIsBgmCpuBudgetAcquired	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilIsBgmCpuBudgetAvailable	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilIsBgmPlaying	C	0 (not playing): no system background music player (debt: DisableMusicPlayer); real behaviour
+sceShellCoreUtilIsCronosInGameCommerceEnabled	D	unknown signature (debt); PSN/cloud account internals of ShellCore
+sceShellCoreUtilIsDddTemperatureDanger	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilIsEChassisVariant	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilIsExternalStorageAppMoveInProgress	C	false: no app is ever moved between storages; real behaviour
+sceShellCoreUtilIsEyeToEyeDistanceAdjusted	C	0 with *adjusted=0: no PS VR, the user's eye distance was never set; null throws; real behaviour
+sceShellCoreUtilIsGameLiveStreamingOnAir	C	false: no broadcast runs (libSceGameLiveStreaming/Export.cpp:46 reports none); real behaviour
+sceShellCoreUtilIsIDUState	D	in-store demo unit (IDU) mode internals; values not public
+sceShellCoreUtilIsImposeScreenOverlaid	C	false: no impose (quick) menu overlay exists on the host; real behaviour
+sceShellCoreUtilIsInSystemSuspendBlackList	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilIsInternalCronosUser	D	unknown signature (debt); PSN/cloud account internals of ShellCore
+sceShellCoreUtilIsInternalKratosUser	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilIsKilledOrSuspendedByLogout	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilIsLaunchBlockDialog	D	unknown signature (debt); no other app or home screen exists
+sceShellCoreUtilIsLotusMicActivated	D	unknown signature (debt); microphone/voice-command internals
+sceShellCoreUtilIsM2StorageTemperatureDanger	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilIsNeededCrashReport	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilIsPowerSaveAlertRequested	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilIsRemotePlayCpuBudgetAcquired	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilIsScreenSaverOn	C	false: AnyPS5 has no system screen saver; real behaviour
+sceShellCoreUtilIsSharePlayCpuBudgetAcquired	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilIsShowCrashReport	D	crash reporter service of ShellCore; layouts and results not public
+sceShellCoreUtilIsTemperatureDanger	D	host temperatures exist (sceKernelGetSocSensorTemperature); danger threshold and result encoding not public
+sceShellCoreUtilIsTitleWorkaroundEnabled	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilIsUsbMassStorageMounted	C	false: no USB mass storage is exposed to the guest (libSceUsbStorage unimplemented); real behaviour
+sceShellCoreUtilLaunchByUri	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilLaunchByUriParamInit	D	unknown signature (debt); no other app or home screen exists
+sceShellCoreUtilLeavePowerLockSection	C	0 no-op: the host never enters rest mode, nothing to lock out (as PowerTick); silent stub
+sceShellCoreUtilLemSettingGet	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilLemSettingGetList	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilLemSettingReset	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilLemSettingSet	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilMakeManifestFile	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilMicMuteKeyPressed	D	unknown signature (debt); microphone/voice-command internals
+sceShellCoreUtilMountAppRight	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilMountDownloadDataForShellUI	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilMountHddForBackup	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilMountHddForRestore	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilNavigateToAnotherApp	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilNavigateToGoHome	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilNavigateToLaunchedApp	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilNotificationCancelForIDU	D	in-store demo unit (IDU) mode internals; values not public
+sceShellCoreUtilNotificationRequestedForIDU	D	in-store demo unit (IDU) mode internals; values not public
+sceShellCoreUtilNotifyBgmCoreTermination	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilNotifyConnectAccountStatusChanged	D	unknown signature (debt); PSN/cloud account internals of ShellCore
+sceShellCoreUtilNotifyFsReadError	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilNotifyImeStatusChanged	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilNotifyPsnAccountInfoReceived	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilNotifyStartEventToUniversalMicMute	D	unknown signature (debt); microphone/voice-command internals
+sceShellCoreUtilNotifySystemResumeTelemetryInfo	D	unknown signature (debt); system telemetry/logging internals
+sceShellCoreUtilNotifySystemSuspendTelemetryInfo	D	system telemetry/logging internals; layouts unresolved (debt)
+sceShellCoreUtilNpDebugSpecialNotification	D	unknown signature (debt); PSN/cloud account internals of ShellCore
+sceShellCoreUtilPfAuthClientConsoleTokenClearCache	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilPostActivityForPsNow	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilPostErrorLog	D	system telemetry/logging internals; layouts unresolved (debt)
+sceShellCoreUtilPostLaunchConfirmResult	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilPostPsmEventToShellUI	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilPreNotifyOfGameLiveStreaming	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilPreNotifyOfRemotePlay	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilPreNotifyOfSharePlay	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilReleaseBgmCpuBudget	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilReleaseRemotePlayCpuBudget	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilReleaseSharePlayCpuBudget	D	system CPU budget reservation; grant rules and errors not public
+sceShellCoreUtilRemoveCffConfigFile	D	unknown signature (debt); server-downloaded system configuration files
+sceShellCoreUtilReportSessionErrorToGaikaiController	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilReportUnexpectedFatalErrorToSystemTelemetry	D	system telemetry/logging internals; layouts unresolved (debt)
+sceShellCoreUtilRequestCameraCalibration	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilRequestCffUpdate	D	unknown signature (debt); server-downloaded system configuration files
+sceShellCoreUtilRequestEjectDevice	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilRequestRebootApp	D	no other app or home screen exists; target values and errors not public
+sceShellCoreUtilRequestShutdown	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilResetAllNoticeScreenSkipFlag	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilResetAutoPowerDownTimer	C	0 no-op: no auto power-off timer, as sceSystemServicePowerTick (Export.cpp:334, debt silent stub); silent stub
+sceShellCoreUtilResetBgdcConfig	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilResetNoticeScreenSkipFlag	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilSetAppData	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetBgmProhibition	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetDeviceIndexBehavior	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetGameLiveStreamingOnAirFlag	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetGameLiveStreamingStatus	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetGnmCompositorOnScreenProfilerFlag	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetGpuLoadEmulationMode	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetGpuLoadEmulationModeByAppId	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetIDUMode	D	in-store demo unit (IDU) mode internals; values not public
+sceShellCoreUtilSetImposeStatusFlag	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetPsStoreIconLayout	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetPsStoreIconState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetRemotePlayStatus	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetSharePlayStatus	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetSkipUpdateCheck	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetSocialScreenStatus	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetSplashScreenState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetSystemBGState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetSystemBGWaveColor	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetSystemBGWaveState	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetUIStatus	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSetUserFocus	D	changes the focused user; user switching not modelled and errors not public
+sceShellCoreUtilSetVRBaseMatRectangles	D	unknown signature (debt); ShellCore-internal IPC for system software
+sceShellCoreUtilShowCriticalErrorDialog	D	whether the console terminates the title after the critical dialog is not public
+sceShellCoreUtilShowErrorDialog	C	0, code and message logged to stderr: no system dialog on the host; silent stub (UI only)
+sceShellCoreUtilShowErrorDialogWithFormatArgs	C	0, code, message and args logged to stderr: no system dialog on the host; silent stub (UI only)
+sceShellCoreUtilShowErrorDialogWithParam	C	0, message/args of the asserted 24-byte param (PendingExports.cpp:10) logged: no system dialog; silent stub (UI only)
+sceShellCoreUtilShowPsUnderLockIndicator	D	ShellCore-internal IPC for system software; behaviour and results not public
+sceShellCoreUtilSignalUserInput	C	0 no-op: no idle timer to reset, as sceSystemServicePowerTick (Export.cpp:334, debt silent stub); silent stub
+sceShellCoreUtilStartPsNowGame	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilStartUmmDictation	D	unknown signature (debt); microphone/voice-command internals
+sceShellCoreUtilStopPsNowGame	D	PSN/cloud account internals of ShellCore; layouts and results not public
+sceShellCoreUtilSwitchMicMute	D	unknown signature (debt); microphone/voice-command internals
+sceShellCoreUtilTalkKeyEventReceived	D	microphone/voice-command internals; state values not public
+sceShellCoreUtilTelemetryCacheData	D	unknown signature (debt); system telemetry/logging internals
+sceShellCoreUtilTestBusTransferSpeed	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilTickHeartBeat	D	ShellCore watchdog heartbeat; consumer and timeout not public
+sceShellCoreUtilTriggerPapcUpdate	D	server-downloaded system configuration files; formats not public
+sceShellCoreUtilTurnOffScreenSaver	C	0 no-op: no screen saver to turn off, as sceSystemServicePowerTick (Export.cpp:334, debt silent stub); silent stub
+sceShellCoreUtilUnmountAppRight	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilUnmountDownloadDataForShellUI	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilUnmountHddForBackup	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilUnmountHddForRestore	D	storage maintenance/mount service of ShellCore; paths and results not public
+sceShellCoreUtilUpdateTelemetryToken	D	unknown signature (debt); system telemetry/logging internals
+sceShellCoreutilGetCrashReportProcessInformation	D	crash reporter service of ShellCore; layouts and results not public
+sceSystemModalDialogClose	D	system modal dialog IPC; dialog IDs and results not public
+sceSystemModalDialogOpen	D	system modal dialog IPC; dialog IDs and results not public
+sceSystemServiceAcquireBgmCpuBudget	D	BGM CPU budget grant rules and errors not public
+sceSystemServiceActivateHevc	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcAbort	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcGetStatus	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcInit	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcIsActivated	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcSoft	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcSoftAbort	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcSoftGetStatus	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcSoftInit	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcSoftIsActivated	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcSoftStart	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcSoftTerm	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcStart	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateHevcTerm	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateMpeg2Abort	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateMpeg2GetStatus	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateMpeg2Init	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateMpeg2IsActivated	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateMpeg2Start	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceActivateMpeg2Term	D	codec licence activation service; status/result values not public (neighbour ShellCoreUtilActivateStart is a silent stub)
+sceSystemServiceAddLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceAddLocalProcessForJvm	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceAddLocalProcessForPs2Emu	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceAddLocalProcessForPsmKit	D	AnyPS5 starts no second process; 0x90-byte parameter block and console results unknown (debt)
+sceSystemServiceAppGetAppInstallStatus	D	12-byte install status fields unresolved (debt); no install service
+sceSystemServiceChangeClock	C	0 as sceSystemServiceChangeCpuClock and the clock setters (PendingExports.cpp:1853-1908): host clocks are not guest-controlled; silent stub
+sceSystemServiceChangeCpuPstate	C	0 as sceSystemServiceChangeCpuClock (PendingExports.cpp:1862): host CPU states are not guest-controlled; silent stub
+sceSystemServiceChangeMemPstate	C	0 as sceSystemServiceChangeMemoryClock (PendingExports.cpp:1880): host memory clock is not guest-controlled; silent stub
+sceSystemServiceDeclareReadyForSuspend	D	answers a suspend event AnyPS5 never sends; result when called unprompted not public
+sceSystemServiceDisablePersonalEyeToEyeDistanceSetting	C	SYSTEM_SERVICE_OK: no PS VR settings UI to disable; silent stub (UI only)
+sceSystemServiceDisableSuspendConfirmationDialog	C	SYSTEM_SERVICE_OK: the title is never suspended, so the dialog never shows; silent stub (UI only)
+sceSystemServiceDisableSuspendNotification	C	SYSTEM_SERVICE_OK: AnyPS5 never suspends the title, so no notification is ever due; real behaviour
+sceSystemServiceEnablePersonalEyeToEyeDistanceSetting	C	SYSTEM_SERVICE_OK: no PS VR settings UI to enable; silent stub (UI only)
+sceSystemServiceEnableSuspendConfirmationDialog	C	SYSTEM_SERVICE_OK: the title is never suspended, so the dialog never shows; silent stub (UI only)
+sceSystemServiceEnableSuspendNotification	C	SYSTEM_SERVICE_OK: AnyPS5 never suspends the title, so no notification is ever due; real behaviour
+sceSystemServiceGetAppCategoryType	D	category type enum values not public
+sceSystemServiceGetAppFocusedAppStatus	D	16-byte status fields unresolved (debt)
+sceSystemServiceGetAppId	B-S	running title ID from GetAppTitleId_nid_postfix (libkernel/AppMetadata/src/AppMetadata.cpp:131) -> SYSTEM_SERVICE_RUNNING_APP_ID 1 (SystemService.hpp:17); other title IDs throw (no-app error not in tree)
+sceSystemServiceGetAppIdListOfBigApp	B-S	one entry, SYSTEM_SERVICE_RUNNING_APP_ID 1 (SystemService.hpp:17), as sceSystemServiceGetAppIdOfRunningBigApp (Export.cpp:434); zero capacity/null throw
+sceSystemServiceGetAppLaunchedUser	B-S	app ID 1 -> USER_SERVICE_INITIAL_USER_ID (libSceUserService/UserService.hpp:20), as sceUserServiceGetInitialUser; other app IDs throw
+sceSystemServiceGetAppStatus	D	16-byte status fields unresolved (debt)
+sceSystemServiceGetAppStatusListContainsDaemon	D	unknown signature (debt)
+sceSystemServiceGetAppTitleId	B-S	app ID 1 -> GetAppTitleId_nid_postfix (libkernel/AppMetadata/src/AppMetadata.cpp:131) into the 16-byte title-ID output (debt); other app IDs throw
+sceSystemServiceGetAppType	D	app type enum values not public
+sceSystemServiceGetDbgExecutablePath	D	debug path protocol and 64-bit selector unresolved (debt)
+sceSystemServiceGetEventForDaemon	D	12-byte daemon event layout unresolved (debt)
+sceSystemServiceGetGpuLoadEmulationMode	D	devkit GPU load emulation mode values not public
+sceSystemServiceGetLocalProcessStatusList	D	whether the caller's own process is listed is not public
+sceSystemServiceGetMainAppTitleId	D	int() signature unconfirmed for a title-ID query; output form not public
+sceSystemServiceGetPSButtonEvent	D	16-byte event field rearrangement only known from disassembly (debt)
+sceSystemServiceGetParentSocket	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceGetParentSocketForJvm	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceGetParentSocketForPs2Emu	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceGetParentSocketForPsmKit	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceGetPlatformPrivacyDefinitionData	D	privacy definition layouts unresolved (debt)
+sceSystemServiceGetPlatformPrivacyDefinitionVersion	D	privacy definition layouts unresolved (debt)
+sceSystemServiceGetPlatformPrivacySetting	D	privacy setting values not public
+sceSystemServiceGetRecentLotusPushedButton	D	Lotus (controller) button/device encoding not public
+sceSystemServiceGetRemoteplayStatus	C	SYSTEM_SERVICE_OK with *active=false: no Remote Play session (libSceRemoteplay/Export.cpp:12 reports DISCONNECT); null throws; real behaviour
+sceSystemServiceGetRenderingMode	D	rendering mode enum not public (RequestToChangeRenderingMode only rejects)
+sceSystemServiceGetSpotifyTitleId	D	unknown signature (debt)
+sceSystemServiceGetSubAppTitleId	D	sub-app concept and output form not public
+sceSystemServiceGetSubAppTitleIdForSP	D	sub-app concept and output form not public
+sceSystemServiceGetTitleWorkaroundInfo	D	workaround info fields unresolved (debt); data comes from Sony servers
+sceSystemServiceGetUIStatus	D	64-bit UI status bit meanings not public
+sceSystemServiceGetVersionNumberOfCameraCalibrationData	D	camera calibration data versioning not public
+sceSystemServiceInitializeForShellCore	D	ShellCore-only initialization IPC
+sceSystemServiceInvokeAppLaunchLink	D	launch-link URI scheme and target app handling not public
+sceSystemServiceIsAppSuspended	B-S	app ID 1 -> false: AnyPS5 never suspends the title (neighbour GetAppIdOfRunningBigApp); other app IDs throw
+sceSystemServiceIsBgmCpuBudgetAvailable	D	BGM CPU budget rules not public
+sceSystemServiceIsBgmPlaying	C	0 (not playing): no system background music player (debt: DisableMusicPlayer); real behaviour
+sceSystemServiceIsEyeToEyeDistanceAdjusted	C	0 with *adjusted=0: no PS VR, the user's eye distance was never set; null throws; real behaviour
+sceSystemServiceIsGameLiveStreamingOnAir	C	false: no broadcast runs (libSceGameLiveStreaming/Export.cpp:46 reports none); real behaviour
+sceSystemServiceIsScreenSaverOn	C	false: AnyPS5 has no system screen saver; real behaviour
+sceSystemServiceIsShellUiFgAndGameBgCpuMode	C	false: no ShellUI ever takes the foreground from the title; real behaviour
+sceSystemServiceKillApp	D	running-title path done (Export.cpp:438); other app IDs and how/reason/coredump values need console errors and semantics not public
+sceSystemServiceKillLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceKillLocalProcessForJvm	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceKillLocalProcessForPs2Emu	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceKillLocalProcessForPsmKit	D	AnyPS5 starts no second process; console results unknown (debt)
+sceSystemServiceLaunchApp	D	AnyPS5 runs one title and has no installed-title database; console argument checks and errors unknown (debt)
+sceSystemServiceLaunchEventDetails	C	SYSTEM_SERVICE_OK without UI: PSN events absent, as OpenTournamentOccurrence (Export.cpp:412); silent stub (UI only)
+sceSystemServiceLaunchStore	C	SYSTEM_SERVICE_OK without UI: PS Store is a PSN service absent here, as OpenTournamentOccurrence (Export.cpp:412); silent stub (UI only)
+sceSystemServiceLaunchSystemDeeplink	D	unknown signature (debt)
+sceSystemServiceLaunchTournamentList	C	SYSTEM_SERVICE_OK without UI: PSN tournaments absent, as OpenTournamentOccurrence (Export.cpp:412); silent stub (UI only)
+sceSystemServiceLaunchTournamentsTeamProfile	C	SYSTEM_SERVICE_OK without UI: PSN tournaments absent, as OpenTournamentOccurrence (Export.cpp:412); silent stub (UI only)
+sceSystemServiceLaunchWebApp	D	web app argument format and launcher not public
+sceSystemServiceLoadExec	B-L	only unconverted executables and paths outside /app0 still throw; needs run-time relinking (neighbour LoadConvertedExecutable_nid_no_patch, LoadExec.cpp)
+sceSystemServiceNavigateToAnotherApp	D	no other app or home screen exists; target values and errors not public
+sceSystemServiceNavigateToGoBack	D	no other app or home screen exists; result not public
+sceSystemServiceNavigateToGoBackWithValue	D	no other app or home screen exists; value format and result not public
+sceSystemServiceNavigateToGoHome	D	no home screen exists; target values and result not public
+sceSystemServiceNotifyBgmCoreTermination	D	BGM core protocol not public
+sceSystemServiceParamGetInt	D	only registry-backed parameters 100-111, 200-213 and 300 still throw; their meanings and values are not public (debt)
+sceSystemServiceRaiseExceptionLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceRegisterDaemon	D	daemon registration IPC with SysCore
+sceSystemServiceReleaseBgmCpuBudget	D	BGM CPU budget grant rules and errors not public
+sceSystemServiceRequestCameraCalibration	D	camera calibration service; console result without a camera not public
+sceSystemServiceRequestPowerOff	D	whether the console ends the title or only signals the shell is not public
+sceSystemServiceRequestReboot	D	whether the console ends the title or only signals the shell is not public
+sceSystemServiceResumeLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceSaveVideoToken	D	video service token storage (PSN) protocol not public
+sceSystemServiceSetControllerFocusPermission	D	controller focus permission values not public
+sceSystemServiceSetGpuLoadEmulationMode	D	devkit GPU load emulation mode values not public
+sceSystemServiceSetOutOfVrPlayAreaFlag	C	0 as sceSystemServiceSetOutOfVrPlayZoneWarning (PendingExports.cpp:2289): no PS VR; silent stub
+sceSystemServiceSetPowerSaveLevel	C	0 as the clock setters (PendingExports.cpp:1853-1908): host power management is not guest-controlled; silent stub
+sceSystemServiceShowClosedCaptionAdvancedSettings	C	SYSTEM_SERVICE_OK without UI, as sceSystemServiceShowControllerSettings (Export.cpp:430); silent stub (UI only)
+sceSystemServiceShowClosedCaptionSettings	C	SYSTEM_SERVICE_OK without UI, as sceSystemServiceShowControllerSettings (Export.cpp:430); silent stub (UI only)
+sceSystemServiceShowErrorDialog	C	SYSTEM_SERVICE_OK, code and message logged to stderr: no system dialog on the host; silent stub (UI only)
+sceSystemServiceShowEyeToEyeDistanceSetting	C	SYSTEM_SERVICE_OK without UI (no PS VR), as ShowControllerSettings (Export.cpp:430); silent stub (UI only)
+sceSystemServiceShowImposeMenuForPs2Emu	D	PS2 emulator impose menu; reserved argument and result not public
+sceSystemServiceSuspendBackgroundApp	D	argument meanings unresolved; no background app exists
+sceSystemServiceSuspendLocalProcess	D	AnyPS5 runs one process; local-process parameter blocks and console errors unresolved (debt)
+sceSystemServiceSwitchToNonVRApp	D	unknown signature (debt); VR app switching
+sceSystemServiceSwitchToVRApp	D	unknown signature (debt); VR app switching
+sceSystemServiceTelemetrySetData	C	0 no-op: telemetry only goes to Sony's servers, no guest-visible effect; silent stub
+sceSystemServiceTelemetrySetData2	C	0 no-op: telemetry only goes to Sony's servers, no guest-visible effect; silent stub
+sceSystemServiceTelemetrySetData2WithUserId	D	unknown signature (debt)
+sceSystemServiceTickVideoPlayback	C	0 no-op: no auto power-off to defer during playback, as sceSystemServicePowerTick (Export.cpp:334, debt silent stub); silent stub
+sceSystemServiceTurnOffScreenSaver	C	SYSTEM_SERVICE_OK no-op: no screen saver to turn off, as sceSystemServicePowerTick (Export.cpp:334, debt silent stub); silent stub
+sceSystemServiceUsbStorageGetDeviceInfo	D	direct alias of libSceUsbStorage sceUsbStorageGetDeviceInfo (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageGetDeviceList	D	direct alias of libSceUsbStorage sceUsbStorageGetDeviceList (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageGetdentsClose	D	direct alias of libSceUsbStorage sceUsbStorageGetdentsClose (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageGetdentsOpen	D	direct alias of libSceUsbStorage sceUsbStorageGetdentsOpen (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageGetdentsRead	D	direct alias of libSceUsbStorage sceUsbStorageGetdentsRead (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageInit	D	direct alias of libSceUsbStorage sceUsbStorageInit (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageIsExist	D	direct alias of libSceUsbStorage sceUsbStorageIsExist (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageRegisterCallback	D	direct alias of libSceUsbStorage sceUsbStorageRegisterCallback (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageRegisterCallbackForMapAvailable	D	direct alias of libSceUsbStorage sceUsbStorageRegisterCallbackForMapAvailable (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageRegisterCallbackForMapUnavailable	D	direct alias of libSceUsbStorage sceUsbStorageRegisterCallbackForMapUnavailable (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageRequestMap	D	direct alias of libSceUsbStorage sceUsbStorageRequestMap (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageRequestMapWSB	D	direct alias of libSceUsbStorage sceUsbStorageRequestMapWSB (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageRequestUnmap	D	direct alias of libSceUsbStorage sceUsbStorageRequestUnmap (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageTerm	D	direct alias of libSceUsbStorage sceUsbStorageTerm (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageUnregisterCallback	D	direct alias of libSceUsbStorage sceUsbStorageUnregisterCallback (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageUnregisterCallbackForMapAvailable	D	direct alias of libSceUsbStorage sceUsbStorageUnregisterCallbackForMapAvailable (todo there); device/event layouts and errors unresolved (debt)
+sceSystemServiceUsbStorageUnregisterCallbackForMapUnavailable	D	direct alias of libSceUsbStorage sceUsbStorageUnregisterCallbackForMapUnavailable (todo there); device/event layouts and errors unresolved (debt)
+sceSystemStateMgrCancelShutdownTimer	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrEnterMediaPlaybackMode	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrEnterStandby	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrExtendShutdownTimer	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrExtendShutdownTimerForPostAutoUpdateProcess	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrGetCurrentState	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrGetRebootCause	D	unknown signature (debt); power-state manager internals
+sceSystemStateMgrGetTriggerCode	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrIsBdDriveReady	C	false: AnyPS5 has no Blu-ray drive; real behaviour
+sceSystemStateMgrIsGpuPerformanceNormal	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrIsShellUIShutdownInProgress	C	false: there is no ShellUI to shut down; real behaviour
+sceSystemStateMgrIsStandbyModeEnabled	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrLeaveMediaPlaybackMode	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrNotifySystemSuspendResumeProgress	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrReboot	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrRequestToKeepMainOnStandby	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrSendCecOneTouchPlayCommand	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrStartRebootTimer	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrStartShutdownTimer	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrStartStadbyTimer	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrStartVshAutoUpdateTimer	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrTickMusicPlayback	C	0 no-op: no auto power-off to defer, as sceSystemServicePowerTick (Export.cpp:334, debt silent stub); silent stub
+sceSystemStateMgrTickPartyChat	C	0 no-op: no auto power-off to defer, as sceSystemServicePowerTick (Export.cpp:334, debt silent stub); silent stub
+sceSystemStateMgrTickVideoPlayback	C	0 no-op as sceSystemServicePowerTick; unknown signature (debt) is harmless for a body that reads nothing; silent stub
+sceSystemStateMgrTurnOff	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrVshAutoUpdate	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrWaitVshAutoUpdateVerifyDone	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public
+sceSystemStateMgrWakeUp	D	power-state manager IPC for system software (standby, timers, auto update); states and results not public

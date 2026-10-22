@@ -1,0 +1,73 @@
+function	class	basis
+sceBgftServiceDownloadFindActivePatchTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadFindActivePupTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadFindTaskByContentId	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadGetProgress	D	88-byte progress fields unresolved (debt); no download service to report on
+sceBgftServiceDownloadPauseTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadPauseTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadQueryTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadResumeTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadResumeTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadStartTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadStartTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadStopTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceDownloadStopTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceInit	B-S	library state init with the confirmed BgftInitParam {heap, heapSize} (Export.cpp:6), SCE pattern as sceRemoteplayInitialize (libSceRemoteplay/Export.cpp:19); null/double init throw (errors not in tree)
+sceBgftServiceIntDebugDownloadCorruptPkg	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugDownloadRequest	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoGetPlayGoStatusString	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoIsPaused	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoResume	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoRevertToFullState	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoRevertToInitialState	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoRevertToSnapshot	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoSnapshotByTitleId	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDebugPlayGoSuspend	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDownloadDebugDeleteBgftEnvFile	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDownloadDebugDownloadBgftEnvFile	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDownloadDebugGetBgftEnvInfoString	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDownloadDebugGetStat	D	unknown signature (debt); debug-only bgft environment/PlayGo controls
+sceBgftServiceIntDownloadFindActiveGameAndGameAcTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadFindActiveTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadGetExtUsbUserStorageSize	D	unknown signature (debt); storage size unit and target not public
+sceBgftServiceIntDownloadGetGameAndGameAcProgress	D	88-byte progress fields unresolved (debt); no download service to report on
+sceBgftServiceIntDownloadGetPatchProgress	D	88-byte progress fields unresolved (debt); no download service to report on
+sceBgftServiceIntDownloadGetPlayGoProgress	D	PlayGo install-state control inside the bgft daemon; layouts and results not public
+sceBgftServiceIntDownloadGetProgress	D	88-byte progress fields unresolved (debt); no download service to report on
+sceBgftServiceIntDownloadGetTaskInfo	D	unknown signature (debt); task info keys not public
+sceBgftServiceIntDownloadGetUserStorageSize	D	unknown signature (debt); storage size unit and target not public
+sceBgftServiceIntDownloadPauseTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadPauseTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadQueryTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadRegisterTaskByStorage	D	installs a package from storage: needs PKG decryption and an install service; task fields unresolved (debt)
+sceBgftServiceIntDownloadRegisterTaskByStorageEx	D	installs a package from storage: needs PKG decryption and an install service; task fields unresolved (debt)
+sceBgftServiceIntDownloadRestartTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadResumeTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadResumeTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadStartTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadStartTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadStopTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadStopTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadUnregisterTask	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntDownloadUnregisterTaskAll	D	background download service IPC: task IDs and not-found/error codes not public; downloads need PSN
+sceBgftServiceIntExtUsbCheckActiveDownloadTasks	D	unknown signature (debt); storage size unit and target not public
+sceBgftServiceIntGetTaskInfoValueInt	D	unknown signature (debt); task info keys not public
+sceBgftServiceIntGetTaskInfoValueString	D	unknown signature (debt); task info keys not public
+sceBgftServiceIntGetTaskInfoValueStringIndex	D	unknown signature (debt); task info keys not public
+sceBgftServiceIntInit	B-S	library state init with the confirmed BgftInitParam {heap, heapSize} (Export.cpp:6), SCE pattern as sceRemoteplayInitialize (libSceRemoteplay/Export.cpp:19); null/double init throw (errors not in tree)
+sceBgftServiceIntPlayGoFindTaskId	D	PlayGo install-state control inside the bgft daemon; layouts and results not public
+sceBgftServiceIntPlayGoGetDiscIniChunksInstallProgress	D	PlayGo install-state control inside the bgft daemon; layouts and results not public
+sceBgftServiceIntPlayGoIsPaused	D	PlayGo install-state control inside the bgft daemon; layouts and results not public
+sceBgftServiceIntPlayGoResume	D	PlayGo install-state control inside the bgft daemon; layouts and results not public
+sceBgftServiceIntTerm	B-S	clears the state set by Init (neighbour sceBgftServiceInit); terminate-before-init throws (error not in tree)
+sceBgftServiceIntUploadGetProgress	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadQueryTask	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadRegisterTask	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadRestartTask	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadStartTask	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadStartTaskAll	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadStopTask	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadStopTaskAll	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadUnregisterTask	D	unknown signature (debt); upload task service
+sceBgftServiceIntUploadUnregisterTaskAll	D	unknown signature (debt); upload task service
+sceBgftServiceTerm	B-S	clears the state set by Init (neighbour sceBgftServiceInit); terminate-before-init throws (error not in tree)

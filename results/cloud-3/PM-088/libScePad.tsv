@@ -1,0 +1,165 @@
+function	class	basis
+scePadBondUpdateGetReconnectStatus	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadBondUpdateGetStatus	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadBondUpdateInit	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadBondUpdateIsReady	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadBondUpdateResetBond	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadBondUpdateSendData	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadBondUpdateStart	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadBondUpdateTerm	D	controller bond update through the system pad driver; status codes and PadUpdateParameter unresolved
+scePadConnectPort	D	system port management; game-process result unknown
+scePadControllerUpdateGetReconnectStatus	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateGetStatus	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateInit	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateIsReady	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateIsUpdateNeeded2	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateResetController	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateSendData	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateStart	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadControllerUpdateTerm	D	controller firmware update through the system pad driver; status codes and payloads unresolved
+scePadDeviceOpen	D	deviceId-based open; device-id encoding unknown
+scePadDisableActiveProfileChange	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadDisableActiveProfileChangeByDeviceId	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadDisableDataConversion	D	meaning of data conversion unknown
+scePadDisableTrackingLedBatterySaver	D	tracking-LED system setting; game-process result unmeasured
+scePadDisableTransportButtons	D	media transport-button switch; meaning unknown
+scePadDisableTriggerEffect	D	system trigger-effect switch: effect on stored/later scePadSetTriggerEffect unknown
+scePadDisableVibration	D	system vibration switch: whether it stops output or rejects later scePadSetVibration unknown
+scePadDisconnectDevice	D	system device management by deviceId
+scePadDisconnectPort	D	system port management; game-process result unknown
+scePadEnableAutoDetect	D	system auto-detect switch; meaning unknown
+scePadEnableControllerIndicator	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadEnablePlayPauseEmulation	D	media play/pause emulation switch; meaning unknown
+scePadEnableProfileIndicator	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadEnablePs4CompatibleMode	D	effect of PS4-compatible mode on reports unknown
+scePadEnableSpecificDeviceClass	D	special device-class values and effect on scePadOpenExt unknown
+scePadEnableUsbConnection	D	system USB-connection switch; meaning unknown
+scePadGetActiveProfileInfo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadGetActiveTime	D	type selector and time unit unknown
+scePadGetAstonModel	D	Aston model enum and absent-device answer unknown
+scePadGetBluetoothAddress	B-S	PAD_BD_ADDRESS (Pad.hpp:30) as scePadGetInfo reports it (Export.cpp:215); handle/null checks as scePadIsRemoteController; uint64 byte order to confirm
+scePadGetCapability	D	takes a deviceId; capability bit meanings unknown
+scePadGetControllerIdleCount	D	idle-count unit unknown
+scePadGetControllerType	D	controller-type enum not in tree (may differ from PAD_DEVICE_TYPE_*)
+scePadGetControllerTypeLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadGetDataInternal	D	internal per-port read; raw vs processed data and port numbering unknown
+scePadGetDeviceId	D	device-id encoding (Mbus device id) unknown
+scePadGetDeviceInfo	D	PadDeviceInfo layout unresolved
+scePadGetExtensionUnitInfo	D	PadExtensionUnitInfo layout unresolved
+scePadGetFeatureReport	B-L	needs a DualSense feature-report model (public formats: hid-playstation 0x05/0x09/0x20) or SDL_hid passthrough; no report layer exists
+scePadGetFeatureReport2	D	differs from scePadGetFeatureReport in an unknown way (same register signature)
+scePadGetIdleCount	D	idle-count unit unknown
+scePadGetInfoByPortType	D	152-byte port information fields unresolved (debt)
+scePadGetLicenseControllerInformation	D	1224-byte layout unresolved (debt)
+scePadGetLotusIrCodeSetResult	D	Lotus device (IR codes/buttons) absent; payload semantics and absent-device error unknown
+scePadGetMotionSensorPosition	D	physical sensor offset of the DualSense not in tree or a public source
+scePadGetMotionTimerUnit	D	motion timer unit value not in tree or a public source
+scePadGetProfileEditMode	D	profile edit mode (Edge/Access) semantics unknown
+scePadGetProfileEditModeLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadGetProfileHunt	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadGetProfileInfo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadGetProfileLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadGetSavedSettingInfo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadGetSelectButtonCustomizeMode	D	select-button customisation semantics unknown
+scePadGetSphereRadius	D	Move sphere radius; answer for a DualSense handle unknown
+scePadGetTelemetryInfo	D	telemetry payload fields unresolved (debt)
+scePadGetTriggerEffectInternalState	D	PadTriggerInternalState layout unknown
+scePadGetUsbDetectionState	D	PadUsbDetectionState layout unresolved
+scePadGetVersionInfo	D	firmware version payload fields unresolved (debt)
+scePadIsBlasterConnected	C	false: no Blaster (aim-type) controller can be connected on this PC; bool result, real behaviour
+scePadIsCoPilot	D	co-pilot (system accessibility) state; int result meaning unknown
+scePadIsDS4Connected	C	false: the library always reports a DualSense (Export.cpp:213, debt Functional); bool result, real behaviour
+scePadIsLightBarBaseBrightnessControllable	D	int result: bool vs error meaning unknown
+scePadIsMoveConnected	C	false: no PS Move controller can be connected on this PC; bool result, real behaviour
+scePadIsMoveReproductionModel	D	int result meaning (bool vs error) for absent Move unknown
+scePadIsValidHandle	B-S	neighbour scePadGetHandle/ValidPort (Export.cpp:199,113): true iff g_opened, handle==PAD_HANDLE and portType valid; bool, no error codes
+scePadLastLotusButtonData	D	Lotus device (IR codes/buttons) absent; payload semantics and absent-device error unknown
+scePadMbusInit	D	registration with the private Mbus service
+scePadMbusTerm	D	registration with the private Mbus service
+scePadOpenExt	D	standard/remote-port meaning of the ext param unknown (debt: other port types throw)
+scePadOpenExt2	D	deviceId-based open; device-id encoding and reserved arg unknown
+scePadOutputReport	B-M	public DualSense output-report fields (Linux hid-playstation, SDL HIDAPI PS5) into PadOutputState: rumble, light bar, 11-byte trigger blocks (PadTriggerRequest)
+scePadParseUniqueDataLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadReadAstonForTracker	D	camera-tracker data/state for Move/Blaster/Aston; layouts unknown
+scePadReadBlasterForTracker	D	camera-tracker data/state for Move/Blaster/Aston; layouts unknown
+scePadReadExt	D	PadDataExtended layout incomplete (debt)
+scePadReadForTracker	D	camera-tracker data/state for Move/Blaster/Aston; layouts unknown
+scePadReadHistory	D	72-byte history record fields unresolved (debt)
+scePadReadStateExt	D	PadDataExtended layout incomplete (debt)
+scePadRegisterCollaboInputMgrProcess	D	system collaboration input manager registration (private)
+scePadRemoteControlInsertData	D	remote-play input injection; data format unknown
+scePadRemoteControlInsertDataForAston	D	remote-play input injection; data format unknown
+scePadResetHunt	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadResetLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadResetLightBarAll	B-S	neighbour scePadResetLightBar (Export.cpp:300): Pad::SetLightBar(false,...) for the one emulated pad; SDL backend restores default LED
+scePadResetLightBarAllByPortType	B-S	neighbour scePadResetLightBar (Export.cpp:300) filtered by port type (only standard has a pad); invalid type -> INVALID_ARG as scePadOpen
+scePadResetOrientationForTracker	D	tracker-side orientation (libScePadTracker, all todo) unknown
+scePadSetActiveProfileSlot	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadSetAngularVelocityBiasCorrectionState	B-S	enable path: gyro-bias estimate while stationary beside fuse()/biasIntegral (PadState.cpp:41,66); algorithm unmeasured, record like the deadband
+scePadSetAutoPowerOffCount	D	system auto power-off setting; unit and game-process result unknown
+scePadSetButtonRemappingInfo	D	remap table index semantics (14 entries + mode) unknown
+scePadSetControllerTypeLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadSetExtensionReport	D	kernel-owned extension report layout unresolved (debt)
+scePadSetFeatureReport	B-L	needs a DualSense feature-report model or SDL_hid_send_feature_report passthrough; no report layer exists; console filtering unknown
+scePadSetFeatureReport2	D	differs from scePadSetFeatureReport in an unknown way (same register signature)
+scePadSetForceIntercepted	D	system intercept flag; meaning unknown
+scePadSetIsCoPilot	D	co-pilot (system accessibility) setting; effect on input merging unknown
+scePadSetLightBarBaseBrightness	D	brightness scale unknown; SDL has no separate brightness
+scePadSetLightBarBlinking	D	the three blinking byte meanings are unknown (debt)
+scePadSetLightBarForTracker	D	tracking-colour validation for the camera tracker unknown
+scePadSetLoginUserNumber	D	system login-number setting; meaning and game-process result unknown
+scePadSetLotusDisableIrKey	D	Lotus device (IR codes/buttons) absent; payload semantics and absent-device error unknown
+scePadSetLotusEnableIrKey	D	Lotus device (IR codes/buttons) absent; payload semantics and absent-device error unknown
+scePadSetLotusIrCodeSetData	D	Lotus device (IR codes/buttons) absent; payload semantics and absent-device error unknown
+scePadSetLotusIrCodeSetEnd	D	Lotus device (IR codes/buttons) absent; payload semantics and absent-device error unknown
+scePadSetLotusIrCodeSetStart	D	Lotus device (IR codes/buttons) absent; payload semantics and absent-device error unknown
+scePadSetMuteLed	D	mute-LED mode values unknown; SDL2 has no mute-LED call
+scePadSetPS4BcVibrationMode	D	PS4-BC vibration mode values unknown
+scePadSetPowerSavingState	D	power-saving state values unknown
+scePadSetProcessFocus	D	PadProcessFocusParameter layout unresolved; system focus handling
+scePadSetProcessPrivilegeOfButtonRemapping	D	system remapping privilege flag; meaning unknown
+scePadSetProfileEditMode	D	profile edit mode (Edge/Access) semantics unknown
+scePadSetProfileHunt	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadSetProfileIndicatorAnimation	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadSetProfileLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadSetSavedSettingInfo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadSetSelectButtonCustomizeMode	D	select-button customisation semantics unknown
+scePadSetShareButtonMaskForRemotePlay	D	remote-play share-button mask; no remote play, error for absent service not in tree
+scePadSetStickTriggerTuningMode	D	tuning mode values unknown
+scePadSetStickTuningParam	D	PadStickTuningParameter layout unresolved
+scePadSetToggleAllReleaseLeonardo	D	DualSense Edge/Access profile service; answer for the emulated plain DualSense and payloads unknown (debt)
+scePadSetTriggerEffectExt	D	PadTriggerEffectExtended layout unknown
+scePadSetTriggerEffectStrength	D	strength scale values unknown
+scePadSetTriggerTuningParam	D	PadTriggerTuningParameter layout unresolved
+scePadSetUserColor	D	system-assigned user colour encoding and its relation to the light bar unknown
+scePadSetUserNumber	D	player-number system setting; value range and game-process result unknown
+scePadSetVibrationForce	B-S	neighbour scePadSetVibration (Export.cpp:356): same PadVibrationParam into Pad::SetVibration; no system vibration-off state exists to override
+scePadSetVibrationStrength	D	strength scale values unknown
+scePadSetVirtualDeviceComponentInformation	D	16-byte component information fields unknown (debt)
+scePadSetVrTrackingMode	D	VR tracking mode values unknown
+scePadShareOutputData	D	shared-output routing between handles; semantics unknown
+scePadShareOutputDataWithFunctionType	D	shared-output routing; function-type values unknown
+scePadStartRecording	D	history recording for scePadReadHistory; record format unresolved
+scePadStopRecording	D	history recording for scePadReadHistory; record format unresolved
+scePadSwitchConnection	D	connection switch flags unknown
+scePadUiReadState	D	PadUiData layout unresolved
+scePadUiReadStateForTuning	D	PadUiTuningData layout unresolved
+scePadVertualDeviceAddDevice	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVirtualDeviceAddDevice	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVirtualDeviceDeleteDevice	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVirtualDeviceDisableButtonRemapping	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVirtualDeviceGetRemoteSetting	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVirtualDeviceInsertData	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVirtualDeviceInsertTriggerInternalState	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVirtualDeviceSetTriggerEffectSetting	D	remote-play/system virtual devices; input record and output id width unresolved (debt)
+scePadVrControllerGetDeviceInformation	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerGetPhysicalUsbConnectionStatus	D	no handle; PadVrUsbConnectionStatus layout unresolved (debt), so the not-connected answer cannot be written
+scePadVrControllerGetTriggerEffectState	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerGetTriggerEffectStates	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerRead	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerReadCombinedState	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerReadState	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerSetTriggerEffect	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerSetTriggerEffects	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerSetVibration	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured
+scePadVrControllerSetVibrationMode	C	PAD_ERROR_INVALID_HANDLE 0x80920003 (Pad.hpp:8) for any handle: scePadOpen never issues VR-controller handles (Export.cpp:259); real behaviour, DualSense-handle case unmeasured

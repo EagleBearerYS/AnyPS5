@@ -1,0 +1,70 @@
+function	class	basis
+sceFontControl	D	command-dependent payload types unmodelled (debt); command ids unknown
+sceFontCreateGraphicsDevice	D	Font Graphics vector renderer device/service: parameter and object layouts opaque (debt), no public spec
+sceFontCreateGraphicsService	D	Font Graphics vector renderer device/service: parameter and object layouts opaque (debt), no public spec
+sceFontCreateGraphicsServiceWithEdition	D	Font Graphics vector renderer device/service: parameter and object layouts opaque (debt), no public spec
+sceFontCreateWords	D	FontWords object layout and the library's word-break rules are unknown (third signature slot unread, debt)
+sceFontDestroyGraphicsDevice	D	Font Graphics vector renderer device/service: parameter and object layouts opaque (debt), no public spec
+sceFontDestroyGraphicsService	D	Font Graphics vector renderer device/service: parameter and object layouts opaque (debt), no public spec
+sceFontDestroyWords	D	FontWords object layout and the library's word-break rules are unknown (third signature slot unread, debt)
+sceFontGetFontGlyphsOutlineProfile	D	output record opaque pending field recovery (debt); FreeType could supply the values but the layout is unknown
+sceFontGetFontMetrics	D	output record opaque pending field recovery (debt); FreeType could supply the values but the layout is unknown
+sceFontGetFontStyleInformation	D	output record opaque pending field recovery (debt); FreeType could supply the values but the layout is unknown
+sceFontGetGlyphExpandBufferState	D	output record opaque pending field recovery (debt); FreeType could supply the values but the layout is unknown
+sceFontGlyphRenderImage	B-M	render a glyph from sceFontGenerateCharGlyph (core/libs/prx/libSceFont/src/Render.cpp:371 keeps owner font, code and scale) through RenderCharGlyphImageCore as sceFontRenderCharGlyphImage does (Render.cpp:220, RenderDirectional :97); signature recovered (debt), error precedence and style-frame override unverified
+sceFontGlyphRenderImageHorizontal	B-M	render a glyph from sceFontGenerateCharGlyph (core/libs/prx/libSceFont/src/Render.cpp:371 keeps owner font, code and scale) through RenderCharGlyphImageCore as sceFontRenderCharGlyphImage does (Render.cpp:220, RenderDirectional :97); signature recovered (debt), error precedence and style-frame override unverified
+sceFontGlyphRenderImageVertical	B-M	render a glyph from sceFontGenerateCharGlyph (core/libs/prx/libSceFont/src/Render.cpp:371 keeps owner font, code and scale) through RenderCharGlyphImageCore as sceFontRenderCharGlyphImage does (Render.cpp:220, RenderDirectional :97); signature recovered (debt), error precedence and style-frame override unverified
+sceFontGraphicsBeginFrame	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsDrawingCancel	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsDrawingFinish	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsDrawupFillTextureImageObject	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsDrawupFillTexturePatternObject	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsEndFrame	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsExchangeResource	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsFillMethodInit	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsFillPlotInit	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsFillPlotSetLayout	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsFillPlotSetMapping	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsFillRatesInit	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsFillRatesSetFillEffect	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsFillRatesSetLayout	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsFillRatesSetMapping	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsGetDeviceUsage	D	Font Graphics vector renderer device/service: parameter and object layouts opaque (debt), no public spec
+sceFontGraphicsRegionInit	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsRegionInitCircular	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsRegionInitRoundish	D	Font Graphics descriptor init/setter: struct layout is in the tree (core/libs/prx/libSceFont/src/Unimplemented.cpp:27-99) but tag/flag values and selector/mapping meanings are unrecovered (debt); its only consumer is the absent renderer
+sceFontGraphicsRelease	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsRenderResource	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsSetFramePolicy	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsSetupClipping	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupColorRates	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupFillMethod	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupFillRates	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupGlyphFill	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupGlyphFillPlot	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupHandleDefault	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsSetupLocation	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupPositioning	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupRotation	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupScaling	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupShapeFill	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsSetupShapeFillPlot	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsStructureCanvas	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsStructureCanvasSequence	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsStructureDesign	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsStructureDesignResource	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsStructureSurfaceTexture	D	Font Graphics frame/resource/canvas object: layouts opaque and the renderer behind them unrecovered (debt)
+sceFontGraphicsUpdateClipping	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateColorRates	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateFillMethod	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateFillRates	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateGlyphFill	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateGlyphFillPlot	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateLocation	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdatePositioning	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateRotation	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateScaling	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateShapeFill	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontGraphicsUpdateShapeFillPlot	D	mutates an opaque FontGraphicsResource; resource layout and draw semantics unrecovered (debt)
+sceFontSupportGlyphs	D	FontGlyphSupport layout unknown (debt); neighbours sceFontSupportExternalFonts/SystemFonts (core/libs/prx/libSceFont/src/Library.cpp:414) take scalars
+sceFontWordsFindWordCharacters	D	FontWords object layout and the library's word-break rules are unknown (third signature slot unread, debt)

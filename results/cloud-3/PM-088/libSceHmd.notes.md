@@ -1,0 +1,22 @@
+# libSceHmd (PM-088 classification)
+
+- **What it is:** the first-generation PS VR headset API. It covers device open and info, distortion and 2D-VR GPU command generation, reprojection (timewarp, capture, user events), and about 100 `sceHmdInternal*` system calls (processor-unit/HMU info, firmware update, crash reports, social and separate screen, 3D audio, LEDs, settings, debug). 22 done, 146 todo.
+- **No-headset model already in the tree** (`core/libs/prx/libSceHmd/Export.cpp`, debt Silent stubs):
+  - `sceHmdInitialize` succeeds and device queries report `NotDetected`.
+  - `sceHmdOpen` returns `DeviceDisconnected 0x81110004`.
+  - Every public call taking a handle returns `InvalidHandle 0x81110003` once initialized and `NotInitialized 0x81110002` before. This covers Close, GetDeviceInformationByHandle, GetFieldOfView (null output checked first), Get2DEyeOffset and GetInertialSensorData.
+  - Size and alignment queries return constants.
+  - The implemented internal status queries (`InternalGetDeviceStatus`, `InternalMmapIsConnect`) report "absent" without an init check.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 10, D 136.
+- **C (real behaviour for an absent device, not silent stubs):**
+  - The six distortion and 2D-VR command queries take an HMD handle that can never be issued. They get the sceHmdGetFieldOfView answer: InvalidHandle, or NotInitialized before init. The order of their null-argument checks still needs confirming.
+  - The debt says the three `sceHmdDistortion*` entries are ELF aliases of the three `sceHmdGet*` ones. Implementing one of a pair makes its twin an A.
+  - The four `sceHmdInternalIs*Vr2d` bool queries return false. Nothing runs in VR2D without a headset, and the measured libSceHmd2 counterparts answer 0.
+- **D:**
+  - Reprojection (28). Its answer without a headset or before ReprojectionInitialize is not in the tree. Real support would need a timewarp subsystem plus frame, pose and overlay layouts that the debt lists as incomplete.
+  - DistortionInitialize, SetOutputMinColor, GetDistortionParams and SetVr2dEnable: no-headset answer unknown.
+  - All other `sceHmdInternal*`: system-only service IPC, firmware update, crash reports, debug and settings.
+  - Handle-taking internal calls are not assumed to validate their handle, because the debt shows `sceHmdInternalGetDefaultLedData` ignores its handle.
+- **Dependencies:** none.
+- **Batch 1 (10 functions, C): "no-headset command and VR2D queries".** It extends `guest_hmd_tests` (`core/libs/tests/GuestHmd.cpp`, already registered in `libSceHmd/CMakeLists.txt`). `CheckHandleQueries` gains the six command queries: NotInitialized before `sceHmdInitialize` and InvalidHandle after, for handles 0, 1 and -1, with a non-null descriptor and an untouched output buffer. A new check confirms the four Is*Vr2d calls return false.
+- No second batch: every other row is D. Probing the console for the no-headset answers of the 28 reprojection calls (a payload, as with libSceHmd2's hmd2n) would be the next step.

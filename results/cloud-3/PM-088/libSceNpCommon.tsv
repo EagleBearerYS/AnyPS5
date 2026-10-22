@@ -1,0 +1,151 @@
+function	class	basis
+sceNpAllocateKernelMemoryNoAlignment	D	kernel-memory allocator wrapper; no prototype or behaviour claimed (debt) and no public source gives the signature; alignment/flag semantics unknown
+sceNpAllocateKernelMemoryWithAlignment	D	kernel-memory allocator wrapper; no prototype or behaviour claimed (debt) and no public source gives the signature; alignment/flag semantics unknown
+sceNpArchInit	D	library arch init/term; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpArchTerm	D	library arch init/term; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpAtomicCas32	D	atomic helper; no prototype or behaviour claimed (debt) and no public source gives the signature: argument width and whether the old or new value is returned are not public
+sceNpAtomicDec32	D	atomic helper; no prototype or behaviour claimed (debt) and no public source gives the signature: argument width and whether the old or new value is returned are not public
+sceNpAtomicInc32	D	atomic helper; no prototype or behaviour claimed (debt) and no public source gives the signature: argument width and whether the old or new value is returned are not public
+sceNpBase64Decoder	D	RFC 4648 algorithm is public, but no prototype or behaviour claimed (debt) and no public source gives the signature: size convention (NUL, padding) and buffer-too-small error unknown; mbedtls base64 could serve
+sceNpBase64Encoder	D	RFC 4648 algorithm is public, but no prototype or behaviour claimed (debt) and no public source gives the signature: size convention (NUL, padding) and buffer-too-small error unknown; mbedtls base64 could serve
+sceNpBase64GetDecodeSize	D	RFC 4648 algorithm is public, but no prototype or behaviour claimed (debt) and no public source gives the signature: size convention (NUL, padding) and buffer-too-small error unknown; mbedtls base64 could serve
+sceNpBase64UrlDecoder	D	RFC 4648 algorithm is public, but no prototype or behaviour claimed (debt) and no public source gives the signature: size convention (NUL, padding) and buffer-too-small error unknown; mbedtls base64 could serve
+sceNpBase64UrlEncoder	D	RFC 4648 algorithm is public, but no prototype or behaviour claimed (debt) and no public source gives the signature: size convention (NUL, padding) and buffer-too-small error unknown; mbedtls base64 could serve
+sceNpBase64UrlGetDecodeSize	D	RFC 4648 algorithm is public, but no prototype or behaviour claimed (debt) and no public source gives the signature: size convention (NUL, padding) and buffer-too-small error unknown; mbedtls base64 could serve
+sceNpCalloutInitCtx	D	timer callout context; caller-allocated context layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCalloutStartOnCtx	D	timer callout context; caller-allocated context layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCalloutStartOnCtx64	D	timer callout context; caller-allocated context layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCalloutStopOnCtx	D	timer callout context; caller-allocated context layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCalloutTermCtx	D	timer callout context; caller-allocated context layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCancelEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpClearEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpCloseEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpCloseSema	D	wrapper over libkernel semaphores (neighbour sceKernelCreateSema, core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:22); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpCmpNpIdInOrder	B-S	shadPS4 np_common: (const NpId*, const NpId*, int* order), compare online id then opt bytes; null -> SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003; tree NpId (SceTypes.hpp:1498, 24 bytes) must grow to the 36-byte public layout
+sceNpCmpOnlineId	B-S	shadPS4 np_common: (const NpOnlineId*, const NpOnlineId*), strncmp of 16 data chars; null -> SCE_NP_ERROR_INVALID_ARGUMENT 0x80550003; mismatch -> SCE_NP_UTIL_ERROR_NOT_MATCH 0x80550609 (shadPS4, not yet in the tree)
+sceNpCondDestroy	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCondInit	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCondSignal	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCondSignalAll	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCondSignalTo	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCondTimedwait	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCondWait	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpCreateEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpCreateSema	D	wrapper over libkernel semaphores (neighbour sceKernelCreateSema, core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:22); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpCreateThread	D	thread wrapper; thread parameter/handle layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpDbgAssignDebugId	D	debug-only facility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpDbgDumpBinary	D	debug-only facility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpDbgDumpText	D	debug-only facility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpDeleteEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpDeleteSema	D	wrapper over libkernel semaphores (neighbour sceKernelCreateSema, core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:22); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpFreeKernelMemory	D	kernel-memory allocator wrapper; no prototype or behaviour claimed (debt) and no public source gives the signature; alignment/flag semantics unknown
+sceNpGetNavSdkVersion	D	SDK version query; no prototype or behaviour claimed (debt) and no public source gives the signature and the PS5 value is unknown
+sceNpGetPlatformType	D	platform-type setting (feeds NpId opt bytes); no prototype or behaviour claimed (debt) and no public source gives the signature, values unknown
+sceNpGetProcessId	D	process query; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpGetRandom	D	random bytes wrapper; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpGetSdkVersion	D	SDK version query; no prototype or behaviour claimed (debt) and no public source gives the signature and the PS5 value is unknown
+sceNpGetSdkVersionUInt	D	SDK version query; no prototype or behaviour claimed (debt) and no public source gives the signature and the PS5 value is unknown
+sceNpGetSystemClockUsec	D	clock query; no prototype or behaviour claimed (debt) and no public source gives the signature, which clock (process, RTC, network) is unknown
+sceNpGlobalHeapGetAllocator	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpGlobalHeapGetAllocatorEx	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpGlobalHeapGetAllocatorExPtr	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpGlobalHeapGetAllocatorPtr	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpHeapDestroy	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpHeapGetAllocator	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpHeapGetStat	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpHeapInit	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpHeapShowStat	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpHexToInt	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpInt32ToStr	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpInt64ToStr	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpIntGetPlatformType	D	platform-type setting (feeds NpId opt bytes); no prototype or behaviour claimed (debt) and no public source gives the signature, values unknown
+sceNpIntIsOnlineIdString	D	online-id syntax check; no prototype or behaviour claimed (debt) and no public source gives the signature, return type (bool or error) unknown
+sceNpIntIsValidOnlineId	D	online-id syntax check; no prototype or behaviour claimed (debt) and no public source gives the signature, return type (bool or error) unknown
+sceNpIntSetPlatformType	D	platform-type setting (feeds NpId opt bytes); no prototype or behaviour claimed (debt) and no public source gives the signature, values unknown
+sceNpIntToHex	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpIpc2ClientInit	D	private IPC client to the NP system service
+sceNpIpc2ClientTerm	D	private IPC client to the NP system service
+sceNpJoinThread	D	thread wrapper; thread parameter/handle layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpJsonParse	D	JSON parser (RFC 8259 public, neighbour libSceJson2) but parser API, callbacks and init structs unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpJsonParseBuf	D	JSON parser (RFC 8259 public, neighbour libSceJson2) but parser API, callbacks and init structs unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpJsonParseBufInit	D	JSON parser (RFC 8259 public, neighbour libSceJson2) but parser API, callbacks and init structs unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpJsonParseEx	D	JSON parser (RFC 8259 public, neighbour libSceJson2) but parser API, callbacks and init structs unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpJsonParseExInit	D	JSON parser (RFC 8259 public, neighbour libSceJson2) but parser API, callbacks and init structs unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpJsonParseInit	D	JSON parser (RFC 8259 public, neighbour libSceJson2) but parser API, callbacks and init structs unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwCondDestroy	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwCondInit	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwCondSignal	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwCondSignalAll	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwCondSignalTo	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwCondWait	D	wrapper over libkernel pthread cond (neighbour scePthreadCondInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwMutexDestroy	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwMutexInit	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwMutexLock	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwMutexTryLock	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpLwMutexUnlock	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMemoryHeapDestroy	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMemoryHeapGetAllocator	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMemoryHeapGetAllocatorEx	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMemoryHeapInit	D	NP heap/allocator; heap object and allocator struct layouts unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMutexDestroy	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMutexInit	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMutexLock	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMutexTryLock	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpMutexUnlock	D	wrapper over libkernel pthread mutex (neighbour scePthreadMutexInit); caller-allocated object layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpOpenEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpOpenSema	D	wrapper over libkernel semaphores (neighbour sceKernelCreateSema, core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:22); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpPanic	D	abort helper; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpPollEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpPollSema	D	wrapper over libkernel semaphores (neighbour sceKernelCreateSema, core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:22); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpRtcConvertToPosixTime	D	RFC 3339 helpers (neighbour sceRtcFormatRFC3339/sceRtcParseRFC3339, core/libs/prx/libSceRtc/Export.cpp:582,:642); no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpRtcFormatRFC3339	D	RFC 3339 helpers (neighbour sceRtcFormatRFC3339/sceRtcParseRFC3339, core/libs/prx/libSceRtc/Export.cpp:582,:642); no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpRtcParseRFC3339	D	RFC 3339 helpers (neighbour sceRtcFormatRFC3339/sceRtcParseRFC3339, core/libs/prx/libSceRtc/Export.cpp:582,:642); no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpServerErrorJsonGetErrorCode	D	PSN server-error JSON parser; API and output struct unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpServerErrorJsonMultiGetErrorCode	D	PSN server-error JSON parser; API and output struct unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpServerErrorJsonParse	D	PSN server-error JSON parser; API and output struct unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpServerErrorJsonParseInit	D	PSN server-error JSON parser; API and output struct unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpServerErrorJsonParseMultiInit	D	PSN server-error JSON parser; API and output struct unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpSetEventFlag	D	wrapper over libkernel event flags (neighbour sceKernelCreateEventFlag, core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:129); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpSetPlatformType	D	platform-type setting (feeds NpId opt bytes); no prototype or behaviour claimed (debt) and no public source gives the signature, values unknown
+sceNpSignalSema	D	wrapper over libkernel semaphores (neighbour sceKernelCreateSema, core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:22); no prototype or behaviour claimed (debt) and no public source gives the signature, handle type unknown
+sceNpStrBuildHex	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrParseHex	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrToInt32	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrToInt64	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrToUInt32	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrToUInt64	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrcpyToBuf	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrnParseHex	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpStrncpyToBuf	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpThreadGetId	D	thread wrapper; thread parameter/handle layout unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUInt32ToStr	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpUInt64ToStr	D	string/number helper; strtol/snprintf semantics are public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer/size order, truncation and error codes unknown
+sceNpUserGetUserIdList	D	user-id list; output struct unknown; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilBuildTitleId	D	NpId/title-id utility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilCanonicalizeNpIdForPs4	D	NpId/title-id utility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilCanonicalizeNpIdForPsp2	D	NpId/title-id utility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilCmpAccountId	D	NpId/title-id utility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetDateSetAuto	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetDbgCommerce	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetEnv	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetFakeDisplayNameMode	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetFakeRateLimit	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetIgnoreNpTitleId	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetNpDebug	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetNpLanguageCode	D	system-language to NP language mapping; no prototype or behaviour claimed (debt) and no public source gives the signature, mapping table not public
+sceNpUtilGetNpLanguageCode2	D	system-language to NP language mapping; no prototype or behaviour claimed (debt) and no public source gives the signature, mapping table not public
+sceNpUtilGetNpLanguageCode2Str	D	system-language to NP language mapping; no prototype or behaviour claimed (debt) and no public source gives the signature, mapping table not public
+sceNpUtilGetNpLanguageCodeStr	D	system-language to NP language mapping; no prototype or behaviour claimed (debt) and no public source gives the signature, mapping table not public
+sceNpUtilGetNpTestPatch	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetNthChar	D	NpId/title-id utility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetShareTitleCheck	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetSystemLanguage	D	system-language to NP language mapping; no prototype or behaviour claimed (debt) and no public source gives the signature, mapping table not public
+sceNpUtilGetTrcNotify	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetWebApi2FakeRateLimit	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetWebApi2FakeRateLimitTarget	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilGetWebTraceSetting	D	debug/registry setting read; retail value and no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilHttpUrlEncode	D	RFC 3986/8259 escaping is public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer and error conventions unknown
+sceNpUtilJidToNpId	D	NpId/title-id utility; no prototype or behaviour claimed (debt) and no public source gives the signature
+sceNpUtilJsonEscape	D	RFC 3986/8259 escaping is public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer and error conventions unknown
+sceNpUtilJsonGetOneChar	D	RFC 3986/8259 escaping is public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer and error conventions unknown
+sceNpUtilJsonUnescape	D	RFC 3986/8259 escaping is public but no prototype or behaviour claimed (debt) and no public source gives the signature: buffer and error conventions unknown

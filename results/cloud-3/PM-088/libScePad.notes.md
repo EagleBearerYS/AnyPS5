@@ -1,0 +1,25 @@
+# libScePad (PM-088 classification)
+
+- **What it is:** controller input and output. 28 done: open/close/handle, read and read-state, controller info, light bar, vibration and vibration mode, trigger effects, motion/tilt/deadband flags, orientation reset and IsRemoteController. 164 todo.
+- **Existing state:** one emulated DualSense behind `PAD_HANDLE` (`include/Pad.hpp:15`), with `g_opened` and `ValidPort` in `Export.cpp:110-117`. `src/PadState.cpp` holds an input queue plus latch, `PadOutputState` (vibration, vibrationMode, lightBar, two 11-byte trigger blocks, motionEnabled) and the orientation filter (`fuse()`, `biasIntegral`).
+- **Input backend:** `core/libs/prx/libSceVideoOut/src/PadInput.cpp` (SDL) publishes input and drains output through `PadFetchOutput_nid_postfix`. It drives SetLED (`:100`), Rumble (`:109`), SendEffect for trigger blocks (`:117`), RumbleTriggers, sensors and touchpad.
+- **Counts:** A 0, B-S 6, B-M 1, B-L 2, C 13, D 142.
+- **B-S: getters and setters over existing state.**
+  - `scePadIsValidHandle` (g_opened, PAD_HANDLE, ValidPort) and `scePadGetBluetoothAddress` (PAD_BD_ADDRESS, as scePadGetInfo reports it).
+  - `scePadResetLightBarAll` and `…ByPortType`: `Pad::SetLightBar(false, …)`, as scePadResetLightBar does.
+  - `scePadSetVibrationForce`: `Pad::SetVibration`. No system "vibration off" state exists for it to override.
+  - `scePadSetAngularVelocityBiasCorrectionState`: the enable path, a gyro-bias estimate added beside `fuse()`.
+- **B-M:** `scePadOutputReport` maps public DualSense output-report fields (Linux hid-playstation, SDL HIDAPI PS5) onto the output state already kept. **B-L:** `scePadGet/SetFeatureReport` need a feature-report model or SDL_hid passthrough.
+- **C (real behaviour, absent devices):** the 10 handle-taking `scePadVrController*` calls return `PAD_ERROR_INVALID_HANDLE 0x80920003`, because `scePadOpen` never issues a VR-controller handle. `scePadIsDS4Connected`, `IsMoveConnected` and `IsBlasterConnected` return false; the library always reports a DualSense.
+- **D families:**
+  - DualSense Edge "Hunt" and Access "Leonardo" profiles, tuning, UI reads and indicators (about 30): the answer for a plain DualSense handle is unknown.
+  - Bond and controller firmware update (17), virtual devices and remote-play injection (12), Lotus IR (7).
+  - Tracker, Move and Aston reads and physical constants; extended and history reads (layouts incomplete per debt); deviceId-based open and info calls.
+  - System-only switches (auto-detect, USB, play/pause emulation, transport buttons, co-pilot, remapping, intercept, power saving, login/user number, strength, disable vibration and triggers), whose meaning or game-process result is unmeasured; and the `…2` feature-report variants.
+- **Caveats for the B rows:**
+  - Whether ResetLightBarAll or SetVibrationForce refuse a game process is unmeasured; the tree's existing system setters (SetProcessPrivilege, SetParticularMode) return PAD_OK.
+  - GetBluetoothAddress's byte order inside the uint64 must be checked.
+  - The bias-correction algorithm is not the console's; record it in the debt file, as was done for the deadband.
+- **Dependencies:** none new. 3rdparty/SDL2 already provides SetLED/Rumble/SendEffect, and `SDL_hid_*` (SDL 2.0.18+) for feature-report passthrough with a host DualSense. SDL2 has no mute-LED call, so scePadSetMuteLed stays D.
+- **Batch 1 (13 functions, C): "absent VR/Move/Blaster/DS4 devices".** The 10 VR-controller handle calls plus the 3 Is*Connected. Tests extend `guest_pad_tests` (`core/libs/tests/GuestPad.cpp`, registered in `libScePad/CMakeLists.txt`): after scePadInit/Open, each VR call returns 0x80920003 for handles 1, 0 and -1, and Is*Connected is false for the open handle.
+- **Batch 2 (7 functions, B-S plus OutputReport): "state-backed pad setters and getters".** Under the 10-function floor, so it can ride with batch 1. Tests in `guest_pad_tests`: IsValidHandle is true only for an opened standard handle; ResetLightBarAll clears lightBarValid as seen through PadFetchOutput; SetVibrationForce changes vibrationLarge/Small; OutputReport rumble, LED and trigger bytes reach PadOutputState; bias correction removes a constant gyro offset from orientation drift.

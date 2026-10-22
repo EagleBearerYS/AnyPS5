@@ -1,0 +1,61 @@
+function	class	basis
+sceDataTransferAbortFgTransfer	D	unknown signature (debt); foreground/background transfer service IPC, private
+sceDataTransferAbortRequest	D	unknown signature (debt); foreground/background transfer service IPC, private
+sceDataTransferAbortSearchPS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferCheckBgTransferRunning	D	unknown signature (debt); foreground/background transfer service IPC, private
+sceDataTransferGetFgTransferProgress	D	unknown signature (debt); foreground/background transfer service IPC, private
+sceDataTransferGetPrepareFgTransferProgress	D	unknown signature (debt); foreground/background transfer service IPC, private
+sceDataTransferInitialize	D	unknown signature (debt); data transfer system app service setup
+sceDataTransferRequestGetAppInfoPS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferRequestGetSavedataInfoPS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferRequestGetUsersPS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferRequestLaunchPS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferRequestPrepareFgTransfer	D	unknown signature (debt); foreground/background transfer service IPC, private
+sceDataTransferRequestRebootAuthPS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferRequestSearchPS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferRequestStartFgTransfer	D	unknown signature (debt); foreground/background transfer service IPC, private
+sceDataTransferRequestTransferTimePS4	D	unknown signature (debt); PS4 discovery/transfer protocol, private
+sceDataTransferTargetAbortBindSavedata	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortDeactivate	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortEth0	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortGetDeviceInfo	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortGetDeviceInfoApplication	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortGetTitles	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortGetUsers	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortLaunch	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortPrepareTransfer	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortPwrReq	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortReboot	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortSendSsoNew2Old	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortSendSsoOld2New	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortTransfer	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetAbortTransferSpeed	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetEventIsAuthReady	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetEventIsIPv6Ready	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetEventIsPwrReqReady	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetGetFailedUsers	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetGetRebootData	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetGetTransferProgress	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestAbortSearch	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestActivate	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestAuth	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestBindSavedata	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestComplete	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestCreateRebootData	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestDeactivate	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestEndTransfer	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestGetDeviceInfo	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestGetDeviceInfoApplication	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestGetTitles	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestGetUsers	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestLaunch	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestPrepareTransfer	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestPrepareTransferProgress	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestPwrReq	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestReboot	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestSearch	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestSendSsoNew2Old	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestSendSsoOld2New	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestStartTransfer	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTargetRequestTransferSpeed	D	unknown signature (debt); PS4-to-PS5 transfer target protocol over the network, private
+sceDataTransferTerminate	D	unknown signature (debt); data transfer system app service setup

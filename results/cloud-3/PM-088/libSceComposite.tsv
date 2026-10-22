@@ -1,0 +1,79 @@
+function	class	basis
+sceCompositorAllocateIndex	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorCheckCrash	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorCommandGpuPerfBegin	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorCommandGpuPerfEnd	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorCreateIndirectRenderTarget	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorDeleteIndirectRenderTarget	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorFlush	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorFlushWithRepeat	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorGetAnotherProcessSystemAddress	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetAnotherProcessSystemSize	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetAnotherProcessVideoAddress	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetAnotherProcessVideoSize	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetCanvasHandle	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorGetClientList	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorGetDmemOffset	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetDummyAddress	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetDummySize	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetRemainedCommandNum	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorGetRenderTargetResolution	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorGetSystemAddress	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetSystemSize	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetVideoAddress	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorGetVideoSize	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorHandleProcessEvents	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorInit	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorInitWithProcessOrder	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorInsertThreadTraceMarker	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorIsDebugCaptureEnabled	D	compositor status/timing query; no prototype (debt) and the console values are not public
+sceCompositorIsReady4K	D	compositor status/timing query; no prototype (debt) and the console values are not public
+sceCompositorLockCommandBuffer	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorMakeCanvasHandle	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorMapAnotherProcess	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorMemoryPoolDecommit	D	compositor-owned memory or another process's mapping; private system memory layout, no prototype (debt)
+sceCompositorPrivacyMaskPushArea	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorQuit	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorReleaseCommandBuffer	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorReleaseIndex	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorReleaseLocalStall	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorReserveCommandBuffer	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorResetZoomCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetAgcCompositeCanvasCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetAgcContextCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetCompositeCanvasCommandInC	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetCursorImageAddress	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorSetDebugPositionCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetEndOfFrameCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetEventCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetFilterType	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorSetFlipCommand2	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetGameSufaceControlCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetGnmContextCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetIndirectCanvasCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetIndirectCompositionCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetIndirectRenderTargetConfigCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetInvisibleCanvasCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetKeepDisplayBufferCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetLocalStallCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetMemoryCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetPatchCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetPostEventCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetRepeatCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetResolutionCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetScalingLayoutInfo	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorSetSeparateContextCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetSystemConfigWithMask	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorSetVideoOutMode	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorSetVirtualCanvasAgcContextCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetVirtualCanvasCommandFooter	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetVirtualCanvasPatchCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSetVrMode	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorSetZoomCommand	D	compositor command builder for the system compositor; no credible prototype (debt) and the command format is private
+sceCompositorSystemConfig	D	compositor canvas/render-target/system configuration; private system service, no prototype (debt)
+sceCompositorWaitEndOfRendering	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorWaitEvent	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompositorWaitPostEvent	D	compositor client session/command-buffer control over private system IPC; no credible prototype (debt)
+sceCompsoitorGetGpuClock	D	compositor status/timing query; no prototype (debt) and the console values are not public
+sceCompsoitorGetProcessRenderingTime	D	compositor status/timing query; no prototype (debt) and the console values are not public
+sceCompsoitorGetRenderingTime	D	compositor status/timing query; no prototype (debt) and the console values are not public

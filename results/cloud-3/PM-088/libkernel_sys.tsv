@@ -1,0 +1,533 @@
+function	class	basis
+aio_cancel_nid_postfix	B-S	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; reads/updates the aiocb _aiocb_private state set by aio_read/aio_write
+aio_error_nid_postfix	B-S	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; reads/updates the aiocb _aiocb_private state set by aio_read/aio_write
+aio_fsync_nid_postfix	B-S	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; reads/updates the aiocb _aiocb_private state set by aio_read/aio_write
+aio_read_nid_postfix	B-M	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; sigevent SIGEV_SIGNAL/SIGEV_KEVENT notice via Signals.cpp/Kqueue.cpp
+aio_return_nid_postfix	B-S	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; reads/updates the aiocb _aiocb_private state set by aio_read/aio_write
+aio_suspend_nid_postfix	B-S	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; reads/updates the aiocb _aiocb_private state set by aio_read/aio_write
+aio_waitcomplete_nid_postfix	B-S	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; reads/updates the aiocb _aiocb_private state set by aio_read/aio_write
+aio_write_nid_postfix	B-M	FreeBSD 11 vfs_aio.c + sys/aio.h aiocb layout; neighbour sceKernelAio* (Aio/src/Aio.cpp:234) completes synchronously; sigevent SIGEV_SIGNAL/SIGEV_KEVENT notice via Signals.cpp/Kqueue.cpp
+amd64_set_fsbase_nid_postfix	B-L	FreeBSD libc sysarch(AMD64_SET_FSBASE); neighbour sysarch core/libs/prx/libkernel/System/src/Process.cpp:490 throws for it: needs a guest FS base separate from host TLS
+blockpool_batch_nid_postfix	D	Sony blockpool syscall behind sceKernelMemoryPoolBatch; batch entry layout not public
+blockpool_map_nid_postfix	D	Sony blockpool syscall behind sceKernelMemoryPoolCommit; arguments not public
+blockpool_open_nid_postfix	D	Sony blockpool syscall behind sceKernelMemoryPool* (MemoryPoolExport.cpp); syscall arguments not public
+blockpool_unmap_nid_postfix	D	Sony blockpool syscall behind sceKernelMemoryPoolDecommit; arguments not public
+chown_nid_postfix	B-S	FreeBSD 11 kern_fchownat; neighbour fchown core/libs/prx/libkernel_sys/Export.cpp:535 (ids 0/-1 accepted, others throw) + *at dir join of fstatat core/libs/prx/libkernel_sys/Export.cpp:551
+cpuset_getid_nid_postfix	B-S	FreeBSD 11 kern_cpuset.c set ids (root set, per-process set); neighbour cpuset_getaffinity core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:60
+cpuset_nid_postfix	B-S	FreeBSD 11 kern_cpuset.c set ids (root set, per-process set); neighbour cpuset_getaffinity core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:60
+cpuset_setid_nid_postfix	B-S	FreeBSD 11 kern_cpuset.c set ids (root set, per-process set); neighbour cpuset_getaffinity core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:60
+dynlib_get_obj_member_nid_postfix	D	Sony rtld syscall; object member ids and layout not public
+fchown_nid_postfix	B-M	remaining gap of core/libs/prx/libkernel_sys/Export.cpp:535: owner/group other than 0 needs an ownership model (FreeBSD 11 chown(2) root semantics, reported by stat)
+fchownat_nid_postfix	B-S	FreeBSD 11 kern_fchownat; neighbour fchown core/libs/prx/libkernel_sys/Export.cpp:535 (ids 0/-1 accepted, others throw) + *at dir join of fstatat core/libs/prx/libkernel_sys/Export.cpp:551
+fork_nid_postfix	B-L	FreeBSD 11 fork(2); partial at core/libs/prx/libkernel_sys/Export.cpp:258 (throws): needs a child-process subsystem (second guest process)
+fstat_nid_postfix	A	core/libs/prx/libkernel/File/src/Stdio.cpp:896 fstat_nid_disambig1_nid_postfix exports the fstat NID; forward (as fstatfs forwards to _fstatfs)
+futimesat_nid_postfix	B-S	FreeBSD 11 futimesat(2); neighbour utimes core/libs/prx/libkernel/File/src/Stdio.cpp:1547 + *at dir join of fstatat core/libs/prx/libkernel_sys/Export.cpp:551
+get_authinfo_nid_postfix	D	Sony auth-info syscall; struct layout not public
+get_module_info_list_nid_postfix	D	Sony module-list syscall; wrapper sceKernelGetModuleList is implemented but the syscall ABI is not public
+get_page_table_stats_nid_postfix	D	Sony syscall behind sceKernelGetPageTableStats core/libs/prx/libkernel/DirectMemory/Export.cpp:490; syscall arguments not public
+get_sdk_compiled_version_nid_postfix	D	Sony syscall (SDK version of a path/process); arguments not public
+get_self_auth_info_nid_postfix	D	Sony SELF auth-info syscall; struct layout not public
+get_vm_map_timestamp_nid_postfix	D	Sony VM-map timestamp syscall; meaning and arguments not public
+getfsstat_nid_postfix	B-M	FreeBSD 11 kern_getfsstat over the guest mount aliases; neighbour _fstatfs core/libs/prx/libkernel/File/src/Stdio.cpp:882 (console mount list unverified)
+getlogin_nid_postfix	B-S	FreeBSD 11 getlogin(2)/libc getlogin; neighbour getlogin_r core/libs/prx/libkernel/System/src/Login.cpp:46
+ipmimgr_call_nid_postfix	D	Sony IPMI manager IPC syscall; private service protocol
+is_in_sandbox_nid_postfix	D	Sony syscall; the value for a title is unmeasured (no guessed constant per sceKernelGetProcessAbiType debt)
+kenv_nid_postfix	D	FreeBSD kenv(2) semantics are public but the answer is the console kernel environment, not public
+kldfind_nid_postfix	D	FreeBSD kldfind(2); answer is the console kernel's linker files, not public
+kldfirstmod_nid_postfix	D	FreeBSD kldfirstmod(2); answer is the console kernel's module list, not public
+kldload_nid_postfix	D	FreeBSD kldload(2); the console's answer for a title (privilege policy) is unmeasured and no kernel exists to load into
+kldnext_nid_postfix	D	FreeBSD kldnext(2); answer is the console kernel's linker files, not public
+kldstat_nid_postfix	D	FreeBSD kldstat(2); answer is the console kernel's linker files, not public
+kldsym_nid_postfix	D	FreeBSD kldsym(2); answer is console kernel symbols, not public
+kldunload_nid_postfix	D	FreeBSD kldunload(2); console policy for a title unmeasured
+kmq_notify_nid_postfix	B-M	FreeBSD 11 uipc_mqueue.c sigevent registration; delivery via Signals.cpp (kill core/libs/prx/libkernel/System/src/Signals.cpp:526)
+kmq_open_nid_postfix	B-L	FreeBSD 11 uipc_mqueue.c named queues: new mqueue subsystem (name table like shm_open core/libs/prx/libkernel/File/src/SharedMemory.cpp:453)
+kmq_setattr_nid_postfix	B-S	FreeBSD 11 uipc_mqueue.c O_NONBLOCK/mq_attr getter-setter on the kmq_open subsystem
+kmq_timedreceive_nid_postfix	B-M	FreeBSD 11 uipc_mqueue.c timed blocking receive on the kmq_open subsystem
+kmq_timedsend_nid_postfix	B-M	FreeBSD 11 uipc_mqueue.c priority queue + timed blocking send on the kmq_open subsystem
+kmq_unlink_nid_postfix	B-S	FreeBSD 11 uipc_mqueue.c name removal on the kmq_open subsystem
+ksem_close_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_destroy_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_getvalue_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_init_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_open_nid_postfix	B-M	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52 plus a name table (O_CREAT/O_EXCL, mode)
+ksem_post_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_timedwait_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_trywait_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_unlink_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ksem_wait_nid_postfix	B-S	FreeBSD 11 uipc_sem.c ksem id table; neighbour POSIX sem core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52
+ktimer_create_nid_postfix	B-M	FreeBSD 11 kern_time.c POSIX timers; neighbour setitimer core/libs/prx/libkernel/System/src/Signals.cpp:433 + sigevent (SIGEV_SIGNAL/THREAD_ID/NONE/KEVENT) timer table
+ktimer_delete_nid_postfix	B-S	FreeBSD 11 kern_time.c POSIX timers; neighbour setitimer core/libs/prx/libkernel/System/src/Signals.cpp:433 timer removal
+ktimer_getoverrun_nid_postfix	B-S	FreeBSD 11 kern_time.c POSIX timers; neighbour setitimer core/libs/prx/libkernel/System/src/Signals.cpp:433 overrun counter getter
+ktimer_gettime_nid_postfix	B-S	FreeBSD 11 kern_time.c POSIX timers; neighbour setitimer core/libs/prx/libkernel/System/src/Signals.cpp:433 remaining time getter
+ktimer_settime_nid_postfix	B-M	FreeBSD 11 kern_time.c POSIX timers; neighbour setitimer core/libs/prx/libkernel/System/src/Signals.cpp:433 arming, TIMER_ABSTIME, interval reload
+ktrace_nid_postfix	B-L	FreeBSD 11 kern_ktrace.c + sys/ktrace.h record format; needs a ktrace record writer
+lchflags_nid_postfix	B-S	FreeBSD 11 sys_lchflags (no-follow chflags); neighbour chflags core/libs/prx/libkernel/File/src/Stdio.cpp:684
+lchmod_nid_postfix	A	core/libs/prx/libkernel_sys/Export.cpp:495 fchmodat(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW): FreeBSD 11 sys_lchmod is exactly kern_fchmodat with these arguments
+lchown_nid_postfix	B-S	FreeBSD 11 kern_fchownat; neighbour fchown core/libs/prx/libkernel_sys/Export.cpp:535 (ids 0/-1 accepted, others throw) + *at dir join of fstatat core/libs/prx/libkernel_sys/Export.cpp:551
+linkat_nid_postfix	B-S	FreeBSD 11 kern_linkat (AT_SYMLINK_FOLLOW); neighbour link core/libs/prx/libkernel_sys/Export.cpp:338 + *at dir join
+mdbg_call_nid_postfix	D	Sony debugger syscall; debug-only private interface
+mdbg_service_nid_postfix	D	Sony debugger service syscall; debug-only private interface
+mount_nid_postfix	B-L	FreeBSD 11 vfs_mount.c root semantics; neighbour nmount core/libs/prx/libkernel/File/src/Stdio.cpp:705 throws: needs a mount table in the guest path resolver
+openintr_nid_postfix	D	Sony syscall with no public definition
+profil_nid_postfix	B-L	FreeBSD 11 profil(2); needs periodic PC sampling of guest threads
+pselect_nid_postfix	B-S	POSIX pselect; neighbour select core/libs/prx/libkernel/Socket/src/Socket.cpp:187 + _sigprocmask core/libs/prx/libkernel/System/src/Signals.cpp:557
+pthread_attr_getaffinity_np_nid_postfix	B-S	FreeBSD 11 pthread_attr_getaffinity_np (cpusetsize, cpuset_t); neighbour scePthreadAttrGetaffinity core/libs/prx/libkernel/Pthread/src/Attr.cpp:94, pthread_getaffinity_np core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:213
+pthread_attr_getsolosched_np_nid_postfix	A	core/libs/prx/libkernel/Pthread/src/Attr.cpp:132 scePthreadAttrGetsolosched with PosixThread::ToErrno, as pthread_attr_setsolosched_np does
+pthread_attr_setaffinity_np_nid_postfix	B-S	FreeBSD 11 pthread_attr_setaffinity_np; neighbour scePthreadAttrSetaffinity core/libs/prx/libkernel/Pthread/src/Attr.cpp:151, pthread_setaffinity_np core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:225
+pthread_attr_setcreatesuspend_np_nid_postfix	B-M	FreeBSD libthr pthread_attr_setcreatesuspend_np; needs the suspend subsystem of pthread_suspend_np
+pthread_attr_setstackaddr_nid_postfix	A	core/libs/prx/libkernel/Pthread/src/Attr.cpp:197 scePthreadAttrSetstackaddr with PosixThread::ToErrno, as pthread_attr_setsolosched_np does
+pthread_barrier_setname_np_nid_postfix	B-S	debug name stored on the object; neighbour pthread_set_name_np core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:280 (signature (object*, name) assumed)
+pthread_cond_setname_np_nid_postfix	B-S	debug name stored on the object; neighbour pthread_set_name_np core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:280 (signature (object*, name) assumed)
+pthread_get_specificarray_np_nid_postfix	D	Sony TSD-array export; layout not public
+pthread_get_user_context_np_nid_postfix	D	Sony user-context export; ucontext use and arguments not public
+pthread_getstack_np_nid_postfix	D	Sony export, not FreeBSD; signature not public (neighbour pthread_attr_get_np core/libs/prx/libkernel/Pthread/Posix/Attr.cpp:34)
+pthread_main_np_nid_postfix	B-S	FreeBSD libthr pthread_main_np (1 main, 0 other); neighbour thread table in core/libs/prx/libkernel/Pthread/Posix/Thread.cpp (main/adopted thread)
+pthread_multi_np_nid_postfix	B-S	FreeBSD libthr pthread_multi_np = pthread_resume_all_np
+pthread_mutex_getprioceiling_nid_postfix	B-S	POSIX/FreeBSD libthr (EINVAL unless PRIO_PROTECT); neighbour pthread_mutexattr_getprioceiling core/libs/prx/libkernel/Pthread/Posix/Mutex.cpp:153
+pthread_mutex_init_for_mono_nid_postfix	D	Sony Mono-specific mutex init; differences from pthread_mutex_init not public
+pthread_mutex_setname_np_nid_postfix	B-S	debug name stored on the object; neighbour pthread_set_name_np core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:280 (signature (object*, name) assumed)
+pthread_mutex_setprioceiling_nid_postfix	B-S	POSIX/FreeBSD libthr (returns old ceiling); neighbour pthread_mutexattr_setprioceiling core/libs/prx/libkernel/Pthread/Posix/Mutex.cpp:146
+pthread_mutexattr_getgen_np_nid_postfix	D	Sony mutex 'gen' attribute; meaning not public
+pthread_mutexattr_setgen_np_nid_postfix	D	Sony mutex 'gen' attribute; meaning not public
+pthread_resume_all_np_nid_postfix	B-S	FreeBSD libthr pthread_resume_all_np: loop of pthread_resume_np
+pthread_resume_np_nid_postfix	B-M	FreeBSD libthr pthread_resume_np on the pthread_suspend_np subsystem
+pthread_resume_user_context_np_nid_postfix	D	Sony user-context export; arguments not public
+pthread_rwlock_reltimedrdlock_np_nid_postfix	B-S	relative-timeout read lock; neighbours scePthreadRwlockTimedrdlock core/libs/prx/libkernel/Pthread/src/Rwlock.cpp:102, pthread_mutex_reltimedlock_np Posix/Mutex.cpp:82
+pthread_rwlock_reltimedwrlock_np_nid_postfix	B-S	relative-timeout write lock; neighbours scePthreadRwlockTimedwrlock core/libs/prx/libkernel/Pthread/src/Rwlock.cpp:131, pthread_mutex_reltimedlock_np Posix/Mutex.cpp:82
+pthread_rwlock_setname_np_nid_postfix	B-S	debug name stored on the object; neighbour pthread_set_name_np core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:280 (signature (object*, name) assumed)
+pthread_rwlockattr_settype_np_nid_postfix	A	core/libs/prx/libkernel/Pthread/src/Rwlock.cpp:176 scePthreadRwlockattrSettype with PosixThread::ToErrno, as pthread_attr_setsolosched_np does
+pthread_set_defaultstacksize_np_nid_postfix	B-S	setter of the default stack size scePthreadAttrInit core/libs/prx/libkernel/Pthread/src/Attr.cpp:22 uses; checks as scePthreadAttrSetstacksize Attr.cpp:59
+pthread_set_user_context_np_nid_postfix	D	Sony user-context export; arguments not public
+pthread_single_np_nid_postfix	B-S	FreeBSD libthr pthread_single_np = pthread_suspend_all_np
+pthread_suspend_all_np_nid_postfix	B-S	FreeBSD libthr pthread_suspend_all_np: loop of pthread_suspend_np over live guest threads
+pthread_suspend_np_nid_postfix	B-L	FreeBSD libthr pthread_suspend_np; needs cross-platform guest thread suspension (Windows SuspendThread use in sceKernelRaiseException core/libs/prx/libkernel/System/src/Exception.cpp:668 is the only start)
+pthread_suspend_user_context_np_nid_postfix	D	Sony user-context export; arguments not public
+pthread_switch_add_np_nid_postfix	C	ENOTSUP (45, FreeBSD errno.h): FreeBSD 11 libthr thr_switch_np.c always returns it; real behaviour, not a silent stub
+pthread_switch_delete_np_nid_postfix	C	ENOTSUP (45, FreeBSD errno.h): FreeBSD 11 libthr thr_switch_np.c always returns it; real behaviour, not a silent stub
+pthread_timedjoin_np_nid_postfix	B-S	FreeBSD libthr pthread_timedjoin_np (ETIMEDOUT); neighbour pthread_join core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:240 and its TimedWait join condition
+ptrace_nid_postfix	B-L	FreeBSD 11 ptrace(2); needs a debugger subsystem (single guest process)
+pwrite_nid_postfix	A	core/libs/prx/libkernel/File/src/Stdio.cpp:997 pwrite_nid_disambig1_nid_postfix exports the pwrite NID; forward
+readlink_nid_postfix	B-S	remaining gap of core/libs/prx/libkernel_sys/Export.cpp:277: Windows non-link reparse points -> EINVAL per FreeBSD readlink(2) (see debt)
+readlinkat_nid_postfix	B-S	same remaining ReadNativeLink branch as readlink core/libs/prx/libkernel_sys/Export.cpp:277
+reboot_nid_postfix	D	FreeBSD reboot(2) has no host meaning; the console's answer for a title (privilege) is unmeasured
+revoke_nid_postfix	B-S	FreeBSD 11 sys_revoke: EINVAL unless a character device; guest char devices (RandomDevice, Terminal) need a revoke path
+rfork_thread_nid_postfix	B-L	FreeBSD 11 libc rfork_thread(3)/rfork(2); needs the child-process subsystem (RFMEM share)
+rtld_printf_nid_postfix	B-S	FreeBSD rtld-elf/rtld_printf.c (format to fd 1); neighbour write core/libs/prx/libkernel/File/src/Stdio.cpp:1023
+sceCoredumpDebugForceCoredumpOnAppClose	D	coredump debug control; debug-only, no prototype
+sceCoredumpDebugTriggerCoredump	D	coredump debug control; debug-only, no prototype
+sceCoredumpGetStopInfoGpu	B-S	outside a coredump handler as sceCoredumpGetStopInfoGpu_Agc core/libs/prx/libkernel/System/src/Coredump.cpp:58 (SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER); signature assumed equal
+sceCoredumpInternalGetThreadContextInfo	D	internal variant of sceCoredumpGetThreadContextInfo; differences not public
+sceKernelAddACInfo	D	process budget/resource accounting; structs not public
+sceKernelAddCpumodeEvent	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelAddGpuExceptionEvent	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelAddProcessToCanvasMap	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelAddResource	D	process budget/resource accounting; structs not public
+sceKernelAllocateDirectMemory2	D	system memory-management variant; arguments and accounting not public
+sceKernelAllocateDirectMemoryForApp	D	system memory-management variant; arguments and accounting not public
+sceKernelAllocateDirectMemoryForMiniApp	D	system memory-management variant; arguments and accounting not public
+sceKernelAllocateToolMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelAllocateTraceDirectMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelAprCtrl	D	APR control call; operations and arguments not public
+sceKernelAprSubmitCommandBufferAndGetResult_TEST	D	test variant of sceKernelAprSubmitCommandBufferAndGetResult core/libs/prx/libkernel/Apr/src/Apr.cpp:900; differences not public
+sceKernelAprSubmitCommandBuffer_TEST	D	test variant of sceKernelAprSubmitCommandBuffer core/libs/prx/libkernel/Apr/src/Apr.cpp:885; differences not public
+sceKernelAvailableToolMemorySize	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelBacktraceSelf	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelBeginAppMount	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelBeginAppMount2	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelCallIndirectBuffer	D	AMPR indirect-buffer call; command format and arguments not public
+sceKernelCallIndirectBuffer2	D	AMPR indirect-buffer call; command format and arguments not public
+sceKernelClearBootReqNotifyCount	D	system setting/state query; system-only, no prototype
+sceKernelClearGameDirectMemory	D	system memory-management variant; arguments and accounting not public
+sceKernelCloseEport	D	event-port object; semantics and arguments not public
+sceKernelCloseEventFlag	B-S	counterpart of sceKernelOpenEventFlag core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:150 (handle validity, ESRCH as DeleteEventFlag)
+sceKernelCloseSema	B-S	counterpart of sceKernelOpenSema; neighbour sceKernelDeleteSema core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:149
+sceKernelCreateBudget	D	process budget/resource accounting; structs not public
+sceKernelCreateEport	D	event-port object; semantics and arguments not public
+sceKernelDebugAcquireAndUpdateDebugRegister	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugGetAppStatus	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugGetPauseCount	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugGetPrivateLogText	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugGetSchedLockMode	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugGetSdkLogText	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugGpuPaDebugIsInProgress	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugInjectProcessEvent	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugPackageCorrupted	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDebugRaiseExceptionWithContext	D	debug variant of sceKernelDebugRaiseException (core/libs/prx/libkernel/System/src/Exception.cpp); context argument layout not public
+sceKernelDebugRaiseExceptionWithInfo	D	debug variant of sceKernelDebugRaiseException (core/libs/prx/libkernel/System/src/Exception.cpp); info argument layout not public
+sceKernelDebugReleaseDebugContext	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDeleteACInfo	D	process budget/resource accounting; structs not public
+sceKernelDeleteBudget	D	process budget/resource accounting; structs not public
+sceKernelDeleteCpumodeEvent	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelDeleteEport	D	event-port object; semantics and arguments not public
+sceKernelDeleteGpuExceptionEvent	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelDeleteProcessFromCanvasMap	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelDeleteSavedApp	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelDirectMemoryQueryForId	D	id-scoped variant of sceKernelDirectMemoryQuery core/libs/prx/libkernel/DirectMemory/Export.cpp:231; id meaning not public
+sceKernelEnableDmemAliasing2	D	system memory-management variant; arguments and accounting not public
+sceKernelEnablePthreadObjectCheck	D	debug switch for pthread object validation; semantics not public
+sceKernelEndAppMount	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelEndAppMount2	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelEventLogInit	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelEventLogPread	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelEventLogRead	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelEventLogWrite	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelExpectedHddFormat	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelFlock	A	core/libs/prx/libkernel/File/src/Stdio.cpp:854 flock with errno->SCE (0x8002xxxx) mapping, the libkernel sceKernelFtruncate pattern
+sceKernelGetACInfoAllForCoredump	D	process budget/resource accounting; structs not public
+sceKernelGetAppCategoryType	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelGetAppInfoByAppId	D	variant of sceKernelGetAppInfo core/libs/prx/libkernel/System/src/Process.cpp:282 for other apps; app ids and layout unmeasured
+sceKernelGetAppState	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelGetAslrStatus	D	system setting/state query; system-only, no prototype
+sceKernelGetAutoUpdateVersion	D	firmware version query; value/layout not public (neighbour sceKernelGetSystemSwVersion SystemConfiguration.cpp:458)
+sceKernelGetBackupRestoreMode	D	system setting/state query; system-only, no prototype
+sceKernelGetBackupRestoreModeOfNextBoot	D	system setting/state query; system-only, no prototype
+sceKernelGetBasicProductShape	D	console hardware/identity query; value and layout not public
+sceKernelGetBetaUpdateTestForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetBioUsageAll	D	CPU/IO usage accounting query; output layout not public
+sceKernelGetBootReqNotifyCount	D	system setting/state query; system-only, no prototype
+sceKernelGetBudget	D	process budget/resource accounting; structs not public
+sceKernelGetBuildNumber	D	firmware version query; value/layout not public (neighbour sceKernelGetSystemSwVersion SystemConfiguration.cpp:458)
+sceKernelGetCallRecord	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelGetChildApp	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelGetCompiledSdkVersion	B-S	process param SDK version (offset 0x10) via ApplicationProcessParameters_nid_no_patch, as libSceHmd2 CompiledSdkVersion core/libs/prx/libSceHmd2/Export.cpp:225; sceKernelGetProcParam core/libs/prx/libkernel/System/src/Process.cpp:442
+sceKernelGetCompiledSdkVersionByPath	D	reads the SDK version of another executable; signature and SELF parsing rules not public
+sceKernelGetCompiledSdkVersionByPid	D	per-pid SDK version; signature not public
+sceKernelGetCoredumpAppInfo	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelGetCpuUsage	D	CPU/IO usage accounting query; output layout not public
+sceKernelGetCpuUsageAll	D	CPU/IO usage accounting query; output layout not public
+sceKernelGetCpuUsageProc	D	CPU/IO usage accounting query; output layout not public
+sceKernelGetCpuUsageProc2	D	CPU/IO usage accounting query; output layout not public
+sceKernelGetCpuUsageThread	D	CPU/IO usage accounting query; output layout not public
+sceKernelGetCpumodeGame	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelGetCurrentFanDuty	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelGetDataTransferMode	D	system setting/state query; system-only, no prototype
+sceKernelGetDebugMenuMiniModeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetDebugMenuModeForPsmForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetDebugMenuModeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetDefaultToolMemorySize	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelGetEmergencyErrorLog	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelGetExecutableModuleHandle	D	system setting/state query; system-only, no prototype
+sceKernelGetExtLibcHandle	D	system setting/state query; system-only, no prototype
+sceKernelGetFakeFinalizeMenuForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetFirstImageAddr	D	system setting/state query; system-only, no prototype
+sceKernelGetFlagedUpdaterForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetForceUpdateModeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetGPO	B-S	getter over gpoBits that sceKernelSetGPO core/libs/prx/libkernel/System/src/Process.cpp:431 keeps (signature as sceKernelGetGPI Process.cpp:427)
+sceKernelGetHwFeatureInfoForDecid	D	console hardware/identity query; value and layout not public
+sceKernelGetHwModelName	D	console hardware/identity query; value and layout not public
+sceKernelGetHwSerialNumber	D	console hardware/identity query; value and layout not public
+sceKernelGetIdPs	D	console hardware/identity query; value and layout not public
+sceKernelGetIdTableCurrentCount	D	process budget/resource accounting; structs not public
+sceKernelGetIoreq	D	system setting/state query; system-only, no prototype
+sceKernelGetIpcPath	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelGetKnobs	D	system setting/state query; system-only, no prototype
+sceKernelGetKqueueFromEqueue	D	equeue->kqueue fd mapping; libkernel equeues (Equeue.cpp) and kqueue (Kqueue.cpp:453) are separate, console mapping not public
+sceKernelGetMemoryPstate	D	system memory-management variant; arguments and accounting not public
+sceKernelGetModuleInfoInternal	D	internal variant of sceKernelGetModuleInfo core/libs/prx/libkernel/Module/src/ModuleInfo.cpp:423; layout differences not public
+sceKernelGetModuleListInternal	D	internal variant of sceKernelGetModuleList core/libs/prx/libkernel/Module/src/ModuleInfo.cpp:415; which modules it lists not public
+sceKernelGetOpenPsIdForSystem	D	system variant of sceKernelGetOpenPsId core/libs/prx/libkernel/System/src/Process.cpp:435; whether it returns the same id is unmeasured
+sceKernelGetPagingStatsOfAllObjects	D	system memory-management variant; arguments and accounting not public
+sceKernelGetPagingStatsOfAllThreads	D	system memory-management variant; arguments and accounting not public
+sceKernelGetParentApp	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelGetPhysPageSize	D	system memory-management variant; arguments and accounting not public
+sceKernelGetProcessName	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelGetProcessType	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelGetProcessTypeOfBudget	D	process budget/resource accounting; structs not public
+sceKernelGetProductCode	D	console hardware/identity query; value and layout not public
+sceKernelGetProductStr	D	console hardware/identity query; value and layout not public
+sceKernelGetPs4SystemSwVersion	D	firmware version query; value/layout not public (neighbour sceKernelGetSystemSwVersion SystemConfiguration.cpp:458)
+sceKernelGetPsmIntdevModeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetPsnAccessTraceLogForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetQafExpirationTimeNotafterForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetQafExpirationTimeNotbeforeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetQafGenerationForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetQafNameForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetRenderingMode	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelGetResidentCount	D	system memory-management variant; arguments and accounting not public
+sceKernelGetResidentFmemCount	D	system memory-management variant; arguments and accounting not public
+sceKernelGetResource	D	process budget/resource accounting; structs not public
+sceKernelGetResourceLimit	D	process budget/resource accounting; structs not public
+sceKernelGetResourceOne	D	process budget/resource accounting; structs not public
+sceKernelGetSafemode	D	system setting/state query; system-only, no prototype
+sceKernelGetSanitizerMallocReplace	D	non-External variant of core/libs/prx/libkernel/System/src/Sanitizer.cpp exports; difference not public
+sceKernelGetSanitizerNewReplace	D	non-External variant of core/libs/prx/libkernel/System/src/Sanitizer.cpp exports; difference not public
+sceKernelGetSocClock	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelGetSpecialIForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetSubsysId	D	system setting/state query; system-only, no prototype
+sceKernelGetSubsysSubId	D	system setting/state query; system-only, no prototype
+sceKernelGetSystemExVersion	D	firmware version query; value/layout not public (neighbour sceKernelGetSystemSwVersion SystemConfiguration.cpp:458)
+sceKernelGetSystemLevelDebuggerModeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetSystemSwBeta	D	firmware version query; value/layout not public (neighbour sceKernelGetSystemSwVersion SystemConfiguration.cpp:458)
+sceKernelGetThreadName	D	system setting/state query; system-only, no prototype
+sceKernelGetTraceMemoryStats	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelGetUniversalMode	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelGetUpdVersion	D	firmware version query; value/layout not public (neighbour sceKernelGetSystemSwVersion SystemConfiguration.cpp:458)
+sceKernelGetUtokenDataExecutionForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenExpirationTimeNotafterForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenFakeSharefactoryForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenFlagedUpdaterForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenNpEnvSwitchingForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenSaveDataRepairForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenStoreModeForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenUseSoftwagnerForAcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenUseSoftwagnerForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetUtokenWeakenedPortRestrictionForRcmgr	D	resource-manager (rcmgr/acmgr) utoken/QAF flag; console-private, no prototype
+sceKernelGetVrCaptureSize	D	system setting/state query; system-only, no prototype
+sceKernelGiveDirectMemoryToMapper	D	likely kernel side of sceAmprAmmGiveDirectMemory core/libs/prx/libSceAmpr/Export.cpp:805; arguments not public
+sceKernelHasNeoMode	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelHwGetBdDriveInfo	D	console hardware/identity query; value and layout not public
+sceKernelHwHasOpticalOut	D	console hardware/identity query; value and layout not public
+sceKernelHwHasWlanBt	D	console hardware/identity query; value and layout not public
+sceKernelIccControlBDPowerState	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccControlUSBPowerState	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetBDPowerState	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetBootTimestamp	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetCPMode	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetCountTime	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetCpuInfoBit	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetErrLog	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetHwInfo	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetPowerNumberOfBootShutdown	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetPowerOperatingTime	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetPowerUpCause	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetSysEventLog	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccGetUSBPowerState	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccIndicatorBootDone	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccIndicatorShutdown	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccIndicatorStandby	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccIndicatorStandbyBoot	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccIndicatorStandbyShutdown	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccNotifyBootStatus	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccNvsFlush	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccReadPowerBootMessage	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccSetBuzzer	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccSetCPMode	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccSetCpuInfoBit	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelIccSetDownloadMode	D	ICC (system controller) private interface; system-only, no prototype
+sceKernelInternalGetKmemStatistics	D	system memory-management variant; arguments and accounting not public
+sceKernelInternalGetMapStatistics	D	system memory-management variant; arguments and accounting not public
+sceKernelInternalHeapPrintBacktraceWithModuleInfo	D	debug backtrace printer; libkernel sceKernelPrintBacktraceWithModuleInfo also throws for lack of a prototype
+sceKernelInternalMapDirectMemory	D	internal variant of sceKernelMapDirectMemory (core/libs/prx/libkernel/DirectMemory/Export.cpp); extra flags/arguments not public
+sceKernelInternalMapNamedDirectMemory	D	internal variant of sceKernelMapNamedDirectMemory core/libs/prx/libkernel/DirectMemory/Export.cpp:282; extra flags/arguments not public
+sceKernelInternalResumeDirectMemoryRelease	D	system memory-management variant; arguments and accounting not public
+sceKernelInternalSuspendDirectMemoryRelease	D	system memory-management variant; arguments and accounting not public
+sceKernelIsAllowedToSelectDvdRegion	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsAuthenticNeo	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsCEX	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsDebuggerAttached	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsDevKit	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsExperimentalBeta	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsGenuineCEX	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsGenuineDevKit	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsGenuineKratosCex	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsGenuineN	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsGenuineTestKit	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsInSandbox	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsKratos	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsM2DeviceAttached	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsMainOnStanbyMode	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsMainOnStandbyMode	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsModuleLoaded	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsNeoMode	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsProspero	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsPs4Process	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelIsTestKit	D	console/process predicate; value unmeasured and no guessed constant (sceKernelGetProcessAbiType debt policy)
+sceKernelJitGetSharedMemoryInfo	D	JIT shared-memory query (core/libs/prx/libkernel/DirectMemory/Jit.cpp keeps the handles); output arguments not public
+sceKernelKernelHeapUsage	D	system memory-management variant; arguments and accounting not public
+sceKernelLoadStartModuleForSysmodule	D	sysmodule variant of sceKernelLoadStartModule core/libs/prx/libkernel/Module/src/Module.cpp:291; differences not public
+sceKernelLoadStartModuleInternalForMono	D	Mono variant of sceKernelLoadStartModule core/libs/prx/libkernel/Module/src/Module.cpp:291; differences not public
+sceKernelLwfsAllocateBlock	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelLwfsLseek	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelLwfsSetAttribute	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelLwfsTrimBlock	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelLwfsWrite	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelMapNamedSystemFlexibleMemory	D	system-pool variant of sceKernelMapNamedFlexibleMemory core/libs/prx/libkernel/DirectMemory/Export.cpp:289; pool semantics/arguments not public
+sceKernelMapSanitizerShadowMemory	D	system memory-management variant; arguments and accounting not public
+sceKernelMapToolMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelMapTraceMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelMapperGetParam	D	AMM mapper parameters (ampr_emu reads ranges from it); output layout not public
+sceKernelMemoryPoolMove	D	system memory-management variant; arguments and accounting not public
+sceKernelMlockall	A	core/libs/prx/libkernel/DirectMemory/PosixMemory.cpp:311 mlockall with errno->SCE (0x8002xxxx) mapping, the libkernel sceKernelFtruncate pattern (mlockall itself still throws for MCL_CURRENT/MCL_FUTURE)
+sceKernelMsync	A	core/libs/prx/libkernel/DirectMemory/PosixMemory.cpp:327 msync with errno->SCE (0x8002xxxx) mapping, the libkernel sceKernelFtruncate pattern
+sceKernelNormalizePath	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelNotifyAppEvent	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelNotifyAppStateChanged	D	ShellCore app-state notification; system-only, no prototype
+sceKernelNotifySystemSuspendResumeProgress	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelNotifySystemSuspendStart	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelOpenEport	D	event-port object; semantics and arguments not public
+sceKernelOpenInternal	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelOpenSema	B-S	name lookup as sceKernelOpenEventFlag core/libs/prx/libkernel/EventFlag/src/EventFlag.cpp:150 over semaphores sceKernelCreateSema names core/libs/prx/libkernel/Semaphore/src/Semaphore.cpp:22
+sceKernelPrepareDirectMemorySwap	D	system memory-management variant; arguments and accounting not public
+sceKernelPrepareToResumeProcess	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelPrepareToSuspendProcess	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelProtectDirectMemory	D	system memory-management variant; arguments and accounting not public
+sceKernelProtectDirectMemoryForPID	D	system memory-management variant; arguments and accounting not public
+sceKernelQueryToolMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelQueryTraceMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelRandomizedPath	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelRdup	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelReboot	D	system setting/state query; system-only, no prototype
+sceKernelReleaseToolMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelReleaseTraceDirectMemory	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelReportUnpatchedFunctionCall	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelReserve2mbPage	D	system memory-management variant; arguments and accounting not public
+sceKernelReserveSystemDirectMemory	D	system memory-management variant; arguments and accounting not public
+sceKernelRestoreApp	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelResumeDirectMemoryRelease	D	system memory-management variant; arguments and accounting not public
+sceKernelResumeProcess	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelRtldControl	D	system setting/state query; system-only, no prototype
+sceKernelSandboxPath	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelSaveApp	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSetAppInfo	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSetAppState	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSetBackupRestoreMode	D	system setting/state query; system-only, no prototype
+sceKernelSetBaseModeClock	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelSetBesteffort	D	Sony best-effort scheduling class; semantics not public
+sceKernelSetBootReqNotify	D	system setting/state query; system-only, no prototype
+sceKernelSetBudget	D	process budget/resource accounting; structs not public
+sceKernelSetCallRecord	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelSetCompressionAttribute	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelSetCoredumpAppInfo	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelSetCpumodeGame	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelSetDataTransferMode	D	system setting/state query; system-only, no prototype
+sceKernelSetEmergencyErrorLog	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelSetFsstParam	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelSetGPI	D	sets general-purpose inputs; tree models GPI as the GPO loopback (core/libs/prx/libkernel/System/src/Process.cpp:427), no separate input state
+sceKernelSetGameDirectMemoryLimit	D	system memory-management variant; arguments and accounting not public
+sceKernelSetGpuCu	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelSetIoreq	D	system setting/state query; system-only, no prototype
+sceKernelSetKnobs	D	system setting/state query; system-only, no prototype
+sceKernelSetMemoryPstate	D	system memory-management variant; arguments and accounting not public
+sceKernelSetNeoModeClock	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelSetPackageInfo	D	system setting/state query; system-only, no prototype
+sceKernelSetPhysFmemLimit	D	system memory-management variant; arguments and accounting not public
+sceKernelSetProcessName	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSetProcessProperty	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSetProcessPropertyString	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSetSafemode	D	system setting/state query; system-only, no prototype
+sceKernelSetSafemodeDirect	D	system setting/state query; system-only, no prototype
+sceKernelSetSuspendState	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSetTimezoneInfo	D	system time-zone setter (neighbour sceKernelGettimezone core/libs/prx/libkernel/Time/Time.cpp:717); struct and privilege not public
+sceKernelSetUpdatemode	D	system setting/state query; system-only, no prototype
+sceKernelSetVmContainer	D	system memory-management variant; arguments and accounting not public
+sceKernelSettimeofday	B-S	settimeofday with SCE error codes; neighbour clock_settime core/libs/prx/libkernel/Time/Time.cpp:619, sceKernelGettimeofday Time.cpp:712
+sceKernelSflashGetWritePrio	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelSflashSetWritePrio	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelSlvNotifyError	D	system setting/state query; system-only, no prototype
+sceKernelSpawn	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelStreamWriteActivate	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelStreamWriteCreate	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelStreamWriteDeactivate	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelStreamWriteDelete	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelStreamWriteRead	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelStreamWriteStat	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelStreamWriteWrite	D	Sony filesystem/path internal; arguments and semantics not public
+sceKernelSuspendDirectMemoryRelease	D	system memory-management variant; arguments and accounting not public
+sceKernelSuspendProcess	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSuspendSystem	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelSwitchToBaseMode	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelSwitchToNativeMode	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelSwitchToNeoMode	D	power/clock/compat-mode control; system-only, no prototype
+sceKernelTerminateProcess	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelTerminateSysCore	D	ShellCore app/process lifecycle; system-only, no prototype
+sceKernelTitleWorkaroundIsEnabled	D	system setting/state query; system-only, no prototype
+sceKernelTitleWorkdaroundIsEnabled	D	system setting/state query; system-only, no prototype
+sceKernelTraceMemoryTypeProtect	D	devkit tool/trace memory pool; system/devkit-only, arguments not public
+sceKernelTriggerEport	D	event-port object; semantics and arguments not public
+sceKernelVirtualQueryAll	D	system memory-management variant; arguments and accounting not public
+sceKernelWaitCommandBufferCompletion	B-S	neighbour sceAmprAmmWaitCommandBufferCompletion core/libs/prx/libSceAmpr/Export.cpp:844, sceKernelAprWaitCommandBuffer Apr/src/Apr.cpp:908 (submission is synchronous); confirm signature in ampr_emu hook targets
+sceKernelWriteEventQueueOnCompletionCommand	B-S	sceAmprCommandBufferWriteKernelEventQueueOnCompletion core/libs/prx/libSceAmpr/Export.cpp:268; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteMapCommand	B-S	sceAmprAmmCommandBufferMap core/libs/prx/libSceAmpr/Export.cpp:642; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteMapCommand2	D	second form of sceKernelWriteMapCommand with no libSceAmpr sibling; extra arguments not public
+sceKernelWriteMapDirectCommand	B-S	sceAmprAmmCommandBufferMapDirect core/libs/prx/libSceAmpr/Export.cpp:651; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteMapDirectWithGpuMaskIdCommand	B-S	sceAmprAmmCommandBufferMapDirectWithGpuMaskId core/libs/prx/libSceAmpr/Export.cpp:655; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteMapWithGpuMaskIdCommand	B-S	sceAmprAmmCommandBufferMapWithGpuMaskId core/libs/prx/libSceAmpr/Export.cpp:646; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand	B-S	sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId core/libs/prx/libSceAmpr/Export.cpp:723; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteModifyProtectCommand	B-S	sceAmprAmmCommandBufferModifyProtect core/libs/prx/libSceAmpr/Export.cpp:710; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteModifyProtectWithGpuMaskIdCommand	B-S	sceAmprAmmCommandBufferModifyProtectWithGpuMaskId core/libs/prx/libSceAmpr/Export.cpp:714; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteMultiMapCommand	B-S	sceAmprAmmCommandBufferMultiMap core/libs/prx/libSceAmpr/Export.cpp:701; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteMultiMapWithGpuMaskIdCommand	B-S	sceAmprAmmCommandBufferMultiMapWithGpuMaskId core/libs/prx/libSceAmpr/Export.cpp:705; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteRemapCommand	B-S	sceAmprAmmCommandBufferRemap core/libs/prx/libSceAmpr/Export.cpp:692; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteRemapWithGpuMaskIdCommand	B-S	sceAmprAmmCommandBufferRemapWithGpuMaskId core/libs/prx/libSceAmpr/Export.cpp:696; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteSdkEventLog	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelWriteSdkEventLogV	D	debug/diagnostic kernel interface; debug-only, no prototype
+sceKernelWriteUnmapCommand	B-S	sceAmprAmmCommandBufferUnmap core/libs/prx/libSceAmpr/Export.cpp:660; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteWaitOnAddressCommand	B-S	sceAmprCommandBufferWaitOnAddress core/libs/prx/libSceAmpr/Export.cpp:258; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteWaitOnCounterCommand	B-S	sceAmprCommandBufferWaitOnCounter core/libs/prx/libSceAmpr/Export.cpp:263; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteWriteAddressCommand	B-S	sceAmprCommandBufferWriteAddressOnCompletion core/libs/prx/libSceAmpr/Export.cpp:246; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelWriteWriteCounterCommand	B-S	sceAmprCommandBufferWriteCounterOnCompletion core/libs/prx/libSceAmpr/Export.cpp:252; same bytes as that sibling, signature pattern (dst, sibling args, outSize) of sceKernelWriteModifyMtypeProtectCommand Apr/src/Apr.cpp:941; confirm in ampr_emu hook targets
+sceKernelYieldCpumode	D	power/clock/compat-mode control; system-only, no prototype
+sceLibcMspaceCreateForMonoMutex	D	Sony libc mspace/Mono helper; arguments and semantics not public
+scePthreadAtfork	A	core/libs/prx/libkernel/Pthread/Posix/Atfork.cpp:11 pthread_atfork, result errno->SCE
+scePthreadAttrGetscope	A	core/libs/prx/libkernel/Pthread/Posix/Attr.cpp:79 pthread_attr_getscope, result errno->SCE
+scePthreadAttrSetcreatesuspend	B-S	SCE form of pthread_attr_setcreatesuspend_np (errno->SCE)
+scePthreadAttrSetscope	A	core/libs/prx/libkernel/Pthread/Posix/Attr.cpp:146 pthread_attr_setscope, result errno->SCE
+scePthreadBarrierDestroy	A	core/libs/prx/libkernel/Pthread/Posix/Barrier.cpp:93 pthread_barrier_destroy, result errno->SCE
+scePthreadBarrierInit	B-S	neighbour pthread_barrier_init core/libs/prx/libkernel/Pthread/Posix/Barrier.cpp:62; SCE form takes a name argument like scePthreadMutexInit
+scePthreadBarrierWait	B-S	neighbour pthread_barrier_wait core/libs/prx/libkernel/Pthread/Posix/Barrier.cpp:75; SCE serial-thread return value to confirm
+scePthreadBarrierattrDestroy	A	core/libs/prx/libkernel/Pthread/Posix/Barrier.cpp:41 pthread_barrierattr_destroy, result errno->SCE
+scePthreadBarrierattrGetpshared	A	core/libs/prx/libkernel/Pthread/Posix/Barrier.cpp:48 pthread_barrierattr_getpshared, result errno->SCE
+scePthreadBarrierattrInit	A	core/libs/prx/libkernel/Pthread/Posix/Barrier.cpp:31 pthread_barrierattr_init, result errno->SCE
+scePthreadBarrierattrSetpshared	A	core/libs/prx/libkernel/Pthread/Posix/Barrier.cpp:55 pthread_barrierattr_setpshared, result errno->SCE
+scePthreadCondattrGetclock	B-S	getter of the clock scePthreadCondattrSetclock core/libs/prx/libkernel/Pthread/src/Cond.cpp:152 stores
+scePthreadGetconcurrency	A	core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:165 pthread_getconcurrency
+scePthreadGetcpuclockid	A	core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:298 pthread_getcpuclockid, result errno->SCE
+scePthreadMain	B-S	SCE form of pthread_main_np
+scePthreadMulti	B-S	SCE form of pthread_multi_np (errno->SCE), as libkernel pairs scePthreadRename/pthread_rename_np
+scePthreadMutexGetprioceiling	B-S	SCE form of pthread_mutex_getprioceiling
+scePthreadMutexInitForInternalLibc	D	internal libc mutex init variant; differences from scePthreadMutexInit not public
+scePthreadMutexIsowned	A	core/libs/prx/libkernel/Pthread/Posix/Mutex.cpp:87 pthread_mutex_isowned_np (boolean result)
+scePthreadMutexSetprioceiling	B-S	SCE form of pthread_mutex_setprioceiling
+scePthreadMutexattrGetgen	D	Sony mutex 'gen' attribute; meaning not public
+scePthreadMutexattrGetkind	B-S	FreeBSD libthr pthread_mutexattr_getkind_np = mutex type; neighbour pthread_mutexattr_gettype core/libs/prx/libkernel/Pthread/Posix/Mutex.cpp:165
+scePthreadMutexattrInitForInternalLibc	D	internal libc mutexattr init variant; differences not public
+scePthreadMutexattrSetgen	D	Sony mutex 'gen' attribute; meaning not public
+scePthreadMutexattrSetkind	B-S	FreeBSD libthr pthread_mutexattr_setkind_np = mutex type; neighbour scePthreadMutexattrSettype core/libs/prx/libkernel/Pthread/src/Mutex.cpp:136
+scePthreadResume	B-S	SCE form of pthread_resume_np (errno->SCE), as libkernel pairs scePthreadRename/pthread_rename_np
+scePthreadResumeAll	B-S	SCE form of pthread_resume_all_np (errno->SCE), as libkernel pairs scePthreadRename/pthread_rename_np
+scePthreadSetBesteffort	D	Sony best-effort scheduling class; semantics not public
+scePthreadSetDefaultstacksize	B-S	SCE form of pthread_set_defaultstacksize_np
+scePthreadSetName	D	signature not public (scePthreadRename core/libs/prx/libkernel/Pthread/src/Thread.cpp:1132 covers the known naming call)
+scePthreadSetconcurrency	A	core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:158 pthread_setconcurrency, result errno->SCE
+scePthreadSingle	B-S	SCE form of pthread_single_np (errno->SCE), as libkernel pairs scePthreadRename/pthread_rename_np
+scePthreadSuspend	B-S	SCE form of pthread_suspend_np (errno->SCE), as libkernel pairs scePthreadRename/pthread_rename_np
+scePthreadSuspendAll	B-S	SCE form of pthread_suspend_all_np (errno->SCE), as libkernel pairs scePthreadRename/pthread_rename_np
+scePthreadTimedjoin	B-S	SCE form of pthread_timedjoin_np; neighbour scePthreadJoin core/libs/prx/libkernel/Pthread/src/Thread.cpp:930
+sched_getparam_nid_postfix	B-S	FreeBSD 11 p1003_1b.c (pid 0/self -> first thread, else ESRCH); neighbour pthread_getschedparam/setschedparam core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:199/327
+sched_getscheduler_nid_postfix	B-S	FreeBSD 11 p1003_1b.c (pid 0/self -> first thread, else ESRCH); neighbour pthread_getschedparam/setschedparam core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:199/327
+sched_rr_get_interval_nid_postfix	D	FreeBSD 11 SCHED_ULE quantum depends on the console kernel hz/slice, not public
+sched_setparam_nid_postfix	B-S	FreeBSD 11 p1003_1b.c (pid 0/self -> first thread, else ESRCH); neighbour pthread_getschedparam/setschedparam core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:199/327
+sched_setscheduler_nid_postfix	B-S	FreeBSD 11 p1003_1b.c (pid 0/self -> first thread, else ESRCH); neighbour pthread_getschedparam/setschedparam core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:199/327
+sem_close_nid_postfix	B-S	POSIX sem_close on the sem_open table; neighbour sem_destroy core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:61
+sem_open_nid_postfix	B-M	POSIX/FreeBSD 11 sem_open named semaphores; neighbour sem_init core/libs/prx/libkernel/Pthread/Posix/Sem.cpp:52 + name table
+sem_setname_nid_postfix	B-S	debug name stored on the semaphore; neighbour pthread_set_name_np core/libs/prx/libkernel/Pthread/Posix/Thread.cpp:280 (signature (sem_t*, name) assumed)
+sem_unlink_nid_postfix	B-S	POSIX sem_unlink on the sem_open name table
+set_phys_fmem_limit_nid_postfix	D	Sony physical flexible-memory limit syscall; system-only, arguments not public
+setlogin_nid_postfix	B-S	FreeBSD 11 sys_setlogin (MAXLOGNAME, root caller); must agree with getlogin_r core/libs/prx/libkernel/System/src/Login.cpp:46
+settimeofday_nid_postfix	B-S	FreeBSD 11 kern_settimeofday validation; neighbour clock_settime core/libs/prx/libkernel/Time/Time.cpp:619 (throws on a real change)
+sigqueue_nid_postfix	B-M	FreeBSD 11 sys_sigqueue (si_value to SA_SIGINFO handlers); neighbour kill core/libs/prx/libkernel/System/src/Signals.cpp:526
+sigreturn_nid_postfix	B-S	FreeBSD 11 amd64 sys_sigreturn (mask + mcontext); neighbour setcontext core/libs/prx/libkernel/System/src/UserContext.cpp:187
+statfs_nid_postfix	B-S	FreeBSD 11 statfs(2); neighbour _fstatfs/NativeFstatfs core/libs/prx/libkernel/File/src/Stdio.cpp:882 by path
+swapcontext_nid_postfix	B-S	POSIX swapcontext = getcontext + setcontext; neighbours core/libs/prx/libkernel/System/src/UserContext.cpp:75/187
+swapon_nid_postfix	D	FreeBSD swapon(2) has no host meaning; console policy for a title unmeasured
+symlink_nid_postfix	B-M	remaining gap of core/libs/prx/libkernel_sys/Export.cpp:387: absolute and '..' targets need guest<->host target mapping that readlink reverses
+symlinkat_nid_postfix	B-S	FreeBSD 11 symlinkat(2); neighbour symlink core/libs/prx/libkernel_sys/Export.cpp:387 + *at dir join
+sysKernelGetIntdevModeForInternalLibc_nid_postfix	D	Sony system-mode/version query; values and signature not public
+sysKernelGetIntdevModeForRcmgr_nid_postfix	D	Sony system-mode/version query; values and signature not public
+sysKernelGetLowerLimitSysexVersion_nid_postfix	D	Sony system-mode/version query; values and signature not public
+sysKernelGetLowerLimitUpdVersion_nid_postfix	D	Sony system-mode/version query; values and signature not public
+sysKernelGetManufacturingMode_nid_postfix	D	Sony system-mode/version query; values and signature not public
+sysKernelGetUpdVersion_nid_postfix	D	Sony system-mode/version query; values and signature not public
+sysc_e00_nid_postfix	D	Sony syscall stub with no public definition
+sysc_m00_nid_postfix	D	Sony syscall stub with no public definition
+sysc_s00_nid_postfix	D	Sony syscall stub with no public definition
+tcgetsid_nid_postfix	B-S	POSIX tcgetsid; neighbour tcgetpgrp core/libs/prx/libkernel/File/src/Terminal.cpp:125 and getsid Process.cpp:249
+tcsetsid_nid_postfix	B-S	FreeBSD tcsetsid (TIOCSCTTY); neighbour tcsetpgrp core/libs/prx/libkernel/File/src/Terminal.cpp:129
+unmount_nid_postfix	B-L	FreeBSD 11 unmount(2); same mount table as mount; neighbour nmount core/libs/prx/libkernel/File/src/Stdio.cpp:705
+utrace_nid_postfix	B-S	FreeBSD 11 sys_utrace: 0 when the process is not ktraced, EINVAL over KTR_USER_MAXLEN (console KTRACE option unverified)
+uuidgen_nid_postfix	B-S	FreeBSD 11 kern_uuid.c version-1 UUIDs (random multicast node); neighbour sceKernelUuidCreate core/libs/prx/libkernel/System/src/Process.cpp:446
+vfork_nid_postfix	B-L	FreeBSD 11 vfork(2); same child-process subsystem as fork
+wait3_nid_postfix	B-S	FreeBSD wait3/wait4(2); neighbour waitpid core/libs/prx/libkernel/System/src/Process.cpp:330 + getrusage Process.cpp:537
+wait4_nid_postfix	B-S	FreeBSD wait4(2); neighbour waitpid core/libs/prx/libkernel/System/src/Process.cpp:330 + getrusage Process.cpp:537

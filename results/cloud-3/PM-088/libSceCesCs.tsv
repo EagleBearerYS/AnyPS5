@@ -1,0 +1,250 @@
+function	class	basis
+sceCesBig5ToUcs2	B-S	one char Big5 to UCS-2 (BMP only): CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesBig5ToUtf16	B-S	one char Big5 to UTF-16 host order (Unicode.cpp units): CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesBig5ToUtf16be	B-S	one char Big5 to UTF-16BE (Unicode.cpp units): CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesBig5ToUtf16le	B-S	one char Big5 to UTF-16LE (Unicode.cpp units): CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesBig5ToUtf32	B-S	one char Big5 to UTF-32 host order: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesBig5ToUtf32be	B-S	one char Big5 to UTF-32BE: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesBig5ToUtf32le	B-S	one char Big5 to UTF-32LE: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesEucCnToUcs2	B-S	one char EucCn to UCS-2 (BMP only): GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnToUtf16	B-S	one char EucCn to UTF-16 host order (Unicode.cpp units): GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnToUtf16be	B-S	one char EucCn to UTF-16BE (Unicode.cpp units): GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnToUtf16le	B-S	one char EucCn to UTF-16LE (Unicode.cpp units): GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnToUtf32	B-S	one char EucCn to UTF-32 host order: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnToUtf32be	B-S	one char EucCn to UTF-32BE: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnToUtf32le	B-S	one char EucCn to UTF-32LE: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnToUtf8	B-S	one char EucCn to UTF-8: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucCnUcsProfileSetSbcs	D	profile option setter: argument meaning/accepted SBC profiles not in tree or public source (likely selects a RefersUcsProfile G0 set)
+sceCesEucJpToUtf16	B-S	one char EucJp to UTF-16 host order (Unicode.cpp units): JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesEucJpToUtf16be	B-S	one char EucJp to UTF-16BE (Unicode.cpp units): JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesEucJpToUtf16le	B-S	one char EucJp to UTF-16LE (Unicode.cpp units): JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesEucJpToUtf32	B-S	one char EucJp to UTF-32 host order: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesEucJpToUtf32be	B-S	one char EucJp to UTF-32BE: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesEucJpToUtf32le	B-S	one char EucJp to UTF-32LE: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesEucJpUcsProfileSetSbcs	D	profile option setter: argument meaning/accepted SBC profiles not in tree or public source (likely selects a RefersUcsProfile G0 set)
+sceCesEucKrToUcs2	B-S	one char EucKr to UCS-2 (BMP only): CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucKrToUtf16	B-S	one char EucKr to UTF-16 host order (Unicode.cpp units): CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucKrToUtf16be	B-S	one char EucKr to UTF-16BE (Unicode.cpp units): CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucKrToUtf16le	B-S	one char EucKr to UTF-16LE (Unicode.cpp units): CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucKrToUtf32	B-S	one char EucKr to UTF-32 host order: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucKrToUtf32be	B-S	one char EucKr to UTF-32BE: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucKrToUtf32le	B-S	one char EucKr to UTF-32LE: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesEucKrUcsProfileSetSbcs	D	profile option setter: argument meaning/accepted SBC profiles not in tree or public source (debt guesses KS X 1003)
+sceCesGbToUcs2	B-S	one char Gb to UCS-2 (BMP only): CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbToUtf16	B-S	one char Gb to UTF-16 host order (Unicode.cpp units): CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbToUtf16be	B-S	one char Gb to UTF-16BE (Unicode.cpp units): CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbToUtf16le	B-S	one char Gb to UTF-16LE (Unicode.cpp units): CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbToUtf32	B-S	one char Gb to UTF-32 host order: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbToUtf32be	B-S	one char Gb to UTF-32BE: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbToUtf32le	B-S	one char Gb to UTF-32LE: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbToUtf8	B-S	one char Gb to UTF-8: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesGbUcsProfileSet4ByteCharRange	D	GB18030 four-byte range option: argument meaning and effect not in tree or public source
+sceCesGbUcsProfileSetSbcs	D	profile option setter: argument meaning/accepted SBC profiles not in tree or public source (likely GB/T 1988)
+sceCesGbUcsProfileSetUdaMapping	D	user-defined-area mapping option (PUA or not): argument values not in tree or public source
+sceCesIso2022JpUcsProfileSetSbcs	D	profile option setter: argument meaning/accepted SBC profiles not in tree or public source
+sceCesIso2022StrGetUcs2Len	B-S	length pass of the ISO-2022 decoder to Ucs2; neighbour sceCesMbcsStrGetUtf8Len
+sceCesIso2022StrGetUtf16Len	B-S	length pass of the ISO-2022 decoder to Utf16; neighbour sceCesMbcsStrGetUtf8Len
+sceCesIso2022StrGetUtf32Len	B-S	length pass of the ISO-2022 decoder to Utf32; neighbour sceCesMbcsStrGetUtf8Len
+sceCesIso2022StrGetUtf8Len	B-S	length pass of the ISO-2022 decoder to Utf8; neighbour sceCesMbcsStrGetUtf8Len
+sceCesIso2022StrToUcs2Str	B-S	ISO-2022 decoder (sceCesIso2022StrToUtf8Str) with Ucs2 output; neighbour sceCesMbcsStrToUcs2Str
+sceCesIso2022StrToUtf16Str	B-S	ISO-2022 decoder (sceCesIso2022StrToUtf8Str) with Utf16 output; neighbour sceCesMbcsStrToUcs2Str
+sceCesIso2022StrToUtf32Str	B-S	ISO-2022 decoder (sceCesIso2022StrToUtf8Str) with Utf32 output; neighbour sceCesMbcsStrToUcs2Str
+sceCesIso2022StrToUtf8Str	B-M	stateful ISO-2022-JP decoder (ESC ( B / ( J / ( I / $ @ / $ B, SO/SI for CP50222) over JisX0208.hpp; neighbour sceCesMbcsStrToUtf8Str
+sceCesIso2022UcsContextInit	B-S	profile + initial ASCII shift state in the caller's context; neighbour sceCesMbcsUcsContextInit (console layout unknown, as there)
+sceCesIso2022UcsContextInitCopy	B-S	copies profile and shift state of an ISO-2022 context
+sceCesJisGetLevel	D	level numbering (non-kanji, X0213 levels 3/4, error) of the result not in tree or public source
+sceCesJisX0208ToSJisCode	B-S	JIS X 0208 Annex 1 row/cell to Shift_JIS arithmetic already in encodeMbcs; Orbital db_types prototype
+sceCesJisX0213ToSJisCode	B-S	JIS X 0213 Annex 1 plane-1/plane-2 Shift_JIS-2004 arithmetic (public); plane argument per Orbital db_types prototype
+sceCesJiscsToUcs	D	JIS coded-character-set selector values (X0201/X0208/X0212/X0213 planes) not in tree or public source
+sceCesMbcToUcs2	B-S	one char Mbc to UCS-2 (BMP only): profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcToUtf16	B-S	one char Mbc to UTF-16 host order (Unicode.cpp units): profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcToUtf16be	B-S	one char Mbc to UTF-16BE (Unicode.cpp units): profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcToUtf16le	B-S	one char Mbc to UTF-16LE (Unicode.cpp units): profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcToUtf32	B-S	one char Mbc to UTF-32 host order: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcToUtf32be	B-S	one char Mbc to UTF-32BE: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcToUtf32le	B-S	one char Mbc to UTF-32LE: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcToUtf8	B-S	one char Mbc to UTF-8: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesMbcsStrGetUtf16Len	B-S	fromMbcs template with Utf16 units (surrogates for GB18030/X0213); neighbour sceCesMbcsStrGetUcs2Len
+sceCesMbcsStrGetUtf32Len	B-S	fromMbcs template with Utf32 units (surrogates for GB18030/X0213); neighbour sceCesMbcsStrGetUcs2Len
+sceCesMbcsStrToUtf16Str	B-S	fromMbcs template with Utf16 output; neighbour sceCesMbcsStrToUcs2Str
+sceCesMbcsStrToUtf32Str	B-S	fromMbcs template with Utf32 output; neighbour sceCesMbcsStrToUcs2Str
+sceCesMbcsUcsContextInitCopy	B-S	copies the profile pointer the context holds (sceCesMbcsUcsContextInit layout, Export.cpp:543)
+sceCesMbcsUcsSetMbcsReplacementCharCode	D	replacement policy (direction, disable value, effect on UNASSIGNED_CODE, context room) not in tree or public source
+sceCesMbcsUcsSetMbcsReplacementCharUCode	D	replacement policy (direction, disable value, effect on UNASSIGNED_CODE, context room) not in tree or public source
+sceCesRefersUcsProfileAscii	B-S	static SBC profile, US-ASCII 0x00-0x7F, high bytes unassigned (ANSI X3.4); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileAsciiWithKatakana	B-S	static SBC profile, ASCII + JIS X 0201 katakana 0xA1-0xDF to U+FF61-FF9F (unicode.org JIS0201.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileBs4730	B-S	static SBC profile, ISO 646-GB (BS 4730, ISO-IR-4): ASCII with 0x23 U+00A3, 0x7E U+203E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp1253	B-S	static SBC profile, Windows CP1253 (unicode.org MICSFT/WINDOWS/CP1253.TXT, unassigned bytes as Cp1250 does); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp1254	B-S	static SBC profile, Windows CP1254 (unicode.org MICSFT/WINDOWS/CP1254.TXT, unassigned bytes as Cp1250 does); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp1255	B-S	static SBC profile, Windows CP1255 (unicode.org MICSFT/WINDOWS/CP1255.TXT, unassigned bytes as Cp1250 does); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp1256	B-S	static SBC profile, Windows CP1256 (unicode.org MICSFT/WINDOWS/CP1256.TXT, unassigned bytes as Cp1250 does); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp1257	B-S	static SBC profile, Windows CP1257 (unicode.org MICSFT/WINDOWS/CP1257.TXT, unassigned bytes as Cp1250 does); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp1258	B-S	static SBC profile, Windows CP1258 (unicode.org MICSFT/WINDOWS/CP1258.TXT, unassigned bytes as Cp1250 does); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp437	B-S	static SBC profile, DOS CP437 (unicode.org MICSFT/PC/CP437.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp737	B-S	static SBC profile, DOS CP737 (unicode.org MICSFT/PC/CP737.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp775	B-S	static SBC profile, DOS CP775 (unicode.org MICSFT/PC/CP775.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp850	B-S	static SBC profile, DOS CP850 (unicode.org MICSFT/PC/CP850.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp852	B-S	static SBC profile, DOS CP852 (unicode.org MICSFT/PC/CP852.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp855	B-S	static SBC profile, DOS CP855 (unicode.org MICSFT/PC/CP855.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp857	B-S	static SBC profile, DOS CP857 (unicode.org MICSFT/PC/CP857.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp858	B-S	static SBC profile, IBM CP858 = CP850 with 0xD5 U+20AC (ICU ibm-858); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp860	B-S	static SBC profile, DOS CP860 (unicode.org MICSFT/PC/CP860.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp861	B-S	static SBC profile, DOS CP861 (unicode.org MICSFT/PC/CP861.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp862	B-S	static SBC profile, DOS CP862 (unicode.org MICSFT/PC/CP862.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp863	B-S	static SBC profile, DOS CP863 (unicode.org MICSFT/PC/CP863.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp864	B-S	static SBC profile, DOS CP864 (unicode.org MICSFT/PC/CP864.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp865	B-S	static SBC profile, DOS CP865 (unicode.org MICSFT/PC/CP865.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp866	B-S	static SBC profile, DOS CP866 (unicode.org MICSFT/PC/CP866.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp869	B-S	static SBC profile, DOS CP869 (unicode.org MICSFT/PC/CP869.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileCp874	B-S	static SBC profile, Windows CP874 (unicode.org MICSFT/WINDOWS/CP874.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileGbT1988	B-S	static SBC profile, ISO 646-CN (GB/T 1988, ISO-IR-57): ASCII with 0x24 U+00A5, 0x7E U+203E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileGbT1988Tilde0x7e	B-S	static SBC profile, GB/T 1988 with 0x7E kept as U+007E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_1	B-S	static SBC profile, ISO/IEC 8859-1 (unicode.org MAPPINGS/ISO8859/8859-1.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_10	B-S	static SBC profile, ISO/IEC 8859-10 (unicode.org MAPPINGS/ISO8859/8859-10.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_11	B-S	static SBC profile, ISO/IEC 8859-11 (unicode.org MAPPINGS/ISO8859/8859-11.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_13	B-S	static SBC profile, ISO/IEC 8859-13 (unicode.org MAPPINGS/ISO8859/8859-13.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_14	B-S	static SBC profile, ISO/IEC 8859-14 (unicode.org MAPPINGS/ISO8859/8859-14.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_15	B-S	static SBC profile, ISO/IEC 8859-15 (unicode.org MAPPINGS/ISO8859/8859-15.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_16	B-S	static SBC profile, ISO/IEC 8859-16 (unicode.org MAPPINGS/ISO8859/8859-16.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_2	B-S	static SBC profile, ISO/IEC 8859-2 (unicode.org MAPPINGS/ISO8859/8859-2.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_3	B-S	static SBC profile, ISO/IEC 8859-3 (unicode.org MAPPINGS/ISO8859/8859-3.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_4	B-S	static SBC profile, ISO/IEC 8859-4 (unicode.org MAPPINGS/ISO8859/8859-4.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_5	B-S	static SBC profile, ISO/IEC 8859-5 (unicode.org MAPPINGS/ISO8859/8859-5.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_6	B-S	static SBC profile, ISO/IEC 8859-6 (unicode.org MAPPINGS/ISO8859/8859-6.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_7	B-S	static SBC profile, ISO/IEC 8859-7 (unicode.org MAPPINGS/ISO8859/8859-7.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_8	B-S	static SBC profile, ISO/IEC 8859-8 (unicode.org MAPPINGS/ISO8859/8859-8.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileIso8859_9	B-S	static SBC profile, ISO/IEC 8859-9 (unicode.org MAPPINGS/ISO8859/8859-9.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileJisX0201	B-S	static SBC profile, JIS X 0201 8-bit: Roman (0x5C U+00A5, 0x7E U+203E) + katakana 0xA1-0xDF (unicode.org JIS0201.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileJisX0201Katakana	B-S	static SBC profile, JIS X 0201 katakana half 0xA1-0xDF (JIS0201.TXT); whether the low half is accepted is unverified; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileJisX0201Roman	B-S	static SBC profile, JIS X 0201 Roman (ISO-IR-14): ASCII with 0x5C U+00A5, 0x7E U+203E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileJisX0201RomanTilde0x7e	B-S	static SBC profile, JIS X 0201 Roman with 0x7E kept as U+007E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileJisX0201Tilde0x7e	B-S	static SBC profile, JIS X 0201 8-bit with 0x7E kept as U+007E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileKoi8R	B-S	static SBC profile, KOI8-R (RFC 1489, unicode.org VENDORS/MISC/KOI8-R.TXT); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileKoi8U	B-S	static SBC profile, KOI8-U (RFC 2319); neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileKsX1003	B-S	static SBC profile, KS X 1003 (ISO 646-KR): ASCII with 0x5C U+20A9, 0x7E U+203E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesRefersUcsProfileKsX1003Tilde0x7e	B-S	static SBC profile, KS X 1003 with 0x7E kept as U+007E; neighbour sceCesRefersUcsProfileCp1250 (sbcToUnicode tables)
+sceCesSJisCodeToJisX0208	B-S	inverse Shift_JIS to JIS X 0208 arithmetic already in decodeMbcs; Orbital db_types prototype
+sceCesSJisCodeToJisX0213	B-S	inverse Shift_JIS-2004 to JIS X 0213 plane/row/cell arithmetic (public); Orbital db_types prototype
+sceCesSJisGetCode	B-S	reads one 1/2-byte Shift_JIS code (lead/trail ranges as decodeMbcs); Orbital db_types prototype
+sceCesSJisPutCode	B-S	writes a Shift_JIS code as 1 or 2 bytes with DST_BUFFER_END; Orbital db_types prototype
+sceCesSJisToUcs2	B-S	one char SJis to UCS-2 (BMP only): CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisToUtf16	B-S	one char SJis to UTF-16 host order (Unicode.cpp units): CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisToUtf16be	B-S	one char SJis to UTF-16BE (Unicode.cpp units): CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisToUtf16le	B-S	one char SJis to UTF-16LE (Unicode.cpp units): CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisToUtf32	B-S	one char SJis to UTF-32 host order: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisToUtf32be	B-S	one char SJis to UTF-32BE: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisToUtf32le	B-S	one char SJis to UTF-32LE: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisToUtf8	B-S	one char SJis to UTF-8: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesSJisUcsProfileSetSbcs	D	profile option setter: argument meaning/accepted SBC profiles not in tree or public source (likely JIS X 0201 Roman)
+sceCesSbcToUcs2	B-S	one char Sbc to UCS-2 (BMP only): sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesSbcToUtf16	B-S	one char Sbc to UTF-16 host order (Unicode.cpp units): sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesSbcToUtf16be	B-S	one char Sbc to UTF-16BE (Unicode.cpp units): sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesSbcToUtf16le	B-S	one char Sbc to UTF-16LE (Unicode.cpp units): sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesSbcToUtf32	B-S	one char Sbc to UTF-32 host order: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesSbcToUtf32be	B-S	one char Sbc to UTF-32BE: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesSbcToUtf32le	B-S	one char Sbc to UTF-32LE: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUcs2StrGetIso2022Len	B-S	length pass of the ISO-2022 encoder from Ucs2; neighbour sceCesUtf8StrGetMbcsLen
+sceCesUcs2StrToIso2022Str	B-S	ISO-2022 encoder (sceCesUtf8StrToIso2022Str) from Ucs2; neighbour sceCesUcs2StrToMbcsStr
+sceCesUcs2ToBig5	B-S	one char UCS-2 (BMP only) to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUcs2ToEucCn	B-S	one char UCS-2 (BMP only) to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUcs2ToEucJp	B-S	one char UCS-2 (BMP only) to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUcs2ToEucKr	B-S	one char UCS-2 (BMP only) to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUcs2ToGb	B-S	one char UCS-2 (BMP only) to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUcs2ToMbc	B-S	one char UCS-2 (BMP only) to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUcs2ToSJis	B-S	one char UCS-2 (BMP only) to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUcs2ToSbc	B-S	one char UCS-2 (BMP only) to Sbc: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUcs2ToUhc	B-S	one char UCS-2 (BMP only) to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUcsProfileInitEucCnGb2312	B-M	GB2312 table from unicode.org GB2312.TXT (or CP936's GB2312 region) as a new header like Cp949.hpp + tag; neighbour sceCesUcsProfileInitEucKr
+sceCesUcsProfileInitEucJis2004	B-L	JIS X 0213:2004 plane 1/2 table (x0213.org public mapping, ~11k cells, some to two code points) not in tree
+sceCesUcsProfileInitEucJpX0208	B-M	EUC-JP two-byte only with the standard JIS X 0208 mapping (unicode.org JIS0208.TXT: delta to the CP932-flavoured JisX0208.hpp); neighbour InitEucJpCp51932
+sceCesUcsProfileInitEucJpX0208Ss2	B-S	the X0208 profile plus SS2 half-width katakana (existing 0x8E path)
+sceCesUcsProfileInitEucJpX0208Ss2Ss3	B-S	the X0208 profile plus SS2 katakana and SS3 JIS X 0212 (JisX0212.hpp)
+sceCesUcsProfileInitGb18030_2000	B-M	CP936-based two-byte table + GB 18030-2000 four-byte BMP range table and linear supplementary mapping (public, as ICU gb-18030-2000)
+sceCesUcsProfileInitGb18030_2005	B-M	GB18030-2000 profile with the 2005 swap (0xA8BC<->U+1E3F, 0x8135F437<->U+E7C7)
+sceCesUcsProfileInitGbkCp936	B-M	CP936 table from unicode.org MICSFT/WINDOWS/CP936.TXT as a new header + tag; neighbour sceCesUcsProfileInitBig5Cp950
+sceCesUcsProfileInitIso2022JpCp50221	B-S	tag profile: Microsoft CP50221 (ESC ( I half-width katakana, CP932 extensions; public .NET ISO2022Encoding source)
+sceCesUcsProfileInitIso2022JpCp50222	B-S	tag profile: Microsoft CP50222 (SO/SI half-width katakana, CP932 extensions; public .NET ISO2022Encoding source)
+sceCesUcsProfileInitIso2022JpRfc1468	B-S	tag profile for the ISO-2022-JP engine: RFC 1468 sets (ASCII, JIS X 0201 Roman, JIS C 6226-1978, JIS X 0208-1983)
+sceCesUcsProfileInitSJis1997X0208	B-M	Shift_JIS with the standard JIS X 0208:1997 mapping (unicode.org JIS0208.TXT/SHIFTJIS.TXT) instead of CP932, no NEC/IBM rows; neighbour InitSJis1997Cp932
+sceCesUcsProfileInitSJis2004X0213	B-L	Shift_JIS-2004 needs the JIS X 0213:2004 table (x0213.org, combining pairs) not in tree
+sceCesUcsToJiscs	D	JIS coded-character-set selector values (X0201/X0208/X0212/X0213 planes) not in tree or public source
+sceCesUhcToUcs2	B-S	one char Uhc to UCS-2 (BMP only): CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUhcToUtf16	B-S	one char Uhc to UTF-16 host order (Unicode.cpp units): CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUhcToUtf16be	B-S	one char Uhc to UTF-16BE (Unicode.cpp units): CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUhcToUtf16le	B-S	one char Uhc to UTF-16LE (Unicode.cpp units): CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUhcToUtf32	B-S	one char Uhc to UTF-32 host order: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUhcToUtf32be	B-S	one char Uhc to UTF-32BE: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUhcToUtf32le	B-S	one char Uhc to UTF-32LE: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUhcUcsProfileSetSbcs	D	profile option setter: argument meaning/accepted SBC profiles not in tree or public source
+sceCesUtf16StrGetIso2022Len	B-S	length pass of the ISO-2022 encoder from Utf16; neighbour sceCesUtf8StrGetMbcsLen
+sceCesUtf16StrGetMbcsLen	B-S	toMbcs template decoding Utf16; neighbour sceCesUcs2StrGetMbcsLen
+sceCesUtf16StrToIso2022Str	B-S	ISO-2022 encoder (sceCesUtf8StrToIso2022Str) from Utf16; neighbour sceCesUcs2StrToMbcsStr
+sceCesUtf16StrToMbcsStr	B-S	toMbcs template decoding Utf16; neighbour sceCesUcs2StrToMbcsStr
+sceCesUtf16ToBig5	B-S	one char UTF-16 host order (Unicode.cpp units) to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf16ToEucCn	B-S	one char UTF-16 host order (Unicode.cpp units) to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf16ToEucJp	B-S	one char UTF-16 host order (Unicode.cpp units) to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf16ToEucKr	B-S	one char UTF-16 host order (Unicode.cpp units) to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf16ToGb	B-S	one char UTF-16 host order (Unicode.cpp units) to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf16ToMbc	B-S	one char UTF-16 host order (Unicode.cpp units) to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf16ToSJis	B-S	one char UTF-16 host order (Unicode.cpp units) to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUtf16ToSbc	B-S	one char UTF-16 host order (Unicode.cpp units) to Sbc: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUtf16ToUhc	B-S	one char UTF-16 host order (Unicode.cpp units) to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUtf16beToBig5	B-S	one char UTF-16BE (Unicode.cpp units) to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf16beToEucCn	B-S	one char UTF-16BE (Unicode.cpp units) to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf16beToEucJp	B-S	one char UTF-16BE (Unicode.cpp units) to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf16beToEucKr	B-S	one char UTF-16BE (Unicode.cpp units) to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf16beToGb	B-S	one char UTF-16BE (Unicode.cpp units) to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf16beToMbc	B-S	one char UTF-16BE (Unicode.cpp units) to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf16beToSJis	B-S	one char UTF-16BE (Unicode.cpp units) to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUtf16beToSbc	B-S	one char UTF-16BE (Unicode.cpp units) to Sbc: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUtf16beToUhc	B-S	one char UTF-16BE (Unicode.cpp units) to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUtf16leToBig5	B-S	one char UTF-16LE (Unicode.cpp units) to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf16leToEucCn	B-S	one char UTF-16LE (Unicode.cpp units) to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf16leToEucJp	B-S	one char UTF-16LE (Unicode.cpp units) to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf16leToEucKr	B-S	one char UTF-16LE (Unicode.cpp units) to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf16leToGb	B-S	one char UTF-16LE (Unicode.cpp units) to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf16leToMbc	B-S	one char UTF-16LE (Unicode.cpp units) to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf16leToSJis	B-S	one char UTF-16LE (Unicode.cpp units) to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUtf16leToSbc	B-S	one char UTF-16LE (Unicode.cpp units) to Sbc: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUtf16leToUhc	B-S	one char UTF-16LE (Unicode.cpp units) to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUtf32StrGetIso2022Len	B-S	length pass of the ISO-2022 encoder from Utf32; neighbour sceCesUtf8StrGetMbcsLen
+sceCesUtf32StrGetMbcsLen	B-S	toMbcs template decoding Utf32; neighbour sceCesUcs2StrGetMbcsLen
+sceCesUtf32StrToIso2022Str	B-S	ISO-2022 encoder (sceCesUtf8StrToIso2022Str) from Utf32; neighbour sceCesUcs2StrToMbcsStr
+sceCesUtf32StrToMbcsStr	B-S	toMbcs template decoding Utf32; neighbour sceCesUcs2StrToMbcsStr
+sceCesUtf32ToBig5	B-S	one char UTF-32 host order to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf32ToEucCn	B-S	one char UTF-32 host order to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf32ToEucJp	B-S	one char UTF-32 host order to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf32ToEucKr	B-S	one char UTF-32 host order to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf32ToGb	B-S	one char UTF-32 host order to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf32ToMbc	B-S	one char UTF-32 host order to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf32ToSJis	B-S	one char UTF-32 host order to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUtf32ToSbc	B-S	one char UTF-32 host order to Sbc: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUtf32ToUhc	B-S	one char UTF-32 host order to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUtf32beToBig5	B-S	one char UTF-32BE to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf32beToEucCn	B-S	one char UTF-32BE to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf32beToEucJp	B-S	one char UTF-32BE to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf32beToEucKr	B-S	one char UTF-32BE to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf32beToGb	B-S	one char UTF-32BE to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf32beToMbc	B-S	one char UTF-32BE to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf32beToSJis	B-S	one char UTF-32BE to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUtf32beToSbc	B-S	one char UTF-32BE to Sbc: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUtf32beToUhc	B-S	one char UTF-32BE to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUtf32leToBig5	B-S	one char UTF-32LE to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf32leToEucCn	B-S	one char UTF-32LE to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf32leToEucJp	B-S	one char UTF-32LE to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf32leToEucKr	B-S	one char UTF-32LE to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf32leToGb	B-S	one char UTF-32LE to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf32leToMbc	B-S	one char UTF-32LE to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf32leToSJis	B-S	one char UTF-32LE to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUtf32leToSbc	B-S	one char UTF-32LE to Sbc: sbcToUnicode/unicodeToSbc tables; neighbour sceCesSbcToUtf8/sceCesUtf8ToSbc; Orbital db_types prototype
+sceCesUtf32leToUhc	B-S	one char UTF-32LE to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype
+sceCesUtf8StrGetIso2022Len	B-S	length pass of the ISO-2022 encoder from Utf8; neighbour sceCesUtf8StrGetMbcsLen
+sceCesUtf8StrToIso2022Str	B-M	stateful ISO-2022-JP encoder over the reverse JIS table (ESC switching, return to ASCII at end unverified); neighbour sceCesUtf8StrToMbcsStr
+sceCesUtf8ToBig5	B-S	one char UTF-8 to Big5: CP950 table (Cp950.hpp, decodeCp950/cp950Reverse); neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf8ToEucCn	B-S	one char UTF-8 to EucCn: GB2312 table (unicode.org GB2312.TXT) that sceCesUcsProfileInitEucCnGb2312 adds; neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf8ToEucJp	B-S	one char UTF-8 to EucJp: JisX0208/JisX0212 tables via decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf8ToEucKr	B-S	one char UTF-8 to EucKr: CP949 table limited to 0xA1-0xFE (Cp949.hpp, decodeCp949); neighbour sceCesEucKrToUtf8; Orbital db_types prototype
+sceCesUtf8ToGb	B-S	one char UTF-8 to Gb: CP936 table + GB18030 ranges that the Gb profile inits add; neighbour sceCesBig5ToUtf8; Orbital db_types prototype
+sceCesUtf8ToMbc	B-S	one char UTF-8 to Mbc: profile-dispatching decodeMbcs/encodeMbcs; neighbour sceCesEucJpToUtf8; Orbital db_types prototype
+sceCesUtf8ToSJis	B-S	one char UTF-8 to SJis: CP932 path of decodeMbcs/encodeMbcs (JisX0208.hpp); neighbour sceCesMbcsStrToUtf8Str (SJIS profile); Orbital db_types prototype
+sceCesUtf8ToUhc	B-S	one char UTF-8 to Uhc: CP949 table (Cp949.hpp, unified decodeCp949); neighbour sceCesUhcToUtf8; Orbital db_types prototype

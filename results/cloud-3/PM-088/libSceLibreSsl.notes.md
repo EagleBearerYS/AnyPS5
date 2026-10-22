@@ -1,0 +1,29 @@
+# libSceLibreSsl classification notes
+
+- **What it is:** the console's LibreSSL build (libcrypto + libssl public API) plus five Sony entry points. The export set belongs to the 2.x generation: `SSLeay`, `SSL_library_init`, `CRYPTO_THREADID_*`, `HMAC_CTX_init`/`EVP_MD_CTX_init` on caller-allocated structs, and no `RSA_get0_key`/`X509_get0_notBefore` accessors. 399 todo, 0 done; no CMakeLists.txt today (generic Export.cpp build).
+- **Counts:** 0 A, 205 B-S, 28 B-M, 148 B-L, 13 C, 5 D. Nothing in the tree has these names; libSceSsl is a different API and is at most a neighbour.
+- **Guest-visible layouts matter.** With 2.x headers, titles allocate `SHA_CTX` (96 bytes), `SHA256_CTX` (112), `SHA512_CTX` (216), `MD5_CTX` (92), `AES_KEY` (244), `DES_key_schedule`, `EVP_MD_CTX`, `EVP_CIPHER_CTX` and `HMAC_CTX` themselves, and use macros that read fields directly (`BN_is_zero` on `bignum_st`, `rsa->n` with no `RSA_set0_key`, `X509_get_notBefore` via `cert_info->validity`, `sk_*` on `_STACK`, `ASN1_STRING`). Objects must be in the guest's LP64 layout, pinned with static_asserts as libSceSsl/SslTypes.hpp does.
+- **Windows breaks host layouts.** A host build of LibreSSL gives that layout on Linux/macOS but not on Windows (LLP64): every struct with a `long` field shifts (`rsa_st.version` moves `n`/`e`; `bio_st`; `EVP_MD`/`X509_VERIFY_PARAM` flags).
+- **Tier 1: mbedtls 3.6.7, the existing 3rdparty/mbedtls (B-S/B-M).**
+  - Covers low-level digests, AES/DES on guest-owned state, EVP digest/cipher (AES CBC/CFB8/CTR/GCM) with LibreSSL-layout `EVP_MD`/`EVP_CIPHER` descriptors, HMAC, CMAC, RAND (via `HostEntropy_nid_no_patch`), the ERR queue, the CRYPTO no-ops, and the key objects BN/RSA/EC/ECDSA/ECDH/EVP_PKEY as guest-layout mirrors over mbedtls_mpi/rsa/ecp/ecdsa.
+  - The submodule's config already enables DES, CMAC, NIST_KW, GCM, CFB/CTR, PKCS1_V21, ECDH and ECDSA. mbedtls 3 has no MD4 (RFC 1320 by hand), no standalone EMSA-PSS, no RSA "recover" and no compressed-point decode; those rows are B-M.
+  - Build change: move `configure_ssl_backend()` out of libSceSsl/CMakeLists.txt into a shared cmake file, and give libSceLibreSsl its own CMakeLists.txt linking `mbedcrypto` (static, `--exclude-libs,ALL`, its own allocator hooks).
+- **Tier 2: needs LibreSSL itself as a new 3rdparty submodule, built from source (all B-L).**
+  - Covers BIO; the ASN.1 codec and the 2.x X509 object graph (d2i/PEM, X509_NAME, X509v3, GENERAL_NAMES); X509_STORE/verify with callbacks; PKCS#12; OCSP; CONF; and the whole SSL/SSL_CTX layer.
+  - mbedtls lacks OCSP, a PFX parser, OBJ/NIDs, BIO, TLS 1.0/1.1, DTLS 1.0 (`DTLSv1_*`), NPN, OpenSSL cipher strings, info/msg callbacks and any X509_STORE_CTX callback model. Rebuilding these on mbedtls is larger than wrapping LibreSSL.
+  - The console's LibreSSL release is not in the tree (`SSLeay` returns 0x20000000 for every release), so the pin must be a 2.x release whose public structs match.
+- **Glue needed with either backend:**
+  - Guest `FILE*` is libc's `FileStream`, not a host FILE (`BIO_new_fp`, `PEM_read_*`, `d2i_PKCS12_fp`). Guest paths go through libc path resolution (`*_file`, `load_verify_locations`, CONF). Guest sockets map through the libkernel/libSceNet tables, like libSceSsl's KernelSocketPoll (`SSL_set_fd`, `BIO_new_socket`).
+  - Guest callbacks and guest `BIO_METHOD`/`UI_METHOD` tables need APS5_VABI thunks. Memory that the guest releases with OPENSSL_free must come from the guest-visible libc heap.
+  - Keys that tier 2 produces (`X509_get_pubkey`, `PEM_read_bio_PrivateKey`) must be converted into tier-1 key objects at the boundary, unless tier 1 also moves to LibreSSL once it is in.
+- **OBJ and accessor rows:** `OBJ_*`, `i2t_ASN1_OBJECT` and `X509_NAME_oneline` are B-M; they need LibreSSL's public objects.txt NID table, as a generated header (like Cp949.hpp) or from the submodule. Accessors over public 2.x structs (`ASN1_STRING_*`, `X509_get_*_name`, `X509_NAME_*`, `X509_EXTENSION_*`, `X509_STORE_CTX_get_*`, `sk_*`) are B-S, but only useful once tier 2 creates the objects.
+- **C (13): `ENGINE_*`.** A PC has no crypto hardware engine (LibreSSL 3.9 cut this API down to the same stubs). The answers are NULL, or 0 with `ERR_R_PASSED_NULL_PARAMETER` for a NULL engine; `ENGINE_get_id` and `ENGINE_set_default` dereference even NULL and stay throwing. This is real behaviour, not a silent stub.
+- **D (5):** `sceLibreSslInit`/`InitEx`/`InitEx2`/`Term`/`GetMemoryPoolStats`. Their prototypes and pool semantics are not public; `sceSslInit` is only a neighbour.
+
+## Batch proposals (all tier 1, no new submodule)
+
+1. **Low-level digests on mbedtls (22):** `MD4_*`, `MD5_*`, `SHA1_*`, `SHA224_*`, `SHA256_*`, `SHA256`, `SHA384_*`, `SHA512_*`. Tests: guest test `core/libs/tests/GuestLibreSslDigest.cpp`, registered as `guest_libressl_digest` in a new libSceLibreSsl/CMakeLists.txt, with FIPS 180-4, RFC 1321 and RFC 1320 vectors, updates split across block boundaries, mid-stream struct copies, and the struct sizes above.
+2. **Legacy block-cipher API on mbedtls (11):** `AES_*` and `DES_*`. Tests: `guest_libressl_cipher` with FIPS-197 Appendix C and SP 800-38A CBC/CFB128/CTR vectors (including `*num`/`ecount_buf` resumption), the partial CBC tail, DES known-answer vectors, and the 244-byte `AES_KEY`.
+3. **EVP digest + HMAC on mbedtls (21):** `EVP_MD_CTX_*`, `EVP_DigestInit_ex`/`Update`/`Final_ex`, `EVP_Digest`, `EVP_MD_size`, `EVP_md5`/`sha256`/`sha384`/`sha512`, `EVP_cleanup`, `HMAC*`. Tests: RFC 4231 and RFC 2202 vectors through `HMAC` and through an `HMAC_CTX` on the guest stack (including `HMAC_Init_ex` reuse with a NULL key), plus descriptor NIDs and sizes. EVP cipher + CMAC (33 rows) is the natural follow-up.
+
+- cloud-3 review: `ENGINE_get_id` and `ENGINE_set_default` were moved from C to D in the TSV (no valid call; they stay a throw), so the final counts are 11 C and 7 D.

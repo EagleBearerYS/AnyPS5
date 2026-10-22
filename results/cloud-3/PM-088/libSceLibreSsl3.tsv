@@ -1,0 +1,88 @@
+function	class	basis
+ASN1_INTEGER_free_nid_postfix	B-S	shared code with libSceLibreSsl ASN1 family: frees a V_ASN1_INTEGER asn1_string_st
+ASN1_OBJECT_free_nid_postfix	B-S	frees only the ASN1_OBJECT_FLAG_DYNAMIC* parts of the public asn1_object_st
+ASN1_STRING_get0_data_nid_postfix	B-S	shared code with libSceLibreSsl ASN1_STRING_data: const x->data
+BIO_up_ref_nid_postfix	B-L	shared code with libSceLibreSsl BIO tier: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+BIO_vfree_nid_postfix	B-L	shared code with libSceLibreSsl BIO_free without a result: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+CRYPTO_memcmp_nid_postfix	B-S	constant-time compare (mbedtls_ct_memcmp), 0 when equal
+DH_get0_key_nid_postfix	B-S	pub/priv BIGNUMs of a DH key; DH objects only come from PEM/d2i (LibreSSL tier)
+DH_get0_pqg_nid_postfix	B-S	p/q/g BIGNUMs of a DH key; DH objects only come from PEM/d2i (LibreSSL tier)
+DSA_get0_key_nid_postfix	B-S	pub/priv BIGNUMs of a DSA key; DSA objects only come from PEM/d2i (LibreSSL tier)
+DSA_get0_pqg_nid_postfix	B-S	p/q/g BIGNUMs of a DSA key; DSA objects only come from PEM/d2i (LibreSSL tier)
+EC_KEY_up_ref_nid_postfix	B-S	shared code with libSceLibreSsl EC_KEY: refcount increment
+ERR_load_crypto_strings_nid_postfix	B-S	shared code with libSceLibreSsl ERR family: loads string tables (static here)
+ERR_peek_last_error_nid_postfix	B-S	shared code with libSceLibreSsl ERR queue: newest code without removing it
+ERR_print_errors_cb_nid_postfix	B-M	shared code with libSceLibreSsl ERR queue: LibreSSL line format per error to the guest callback (APS5_VABI), queue emptied
+EVP_CIPHER_CTX_set_flags_nid_postfix	B-S	shared code with libSceLibreSsl EVP_CIPHER_CTX: ORs ctx->flags (EVP_CIPHER_CTX_FLAG_WRAP_ALLOW for the wrap ciphers)
+EVP_DigestInit_nid_postfix	B-S	shared code with libSceLibreSsl EVP_DigestInit_ex after EVP_MD_CTX_init
+EVP_DigestSignFinal_nid_postfix	B-M	shared code with libSceLibreSsl EVP_DigestVerifyFinal's key tier: signature or length query with NULL sig
+EVP_DigestSignInit_nid_postfix	B-M	shared code with libSceLibreSsl EVP_DigestVerifyInit's key tier: RSA PKCS#1/PSS, ECDSA, HMAC mac key
+EVP_EncryptInit_nid_postfix	B-S	shared code with libSceLibreSsl EVP_EncryptInit_ex after EVP_CIPHER_CTX_init
+EVP_MD_CTX_free_nid_postfix	B-S	shared code with libSceLibreSsl EVP_MD_CTX_destroy
+EVP_MD_CTX_new_nid_postfix	B-S	shared code with libSceLibreSsl EVP_MD_CTX_create
+EVP_PKCS82PKEY_nid_postfix	B-L	PKCS8_PRIV_KEY_INFO objects come from the ASN.1/BIO tier (LibreSSL)
+EVP_PKEY_CTX_ctrl_nid_postfix	B-M	EVP_PKEY_CTRL_RSA_PADDING/PSS_SALTLEN/MGF1_MD/OAEP_MD (public evp.h/rsa.h codes) on the key tier
+EVP_PKEY_CTX_new_nid_postfix	B-S	opaque context over an EVP_PKEY of the key tier
+EVP_PKEY_decrypt_init_nid_postfix	B-S	marks the EVP_PKEY_CTX for decryption, default PKCS#1 padding
+EVP_PKEY_decrypt_nid_postfix	B-M	shared code with libSceLibreSsl RSA_private_decrypt with the context padding; length query with NULL out
+EVP_PKEY_encrypt_init_nid_postfix	B-S	marks the EVP_PKEY_CTX for encryption, default PKCS#1 padding
+EVP_PKEY_encrypt_nid_postfix	B-M	shared code with libSceLibreSsl RSA_public_encrypt with the context padding; length query with NULL out
+EVP_PKEY_get0_DH_nid_postfix	B-S	pkey.dh without up-ref, NULL + EVP_R_EXPECTING_A_DH_KEY
+EVP_PKEY_get0_DSA_nid_postfix	B-S	pkey.dsa without up-ref, NULL + EVP_R_EXPECTING_A_DSA_KEY
+EVP_PKEY_get0_RSA_nid_postfix	B-S	shared code with libSceLibreSsl EVP_PKEY_get1_RSA without the up-ref
+EVP_PKEY_new_mac_key_nid_postfix	B-M	EVP_PKEY_HMAC (NID 855) holding the key for EVP_DigestSign HMAC on mbedtls_md_hmac
+EVP_PKEY_set1_EC_KEY_nid_postfix	B-S	shared code with libSceLibreSsl EVP_PKEY_set1_RSA: type EVP_PKEY_EC (408), EC_KEY up-ref'd
+EVP_PKEY_size_nid_postfix	B-S	max signature/ciphertext size (RSA_size/ECDSA_size)
+EVP_PKEY_up_ref_nid_postfix	B-S	shared code with libSceLibreSsl EVP_PKEY: refcount increment
+EVP_SignFinal_nid_postfix	B-M	shared code with libSceLibreSsl EVP digest + RSA_sign/ECDSA_sign of the EVP_PKEY
+EVP_VerifyFinal_nid_postfix	B-M	shared code with libSceLibreSsl EVP digest + RSA_verify/ECDSA_verify of the EVP_PKEY
+EVP_aes_128_wrap_nid_postfix	B-S	shared code with libSceLibreSsl EVP_aes_* descriptors: RFC 3394 key wrap (NID 788) on mbedtls_nist_kw
+EVP_aes_192_wrap_nid_postfix	B-S	shared code with libSceLibreSsl EVP_aes_* descriptors: RFC 3394 key wrap (NID 789) on mbedtls_nist_kw
+EVP_aes_256_wrap_nid_postfix	B-S	shared code with libSceLibreSsl EVP_aes_* descriptors: RFC 3394 key wrap (NID 790) on mbedtls_nist_kw
+EVP_sha1_nid_postfix	B-S	shared code with libSceLibreSsl EVP_sha256 family: EVP_MD descriptor (NID 64, size 20, block 64)
+EVP_sha224_nid_postfix	B-S	shared code with libSceLibreSsl EVP_sha256 family: EVP_MD descriptor (NID 675, size 28, block 64)
+MD5_nid_postfix	B-S	shared code with libSceLibreSsl MD5_*: one-shot mbedtls_md5, static buffer when md is NULL
+OBJ_cmp_nid_postfix	B-S	compares length then data of two public asn1_object_st
+OBJ_txt2obj_nid_postfix	B-M	shared code with libSceLibreSsl OBJ NID table: name lookup (unless no_name) or dotted-OID DER encoding
+OCSP_CERTID_free_nid_postfix	B-L	shared code with libSceLibreSsl OCSP tier: OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_cert_to_id_nid_postfix	B-L	shared code with libSceLibreSsl OCSP tier: hashes issuer name/key + serial; OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OCSP_resp_find_status_nid_postfix	B-L	shared code with libSceLibreSsl OCSP tier: OCSP ASN.1 objects: mbedtls has no OCSP; LibreSSL ocsp/ with the X509 tier
+OpenSSL_version_nid_postfix	D	OPENSSL_VERSION answer is the console's LIBRESSL_VERSION_TEXT, not in tree or a public source
+PKCS7_free_nid_postfix	B-L	PKCS#7 ASN.1 objects (mbedtls_pkcs7 has its own model); LibreSSL pkcs7/
+PKCS8_PRIV_KEY_INFO_free_nid_postfix	B-L	PKCS#8 ASN.1 object; LibreSSL asn1/
+RSA_check_key_nid_postfix	B-S	shared code with libSceLibreSsl RSA: mbedtls_rsa_check_privkey on the rsa_st BIGNUMs, 1/0/-1
+RSA_get0_key_nid_postfix	B-S	shared code with libSceLibreSsl RSA: n/e/d of the rsa_st
+RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix	B-M	shared code with libSceLibreSsl RSA_padding_add_PKCS1_PSS with a separate MGF1 hash (RFC 8017)
+RSA_up_ref_nid_postfix	B-S	shared code with libSceLibreSsl RSA: refcount increment
+SHA1_nid_postfix	B-S	shared code with libSceLibreSsl SHA1_*: one-shot mbedtls_sha1, static buffer when md is NULL
+SSL_CTX_add0_chain_cert_nid_postfix	B-L	shared code with libSceLibreSsl SSL tier: SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_clear_chain_certs_nid_postfix	B-L	shared code with libSceLibreSsl SSL tier: SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_max_proto_version_nid_postfix	B-L	shared code with libSceLibreSsl SSL_CTX_ctrl: SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_set_min_proto_version_nid_postfix	B-L	shared code with libSceLibreSsl SSL_CTX_ctrl: SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_CTX_up_ref_nid_postfix	B-L	shared code with libSceLibreSsl SSL tier: SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_SESSION_up_ref_nid_postfix	B-L	shared code with libSceLibreSsl SSL tier: SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_get_client_random_nid_postfix	B-L	shared code with libSceLibreSsl SSL tier: handshake client_random; SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+SSL_up_ref_nid_postfix	B-L	shared code with libSceLibreSsl SSL tier: SSL tier: LibreSSL libssl (mbedtls lacks TLS 1.0/1.1, DTLS 1.0, NPN, OpenSSL cipher strings, info/msg callbacks)
+X509_PUBKEY_get0_param_nid_postfix	B-S	algorithm OID, key bytes and params of the public 2.x x509_pubkey_st
+X509_STORE_CTX_free_nid_postfix	B-L	shared code with libSceLibreSsl verify tier: X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_CTX_init_nid_postfix	B-L	shared code with libSceLibreSsl verify tier: X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_CTX_new_nid_postfix	B-L	shared code with libSceLibreSsl verify tier: X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_STORE_up_ref_nid_postfix	B-L	shared code with libSceLibreSsl verify tier: X509_STORE verify tier (LibreSSL x509_vfy; mbedtls_x509_crt_verify cannot drive X509_STORE_CTX callbacks)
+X509_get0_extensions_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: cert_info->extensions
+X509_get0_notAfter_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: cert_info->validity->notAfter
+X509_get0_notBefore_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: cert_info->validity->notBefore
+X509_get0_signature_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: signature bit string and sig_alg
+X509_get_ext_count_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: sk_num of the extensions
+X509_get_ext_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: sk_value of the extensions
+X509_get_version_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: ASN1_INTEGER_get(cert_info->version)
+X509_getm_notAfter_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: mutable validity->notAfter
+X509_getm_notBefore_nid_postfix	B-S	shared code with libSceLibreSsl X509 accessors: mutable validity->notBefore
+X509_up_ref_nid_postfix	B-S	shared code with libSceLibreSsl X509: atomic increment of x->references
+d2i_ASN1_INTEGER_nid_postfix	B-M	DER INTEGER via mbedtls_asn1_get_tag into an asn1_string_st (reuse *a, advance *pp, V_ASN1_NEG_INTEGER)
+d2i_ECParameters_nid_postfix	B-M	named-curve OID via mbedtls_oid_get_ec_grp into an EC_KEY; explicit curve parameters would need LibreSSL
+d2i_PKCS7_nid_postfix	B-L	PKCS#7 ASN.1 objects; LibreSSL pkcs7/
+d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix	B-L	BIO tier + PKCS#8 ASN.1; LibreSSL
+d2i_PrivateKey_bio_nid_postfix	B-L	shared code with libSceLibreSsl BIO tier: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+d2i_RSAPublicKey_bio_nid_postfix	B-L	shared code with libSceLibreSsl BIO tier: needs the BIO tier (public 2.x bio_st/BIO_METHOD; LibreSSL bio/, not in mbedtls)
+d2i_X509_bio_nid_postfix	B-L	shared code with libSceLibreSsl BIO and X509 tiers: X509 object tier: full 2.x x509_st graph a title may read; LibreSSL submodule (mbedtls_x509_crt has no such objects)
+o2i_ECPublicKey_nid_postfix	B-S	point bytes into the EC_KEY's public key (mbedtls_ecp_point_read_binary), advances *in

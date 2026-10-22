@@ -1,0 +1,87 @@
+function	class	basis
+sceAudioOut2AllAudioMainToHeadphoneForDiag	D	diagnostic/debug control; debug-only, signature unknown
+sceAudioOut2ArbitrationInitialize	D	AudioOut2 service lifecycle; effect on open contexts/ports and result when not started are unknown (debt), host sceAudioOut2Initialize keeps no state (core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp:14)
+sceAudioOut2ContextBedWrite	D	port registry/IPC/report hook of the system audio service; signature and contract unpublished
+sceAudioOut2DebugStateCtrl	D	diagnostic/debug control; debug-only, signature unknown
+sceAudioOut2GetAmbisonicsEncodeCoefficients	D	signature unknown (debt); the SN3D/ACN math exists (Sn3d core/libs/prx/libSceAudioOut/src/AudioOut2SpeakerArray.cpp:39) but argument order, normalisation and channel count are not established
+sceAudioOut2GetHrtfIdForCronos	D	3D audio/HRTF/TV-correction data from system audio settings; signature and layout unknown
+sceAudioOut2GetIpcHandle	D	port registry/IPC/report hook of the system audio service; signature and contract unpublished
+sceAudioOut2GetSystemStateEx	D	Ex result layout unknown; neighbour sceAudioOut2GetSystemState (core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp:24)
+sceAudioOut2GetTvCorrectionInfo	D	3D audio/HRTF/TV-correction data from system audio settings; signature and layout unknown
+sceAudioOut2InitializeEx	D	Ex variant of an implemented AudioOut2 call; the extra parameter/result layout is unknown (debt: unknown signature)
+sceAudioOut2LoPortGetStateEx	D	Ex result layout unknown; neighbour sceAudioOut2LoPortGetState (core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp:65)
+sceAudioOut2LoTerminate	D	AudioOut2 service lifecycle; effect on open contexts/ports and result when not started are unknown (debt), host sceAudioOut2Initialize keeps no state (core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp:14)
+sceAudioOut2MasteringInit	B-S	only nonzero flags throw (core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp:20); debt records the PS5 module: 0x80268006 before AudioOut2 init, 0 when already initialized, else 0x80268201 (SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_API_PARAM, same file) for nonzero flags; needs init/mastering flags
+sceAudioOut2MasteringInitEx	D	Ex variant of an implemented AudioOut2 call; the extra parameter/result layout is unknown (debt: unknown signature)
+sceAudioOut2MbusInit	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetCaesarParam	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetConnections	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetDeviceConnections	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetHeadphoneOutMode	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetMorpheusParam	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetPortConnections	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetPortStatuses	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusSetSparkParam	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2MbusUserLoginFor3DAudio	D	system audio-bus (Mbus) routing control; private system service, signature unknown
+sceAudioOut2PortCreateEx	D	Ex variant of an implemented AudioOut2 call; the extra parameter/result layout is unknown (debt: unknown signature)
+sceAudioOut2PortRegister	D	port registry/IPC/report hook of the system audio service; signature and contract unpublished
+sceAudioOut2PortUnregister	D	port registry/IPC/report hook of the system audio service; signature and contract unpublished
+sceAudioOut2ReportRegisterHandler	D	port registry/IPC/report hook of the system audio service; signature and contract unpublished
+sceAudioOut2ReportUnregisterHandler	D	port registry/IPC/report hook of the system audio service; signature and contract unpublished
+sceAudioOut2SetDebugHeadphoneMode	D	diagnostic/debug control; debug-only, signature unknown
+sceAudioOut2Terminate	D	AudioOut2 service lifecycle; effect on open contexts/ports and result when not started are unknown (debt), host sceAudioOut2Initialize keeps no state (core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp:14)
+sceAudioOut2UserCreateEx	D	Ex variant of an implemented AudioOut2 call; the extra parameter/result layout is unknown (debt: unknown signature)
+sceAudioOutArbitrationInitialize	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutAssignHRTF	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutAttachToApplicationByPid	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutChangeAppModuleState	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutCustomHrtfIsExist	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutDetachFromApplicationByPid	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutDeviceIdOpen	D	signature known (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:602) but the device-ID space and its mapping to host outputs are undocumented (debt)
+sceAudioOutEnable3DAudioByArbitration	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutEnable3DAudioForUser	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutEnableCinematicVrRotation	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutEnableMonoHpOutput	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutEnableTVCorrection	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutEnableTVVirtual	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutEnableVrControllerLowPowerMode	D	process focus/arbitration/3D-audio/HRTF/TV/VR control of the system audio service; signature unknown and the 'absent device' error values are not in the tree
+sceAudioOutExConfigureOutputMode	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutExGetLastOutputTime	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutExGetOutputInfo	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutExGetSystemInfo	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutExPtClose	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutExPtGetLastOutputTime	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutExPtOpen	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutExSystemInfoIsSupportedAudioOutExMode	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutGetFocusEnablePid	D	handle/bus status query; signature and record layout unknown (debt)
+sceAudioOutGetHandleStatusInfo	D	handle/bus status query; signature and record layout unknown (debt)
+sceAudioOutGetInfo	D	handle/bus status query; signature and record layout unknown (debt)
+sceAudioOutGetInfoOpenNum	D	handle/bus status query; signature and record layout unknown (debt)
+sceAudioOutGetSimulatedBusUsableStatusByBusType	D	handle/bus status query; signature and record layout unknown (debt)
+sceAudioOutGetSimulatedHandleStatusInfo	D	handle/bus status query; signature and record layout unknown (debt)
+sceAudioOutGetSimulatedHandleStatusInfo2	D	handle/bus status query; signature and record layout unknown (debt)
+sceAudioOutMasteringGetState	D	legacy mastering API; signature and state layout unknown (neighbour sceAudioOut2Mastering* in core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp)
+sceAudioOutMasteringInit	D	legacy mastering API; signature and state layout unknown (neighbour sceAudioOut2Mastering* in core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp)
+sceAudioOutMasteringSetParam	D	legacy mastering API; signature and state layout unknown (neighbour sceAudioOut2Mastering* in core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp)
+sceAudioOutMasteringTerm	D	legacy mastering API; signature and state layout unknown (neighbour sceAudioOut2Mastering* in core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp)
+sceAudioOutOpenEx	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutPtClose	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutPtGetLastOutputTime	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutPtOpen	D	port-open/time variant with unknown signature (debt); neighbours sceAudioOutOpen (core/libs/prx/libSceAudioOut/src/AudioOut.cpp:410), sceAudioOutGetLastOutputTime (:548), sceAudioOutExOpen (:708)
+sceAudioOutSetAllMute	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetCaesarVolume	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetChatBalance	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetHeadphoneOutMode	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetMainOutput	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetPadJackVolume	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetPadSpkVolume	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetRecMode	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetSparkEQ	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetSystemDebugState	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetUsbVolume	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSetVolumeDown	D	system-settings setter used by the shell; signature and the result for an application caller are unknown
+sceAudioOutSysConfigureOutputMode	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutSysGetMonitorInfo	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutSysGetOutputInfo	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutSysGetSystemInfo	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
+sceAudioOutSysHdmiMonitorInfoIsSupportedAudioOutMode	D	HDMI output mode/system/monitor info; record layouts and mode bits unknown (neighbours sceAudioOutExGetMonitorInfo core/libs/prx/libSceAudioOut/src/AudioOut.cpp:700, sceAudioOutSysGetHdmiMonitorInfo :637 only zero their records)
