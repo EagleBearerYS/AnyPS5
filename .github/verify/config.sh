@@ -1,0 +1,4 @@
+BASE=da54c652e30b59cdc54087e9c1fc9e46237964ca
+REPEAT=20
+EXTRA_TESTS='guest_raise_in_system_call|guest_semaphore_handoff'
+NO_BEFORE=1
