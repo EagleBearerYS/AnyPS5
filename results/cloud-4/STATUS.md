@@ -1,5 +1,5 @@
-BUSY BF-148
-since: 2026-10-22T12:23Z (claimed BF-148: nested image table, one V# behind a record pointer feeding two T# reads)
+READY
+since: 2026-10-22T12:54Z (BF-148 done: fork fix/shader-nested-table-shared-vsharp = 0e78959001, result results/cloud-4/BF-148.md)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
