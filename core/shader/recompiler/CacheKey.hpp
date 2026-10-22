@@ -336,6 +336,7 @@ private:
         append(key, value.deviceScopeLdsMemoryBarriers);
         append(key, value.gpuResolvedImages);
         append(key, value.descriptorMemory);
+        append(key, value.deviceImageTables);
     }
 };
 
