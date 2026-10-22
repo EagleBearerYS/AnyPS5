@@ -1,0 +1,4 @@
+BASE=8499ea52e571b0edfc1feecfd3f6b9944012b359
+REPEAT=1
+EXTRA_TESTS='agc_driver_msaa_dcc_compared_import_2|agc_driver_msaa_dcc_compared_import_4|agc_driver_msaa_dcc_compared_import_8|agc_driver_msaa_dcc_clear_2|agc_driver_msaa_dcc_clear_4|agc_driver_msaa_dcc_clear_8'
+VALIDATION=1
