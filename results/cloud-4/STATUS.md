@@ -1,5 +1,5 @@
-READY
-since: 2026-10-22T03:08Z (finished BF-133: PM-093 rework to rwlockattr_settype_np and MutexattrSetkind, result results/cloud-4/BF-133.md)
+BUSY BF-136
+since: 2026-10-22T04:48Z (claimed BF-136: write index (BF-124) into PR shape)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
