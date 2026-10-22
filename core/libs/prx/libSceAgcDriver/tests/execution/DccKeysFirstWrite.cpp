@@ -301,6 +301,21 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
         Require(read == expected && waited == wait, text);
         device.WaitIdle();
     };
+    fillKeys(0x00, DccKeys::Clear0000);
+    Dispatch(device, WriteCode, writeData, false);
+    Require(recorder->PendingWriteOverlaps(AddressOf(keys), KeyBytes), "the first write after a key fill left no pending store over the keys");
+    const auto pending = image->ProvedKeys();
+    Require(pending == DccKeys::Uncompressed, "a key read under the first write's pending key store did not read the keys uncompressed");
+    if (AgcDriver::GuestMemory::Watched(AddressOf(keys), KeyBytes)) {
+        const auto before = AgcDriver::Graphics::KeyProofCounts().proved;
+        const auto again = AgcDriver::Graphics::ProvedClearKeys(image->Descriptor(), image->GuestBytes(), image->KeyProof());
+        std::snprintf(message, sizeof(message), "a key read answered by the pending first write's key store left no proof: the next read %s with the keys %s", AgcDriver::Graphics::KeyProofCounts().proved == before + 1 ? "was proved" : "scanned again", AgcDriver::Graphics::DccKeysName(again));
+        Require(again == DccKeys::Uncompressed && AgcDriver::Graphics::KeyProofCounts().proved == before + 1, message);
+    }
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    RequireKeys(keys, 0xff, "the keys of a first write whose pending key store answered a key read, after its write-back");
+    requireTexels("a first write whose pending key store answered a key read");
     std::vector<std::uint32_t> clearTailData(16, 0u);
     const auto tail = BufferDescriptor(keys + KeyBytes / 2, KeyBytes / 2);
     std::copy(tail.begin(), tail.end(), clearTailData.begin());
