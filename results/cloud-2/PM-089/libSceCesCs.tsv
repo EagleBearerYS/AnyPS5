@@ -1,0 +1,250 @@
+function	class	claimed_by
+sceCesBig5ToUcs2	B-S	claimed by #9107 (jacob6769, implements)
+sceCesBig5ToUtf16	B-S	claimed by #9107 (jacob6769, implements)
+sceCesBig5ToUtf16be	B-S	claimed by #9107 (jacob6769, implements)
+sceCesBig5ToUtf16le	B-S	claimed by #9107 (jacob6769, implements)
+sceCesBig5ToUtf32	B-S	claimed by #9107 (jacob6769, implements)
+sceCesBig5ToUtf32be	B-S	claimed by #9107 (jacob6769, implements)
+sceCesBig5ToUtf32le	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucCnToUcs2	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnToUtf16	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnToUtf16be	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnToUtf16le	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnToUtf32	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnToUtf32be	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnToUtf32le	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnToUtf8	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucCnUcsProfileSetSbcs	D	unclaimed
+sceCesEucJpToUtf16	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucJpToUtf16be	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucJpToUtf16le	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucJpToUtf32	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucJpToUtf32be	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucJpToUtf32le	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesEucJpUcsProfileSetSbcs	D	unclaimed
+sceCesEucKrToUcs2	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucKrToUtf16	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucKrToUtf16be	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucKrToUtf16le	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucKrToUtf32	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucKrToUtf32be	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucKrToUtf32le	B-S	claimed by #9107 (jacob6769, implements)
+sceCesEucKrUcsProfileSetSbcs	D	unclaimed
+sceCesGbToUcs2	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbToUtf16	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbToUtf16be	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbToUtf16le	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbToUtf32	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbToUtf32be	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbToUtf32le	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbToUtf8	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesGbUcsProfileSet4ByteCharRange	D	unclaimed
+sceCesGbUcsProfileSetSbcs	D	unclaimed
+sceCesGbUcsProfileSetUdaMapping	D	unclaimed
+sceCesIso2022JpUcsProfileSetSbcs	D	unclaimed
+sceCesIso2022StrGetUcs2Len	B-S	unclaimed
+sceCesIso2022StrGetUtf16Len	B-S	unclaimed
+sceCesIso2022StrGetUtf32Len	B-S	unclaimed
+sceCesIso2022StrGetUtf8Len	B-S	unclaimed
+sceCesIso2022StrToUcs2Str	B-S	unclaimed
+sceCesIso2022StrToUtf16Str	B-S	unclaimed
+sceCesIso2022StrToUtf32Str	B-S	unclaimed
+sceCesIso2022StrToUtf8Str	B-M	unclaimed
+sceCesIso2022UcsContextInit	B-S	unclaimed
+sceCesIso2022UcsContextInitCopy	B-S	unclaimed
+sceCesJisGetLevel	D	unclaimed
+sceCesJisX0208ToSJisCode	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesJisX0213ToSJisCode	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesJiscsToUcs	D	unclaimed
+sceCesMbcToUcs2	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcToUtf16	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcToUtf16be	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcToUtf16le	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcToUtf32	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcToUtf32be	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcToUtf32le	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcToUtf8	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcsStrGetUtf16Len	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcsStrGetUtf32Len	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcsStrToUtf16Str	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcsStrToUtf32Str	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcsUcsContextInitCopy	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesMbcsUcsSetMbcsReplacementCharCode	D	unclaimed
+sceCesMbcsUcsSetMbcsReplacementCharUCode	D	unclaimed
+sceCesRefersUcsProfileAscii	B-S	unclaimed
+sceCesRefersUcsProfileAsciiWithKatakana	B-S	unclaimed
+sceCesRefersUcsProfileBs4730	B-S	unclaimed
+sceCesRefersUcsProfileCp1253	B-S	unclaimed
+sceCesRefersUcsProfileCp1254	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp1255	B-S	unclaimed
+sceCesRefersUcsProfileCp1256	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp1257	B-S	unclaimed
+sceCesRefersUcsProfileCp1258	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp437	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp737	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp775	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp850	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp852	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp855	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp857	B-S	unclaimed
+sceCesRefersUcsProfileCp858	B-S	unclaimed
+sceCesRefersUcsProfileCp860	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp861	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp862	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp863	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp864	B-S	unclaimed
+sceCesRefersUcsProfileCp865	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp866	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileCp869	B-S	unclaimed
+sceCesRefersUcsProfileCp874	B-S	unclaimed
+sceCesRefersUcsProfileGbT1988	B-S	unclaimed
+sceCesRefersUcsProfileGbT1988Tilde0x7e	B-S	unclaimed
+sceCesRefersUcsProfileIso8859_1	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_10	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_11	B-S	unclaimed
+sceCesRefersUcsProfileIso8859_13	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_14	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_15	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_16	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_2	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_3	B-S	unclaimed
+sceCesRefersUcsProfileIso8859_4	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_5	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileIso8859_6	B-S	unclaimed
+sceCesRefersUcsProfileIso8859_7	B-S	unclaimed
+sceCesRefersUcsProfileIso8859_8	B-S	unclaimed
+sceCesRefersUcsProfileIso8859_9	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileJisX0201	B-S	unclaimed
+sceCesRefersUcsProfileJisX0201Katakana	B-S	unclaimed
+sceCesRefersUcsProfileJisX0201Roman	B-S	unclaimed
+sceCesRefersUcsProfileJisX0201RomanTilde0x7e	B-S	unclaimed
+sceCesRefersUcsProfileJisX0201Tilde0x7e	B-S	unclaimed
+sceCesRefersUcsProfileKoi8R	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileKoi8U	B-S	claimed by #8923 (Niko, implements)
+sceCesRefersUcsProfileKsX1003	B-S	unclaimed
+sceCesRefersUcsProfileKsX1003Tilde0x7e	B-S	unclaimed
+sceCesSJisCodeToJisX0208	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisCodeToJisX0213	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisGetCode	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisPutCode	B-S	claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUcs2	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUtf16	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUtf16be	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUtf16le	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUtf32	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUtf32be	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUtf32le	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisToUtf8	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSJisUcsProfileSetSbcs	D	unclaimed
+sceCesSbcToUcs2	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSbcToUtf16	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSbcToUtf16be	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSbcToUtf16le	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSbcToUtf32	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSbcToUtf32be	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesSbcToUtf32le	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcs2StrGetIso2022Len	B-S	unclaimed
+sceCesUcs2StrToIso2022Str	B-S	unclaimed
+sceCesUcs2ToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUcs2ToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcs2ToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcs2ToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUcs2ToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcs2ToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUcs2ToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcs2ToSbc	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcs2ToUhc	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUcsProfileInitEucCnGb2312	B-M	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcsProfileInitEucJis2004	B-L	unclaimed
+sceCesUcsProfileInitEucJpX0208	B-M	claimed by #9204 (Simone, implements)
+sceCesUcsProfileInitEucJpX0208Ss2	B-S	claimed by #9204 (Simone, implements)
+sceCesUcsProfileInitEucJpX0208Ss2Ss3	B-S	claimed by #9204 (Simone, implements)
+sceCesUcsProfileInitGb18030_2000	B-M	claimed by #9210 (Simone, implements)
+sceCesUcsProfileInitGb18030_2005	B-M	claimed by #9210 (Simone, implements)
+sceCesUcsProfileInitGbkCp936	B-M	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUcsProfileInitIso2022JpCp50221	B-S	unclaimed
+sceCesUcsProfileInitIso2022JpCp50222	B-S	unclaimed
+sceCesUcsProfileInitIso2022JpRfc1468	B-S	unclaimed
+sceCesUcsProfileInitSJis1997X0208	B-M	claimed by #9204 (Simone, implements)
+sceCesUcsProfileInitSJis2004X0213	B-L	unclaimed
+sceCesUcsToJiscs	D	unclaimed
+sceCesUhcToUcs2	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUhcToUtf16	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUhcToUtf16be	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUhcToUtf16le	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUhcToUtf32	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUhcToUtf32be	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUhcToUtf32le	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUhcUcsProfileSetSbcs	D	unclaimed
+sceCesUtf16StrGetIso2022Len	B-S	unclaimed
+sceCesUtf16StrGetMbcsLen	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16StrToIso2022Str	B-S	unclaimed
+sceCesUtf16StrToMbcsStr	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16ToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16ToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16ToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16ToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16ToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16ToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUtf16ToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16ToSbc	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16ToUhc	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16beToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16beToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16beToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16beToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16beToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16beToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUtf16beToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16beToSbc	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16beToUhc	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16leToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16leToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16leToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16leToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf16leToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16leToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUtf16leToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16leToSbc	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf16leToUhc	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32StrGetIso2022Len	B-S	unclaimed
+sceCesUtf32StrGetMbcsLen	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32StrToIso2022Str	B-S	unclaimed
+sceCesUtf32StrToMbcsStr	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32ToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32ToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32ToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32ToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32ToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32ToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUtf32ToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32ToSbc	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32ToUhc	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32beToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32beToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32beToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32beToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32beToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32beToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUtf32beToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32beToSbc	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32beToUhc	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32leToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32leToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32leToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32leToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf32leToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32leToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUtf32leToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32leToSbc	B-S	claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf32leToUhc	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf8StrGetIso2022Len	B-S	unclaimed
+sceCesUtf8StrToIso2022Str	B-M	unclaimed
+sceCesUtf8ToBig5	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf8ToEucCn	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf8ToEucJp	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf8ToEucKr	B-S	claimed by #9107 (jacob6769, implements)
+sceCesUtf8ToGb	B-S	claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf8ToMbc	B-S	claimed by #9175 (Simone, implements)
+sceCesUtf8ToSJis	B-S	claimed by #8967 (simonbronk, implements); claimed by #8972 (simonbronk, implements); claimed by #8976 (Simone, implements); claimed by #8993 (Simone, implements); claimed by #9175 (Simone, implements); claimed by #9204 (Simone, implements); claimed by #9210 (Simone, implements)
+sceCesUtf8ToUhc	B-S	claimed by #9107 (jacob6769, implements)

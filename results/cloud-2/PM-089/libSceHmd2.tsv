@@ -1,0 +1,114 @@
+function	class	claimed_by
+Hmd2BeforeInitializeError0004	C-real	unclaimed
+Hmd2BeforeInitializeError002C	C-real	unclaimed
+Hmd2BeforeInitializeError1002	C-real	unclaimed
+Hmd2BeforeInitializeError1003	C-real	unclaimed
+Hmd2BeforeInitializeMinusOne	C-real	unclaimed
+Hmd2BeforeInitializeNotInitialized	C-real	unclaimed
+Hmd2BeforeInitializeParameterInvalid	C-real	unclaimed
+Hmd2BeforeInitializeParameterNull	C-real	unclaimed
+Hmd2BeforeInitializeReprojectionNotInitialized	C-real	unclaimed
+Hmd2BeforeInitializeValue0400	C-real	unclaimed
+Hmd2BeforeInitializeValue20000	C-real	unclaimed
+Hmd2BeforeInitializeZero	C-real	unclaimed
+Hmd2CheckAllSixThenZero	C-real	unclaimed
+Hmd2CheckFirstAndThirdThenError1003	C-real	unclaimed
+Hmd2CheckFirstAndThirdThenZero	C-real	unclaimed
+Hmd2CheckFirstThenError0004	C-real	unclaimed
+Hmd2CheckFirstThenError1002	C-real	unclaimed
+Hmd2CheckFirstThenError1003	C-real	unclaimed
+Hmd2CheckFirstThenError1010	C-real	unclaimed
+Hmd2CheckFirstThenError800d0203	C-real	unclaimed
+Hmd2CheckFirstThenMinusOne	C-real	unclaimed
+Hmd2CheckFirstThenParameterInvalid	C-real	unclaimed
+Hmd2CheckFirstThenZero	C-real	unclaimed
+Hmd2CheckFirstTwoThenError1002	C-real	unclaimed
+Hmd2CheckFirstTwoThenError1003	C-real	unclaimed
+Hmd2CheckFirstTwoThenParameterInvalid	C-real	unclaimed
+Hmd2CheckSecondThenError002C	C-real	unclaimed
+Hmd2CheckSecondThenError1002	C-real	unclaimed
+Hmd2CheckSecondThenInvalidHandle	C-real	unclaimed
+Hmd2CheckSecondThenParameterInvalid	C-real	unclaimed
+Hmd2IndexZeroCheckSecondThenZero	C-real	unclaimed
+Hmd2SlotUpTo1CheckSecondThenError1002	C-real	unclaimed
+Hmd2SlotUpTo1ThenError1002	C-real	unclaimed
+Hmd2SlotUpTo1ThenMinusOne	C-real	unclaimed
+Hmd2SlotUpTo2CheckSecondThenError002C	C-real	unclaimed
+Hmd2SlotUpTo2ThenError1002	C-real	unclaimed
+Hmd2SlotUpTo2ThenError1003	C-real	unclaimed
+Hmd2SlotUpTo2ThenMinusOne	C-real	unclaimed
+Hmd2SlotUpTo3CheckSecondThirdThenZero	C-real	unclaimed
+Hmd2WriteFourConstants	C-real	unclaimed
+Hmd2WriteSixHalvesThenInvalidHandle	C-real	unclaimed
+Hmd2WriteSize0x2000Align0x100	C-real	unclaimed
+Hmd2WriteStateTwo	C-real	unclaimed
+Hmd2WriteTwelveHalvesThenInvalidHandle	C-real	unclaimed
+sceHmd2GazeActivateGazeTracking	C-real	unclaimed
+sceHmd2GazeGetCalibrationData	C-real	unclaimed
+sceHmd2GazeGetCalibrationDataMaxSize	C-real	unclaimed
+sceHmd2GazeGetDeviceStatus	C-real	unclaimed
+sceHmd2GazeGetResult	D	claimed by #8907 (hypermist, changes)
+sceHmd2GazeGetResultForFoveatedRendering	D	claimed by #8907 (hypermist, changes)
+sceHmd2GazeGetUserCalibrationStatus	C-real	unclaimed
+sceHmd2GazeInsertRawDataWithHandle	C-real	unclaimed
+sceHmd2GazeObjectSelectionGetSelectedObject	C-real	unclaimed
+sceHmd2GazeObjectSelectionInitialize	C-real	unclaimed
+sceHmd2GazeObjectSelectionQueryMemory	C-real	unclaimed
+sceHmd2GazeObjectSelectionTerminate	C-real	unclaimed
+sceHmd2GazeSetEnabledEye	C-real	unclaimed
+sceHmd2GazeSetUserCalibrationData	C-real	unclaimed
+sceHmd2GazeSetUserCalibrationPoint	C-real	unclaimed
+sceHmd2GazeStartUserCalibration	C-real	unclaimed
+sceHmd2GazeStopUserCalibration	C-real	unclaimed
+sceHmd2InternalDfuSend	D	unclaimed
+sceHmd2InternalGetDeviceId	D	unclaimed
+sceHmd2InternalGetVr2dData	D	unclaimed
+sceHmd2InternalImageCloseBySlot	D	unclaimed
+sceHmd2InternalImageOpenBySlot	D	unclaimed
+sceHmd2InternalImageStartBySlot	D	unclaimed
+sceHmd2InternalImageStopBySlot	D	unclaimed
+sceHmd2InternalLedDetectorCloseBySlot	D	unclaimed
+sceHmd2InternalLedDetectorOpenBySlot	D	unclaimed
+sceHmd2InternalLedDetectorStartBySlot	D	unclaimed
+sceHmd2InternalLedDetectorStopBySlot	D	unclaimed
+sceHmd2InternalSetBrightness	D	unclaimed
+sceHmd2InternalSetCameraSeeThroughMode	D	unclaimed
+sceHmd2InternalSetDeviceConnection	D	unclaimed
+sceHmd2InternalSetFakeLensSeparationDistance	D	unclaimed
+sceHmd2InternalSetPortConnection	D	unclaimed
+sceHmd2InternalSetPortStatus	D	unclaimed
+sceHmd2InternalSetSidetone	D	unclaimed
+sceHmd2InternalSetVibrationMode	D	unclaimed
+sceHmd2ReprojectionBeginFrame	D	claimed by #8645 (Niko, implements)
+sceHmd2ReprojectionClear	D	unclaimed
+sceHmd2ReprojectionClearUserEventEnd	C-real	unclaimed
+sceHmd2ReprojectionClearUserEventStart	C-real	unclaimed
+sceHmd2ReprojectionDisableMirroring	D	claimed by #8645 (Niko, implements)
+sceHmd2ReprojectionDisableVrMode	D	claimed by #8645 (Niko, implements)
+sceHmd2ReprojectionEnableMirroring	D	unclaimed
+sceHmd2ReprojectionEnableVrMode	D	claimed by #7658 (primesoul-web, implements)
+sceHmd2ReprojectionGetCurrentOutput	C-real	unclaimed
+sceHmd2ReprojectionGetPredictedDisplayTime	D	unclaimed
+sceHmd2ReprojectionGetStatus	D	claimed by #8645 (Niko, implements)
+sceHmd2ReprojectionInitialize	D	claimed by #7658 (primesoul-web, implements)
+sceHmd2ReprojectionQueryBufferSizeAlign	D	claimed by #7658 (primesoul-web, implements)
+sceHmd2ReprojectionSeeThroughDraw	D	unclaimed
+sceHmd2ReprojectionSeeThroughIC	D	unclaimed
+sceHmd2ReprojectionSet	D	unclaimed
+sceHmd2ReprojectionSetAllowPositionalReprojection	D	claimed by #7658 (primesoul-web, implements)
+sceHmd2ReprojectionSetEventGpuEnd	D	unclaimed
+sceHmd2ReprojectionSetEventGpuStart	D	unclaimed
+sceHmd2ReprojectionSetMirroringOption	D	claimed by #8645 (Niko, implements)
+sceHmd2ReprojectionSetParam	D	unclaimed
+sceHmd2ReprojectionSetParamWithBuffer	D	unclaimed
+sceHmd2ReprojectionSetRenderConfig	D	unclaimed
+sceHmd2ReprojectionSetTiming	D	claimed by #7658 (primesoul-web, implements)
+sceHmd2ReprojectionSetUserEventEnd	C-real	unclaimed
+sceHmd2ReprojectionSetUserEventStart	C-real	unclaimed
+sceHmd2ReprojectionTerminate	D	claimed by #7658 (primesoul-web, implements)
+sceHmd2ReprojectionVideoOutEq	D	unclaimed
+sceHmd2ReprojectionWaitShader	D	unclaimed
+sceHmd2RpeorjectionSetParam	D	unclaimed
+sceHmd2SeeThroughCallbackGetPoseDataFunc	D	unclaimed
+sceHmd2SetFieldOfView	C-real	unclaimed
+sceHmd2SetIpdOffset	C-real	unclaimed

@@ -1,0 +1,160 @@
+function	class	claimed_by
+sceNetAddrConfig6GetInfo	D	unclaimed
+sceNetAddrConfig6Start	D	unclaimed
+sceNetAddrConfig6Stop	D	unclaimed
+sceNetAllocateAllRouteInfo	D	unclaimed
+sceNetAllocateAllRouteInfo6	D	unclaimed
+sceNetBandwidthControlGetDataTraffic	D	unclaimed
+sceNetBandwidthControlGetDefaultParam	D	unclaimed
+sceNetBandwidthControlSetDefaultParam	D	unclaimed
+sceNetConfigAddArp	D	unclaimed
+sceNetConfigAddArpWithInterface	D	unclaimed
+sceNetConfigAddIfaddr	D	unclaimed
+sceNetConfigAddIfaddr6	D	unclaimed
+sceNetConfigAddMRoute	D	unclaimed
+sceNetConfigAddRoute	D	unclaimed
+sceNetConfigAddRoute6	D	unclaimed
+sceNetConfigAddRouteWithInterface	D	unclaimed
+sceNetConfigCleanUpAllInterfaces	D	unclaimed
+sceNetConfigDelArp	D	unclaimed
+sceNetConfigDelArpWithInterface	D	unclaimed
+sceNetConfigDelDefaultRoute	D	unclaimed
+sceNetConfigDelDefaultRoute6	D	unclaimed
+sceNetConfigDelDefaultRouteDev	D	unclaimed
+sceNetConfigDelIfaddr	D	unclaimed
+sceNetConfigDelIfaddr6	D	unclaimed
+sceNetConfigDelMRoute	D	unclaimed
+sceNetConfigDelRoute	D	unclaimed
+sceNetConfigDelRoute6	D	unclaimed
+sceNetConfigDownInterface	D	unclaimed
+sceNetConfigEtherGetLinkMode	D	unclaimed
+sceNetConfigEtherPostPlugInOutEvent	D	unclaimed
+sceNetConfigEtherSetLinkMode	D	unclaimed
+sceNetConfigFlushRoute	D	unclaimed
+sceNetConfigFlushRoute6	D	unclaimed
+sceNetConfigGetDefaultRoute	B-S	unclaimed
+sceNetConfigGetDefaultRoute6	B-M	unclaimed
+sceNetConfigGetIfFlags	B-M	unclaimed
+sceNetConfigGetIfaddr	D	unclaimed
+sceNetConfigGetIfaddr6	D	unclaimed
+sceNetConfigRoutingShowRoutingConfig	D	unclaimed
+sceNetConfigRoutingShowtCtlVar	D	unclaimed
+sceNetConfigRoutingStart	D	unclaimed
+sceNetConfigRoutingStop	D	unclaimed
+sceNetConfigSetDefaultRoute	D	unclaimed
+sceNetConfigSetDefaultRoute6	D	unclaimed
+sceNetConfigSetDefaultRouteDev	D	unclaimed
+sceNetConfigSetDefaultScope	D	unclaimed
+sceNetConfigSetIfFlags	D	unclaimed
+sceNetConfigSetIfLinkLocalAddr6	D	unclaimed
+sceNetConfigSetIfaddr	D	unclaimed
+sceNetConfigSetIfaddr6	D	unclaimed
+sceNetConfigSetIfaddr6WithFlags	D	unclaimed
+sceNetConfigSetIfmtu	D	unclaimed
+sceNetConfigUnsetIfFlags	D	unclaimed
+sceNetConfigUpInterface	D	unclaimed
+sceNetConfigUpInterfaceWithFlags	D	unclaimed
+sceNetConfigWlanAdhocClearWakeOnWlan	D	unclaimed
+sceNetConfigWlanAdhocCreate	D	unclaimed
+sceNetConfigWlanAdhocGetWakeOnWlanInfo	D	unclaimed
+sceNetConfigWlanAdhocJoin	D	unclaimed
+sceNetConfigWlanAdhocLeave	D	unclaimed
+sceNetConfigWlanAdhocPspEmuClearWakeOnWlan	D	unclaimed
+sceNetConfigWlanAdhocPspEmuGetWakeOnWlanInfo	D	unclaimed
+sceNetConfigWlanAdhocPspEmuSetWakeOnWlan	D	unclaimed
+sceNetConfigWlanAdhocScanJoin	D	unclaimed
+sceNetConfigWlanAdhocSetExtInfoElement	D	unclaimed
+sceNetConfigWlanAdhocSetWakeOnWlan	D	unclaimed
+sceNetConfigWlanApStart	D	unclaimed
+sceNetConfigWlanApStop	D	unclaimed
+sceNetConfigWlanBackgroundScanQuery	D	unclaimed
+sceNetConfigWlanBackgroundScanStart	D	unclaimed
+sceNetConfigWlanBackgroundScanStop	D	unclaimed
+sceNetConfigWlanDiagGetDeviceInfo	D	unclaimed
+sceNetConfigWlanDiagSetAntenna	D	unclaimed
+sceNetConfigWlanDiagSetTxFixedRate	D	unclaimed
+sceNetConfigWlanGetDeviceConfig	D	unclaimed
+sceNetConfigWlanInfraGetRssiInfo	D	unclaimed
+sceNetConfigWlanInfraLeave	D	unclaimed
+sceNetConfigWlanInfraScanJoin	D	unclaimed
+sceNetConfigWlanScan	D	unclaimed
+sceNetConfigWlanSetDeviceConfig	D	unclaimed
+sceNetControl	D	unclaimed
+sceNetDbgInit	D	unclaimed
+sceNetDhcpGetAutoipInfo	D	unclaimed
+sceNetDhcpGetInfo	D	unclaimed
+sceNetDhcpGetInfoEx	D	unclaimed
+sceNetDhcpStart	D	unclaimed
+sceNetDhcpStop	D	unclaimed
+sceNetDhcpdStart	D	unclaimed
+sceNetDhcpdStop	D	unclaimed
+sceNetDumpAbort	D	unclaimed
+sceNetDumpCreate	D	unclaimed
+sceNetDumpDestroy	D	unclaimed
+sceNetDumpRead	D	unclaimed
+sceNetDumpSetFilterParam	D	unclaimed
+sceNetDuplicateIpStart	D	unclaimed
+sceNetDuplicateIpStop	D	unclaimed
+sceNetEmulationDebugSettingsGet	D	unclaimed
+sceNetEmulationDebugSettingsSet	D	unclaimed
+sceNetEmulationGet	D	claimed by #8254 (Yossi Yadgar, implements)
+sceNetEmulationSet	D	claimed by #8254 (Yossi Yadgar, implements)
+sceNetEtherStrton	B-S	claimed by #8204 (ShinMalphur, changes)
+sceNetEventCallbackCreate	D	unclaimed
+sceNetEventCallbackDestroy	D	unclaimed
+sceNetEventCallbackGetError	D	unclaimed
+sceNetEventCallbackWaitCB	D	unclaimed
+sceNetFreeAllRouteInfo	D	unclaimed
+sceNetGetAppMemInfo	D	unclaimed
+sceNetGetArpInfo	D	unclaimed
+sceNetGetDns6Info	B-M	claimed by #9506 (Noxy-HNR, implements)
+sceNetGetIfList	D	unclaimed
+sceNetGetIfListEx	D	unclaimed
+sceNetGetIfListOnce	D	unclaimed
+sceNetGetIfnameNumList	B-S	unclaimed
+sceNetGetInterfaceStats	D	unclaimed
+sceNetGetNameToIndex	D	unclaimed
+sceNetGetRouteInfo	D	unclaimed
+sceNetGetSockInfo6	D	claimed by #8362 (Federico Marras, implements)
+sceNetGetStatisticsInfo	D	unclaimed
+sceNetGetStatisticsInfoInternal	D	unclaimed
+sceNetGetSystemMemInfo	D	unclaimed
+sceNetGetsockoptEx	B-S	unclaimed
+sceNetInetNtopWithScopeId	B-S	unclaimed
+sceNetInetPtonWithScopeId	B-S	unclaimed
+sceNetInfoDumpStart	D	unclaimed
+sceNetInfoDumpStop	D	unclaimed
+sceNetInitParam	B-S	unclaimed
+sceNetIoctl	B-S	claimed by #9060 (Arnab Ghosh, implements)
+sceNetPppoeStart	D	unclaimed
+sceNetPppoeStop	D	unclaimed
+sceNetResolverConnect	D	unclaimed
+sceNetResolverConnectAbort	D	unclaimed
+sceNetResolverConnectCreate	D	unclaimed
+sceNetResolverConnectDestroy	D	unclaimed
+sceNetSetDns6Info	D	claimed by #9506 (Noxy-HNR, implements)
+sceNetSetDns6InfoToKernel	D	unclaimed
+sceNetSetDnsInfo	D	claimed by #9506 (Noxy-HNR, implements)
+sceNetSetDnsInfoToKernel	D	unclaimed
+sceNetSetsockoptEx	B-S	unclaimed
+sceNetShowIfconfigForBuffer	D	unclaimed
+sceNetShowIfconfigWithMemory	D	claimed by #8234 (jagrat Singh, implements)
+sceNetShowNetstatEx	D	claimed by #8232 (jagrat Singh, implements)
+sceNetShowNetstatExForBuffer	D	unclaimed
+sceNetShowNetstatForBuffer	D	unclaimed
+sceNetShowPolicy	D	claimed by #8225 (jagrat Singh, implements)
+sceNetShowPolicyWithMemory	D	unclaimed
+sceNetShowRoute6ForBuffer	D	unclaimed
+sceNetShowRoute6WithMemory	C-silent	unclaimed
+sceNetShowRouteForBuffer	D	unclaimed
+sceNetShowRouteWithMemory	C-silent	claimed by #8235 (jagrat Singh, implements)
+sceNetSocketInternal	B-S	unclaimed
+sceNetSyncCreate	D	unclaimed
+sceNetSyncDestroy	D	unclaimed
+sceNetSyncGet	D	unclaimed
+sceNetSyncSignal	D	unclaimed
+sceNetSyncWait	D	unclaimed
+sceNetSysctl	B-S	unclaimed
+sceNetThreadCreate	D	claimed by #8254 (Yossi Yadgar, implements)
+sceNetThreadExit	B-S	claimed by #8254 (Yossi Yadgar, implements)
+sceNetThreadJoin	D	claimed by #8254 (Yossi Yadgar, implements)

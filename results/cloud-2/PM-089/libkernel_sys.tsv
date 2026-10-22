@@ -1,0 +1,533 @@
+function	class	claimed_by
+aio_cancel_nid_postfix	B-S	claimed by #9355 (David, implements)
+aio_error_nid_postfix	B-S	claimed by #9355 (David, implements)
+aio_fsync_nid_postfix	B-S	claimed by #9355 (David, changes)
+aio_read_nid_postfix	B-M	claimed by #9355 (David, changes)
+aio_return_nid_postfix	B-S	claimed by #9355 (David, implements)
+aio_suspend_nid_postfix	B-S	claimed by #9355 (David, implements)
+aio_waitcomplete_nid_postfix	B-S	claimed by #9355 (David, implements)
+aio_write_nid_postfix	B-M	claimed by #9355 (David, changes)
+amd64_set_fsbase_nid_postfix	B-L	unclaimed
+blockpool_batch_nid_postfix	D	unclaimed
+blockpool_map_nid_postfix	D	unclaimed
+blockpool_open_nid_postfix	D	unclaimed
+blockpool_unmap_nid_postfix	D	unclaimed
+chown_nid_postfix	B-S	claimed by #9103 (Claude, changes)
+cpuset_getid_nid_postfix	B-S	unclaimed
+cpuset_nid_postfix	B-S	unclaimed
+cpuset_setid_nid_postfix	B-S	unclaimed
+dynlib_get_obj_member_nid_postfix	D	unclaimed
+fchown_nid_postfix	B-M	claimed by #8457 (vaibhavindalia, implements); claimed by #8531 (xxLnolan, implements); claimed by #9103 (Claude, changes)
+fchownat_nid_postfix	B-S	claimed by #9103 (Claude, changes)
+fork_nid_postfix	B-L	unclaimed
+fstat_nid_postfix	A	claimed by #9008 (verusferro, implements)
+futimesat_nid_postfix	B-S	claimed by #9161 (Daniele Giovane, implements)
+get_authinfo_nid_postfix	D	unclaimed
+get_module_info_list_nid_postfix	D	unclaimed
+get_page_table_stats_nid_postfix	D	unclaimed
+get_sdk_compiled_version_nid_postfix	D	unclaimed
+get_self_auth_info_nid_postfix	D	unclaimed
+get_vm_map_timestamp_nid_postfix	D	unclaimed
+getfsstat_nid_postfix	B-M	unclaimed
+getlogin_nid_postfix	B-S	claimed by #9171 (David, moves to libkernel, implemented)
+ipmimgr_call_nid_postfix	D	unclaimed
+is_in_sandbox_nid_postfix	D	unclaimed
+kenv_nid_postfix	D	unclaimed
+kldfind_nid_postfix	D	unclaimed
+kldfirstmod_nid_postfix	D	unclaimed
+kldload_nid_postfix	D	unclaimed
+kldnext_nid_postfix	D	unclaimed
+kldstat_nid_postfix	D	unclaimed
+kldsym_nid_postfix	D	unclaimed
+kldunload_nid_postfix	D	unclaimed
+kmq_notify_nid_postfix	B-M	claimed by #9302 (David, changes)
+kmq_open_nid_postfix	B-L	claimed by #9297 (David, implements); claimed by #9302 (David, implements)
+kmq_setattr_nid_postfix	B-S	claimed by #9297 (David, implements); claimed by #9302 (David, implements)
+kmq_timedreceive_nid_postfix	B-M	claimed by #9297 (David, implements); claimed by #9302 (David, implements)
+kmq_timedsend_nid_postfix	B-M	claimed by #9297 (David, implements); claimed by #9302 (David, implements)
+kmq_unlink_nid_postfix	B-S	claimed by #9297 (David, implements); claimed by #9302 (David, implements)
+ksem_close_nid_postfix	B-S	claimed by #9293 (David, moves to libkernel, implemented)
+ksem_destroy_nid_postfix	B-S	claimed by #9284 (David, moves to libkernel, implemented); claimed by #9293 (David, moves to libkernel, implemented); claimed by #9297 (David, moves to libkernel, implemented); claimed by #9302 (David, moves to libkernel, implemented)
+ksem_getvalue_nid_postfix	B-S	claimed by #9284 (David, moves to libkernel, implemented); claimed by #9293 (David, moves to libkernel, implemented); claimed by #9297 (David, moves to libkernel, implemented); claimed by #9302 (David, moves to libkernel, implemented)
+ksem_init_nid_postfix	B-S	claimed by #9284 (David, moves to libkernel, implemented); claimed by #9293 (David, moves to libkernel, implemented); claimed by #9297 (David, moves to libkernel, implemented); claimed by #9302 (David, moves to libkernel, implemented)
+ksem_open_nid_postfix	B-M	claimed by #9293 (David, moves to libkernel, implemented)
+ksem_post_nid_postfix	B-S	claimed by #9284 (David, moves to libkernel, implemented); claimed by #9293 (David, moves to libkernel, implemented); claimed by #9297 (David, moves to libkernel, implemented); claimed by #9302 (David, moves to libkernel, implemented)
+ksem_timedwait_nid_postfix	B-S	claimed by #9284 (David, moves to libkernel, implemented); claimed by #9293 (David, moves to libkernel, implemented); claimed by #9297 (David, moves to libkernel, implemented); claimed by #9302 (David, moves to libkernel, implemented)
+ksem_trywait_nid_postfix	B-S	claimed by #9284 (David, moves to libkernel, implemented); claimed by #9293 (David, moves to libkernel, implemented); claimed by #9297 (David, moves to libkernel, implemented); claimed by #9302 (David, moves to libkernel, implemented)
+ksem_unlink_nid_postfix	B-S	claimed by #9293 (David, moves to libkernel, implemented)
+ksem_wait_nid_postfix	B-S	claimed by #9284 (David, moves to libkernel, implemented); claimed by #9293 (David, moves to libkernel, implemented); claimed by #9297 (David, moves to libkernel, implemented); claimed by #9302 (David, moves to libkernel, implemented)
+ktimer_create_nid_postfix	B-M	claimed by #9314 (David, moves to libkernel, still todo)
+ktimer_delete_nid_postfix	B-S	claimed by #9314 (David, moves to libkernel, still todo)
+ktimer_getoverrun_nid_postfix	B-S	claimed by #9314 (David, moves to libkernel, still todo)
+ktimer_gettime_nid_postfix	B-S	claimed by #9314 (David, moves to libkernel, still todo)
+ktimer_settime_nid_postfix	B-M	claimed by #9314 (David, moves to libkernel, still todo)
+ktrace_nid_postfix	B-L	unclaimed
+lchflags_nid_postfix	B-S	claimed by #9442 (Gruzzberry, implements)
+lchmod_nid_postfix	A	claimed by #9200 (KernelPanicNT, changes)
+lchown_nid_postfix	B-S	claimed by #9103 (Claude, changes)
+linkat_nid_postfix	B-S	claimed by #9103 (Claude, changes)
+mdbg_call_nid_postfix	D	unclaimed
+mdbg_service_nid_postfix	D	unclaimed
+mount_nid_postfix	B-L	unclaimed
+openintr_nid_postfix	D	unclaimed
+profil_nid_postfix	B-L	unclaimed
+pselect_nid_postfix	B-S	claimed by #9273 (David, moves to libkernel, implemented)
+pthread_attr_getaffinity_np_nid_postfix	B-S	claimed by #9156 (David, moves to libkernel, implemented); claimed by #9160 (Daniele Giovane, implements)
+pthread_attr_getsolosched_np_nid_postfix	A	claimed by #9156 (David, moves to libkernel, implemented); claimed by #9160 (Daniele Giovane, implements)
+pthread_attr_setaffinity_np_nid_postfix	B-S	claimed by #9156 (David, moves to libkernel, implemented); claimed by #9160 (Daniele Giovane, implements)
+pthread_attr_setcreatesuspend_np_nid_postfix	B-M	unclaimed
+pthread_attr_setstackaddr_nid_postfix	A	claimed by #9156 (David, moves to libkernel, implemented); claimed by #9160 (Daniele Giovane, implements)
+pthread_barrier_setname_np_nid_postfix	B-S	unclaimed
+pthread_cond_setname_np_nid_postfix	B-S	unclaimed
+pthread_get_specificarray_np_nid_postfix	D	unclaimed
+pthread_get_user_context_np_nid_postfix	D	unclaimed
+pthread_getstack_np_nid_postfix	D	unclaimed
+pthread_main_np_nid_postfix	B-S	claimed by #9160 (Daniele Giovane, implements)
+pthread_multi_np_nid_postfix	B-S	unclaimed
+pthread_mutex_getprioceiling_nid_postfix	B-S	claimed by #9326 (erickerxhalli, moves to libkernel, implemented)
+pthread_mutex_init_for_mono_nid_postfix	D	unclaimed
+pthread_mutex_setname_np_nid_postfix	B-S	unclaimed
+pthread_mutex_setprioceiling_nid_postfix	B-S	claimed by #9326 (erickerxhalli, moves to libkernel, implemented)
+pthread_mutexattr_getgen_np_nid_postfix	D	unclaimed
+pthread_mutexattr_setgen_np_nid_postfix	D	unclaimed
+pthread_resume_all_np_nid_postfix	B-S	unclaimed
+pthread_resume_np_nid_postfix	B-M	unclaimed
+pthread_resume_user_context_np_nid_postfix	D	unclaimed
+pthread_rwlock_reltimedrdlock_np_nid_postfix	B-S	claimed by #9265 (Claude, moves to libkernel, implemented)
+pthread_rwlock_reltimedwrlock_np_nid_postfix	B-S	claimed by #9265 (Claude, moves to libkernel, implemented)
+pthread_rwlock_setname_np_nid_postfix	B-S	unclaimed
+pthread_rwlockattr_settype_np_nid_postfix	A	unclaimed
+pthread_set_defaultstacksize_np_nid_postfix	B-S	claimed by #9279 (Yossi Yadgar, implements)
+pthread_set_user_context_np_nid_postfix	D	unclaimed
+pthread_single_np_nid_postfix	B-S	unclaimed
+pthread_suspend_all_np_nid_postfix	B-S	unclaimed
+pthread_suspend_np_nid_postfix	B-L	unclaimed
+pthread_suspend_user_context_np_nid_postfix	D	unclaimed
+pthread_switch_add_np_nid_postfix	C-real	claimed by #9172 (hypermist, implements)
+pthread_switch_delete_np_nid_postfix	C-real	claimed by #9172 (hypermist, implements)
+pthread_timedjoin_np_nid_postfix	B-S	unclaimed
+ptrace_nid_postfix	B-L	unclaimed
+pwrite_nid_postfix	A	claimed by #9019 (Daniele Giovane, implements)
+readlink_nid_postfix	B-S	claimed by #5528 (UmillD, changes); claimed by #8534 (blu, implements); claimed by #9423 (ali zedan, changes)
+readlinkat_nid_postfix	B-S	claimed by #5528 (UmillD, changes); claimed by #8534 (blu, implements); claimed by #9423 (ali zedan, changes)
+reboot_nid_postfix	D	unclaimed
+revoke_nid_postfix	B-S	claimed by #9537 (David, changes)
+rfork_thread_nid_postfix	B-L	unclaimed
+rtld_printf_nid_postfix	B-S	claimed by #9383 (David, moves to libkernel, implemented)
+sceCoredumpDebugForceCoredumpOnAppClose	D	unclaimed
+sceCoredumpDebugTriggerCoredump	D	unclaimed
+sceCoredumpGetStopInfoGpu	B-S	unclaimed
+sceCoredumpInternalGetThreadContextInfo	D	unclaimed
+sceKernelAddACInfo	D	unclaimed
+sceKernelAddCpumodeEvent	D	unclaimed
+sceKernelAddGpuExceptionEvent	D	unclaimed
+sceKernelAddProcessToCanvasMap	D	unclaimed
+sceKernelAddResource	D	claimed by #9172 (hypermist, implements)
+sceKernelAllocateDirectMemory2	D	unclaimed
+sceKernelAllocateDirectMemoryForApp	D	unclaimed
+sceKernelAllocateDirectMemoryForMiniApp	D	unclaimed
+sceKernelAllocateToolMemory	D	unclaimed
+sceKernelAllocateTraceDirectMemory	D	unclaimed
+sceKernelAprCtrl	D	unclaimed
+sceKernelAprSubmitCommandBufferAndGetResult_TEST	D	unclaimed
+sceKernelAprSubmitCommandBuffer_TEST	D	unclaimed
+sceKernelAvailableToolMemorySize	D	unclaimed
+sceKernelBacktraceSelf	D	unclaimed
+sceKernelBeginAppMount	D	unclaimed
+sceKernelBeginAppMount2	D	unclaimed
+sceKernelCallIndirectBuffer	D	unclaimed
+sceKernelCallIndirectBuffer2	D	unclaimed
+sceKernelClearBootReqNotifyCount	D	unclaimed
+sceKernelClearGameDirectMemory	D	claimed by #9172 (hypermist, implements)
+sceKernelCloseEport	D	claimed by #9172 (hypermist, implements)
+sceKernelCloseEventFlag	B-S	claimed by #9134 (orezraey, moves to libkernel, implemented)
+sceKernelCloseSema	B-S	unclaimed
+sceKernelCreateBudget	D	unclaimed
+sceKernelCreateEport	D	claimed by #9172 (hypermist, implements)
+sceKernelDebugAcquireAndUpdateDebugRegister	D	unclaimed
+sceKernelDebugGetAppStatus	D	unclaimed
+sceKernelDebugGetPauseCount	D	unclaimed
+sceKernelDebugGetPrivateLogText	D	unclaimed
+sceKernelDebugGetSchedLockMode	D	unclaimed
+sceKernelDebugGetSdkLogText	D	unclaimed
+sceKernelDebugGpuPaDebugIsInProgress	D	unclaimed
+sceKernelDebugInjectProcessEvent	D	unclaimed
+sceKernelDebugPackageCorrupted	D	unclaimed
+sceKernelDebugRaiseExceptionWithContext	D	unclaimed
+sceKernelDebugRaiseExceptionWithInfo	D	unclaimed
+sceKernelDebugReleaseDebugContext	D	unclaimed
+sceKernelDeleteACInfo	D	unclaimed
+sceKernelDeleteBudget	D	unclaimed
+sceKernelDeleteCpumodeEvent	D	unclaimed
+sceKernelDeleteEport	D	claimed by #9172 (hypermist, implements)
+sceKernelDeleteGpuExceptionEvent	D	unclaimed
+sceKernelDeleteProcessFromCanvasMap	D	unclaimed
+sceKernelDeleteSavedApp	D	unclaimed
+sceKernelDirectMemoryQueryForId	D	unclaimed
+sceKernelEnableDmemAliasing2	D	unclaimed
+sceKernelEnablePthreadObjectCheck	D	unclaimed
+sceKernelEndAppMount	D	unclaimed
+sceKernelEndAppMount2	D	unclaimed
+sceKernelEventLogInit	D	claimed by #9172 (hypermist, implements)
+sceKernelEventLogPread	D	unclaimed
+sceKernelEventLogRead	D	unclaimed
+sceKernelEventLogWrite	D	unclaimed
+sceKernelExpectedHddFormat	D	unclaimed
+sceKernelFlock	A	claimed by #9097 (David, implements)
+sceKernelGetACInfoAllForCoredump	D	unclaimed
+sceKernelGetAppCategoryType	D	unclaimed
+sceKernelGetAppInfoByAppId	D	unclaimed
+sceKernelGetAppState	D	unclaimed
+sceKernelGetAslrStatus	D	unclaimed
+sceKernelGetAutoUpdateVersion	D	unclaimed
+sceKernelGetBackupRestoreMode	D	unclaimed
+sceKernelGetBackupRestoreModeOfNextBoot	D	unclaimed
+sceKernelGetBasicProductShape	D	unclaimed
+sceKernelGetBetaUpdateTestForRcmgr	D	unclaimed
+sceKernelGetBioUsageAll	D	unclaimed
+sceKernelGetBootReqNotifyCount	D	unclaimed
+sceKernelGetBudget	D	unclaimed
+sceKernelGetBuildNumber	D	unclaimed
+sceKernelGetCallRecord	D	unclaimed
+sceKernelGetChildApp	D	unclaimed
+sceKernelGetCompiledSdkVersion	B-S	claimed by #9214 (erickerxhalli, implements)
+sceKernelGetCompiledSdkVersionByPath	D	unclaimed
+sceKernelGetCompiledSdkVersionByPid	D	unclaimed
+sceKernelGetCoredumpAppInfo	D	unclaimed
+sceKernelGetCpuUsage	D	unclaimed
+sceKernelGetCpuUsageAll	D	unclaimed
+sceKernelGetCpuUsageProc	D	unclaimed
+sceKernelGetCpuUsageProc2	D	unclaimed
+sceKernelGetCpuUsageThread	D	unclaimed
+sceKernelGetCpumodeGame	D	unclaimed
+sceKernelGetCurrentFanDuty	D	unclaimed
+sceKernelGetDataTransferMode	D	unclaimed
+sceKernelGetDebugMenuMiniModeForRcmgr	D	unclaimed
+sceKernelGetDebugMenuModeForPsmForRcmgr	D	unclaimed
+sceKernelGetDebugMenuModeForRcmgr	D	unclaimed
+sceKernelGetDefaultToolMemorySize	D	unclaimed
+sceKernelGetEmergencyErrorLog	D	unclaimed
+sceKernelGetExecutableModuleHandle	D	unclaimed
+sceKernelGetExtLibcHandle	D	unclaimed
+sceKernelGetFakeFinalizeMenuForRcmgr	D	unclaimed
+sceKernelGetFirstImageAddr	D	unclaimed
+sceKernelGetFlagedUpdaterForRcmgr	D	unclaimed
+sceKernelGetForceUpdateModeForRcmgr	D	unclaimed
+sceKernelGetGPO	B-S	unclaimed
+sceKernelGetHwFeatureInfoForDecid	D	unclaimed
+sceKernelGetHwModelName	D	unclaimed
+sceKernelGetHwSerialNumber	D	unclaimed
+sceKernelGetIdPs	D	unclaimed
+sceKernelGetIdTableCurrentCount	D	unclaimed
+sceKernelGetIoreq	D	unclaimed
+sceKernelGetIpcPath	D	unclaimed
+sceKernelGetKnobs	D	unclaimed
+sceKernelGetKqueueFromEqueue	D	unclaimed
+sceKernelGetMemoryPstate	D	unclaimed
+sceKernelGetModuleInfoInternal	D	claimed by #9294 (Yossi Yadgar, implements)
+sceKernelGetModuleListInternal	D	claimed by #9294 (Yossi Yadgar, implements)
+sceKernelGetOpenPsIdForSystem	D	unclaimed
+sceKernelGetPagingStatsOfAllObjects	D	unclaimed
+sceKernelGetPagingStatsOfAllThreads	D	unclaimed
+sceKernelGetParentApp	D	unclaimed
+sceKernelGetPhysPageSize	D	unclaimed
+sceKernelGetProcessName	D	unclaimed
+sceKernelGetProcessType	D	claimed by #9040 (Yossi Yadgar, implements)
+sceKernelGetProcessTypeOfBudget	D	unclaimed
+sceKernelGetProductCode	D	unclaimed
+sceKernelGetProductStr	D	unclaimed
+sceKernelGetPs4SystemSwVersion	D	unclaimed
+sceKernelGetPsmIntdevModeForRcmgr	D	unclaimed
+sceKernelGetPsnAccessTraceLogForRcmgr	D	unclaimed
+sceKernelGetQafExpirationTimeNotafterForRcmgr	D	unclaimed
+sceKernelGetQafExpirationTimeNotbeforeForRcmgr	D	unclaimed
+sceKernelGetQafGenerationForRcmgr	D	unclaimed
+sceKernelGetQafNameForRcmgr	D	unclaimed
+sceKernelGetRenderingMode	D	unclaimed
+sceKernelGetResidentCount	D	unclaimed
+sceKernelGetResidentFmemCount	D	unclaimed
+sceKernelGetResource	D	unclaimed
+sceKernelGetResourceLimit	D	unclaimed
+sceKernelGetResourceOne	D	unclaimed
+sceKernelGetSafemode	D	unclaimed
+sceKernelGetSanitizerMallocReplace	D	unclaimed
+sceKernelGetSanitizerNewReplace	D	unclaimed
+sceKernelGetSocClock	D	unclaimed
+sceKernelGetSpecialIForRcmgr	D	unclaimed
+sceKernelGetSubsysId	D	unclaimed
+sceKernelGetSubsysSubId	D	unclaimed
+sceKernelGetSystemExVersion	D	unclaimed
+sceKernelGetSystemLevelDebuggerModeForRcmgr	D	unclaimed
+sceKernelGetSystemSwBeta	D	unclaimed
+sceKernelGetThreadName	D	unclaimed
+sceKernelGetTraceMemoryStats	D	unclaimed
+sceKernelGetUniversalMode	D	unclaimed
+sceKernelGetUpdVersion	D	unclaimed
+sceKernelGetUtokenDataExecutionForRcmgr	D	unclaimed
+sceKernelGetUtokenExpirationTimeNotafterForRcmgr	D	unclaimed
+sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr	D	unclaimed
+sceKernelGetUtokenFakeSharefactoryForRcmgr	D	unclaimed
+sceKernelGetUtokenFlagedUpdaterForRcmgr	D	unclaimed
+sceKernelGetUtokenNpEnvSwitchingForRcmgr	D	unclaimed
+sceKernelGetUtokenSaveDataRepairForRcmgr	D	unclaimed
+sceKernelGetUtokenStoreModeForRcmgr	D	unclaimed
+sceKernelGetUtokenUseSoftwagnerForAcmgr	D	unclaimed
+sceKernelGetUtokenUseSoftwagnerForRcmgr	D	unclaimed
+sceKernelGetUtokenWeakenedPortRestrictionForRcmgr	D	unclaimed
+sceKernelGetVrCaptureSize	D	unclaimed
+sceKernelGiveDirectMemoryToMapper	D	unclaimed
+sceKernelHasNeoMode	D	claimed by #9172 (hypermist, implements)
+sceKernelHwGetBdDriveInfo	D	unclaimed
+sceKernelHwHasOpticalOut	D	unclaimed
+sceKernelHwHasWlanBt	D	unclaimed
+sceKernelIccControlBDPowerState	D	unclaimed
+sceKernelIccControlUSBPowerState	D	unclaimed
+sceKernelIccGetBDPowerState	D	unclaimed
+sceKernelIccGetBootTimestamp	D	unclaimed
+sceKernelIccGetCPMode	D	claimed by #9172 (hypermist, implements)
+sceKernelIccGetCountTime	D	unclaimed
+sceKernelIccGetCpuInfoBit	D	unclaimed
+sceKernelIccGetErrLog	D	unclaimed
+sceKernelIccGetHwInfo	D	unclaimed
+sceKernelIccGetPowerNumberOfBootShutdown	D	unclaimed
+sceKernelIccGetPowerOperatingTime	D	unclaimed
+sceKernelIccGetPowerUpCause	D	unclaimed
+sceKernelIccGetSysEventLog	D	unclaimed
+sceKernelIccGetUSBPowerState	D	unclaimed
+sceKernelIccIndicatorBootDone	D	unclaimed
+sceKernelIccIndicatorShutdown	D	unclaimed
+sceKernelIccIndicatorStandby	D	unclaimed
+sceKernelIccIndicatorStandbyBoot	D	unclaimed
+sceKernelIccIndicatorStandbyShutdown	D	unclaimed
+sceKernelIccNotifyBootStatus	D	unclaimed
+sceKernelIccNvsFlush	D	unclaimed
+sceKernelIccReadPowerBootMessage	D	unclaimed
+sceKernelIccSetBuzzer	D	unclaimed
+sceKernelIccSetCPMode	D	claimed by #9172 (hypermist, implements)
+sceKernelIccSetCpuInfoBit	D	unclaimed
+sceKernelIccSetDownloadMode	D	unclaimed
+sceKernelInternalGetKmemStatistics	D	unclaimed
+sceKernelInternalGetMapStatistics	D	unclaimed
+sceKernelInternalHeapPrintBacktraceWithModuleInfo	D	unclaimed
+sceKernelInternalMapDirectMemory	D	unclaimed
+sceKernelInternalMapNamedDirectMemory	D	unclaimed
+sceKernelInternalResumeDirectMemoryRelease	D	unclaimed
+sceKernelInternalSuspendDirectMemoryRelease	D	unclaimed
+sceKernelIsAllowedToSelectDvdRegion	D	unclaimed
+sceKernelIsAuthenticNeo	D	claimed by #9172 (hypermist, implements)
+sceKernelIsCEX	D	unclaimed
+sceKernelIsDebuggerAttached	D	unclaimed
+sceKernelIsDevKit	D	unclaimed
+sceKernelIsExperimentalBeta	D	unclaimed
+sceKernelIsGenuineCEX	D	unclaimed
+sceKernelIsGenuineDevKit	D	unclaimed
+sceKernelIsGenuineKratosCex	D	claimed by #9172 (hypermist, implements)
+sceKernelIsGenuineN	D	claimed by #9172 (hypermist, implements)
+sceKernelIsGenuineTestKit	D	unclaimed
+sceKernelIsInSandbox	D	unclaimed
+sceKernelIsKratos	D	unclaimed
+sceKernelIsM2DeviceAttached	D	unclaimed
+sceKernelIsMainOnStanbyMode	D	unclaimed
+sceKernelIsMainOnStandbyMode	D	unclaimed
+sceKernelIsModuleLoaded	D	unclaimed
+sceKernelIsNeoMode	D	unclaimed
+sceKernelIsProspero	D	unclaimed
+sceKernelIsPs4Process	D	unclaimed
+sceKernelIsTestKit	D	unclaimed
+sceKernelJitGetSharedMemoryInfo	D	unclaimed
+sceKernelKernelHeapUsage	D	unclaimed
+sceKernelLoadStartModuleForSysmodule	D	unclaimed
+sceKernelLoadStartModuleInternalForMono	D	unclaimed
+sceKernelLwfsAllocateBlock	D	unclaimed
+sceKernelLwfsLseek	D	unclaimed
+sceKernelLwfsSetAttribute	D	unclaimed
+sceKernelLwfsTrimBlock	D	unclaimed
+sceKernelLwfsWrite	D	unclaimed
+sceKernelMapNamedSystemFlexibleMemory	D	unclaimed
+sceKernelMapSanitizerShadowMemory	D	unclaimed
+sceKernelMapToolMemory	D	unclaimed
+sceKernelMapTraceMemory	D	claimed by #9172 (hypermist, implements)
+sceKernelMapperGetParam	D	unclaimed
+sceKernelMemoryPoolMove	D	unclaimed
+sceKernelMlockall	A	unclaimed
+sceKernelMsync	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+sceKernelNormalizePath	D	unclaimed
+sceKernelNotifyAppEvent	D	unclaimed
+sceKernelNotifyAppStateChanged	D	unclaimed
+sceKernelNotifySystemSuspendResumeProgress	D	unclaimed
+sceKernelNotifySystemSuspendStart	D	unclaimed
+sceKernelOpenEport	D	claimed by #9172 (hypermist, implements)
+sceKernelOpenInternal	D	unclaimed
+sceKernelOpenSema	B-S	unclaimed
+sceKernelPrepareDirectMemorySwap	D	unclaimed
+sceKernelPrepareToResumeProcess	D	unclaimed
+sceKernelPrepareToSuspendProcess	D	unclaimed
+sceKernelProtectDirectMemory	D	unclaimed
+sceKernelProtectDirectMemoryForPID	D	unclaimed
+sceKernelQueryToolMemory	D	unclaimed
+sceKernelQueryTraceMemory	D	claimed by #9172 (hypermist, implements)
+sceKernelRandomizedPath	D	unclaimed
+sceKernelRdup	D	unclaimed
+sceKernelReboot	D	unclaimed
+sceKernelReleaseToolMemory	D	unclaimed
+sceKernelReleaseTraceDirectMemory	D	claimed by #9172 (hypermist, implements)
+sceKernelReportUnpatchedFunctionCall	D	unclaimed
+sceKernelReserve2mbPage	D	unclaimed
+sceKernelReserveSystemDirectMemory	D	unclaimed
+sceKernelRestoreApp	D	unclaimed
+sceKernelResumeDirectMemoryRelease	D	unclaimed
+sceKernelResumeProcess	D	unclaimed
+sceKernelRtldControl	D	unclaimed
+sceKernelSandboxPath	D	unclaimed
+sceKernelSaveApp	D	unclaimed
+sceKernelSetAppInfo	D	unclaimed
+sceKernelSetAppState	D	unclaimed
+sceKernelSetBackupRestoreMode	D	unclaimed
+sceKernelSetBaseModeClock	D	unclaimed
+sceKernelSetBesteffort	D	unclaimed
+sceKernelSetBootReqNotify	D	unclaimed
+sceKernelSetBudget	D	unclaimed
+sceKernelSetCallRecord	D	unclaimed
+sceKernelSetCompressionAttribute	D	unclaimed
+sceKernelSetCoredumpAppInfo	D	unclaimed
+sceKernelSetCpumodeGame	D	unclaimed
+sceKernelSetDataTransferMode	D	unclaimed
+sceKernelSetEmergencyErrorLog	D	unclaimed
+sceKernelSetFsstParam	D	unclaimed
+sceKernelSetGPI	D	unclaimed
+sceKernelSetGameDirectMemoryLimit	D	unclaimed
+sceKernelSetGpuCu	D	unclaimed
+sceKernelSetIoreq	D	unclaimed
+sceKernelSetKnobs	D	unclaimed
+sceKernelSetMemoryPstate	D	unclaimed
+sceKernelSetNeoModeClock	D	unclaimed
+sceKernelSetPackageInfo	D	unclaimed
+sceKernelSetPhysFmemLimit	D	unclaimed
+sceKernelSetProcessName	D	unclaimed
+sceKernelSetProcessProperty	D	unclaimed
+sceKernelSetProcessPropertyString	D	unclaimed
+sceKernelSetSafemode	D	unclaimed
+sceKernelSetSafemodeDirect	D	unclaimed
+sceKernelSetSuspendState	D	unclaimed
+sceKernelSetTimezoneInfo	D	unclaimed
+sceKernelSetUpdatemode	D	unclaimed
+sceKernelSetVmContainer	D	unclaimed
+sceKernelSettimeofday	B-S	unclaimed
+sceKernelSflashGetWritePrio	D	unclaimed
+sceKernelSflashSetWritePrio	D	unclaimed
+sceKernelSlvNotifyError	D	unclaimed
+sceKernelSpawn	D	unclaimed
+sceKernelStreamWriteActivate	D	unclaimed
+sceKernelStreamWriteCreate	D	unclaimed
+sceKernelStreamWriteDeactivate	D	unclaimed
+sceKernelStreamWriteDelete	D	unclaimed
+sceKernelStreamWriteRead	D	unclaimed
+sceKernelStreamWriteStat	D	unclaimed
+sceKernelStreamWriteWrite	D	unclaimed
+sceKernelSuspendDirectMemoryRelease	D	unclaimed
+sceKernelSuspendProcess	D	unclaimed
+sceKernelSuspendSystem	D	unclaimed
+sceKernelSwitchToBaseMode	D	unclaimed
+sceKernelSwitchToNativeMode	D	unclaimed
+sceKernelSwitchToNeoMode	D	unclaimed
+sceKernelTerminateProcess	D	unclaimed
+sceKernelTerminateSysCore	D	unclaimed
+sceKernelTitleWorkaroundIsEnabled	D	claimed by #9040 (Yossi Yadgar, implements)
+sceKernelTitleWorkdaroundIsEnabled	D	unclaimed
+sceKernelTraceMemoryTypeProtect	D	claimed by #9172 (hypermist, implements)
+sceKernelTriggerEport	D	claimed by #9172 (hypermist, implements)
+sceKernelVirtualQueryAll	D	unclaimed
+sceKernelWaitCommandBufferCompletion	B-S	unclaimed
+sceKernelWriteEventQueueOnCompletionCommand	B-S	unclaimed
+sceKernelWriteMapCommand	B-S	unclaimed
+sceKernelWriteMapCommand2	D	unclaimed
+sceKernelWriteMapDirectCommand	B-S	unclaimed
+sceKernelWriteMapDirectWithGpuMaskIdCommand	B-S	unclaimed
+sceKernelWriteMapWithGpuMaskIdCommand	B-S	unclaimed
+sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand	B-S	unclaimed
+sceKernelWriteModifyProtectCommand	B-S	unclaimed
+sceKernelWriteModifyProtectWithGpuMaskIdCommand	B-S	unclaimed
+sceKernelWriteMultiMapCommand	B-S	unclaimed
+sceKernelWriteMultiMapWithGpuMaskIdCommand	B-S	unclaimed
+sceKernelWriteRemapCommand	B-S	unclaimed
+sceKernelWriteRemapWithGpuMaskIdCommand	B-S	unclaimed
+sceKernelWriteSdkEventLog	D	unclaimed
+sceKernelWriteSdkEventLogV	D	unclaimed
+sceKernelWriteUnmapCommand	B-S	unclaimed
+sceKernelWriteWaitOnAddressCommand	B-S	unclaimed
+sceKernelWriteWaitOnCounterCommand	B-S	unclaimed
+sceKernelWriteWriteAddressCommand	B-S	unclaimed
+sceKernelWriteWriteCounterCommand	B-S	unclaimed
+sceKernelYieldCpumode	D	unclaimed
+sceLibcMspaceCreateForMonoMutex	D	unclaimed
+scePthreadAtfork	A	claimed by #9141 (Federico Marras, implements)
+scePthreadAttrGetscope	A	claimed by #9141 (Federico Marras, implements)
+scePthreadAttrSetcreatesuspend	B-S	unclaimed
+scePthreadAttrSetscope	A	claimed by #9141 (Federico Marras, implements)
+scePthreadBarrierDestroy	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadBarrierInit	B-S	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadBarrierWait	B-S	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadBarrierattrDestroy	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadBarrierattrGetpshared	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadBarrierattrInit	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadBarrierattrSetpshared	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadCondattrGetclock	B-S	claimed by #9322 (zaryabzip, implements)
+scePthreadGetconcurrency	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadGetcpuclockid	A	claimed by #8987 (Simone, implements); claimed by #9141 (Federico Marras, implements)
+scePthreadMain	B-S	unclaimed
+scePthreadMulti	B-S	unclaimed
+scePthreadMutexGetprioceiling	B-S	claimed by #9326 (erickerxhalli, moves to libkernel, implemented)
+scePthreadMutexInitForInternalLibc	D	unclaimed
+scePthreadMutexIsowned	A	unclaimed
+scePthreadMutexSetprioceiling	B-S	claimed by #9326 (erickerxhalli, moves to libkernel, implemented)
+scePthreadMutexattrGetgen	D	unclaimed
+scePthreadMutexattrGetkind	B-S	unclaimed
+scePthreadMutexattrInitForInternalLibc	D	unclaimed
+scePthreadMutexattrSetgen	D	unclaimed
+scePthreadMutexattrSetkind	B-S	unclaimed
+scePthreadResume	B-S	unclaimed
+scePthreadResumeAll	B-S	unclaimed
+scePthreadSetBesteffort	D	unclaimed
+scePthreadSetDefaultstacksize	B-S	claimed by #9279 (Yossi Yadgar, implements)
+scePthreadSetName	D	claimed by #9279 (Yossi Yadgar, implements)
+scePthreadSetconcurrency	A	claimed by #9141 (Federico Marras, implements)
+scePthreadSingle	B-S	unclaimed
+scePthreadSuspend	B-S	unclaimed
+scePthreadSuspendAll	B-S	unclaimed
+scePthreadTimedjoin	B-S	unclaimed
+sched_getparam_nid_postfix	B-S	claimed by #9187 (Sebastian, moves to libkernel, implemented); claimed by #9369 (MarcZX10, implements)
+sched_getscheduler_nid_postfix	B-S	claimed by #9187 (Sebastian, moves to libkernel, implemented); claimed by #9369 (MarcZX10, implements)
+sched_rr_get_interval_nid_postfix	D	claimed by #9382 (MarcZX10, implements)
+sched_setparam_nid_postfix	B-S	claimed by #9187 (Sebastian, moves to libkernel, implemented)
+sched_setscheduler_nid_postfix	B-S	unclaimed
+sem_close_nid_postfix	B-S	claimed by #9167 (Sebastian, moves to libkernel, implemented)
+sem_open_nid_postfix	B-M	claimed by #9167 (Sebastian, moves to libkernel, implemented)
+sem_setname_nid_postfix	B-S	unclaimed
+sem_unlink_nid_postfix	B-S	claimed by #9167 (Sebastian, moves to libkernel, implemented)
+set_phys_fmem_limit_nid_postfix	D	unclaimed
+setlogin_nid_postfix	B-S	unclaimed
+settimeofday_nid_postfix	B-S	unclaimed
+sigqueue_nid_postfix	B-M	claimed by #9389 (Itamar Medyoni, implements)
+sigreturn_nid_postfix	B-S	unclaimed
+statfs_nid_postfix	B-S	claimed by #9161 (Daniele Giovane, implements)
+swapcontext_nid_postfix	B-S	claimed by #9379 (David, removes)
+swapon_nid_postfix	D	unclaimed
+symlink_nid_postfix	B-M	claimed by #8723 (xXPBSXx, changes); claimed by #9161 (Daniele Giovane, changes); claimed by #9423 (ali zedan, changes)
+symlinkat_nid_postfix	B-S	claimed by #9161 (Daniele Giovane, changes)
+sysKernelGetIntdevModeForInternalLibc_nid_postfix	D	unclaimed
+sysKernelGetIntdevModeForRcmgr_nid_postfix	D	unclaimed
+sysKernelGetLowerLimitSysexVersion_nid_postfix	D	unclaimed
+sysKernelGetLowerLimitUpdVersion_nid_postfix	D	unclaimed
+sysKernelGetManufacturingMode_nid_postfix	D	unclaimed
+sysKernelGetUpdVersion_nid_postfix	D	unclaimed
+sysc_e00_nid_postfix	D	unclaimed
+sysc_m00_nid_postfix	D	unclaimed
+sysc_s00_nid_postfix	D	unclaimed
+tcgetsid_nid_postfix	B-S	claimed by #9242 (David, moves to libkernel, implemented)
+tcsetsid_nid_postfix	B-S	unclaimed
+unmount_nid_postfix	B-L	unclaimed
+utrace_nid_postfix	B-S	unclaimed
+uuidgen_nid_postfix	B-S	claimed by #9195 (Nikolay Polukhin, implements)
+vfork_nid_postfix	B-L	unclaimed
+wait3_nid_postfix	B-S	claimed by #9162 (Daniele Giovane, implements)
+wait4_nid_postfix	B-S	claimed by #9162 (Daniele Giovane, implements)

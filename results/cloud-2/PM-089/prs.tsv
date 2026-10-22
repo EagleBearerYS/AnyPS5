@@ -1,0 +1,1488 @@
+pr	author	library	function	class	how
+#5038	Sebastian	libScePad	scePadGetFeatureReport	B-L	implements
+#5038	Sebastian	libScePad	scePadOpenExt	D	implements
+#5038	Sebastian	libScePad	scePadOutputReport	B-M	implements
+#5038	Sebastian	libScePad	scePadReadExt	D	implements
+#5038	Sebastian	libScePad	scePadSetAngularVelocityBiasCorrectionState	B-S	implements
+#5038	Sebastian	libScePad	scePadSetFeatureReport	B-L	implements
+#5038	Sebastian	libScePad	scePadVrControllerGetDeviceInformation	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerGetTriggerEffectState	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerGetTriggerEffectStates	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerRead	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerReadCombinedState	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerReadState	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerSetTriggerEffect	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerSetTriggerEffects	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerSetVibration	C-real	implements
+#5038	Sebastian	libScePad	scePadVrControllerSetVibrationMode	C-real	implements
+#5528	UmillD	libkernel_sys	readlink_nid_postfix	B-S	changes
+#5528	UmillD	libkernel_sys	readlinkat_nid_postfix	B-S	changes
+#6977	Get-fix	libSceNpManager	sceNpIsPlusMember	D	implements
+#6977	Get-fix	libSceNpManager	sceNpSetContentRestriction	C-real	implements
+#7201	Claude	libSceSystemService	sceSystemServiceLoadExec	B-L	changes
+#7658	primesoul-web	libSceHmd2	sceHmd2ReprojectionEnableVrMode	D	implements
+#7658	primesoul-web	libSceHmd2	sceHmd2ReprojectionInitialize	D	implements
+#7658	primesoul-web	libSceHmd2	sceHmd2ReprojectionQueryBufferSizeAlign	D	implements
+#7658	primesoul-web	libSceHmd2	sceHmd2ReprojectionSetAllowPositionalReprojection	D	implements
+#7658	primesoul-web	libSceHmd2	sceHmd2ReprojectionSetTiming	D	implements
+#7658	primesoul-web	libSceHmd2	sceHmd2ReprojectionTerminate	D	implements
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataAbort	A	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataBindPsnAccount	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataBindPsnAccountForSystemBackup	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataChangeDatabase	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataChangeInternal	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckBackupData	B-M	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckBackupDataForCdlg	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckBackupDataInternal	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckBackupDataLight	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckCloudData	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckSaveDataBroken	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckSaveDataVersion	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCheckSaveDataVersionLatest	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataClearProgress	B-S	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataCreateUploadData	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDebugGetThreadId	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDeleteAllUser	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDeleteBackupData	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDeleteCloudData	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDeleteProspero	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDeleteTitle	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDeleteUser	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDirNameSearchInternal	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataDownload	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetAllSize	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetAppLaunchedUser	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetAutoUploadConditions	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetAutoUploadRequestInfo	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetAutoUploadSetting	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetBoundPsnAccountCount	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetClientThreadPriority	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetCloudQuotaInfo	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetEventInfo	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetMountedSaveDataCount	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetProgress	B-S	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetSaveDataCount	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetSaveDataRootDir	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetSaveDataRootPath	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetSaveDataRootUsbPath	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetSavePoint	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataGetUpdatedDataCount	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataInitialize2	A	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataInitializeForCdlg	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataIsDeletingUsbDb	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataIsMounted	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataManualDelete	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataManualDownload	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataManualUpload	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataMount5	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataMountInternal	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataMountSys	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataRebuildDatabase	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataRegisterEventCallback	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataRestoreBackupData	B-M	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataRestoreBackupDataForCdlg	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataRestoreLoadSaveDataMemory	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataSetAutoUploadSetting	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataSetEventInfo	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataSetSaveDataLibraryUser	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataShutdownStart	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataSupportedFakeBrokenStatus	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataSyncCloudList	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataUmountSys	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataUmountWithBackup	B-S	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataUnregisterEventCallback	D	moves to libSceSaveData.native, still todo
+#7780	Savvanis Spyros	libSceSaveData	sceSaveDataUpload	D	moves to libSceSaveData.native, still todo
+#7881	SlugZero	libScePad	scePadSetAngularVelocityBiasCorrectionState	B-S	changes
+#7965	frankea	libSceSystemService	sceSystemServiceParamGetInt	D	changes
+#8204	ShinMalphur	libSceNet	sceNetEtherStrton	B-S	changes
+#8225	jagrat Singh	libSceNet	sceNetShowPolicy	D	implements
+#8232	jagrat Singh	libSceNet	sceNetShowNetstatEx	D	implements
+#8234	jagrat Singh	libSceNet	sceNetShowIfconfigWithMemory	D	implements
+#8235	jagrat Singh	libSceNet	sceNetShowRouteWithMemory	C-silent	implements
+#8254	Yossi Yadgar	libSceNet	sceNetEmulationGet	D	implements
+#8254	Yossi Yadgar	libSceNet	sceNetEmulationSet	D	implements
+#8254	Yossi Yadgar	libSceNet	sceNetThreadCreate	D	implements
+#8254	Yossi Yadgar	libSceNet	sceNetThreadExit	B-S	implements
+#8254	Yossi Yadgar	libSceNet	sceNetThreadJoin	D	implements
+#8260	Yossi Yadgar	libScePad	scePadSetLightBarForTracker	D	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V57ProductEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V59ContainerEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V15OwnerEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V53SkuEEEEEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V57ProductEEEEEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_17TitleCloudStorage2V110DataStatusEEEEEED1Ev	B-S	changes
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V57ProductEEC1ERS7_	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEC1ERS7_	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEC1Ev	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEC1Ev	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEED2Ev	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEED2Ev	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V57ProductEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V15OwnerEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V53SkuEEEEEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V57ProductEEEEEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEdeEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEptEv	B-S	implements
+#8264	Yossi Yadgar	libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_17TitleCloudStorage2V110DataStatusEEEEEEdeEv	B-S	implements
+#8350	Adria Espi	libScePad	scePadGetControllerType	D	implements
+#8354	Federico Marras	libSceSystemService	sceLncUtilGetAppTitleId	B-S	changes
+#8354	Federico Marras	libSceSystemService	sceSystemServiceGetAppId	B-S	changes
+#8354	Federico Marras	libSceSystemService	sceSystemServiceGetAppTitleId	B-S	changes
+#8362	Federico Marras	libSceNet	sceNetGetSockInfo6	D	implements
+#8457	vaibhavindalia	libkernel_sys	fchown_nid_postfix	B-M	implements
+#8525	Federico Marras	libSceAudioOut	sceAudioOutMasteringGetState	D	changes
+#8525	Federico Marras	libSceAudioOut	sceAudioOutMasteringInit	D	changes
+#8525	Federico Marras	libSceAudioOut	sceAudioOutMasteringSetParam	D	changes
+#8525	Federico Marras	libSceAudioOut	sceAudioOutMasteringTerm	D	implements
+#8531	xxLnolan	libkernel_sys	fchown_nid_postfix	B-M	implements
+#8534	blu	libkernel_sys	readlink_nid_postfix	B-S	implements
+#8534	blu	libkernel_sys	readlinkat_nid_postfix	B-S	implements
+#8645	Niko	libSceHmd2	sceHmd2ReprojectionBeginFrame	D	implements
+#8645	Niko	libSceHmd2	sceHmd2ReprojectionDisableMirroring	D	implements
+#8645	Niko	libSceHmd2	sceHmd2ReprojectionDisableVrMode	D	implements
+#8645	Niko	libSceHmd2	sceHmd2ReprojectionGetStatus	D	implements
+#8645	Niko	libSceHmd2	sceHmd2ReprojectionSetMirroringOption	D	implements
+#8651	Niko	libSceSystemService	sceAppMessagingTryReceiveMsg	D	implements
+#8651	Niko	libSceSystemService	sceLncUtilInitialize	D	implements
+#8652	Niko	libSceAudioOut	sceAudioOutSetMainOutput	D	implements
+#8723	xXPBSXx	libkernel_sys	symlink_nid_postfix	B-M	changes
+#8907	hypermist	libSceHmd2	sceHmd2GazeGetResult	D	changes
+#8907	hypermist	libSceHmd2	sceHmd2GazeGetResultForFoveatedRendering	D	changes
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp1254	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp1256	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp1258	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp437	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp737	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp775	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp850	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp852	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp855	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp860	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp861	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp862	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp863	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp865	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileCp866	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_1	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_10	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_13	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_14	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_15	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_16	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_2	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_4	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_5	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileIso8859_9	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileKoi8R	B-S	implements
+#8923	Niko	libSceCesCs	sceCesRefersUcsProfileKoi8U	B-S	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariable	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableA	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableAAsync	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableAVUser	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableAVUserAsync	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableAsync	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableForCrossSave	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveAsync	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveVUser	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveVUserAsync	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableVUser	C-real	implements
+#8925	Felipe Arce	libSceNpTus	sceNpTusTryAndSetVariableVUserAsync	C-real	implements
+#8956	Codex	libSceLibreSsl3	CRYPTO_memcmp_nid_postfix	B-S	implements
+#8959	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi12getContainerEiRKNS4_23ParameterToGetContainerERNS1_6Common11TransactionINS8_12IntrusivePtrINS8_6VectorINSA_INS3_9ContainerEEEEEEENSA_INS8_18ResponseHeaderBaseEEEEE	C-real	implements
+#8959	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer10initializeEPNS1_6Common10LibContextE	C-silent	implements
+#8959	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer9terminateEv	C-silent	implements
+#8959	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainerD1Ev	C-silent	implements
+#8967	simonbronk	libSceCesCs	sceCesEucJpToUtf16	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesEucJpToUtf16be	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesEucJpToUtf16le	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesEucJpToUtf32	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesEucJpToUtf32be	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesEucJpToUtf32le	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesJisX0208ToSJisCode	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisCodeToJisX0208	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUcs2	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUtf16	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUtf16be	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUtf16le	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUtf32	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUtf32be	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUtf32le	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesSJisToUtf8	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUcs2ToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUcs2ToSJis	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf16ToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf16ToSJis	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf16beToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf16beToSJis	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf16leToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf16leToSJis	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf32ToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf32ToSJis	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf32beToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf32beToSJis	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf32leToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf32leToSJis	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf8ToEucJp	B-S	implements
+#8967	simonbronk	libSceCesCs	sceCesUtf8ToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesEucJpToUtf16	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesEucJpToUtf16be	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesEucJpToUtf16le	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesEucJpToUtf32	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesEucJpToUtf32be	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesEucJpToUtf32le	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesJisX0208ToSJisCode	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesMbcsStrGetUtf16Len	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesMbcsStrGetUtf32Len	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesMbcsStrToUtf16Str	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesMbcsStrToUtf32Str	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisCodeToJisX0208	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUcs2	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUtf16	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUtf16be	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUtf16le	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUtf32	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUtf32be	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUtf32le	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSJisToUtf8	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSbcToUcs2	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSbcToUtf16	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSbcToUtf16be	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSbcToUtf16le	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSbcToUtf32	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSbcToUtf32be	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesSbcToUtf32le	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUcs2ToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUcs2ToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUcs2ToSbc	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16StrGetMbcsLen	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16StrToMbcsStr	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16ToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16ToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16ToSbc	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16beToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16beToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16beToSbc	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16leToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16leToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf16leToSbc	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32StrGetMbcsLen	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32StrToMbcsStr	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32ToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32ToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32ToSbc	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32beToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32beToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32beToSbc	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32leToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32leToSJis	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf32leToSbc	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf8ToEucJp	B-S	implements
+#8972	simonbronk	libSceCesCs	sceCesUtf8ToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUcs2	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUtf16	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUtf16be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUtf16le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUtf32	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUtf32be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUtf32le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucCnToUtf8	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucJpToUtf16	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucJpToUtf16be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucJpToUtf16le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucJpToUtf32	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucJpToUtf32be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesEucJpToUtf32le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUcs2	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUtf16	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUtf16be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUtf16le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUtf32	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUtf32be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUtf32le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesGbToUtf8	B-S	implements
+#8976	Simone	libSceCesCs	sceCesJisX0208ToSJisCode	B-S	implements
+#8976	Simone	libSceCesCs	sceCesMbcsStrGetUtf16Len	B-S	implements
+#8976	Simone	libSceCesCs	sceCesMbcsStrGetUtf32Len	B-S	implements
+#8976	Simone	libSceCesCs	sceCesMbcsStrToUtf16Str	B-S	implements
+#8976	Simone	libSceCesCs	sceCesMbcsStrToUtf32Str	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisCodeToJisX0208	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUcs2	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUtf16	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUtf16be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUtf16le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUtf32	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUtf32be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUtf32le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSJisToUtf8	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSbcToUcs2	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSbcToUtf16	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSbcToUtf16be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSbcToUtf16le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSbcToUtf32	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSbcToUtf32be	B-S	implements
+#8976	Simone	libSceCesCs	sceCesSbcToUtf32le	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUcs2ToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUcs2ToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUcs2ToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUcs2ToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUcs2ToSbc	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUcsProfileInitEucCnGb2312	B-M	implements
+#8976	Simone	libSceCesCs	sceCesUcsProfileInitGbkCp936	B-M	implements
+#8976	Simone	libSceCesCs	sceCesUtf16StrGetMbcsLen	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16StrToMbcsStr	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16ToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16ToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16ToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16ToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16ToSbc	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16beToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16beToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16beToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16beToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16beToSbc	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16leToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16leToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16leToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16leToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf16leToSbc	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32StrGetMbcsLen	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32StrToMbcsStr	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32ToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32ToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32ToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32ToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32ToSbc	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32beToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32beToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32beToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32beToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32beToSbc	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32leToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32leToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32leToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32leToSJis	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf32leToSbc	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf8ToEucCn	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf8ToEucJp	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf8ToGb	B-S	implements
+#8976	Simone	libSceCesCs	sceCesUtf8ToSJis	B-S	implements
+#8987	Simone	libkernel_sys	sceKernelMsync	A	implements
+#8987	Simone	libkernel_sys	scePthreadBarrierDestroy	A	implements
+#8987	Simone	libkernel_sys	scePthreadBarrierInit	B-S	implements
+#8987	Simone	libkernel_sys	scePthreadBarrierWait	B-S	implements
+#8987	Simone	libkernel_sys	scePthreadBarrierattrDestroy	A	implements
+#8987	Simone	libkernel_sys	scePthreadBarrierattrGetpshared	A	implements
+#8987	Simone	libkernel_sys	scePthreadBarrierattrInit	A	implements
+#8987	Simone	libkernel_sys	scePthreadBarrierattrSetpshared	A	implements
+#8987	Simone	libkernel_sys	scePthreadGetconcurrency	A	implements
+#8987	Simone	libkernel_sys	scePthreadGetcpuclockid	A	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUcs2	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUtf16	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUtf16be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUtf16le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUtf32	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUtf32be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUtf32le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucCnToUtf8	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucJpToUtf16	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucJpToUtf16be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucJpToUtf16le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucJpToUtf32	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucJpToUtf32be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesEucJpToUtf32le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUcs2	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUtf16	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUtf16be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUtf16le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUtf32	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUtf32be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUtf32le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesGbToUtf8	B-S	implements
+#8993	Simone	libSceCesCs	sceCesJisX0208ToSJisCode	B-S	implements
+#8993	Simone	libSceCesCs	sceCesJisX0213ToSJisCode	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUcs2	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUtf16	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUtf16be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUtf16le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUtf32	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUtf32be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUtf32le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcToUtf8	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcsStrGetUtf16Len	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcsStrGetUtf32Len	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcsStrToUtf16Str	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcsStrToUtf32Str	B-S	implements
+#8993	Simone	libSceCesCs	sceCesMbcsUcsContextInitCopy	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisCodeToJisX0208	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisCodeToJisX0213	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisGetCode	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisPutCode	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUcs2	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUtf16	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUtf16be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUtf16le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUtf32	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUtf32be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUtf32le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSJisToUtf8	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSbcToUcs2	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSbcToUtf16	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSbcToUtf16be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSbcToUtf16le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSbcToUtf32	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSbcToUtf32be	B-S	implements
+#8993	Simone	libSceCesCs	sceCesSbcToUtf32le	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUcs2ToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUcs2ToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUcs2ToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUcs2ToSJis	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUcs2ToSbc	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUcsProfileInitEucCnGb2312	B-M	implements
+#8993	Simone	libSceCesCs	sceCesUcsProfileInitGbkCp936	B-M	implements
+#8993	Simone	libSceCesCs	sceCesUtf16StrGetMbcsLen	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16StrToMbcsStr	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16ToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16ToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16ToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16ToSJis	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16ToSbc	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16beToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16beToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16beToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16beToSJis	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16beToSbc	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16leToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16leToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16leToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16leToSJis	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf16leToSbc	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32StrGetMbcsLen	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32StrToMbcsStr	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32ToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32ToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32ToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32ToSJis	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32ToSbc	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32beToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32beToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32beToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32beToSJis	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32beToSbc	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32leToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32leToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32leToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32leToSJis	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf32leToSbc	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf8ToEucCn	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf8ToEucJp	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf8ToGb	B-S	implements
+#8993	Simone	libSceCesCs	sceCesUtf8ToSJis	B-S	implements
+#9008	verusferro	libkernel_sys	fstat_nid_postfix	A	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTssGetSmallStorage	D	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTssGetSmallStorageAsync	D	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariable	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableAVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableAVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableForCrossSave	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableForCrossSaveAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableForCrossSaveVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableForCrossSaveVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusAddAndGetVariableVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusDeleteMultiSlotData	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusDeleteMultiSlotDataA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusDeleteMultiSlotDataAAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusDeleteMultiSlotDataAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataAAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataAVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataAVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataForCrossSave	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataForCrossSaveAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetDataVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetFriendsDataStatus	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetFriendsDataStatusAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetFriendsVariable	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetFriendsVariableAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatus	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusAAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusAVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusAVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSave	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSaveAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSaveVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiSlotDataStatusVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatus	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusAAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusAVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusAVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSave	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSaveAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSaveVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSaveVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserDataStatusVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariable	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableAAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableAVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableAVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableForCrossSaveAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableForCrossSaveVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableForCrossSaveVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusGetMultiUserVariableVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusSetDataA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusSetDataAAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusSetDataAVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusSetDataAVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusSetDataAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusSetDataVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariable	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableA	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableAAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableAVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableAVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableForCrossSave	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveVUserAsync	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableVUser	C-real	implements
+#9009	Yossi Yadgar	libSceNpTus	sceNpTusTryAndSetVariableVUserAsync	C-real	implements
+#9015	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi12getContainerEiRKNS4_23ParameterToGetContainerERNS1_6Common11TransactionINS8_12IntrusivePtrINS8_6VectorINSA_INS3_9ContainerEEEEEEENSA_INS8_18ResponseHeaderBaseEEEEE	C-real	implements
+#9015	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer10initializeEPNS1_6Common10LibContextE	C-silent	implements
+#9015	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer9terminateEv	C-silent	implements
+#9015	akkadbakkad89	libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainerD1Ev	C-silent	implements
+#9019	Daniele Giovane	libkernel_sys	pwrite_nid_postfix	A	implements
+#9023	hypermist	libSceAudioOut	sceAudioOutGetInfo	D	implements
+#9023	hypermist	libSceAudioOut	sceAudioOutGetInfoOpenNum	D	implements
+#9023	hypermist	libSceAudioOut	sceAudioOutGetSimulatedHandleStatusInfo	D	implements
+#9025	HQasper	libSceLibreSsl	SHA256_nid_postfix	B-S	changes
+#9025	HQasper	libSceLibreSsl	SHA512_Final_nid_postfix	B-S	changes
+#9025	HQasper	libSceLibreSsl	MD4_Final_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	MD4_Init_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	MD4_Update_nid_postfix	B-M	implements
+#9025	HQasper	libSceLibreSsl	MD5_Final_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	MD5_Init_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	MD5_Update_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA1_Final_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA1_Init_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA1_Update_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA224_Final_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA224_Init_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA224_Update_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA256_Final_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA256_Init_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA256_Update_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA384_Final_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA384_Init_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA384_Update_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA512_Init_nid_postfix	B-S	implements
+#9025	HQasper	libSceLibreSsl	SHA512_Update_nid_postfix	B-S	implements
+#9027	hypermist	libSceAudioOut	sceAudioOut2MasteringInit	B-S	implements
+#9027	hypermist	libSceAudioOut	sceAudioOut2MasteringInitEx	D	implements
+#9032	hypermist	libSceAudioOut	sceAudioOut2InitializeEx	D	implements
+#9032	hypermist	libSceAudioOut	sceAudioOut2LoTerminate	D	implements
+#9033	HQasper	libSceLibreSsl	AES_cbc_encrypt_nid_postfix	B-S	implements
+#9033	HQasper	libSceLibreSsl	AES_cfb128_encrypt_nid_postfix	B-S	implements
+#9033	HQasper	libSceLibreSsl	AES_ctr128_encrypt_nid_postfix	B-S	implements
+#9033	HQasper	libSceLibreSsl	AES_decrypt_nid_postfix	B-S	implements
+#9033	HQasper	libSceLibreSsl	AES_ecb_encrypt_nid_postfix	B-S	implements
+#9033	HQasper	libSceLibreSsl	AES_encrypt_nid_postfix	B-S	implements
+#9033	HQasper	libSceLibreSsl	AES_set_decrypt_key_nid_postfix	B-S	implements
+#9033	HQasper	libSceLibreSsl	AES_set_encrypt_key_nid_postfix	B-S	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpCmpNpIdInOrder	B-S	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpCmpOnlineId	B-S	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpCondDestroy	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpCondInit	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpCondSignal	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpCondTimedwait	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpGetPlatformType	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpGetSdkVersion	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpGetSystemClockUsec	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpIntIsValidOnlineId	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpJoinThread	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpLwMutexDestroy	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpLwMutexInit	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpLwMutexLock	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpLwMutexTryLock	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpLwMutexUnlock	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpMutexDestroy	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpMutexInit	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpMutexLock	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpMutexTryLock	D	implements
+#9037	Yossi Yadgar	libSceNpCommon	sceNpMutexUnlock	D	implements
+#9040	Yossi Yadgar	libkernel_sys	sceKernelGetProcessType	D	implements
+#9040	Yossi Yadgar	libkernel_sys	sceKernelTitleWorkaroundIsEnabled	D	implements
+#9041	HQasper	libSceLibreSsl	CRYPTO_malloc_nid_postfix	B-S	changes
+#9041	HQasper	libSceLibreSsl	CRYPTO_free_nid_postfix	B-S	implements
+#9041	HQasper	libSceLibreSsl	CRYPTO_set_mem_functions_nid_postfix	B-S	implements
+#9041	HQasper	libSceLibreSsl	RAND_add_nid_postfix	B-S	implements
+#9041	HQasper	libSceLibreSsl	RAND_bytes_nid_postfix	B-S	implements
+#9041	HQasper	libSceLibreSsl	RAND_file_name_nid_postfix	B-S	implements
+#9041	HQasper	libSceLibreSsl	RAND_load_file_nid_postfix	B-S	implements
+#9041	HQasper	libSceLibreSsl	RAND_status_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl3	MD5_nid_postfix	B-S	changes
+#9043	HQasper	libSceLibreSsl3	SHA1_nid_postfix	B-S	changes
+#9043	HQasper	libSceLibreSsl3	CRYPTO_memcmp_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA256_nid_postfix	B-S	changes
+#9043	HQasper	libSceLibreSsl	SHA512_Final_nid_postfix	B-S	changes
+#9043	HQasper	libSceLibreSsl	MD4_Final_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	MD4_Init_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	MD4_Update_nid_postfix	B-M	implements
+#9043	HQasper	libSceLibreSsl	MD5_Final_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	MD5_Init_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	MD5_Update_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA1_Final_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA1_Init_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA1_Update_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA224_Final_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA224_Init_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA224_Update_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA256_Final_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA256_Init_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA256_Update_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA384_Final_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA384_Init_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA384_Update_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA512_Init_nid_postfix	B-S	implements
+#9043	HQasper	libSceLibreSsl	SHA512_Update_nid_postfix	B-S	implements
+#9047	VakzOs	libSceLibreSsl	DES_ecb_encrypt_nid_postfix	B-S	implements
+#9047	VakzOs	libSceLibreSsl	DES_set_key_nid_postfix	B-S	implements
+#9047	VakzOs	libSceLibreSsl	DES_set_odd_parity_nid_postfix	B-S	implements
+#9060	Arnab Ghosh	libSceNet	sceNetIoctl	B-S	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpAllocateKernelMemoryNoAlignment	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpAllocateKernelMemoryWithAlignment	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpArchInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpArchTerm	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpAtomicCas32	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpAtomicDec32	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpAtomicInc32	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpBase64Decoder	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpBase64Encoder	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpBase64GetDecodeSize	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpBase64UrlDecoder	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpBase64UrlEncoder	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpBase64UrlGetDecodeSize	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCalloutInitCtx	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCalloutStartOnCtx	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCalloutStartOnCtx64	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCalloutStopOnCtx	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCalloutTermCtx	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCancelEventFlag	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpClearEventFlag	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCmpNpIdInOrder	B-S	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCmpOnlineId	B-S	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCondDestroy	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCondInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCondSignal	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCondSignalAll	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCondSignalTo	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCondTimedwait	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCondWait	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCreateEventFlag	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCreateSema	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpCreateThread	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpDbgAssignDebugId	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpDbgDumpBinary	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpDbgDumpText	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpDeleteEventFlag	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpDeleteSema	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpFreeKernelMemory	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGetPlatformType	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGetProcessId	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGetRandom	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGetSdkVersion	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGetSdkVersionUInt	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGetSystemClockUsec	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGlobalHeapGetAllocator	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGlobalHeapGetAllocatorEx	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGlobalHeapGetAllocatorExPtr	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpGlobalHeapGetAllocatorPtr	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpHeapDestroy	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpHeapGetAllocator	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpHeapGetStat	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpHeapInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpHeapShowStat	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpHexToInt	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpInt32ToStr	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpInt64ToStr	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpIntIsOnlineIdString	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpIntIsValidOnlineId	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpIntToHex	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpIpc2ClientInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpIpc2ClientTerm	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpJoinThread	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwCondDestroy	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwCondInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwCondSignal	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwCondSignalAll	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwCondSignalTo	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwCondWait	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwMutexDestroy	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwMutexInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwMutexLock	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwMutexTryLock	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpLwMutexUnlock	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMemoryHeapDestroy	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMemoryHeapGetAllocator	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMemoryHeapGetAllocatorEx	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMemoryHeapInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMutexDestroy	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMutexInit	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMutexLock	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMutexTryLock	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpMutexUnlock	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpOpenEventFlag	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpPanic	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpPollEventFlag	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpPollSema	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpRtcConvertToPosixTime	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpRtcFormatRFC3339	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpRtcParseRFC3339	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpSetEventFlag	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpSignalSema	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrBuildHex	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrParseHex	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrToInt32	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrToInt64	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrToUInt32	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrToUInt64	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrcpyToBuf	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrnParseHex	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpStrncpyToBuf	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpThreadGetId	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUInt32ToStr	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUInt64ToStr	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUserGetUserIdList	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilBuildTitleId	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilCmpAccountId	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilGetNpLanguageCode	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilGetNpLanguageCode2	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilGetNpLanguageCode2Str	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilGetNpLanguageCodeStr	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilGetNthChar	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilHttpUrlEncode	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilJsonEscape	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilJsonGetOneChar	D	implements
+#9063	Yossi Yadgar	libSceNpCommon	sceNpUtilJsonUnescape	D	implements
+#9085	Yossi Yadgar	libSceNpManager	sceNpCheckCallbackForLib	C-real	implements
+#9089	Yossi Yadgar	libSceSystemService	sceShellCoreUtilIsBgmPlaying	C-real	implements
+#9089	Yossi Yadgar	libSceSystemService	sceSystemServiceIsBgmPlaying	C-real	implements
+#9097	David	libkernel_sys	sceKernelFlock	A	implements
+#9103	Claude	libkernel_sys	chown_nid_postfix	B-S	changes
+#9103	Claude	libkernel_sys	fchown_nid_postfix	B-M	changes
+#9103	Claude	libkernel_sys	fchownat_nid_postfix	B-S	changes
+#9103	Claude	libkernel_sys	lchown_nid_postfix	B-S	changes
+#9103	Claude	libkernel_sys	linkat_nid_postfix	B-S	changes
+#9107	jacob6769	libSceCesCs	sceCesBig5ToUcs2	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesBig5ToUtf16	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesBig5ToUtf16be	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesBig5ToUtf16le	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesBig5ToUtf32	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesBig5ToUtf32be	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesBig5ToUtf32le	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesEucKrToUcs2	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesEucKrToUtf16	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesEucKrToUtf16be	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesEucKrToUtf16le	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesEucKrToUtf32	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesEucKrToUtf32be	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesEucKrToUtf32le	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUcs2ToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUcs2ToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUcs2ToUhc	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUhcToUcs2	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUhcToUtf16	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUhcToUtf16be	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUhcToUtf16le	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUhcToUtf32	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUhcToUtf32be	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUhcToUtf32le	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16ToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16ToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16ToUhc	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16beToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16beToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16beToUhc	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16leToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16leToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf16leToUhc	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32ToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32ToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32ToUhc	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32beToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32beToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32beToUhc	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32leToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32leToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf32leToUhc	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf8ToBig5	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf8ToEucKr	B-S	implements
+#9107	jacob6769	libSceCesCs	sceCesUtf8ToUhc	B-S	implements
+#9134	orezraey	libkernel_sys	sceKernelCloseEventFlag	B-S	moves to libkernel, implemented
+#9141	Federico Marras	libkernel_sys	sceKernelMsync	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadAtfork	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadAttrGetscope	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadAttrSetscope	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadBarrierDestroy	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadBarrierInit	B-S	implements
+#9141	Federico Marras	libkernel_sys	scePthreadBarrierWait	B-S	implements
+#9141	Federico Marras	libkernel_sys	scePthreadBarrierattrDestroy	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadBarrierattrGetpshared	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadBarrierattrInit	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadBarrierattrSetpshared	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadGetconcurrency	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadGetcpuclockid	A	implements
+#9141	Federico Marras	libkernel_sys	scePthreadSetconcurrency	A	implements
+#9144	Rookie	libSceNpManager	sceNpCheckNpAvailabilityA	C-real	implements
+#9144	Rookie	libSceNpManager	sceNpGetAccountDateOfBirthA	C-real	implements
+#9144	Rookie	libSceNpManager	sceNpGetAccountLanguageA	C-real	implements
+#9144	Rookie	libSceNpManager	sceNpGetGamePresenceStatus	C-real	implements
+#9144	Rookie	libSceNpManager	sceNpGetGamePresenceStatusA	C-real	implements
+#9144	Rookie	libSceNpManager	sceNpGetParentalControlInfoA	C-real	implements
+#9156	David	libkernel_sys	pthread_attr_getaffinity_np_nid_postfix	B-S	moves to libkernel, implemented
+#9156	David	libkernel_sys	pthread_attr_getsolosched_np_nid_postfix	A	moves to libkernel, implemented
+#9156	David	libkernel_sys	pthread_attr_setaffinity_np_nid_postfix	B-S	moves to libkernel, implemented
+#9156	David	libkernel_sys	pthread_attr_setstackaddr_nid_postfix	A	moves to libkernel, implemented
+#9160	Daniele Giovane	libkernel_sys	pthread_attr_getaffinity_np_nid_postfix	B-S	implements
+#9160	Daniele Giovane	libkernel_sys	pthread_attr_getsolosched_np_nid_postfix	A	implements
+#9160	Daniele Giovane	libkernel_sys	pthread_attr_setaffinity_np_nid_postfix	B-S	implements
+#9160	Daniele Giovane	libkernel_sys	pthread_attr_setstackaddr_nid_postfix	A	implements
+#9160	Daniele Giovane	libkernel_sys	pthread_main_np_nid_postfix	B-S	implements
+#9161	Daniele Giovane	libkernel_sys	symlink_nid_postfix	B-M	changes
+#9161	Daniele Giovane	libkernel_sys	symlinkat_nid_postfix	B-S	changes
+#9161	Daniele Giovane	libkernel_sys	futimesat_nid_postfix	B-S	implements
+#9161	Daniele Giovane	libkernel_sys	statfs_nid_postfix	B-S	implements
+#9162	Daniele Giovane	libkernel_sys	wait3_nid_postfix	B-S	implements
+#9162	Daniele Giovane	libkernel_sys	wait4_nid_postfix	B-S	implements
+#9167	Sebastian	libkernel_sys	sem_close_nid_postfix	B-S	moves to libkernel, implemented
+#9167	Sebastian	libkernel_sys	sem_open_nid_postfix	B-M	moves to libkernel, implemented
+#9167	Sebastian	libkernel_sys	sem_unlink_nid_postfix	B-S	moves to libkernel, implemented
+#9171	David	libkernel_sys	getlogin_nid_postfix	B-S	moves to libkernel, implemented
+#9172	hypermist	libkernel_sys	pthread_switch_add_np_nid_postfix	C-real	implements
+#9172	hypermist	libkernel_sys	pthread_switch_delete_np_nid_postfix	C-real	implements
+#9172	hypermist	libkernel_sys	sceKernelAddResource	D	implements
+#9172	hypermist	libkernel_sys	sceKernelClearGameDirectMemory	D	implements
+#9172	hypermist	libkernel_sys	sceKernelCloseEport	D	implements
+#9172	hypermist	libkernel_sys	sceKernelCreateEport	D	implements
+#9172	hypermist	libkernel_sys	sceKernelDeleteEport	D	implements
+#9172	hypermist	libkernel_sys	sceKernelEventLogInit	D	implements
+#9172	hypermist	libkernel_sys	sceKernelHasNeoMode	D	implements
+#9172	hypermist	libkernel_sys	sceKernelIccGetCPMode	D	implements
+#9172	hypermist	libkernel_sys	sceKernelIccSetCPMode	D	implements
+#9172	hypermist	libkernel_sys	sceKernelIsAuthenticNeo	D	implements
+#9172	hypermist	libkernel_sys	sceKernelIsGenuineKratosCex	D	implements
+#9172	hypermist	libkernel_sys	sceKernelIsGenuineN	D	implements
+#9172	hypermist	libkernel_sys	sceKernelMapTraceMemory	D	implements
+#9172	hypermist	libkernel_sys	sceKernelOpenEport	D	implements
+#9172	hypermist	libkernel_sys	sceKernelQueryTraceMemory	D	implements
+#9172	hypermist	libkernel_sys	sceKernelReleaseTraceDirectMemory	D	implements
+#9172	hypermist	libkernel_sys	sceKernelTraceMemoryTypeProtect	D	implements
+#9172	hypermist	libkernel_sys	sceKernelTriggerEport	D	implements
+#9173	hypermist	libSceComposite	sceCompositorCreateIndirectRenderTarget	D	implements
+#9173	hypermist	libSceComposite	sceCompositorDeleteIndirectRenderTarget	D	implements
+#9173	hypermist	libSceComposite	sceCompositorSetIndirectCanvasCommand	D	implements
+#9173	hypermist	libSceComposite	sceCompositorSetIndirectCompositionCommand	D	implements
+#9173	hypermist	libSceComposite	sceCompositorSetIndirectRenderTargetConfigCommand	D	implements
+#9173	hypermist	libSceFsInternalForVsh	sceFsErriCtl	D	implements
+#9173	hypermist	libSceFsInternalForVsh	sceFsErriGetState	D	implements
+#9173	hypermist	libmdbg_syscore	sceDebugGetProcessEventCntlFlag	D	implements
+#9173	hypermist	libmdbg_syscore	sceDebugSetProcessEventCntlFlag	D	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUcs2	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUtf16	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUtf16be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUtf16le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUtf32	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUtf32be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUtf32le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucCnToUtf8	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucJpToUtf16	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucJpToUtf16be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucJpToUtf16le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucJpToUtf32	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucJpToUtf32be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesEucJpToUtf32le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUcs2	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUtf16	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUtf16be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUtf16le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUtf32	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUtf32be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUtf32le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesGbToUtf8	B-S	implements
+#9175	Simone	libSceCesCs	sceCesJisX0208ToSJisCode	B-S	implements
+#9175	Simone	libSceCesCs	sceCesJisX0213ToSJisCode	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUcs2	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUtf16	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUtf16be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUtf16le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUtf32	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUtf32be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUtf32le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcToUtf8	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcsStrGetUtf16Len	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcsStrGetUtf32Len	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcsStrToUtf16Str	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcsStrToUtf32Str	B-S	implements
+#9175	Simone	libSceCesCs	sceCesMbcsUcsContextInitCopy	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisCodeToJisX0208	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisCodeToJisX0213	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisGetCode	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisPutCode	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUcs2	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUtf16	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUtf16be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUtf16le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUtf32	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUtf32be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUtf32le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSJisToUtf8	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSbcToUcs2	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSbcToUtf16	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSbcToUtf16be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSbcToUtf16le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSbcToUtf32	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSbcToUtf32be	B-S	implements
+#9175	Simone	libSceCesCs	sceCesSbcToUtf32le	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUcs2ToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUcs2ToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUcs2ToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUcs2ToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUcs2ToSJis	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUcs2ToSbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUcsProfileInitEucCnGb2312	B-M	implements
+#9175	Simone	libSceCesCs	sceCesUcsProfileInitGbkCp936	B-M	implements
+#9175	Simone	libSceCesCs	sceCesUtf16StrGetMbcsLen	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16StrToMbcsStr	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16ToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16ToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16ToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16ToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16ToSJis	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16ToSbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16beToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16beToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16beToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16beToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16beToSJis	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16beToSbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16leToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16leToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16leToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16leToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16leToSJis	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf16leToSbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32StrGetMbcsLen	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32StrToMbcsStr	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32ToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32ToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32ToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32ToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32ToSJis	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32ToSbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32beToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32beToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32beToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32beToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32beToSJis	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32beToSbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32leToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32leToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32leToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32leToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32leToSJis	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf32leToSbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf8ToEucCn	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf8ToEucJp	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf8ToGb	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf8ToMbc	B-S	implements
+#9175	Simone	libSceCesCs	sceCesUtf8ToSJis	B-S	implements
+#9187	Sebastian	libkernel_sys	sched_getparam_nid_postfix	B-S	moves to libkernel, implemented
+#9187	Sebastian	libkernel_sys	sched_getscheduler_nid_postfix	B-S	moves to libkernel, implemented
+#9187	Sebastian	libkernel_sys	sched_setparam_nid_postfix	B-S	moves to libkernel, implemented
+#9195	Nikolay Polukhin	libkernel_sys	uuidgen_nid_postfix	B-S	implements
+#9200	KernelPanicNT	libkernel_sys	lchmod_nid_postfix	A	changes
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDebugModuleReset	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDebugReset	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDriverInternalRetrieveGnmInterface	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDriverInternalRetrieveGnmInterfaceForGpuDebugger	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDriverInternalRetrieveGnmInterfaceForReplay	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDriverInternalRetrieveGnmInterfaceForResourceRegistration	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDriverInternalRetrieveGnmInterfaceForValidation	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDriverTraceInProgress	C-real	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmFindResources	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmFindResourcesPublic	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetDbgGcHandle	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetOwnerName	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetPhysicalCounterFromVirtualized	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetResourceBaseAddressAndSizeInBytes	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetResourceName	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetResourceRegistrationBuffers	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetResourceShaderGuid	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetResourceType	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetResourceUserData	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmQueryResourceRegistrationUserMemoryRequirements	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmRegisterGdsResource	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmRegisterOwner	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmRegisterOwnerForSystem	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmRegisterResource	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaClose	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaConstFill	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaCopyLinear	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaCopyTiled	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaCopyWindow	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaFlush	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaGetMinCmdSize	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSdmaOpen	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetResourceRegistrationUserMemory	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetResourceUserData	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetSpiEnableSqCounters	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetSpiEnableSqCountersForUnitInstance	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUnregisterAllResourcesForOwner	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUnregisterOwnerAndResources	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUnregisterResource	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateDisableDiagnostics	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateDisableDiagnostics2	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateDispatchCommandBuffers	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateDrawCommandBuffers	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateGetDiagnosticInfo	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateGetDiagnostics	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateOnSubmitEnabled	C-real	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidateResetState	D	implements
+#9201	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmValidationRegisterMemoryCheckCallback	D	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUcs2	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUtf16	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUtf16be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUtf16le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUtf32	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUtf32be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUtf32le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucCnToUtf8	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucJpToUtf16	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucJpToUtf16be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucJpToUtf16le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucJpToUtf32	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucJpToUtf32be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesEucJpToUtf32le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUcs2	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUtf16	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUtf16be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUtf16le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUtf32	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUtf32be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUtf32le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesGbToUtf8	B-S	implements
+#9204	Simone	libSceCesCs	sceCesJisX0208ToSJisCode	B-S	implements
+#9204	Simone	libSceCesCs	sceCesJisX0213ToSJisCode	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUcs2	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUtf16	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUtf16be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUtf16le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUtf32	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUtf32be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUtf32le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcToUtf8	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcsStrGetUtf16Len	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcsStrGetUtf32Len	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcsStrToUtf16Str	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcsStrToUtf32Str	B-S	implements
+#9204	Simone	libSceCesCs	sceCesMbcsUcsContextInitCopy	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisCodeToJisX0208	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisCodeToJisX0213	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisGetCode	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisPutCode	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUcs2	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUtf16	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUtf16be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUtf16le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUtf32	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUtf32be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUtf32le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSJisToUtf8	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSbcToUcs2	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSbcToUtf16	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSbcToUtf16be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSbcToUtf16le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSbcToUtf32	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSbcToUtf32be	B-S	implements
+#9204	Simone	libSceCesCs	sceCesSbcToUtf32le	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcs2ToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcs2ToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcs2ToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcs2ToSJis	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcs2ToSbc	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcsProfileInitEucCnGb2312	B-M	implements
+#9204	Simone	libSceCesCs	sceCesUcsProfileInitEucJpX0208	B-M	implements
+#9204	Simone	libSceCesCs	sceCesUcsProfileInitEucJpX0208Ss2	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcsProfileInitEucJpX0208Ss2Ss3	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUcsProfileInitGbkCp936	B-M	implements
+#9204	Simone	libSceCesCs	sceCesUcsProfileInitSJis1997X0208	B-M	implements
+#9204	Simone	libSceCesCs	sceCesUtf16StrGetMbcsLen	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16StrToMbcsStr	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16ToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16ToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16ToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16ToSJis	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16ToSbc	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16beToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16beToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16beToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16beToSJis	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16beToSbc	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16leToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16leToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16leToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16leToSJis	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf16leToSbc	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32StrGetMbcsLen	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32StrToMbcsStr	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32ToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32ToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32ToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32ToSJis	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32ToSbc	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32beToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32beToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32beToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32beToSJis	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32beToSbc	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32leToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32leToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32leToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32leToSJis	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf32leToSbc	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf8ToEucCn	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf8ToEucJp	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf8ToGb	B-S	implements
+#9204	Simone	libSceCesCs	sceCesUtf8ToSJis	B-S	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmComputeWaitOnAddress	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmComputeWaitSemaphore	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDispatchDirect	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDispatchIndirect	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDispatchIndirectOnMec	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndex	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndexAuto	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndexIndirect	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndexIndirectCountMulti	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndexIndirectMulti	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndexOffset	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndirect	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndirectCountMulti	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawIndirectMulti	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmInsertDingDongMarker	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmResetVgtControl	D	implements
+#9208	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetVgtControl	D	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUcs2	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUtf16	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUtf16be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUtf16le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUtf32	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUtf32be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUtf32le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucCnToUtf8	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucJpToUtf16	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucJpToUtf16be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucJpToUtf16le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucJpToUtf32	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucJpToUtf32be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesEucJpToUtf32le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUcs2	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUtf16	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUtf16be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUtf16le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUtf32	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUtf32be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUtf32le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesGbToUtf8	B-S	implements
+#9210	Simone	libSceCesCs	sceCesJisX0208ToSJisCode	B-S	implements
+#9210	Simone	libSceCesCs	sceCesJisX0213ToSJisCode	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUcs2	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUtf16	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUtf16be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUtf16le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUtf32	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUtf32be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUtf32le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcToUtf8	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcsStrGetUtf16Len	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcsStrGetUtf32Len	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcsStrToUtf16Str	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcsStrToUtf32Str	B-S	implements
+#9210	Simone	libSceCesCs	sceCesMbcsUcsContextInitCopy	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisCodeToJisX0208	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisCodeToJisX0213	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisGetCode	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisPutCode	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUcs2	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUtf16	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUtf16be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUtf16le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUtf32	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUtf32be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUtf32le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSJisToUtf8	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSbcToUcs2	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSbcToUtf16	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSbcToUtf16be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSbcToUtf16le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSbcToUtf32	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSbcToUtf32be	B-S	implements
+#9210	Simone	libSceCesCs	sceCesSbcToUtf32le	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUcs2ToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUcs2ToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUcs2ToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUcs2ToSJis	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUcs2ToSbc	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUcsProfileInitEucCnGb2312	B-M	implements
+#9210	Simone	libSceCesCs	sceCesUcsProfileInitGb18030_2000	B-M	implements
+#9210	Simone	libSceCesCs	sceCesUcsProfileInitGb18030_2005	B-M	implements
+#9210	Simone	libSceCesCs	sceCesUcsProfileInitGbkCp936	B-M	implements
+#9210	Simone	libSceCesCs	sceCesUtf16StrGetMbcsLen	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16StrToMbcsStr	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16ToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16ToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16ToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16ToSJis	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16ToSbc	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16beToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16beToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16beToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16beToSJis	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16beToSbc	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16leToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16leToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16leToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16leToSJis	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf16leToSbc	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32StrGetMbcsLen	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32StrToMbcsStr	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32ToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32ToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32ToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32ToSJis	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32ToSbc	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32beToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32beToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32beToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32beToSJis	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32beToSbc	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32leToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32leToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32leToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32leToSJis	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf32leToSbc	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf8ToEucCn	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf8ToEucJp	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf8ToGb	B-S	implements
+#9210	Simone	libSceCesCs	sceCesUtf8ToSJis	B-S	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmBeginWorkload	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmCreateWorkloadStream	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmEndWorkload	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetGpuCoreClockFrequency	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmGetOffChipTessellationBufferSize	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetCsShaderWithModifier	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetPsShader350	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUpdateGsShader	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUpdateHsShader	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUpdatePsShader	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUpdatePsShader350	D	implements
+#9212	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmUpdateVsShader	D	implements
+#9214	erickerxhalli	libkernel_sys	sceKernelGetCompiledSdkVersion	B-S	implements
+#9219	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawInitDefaultHardwareState	D	implements
+#9219	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawInitDefaultHardwareState200	D	implements
+#9219	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawInitDefaultHardwareState350	D	implements
+#9219	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawInitToDefaultContextState	D	implements
+#9219	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmDrawInitToDefaultContextState400	D	implements
+#9221	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetEmbeddedPsShader	D	implements
+#9221	Yossi Yadgar	libSceGnmDriverForNeoMode	sceGnmSetEmbeddedVsShader	D	implements
+#9225	Yossi Yadgar	libSceNpManager	sceNpIsPlusMember	D	implements
+#9225	Yossi Yadgar	libSceNpManager	sceNpSetContentRestriction	C-real	implements
+#9242	David	libkernel_sys	tcgetsid_nid_postfix	B-S	moves to libkernel, implemented
+#9265	Claude	libkernel_sys	pthread_rwlock_reltimedrdlock_np_nid_postfix	B-S	moves to libkernel, implemented
+#9265	Claude	libkernel_sys	pthread_rwlock_reltimedwrlock_np_nid_postfix	B-S	moves to libkernel, implemented
+#9273	David	libkernel_sys	pselect_nid_postfix	B-S	moves to libkernel, implemented
+#9279	Yossi Yadgar	libkernel_sys	pthread_set_defaultstacksize_np_nid_postfix	B-S	implements
+#9279	Yossi Yadgar	libkernel_sys	scePthreadSetDefaultstacksize	B-S	implements
+#9279	Yossi Yadgar	libkernel_sys	scePthreadSetName	D	implements
+#9284	David	libkernel_sys	ksem_destroy_nid_postfix	B-S	moves to libkernel, implemented
+#9284	David	libkernel_sys	ksem_getvalue_nid_postfix	B-S	moves to libkernel, implemented
+#9284	David	libkernel_sys	ksem_init_nid_postfix	B-S	moves to libkernel, implemented
+#9284	David	libkernel_sys	ksem_post_nid_postfix	B-S	moves to libkernel, implemented
+#9284	David	libkernel_sys	ksem_timedwait_nid_postfix	B-S	moves to libkernel, implemented
+#9284	David	libkernel_sys	ksem_trywait_nid_postfix	B-S	moves to libkernel, implemented
+#9284	David	libkernel_sys	ksem_wait_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_close_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_destroy_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_getvalue_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_init_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_open_nid_postfix	B-M	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_post_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_timedwait_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_trywait_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_unlink_nid_postfix	B-S	moves to libkernel, implemented
+#9293	David	libkernel_sys	ksem_wait_nid_postfix	B-S	moves to libkernel, implemented
+#9294	Yossi Yadgar	libkernel_sys	sceKernelGetModuleInfoInternal	D	implements
+#9294	Yossi Yadgar	libkernel_sys	sceKernelGetModuleListInternal	D	implements
+#9297	David	libkernel_sys	kmq_open_nid_postfix	B-L	implements
+#9297	David	libkernel_sys	kmq_setattr_nid_postfix	B-S	implements
+#9297	David	libkernel_sys	kmq_timedreceive_nid_postfix	B-M	implements
+#9297	David	libkernel_sys	kmq_timedsend_nid_postfix	B-M	implements
+#9297	David	libkernel_sys	kmq_unlink_nid_postfix	B-S	implements
+#9297	David	libkernel_sys	ksem_destroy_nid_postfix	B-S	moves to libkernel, implemented
+#9297	David	libkernel_sys	ksem_getvalue_nid_postfix	B-S	moves to libkernel, implemented
+#9297	David	libkernel_sys	ksem_init_nid_postfix	B-S	moves to libkernel, implemented
+#9297	David	libkernel_sys	ksem_post_nid_postfix	B-S	moves to libkernel, implemented
+#9297	David	libkernel_sys	ksem_timedwait_nid_postfix	B-S	moves to libkernel, implemented
+#9297	David	libkernel_sys	ksem_trywait_nid_postfix	B-S	moves to libkernel, implemented
+#9297	David	libkernel_sys	ksem_wait_nid_postfix	B-S	moves to libkernel, implemented
+#9302	David	libkernel_sys	kmq_notify_nid_postfix	B-M	changes
+#9302	David	libkernel_sys	kmq_open_nid_postfix	B-L	implements
+#9302	David	libkernel_sys	kmq_setattr_nid_postfix	B-S	implements
+#9302	David	libkernel_sys	kmq_timedreceive_nid_postfix	B-M	implements
+#9302	David	libkernel_sys	kmq_timedsend_nid_postfix	B-M	implements
+#9302	David	libkernel_sys	kmq_unlink_nid_postfix	B-S	implements
+#9302	David	libkernel_sys	ksem_destroy_nid_postfix	B-S	moves to libkernel, implemented
+#9302	David	libkernel_sys	ksem_getvalue_nid_postfix	B-S	moves to libkernel, implemented
+#9302	David	libkernel_sys	ksem_init_nid_postfix	B-S	moves to libkernel, implemented
+#9302	David	libkernel_sys	ksem_post_nid_postfix	B-S	moves to libkernel, implemented
+#9302	David	libkernel_sys	ksem_timedwait_nid_postfix	B-S	moves to libkernel, implemented
+#9302	David	libkernel_sys	ksem_trywait_nid_postfix	B-S	moves to libkernel, implemented
+#9302	David	libkernel_sys	ksem_wait_nid_postfix	B-S	moves to libkernel, implemented
+#9314	David	libkernel_sys	ktimer_create_nid_postfix	B-M	moves to libkernel, still todo
+#9314	David	libkernel_sys	ktimer_delete_nid_postfix	B-S	moves to libkernel, still todo
+#9314	David	libkernel_sys	ktimer_getoverrun_nid_postfix	B-S	moves to libkernel, still todo
+#9314	David	libkernel_sys	ktimer_gettime_nid_postfix	B-S	moves to libkernel, still todo
+#9314	David	libkernel_sys	ktimer_settime_nid_postfix	B-M	moves to libkernel, still todo
+#9322	zaryabzip	libkernel_sys	scePthreadCondattrGetclock	B-S	implements
+#9326	erickerxhalli	libkernel_sys	pthread_mutex_getprioceiling_nid_postfix	B-S	moves to libkernel, implemented
+#9326	erickerxhalli	libkernel_sys	pthread_mutex_setprioceiling_nid_postfix	B-S	moves to libkernel, implemented
+#9326	erickerxhalli	libkernel_sys	scePthreadMutexGetprioceiling	B-S	moves to libkernel, implemented
+#9326	erickerxhalli	libkernel_sys	scePthreadMutexSetprioceiling	B-S	moves to libkernel, implemented
+#9349	MarcZX10	libSceAudioOut	sceAudioOut2MasteringInitEx	D	changes
+#9355	David	libkernel_sys	aio_fsync_nid_postfix	B-S	changes
+#9355	David	libkernel_sys	aio_read_nid_postfix	B-M	changes
+#9355	David	libkernel_sys	aio_write_nid_postfix	B-M	changes
+#9355	David	libkernel_sys	aio_cancel_nid_postfix	B-S	implements
+#9355	David	libkernel_sys	aio_error_nid_postfix	B-S	implements
+#9355	David	libkernel_sys	aio_return_nid_postfix	B-S	implements
+#9355	David	libkernel_sys	aio_suspend_nid_postfix	B-S	implements
+#9355	David	libkernel_sys	aio_waitcomplete_nid_postfix	B-S	implements
+#9369	MarcZX10	libkernel_sys	sched_getparam_nid_postfix	B-S	implements
+#9369	MarcZX10	libkernel_sys	sched_getscheduler_nid_postfix	B-S	implements
+#9379	David	libkernel_sys	swapcontext_nid_postfix	B-S	removes
+#9382	MarcZX10	libkernel_sys	sched_rr_get_interval_nid_postfix	D	implements
+#9383	David	libkernel_sys	rtld_printf_nid_postfix	B-S	moves to libkernel, implemented
+#9389	Itamar Medyoni	libkernel_sys	sigqueue_nid_postfix	B-M	implements
+#9423	ali zedan	libkernel_sys	readlink_nid_postfix	B-S	changes
+#9423	ali zedan	libkernel_sys	readlinkat_nid_postfix	B-S	changes
+#9423	ali zedan	libkernel_sys	symlink_nid_postfix	B-M	changes
+#9442	Gruzzberry	libkernel_sys	lchflags_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_CTX_end_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_CTX_free_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_CTX_new_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_CTX_start_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_add_word_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_bin2bn_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_bn2bin_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_free_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_hex2bn_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_mod_inverse_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_mul_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_new_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_num_bits_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_set_word_nid_postfix	B-S	implements
+#9446	AlxcBTW	libSceLibreSsl	BN_sub_word_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_DigestInit_ex_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	EVP_Digest_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	EVP_MD_CTX_cleanup_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	EVP_MD_CTX_destroy_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	HMAC_CTX_cleanup_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	HMAC_Final_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	HMAC_Init_ex_nid_postfix	B-M	changes
+#9448	HQasper	libSceLibreSsl	HMAC_Init_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	HMAC_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	SHA256_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	SHA512_Final_nid_postfix	B-S	changes
+#9448	HQasper	libSceLibreSsl	EVP_DigestFinal_ex_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_DigestUpdate_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_MD_CTX_create_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_MD_CTX_init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_MD_size_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_md5_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_sha256_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_sha384_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	EVP_sha512_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	HMAC_CTX_init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	HMAC_Update_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	MD4_Final_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	MD4_Init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	MD4_Update_nid_postfix	B-M	implements
+#9448	HQasper	libSceLibreSsl	MD5_Final_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	MD5_Init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	MD5_Update_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA1_Final_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA1_Init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA1_Update_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA224_Final_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA224_Init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA224_Update_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA256_Final_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA256_Init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA256_Update_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA384_Final_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA384_Init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA384_Update_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA512_Init_nid_postfix	B-S	implements
+#9448	HQasper	libSceLibreSsl	SHA512_Update_nid_postfix	B-S	implements
+#9506	Noxy-HNR	libSceNet	sceNetGetDns6Info	B-M	implements
+#9506	Noxy-HNR	libSceNet	sceNetSetDns6Info	D	implements
+#9506	Noxy-HNR	libSceNet	sceNetSetDnsInfo	D	implements
+#9529	Swag	libSceLibreSsl	ERR_remove_thread_state_nid_postfix	B-S	changes
+#9529	Swag	libSceLibreSsl	ERR_clear_error_nid_postfix	B-S	implements
+#9529	Swag	libSceLibreSsl	ERR_get_error_nid_postfix	B-S	implements
+#9529	Swag	libSceLibreSsl	ERR_peek_error_nid_postfix	B-S	implements
+#9531	zaryabzip	libSceNpTus	sceNpTssCreateNpTitleCtx	D	implements
+#9531	zaryabzip	libSceNpTus	sceNpTssCreateNpTitleCtxA	D	implements
+#9535	Felipebmaitan	libSceLibreSsl3	ERR_load_crypto_strings_nid_postfix	B-S	implements
+#9535	Felipebmaitan	libSceLibreSsl3	ERR_peek_last_error_nid_postfix	B-S	implements
+#9535	Felipebmaitan	libSceLibreSsl	ERR_error_string_n_nid_postfix	B-M	changes
+#9535	Felipebmaitan	libSceLibreSsl	ERR_remove_thread_state_nid_postfix	B-S	changes
+#9535	Felipebmaitan	libSceLibreSsl	ERR_clear_error_nid_postfix	B-S	implements
+#9535	Felipebmaitan	libSceLibreSsl	ERR_error_string_nid_postfix	B-S	implements
+#9535	Felipebmaitan	libSceLibreSsl	ERR_free_strings_nid_postfix	B-S	implements
+#9535	Felipebmaitan	libSceLibreSsl	ERR_get_error_nid_postfix	B-S	implements
+#9535	Felipebmaitan	libSceLibreSsl	ERR_peek_error_nid_postfix	B-S	implements
+#9536	Felipebmaitan	libSceLibreSsl3	ERR_load_crypto_strings_nid_postfix	B-S	implements
+#9536	Felipebmaitan	libSceLibreSsl3	ERR_peek_last_error_nid_postfix	B-S	implements
+#9536	Felipebmaitan	libSceLibreSsl	BIO_free_nid_postfix	B-L	changes
+#9536	Felipebmaitan	libSceLibreSsl	ERR_error_string_n_nid_postfix	B-M	changes
+#9536	Felipebmaitan	libSceLibreSsl	ERR_remove_thread_state_nid_postfix	B-S	changes
+#9536	Felipebmaitan	libSceLibreSsl	BIO_ctrl_nid_postfix	B-L	implements
+#9536	Felipebmaitan	libSceLibreSsl	BIO_new_mem_buf_nid_postfix	B-L	implements
+#9536	Felipebmaitan	libSceLibreSsl	BIO_new_nid_postfix	B-L	implements
+#9536	Felipebmaitan	libSceLibreSsl	BIO_puts_nid_postfix	B-L	implements
+#9536	Felipebmaitan	libSceLibreSsl	BIO_s_mem_nid_postfix	B-L	implements
+#9536	Felipebmaitan	libSceLibreSsl	BIO_write_nid_postfix	B-L	implements
+#9536	Felipebmaitan	libSceLibreSsl	ERR_clear_error_nid_postfix	B-S	implements
+#9536	Felipebmaitan	libSceLibreSsl	ERR_error_string_nid_postfix	B-S	implements
+#9536	Felipebmaitan	libSceLibreSsl	ERR_free_strings_nid_postfix	B-S	implements
+#9536	Felipebmaitan	libSceLibreSsl	ERR_get_error_nid_postfix	B-S	implements
+#9536	Felipebmaitan	libSceLibreSsl	ERR_peek_error_nid_postfix	B-S	implements
+#9537	David	libkernel_sys	revoke_nid_postfix	B-S	changes

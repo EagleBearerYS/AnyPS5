@@ -1,0 +1,151 @@
+function	class	claimed_by
+sceNpAllocateKernelMemoryNoAlignment	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpAllocateKernelMemoryWithAlignment	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpArchInit	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpArchTerm	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpAtomicCas32	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpAtomicDec32	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpAtomicInc32	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpBase64Decoder	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpBase64Encoder	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpBase64GetDecodeSize	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpBase64UrlDecoder	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpBase64UrlEncoder	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpBase64UrlGetDecodeSize	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCalloutInitCtx	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCalloutStartOnCtx	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCalloutStartOnCtx64	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCalloutStopOnCtx	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCalloutTermCtx	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCancelEventFlag	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpClearEventFlag	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCloseEventFlag	D	unclaimed
+sceNpCloseSema	D	unclaimed
+sceNpCmpNpIdInOrder	B-S	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpCmpOnlineId	B-S	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpCondDestroy	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpCondInit	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpCondSignal	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpCondSignalAll	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCondSignalTo	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCondTimedwait	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpCondWait	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCreateEventFlag	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCreateSema	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpCreateThread	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpDbgAssignDebugId	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpDbgDumpBinary	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpDbgDumpText	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpDeleteEventFlag	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpDeleteSema	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpFreeKernelMemory	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpGetNavSdkVersion	D	unclaimed
+sceNpGetPlatformType	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpGetProcessId	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpGetRandom	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpGetSdkVersion	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpGetSdkVersionUInt	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpGetSystemClockUsec	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpGlobalHeapGetAllocator	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpGlobalHeapGetAllocatorEx	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpGlobalHeapGetAllocatorExPtr	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpGlobalHeapGetAllocatorPtr	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpHeapDestroy	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpHeapGetAllocator	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpHeapGetStat	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpHeapInit	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpHeapShowStat	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpHexToInt	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpInt32ToStr	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpInt64ToStr	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpIntGetPlatformType	D	unclaimed
+sceNpIntIsOnlineIdString	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpIntIsValidOnlineId	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpIntSetPlatformType	D	unclaimed
+sceNpIntToHex	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpIpc2ClientInit	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpIpc2ClientTerm	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpJoinThread	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpJsonParse	D	unclaimed
+sceNpJsonParseBuf	D	unclaimed
+sceNpJsonParseBufInit	D	unclaimed
+sceNpJsonParseEx	D	unclaimed
+sceNpJsonParseExInit	D	unclaimed
+sceNpJsonParseInit	D	unclaimed
+sceNpLwCondDestroy	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwCondInit	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwCondSignal	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwCondSignalAll	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwCondSignalTo	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwCondWait	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwMutexDestroy	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwMutexInit	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwMutexLock	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwMutexTryLock	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpLwMutexUnlock	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpMemoryHeapDestroy	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpMemoryHeapGetAllocator	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpMemoryHeapGetAllocatorEx	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpMemoryHeapInit	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpMutexDestroy	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpMutexInit	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpMutexLock	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpMutexTryLock	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpMutexUnlock	D	claimed by #9037 (Yossi Yadgar, implements); claimed by #9063 (Yossi Yadgar, implements)
+sceNpOpenEventFlag	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpOpenSema	D	unclaimed
+sceNpPanic	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpPollEventFlag	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpPollSema	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpRtcConvertToPosixTime	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpRtcFormatRFC3339	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpRtcParseRFC3339	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpServerErrorJsonGetErrorCode	D	unclaimed
+sceNpServerErrorJsonMultiGetErrorCode	D	unclaimed
+sceNpServerErrorJsonParse	D	unclaimed
+sceNpServerErrorJsonParseInit	D	unclaimed
+sceNpServerErrorJsonParseMultiInit	D	unclaimed
+sceNpSetEventFlag	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpSetPlatformType	D	unclaimed
+sceNpSignalSema	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrBuildHex	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrParseHex	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrToInt32	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrToInt64	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrToUInt32	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrToUInt64	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrcpyToBuf	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrnParseHex	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpStrncpyToBuf	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpThreadGetId	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUInt32ToStr	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUInt64ToStr	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUserGetUserIdList	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilBuildTitleId	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilCanonicalizeNpIdForPs4	D	unclaimed
+sceNpUtilCanonicalizeNpIdForPsp2	D	unclaimed
+sceNpUtilCmpAccountId	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilGetDateSetAuto	D	unclaimed
+sceNpUtilGetDbgCommerce	D	unclaimed
+sceNpUtilGetEnv	D	unclaimed
+sceNpUtilGetFakeDisplayNameMode	D	unclaimed
+sceNpUtilGetFakeRateLimit	D	unclaimed
+sceNpUtilGetIgnoreNpTitleId	D	unclaimed
+sceNpUtilGetNpDebug	D	unclaimed
+sceNpUtilGetNpLanguageCode	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilGetNpLanguageCode2	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilGetNpLanguageCode2Str	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilGetNpLanguageCodeStr	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilGetNpTestPatch	D	unclaimed
+sceNpUtilGetNthChar	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilGetShareTitleCheck	D	unclaimed
+sceNpUtilGetSystemLanguage	D	unclaimed
+sceNpUtilGetTrcNotify	D	unclaimed
+sceNpUtilGetWebApi2FakeRateLimit	D	unclaimed
+sceNpUtilGetWebApi2FakeRateLimitTarget	D	unclaimed
+sceNpUtilGetWebTraceSetting	D	unclaimed
+sceNpUtilHttpUrlEncode	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilJidToNpId	D	unclaimed
+sceNpUtilJsonEscape	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilJsonGetOneChar	D	claimed by #9063 (Yossi Yadgar, implements)
+sceNpUtilJsonUnescape	D	claimed by #9063 (Yossi Yadgar, implements)

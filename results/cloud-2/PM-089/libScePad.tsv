@@ -1,0 +1,165 @@
+function	class	claimed_by
+scePadBondUpdateGetReconnectStatus	D	unclaimed
+scePadBondUpdateGetStatus	D	unclaimed
+scePadBondUpdateInit	D	unclaimed
+scePadBondUpdateIsReady	D	unclaimed
+scePadBondUpdateResetBond	D	unclaimed
+scePadBondUpdateSendData	D	unclaimed
+scePadBondUpdateStart	D	unclaimed
+scePadBondUpdateTerm	D	unclaimed
+scePadConnectPort	D	unclaimed
+scePadControllerUpdateGetReconnectStatus	D	unclaimed
+scePadControllerUpdateGetStatus	D	unclaimed
+scePadControllerUpdateInit	D	unclaimed
+scePadControllerUpdateIsReady	D	unclaimed
+scePadControllerUpdateIsUpdateNeeded2	D	unclaimed
+scePadControllerUpdateResetController	D	unclaimed
+scePadControllerUpdateSendData	D	unclaimed
+scePadControllerUpdateStart	D	unclaimed
+scePadControllerUpdateTerm	D	unclaimed
+scePadDeviceOpen	D	unclaimed
+scePadDisableActiveProfileChange	D	unclaimed
+scePadDisableActiveProfileChangeByDeviceId	D	unclaimed
+scePadDisableDataConversion	D	unclaimed
+scePadDisableTrackingLedBatterySaver	D	unclaimed
+scePadDisableTransportButtons	D	unclaimed
+scePadDisableTriggerEffect	D	unclaimed
+scePadDisableVibration	D	unclaimed
+scePadDisconnectDevice	D	unclaimed
+scePadDisconnectPort	D	unclaimed
+scePadEnableAutoDetect	D	unclaimed
+scePadEnableControllerIndicator	D	unclaimed
+scePadEnablePlayPauseEmulation	D	unclaimed
+scePadEnableProfileIndicator	D	unclaimed
+scePadEnablePs4CompatibleMode	D	unclaimed
+scePadEnableSpecificDeviceClass	D	unclaimed
+scePadEnableUsbConnection	D	unclaimed
+scePadGetActiveProfileInfo	D	unclaimed
+scePadGetActiveTime	D	unclaimed
+scePadGetAstonModel	D	unclaimed
+scePadGetBluetoothAddress	B-S	unclaimed
+scePadGetCapability	D	unclaimed
+scePadGetControllerIdleCount	D	unclaimed
+scePadGetControllerType	D	claimed by #8350 (Adria Espi, implements)
+scePadGetControllerTypeLeonardo	D	unclaimed
+scePadGetDataInternal	D	unclaimed
+scePadGetDeviceId	D	unclaimed
+scePadGetDeviceInfo	D	unclaimed
+scePadGetExtensionUnitInfo	D	unclaimed
+scePadGetFeatureReport	B-L	claimed by #5038 (Sebastian, implements)
+scePadGetFeatureReport2	D	unclaimed
+scePadGetIdleCount	D	unclaimed
+scePadGetInfoByPortType	D	unclaimed
+scePadGetLicenseControllerInformation	D	unclaimed
+scePadGetLotusIrCodeSetResult	D	unclaimed
+scePadGetMotionSensorPosition	D	unclaimed
+scePadGetMotionTimerUnit	D	unclaimed
+scePadGetProfileEditMode	D	unclaimed
+scePadGetProfileEditModeLeonardo	D	unclaimed
+scePadGetProfileHunt	D	unclaimed
+scePadGetProfileInfo	D	unclaimed
+scePadGetProfileLeonardo	D	unclaimed
+scePadGetSavedSettingInfo	D	unclaimed
+scePadGetSelectButtonCustomizeMode	D	unclaimed
+scePadGetSphereRadius	D	unclaimed
+scePadGetTelemetryInfo	D	unclaimed
+scePadGetTriggerEffectInternalState	D	unclaimed
+scePadGetUsbDetectionState	D	unclaimed
+scePadGetVersionInfo	D	unclaimed
+scePadIsBlasterConnected	C-real	unclaimed
+scePadIsCoPilot	D	unclaimed
+scePadIsDS4Connected	C-real	unclaimed
+scePadIsLightBarBaseBrightnessControllable	D	unclaimed
+scePadIsMoveConnected	C-real	unclaimed
+scePadIsMoveReproductionModel	D	unclaimed
+scePadIsValidHandle	B-S	unclaimed
+scePadLastLotusButtonData	D	unclaimed
+scePadMbusInit	D	unclaimed
+scePadMbusTerm	D	unclaimed
+scePadOpenExt	D	claimed by #5038 (Sebastian, implements)
+scePadOpenExt2	D	unclaimed
+scePadOutputReport	B-M	claimed by #5038 (Sebastian, implements)
+scePadParseUniqueDataLeonardo	D	unclaimed
+scePadReadAstonForTracker	D	unclaimed
+scePadReadBlasterForTracker	D	unclaimed
+scePadReadExt	D	claimed by #5038 (Sebastian, implements)
+scePadReadForTracker	D	unclaimed
+scePadReadHistory	D	unclaimed
+scePadReadStateExt	D	unclaimed
+scePadRegisterCollaboInputMgrProcess	D	unclaimed
+scePadRemoteControlInsertData	D	unclaimed
+scePadRemoteControlInsertDataForAston	D	unclaimed
+scePadResetHunt	D	unclaimed
+scePadResetLeonardo	D	unclaimed
+scePadResetLightBarAll	B-S	unclaimed
+scePadResetLightBarAllByPortType	B-S	unclaimed
+scePadResetOrientationForTracker	D	unclaimed
+scePadSetActiveProfileSlot	D	unclaimed
+scePadSetAngularVelocityBiasCorrectionState	B-S	claimed by #5038 (Sebastian, implements); claimed by #7881 (SlugZero, changes)
+scePadSetAutoPowerOffCount	D	unclaimed
+scePadSetButtonRemappingInfo	D	unclaimed
+scePadSetControllerTypeLeonardo	D	unclaimed
+scePadSetExtensionReport	D	unclaimed
+scePadSetFeatureReport	B-L	claimed by #5038 (Sebastian, implements)
+scePadSetFeatureReport2	D	unclaimed
+scePadSetForceIntercepted	D	unclaimed
+scePadSetIsCoPilot	D	unclaimed
+scePadSetLightBarBaseBrightness	D	unclaimed
+scePadSetLightBarBlinking	D	unclaimed
+scePadSetLightBarForTracker	D	claimed by #8260 (Yossi Yadgar, implements)
+scePadSetLoginUserNumber	D	unclaimed
+scePadSetLotusDisableIrKey	D	unclaimed
+scePadSetLotusEnableIrKey	D	unclaimed
+scePadSetLotusIrCodeSetData	D	unclaimed
+scePadSetLotusIrCodeSetEnd	D	unclaimed
+scePadSetLotusIrCodeSetStart	D	unclaimed
+scePadSetMuteLed	D	unclaimed
+scePadSetPS4BcVibrationMode	D	unclaimed
+scePadSetPowerSavingState	D	unclaimed
+scePadSetProcessFocus	D	unclaimed
+scePadSetProcessPrivilegeOfButtonRemapping	D	unclaimed
+scePadSetProfileEditMode	D	unclaimed
+scePadSetProfileHunt	D	unclaimed
+scePadSetProfileIndicatorAnimation	D	unclaimed
+scePadSetProfileLeonardo	D	unclaimed
+scePadSetSavedSettingInfo	D	unclaimed
+scePadSetSelectButtonCustomizeMode	D	unclaimed
+scePadSetShareButtonMaskForRemotePlay	D	unclaimed
+scePadSetStickTriggerTuningMode	D	unclaimed
+scePadSetStickTuningParam	D	unclaimed
+scePadSetToggleAllReleaseLeonardo	D	unclaimed
+scePadSetTriggerEffectExt	D	unclaimed
+scePadSetTriggerEffectStrength	D	unclaimed
+scePadSetTriggerTuningParam	D	unclaimed
+scePadSetUserColor	D	unclaimed
+scePadSetUserNumber	D	unclaimed
+scePadSetVibrationForce	B-S	unclaimed
+scePadSetVibrationStrength	D	unclaimed
+scePadSetVirtualDeviceComponentInformation	D	unclaimed
+scePadSetVrTrackingMode	D	unclaimed
+scePadShareOutputData	D	unclaimed
+scePadShareOutputDataWithFunctionType	D	unclaimed
+scePadStartRecording	D	unclaimed
+scePadStopRecording	D	unclaimed
+scePadSwitchConnection	D	unclaimed
+scePadUiReadState	D	unclaimed
+scePadUiReadStateForTuning	D	unclaimed
+scePadVertualDeviceAddDevice	D	unclaimed
+scePadVirtualDeviceAddDevice	D	unclaimed
+scePadVirtualDeviceDeleteDevice	D	unclaimed
+scePadVirtualDeviceDisableButtonRemapping	D	unclaimed
+scePadVirtualDeviceGetRemoteSetting	D	unclaimed
+scePadVirtualDeviceInsertData	D	unclaimed
+scePadVirtualDeviceInsertTriggerInternalState	D	unclaimed
+scePadVirtualDeviceSetTriggerEffectSetting	D	unclaimed
+scePadVrControllerGetDeviceInformation	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerGetPhysicalUsbConnectionStatus	D	unclaimed
+scePadVrControllerGetTriggerEffectState	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerGetTriggerEffectStates	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerRead	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerReadCombinedState	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerReadState	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerSetTriggerEffect	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerSetTriggerEffects	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerSetVibration	C-real	claimed by #5038 (Sebastian, implements)
+scePadVrControllerSetVibrationMode	C-real	claimed by #5038 (Sebastian, implements)

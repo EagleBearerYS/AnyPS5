@@ -1,0 +1,119 @@
+function	class	claimed_by
+sceGnmBeginWorkload	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmComputeWaitOnAddress	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmComputeWaitSemaphore	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmCreateWorkloadStream	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmDebugModuleReset	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmDebugReset	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmDestroyWorkloadStream	D	unclaimed
+sceGnmDingDongForWorkload	D	unclaimed
+sceGnmDispatchDirect	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDispatchIndirect	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDispatchIndirectOnMec	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndex	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndexAuto	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndexIndirect	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndexIndirectCountMulti	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndexIndirectMulti	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndexMultiInstanced	D	unclaimed
+sceGnmDrawIndexOffset	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndirect	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndirectCountMulti	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawIndirectMulti	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmDrawInitDefaultHardwareState	D	claimed by #9219 (Yossi Yadgar, implements)
+sceGnmDrawInitDefaultHardwareState200	D	claimed by #9219 (Yossi Yadgar, implements)
+sceGnmDrawInitDefaultHardwareState350	D	claimed by #9219 (Yossi Yadgar, implements)
+sceGnmDrawInitToDefaultContextState	D	claimed by #9219 (Yossi Yadgar, implements)
+sceGnmDrawInitToDefaultContextState400	D	claimed by #9219 (Yossi Yadgar, implements)
+sceGnmDrawInitToDefaultContextStateInternalCommand	D	unclaimed
+sceGnmDrawInitToDefaultContextStateInternalSize	D	unclaimed
+sceGnmDrawOpaqueAuto	D	unclaimed
+sceGnmDriverInternalRetrieveGnmInterface	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmDriverInternalRetrieveGnmInterfaceForGpuDebugger	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmDriverInternalRetrieveGnmInterfaceForReplay	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmDriverInternalRetrieveGnmInterfaceForResourceRegistration	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmDriverInternalRetrieveGnmInterfaceForValidation	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmDriverInternalVirtualQuery	D	unclaimed
+sceGnmDriverTraceInProgress	C-real	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmEndWorkload	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmFindResources	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmFindResourcesPublic	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetCoredumpAddress	D	unclaimed
+sceGnmGetCoredumpMode	D	unclaimed
+sceGnmGetCoredumpProtectionFaultTimestamp	D	unclaimed
+sceGnmGetDbgGcHandle	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetGpuBlockStatus	D	unclaimed
+sceGnmGetGpuCoreClockFrequency	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmGetGpuInfoStatus	D	unclaimed
+sceGnmGetLastWaitedAddress	D	unclaimed
+sceGnmGetNumTcaUnits	D	unclaimed
+sceGnmGetOffChipTessellationBufferSize	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmGetOwnerName	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetPhysicalCounterFromVirtualized	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetProtectionFaultTimeStamp	D	unclaimed
+sceGnmGetResourceBaseAddressAndSizeInBytes	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetResourceName	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetResourceRegistrationBuffers	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetResourceShaderGuid	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetResourceType	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetResourceUserData	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmGetShaderProgramBaseAddress	D	unclaimed
+sceGnmGetShaderStatus	D	unclaimed
+sceGnmGpuPaDebugEnter	D	unclaimed
+sceGnmGpuPaDebugLeave	D	unclaimed
+sceGnmInsertDingDongMarker	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmInsertThreadTraceMarker	D	unclaimed
+sceGnmIsCoredumpValid	D	unclaimed
+sceGnmLogicalTcaUnitToPhysical	D	unclaimed
+sceGnmMapComputeQueueWithPriority	D	unclaimed
+sceGnmPaDisableFlipCallbacks	D	unclaimed
+sceGnmPaEnableFlipCallbacks	D	unclaimed
+sceGnmPaHeartbeat	D	unclaimed
+sceGnmQueryResourceRegistrationUserMemoryRequirements	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmRaiseUserExceptionEvent	D	unclaimed
+sceGnmRegisterGdsResource	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmRegisterGnmLiveCallbackConfig	D	unclaimed
+sceGnmRegisterOwner	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmRegisterOwnerForSystem	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmRegisterResource	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmRequestFlipAndSubmitDoneForWorkload	D	unclaimed
+sceGnmResetVgtControl	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmSdmaClose	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSdmaConstFill	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSdmaCopyLinear	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSdmaCopyTiled	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSdmaCopyWindow	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSdmaFlush	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSdmaGetMinCmdSize	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSdmaOpen	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSetCsShaderWithModifier	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmSetEmbeddedPsShader	D	claimed by #9221 (Yossi Yadgar, implements)
+sceGnmSetEmbeddedVsShader	D	claimed by #9221 (Yossi Yadgar, implements)
+sceGnmSetPsShader350	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmSetResourceRegistrationUserMemory	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSetResourceUserData	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSetSpiEnableSqCounters	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSetSpiEnableSqCountersForUnitInstance	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmSetVgtControl	D	claimed by #9208 (Yossi Yadgar, implements)
+sceGnmSetWaveLimitMultiplier	D	unclaimed
+sceGnmSetWaveLimitMultipliers	D	unclaimed
+sceGnmSubmitAndFlipCommandBuffersForWorkload	D	unclaimed
+sceGnmSubmitCommandBuffersForWorkload	D	unclaimed
+sceGnmUnregisterAllResourcesForOwner	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmUnregisterOwnerAndResources	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmUnregisterResource	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmUpdateGsShader	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmUpdateHsShader	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmUpdatePsShader	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmUpdatePsShader350	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmUpdateVsShader	D	claimed by #9212 (Yossi Yadgar, implements)
+sceGnmValidateDisableDiagnostics	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidateDisableDiagnostics2	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidateDispatchCommandBuffers	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidateDrawCommandBuffers	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidateGetDiagnosticInfo	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidateGetDiagnostics	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidateGetVersion	D	unclaimed
+sceGnmValidateOnSubmitEnabled	C-real	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidateResetState	D	claimed by #9201 (Yossi Yadgar, implements)
+sceGnmValidationRegisterMemoryCheckCallback	D	claimed by #9201 (Yossi Yadgar, implements)

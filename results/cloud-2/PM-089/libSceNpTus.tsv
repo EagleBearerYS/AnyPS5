@@ -1,0 +1,105 @@
+function	class	claimed_by
+sceNpTssCreateNpTitleCtx	D	claimed by #9531 (zaryabzip, implements)
+sceNpTssCreateNpTitleCtxA	D	claimed by #9531 (zaryabzip, implements)
+sceNpTssGetDataAsync	C-real	unclaimed
+sceNpTssGetSmallStorage	D	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTssGetSmallStorageAsync	D	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTssGetStorage	D	unclaimed
+sceNpTssGetStorageAsync	D	unclaimed
+sceNpTusAddAndGetVariable	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableA	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableAVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableAVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableForCrossSave	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableForCrossSaveAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableForCrossSaveVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableForCrossSaveVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusAddAndGetVariableVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusChangeModeForOtherSaveDataOwners	D	unclaimed
+sceNpTusCreateTitleCtx	D	unclaimed
+sceNpTusDeleteMultiSlotData	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusDeleteMultiSlotDataA	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusDeleteMultiSlotDataAAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusDeleteMultiSlotDataAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusDeleteMultiSlotDataVUser	C-real	unclaimed
+sceNpTusDeleteMultiSlotDataVUserAsync	C-real	unclaimed
+sceNpTusGetDataA	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetDataAAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetDataAVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetDataAVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetDataAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetDataForCrossSave	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetDataForCrossSaveAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetDataForCrossSaveVUser	C-real	unclaimed
+sceNpTusGetDataForCrossSaveVUserAsync	C-real	unclaimed
+sceNpTusGetDataVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetFriendsDataStatus	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetFriendsDataStatusA	C-real	unclaimed
+sceNpTusGetFriendsDataStatusAAsync	C-real	unclaimed
+sceNpTusGetFriendsDataStatusAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetFriendsDataStatusForCrossSave	C-real	unclaimed
+sceNpTusGetFriendsDataStatusForCrossSaveAsync	C-real	unclaimed
+sceNpTusGetFriendsVariable	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetFriendsVariableA	C-real	unclaimed
+sceNpTusGetFriendsVariableAAsync	C-real	unclaimed
+sceNpTusGetFriendsVariableAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetFriendsVariableForCrossSave	C-real	unclaimed
+sceNpTusGetFriendsVariableForCrossSaveAsync	C-real	unclaimed
+sceNpTusGetMultiSlotDataStatus	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusA	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusAAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusAVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusAVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusForCrossSave	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusForCrossSaveAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusForCrossSaveVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiSlotDataStatusVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatus	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusA	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusAAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusAVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusAVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusForCrossSave	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusForCrossSaveAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusForCrossSaveVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusForCrossSaveVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserDataStatusVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariable	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableA	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableAAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableAVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableAVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableForCrossSave	C-real	unclaimed
+sceNpTusGetMultiUserVariableForCrossSaveAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableForCrossSaveVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableForCrossSaveVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusGetMultiUserVariableVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusSetDataA	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusSetDataAAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusSetDataAVUser	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusSetDataAVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusSetDataAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusSetDataVUserAsync	C-real	claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusSetThreadParam	C-real	unclaimed
+sceNpTusSetTimeout	D	unclaimed
+sceNpTusTryAndSetVariable	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableA	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableAAsync	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableAVUser	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableAVUserAsync	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableAsync	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableForCrossSave	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableForCrossSaveAsync	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableForCrossSaveVUser	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableForCrossSaveVUserAsync	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableVUser	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)
+sceNpTusTryAndSetVariableVUserAsync	C-real	claimed by #8925 (Felipe Arce, implements); claimed by #9009 (Yossi Yadgar, implements)

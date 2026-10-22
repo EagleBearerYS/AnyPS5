@@ -1,0 +1,87 @@
+function	class	claimed_by
+sceAudioOut2AllAudioMainToHeadphoneForDiag	D	unclaimed
+sceAudioOut2ArbitrationInitialize	D	unclaimed
+sceAudioOut2ContextBedWrite	D	unclaimed
+sceAudioOut2DebugStateCtrl	D	unclaimed
+sceAudioOut2GetAmbisonicsEncodeCoefficients	D	unclaimed
+sceAudioOut2GetHrtfIdForCronos	D	unclaimed
+sceAudioOut2GetIpcHandle	D	unclaimed
+sceAudioOut2GetSystemStateEx	D	unclaimed
+sceAudioOut2GetTvCorrectionInfo	D	unclaimed
+sceAudioOut2InitializeEx	D	claimed by #9032 (hypermist, implements)
+sceAudioOut2LoPortGetStateEx	D	unclaimed
+sceAudioOut2LoTerminate	D	claimed by #9032 (hypermist, implements)
+sceAudioOut2MasteringInit	B-S	claimed by #9027 (hypermist, implements)
+sceAudioOut2MasteringInitEx	D	claimed by #9027 (hypermist, implements); claimed by #9349 (MarcZX10, changes)
+sceAudioOut2MbusInit	D	unclaimed
+sceAudioOut2MbusSetCaesarParam	D	unclaimed
+sceAudioOut2MbusSetConnections	D	unclaimed
+sceAudioOut2MbusSetDeviceConnections	D	unclaimed
+sceAudioOut2MbusSetHeadphoneOutMode	D	unclaimed
+sceAudioOut2MbusSetMorpheusParam	D	unclaimed
+sceAudioOut2MbusSetPortConnections	D	unclaimed
+sceAudioOut2MbusSetPortStatuses	D	unclaimed
+sceAudioOut2MbusSetSparkParam	D	unclaimed
+sceAudioOut2MbusUserLoginFor3DAudio	D	unclaimed
+sceAudioOut2PortCreateEx	D	unclaimed
+sceAudioOut2PortRegister	D	unclaimed
+sceAudioOut2PortUnregister	D	unclaimed
+sceAudioOut2ReportRegisterHandler	D	unclaimed
+sceAudioOut2ReportUnregisterHandler	D	unclaimed
+sceAudioOut2SetDebugHeadphoneMode	D	unclaimed
+sceAudioOut2Terminate	D	unclaimed
+sceAudioOut2UserCreateEx	D	unclaimed
+sceAudioOutArbitrationInitialize	D	unclaimed
+sceAudioOutAssignHRTF	D	unclaimed
+sceAudioOutAttachToApplicationByPid	D	unclaimed
+sceAudioOutChangeAppModuleState	D	unclaimed
+sceAudioOutCustomHrtfIsExist	D	unclaimed
+sceAudioOutDetachFromApplicationByPid	D	unclaimed
+sceAudioOutDeviceIdOpen	D	unclaimed
+sceAudioOutEnable3DAudioByArbitration	D	unclaimed
+sceAudioOutEnable3DAudioForUser	D	unclaimed
+sceAudioOutEnableCinematicVrRotation	D	unclaimed
+sceAudioOutEnableMonoHpOutput	D	unclaimed
+sceAudioOutEnableTVCorrection	D	unclaimed
+sceAudioOutEnableTVVirtual	D	unclaimed
+sceAudioOutEnableVrControllerLowPowerMode	D	unclaimed
+sceAudioOutExConfigureOutputMode	D	unclaimed
+sceAudioOutExGetLastOutputTime	D	unclaimed
+sceAudioOutExGetOutputInfo	D	unclaimed
+sceAudioOutExGetSystemInfo	D	unclaimed
+sceAudioOutExPtClose	D	unclaimed
+sceAudioOutExPtGetLastOutputTime	D	unclaimed
+sceAudioOutExPtOpen	D	unclaimed
+sceAudioOutExSystemInfoIsSupportedAudioOutExMode	D	unclaimed
+sceAudioOutGetFocusEnablePid	D	unclaimed
+sceAudioOutGetHandleStatusInfo	D	unclaimed
+sceAudioOutGetInfo	D	claimed by #9023 (hypermist, implements)
+sceAudioOutGetInfoOpenNum	D	claimed by #9023 (hypermist, implements)
+sceAudioOutGetSimulatedBusUsableStatusByBusType	D	unclaimed
+sceAudioOutGetSimulatedHandleStatusInfo	D	claimed by #9023 (hypermist, implements)
+sceAudioOutGetSimulatedHandleStatusInfo2	D	unclaimed
+sceAudioOutMasteringGetState	D	claimed by #8525 (Federico Marras, changes)
+sceAudioOutMasteringInit	D	claimed by #8525 (Federico Marras, changes)
+sceAudioOutMasteringSetParam	D	claimed by #8525 (Federico Marras, changes)
+sceAudioOutMasteringTerm	D	claimed by #8525 (Federico Marras, implements)
+sceAudioOutOpenEx	D	unclaimed
+sceAudioOutPtClose	D	unclaimed
+sceAudioOutPtGetLastOutputTime	D	unclaimed
+sceAudioOutPtOpen	D	unclaimed
+sceAudioOutSetAllMute	D	unclaimed
+sceAudioOutSetCaesarVolume	D	unclaimed
+sceAudioOutSetChatBalance	D	unclaimed
+sceAudioOutSetHeadphoneOutMode	D	unclaimed
+sceAudioOutSetMainOutput	D	claimed by #8652 (Niko, implements)
+sceAudioOutSetPadJackVolume	D	unclaimed
+sceAudioOutSetPadSpkVolume	D	unclaimed
+sceAudioOutSetRecMode	D	unclaimed
+sceAudioOutSetSparkEQ	D	unclaimed
+sceAudioOutSetSystemDebugState	D	unclaimed
+sceAudioOutSetUsbVolume	D	unclaimed
+sceAudioOutSetVolumeDown	D	unclaimed
+sceAudioOutSysConfigureOutputMode	D	unclaimed
+sceAudioOutSysGetMonitorInfo	D	unclaimed
+sceAudioOutSysGetOutputInfo	D	unclaimed
+sceAudioOutSysGetSystemInfo	D	unclaimed
+sceAudioOutSysHdmiMonitorInfoIsSupportedAudioOutMode	D	unclaimed
