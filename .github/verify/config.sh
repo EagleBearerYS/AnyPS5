@@ -1,0 +1,4 @@
+BASE=94fbb8cea80af91db62ab6ee7e4da23341675c40
+REPEAT=5
+EXTRA_TESTS='guest_system_service_status_suspend|guest_system_service_status_sessions|guest_system_service_status_shell|guest_system_service_status_devices|guest_system_service'
+BEFORE_REPEAT=2
