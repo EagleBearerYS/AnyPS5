@@ -79,6 +79,7 @@ struct DepthSamplingState {
     std::vector<GuestMemory::UnchangedQuery> initial;
     std::string refusal;
     std::optional<std::uint8_t> aliasStencil;
+    std::optional<MultisampleColorAlias> unprovenStencil;
 
     void Refuse(const char* reason) {
         if (refusal.empty()) refusal = reason;
@@ -166,6 +167,10 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
         const auto value = index == 2u && stencilPlane ? aliasedStencil(*alias, range, target.samples) : std::nullopt;
         if (!value) {
             reportAlias(*alias, range, index == 2u ? "stencil plane" : index == 1u ? "HTILE" : "depth");
+            if (index == 2u && stencilPlane) {
+                state.unprovenStencil = alias;
+                continue;
+            }
             return refuse(index == 2u ? stencilAliasRefusal : depthAliasRefusal);
         }
         state.aliasStencil = value;
@@ -186,7 +191,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
         if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
         if (stencil && !stencilPlane && !htileProvesStencilClear(word)) return refuse("native multisample stencil initial HTILE does not prove its clear value");
     }
-    if (stencilPlane && !state.aliasStencil) {
+    if (stencilPlane && !state.aliasStencil && !state.unprovenStencil) {
         std::vector<std::uint8_t> plane(state.initial[2].bytes);
         GuestMemory::Read(target.stencilAddress, std::as_writable_bytes(std::span(plane)));
         if (std::any_of(plane.begin(), plane.end(), [&](std::uint8_t value) { return value != target.clearStencil; })) return refuse("native multisample stencil plane does not hold its clear value");
@@ -418,7 +423,7 @@ public:
             if (recorder != nullptr && !(index == 1u && queuedFill) && !(index == 2u && queuedStencilFill)) Require(!recorder->PendingWriteOverlaps(range.address, range.bytes), "external GPU writes over native multisample depth are not implemented");
             GuestMemory::CollectWritesUncached(range.address, range.bytes);
             const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
-            if (!alias) continue;
+            if (!alias || (index == 2u && sampling.unprovenStencil && stencilClearGeneration == 0u)) continue;
             const auto value = index == 2u && separatePlane ? aliasedStencil(*alias, range, target.samples) : std::nullopt;
             const bool kept = value.has_value() && (stencilClearGeneration != 0u ? *value == *stencilClearValue : value == sampling.aliasStencil);
             if (!kept) reportAlias(*alias, range, index == 2u ? "stencil plane" : index == 1u ? "HTILE" : "depth");
@@ -441,6 +446,7 @@ public:
             RecordClear(VK_IMAGE_ASPECT_STENCIL_BIT);
             plane.generation = generation;
             stencilClearGeneration = 0u;
+            sampling.unprovenStencil.reset();
         }
         if (clearGeneration != 0u) {
             const auto& metadata = sampling.initial[1];
@@ -484,6 +490,14 @@ public:
             if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] native multisample depth 0x%llx sampled through a descriptor without metadata before an in-place expand (last DB_RENDER_CONTROL 0x%08x)\n", static_cast<unsigned long long>(target.address), renderControl);
         }
         Require(layout && (htile || (bare && expanded)), "native multisample depth sampled metadata or XOR mismatch");
+    }
+
+    void RequireStencilProven() const {
+        if (sampling.unprovenStencil) {
+            const auto& plane = sampling.initial[2];
+            reportAlias(MultisampleColorTargetOver(plane.address, plane.bytes).value_or(*sampling.unprovenStencil), plane, "unproven stencil plane");
+        }
+        Require(!sampling.unprovenStencil, stencilAliasRefusal);
     }
 
     void ApplyFastClear() {
@@ -2037,7 +2051,7 @@ float HostDepthBiasConstant(const Context& context, VkFormat format, float const
     return constant * 256.0f;
 }
 
-VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten) {
+VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested) {
     const auto htileCleared = RoutesToNativeDepthOwner(target) ? VkImageAspectFlags{0} : storeBackClearedHtile(context, target);
     std::lock_guard gpu(GuestMemory::GpuMutex());
     settlePendingHtileClear(context, target.address);
@@ -2099,6 +2113,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
     if (!created) surface->NoteHtileClear(htileCleared);
     if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
     surface->ApplyFastClear();
+    if (stencilTested && surface->samplingActive) surface->RequireStencilProven();
     if (drawnDepth != nullptr && drawnDepth != surface) drawnDepth->written = ++depthWrites;
     surface->written = ++depthWrites;
     surface->NoteMemory();
@@ -2428,6 +2443,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         auto* recorder = RecorderFor(context);
         Require(recorder != nullptr, "a native multisampled depth target is sampled only by recorded draws and dispatches");
         found->CheckCurrent();
+        if (stencil) found->RequireStencilProven();
         found->CheckResource(resource);
         Require(found->pendingClear == 0u, "native multisample depth fast-clear transition is not implemented");
         RecordMemoryBarrier(context, recorder->Commands(), VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
