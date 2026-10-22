@@ -37,6 +37,7 @@ public:
     void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
     void Stop();
+    void ReleaseRetired();
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
     bool Busy() const;
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
@@ -123,6 +124,7 @@ public:
     void Enqueue(Job job, Pending held);
     void Drain();
     void Settle();
+    void ReleaseRan();
 
 private:
     DrawFinisher() = default;
