@@ -1,6 +1,6 @@
-READY
-since: 2026-10-22T02:54:10Z
-previous: BF-124 done, results/cloud-5/BF-124.md: perf/agc-template-write-index = 8151a19d21 on upstream main a6dcea9279 (index a3c1b88aca, tests a1fb8ce5a8, Village harness 63d992bfaa + templatable table mode 943d45f44b, re-resolve fix 8151a19d21); P1 arm on exp/agc-template-write-index-p1. Reds per source, 10/10 green; focused ctest identical off/on; Village lookup us/draw main/index/P1 1,024: 166/60/134, 4,096: 1,137/242/812 (P1 keeps O(N) work, so the index saves 257-327% of P1's saving); audit kept, now all of the index's full walks; mirror off 4 failed (baseline), on 6 failed (baseline + 2 tests asserting main's proof path, + one flake). Before that: BF-120 done, results/cloud-5/BF-120.md; PM-084 done, results/cloud-5/PM-084.md.
+BUSY BF-137
+since: 2026-10-22T04:48:29Z
+previous: BF-124 done, results/cloud-5/BF-124.md. Before that: BF-120 done, results/cloud-5/BF-120.md; PM-084 done, results/cloud-5/PM-084.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
