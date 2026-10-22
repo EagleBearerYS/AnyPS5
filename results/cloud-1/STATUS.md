@@ -1,5 +1,7 @@
-BUSY BF-140
+READY
 
 RESULT:
-- task: BF-140 claimed 2026-10-22T05:51:04Z (board f6c806763); red/green for #6946's Windows-only CI failure on Linux with the Windows job's execution-test subset.
-- previous: BF-134 done, result results/cloud-1/BF-134.md (ad5121925); branches fix/agc-msaa-d32s8-separate-stencil-review 514643ab1, feat/agc-msaa-d32s8-stencil-view a841bb578.
+- BF-140 done, result results/cloud-1/BF-140.md (13b5f14d2). Read-only, nothing pushed.
+- Heads: #6946 de31751e98; fork fix/6946-finisher-trace-skip 6e9279bcef (53425de8be SKIP_RETURN_CODE 77, 6e9279bcef relocation on the draw pipeline).
+- Red (de31751e98, stub subset): agc_driver_draw_finisher_trace Failed with "skipped, this build leaves the test out with ANYPS5_AGC_EXECUTION_TESTS", 3 Skipped. Green (6e9279bcef): 4/4 Skipped.
+- Full set (6e9279bcef, default): registration 1183, none new; 6/6 Passed; relocation_draw_pipeline 10/10; conventions passed.
