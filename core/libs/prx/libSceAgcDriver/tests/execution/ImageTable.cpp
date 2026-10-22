@@ -73,6 +73,14 @@ alignas(256) constexpr std::array<std::uint32_t, 28> TableCode{
     0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 38> TableSelfStoreCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0x8f108202u, 0xf4200444u,
+    0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu,
+    0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u, 0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u,
+    0x34101084u, 0xe0781000u, 0x80070408u, 0xbea80304u, 0x8729ff05u, 0x0000ffffu, 0xf4000a94u, 0xfa000000u,
+    0xbf8cc07fu, 0x7e280280u, 0x7e2a022au, 0xdc708000u, 0x00281514u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 35> GuardedTableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u,
     0xf4040a00u, 0xfa000070u, 0xbf8cc07fu, 0xf4000a94u, 0xfa000000u, 0xbf8cc07fu,
@@ -902,6 +910,49 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     RequireRed(tableSampler, 1, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "direct uint texels through a point table sampler");
 
     RunWaveKeys(device, TableWave32Code, "image table");
+
+    Keys = {};
+    {
+        constexpr std::size_t BlockBytes = 65536;
+#ifdef _WIN32
+        auto* block = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+        void* mapped = mmap(nullptr, BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        auto* block = mapped == MAP_FAILED ? nullptr : static_cast<std::uint32_t*>(mapped);
+#endif
+        Require(block != nullptr, "image table: cannot map a block for a table its dispatch stores to");
+        std::copy(Table.begin(), Table.end(), block);
+        {
+            struct Registration {
+                void* data;
+                Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+                ~Registration() { GuestAllocations::Mutation().Remove(data); }
+            } registeredBlock(block, BlockBytes);
+            const auto table = Buffer(block, static_cast<std::uint32_t>(sizeof(Table)));
+            const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+            const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+            std::copy(table.begin(), table.end(), Srt.begin());
+            std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
+            std::copy(output.begin(), output.end(), Srt.begin() + 8);
+            const std::span<const std::uint32_t> span(TableSelfStoreCode);
+            const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
+                {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
+                {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+                {reinterpret_cast<std::uintptr_t>(block), std::as_bytes(std::span(block, Table.size()))},
+                {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            }};
+            const auto restored = Execute(device, span, Srt.data(), memory, 1, Lanes, 64);
+            const bool unchanged = std::equal(Table.begin(), Table.end(), block);
+            const auto control = Run(device, TableCode, 1, Lanes, 64);
+            Require(unchanged, "image table: a dispatch storing a table word back through its address changed the table");
+            Require(!Faulted(restored) && restored.words == control.words, "image table: a dispatch storing into its own table, through its address, the bytes the table holds was taken for one changing it:\n" + restored.log);
+        }
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        munmap(block, BlockBytes);
+#endif
+    }
 
     Keys = {};
     const auto aliased = Run(device, TableCode, 1, Lanes, 64, true);
