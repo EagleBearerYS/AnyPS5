@@ -267,4 +267,8 @@ int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
     return 0;
 }
 
+int APS5_VABI scePthreadMutexIsowned(PthreadMutex* mutex) {
+    return MutexOperations::IsOwned(mutex) ? 1 : 0;
+}
+
 }

@@ -29,6 +29,10 @@ int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr);
 int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr);
 int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(PthreadRwlockattr* attr, int type);
 int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+int APS5_VABI pthread_mutex_isowned_np_nid_postfix(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexIsowned(PthreadMutex* mutex);
 int APS5_VABI pthread_barrier_init_nid_postfix(GuestBarrier** barrier, GuestBarrierattr* const* attr, unsigned count);
 int APS5_VABI pthread_barrier_wait_nid_postfix(GuestBarrier** barrier);
 int APS5_VABI pthread_barrier_destroy_nid_postfix(GuestBarrier** barrier);
@@ -109,6 +113,33 @@ void TestNames() {
     });
 }
 
+void* APS5_VABI IsownedElsewhere(void* arg) {
+    auto* mutex = static_cast<PthreadMutex*>(arg);
+    return reinterpret_cast<void*>(static_cast<std::intptr_t>(scePthreadMutexIsowned(mutex)));
+}
+
+int IsownedOnAnotherThread(PthreadMutex* mutex) {
+    Pthread thread{};
+    void* result = nullptr;
+    if (scePthreadCreate(&thread, nullptr, IsownedElsewhere, mutex, "isowned") != 0 || scePthreadJoin(thread, &result) != 0) return -1;
+    return static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+}
+
+void TestIsowned() {
+    Case("scePthreadMutexIsowned", [] {
+        PthreadMutex mutex = nullptr;
+        if (scePthreadMutexIsowned(&mutex) != 0 || pthread_mutex_init_nid_postfix(&mutex, nullptr) != 0) return false;
+        if (scePthreadMutexIsowned(&mutex) != 0 || IsownedOnAnotherThread(&mutex) != 0) return false;
+        if (pthread_mutex_lock_nid_postfix(&mutex) != 0) return false;
+        const bool owned = scePthreadMutexIsowned(&mutex) == 1 && pthread_mutex_isowned_np_nid_postfix(&mutex) == 1;
+        const bool notOwnedElsewhere = IsownedOnAnotherThread(&mutex) == 0;
+        if (pthread_mutex_unlock_nid_postfix(&mutex) != 0) return false;
+        const bool released = scePthreadMutexIsowned(&mutex) == 0;
+        return owned && notOwnedElsewhere && released && pthread_mutex_destroy_nid_postfix(&mutex) == 0 &&
+            Throws<std::invalid_argument>([] { return scePthreadMutexIsowned(nullptr); });
+    });
+}
+
 void TestRwlockattr() {
     Case("pthread_rwlockattr_settype_np", [] {
         PthreadRwlockattr attr = nullptr;
@@ -132,6 +163,7 @@ int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "names") TestNames();
     else if (mode == "rwlockattr") TestRwlockattr();
+    else if (mode == "isowned") TestIsowned();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
     return failures == 0 ? 0 : 1;
