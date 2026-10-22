@@ -4,6 +4,7 @@
 #include <atomic>
 #include <iostream>
 #include <set>
+#include <string>
 #include <thread>
 
 namespace {
@@ -202,6 +203,26 @@ void CheckForgottenSectionKeepsNoPages() {
     CloseHandle(section);
 }
 
+void CheckReleasedPrivateAllocation() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 32> pages{};
+    std::size_t count = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &count, true), "a collect over a committed private allocation failed");
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "cannot release the private allocation behind the mappings");
+    bool collected = true;
+    try {
+        count = pages.size();
+        collected = mappings.Collect(address, Bytes, pages.data(), &count, true);
+    } catch (const std::exception& error) {
+        Require(false, (std::string("a collect over a private allocation released behind the mappings threw: ") + error.what()).c_str());
+    }
+    Require(!collected, "a collect over a private allocation released behind the mappings succeeded");
+}
+
 void CheckConcurrentWrites() {
     Region region;
     std::atomic<bool> start{false};
@@ -230,6 +251,7 @@ int main() {
         CheckPrivate();
         CheckConcurrentWrites();
         CheckForgottenSectionKeepsNoPages();
+        CheckReleasedPrivateAllocation();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
