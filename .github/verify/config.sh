@@ -1,0 +1,4 @@
+BASE=94fbb8cea80af91db62ab6ee7e4da23341675c40
+REPEAT=10
+EXTRA_TESTS='agc_completion_label_wait'
+BEFORE_REPEAT=3
