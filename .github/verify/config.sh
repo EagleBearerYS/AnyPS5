@@ -1,0 +1,4 @@
+BASE=94fbb8cea80af91db62ab6ee7e4da23341675c40
+REPEAT=3
+EXTRA_TESTS='agc_recorder_command_buffer_release|agc_driver_graphics'
+VALIDATION=1
