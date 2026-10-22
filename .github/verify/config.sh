@@ -1,0 +1,3 @@
+BASE=b7d1d47a5f9f32c9c388ad8d47a0055a90ae6e33
+REPEAT=10
+EXTRA_TESTS='agc_recorder_command_buffer_release'
