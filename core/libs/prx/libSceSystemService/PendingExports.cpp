@@ -476,11 +476,6 @@ int APS5_VABI sceLncUtilIsHostBoot(std::int32_t appId, bool* hostBoot) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1201,11 +1196,6 @@ int APS5_VABI sceShellCoreUtilIsBgmPlaying() {
     return 0;
 }
 
-bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilIsIDUState() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1257,11 +1247,6 @@ int APS5_VABI sceShellCoreUtilIsTemperatureDanger() {
 }
 
 int APS5_VABI sceShellCoreUtilIsTitleWorkaroundEnabled(std::int32_t selector, const char* key) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsUsbMassStorageMounted(std::uint32_t deviceIndex) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2366,11 +2351,6 @@ int APS5_VABI sceSystemStateMgrGetCurrentState() {
 }
 
 int APS5_VABI sceSystemStateMgrGetTriggerCode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

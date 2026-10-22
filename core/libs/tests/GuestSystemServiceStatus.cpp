@@ -29,6 +29,10 @@ extern "C" bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress();
 extern "C" int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active);
 extern "C" int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted);
 extern "C" int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted);
+extern "C" bool APS5_VABI sceSystemStateMgrIsBdDriveReady();
+extern "C" bool APS5_VABI sceShellCoreUtilIsUsbMassStorageMounted(std::uint32_t deviceIndex);
+extern "C" bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress();
+extern "C" int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated);
 
 namespace {
 
@@ -127,6 +131,18 @@ void TestShell() {
     Case("sceSystemServiceIsEyeToEyeDistanceAdjusted", [] { return ReportsNotAdjusted(sceSystemServiceIsEyeToEyeDistanceAdjusted); });
 }
 
+void TestDevices() {
+    Case("sceSystemStateMgrIsBdDriveReady", [] { return !sceSystemStateMgrIsBdDriveReady(); });
+    Case("sceShellCoreUtilIsUsbMassStorageMounted", [] {
+        for (std::uint32_t device = 0; device < 8; ++device) {
+            if (sceShellCoreUtilIsUsbMassStorageMounted(device)) return false;
+        }
+        return true;
+    });
+    Case("sceShellCoreUtilIsExternalStorageAppMoveInProgress", [] { return !sceShellCoreUtilIsExternalStorageAppMoveInProgress(); });
+    Case("sceLncUtilIsPs2Emu", [] { return ReportsInactive(sceLncUtilIsPs2Emu); });
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -134,6 +150,7 @@ int main(int argc, char** argv) {
     if (mode == "suspend") TestSuspend();
     else if (mode == "sessions") TestSessions();
     else if (mode == "shell") TestShell();
+    else if (mode == "devices") TestDevices();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
     return failures == 0 ? 0 : 1;

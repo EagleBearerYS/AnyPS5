@@ -80,7 +80,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_system_service_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_service_status_tests PRIVATE libSceSystemService libc)
     configure_windows_unwind(guest_system_service_status_tests)
-    foreach(statusMode IN ITEMS suspend sessions shell)
+    foreach(statusMode IN ITEMS suspend sessions shell devices)
         add_test(NAME guest_system_service_status_${statusMode} COMMAND guest_system_service_status_tests ${statusMode})
         if(WIN32)
             set_tests_properties(guest_system_service_status_${statusMode} PROPERTIES ENVIRONMENT_MODIFICATION
