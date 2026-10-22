@@ -1,0 +1,4 @@
+BASE=eb8dcfebaa015115bc054cfb37001a334b8e4f61
+REPEAT=10
+EXTRA_TESTS='agc_import_settle_initial_dcc|agc_driver_msaa_dcc_clear_2|agc_driver_msaa_dcc_clear_4|agc_driver_msaa_dcc_clear_8|agc_driver_alpha_to_coverage|agc_driver_dithered_alpha_to_coverage|agc_driver_native_fmask|^agc_import|^agc_driver_msaa'
+NO_BEFORE=1
