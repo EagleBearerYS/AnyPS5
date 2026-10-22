@@ -1,0 +1,4 @@
+BASE=973af43dc692d951134f19914a6737d0a3e497ce
+REPEAT=1
+EXTRA_TESTS='agc_import_settle_initial_dcc|agc_driver_msaa_dcc_clear_2|agc_driver_msaa_dcc_clear_4|agc_driver_msaa_dcc_clear_8|agc_driver_alpha_to_coverage|agc_driver_dithered_alpha_to_coverage'
+VALIDATION=1
