@@ -145,6 +145,7 @@ struct ImageTableReuseCounts {
     std::uint64_t replayed = 0;
     std::uint64_t writesKept = 0;
     std::uint64_t writesMade = 0;
+    std::uint64_t untrackedKept = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 
