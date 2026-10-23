@@ -1,0 +1,4 @@
+BASE=7e69be6793a497b5581ef7871042f5eef4cb6721
+REPEAT=1
+EXTRA_TESTS='agc_driver_presentation_pass|agc_driver_presentation_fsr|agc_driver_present_upscale|agc_performance_overlay|agc_performance_overlay_statistics|agc_driver_present_mode'
+VALIDATION=1
