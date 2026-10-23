@@ -648,7 +648,7 @@ private:
                 const auto access = BufferAccessOf(inst->Opcode());
                 if ((access != BufferAccess::Write && access != BufferAccess::Atomic) || inst->ArgumentCount() == 0u) continue;
                 const IrValue* buffer = inst->Argument(0)->Resolve();
-                if (buffer->Opcode() == IrOpcode::GetBufferResource && SameHandle(*buffer, vsharp)) return true;
+                if (buffer->Opcode() == IrOpcode::GetBufferResource && SameDescriptorWords(*buffer, vsharp)) return true;
             }
         }
         return false;
@@ -691,7 +691,7 @@ private:
                     std::uint32_t stride = 0;
                     std::uint32_t addend = 0;
                     KeyDomain domain;
-                    if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameHandle(*buffer, vsharp) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
+                    if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameDescriptorWords(*buffer, vsharp) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
                     keys = true;
                     continue;
                 }
@@ -713,7 +713,7 @@ private:
         const MemoryInfo* memory = ScalarReadMemory(*word, memoryIndex);
         if (memory == nullptr || !immediateU32(word->Argument(1), immediate) || static_cast<std::uint64_t>(memory->offset) + immediate > 0xffffffffull || !ChildKeyWord(*word, vsharp)) return std::nullopt;
         const IrValue* buffer = word->Argument(0)->Resolve();
-        if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameHandle(*buffer, vsharp)) return std::nullopt;
+        if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameDescriptorWords(*buffer, vsharp)) return std::nullopt;
         domain.offset = memory->offset + immediate;
         return domain;
     }
@@ -1991,6 +1991,34 @@ private:
             if (!EquivalentValue(m_program.Resources(), left.Argument(index), right.Argument(index))) {
                 return false;
             }
+        }
+        return true;
+    }
+
+    bool SameLoadedWord(const IrValue* left, const IrValue* right) const {
+        left = left->Resolve();
+        right = right->Resolve();
+        if (EquivalentValue(m_program.Resources(), left, right)) return true;
+        if (left->Opcode() != right->Opcode() || (left->Opcode() != IrOpcode::LoadAddressU32 && left->Opcode() != IrOpcode::ReadConstBuffer) || left->ArgumentCount() != right->ArgumentCount()) return false;
+        const auto& memory = m_program.Resources().memoryInfo;
+        const auto leftIndex = left->Flags<MemoryFlags>().index;
+        const auto rightIndex = right->Flags<MemoryFlags>().index;
+        if (leftIndex >= memory.size() || rightIndex >= memory.size()) return false;
+        MemoryInfo word = memory[leftIndex];
+        word.componentIndex = memory[rightIndex].componentIndex;
+        word.componentCount = memory[rightIndex].componentCount;
+        if (!(word == memory[rightIndex])) return false;
+        for (std::size_t index = 0; index < left->ArgumentCount(); index++) {
+            if (!EquivalentValue(m_program.Resources(), left->Argument(index), right->Argument(index))) return false;
+        }
+        return true;
+    }
+
+    bool SameDescriptorWords(const IrValue& left, const IrValue& right) const {
+        if (SameHandle(left, right)) return true;
+        if (left.Opcode() != right.Opcode() || left.ArgumentCount() != right.ArgumentCount()) return false;
+        for (std::size_t index = 0; index < left.ArgumentCount(); index++) {
+            if (!SameLoadedWord(left.Argument(index), right.Argument(index))) return false;
         }
         return true;
     }

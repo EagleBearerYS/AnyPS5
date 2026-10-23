@@ -487,6 +487,22 @@ alignas(256) constexpr std::array<std::uint32_t, 77> PointerChildKeyArmCode{
     0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 103> PointerVsharpCopyCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbecc0380u,
+    0xbf8cc07fu, 0xf4081616u, 0xfa000000u, 0xbf8cc07fu, 0xf42c0e2cu, 0xfa0004c0u, 0xbf8cc07fu, 0xf09c0f08u,
+    0x010e0b01u, 0xbf0d8012u, 0xbf840002u, 0xbeac03ffu, 0x000000eau, 0xbf0d8112u, 0xbf840002u, 0xbeac03ffu,
+    0x000000ecu, 0xbf0d8212u, 0xbf840002u, 0xbeac03ffu, 0x000000eeu, 0xf4080d16u, 0xfa000000u, 0xbf8cc07fu,
+    0xf420101au, 0xfa000000u, 0xf40c1416u, 0xfa000000u, 0xbf8cc07fu, 0x90419040u, 0x8f418541u, 0xf42c0928u,
+    0x82000000u, 0xf428121au, 0xfa000020u, 0xbf8cc07fu, 0xf09c0f08u, 0x02490401u, 0x904d9e25u, 0x874eff26u,
+    0x00003fffu, 0x8f4e824eu, 0x884d4e4du, 0x804d814du, 0x93cfff26u, 0x000e000eu, 0x804f814fu, 0xf4240b02u,
+    0x2a000008u, 0xbf8cc07fu, 0xbf068013u, 0xbf850002u, 0xbeac0338u, 0xbead0339u, 0x804c814cu, 0xbf0a824cu,
+    0xbf85ffd0u, 0xbf8c3f70u, 0x7e0a024du, 0x7e0c024fu, 0x7e0e030bu, 0x8afe3032u, 0xbf89ffb9u, 0xbefe042eu,
+    0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
@@ -2564,8 +2580,8 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values; a data read through the V# refused").c_str());
 }
 
-void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool word = false) {
-    constexpr std::uint32_t KeyWord = 0x14u;
+void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool word = false, bool copy = false) {
+    const std::uint32_t KeyWord = copy ? 0u : 0x14u;
     constexpr std::uint32_t SamplerWord = 0x20u;
     constexpr std::uint32_t Entries = 64u;
     constexpr std::uint32_t Bound = 48u;
@@ -2592,6 +2608,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool wor
     const auto point = [&](std::uint32_t record, std::uint32_t palette) {
         const auto descriptor = Buffer(palettes[palette].data(), Bound * 32u);
         std::copy(descriptor.begin(), descriptor.end(), records[record].begin());
+        if (copy) std::copy(descriptor.begin(), descriptor.end(), records[record].begin() + 4u);
     };
     for (std::uint32_t palette = 0; palette < 2u; ++palette) {
         fill(palette);
@@ -2603,7 +2620,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool wor
         Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
     };
     for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
-    const std::string name = word ? "pointer V# table whose V# word also feeds the output, behind a record pointer that may take a T#'s words" : arm ? "pointer V# table with a T# at an offset read from the V#'s own buffer, behind a record pointer that may take a T#'s words" : "pointer V# table with a T# at an offset read from the V#'s own buffer";
+    const std::string name = copy ? "pointer V# table whose T#s are read through a wider second load of the V#, behind a record pointer carried around a loop that may take a T#'s words" : word ? "pointer V# table whose V# word also feeds the output, behind a record pointer that may take a T#'s words" : arm ? "pointer V# table with a T# at an offset read from the V#'s own buffer, behind a record pointer that may take a T#'s words" : "pointer V# table with a T# at an offset read from the V#'s own buffer";
     auto shown = palettes;
     const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 2> live{{
         {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
@@ -2652,9 +2669,14 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool wor
                 const auto actual = outcome.words[(group * Lanes + lane) * 4u];
                 Require(actual == expected, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual) + ", expected " + Hex(expected) + " (palette " + std::to_string(palette) + ", key " + std::to_string(keyOf[palette]) + ")");
                 if (!arm) continue;
+                if (copy) {
+                    const auto width = outcome.words[(group * Lanes + lane) * 4u + 1u];
+                    const auto height = outcome.words[(group * Lanes + lane) * 4u + 2u];
+                    Require(width == Width && height == Height, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " decoded " + std::to_string(width) + "x" + std::to_string(height) + " from dwords 1 and 2 of the T# at the key, expected " + std::to_string(Width) + "x" + std::to_string(Height));
+                }
                 const auto second = ArmEntry == keyOf[palette] ? palette : 1u - palette;
                 const auto texel = std::bit_cast<std::uint32_t>(second != 0u ? OtherFloatTexels[lane % Width] : FloatTexels[lane % Width]);
-                const auto sampled = outcome.words[(group * Lanes + lane) * 4u + 1u];
+                const auto sampled = outcome.words[(group * Lanes + lane) * 4u + (copy ? 3u : 1u)];
                 Require(sampled == texel, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " read " + Hex(sampled) + " through the T# at 0x4c0, expected " + Hex(texel));
                 if (!word) continue;
                 const auto vsharp = outcome.words[(group * Lanes + lane) * 4u + 2u];
@@ -2670,9 +2692,9 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool wor
         return data;
     };
     const auto wordCode = withWord(std::vector<std::uint32_t>(PointerChildKeyArmCode.begin(), PointerChildKeyArmCode.end()), {0x7e0c0234u});
-    const std::span<const std::uint32_t> shader = word ? std::span<const std::uint32_t>(wordCode) : arm ? std::span<const std::uint32_t>(PointerChildKeyArmCode) : std::span<const std::uint32_t>(PointerChildKeyCode);
+    const std::span<const std::uint32_t> shader = copy ? std::span<const std::uint32_t>(PointerVsharpCopyCode) : word ? std::span<const std::uint32_t>(wordCode) : arm ? std::span<const std::uint32_t>(PointerChildKeyArmCode) : std::span<const std::uint32_t>(PointerChildKeyCode);
     const auto taken = run(shader);
-    check(taken, "keys 2 and 5 at offset 0x14 of the V# behind the record's pointer");
+    check(taken, "keys 2 and 5 at offset " + Hex(KeyWord) + " of the V# behind the record's pointer");
     const auto rekey = [&](std::uint32_t first, std::uint32_t second) {
         keyOf = {first, second};
         fill(0u);
@@ -2694,9 +2716,16 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool wor
     check(moved, "keys after record 1's pointer moved to the other V#");
     if (arm) {
         auto fixed = std::vector<std::uint32_t>(shader.begin(), shader.end());
-        Require(fixed[51] == 0xf420101au && fixed[52] == 0xfa000014u, name + ": the key read is not where the test replaces it");
-        fixed[51] = 0xbec003ffu;
-        fixed[52] = 0x00030000u;
+        const std::size_t keyRead = copy ? 56u : 51u;
+        Require(fixed[keyRead] == 0xf420101au && fixed[keyRead + 1u] == (0xfa000000u | KeyWord), name + ": the key read is not where the test replaces it");
+        fixed[keyRead] = 0xbec003ffu;
+        fixed[keyRead + 1u] = 0x00030000u;
+        if (copy) {
+            Require(fixed[70] == 0x904d9e25u && fixed[71] == 0x874eff26u && fixed[76] == 0x93cfff26u, name + ": the T#'s width and height decode is not where the test replaces it");
+            fixed[70] = 0xbecd0380u;
+            fixed[71] = 0xbece03ffu;
+            fixed[76] = 0xbecf03ffu;
+        }
         if (word) {
             Require(fixed[LoopEnd] == 0x7e0c0234u, name + ": the V# word's use is not where the test replaces it");
             fixed[LoopEnd] = 0x7e0c0280u;
@@ -2705,6 +2734,21 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool wor
         const auto armed = run(fixed);
         Keys[3] = 0u;
         Require(Faulted(armed) && armed.log.find("outside the snapshot") != std::string::npos, name + ": group 0, whose record pointer took dwords 0 and 1 of the T# at 0x4c0, did not fault outside the snapshot:\n" + armed.log);
+        if (copy) {
+            const auto refusedCopy = [&](const std::string& what, std::size_t index, std::uint32_t replacement) {
+                auto data = std::vector<std::uint32_t>(PointerVsharpCopyCode.begin(), PointerVsharpCopyCode.end());
+                data[index] = replacement;
+                std::string message;
+                try { static_cast<void>(run(data)); }
+                catch (const std::runtime_error& error) { message = error.what(); }
+                Require(message.find("GetSamplerResource dword 0 is not a valid runtime value") != std::string::npos, name + ": " + what + " was not refused by resource planning: " + message);
+            };
+            Require(PointerVsharpCopyCode[59] == 0xfa000000u && PointerVsharpCopyCode[91] == 0x7e0c024fu, name + ": the second V# load or the height's output is not where the test replaces it");
+            refusedCopy("a copy of the V# loaded from 16 bytes further on, which holds the same words", 59u, 0xfa000010u);
+            refusedCopy("a key word that also feeds the output", 91u, 0x7e0c0240u);
+            std::puts((name + ": the T# at the key read through the wider load, its S# read through the first load, the T#'s width and height and the T# at 0x4c0 checked; the pointer arm holding that T#'s dwords faults outside the snapshot, and a V# copy from another address and a key word that also feeds the output are refused").c_str());
+            return;
+        }
         if (word) {
             const auto derived = withWord(std::vector<std::uint32_t>(PointerChildKeyArmCode.begin(), PointerChildKeyArmCode.end()), {0x874dff35u, 0x0000ffffu, 0xbecc0334u, 0xbece0336u, 0xbecf0337u, 0xf4201426u, 0xfa000000u, 0xbf8cc07fu, 0x7e0c0250u});
             std::string message;
@@ -3054,6 +3098,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-word-arm") == 0) {
             RunPointerChildKeyTests(*device, true, true);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-copy-arm") == 0) {
+            RunPointerChildKeyTests(*device, true, false, true);
             return 0;
         }
         RunTests(*device);
