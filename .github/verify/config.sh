@@ -1,0 +1,4 @@
+BASE=499b1cf9fc44da935fe6d63813675ad5810e8402
+REPEAT=1
+EXTRA_TESTS='agc_driver_pointer_vsharp_shared_table|agc_driver_pointer_vsharp_shared_reuse_table'
+NO_BEFORE=1
