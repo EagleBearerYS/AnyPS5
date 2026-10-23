@@ -253,24 +253,35 @@ void stubsVexOperandsAtRsp() {
     require(sites[2].OriginalBytes == VexStoreAtRsp && sites[2].Body == stubBody({0xc5, 0xf8, 0x11, 0x44, 0x24, 0x10}), "the VEX store at rsp was not re-encoded with an 8-bit displacement moved by the shift");
 }
 
+void stubsOperandsAtRspWithTheInstructionsBeforeThem() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, LoadAtRsp);
+    append(body, LoadRipRelative);
+    const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 1 && report.MovedOperands == 0 && report.OperandStubs == 1 && report.StubbedOperands == 2 && sites.size() == 3 && displacements.empty(), "a leaf whose short operand at rsp sits before a rip-relative instruction was not framed with a stub over the instruction before it");
+    const auto store = Base + 0x40 + FramelessPrologue.size();
+    require(sites[2].Address == store && sites[2].Length == StoreBelowRsp.size() + LoadAtRsp.size(), "the stub site does not start at the store before the operand at rsp");
+    require(sites[2].Body == stubBody({0x48, 0x89, 0x7c, 0x24, 0x00, 0x48, 0x8b, 0x44, 0x24, 0x10}), "the store before the operand and the operand at rsp were not both moved by the shift");
+}
+
 void skipsLeavesWithOperandsThatCannotMove() {
     std::vector<std::uint8_t> evex = StoreBelowRsp;
     append(evex, EvexStoreBelowRsp);
     std::vector<std::uint8_t> beforeExit = StoreBelowRsp;
     append(beforeExit, LoadAtRsp);
-    std::vector<std::uint8_t> beforeRipRelative = StoreBelowRsp;
-    append(beforeRipRelative, LoadAtRsp);
-    append(beforeRipRelative, LoadRipRelative);
     std::vector<std::uint8_t> beforeTarget = StoreBelowRsp;
     append(beforeTarget, LoadAtRsp);
     append(beforeTarget, {0xff, 0xc0, 0x3b, 0x44, 0x24, 0xf0, 0x72, 0xf8});
-    const auto input = image({framelessLeaf(FramelessPrologue, evex, FramelessExit), framelessLeaf(FramelessPrologue, beforeExit, FramelessExit), framelessLeaf(FramelessPrologue, beforeRipRelative, FramelessExit), framelessLeaf(FramelessPrologue, beforeTarget, FramelessExit), framelessLeaf({0x41, 0x56, 0x41, 0x57}, StoreBelowRsp, {0x41, 0x5f, 0x41, 0x5e, 0xc3})});
+    const auto input = image({framelessLeaf(FramelessPrologue, evex, FramelessExit), framelessLeaf(FramelessPrologue, beforeExit, FramelessExit), framelessLeaf(FramelessPrologue, beforeTarget, FramelessExit), framelessLeaf({0x41, 0x56, 0x41, 0x57}, StoreBelowRsp, {0x41, 0x5f, 0x41, 0x5e, 0xc3})});
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 5, "a leaf whose rsp operands can neither move nor be stubbed, or whose prologue is too short, was framed");
+    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 4, "a leaf whose rsp operands can neither move nor be stubbed, or whose prologue is too short, was framed");
     require(report.Skipped.at("rsp operand that cannot move with rsp") == 1, "an EVEX operand, whose 8-bit displacement is scaled, was not refused");
-    require(report.Skipped.at("rsp operand that cannot move and has no room for a stub") == 3, "an operand at rsp followed by an exit, a rip-relative instruction or a branch target was not refused for want of room");
+    require(report.Skipped.at("rsp operand that cannot move and has no room for a stub") == 2, "an operand at rsp followed by an exit or a branch target was not refused for want of room");
     require(report.Skipped.at("prologue shorter than a jump") == 1, "the leaf with a short prologue was not reported with its reason");
 }
 
@@ -530,6 +541,7 @@ int main() {
         stubsOperandsWhoseDisplacementOverflows();
         stubsOperandsAtRspWithTheInstructionsAfterThem();
         stubsVexOperandsAtRsp();
+        stubsOperandsAtRspWithTheInstructionsBeforeThem();
         skipsLeavesWithOperandsThatCannotMove();
         skipsLeavesThatCopyRsp();
         framesEachFunctionFromItsOwnFde();
