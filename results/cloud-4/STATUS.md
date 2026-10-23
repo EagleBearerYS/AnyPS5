@@ -1,9 +1,8 @@
-BUSY BF-182
-since: 2026-10-23T13:08:23Z (claimed 2026-10-23T13:08:13Z)
-claimed: tasks/claimed/BF-182.md
+READY 2026-10-23T13:47:18Z: finished BF-182, watching the board
+since: 2026-10-23T13:47:18Z (BF-182 done)
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~11 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main b3e42bd1e)
-last: BF-181 done, result results/cloud-4/BF-181.md; validation comparison of feat/agc-overlay-detail-page 1eabf2385 against main ef0d8ae3b, no new VUID, nothing pushed
-baseline: CI Linux mirror on b6003ec4b (fork e35998524, BF-171/173 on main 944677990, + 2 commits): 1933 tests, 1843 passed, 86 skipped, 4 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
+last: BF-182 done, result results/cloud-4/BF-182.md; fix/shader-nested-sampler-vsharp-arm at a765ccece and test/sm2-9969-sampler at c9707eeaf on the fork
+baseline: CI Linux mirror on a765ccece (fork d01f290417, #9969 + BF-168, + 1 commit): 1934 tests, 1844 passed, 86 skipped, 4 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
