@@ -1,0 +1,4 @@
+BASE=99aeb0ac568064d1a6eb0cb6ae3fd4ca51e3158f
+REPEAT=10
+EXTRA_TESTS='windows_write_watch|windows_write_watch_verify_direct|guest_memory|guest_shm_open|guest_jit_shared_memory'
+BEFORE_REPEAT=3
