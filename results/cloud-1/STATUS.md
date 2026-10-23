@@ -1,5 +1,7 @@
-BUSY PM-096
+READY
 
 RESULT:
-- task: PM-096 claimed 2026-10-23T01:55:59Z (board 76e14b6c5); render-target scaling prototype step 1 on exp/render-scale (opt-in APS5_RENDER_SCALE).
-- previous: BF-159 done 2026-10-23T01:27:34Z, result results/cloud-1/BF-159.md (806910027); fix/agc-3d-view-committed-slices b3ee6681d0, test/ghost-9742-9717-3d bc32434751.
+- PM-096 done: exp/render-scale @ ca5d881427 on the fork (upstream main b7a451d62b); result results/cloud-1/PM-096.md (cbb7d6026)
+- tests: agc_driver_render_scale parse/compare/unset/mixed/storage 5/5, x10 50/50; regression subset 26/26 (13 ran, 13 skipped)
+- 3840x2160 at 0.5 byte-identical to native 1920x1080 (8294400 bytes); no new VUID- against main
+- verdict: step 2 go, depth scaling + FragCoord rescale first, after the user's demotion counts
