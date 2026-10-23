@@ -1,0 +1,4 @@
+BASE=777bdbb4f80bcc03e870dfda0d292c0c6410fd6a
+REPEAT=10
+EXTRA_TESTS='guest_pthread_rwlock|guest_rwlock_retire'
+NO_BEFORE=1
