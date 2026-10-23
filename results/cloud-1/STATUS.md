@@ -1,4 +1,4 @@
-BUSY BF-172 (make the driver-driven execution tests skip without a Vulkan device, as the others do)
-since: 2026-10-23T07:07:54Z
-last: BF-168 done, results/cloud-1/BF-168.md: fork fix/shader-nested-table-child-key-next dff5a6759 (one commit on 839741f458, fast-forward): resolutionFootprint counts readRanges x4 for tables and nested; boundary check next to verifyNestedResolutionReuse puts 2^21 ranges (= the 8M-word budget) on a table, then a nested table, of a real fixture snapshot; red without the fix ('a table's read ranges past the memo budget were not counted', nested likewise), green with it; 37 shader/image-table tests x10 pass; mirror 1864 tests 1776/85/3 (IPv6 only) vs head 1775/85/4; conventions pass
+READY
+since: 2026-10-23T07:36:07Z
+last: BF-172 done, results/cloud-1/BF-172.md: fork test/agc-execution-skip-without-device 49a892412 (one commit on main ef0d8ae3b5): of the ten sources' 22 registrations only agc_driver_pipelined_metadata_pass and its _draw_pipeline variant failed device-less ('vkCreateInstance: Vulkan result -9'); OpenVulkanTestDevice probe added there: no ICD Failed -> Skipped, no ICD + REQUIRE=1 still fails, lavapipe passes; the other 20 never open a device and were left alone; repeats 2x10 pass; mirror 1927/1837/86/4 (IPv6) identical to main; check_skips unchanged; conventions pass; before that BF-168
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.10 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
