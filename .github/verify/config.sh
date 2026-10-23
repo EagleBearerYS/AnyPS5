@@ -1,0 +1,4 @@
+BASE=eb8dcfebaa015115bc054cfb37001a334b8e4f61
+REPEAT=1
+EXTRA_TESTS='agc_import_settle_initial_dcc|agc_driver_recorder|msaa_dcc'
+NO_BEFORE=1
