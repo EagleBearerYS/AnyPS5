@@ -55,6 +55,9 @@ constexpr std::uint32_t DepthSwizzleMode = 0x18;
 
 alignas(256) std::array<float, Width * Height> FloatTexels{};
 alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
+constexpr std::uint32_t PlacedTexelStride = 512;
+constexpr std::array<std::uint32_t, 2> PlacedTexelOffsets{0x100u, 0x300u};
+alignas(1024) std::array<float, 2u * PlacedTexelStride> PlacedTexels{};
 alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
 alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
 alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
@@ -2436,7 +2439,11 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     alignas(256) std::array<std::array<std::uint32_t, 320>, 2> palettes{};
     Table = {};
     Keys = {};
-    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    const auto placed = [](std::uint32_t image) { return PlacedTexels.data() + image * PlacedTexelStride + PlacedTexelOffsets[image] / sizeof(float); };
+    std::copy(FloatTexels.begin(), FloatTexels.end(), placed(0u));
+    std::copy(OtherFloatTexels.begin(), OtherFloatTexels.end(), placed(1u));
+    const std::array images{Image(placed(0u), Format32Float), Image(placed(1u), Format32Float)};
+    Require((images[0][0] & 3u) == 1u && (images[1][0] & 3u) == 3u, "pointer V# tables: the T#s' first words do not end in the bits 01 and 11");
     const auto point = [&](std::uint32_t record, std::uint32_t palette) {
         const auto descriptor = Buffer(palettes[palette].data(), static_cast<std::uint32_t>(sizeof(palettes[palette])));
         std::copy(descriptor.begin(), descriptor.end(), records[record].begin());
