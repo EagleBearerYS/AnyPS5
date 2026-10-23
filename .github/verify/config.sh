@@ -1,0 +1,3 @@
+BASE=44a59edc3a0354e0e38e51e590e1845e542f3aad
+REPEAT=10
+EXTRA_TESTS='agc_driver_present_key_writer_wait|agc_driver_dcc_key_presync|agc_display_buffer_dcc'
