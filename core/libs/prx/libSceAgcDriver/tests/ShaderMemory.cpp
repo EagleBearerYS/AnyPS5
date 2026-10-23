@@ -3064,14 +3064,14 @@ void verifyImageTableUnkeyedAccess() {
 }
 
 struct TableManyGuest {
-    std::array<std::array<std::uint32_t, 8>, 128> heap{};
+    std::array<std::array<std::uint32_t, 8>, 256> heap{};
     std::array<std::uint32_t, 4> output{};
-    std::array<std::uint32_t, 160> srt{};
+    std::array<std::uint32_t, 224> srt{};
 };
 
-constexpr std::uint32_t TableManyDirectWord = 96u;
-constexpr std::uint32_t TableManyExtraSamplerWord = 112u;
-constexpr std::uint32_t TableManyMoreSamplerWord = 116u;
+constexpr std::uint32_t TableManyDirectWord = 160u;
+constexpr std::uint32_t TableManyExtraSamplerWord = 176u;
+constexpr std::uint32_t TableManyMoreSamplerWord = 180u;
 constexpr std::array<std::uint32_t, 8> TableManySamplerSgprs{8u, 12u, 64u, 68u, 72u, 76u, 80u, 84u};
 
 std::vector<std::uint32_t> TableManyKeyCode(std::uint32_t first, std::uint32_t second, std::uint32_t samplers, std::uint32_t direct = 0u, bool extraSampler = false) {
@@ -3172,10 +3172,12 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
     }
     require(snapshot.codes.at(1) == outside && snapshot.codes.at(limit + 3u) == outside, (name + ": a key no read selects was bound").c_str());
     if (pairs) return;
-    const auto split = TableManyKeyCode(40u, 30u, 1u);
+    const auto larger = limit * 5u / 8u;
+    const auto smaller = limit * 15u / 32u;
+    const auto split = TableManyKeyCode(larger, smaller, 1u);
     const auto twoHeaps = GetResourcePlan(TableRequest(split, userData));
     const auto unselected = std::find_if(twoHeaps->info.images.begin(), twoHeaps->info.images.end(), [&](const ImageResource& image) { return !columnOf(*twoHeaps, image).selected; });
-    require(twoHeaps->info.images.size() == 31u && selectedTables(*twoHeaps) == 30u && unselected != twoHeaps->info.images.end() && columnOf(*twoHeaps, *unselected).keyDomains.size() == 40u, (name + ": the larger heap was not merged first, or the smaller one lost its split").c_str());
+    require(twoHeaps->info.images.size() == smaller + 1u && selectedTables(*twoHeaps) == smaller && unselected != twoHeaps->info.images.end() && columnOf(*twoHeaps, *unselected).keyDomains.size() == larger, (name + ": the larger heap was not merged first, or the smaller one lost its split").c_str());
 }
 
 struct SamplerLimitGuest {
