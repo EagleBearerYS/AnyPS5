@@ -488,6 +488,8 @@ struct DescriptorBinding {
     std::vector<bool> samplerCoordinatesIgnored;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
+    std::vector<bool> imageFetched;
+    std::vector<bool> imageQueried;
     std::vector<std::uint32_t> imageSamplers;
     std::vector<bool> bufferRead;
     std::vector<std::uint32_t> bufferExtent;

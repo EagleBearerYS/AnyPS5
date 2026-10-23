@@ -472,6 +472,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageAtomic.push_back(image.atomic);
                 physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
+                physical.imageFetched.push_back(image.fetched);
+                physical.imageQueried.push_back(image.queried);
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
             }

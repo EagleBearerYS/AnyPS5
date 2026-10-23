@@ -77,6 +77,8 @@ struct ImageResource {
     bool written = false;
     bool atomic = false;
     bool atomic64 = false;
+    bool fetched = false;
+    bool queried = false;
     bool depthCompare = false;
     bool cube = false;
     bool r128 = false;

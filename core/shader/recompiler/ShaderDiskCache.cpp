@@ -88,7 +88,7 @@ namespace ShaderRecompiler::ShaderDiskCache {
 static_assert(sizeof(CompiledShaderArtifact) == 280, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
 static_assert(sizeof(RecompileResult) == 528, "RecompileResult changed: update EncodeResult and DecodeResult");
-static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 736, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -141,7 +141,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 41, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 43, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -430,6 +430,8 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.samplerUnnormalized);
     writer.Flags(binding.imageUnnormalized);
     writer.Flags(binding.imageUnnormalizedBaseLevel);
+    writer.Flags(binding.imageFetched);
+    writer.Flags(binding.imageQueried);
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerCoordinatesIgnored);
     writer.Values(std::span<const std::uint32_t>(binding.imageSamplers));
@@ -459,6 +461,8 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.samplerUnnormalized);
     reader.Flags(binding.imageUnnormalized);
     reader.Flags(binding.imageUnnormalizedBaseLevel);
+    reader.Flags(binding.imageFetched);
+    reader.Flags(binding.imageQueried);
     reader.Flags(binding.samplerIntegerBorder);
     reader.Flags(binding.samplerCoordinatesIgnored);
     reader.Values(binding.imageSamplers);
@@ -729,6 +733,8 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.written);
         out.Value(image.atomic);
         out.Value(image.atomic64);
+        out.Value(image.fetched);
+        out.Value(image.queried);
         out.Value(image.depthCompare);
         out.Value(image.cube);
         out.Value(image.r128);
@@ -834,6 +840,8 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.written);
         in.Value(image.atomic);
         in.Value(image.atomic64);
+        in.Value(image.fetched);
+        in.Value(image.queried);
         in.Value(image.depthCompare);
         in.Value(image.cube);
         in.Value(image.r128);
