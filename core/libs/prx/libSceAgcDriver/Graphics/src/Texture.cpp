@@ -2446,6 +2446,33 @@ std::uint64_t StorageTexture::UntrackedCompares() {
     return untrackedCompares.load(std::memory_order_relaxed);
 }
 
+bool StorageTexture::CompareUnwatched(std::span<std::uint8_t> changed) const {
+    constexpr std::uint64_t block = 65536;
+    const auto firstBlock = descriptor.baseAddress / block;
+    Require(guestBytes != 0 && changed.size() == (descriptor.baseAddress + guestBytes - 1) / block - firstBlock + 1, "unwatched texture comparison block count differs");
+    std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
+    std::vector<bool> saved(trackedLayers, false);
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) saved[unit] = layerOriginal[unit];
+    bool compared = false;
+    std::vector<std::uint8_t> run;
+    for (const auto& [begin, end] : unitRuns(saved)) {
+        const auto from = descriptor.baseAddress + begin;
+        const auto last = descriptor.baseAddress + end - 1;
+        run.assign(static_cast<std::size_t>(last / block - from / block + 1), GuestMemory::BlockUnchanged);
+        if (!compareUntracked(from, static_cast<std::size_t>(end - begin), run, true)) continue;
+        compared = true;
+        const auto offset = static_cast<std::size_t>(from / block - firstBlock);
+        for (std::size_t index = 0; index < run.size(); ++index) {
+            if (run[index] == GuestMemory::BlockWritten) changed[offset + index] = GuestMemory::BlockWritten;
+        }
+    }
+    for (const auto& [from, kept] : keptAtUnwatch) {
+        const auto unit = static_cast<std::uint32_t>((from - descriptor.baseAddress) / trackedLayerBytes);
+        if (unit < trackedLayers && keptAtUnwatchHolds(from, unit)) changed[static_cast<std::size_t>(from / block - firstBlock)] = GuestMemory::BlockWritten;
+    }
+    return compared;
+}
+
 bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
     const bool locked = GuestMemory::GpuMutex().HeldByThisThread();
     const auto readFollowed = [&] {

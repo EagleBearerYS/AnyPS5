@@ -156,6 +156,7 @@ struct DepthPlaneStoreCounters {
     std::atomic<std::uint64_t> stores{0};
     std::atomic<std::uint64_t> units{0};
     std::atomic<std::uint64_t> bytes{0};
+    std::atomic<std::uint64_t> syncs{0};
 };
 
 DepthPlaneStoreCounters& depthPlaneStoreCounters() {
@@ -585,9 +586,10 @@ public:
         stencilMemory = target.stencilAddress != 0 ? GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilBytes())) : 0;
     }
 
-    bool OverwrittenInMemory() const {
+    bool OverwrittenInMemory() {
         GuestMemory::CollectWrites(target.address, static_cast<std::size_t>(depthBytes()));
         if (GuestMemory::WrittenSince(target.address, static_cast<std::size_t>(depthBytes()), depthMemory)) return true;
+        if (std::vector<std::uint8_t> blocks; mirrorPlane.storage != nullptr && GuestMemory::WriteWatched() && !GuestMemory::Watched(target.address, static_cast<std::size_t>(depthBytes())) && UnwatchedBlocks(mirrorPlane.storage->GuestBytes(), blocks) && std::find(blocks.begin(), blocks.end(), GuestMemory::BlockWritten) != blocks.end()) return true;
         if (target.stencilAddress == 0) return false;
         GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilBytes()));
         return GuestMemory::WrittenSince(target.stencilAddress, static_cast<std::size_t>(stencilBytes()), stencilMemory);
@@ -853,6 +855,10 @@ public:
         GuestMemory::CollectWrites(resource.baseAddress, bytes);
         generation = GuestMemory::TrackerGeneration();
         std::vector<bool> changed(unitGeneration.size(), false);
+        if (GuestMemory::WriteWatched() && !GuestMemory::Watched(resource.baseAddress, bytes)) {
+            UnwatchedUnits(bytes, changed);
+            return changed;
+        }
         if (unitGeneration.size() == 1u) {
             changed[0] = GuestMemory::WrittenSince(resource.baseAddress, bytes, unitGeneration[0]);
             return changed;
@@ -863,6 +869,32 @@ public:
         if (!GuestMemory::ChangedBlocks(resource.baseAddress, bytes, unitGeneration, stamped)) return changed;
         for (std::size_t unit = 0; unit < changed.size(); ++unit) changed[unit] = unitGeneration[unit] != 0u && stamped[unit] == GuestMemory::BlockWritten;
         return changed;
+    }
+
+    bool UnwatchedBlocks(std::uint64_t bytes, std::vector<std::uint8_t>& blocks) {
+        const auto mirror = mirrorPlane.storage;
+        if (mirror == nullptr || bytes == 0 || mirror->Descriptor().baseAddress != target.address || mirror->GuestBytes() != bytes) return false;
+        constexpr std::uint64_t block = 65536;
+        blocks.assign(static_cast<std::size_t>((target.address + bytes - 1) / block - target.address / block + 1), GuestMemory::BlockUnchanged);
+        struct Syncing {
+            bool& flag;
+            bool was;
+            ~Syncing() { flag = was; }
+        } guard{syncing, syncing};
+        syncing = true;
+        return mirror->CompareUnwatched(blocks);
+    }
+
+    void UnwatchedUnits(std::uint64_t bytes, std::vector<bool>& changed) {
+        std::vector<std::uint8_t> blocks;
+        if (changed.empty() || unitBytes == 0 || !UnwatchedBlocks(bytes, blocks)) return;
+        constexpr std::uint64_t block = 65536;
+        const auto first = target.address / block;
+        for (std::size_t index = 0; index < blocks.size(); ++index) {
+            if (blocks[index] != GuestMemory::BlockWritten) continue;
+            const auto offset = std::max(target.address, (first + index) * block) - target.address;
+            changed[static_cast<std::size_t>(std::min<std::uint64_t>(offset / unitBytes, changed.size() - 1u))] = true;
+        }
     }
 
     void SyncFromMemory(const GuestTextureResource& resource) {
@@ -895,6 +927,7 @@ public:
             ClearStale();
             copyPlane(mirrorPlane, mirror, false, false, true);
         }
+        ++depthPlaneStoreCounters().syncs;
         written = ++depthWrites;
     }
 
@@ -2129,6 +2162,7 @@ DepthPlaneStoreStatistics DepthPlaneStoreCounts() {
     statistics.stores = counters.stores.load();
     statistics.units = counters.units.load();
     statistics.bytes = counters.bytes.load();
+    statistics.syncs = counters.syncs.load();
     return statistics;
 }
 

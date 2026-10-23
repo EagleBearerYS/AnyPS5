@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -17,13 +18,25 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -96,6 +109,168 @@ std::size_t Holding(std::span<const float> plane, float depth) {
     return static_cast<std::size_t>(std::count(plane.begin(), plane.end(), depth));
 }
 
+struct Plane {
+    VkExtent2D extent;
+    std::size_t bytes;
+    std::size_t texels;
+    float* data;
+    std::span<std::byte> pixels;
+    Surface surface;
+
+    std::span<float> Floats() const { return {data, bytes / sizeof(float)}; }
+};
+
+constexpr std::size_t WrittenTexels = 4;
+constexpr std::size_t UnitFloats = Block / sizeof(float);
+
+Plane MakePlane(VkExtent2D extent) {
+    const auto bytes = static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes(extent, 4u));
+    const auto texels = static_cast<std::size_t>(extent.width) * extent.height;
+    auto* data = static_cast<float*>(AllocateWatched((bytes + Block - 1u) / Block * Block));
+    const auto colorBytes = texels * 4u;
+    const std::span<std::byte> pixels(static_cast<std::byte*>(AllocateWatched((colorBytes + Block - 1u) / Block * Block)), colorBytes);
+    return {extent, bytes, texels, data, pixels, {reinterpret_cast<std::uintptr_t>(data), 0, 0, false, VK_FORMAT_D32_SFLOAT, 0, 0, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX)}};
+}
+
+std::string Named(const Plane& plane, const std::string& what) {
+    return std::to_string(plane.extent.width) + "x" + std::to_string(plane.extent.height) + " plane: " + what;
+}
+
+std::uint32_t DrawAt(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane, float depth, bool write, VkCompareOp compare) {
+    return Draw(device, shaders, plane.surface, {.depthWrite = write, .depthCompare = compare, .minDepth = depth, .maxDepth = depth}, plane.extent, plane.pixels);
+}
+
+std::size_t StoreHalf(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    Require(DrawAt(device, shaders, plane, 0.5f, true, VK_COMPARE_OP_ALWAYS) == plane.texels, Named(plane, "the draw writing depth 0.5 did not cover the target"));
+    Require(!AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes).empty(), Named(plane, "the first store of the plane stored nothing"));
+    device.WaitIdle();
+    Require(Holding(plane.Floats(), 0.5f) == plane.texels, Named(plane, "the first store put depth 0.5 into " + std::to_string(Holding(plane.Floats(), 0.5f)) + " of " + std::to_string(plane.texels) + " texels"));
+    std::printf("%ux%u D32 plane of %zu bytes after its store: %s\n", plane.extent.width, plane.extent.height, plane.bytes, AgcDriver::GuestMemory::Watched(plane.surface.depth, plane.bytes) ? "write-watched" : "outside the write watch");
+    return Holding(plane.Floats().first(std::min(UnitFloats, plane.Floats().size())), 0.5f);
+}
+
+void WriteStart(const Plane& plane) {
+    std::fill_n(plane.data, WrittenTexels, 0.125f);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+}
+
+bool StartHolds(const Plane& plane, float depth) {
+    return std::all_of(plane.data, plane.data + WrittenTexels, [&](float value) { return value == depth; });
+}
+
+void RequireKept(const Plane& plane, std::size_t unitTexels, const std::string& what) {
+    const auto floats = plane.Floats();
+    const auto unit = floats.first(std::min(UnitFloats, floats.size()));
+    Require(StartHolds(plane, 0.125f), Named(plane, what + ": the CPU's depth 0.125 at the start of the plane was not kept, it holds " + std::to_string(plane.data[0])));
+    Require(Holding(unit, 0.5f) == unitTexels - WrittenTexels, Named(plane, what + ": the rest of the CPU-written unit does not hold the depth 0.5 memory had"));
+    Require(Holding(floats.subspan(unit.size()), 0.25f) == plane.texels - unitTexels, Named(plane, what + ": the units the CPU did not write do not hold the GPU's depth 0.25"));
+}
+
+void DrawSeesWrite(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    StoreHalf(device, shaders, plane);
+    WriteStart(plane);
+    const auto covered = DrawAt(device, shaders, plane, 0.25f, false, VK_COMPARE_OP_LESS);
+    Require(covered == plane.texels - WrittenTexels, Named(plane, "after a CPU write of depth 0.125 into " + std::to_string(WrittenTexels) + " texels of the stored plane, a draw at depth 0.25 passed LESS at " + std::to_string(covered) + " of " + std::to_string(plane.texels) + " texels, not " + std::to_string(plane.texels - WrittenTexels)));
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
+    device.WaitIdle();
+    Require(StartHolds(plane, 0.125f), Named(plane, "a store after the draw did not keep the CPU's depth 0.125"));
+}
+
+void StoreKeepsWrite(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    const auto unitTexels = StoreHalf(device, shaders, plane);
+    Require(DrawAt(device, shaders, plane, 0.25f, true, VK_COMPARE_OP_ALWAYS) == plane.texels, Named(plane, "the draw writing depth 0.25 over the stored plane did not cover the target"));
+    WriteStart(plane);
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
+    device.WaitIdle();
+    RequireKept(plane, unitTexels, "a store after a CPU write into a stored plane the GPU wrote again");
+}
+
+void RetireKeepsWrite(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    const auto unitTexels = StoreHalf(device, shaders, plane);
+    Require(DrawAt(device, shaders, plane, 0.25f, true, VK_COMPARE_OP_ALWAYS) == plane.texels, Named(plane, "the draw writing depth 0.25 over the stored plane did not cover the target"));
+    WriteStart(plane);
+    AgcDriver::Graphics::GuestTextureResource resource{};
+    resource.baseAddress = plane.surface.depth;
+    resource.width = plane.extent.width;
+    resource.height = plane.extent.height;
+    resource.mipCount = 2;
+    resource.lastLevel = 1;
+    resource.tileMode = AgcDriver::Graphics::TextureTileMode::kZ64KBX;
+    resource.dimension = AgcDriver::Graphics::TextureDimension::k2D;
+    resource.format = 22;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    constexpr std::array<std::uint32_t, 8> words{};
+    constexpr VkComponentMapping components{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::shared_ptr<AgcDriver::Graphics::Texture> texture;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        texture = AgcDriver::Graphics::DepthSurfaceTexture(context, words, resource, components);
+    }
+    Require(texture == nullptr, Named(plane, "a two-level view of the plane after a CPU write into it did not retire the depth surface"));
+    device.WaitIdle();
+    RequireKept(plane, unitTexels, "the retirement of a surface after a CPU write into its stored plane");
+}
+
+void UnchangedStaysUnsynced(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    StoreHalf(device, shaders, plane);
+    const auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+    const auto compares = AgcDriver::Graphics::StorageTexture::UntrackedCompares();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    constexpr int Draws = 8;
+    for (int draw = 0; draw < Draws; ++draw) Require(DrawAt(device, shaders, plane, 0.25f, false, VK_COMPARE_OP_LESS) == plane.texels, Named(plane, "a draw at depth 0.25 over the stored, unwritten plane failed LESS against 0.5"));
+    const auto after = AgcDriver::Graphics::DepthPlaneStoreCounts();
+    Require(after.syncs == before.syncs, Named(plane, std::to_string(after.syncs - before.syncs) + " syncs from memory in " + std::to_string(Draws) + " draws over a stored plane nothing wrote"));
+    Require(after.stores == before.stores && after.units == before.units, Named(plane, "draws that wrote no depth stored the plane again"));
+    Require(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes).empty(), Named(plane, "a read after draws that wrote no depth stored something"));
+    device.WaitIdle();
+    Require(Holding(plane.Floats(), 0.5f) == plane.texels, Named(plane, "the stored depth 0.5 changed in memory without a write"));
+    std::printf("%d draws over the stored, unwritten plane: %llu syncs from memory, %llu stores, %llu unwatched texture comparisons\n", Draws, static_cast<unsigned long long>(after.syncs - before.syncs), static_cast<unsigned long long>(after.stores - before.stores), static_cast<unsigned long long>(AgcDriver::Graphics::StorageTexture::UntrackedCompares() - compares));
+}
+
+void BindCost(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane, int binds) {
+    StoreHalf(device, shaders, plane);
+    Require(DrawAt(device, shaders, plane, 0.25f, false, VK_COMPARE_OP_LESS) == plane.texels, Named(plane, "the draw before the timed binds failed LESS against 0.5"));
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    AgcDriver::Graphics::DepthTarget target{plane.surface.depth, 0, plane.extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.depthSwizzle = plane.surface.swizzle;
+    const auto timed = [&](bool epochPerBind) {
+        const auto syncs = AgcDriver::Graphics::DepthPlaneStoreCounts().syncs;
+        const auto compares = AgcDriver::Graphics::StorageTexture::UntrackedCompares();
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto start = std::chrono::steady_clock::now();
+        for (int bind = 0; bind < binds; ++bind) {
+            if (epochPerBind) AgcDriver::GuestMemory::BumpCollectEpoch();
+            Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, Named(plane, "a timed bind returned no view"));
+        }
+        const auto spent = std::chrono::steady_clock::now() - start;
+        std::printf("%ux%u plane, %s, %s: %d binds, %.0f ns per bind; %llu syncs from memory, %llu unwatched texture comparisons\n", plane.extent.width, plane.extent.height, AgcDriver::GuestMemory::Watched(plane.surface.depth, plane.bytes) ? "write-watched" : "outside the write watch", epochPerBind ? "a collect epoch per bind" : "one collect epoch", binds, std::chrono::duration<double, std::nano>(spent).count() / binds, static_cast<unsigned long long>(AgcDriver::Graphics::DepthPlaneStoreCounts().syncs - syncs), static_cast<unsigned long long>(AgcDriver::Graphics::StorageTexture::UntrackedCompares() - compares));
+    };
+    timed(false);
+    timed(true);
+}
+
+int UnwatchedTests(AgcDriver::VulkanDevice& device, const std::string& mode, int count) {
+    const auto shaders = Compile(device);
+    constexpr VkExtent2D Small{256, 128};
+    constexpr VkExtent2D Large{1920, 1080};
+    if (mode == "--unwatched-draw") DrawSeesWrite(device, shaders, MakePlane(Small));
+    else if (mode == "--unwatched-store") StoreKeepsWrite(device, shaders, MakePlane(Small));
+    else if (mode == "--unwatched-retire") RetireKeepsWrite(device, shaders, MakePlane(Small));
+    else if (mode == "--unwatched-large") {
+        DrawSeesWrite(device, shaders, MakePlane(Large));
+        StoreKeepsWrite(device, shaders, MakePlane(Large));
+    } else if (mode == "--unwatched-unchanged") UnchangedStaysUnsynced(device, shaders, MakePlane(Small));
+    else if (mode == "--bind-cost") BindCost(device, shaders, MakePlane(Large), count);
+    else Require(false, "unknown mode " + mode);
+    std::printf("depth plane %s tests passed\n", mode.c_str() + 2);
+    return 0;
+}
+
 void DrawBlendKeepingMemory(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& compiled, std::uint64_t address) {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderRecompiler::ShaderStage::Vertex, &compiled.vertex, 0},
@@ -123,10 +298,11 @@ void DrawBlendKeepingMemory(AgcDriver::VulkanDevice& device, const DepthFastClea
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc > 1) return UnwatchedTests(*device, argv[1], argc > 2 ? std::atoi(argv[2]) : 1000);
         const auto planeBytes = static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes({Width, Height}, 4u));
         Require(planeBytes <= Block, "the depth plane does not fit one block");
         auto* block = static_cast<float*>(AllocateWatched(Block));

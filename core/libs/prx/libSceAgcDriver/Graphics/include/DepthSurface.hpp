@@ -27,6 +27,7 @@ struct DepthPlaneStoreStatistics {
     std::uint64_t stores = 0;
     std::uint64_t units = 0;
     std::uint64_t bytes = 0;
+    std::uint64_t syncs = 0;
 };
 DepthPlaneStoreStatistics DepthPlaneStoreCounts();
 void NoteDepthSurfaceWrite(const Context& context, const DepthTarget& target);
