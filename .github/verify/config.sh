@@ -1,0 +1,4 @@
+BASE=b7a451d62b10bb1e3ae2feb72ad45f889fa9b4f9
+REPEAT=1
+EXTRA_TESTS='agc_pixel_position_export|^agc_driver_render_scale|^agc_driver_graphics|^agc_shader_disk_cache|^agc_driver_depth'
+NO_BEFORE=1
