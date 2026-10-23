@@ -1,0 +1,3 @@
+BASE=53886418d9fceee8722779076114800bb07f8a7e
+REPEAT=10
+EXTRA_TESTS='agc_driver_native_depth_aliased_depth|^agc_driver_native_depth|^agc_driver_native_multisample_depth'
