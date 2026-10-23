@@ -1,0 +1,3 @@
+BASE=7b32a842f879f32a39f0412161ddb8e9ba3e3a9a
+REPEAT=10
+EXTRA_TESTS='agc_private_collect|windows_write_watch|windows_write_watch_verify_direct|windows_shared_map_cost|agc_driver_residency_dispatch_work|^agc_import'
