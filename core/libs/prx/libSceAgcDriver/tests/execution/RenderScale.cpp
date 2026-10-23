@@ -416,6 +416,13 @@ void ExpectExtent(const StorageTexture& image, VkExtent2D extent, bool scaled, c
     throw std::runtime_error(what + ": the image is " + std::to_string(actual.width) + "x" + std::to_string(actual.height) + (image.RenderScaled() ? " (scaled)" : " (native)") + ", expected " + std::to_string(extent.width) + "x" + std::to_string(extent.height));
 }
 
+void ExpectSameBytes(std::span<const std::byte> scaled, std::span<const std::byte> native, const std::string& what) {
+    Require(scaled.size() == native.size(), what + ": the scaled and native images differ in size");
+    std::size_t differing = 0;
+    for (std::size_t i = 0; i < scaled.size(); ++i) differing += scaled[i] != native[i];
+    if (differing != 0) throw std::runtime_error(what + ": the scaled stream differs from the native stream in " + std::to_string(differing) + " bytes");
+}
+
 void ParseTests() {
     using AgcDriver::Graphics::ParseRenderScale;
     const auto expect = [](std::string_view text, std::optional<RenderScale> expected) {
@@ -471,15 +478,19 @@ void CompareTests(AgcDriver::VulkanDevice& device) {
     ExpectImageTexel(scaled, 1920, 1088, 540, ColorC, "the scaled image");
     std::printf("scaled 3840x2160 at 0.5 equals native 1920x1080: %zu bytes, fnv %016llx\n", scaled.size(), static_cast<unsigned long long>(Fnv(scaled)));
     const auto stored = GuestTexels(device, big);
-    ExpectExtent(*bigImage, {3840, 2160}, false, "the target after a CPU read-back");
-    ExpectDemotions(Only(RenderScaleDemotion::WriteBack), "a CPU read-back of the scaled target");
-    ExpectGuestTexel(big, stored, 100, 100, ColorA, "the demoted target's guest bytes");
-    ExpectGuestTexel(big, stored, 1100, 1250, ColorB, "the demoted target's guest bytes");
-    ExpectGuestTexel(big, stored, 2176, 1080, ColorC, "the demoted target's guest bytes");
-    Draw(device, {{big.Decode()}, {3840, 2160}, {{0, 0}, {3840, 2160}}, &FullTriangle, ColorB});
+    ExpectExtent(*bigImage, {1920, 1080}, true, "the target after a CPU read-back");
+    ExpectDemotions({}, "a CPU read-back of the scaled target");
+    Require(AgcDriver::Graphics::RenderScaledStores() == 1, "the read-back stores the scaled target once at its native size");
+    ExpectGuestTexel(big, stored, 100, 100, ColorA, "the stored target's guest bytes");
+    ExpectGuestTexel(big, stored, 1100, 1250, ColorB, "the stored target's guest bytes");
+    ExpectGuestTexel(big, stored, 2176, 1080, ColorC, "the stored target's guest bytes");
+    Draw(device, {{big.Decode()}, {3840, 2160}, ScaledRect(200, 100, 1200, 600, 1, 1), &FullTriangle, ColorC});
+    Draw(device, {{small.Decode()}, {1920, 1080}, ScaledRect(200, 100, 1200, 600, 1, 2), &FullTriangle, ColorC});
     device.WaitIdle();
-    ExpectExtent(*bigImage, {3840, 2160}, false, "a demoted target drawn again");
-    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 1, "a demoted surface scales again");
+    ExpectExtent(*bigImage, {1920, 1080}, true, "the stored target drawn again");
+    ExpectDemotions({}, "a draw into the stored target");
+    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 1, "the stored surface scaled once");
+    ExpectSameBytes(bigImage->ReadImageTexels(), smallImage->ReadImageTexels(), "the stored target drawn again");
     std::puts("render scale compare tests passed");
 }
 
@@ -587,11 +598,17 @@ std::size_t CountTexels(std::span<const std::byte> texels, const Color& color) {
     return count;
 }
 
-void ExpectSameBytes(std::span<const std::byte> scaled, std::span<const std::byte> native, const std::string& what) {
-    Require(scaled.size() == native.size(), what + ": the scaled and native images differ in size");
-    std::size_t differing = 0;
-    for (std::size_t i = 0; i < scaled.size(); ++i) differing += scaled[i] != native[i];
-    if (differing != 0) throw std::runtime_error(what + ": the scaled stream differs from the native stream in " + std::to_string(differing) + " bytes");
+void RedrawCompare(AgcDriver::VulkanDevice& device, const Surface& big, const DepthPlane& bigDepth, const Surface& small, const DepthPlane& smallDepth, const std::string& what) {
+    for (const auto& [surface, depth] : {std::pair{&big, &bigDepth}, std::pair{&small, &smallDepth}}) {
+        const VkExtent2D extent{surface->width, surface->height};
+        Draw(device, {{surface->Decode()}, extent, {{0, 0}, extent}, &CrossingTriangle, ColorC, DepthPass{depth->Target(), VK_COMPARE_OP_LESS_OR_EQUAL}});
+    }
+    device.WaitIdle();
+    ExpectExtent(*big.Image(), {1920, 1080}, true, what + ", the color target drawn again");
+    ExpectDepthExtent(device, bigDepth, {1920, 1080}, true, what + ", the depth surface drawn again");
+    ExpectDemotions({}, what + ", the draw after the store");
+    ExpectSameBytes(big.Image()->ReadImageTexels(), small.Image()->ReadImageTexels(), what + ", color");
+    ExpectSameBytes(DepthTexels(device, bigDepth), DepthTexels(device, smallDepth), what + ", depth");
 }
 
 void DepthTests(AgcDriver::VulkanDevice& device) {
@@ -625,17 +642,10 @@ void DepthTests(AgcDriver::VulkanDevice& device) {
     std::printf("scaled 3840x2160 color and D32 depth at 0.5 equal native 1920x1080: color %zu bytes fnv %016llx, depth %zu bytes fnv %016llx, %zu crossing texels\n", scaledColor.size(), static_cast<unsigned long long>(Fnv(scaledColor)), scaledDepth.size(), static_cast<unsigned long long>(Fnv(scaledDepth)), crossing);
     static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(bigDepth.block.Address(), bigDepth.block.bytes));
     device.WaitIdle();
-    ExpectDepthExtent(device, bigDepth, {3840, 2160}, false, "the depth surface after its plane is stored to guest memory");
-    ExpectDemotions(Only(RenderScaleDemotion::DepthWriteBack), "a depth plane stored to guest memory");
-    const auto demotedDepth = DepthTexels(device, bigDepth);
-    Require(FloatAt(demotedDepth, 3840, 100, 100) == 0.5f && FloatAt(demotedDepth, 3840, 2176, 1080) < 0.5f, "the demoted depth image does not hold the tested depths");
-    Draw(device, {{big.Decode()}, {3840, 2160}, {{0, 0}, {3840, 2160}}, &FullTriangle, ColorB, DepthPass{bigDepth.Target(), VK_COMPARE_OP_LESS_OR_EQUAL}});
-    device.WaitIdle();
-    ExpectExtent(*bigImage, {3840, 2160}, false, "the color target drawn with the demoted depth surface");
-    ExpectDemotions(Counts({RenderScaleDemotion::DepthWriteBack, RenderScaleDemotion::DepthAttachment}), "a color target drawn with a demoted depth surface");
-    const auto redrawn = bigImage->ReadImageTexels();
-    ExpectImageTexel(redrawn, 3840, 100, 100, ColorB, "the redrawn color image");
-    ExpectImageTexel(redrawn, 3840, 2176, 1080, ColorC, "the redrawn color image");
+    ExpectDepthExtent(device, bigDepth, {1920, 1080}, true, "the depth surface after its plane is stored to guest memory");
+    ExpectDemotions({}, "a depth plane stored to guest memory");
+    Require(AgcDriver::Graphics::RenderScaledStores() == 1, "the depth plane is stored once at its native size");
+    RedrawCompare(device, big, bigDepth, small, smallDepth, "the depth-tested stream after a depth plane store");
     std::puts("render scale depth tests passed");
 }
 
@@ -723,10 +733,7 @@ void DepthDemotionTests(AgcDriver::VulkanDevice& device, const std::string& mode
         const std::array<float, 4> written{0.125f, 0.125f, 0.125f, 0.125f};
         AgcDriver::GuestMemory::Write(depth.block.Address(), std::as_bytes(std::span(written)), 4);
     } else {
-        if (mode == "--depth-write-back") {
-            reason = RenderScaleDemotion::DepthWriteBack;
-            static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(depth.block.Address(), depth.block.bytes));
-        } else if (mode == "--depth-storage") {
+        if (mode == "--depth-storage") {
             reason = RenderScaleDemotion::DepthStorage;
             Require(AgcDriver::Graphics::DepthSurfaceStorage(context, {}, depth.View(Format32Float), 0) != nullptr, "the depth plane has no storage image");
         } else if (mode == "--depth-copy") {
@@ -751,6 +758,94 @@ void DepthDemotionTests(AgcDriver::VulkanDevice& device, const std::string& mode
     ExpectImageTexel(texels, 256, 2, 2, ColorA, "the demoted color image");
     ExpectImageTexel(texels, 256, 145, 64, ColorC, "the demoted color image");
     std::printf("render scale %s demotion tests passed\n", mode.substr(2).c_str());
+}
+
+void ColorStoreGuestWriteTests(AgcDriver::VulkanDevice& device) {
+    Require(AgcDriver::Graphics::ActiveRenderScale() == RenderScale{1, 2}, "the color guest write test runs with APS5_RENDER_SCALE=0.5");
+    AgcDriver::Graphics::NoteVideoOutExtent(256, 128);
+    Surface target(256, 128);
+    Draw(device, {{target.Decode()}, {256, 128}, {{0, 0}, {256, 128}}, &FullTriangle, ColorA});
+    device.WaitIdle();
+    const auto image = target.Image();
+    ExpectExtent(*image, {128, 64}, true, "the 256x128 target at scale 0.5");
+    const auto stored = GuestTexels(device, target);
+    ExpectExtent(*image, {128, 64}, true, "the target after a scaled store");
+    ExpectDemotions({}, "a scaled store of the target");
+    Require(AgcDriver::Graphics::RenderScaledStores() == 1, "the target is stored once at its native size");
+    ExpectGuestTexel(target, stored, 200, 100, ColorA, "the stored guest bytes");
+    std::vector<std::byte> written(target.block.bytes);
+    const auto texel = Texel(ColorB);
+    for (std::size_t offset = 0; offset + 4u <= written.size(); offset += 4u) std::memcpy(written.data() + offset, texel.data(), 4);
+    AgcDriver::GuestMemory::Write(target.block.Address(), written, 4);
+    Draw(device, {{target.Decode()}, {256, 128}, {{0, 0}, {64, 32}}, &FullTriangle, ColorC});
+    device.WaitIdle();
+    ExpectExtent(*image, {256, 128}, false, "the target drawn after a guest write");
+    ExpectDemotions(Only(RenderScaleDemotion::GuestWrite), "a guest write after a scaled store");
+    const auto texels = image->ReadImageTexels();
+    ExpectImageTexel(texels, 256, 200, 100, ColorB, "the guest-written image");
+    ExpectImageTexel(texels, 256, 10, 10, ColorC, "the guest-written image");
+    std::puts("render scale color store guest write tests passed");
+}
+
+std::vector<std::byte> StoredDepth(AgcDriver::VulkanDevice& device, const DepthPlane& depth) {
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(depth.block.Address(), depth.block.bytes));
+    StorageTexture::FlushPending(depth.block.Address(), depth.block.bytes, nullptr, "test read-back");
+    device.WaitIdle();
+    std::vector<std::byte> stored(depth.block.bytes);
+    AgcDriver::GuestMemory::Read(depth.block.Address(), stored, 1);
+    return stored;
+}
+
+void StoreEqualsDemotionTests(AgcDriver::VulkanDevice& device) {
+    Require(AgcDriver::Graphics::ActiveRenderScale() == RenderScale{1, 2}, "the store comparison runs with APS5_RENDER_SCALE=0.5");
+    AgcDriver::Graphics::NoteVideoOutExtent(3840, 2160);
+    Surface kept(3840, 2160);
+    DepthPlane keptDepth(3840, 2160);
+    Surface demoted(3840, 2160);
+    DepthPlane demotedDepth(3840, 2160);
+    DepthStream(device, kept, keptDepth);
+    DepthStream(device, demoted, demotedDepth);
+    device.WaitIdle();
+    ExpectDemotions({}, "the two scaled streams");
+    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 4, "both color targets and both depth surfaces scale");
+    const auto keptColor = GuestTexels(device, kept);
+    const auto keptPlane = StoredDepth(device, keptDepth);
+    ExpectExtent(*kept.Image(), {1920, 1080}, true, "the color target stored scaled");
+    ExpectDepthExtent(device, keptDepth, {1920, 1080}, true, "the depth surface stored scaled");
+    Require(AgcDriver::Graphics::RenderScaledStores() == 2, "the color target and the depth plane are stored once each at their native size");
+    ExpectDemotions({}, "the scaled stores");
+    static_cast<void>(demoted.Image()->DemoteRenderScale(RenderScaleDemotion::Copy));
+    static_cast<void>(AgcDriver::Graphics::DemoteDepthSurfaceRenderScale(device.graphicsContext(), demotedDepth.Target(), RenderScaleDemotion::DepthCopy));
+    const auto demotedColor = GuestTexels(device, demoted);
+    const auto demotedPlane = StoredDepth(device, demotedDepth);
+    ExpectDemotions(Counts({RenderScaleDemotion::Copy, RenderScaleDemotion::DepthCopy}), "the demoted stream");
+    Require(AgcDriver::Graphics::RenderScaledStores() == 2, "a demoted surface was stored as a scaled one");
+    ExpectSameBytes(keptColor, demotedColor, "the guest color bytes of a scaled store against demotion then store");
+    ExpectSameBytes(keptPlane, demotedPlane, "the guest depth bytes of a scaled store against demotion then store");
+    std::printf("scaled stores equal demotion then store: color %zu bytes fnv %016llx, depth %zu bytes fnv %016llx\n", keptColor.size(), static_cast<unsigned long long>(Fnv(keptColor)), keptPlane.size(), static_cast<unsigned long long>(Fnv(keptPlane)));
+    std::puts("render scale store comparison tests passed");
+}
+
+void IdleStoreTests(AgcDriver::VulkanDevice& device) {
+    Require(AgcDriver::Graphics::ActiveRenderScale() == RenderScale{1, 2}, "the idle store test runs with APS5_RENDER_SCALE=0.5");
+    AgcDriver::Graphics::NoteVideoOutExtent(3840, 2160);
+    Surface big(3840, 2160);
+    DepthPlane bigDepth(3840, 2160);
+    Surface small(1920, 1080);
+    DepthPlane smallDepth(1920, 1080);
+    DepthStream(device, big, bigDepth);
+    DepthStream(device, small, smallDepth);
+    device.WaitIdle();
+    Require(StorageTexture::AnyPending(), "the streams left no pending results to store at idle");
+    device.StoreIdleResults();
+    device.WaitIdle();
+    Require(!StorageTexture::AnyPending(), "the idle store left pending results");
+    ExpectExtent(*big.Image(), {1920, 1080}, true, "the color target after the idle store");
+    ExpectDepthExtent(device, bigDepth, {1920, 1080}, true, "the depth surface after the idle store");
+    ExpectDemotions({}, "the idle store");
+    Require(AgcDriver::Graphics::RenderScaledStores() == 2, "the idle store stores the scaled color target and depth plane once each");
+    RedrawCompare(device, big, bigDepth, small, smallDepth, "the depth-tested stream after an idle store");
+    std::puts("render scale idle store tests passed");
 }
 
 void PositionStream(AgcDriver::VulkanDevice& device, const Surface& u, const Surface& v, std::optional<VkExtent2D> divisor = std::nullopt) {
@@ -846,7 +941,10 @@ int main(int argc, char** argv) {
         else if (mode == "--depth") DepthTests(*device);
         else if (mode == "--depth-unset") DepthUnsetTests(*device);
         else if (mode == "--depth-prepass") DepthPrepassTests(*device);
-        else if (mode == "--depth-guest-write" || mode == "--depth-write-back" || mode == "--depth-storage" || mode == "--depth-copy" || mode == "--stencil-copy") DepthDemotionTests(*device, mode);
+        else if (mode == "--depth-guest-write" || mode == "--depth-storage" || mode == "--depth-copy" || mode == "--stencil-copy") DepthDemotionTests(*device, mode);
+        else if (mode == "--color-store-guest-write") ColorStoreGuestWriteTests(*device);
+        else if (mode == "--store-equals-demotion") StoreEqualsDemotionTests(*device);
+        else if (mode == "--idle-store") IdleStoreTests(*device);
         else if (mode == "--fragcoord") FragCoordTests(*device);
         else if (mode == "--fragcoord-unset") FragCoordUnsetTests(*device);
         else throw std::runtime_error("unknown mode " + mode);
