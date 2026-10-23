@@ -1728,7 +1728,7 @@ bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::v
 
 std::size_t resolutionFootprint(const ResolvedImageTables& resolved, const std::vector<ImageTableColumnSnapshot>& tables) {
     std::size_t footprint = resolved.map.size() + (resolved.elements.size() * sizeof(ImageTableElement) + resolved.samplers.size() * sizeof(ImageTableSamplerElement) + resolved.poison.size() * sizeof(ImageTablePoisonRecord)) / sizeof(std::uint32_t);
-    for (const auto& table : tables) footprint += 16u + table.codes.size() + table.words.size() * 9u + table.pointers.size() * 2u;
+    for (const auto& table : tables) footprint += 16u + table.codes.size() + table.words.size() * 9u + table.pointers.size() * 2u + table.readRanges.size() * 4u;
     return footprint;
 }
 
