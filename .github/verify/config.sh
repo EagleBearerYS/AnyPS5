@@ -1,0 +1,4 @@
+BASE=df2569d2c5fc6adb68f6eb8b56ad0d0ddf35686b
+REPEAT=1
+EXTRA_TESTS='agc_write_tracking|agc_driver_partially_resident_snapshot|agc_driver_host_import_lifetime|agc_driver_host_import_mutation_race|agc_driver_host_import_failure_handles'
+VALIDATION=1
