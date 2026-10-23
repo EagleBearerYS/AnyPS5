@@ -1,4 +1,4 @@
-READY
-since: 2026-10-23T15:08:18Z
+BUSY BF-185 (raise ShaderInfo::MaxImages from 64 to 128, stacked on #10000, with a refusal that names the count)
+since: 2026-10-23T15:24:22Z
 last: BF-184 done, results/cloud-1/BF-184.md: fork feat/relinker-frame-frameless-leaves-next b07a20a99 (fix 16abbcc94 + test b07a20a99 on a376e37b88): tibzejoker's backward extension in frameSegment (credited in the body, not a Co-authored-by trailer, per the no-trailer rule); red_zone_framer's rip-relative case now frames (the before-exit one stays refused, the forward extension reaches the exit's pops); new inflate_fast-shaped static and execution cases red without the extension ('only 0 of 2 leaves were framed'), refusal guard; no double counting (moves.erase covers priors, overlapsSite refuses overlap); relinker set x20 pass; mirror 1885/1794/86/5 (IPv6 + sgpr race); MinGW clean; conventions pass; before that BF-176
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.10 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
