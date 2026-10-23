@@ -1804,9 +1804,6 @@ bool TableCurrent(ReusedTable& table) {
         if (StorageTexture::AnyPendingOverlaps(table.ranges) || StorageTexture::PendingSerial() != serial) return false;
         table.pendingSerial = serial;
     }
-    for (const auto& entry : table.untracked) {
-        if (untrackedKey(entry.address, entry.bytes) != entry.key || Recorder::SnapshotWriteOverlaps(entry.address, entry.bytes)) return false;
-    }
     return GuestMemory::UnchangedSinceAll(table.queries);
 }
 
@@ -5135,11 +5132,10 @@ void ShaderResources::resolveImageTables() {
             if (reusable) {
                 const auto& log = lookupLog();
                 const auto* looked = log.empty() ? nullptr : &log.back();
-                reusable = looked != nullptr && looked->object == texture.get() && looked->source == nullptr && (looked->generation != 0 || looked->untracked[0] != 0) && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0;
+                reusable = looked != nullptr && looked->object == texture.get() && looked->source == nullptr && looked->generation != 0 && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0;
                 if (reusable) {
                     fresh.elements.push_back({MakeTextureKey(context.device, sampledWords, components, depthCompare), texture, resource, guestBytes, firstLayer, false, {}});
-                    if (looked->generation != 0) fresh.queries.push_back({resource.baseAddress, static_cast<std::size_t>(guestBytes), looked->generation});
-                    else fresh.untracked.push_back({looked->resource.baseAddress, static_cast<std::size_t>(looked->bytes), looked->untracked});
+                    fresh.queries.push_back({resource.baseAddress, static_cast<std::size_t>(guestBytes), looked->generation});
                     fresh.ranges.emplace_back(resource.baseAddress, resource.baseAddress + guestBytes);
                 }
             }
