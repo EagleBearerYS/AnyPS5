@@ -14,6 +14,7 @@ int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr);
 int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr);
 int APS5_VABI pthread_mutexattr_gettype_nid_postfix(const PthreadMutexattr* attr, int* type);
 int APS5_VABI scePthreadMutexattrSetkind(PthreadMutexattr* attr, int kind);
+int APS5_VABI scePthreadMutexattrGetkind(PthreadMutexattr attr);
 int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr);
 int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock);
@@ -27,6 +28,9 @@ int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type);
 namespace {
 
 constexpr int GUEST_EDEADLK = 11;
+constexpr int GUEST_EINVAL = 22;
+constexpr int SCE_FAILED_CALL = static_cast<int>(0x8001ffffu);
+constexpr unsigned SCE_KERNEL_ERROR_BASE = 0x80020000u;
 constexpr int KIND_ERRORCHECK = 1;
 constexpr int KIND_RECURSIVE = 2;
 constexpr int KIND_NORMAL = 3;
@@ -81,8 +85,16 @@ void TestKind() {
             if (!Throws<std::runtime_error>([&] { return scePthreadMutexattrSetkind(&attr, kind); }) || !HasKind(&attr, KIND_RECURSIVE)) return false;
         }
         if (pthread_mutexattr_destroy_nid_postfix(&attr) != 0) return false;
-        return Throws<std::runtime_error>([&] { return scePthreadMutexattrSetkind(&attr, KIND_NORMAL); }) &&
-            Throws<std::runtime_error>([] { return scePthreadMutexattrSetkind(nullptr, KIND_NORMAL); });
+        return scePthreadMutexattrSetkind(&attr, KIND_NORMAL) == SCE_FAILED_CALL && scePthreadMutexattrSetkind(nullptr, KIND_NORMAL) == SCE_FAILED_CALL;
+    });
+    Case("scePthreadMutexattrGetkind", [] {
+        PthreadMutexattr attr = nullptr;
+        if (pthread_mutexattr_init_nid_postfix(&attr) != 0) return false;
+        for (const int kind : {KIND_RECURSIVE, KIND_NORMAL, KIND_ADAPTIVE, KIND_ERRORCHECK}) {
+            if (scePthreadMutexattrSetkind(&attr, kind) != 0 || scePthreadMutexattrGetkind(attr) != static_cast<int>(SCE_KERNEL_ERROR_BASE + static_cast<unsigned>(kind))) return false;
+        }
+        if (pthread_mutexattr_destroy_nid_postfix(&attr) != 0) return false;
+        return scePthreadMutexattrGetkind(nullptr) == SCE_FAILED_CALL;
     });
 }
 
@@ -90,18 +102,18 @@ void TestRwlockattr() {
     Case("pthread_rwlockattr_settype_np", [] {
         PthreadRwlockattr attr = nullptr;
         if (pthread_rwlockattr_init_nid_postfix(&attr) != 0) return false;
-        for (const int type : {0, 1, 2}) {
+        for (const int type : {1, 2}) {
             if (pthread_rwlockattr_settype_np_nid_postfix(&attr, type) != 0 || scePthreadRwlockattrSettype(&attr, type) != 0) return false;
             PthreadRwlock rwlock = nullptr;
             if (pthread_rwlock_init_nid_postfix(&rwlock, &attr) != 0) return false;
             const bool usable = pthread_rwlock_wrlock_nid_postfix(&rwlock) == 0 && pthread_rwlock_unlock_nid_postfix(&rwlock) == 0;
             if (!usable || pthread_rwlock_destroy_nid_postfix(&rwlock) != 0) return false;
         }
-        if (!Throws<std::runtime_error>([&] { return pthread_rwlockattr_settype_np_nid_postfix(&attr, 3); }) ||
-            !Throws<std::runtime_error>([&] { return pthread_rwlockattr_settype_np_nid_postfix(&attr, -1); })) return false;
+        for (const int type : {0, 3, -1, static_cast<int>(0x80000000u)}) {
+            if (pthread_rwlockattr_settype_np_nid_postfix(&attr, type) != GUEST_EINVAL) return false;
+        }
         if (pthread_rwlockattr_destroy_nid_postfix(&attr) != 0) return false;
-        return Throws<std::runtime_error>([&] { return pthread_rwlockattr_settype_np_nid_postfix(&attr, 1); }) &&
-            Throws<std::runtime_error>([] { return pthread_rwlockattr_settype_np_nid_postfix(nullptr, 1); });
+        return pthread_rwlockattr_settype_np_nid_postfix(&attr, 1) == GUEST_EINVAL && pthread_rwlockattr_settype_np_nid_postfix(nullptr, 1) == GUEST_EINVAL;
     });
 }
 
