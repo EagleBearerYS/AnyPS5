@@ -2286,6 +2286,9 @@ void VulkanDevice::StoreIdleResults(bool reapFirst) {
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     Graphics::StorageTexture::FlushAllPending("idle");
+    std::fprintf(stderr, "[idle-store] stored the pending results at idle
+");
+    std::fflush(stderr);
     SubmitRecorded(reapFirst);
 }
 
