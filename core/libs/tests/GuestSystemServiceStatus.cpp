@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -66,12 +67,15 @@ void TestSuspend() {
         return sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK && sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK;
     });
     Case("sceLncUtilUnblockAppSuspend", [] {
-        return sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK && sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK &&
-            Unimplemented([] { return sceLncUtilUnblockAppSuspend("saving"); }, "no block left");
+        return sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK && sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK;
+    });
+    Case("sceLncUtilUnblockAppSuspend with no block left", [] {
+        return sceLncUtilUnblockAppSuspend("saving") == SCE_KERNEL_ERROR_EBUSY && sceLncUtilUnblockAppSuspend(nullptr) == SCE_KERNEL_ERROR_EBUSY &&
+            sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK && sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK &&
+            sceLncUtilUnblockAppSuspend("saving") == SCE_KERNEL_ERROR_EBUSY;
     });
     Case("sceLncUtilBlockAppSuspend null reason", [] {
-        return Unimplemented([] { return sceLncUtilBlockAppSuspend(nullptr); }, "null reason") &&
-            Unimplemented([] { return sceLncUtilUnblockAppSuspend(nullptr); }, "null reason");
+        return Unimplemented([] { return sceLncUtilBlockAppSuspend(nullptr); }, "null reason");
     });
     Case("sceLncUtilEnableSuspendNotification", [] {
         return sceLncUtilEnableSuspendNotification() == SYSTEM_SERVICE_OK && sceLncUtilEnableSuspendNotification() == SYSTEM_SERVICE_OK;
@@ -84,6 +88,10 @@ void TestSuspend() {
     });
     Case("sceSystemServiceDisableSuspendNotification", [] {
         return sceSystemServiceDisableSuspendNotification() == sceLncUtilDisableSuspendNotification();
+    });
+    Case("sceLncUtilUnblockAppSuspend null reason while a block is held", [] {
+        return sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK &&
+            Unimplemented([] { return sceLncUtilUnblockAppSuspend(nullptr); }, "null reason while a block is held");
     });
 }
 
@@ -98,21 +106,27 @@ bool RefusesNullOutput(TCall call) {
     return Unimplemented(call, "null output");
 }
 
+template<typename TCall>
+bool RejectsNullOutput(TCall call, int error) {
+    return call(nullptr) == error;
+}
+
 void TestSessions() {
     Case("sceShellCoreUtilGetRemotePlayStatus", [] { return ReportsInactive(sceShellCoreUtilGetRemotePlayStatus); });
     Case("sceShellCoreUtilGetRemotePlayStatus null output", [] {
-        return RefusesNullOutput([] { return sceShellCoreUtilGetRemotePlayStatus(nullptr); });
+        return RejectsNullOutput(sceShellCoreUtilGetRemotePlayStatus, SHELL_CORE_UTIL_ERROR_NULL_OUTPUT);
     });
-    Case("sceSystemServiceGetRemoteplayStatus", [] {
-        return ReportsInactive(sceSystemServiceGetRemoteplayStatus) && sceSystemServiceGetRemoteplayStatus(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER;
+    Case("sceSystemServiceGetRemoteplayStatus", [] { return ReportsInactive(sceSystemServiceGetRemoteplayStatus); });
+    Case("sceSystemServiceGetRemoteplayStatus null output", [] {
+        return RejectsNullOutput(sceSystemServiceGetRemoteplayStatus, SHELL_CORE_UTIL_ERROR_NULL_OUTPUT);
     });
     Case("sceShellCoreUtilGetSharePlayStatus", [] { return ReportsInactive(sceShellCoreUtilGetSharePlayStatus); });
     Case("sceShellCoreUtilGetSharePlayStatus null output", [] {
-        return RefusesNullOutput([] { return sceShellCoreUtilGetSharePlayStatus(nullptr); });
+        return RejectsNullOutput(sceShellCoreUtilGetSharePlayStatus, SHELL_CORE_UTIL_ERROR_NULL_OUTPUT);
     });
     Case("sceShellCoreUtilGetGameLiveStreamingStatus", [] { return ReportsInactive(sceShellCoreUtilGetGameLiveStreamingStatus); });
     Case("sceShellCoreUtilGetGameLiveStreamingStatus null output", [] {
-        return RefusesNullOutput([] { return sceShellCoreUtilGetGameLiveStreamingStatus(nullptr); });
+        return RejectsNullOutput(sceShellCoreUtilGetGameLiveStreamingStatus, SHELL_CORE_UTIL_ERROR_NULL_OUTPUT);
     });
     Case("sceShellCoreUtilIsGameLiveStreamingOnAir", [] { return !sceShellCoreUtilIsGameLiveStreamingOnAir(); });
     Case("sceSystemServiceIsGameLiveStreamingOnAir", [] {
@@ -167,7 +181,7 @@ void TestDevices() {
     });
     Case("sceShellCoreUtilIsExternalStorageAppMoveInProgress", [] { return !sceShellCoreUtilIsExternalStorageAppMoveInProgress(); });
     Case("sceLncUtilIsPs2Emu", [] { return ReportsInactive(sceLncUtilIsPs2Emu); });
-    Case("sceLncUtilIsPs2Emu null output", [] { return RefusesNullOutput([] { return sceLncUtilIsPs2Emu(nullptr); }); });
+    Case("sceLncUtilIsPs2Emu null output", [] { return RejectsNullOutput(sceLncUtilIsPs2Emu, LNC_UTIL_ERROR_NULL_OUTPUT); });
 }
 
 }
