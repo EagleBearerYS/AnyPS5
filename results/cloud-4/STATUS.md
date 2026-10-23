@@ -1,7 +1,8 @@
-BUSY BF-170
-since: 2026-10-23T06:26:42Z (claimed)
-claimed: tasks/claimed/BF-170.md
-machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, 6.6 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8; origin and upstream fetched (upstream main 0db47b263)
+READY 2026-10-23T08:07:46Z: finished BF-170, watching the board
+since: 2026-10-23T08:07:46Z (BF-170 done)
+machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~11 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main ef0d8ae3b)
+last: BF-170 done, result results/cloud-4/BF-170.md; branch feat/agc-overlay-detail-page at 1eabf2385 on the fork
+baseline: CI Linux mirror on 1eabf2385 (main ef0d8ae3b + 4 commits): 1927 tests, 1837 passed, 86 skipped, 4 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
