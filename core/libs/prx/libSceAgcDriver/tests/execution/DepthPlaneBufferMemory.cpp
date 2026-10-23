@@ -30,6 +30,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace AgcDriver {
 
@@ -319,6 +320,113 @@ void BindCost(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shad
     timed(true, 16, "a collect epoch per bind, a present every 16 binds, binds writing depth", true);
 }
 
+struct FramePhases {
+    std::uint64_t writing = 0;
+    std::uint64_t store = 0;
+    std::uint64_t reading = 0;
+    std::uint64_t syncs = 0;
+    double writingUs = 0;
+    double storeUs = 0;
+    double readingUs = 0;
+    double waitUs = 0;
+
+    double DriverUs() const { return writingUs + storeUs + readingUs; }
+};
+
+double Median(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    return values.empty() ? 0.0 : values[values.size() / 2u];
+}
+
+double Mean(const std::vector<double>& values) {
+    double sum = 0;
+    for (const auto value : values) sum += value;
+    return values.empty() ? 0.0 : sum / static_cast<double>(values.size());
+}
+
+void FrameCost(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane, int prePasses) {
+    constexpr int Reads = 4;
+    constexpr int WarmUp = 5;
+    constexpr int Frames = 60;
+    constexpr float Depth = 0.25f;
+    constexpr DepthFastClearHarness::DrawOptions Writing{.depthWrite = true, .depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL, .minDepth = Depth, .maxDepth = Depth};
+    constexpr DepthFastClearHarness::DrawOptions Reading{.depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL, .minDepth = Depth, .maxDepth = Depth};
+    Require(prePasses > 0 && prePasses <= 64, "a frame takes 1 to 64 depth pre-pass packets");
+    StoreHalf(device, shaders, plane);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto target = TargetOf(plane);
+    const auto microseconds = [](auto spent) { return std::chrono::duration<double, std::micro>(spent).count(); };
+    const auto compares = [] { return AgcDriver::Graphics::StorageTexture::UntrackedCompares(); };
+    const auto bind = [&](bool written) {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto start = std::chrono::steady_clock::now();
+        Require(AgcDriver::Graphics::DepthSurfaceView(context, target, written) != VK_NULL_HANDLE, Named(plane, "a bind returned no view"));
+        return microseconds(std::chrono::steady_clock::now() - start);
+    };
+    const auto draw = [&](bool written) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto start = std::chrono::steady_clock::now();
+        DepthFastClearHarness::Record(device, shaders, plane.surface, written ? Writing : Reading, plane.extent, plane.pixels);
+        return microseconds(std::chrono::steady_clock::now() - start);
+    };
+    const auto wait = [&] {
+        const auto start = std::chrono::steady_clock::now();
+        device.WaitIdle();
+        return microseconds(std::chrono::steady_clock::now() - start);
+    };
+    const auto frame = [&](const auto& packet) {
+        FramePhases phases;
+        const auto syncs = AgcDriver::Graphics::DepthPlaneStoreCounts().syncs;
+        auto before = compares();
+        for (int pass = 0; pass < prePasses; ++pass) phases.writingUs += packet(true);
+        phases.writing = compares() - before;
+        phases.waitUs += wait();
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        before = compares();
+        const auto start = std::chrono::steady_clock::now();
+        Require(!AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes).empty(), Named(plane, "the store of the drawn plane stored nothing"));
+        phases.storeUs = microseconds(std::chrono::steady_clock::now() - start);
+        phases.store = compares() - before;
+        phases.waitUs += wait();
+        before = compares();
+        for (int pass = 0; pass < Reads; ++pass) phases.readingUs += packet(false);
+        phases.reading = compares() - before;
+        phases.waitUs += wait();
+        AgcDriver::Graphics::Recorder::CountPresent();
+        phases.syncs = AgcDriver::Graphics::DepthPlaneStoreCounts().syncs - syncs;
+        return phases;
+    };
+    const auto stream = [&](const char* what, const auto& packet) {
+        const bool unwatched = !AgcDriver::GuestMemory::Watched(plane.surface.depth, plane.bytes);
+        for (int warm = 0; warm < WarmUp; ++warm) static_cast<void>(frame(packet));
+        std::vector<FramePhases> measured;
+        for (int index = 0; index < Frames; ++index) measured.push_back(frame(packet));
+        const auto column = [&](auto field) {
+            std::vector<double> values;
+            for (const auto& phases : measured) values.push_back(field(phases));
+            return values;
+        };
+        const auto driver = column([](const FramePhases& phases) { return phases.DriverUs(); });
+        const auto wall = column([](const FramePhases& phases) { return phases.DriverUs() + phases.waitUs; });
+        std::printf("frame-cost %ux%u K=%d M=%d %s, %s before the frames, %s after them: compares per frame (mean) writing %.2f, store %.2f, read-only %.2f; syncs from memory %.2f\n", plane.extent.width, plane.extent.height, prePasses, Reads, what, unwatched ? "outside the write watch" : "write-watched", AgcDriver::GuestMemory::Watched(plane.surface.depth, plane.bytes) ? "write-watched" : "outside the write watch", Mean(column([](const FramePhases& phases) { return static_cast<double>(phases.writing); })), Mean(column([](const FramePhases& phases) { return static_cast<double>(phases.store); })), Mean(column([](const FramePhases& phases) { return static_cast<double>(phases.reading); })), Mean(column([](const FramePhases& phases) { return static_cast<double>(phases.syncs); })));
+        std::printf("frame-cost %ux%u K=%d M=%d %s: us per frame without GPU waits median %.1f mean %.1f (writing %.1f, store %.1f, read-only %.1f median); GPU waits median %.1f; with them median %.1f mean %.1f\n", plane.extent.width, plane.extent.height, prePasses, Reads, what, Median(driver), Mean(driver), Median(column([](const FramePhases& phases) { return phases.writingUs; })), Median(column([](const FramePhases& phases) { return phases.storeUs; })), Median(column([](const FramePhases& phases) { return phases.readingUs; })), Median(column([](const FramePhases& phases) { return phases.waitUs; })), Median(wall), Mean(wall));
+    };
+    stream("binds", bind);
+    stream("draws", draw);
+    WriteStart(plane);
+    const auto seen = DrawAt(device, shaders, plane, Depth, true, VK_COMPARE_OP_LESS_OR_EQUAL);
+    for (int pass = 1; pass < prePasses; ++pass) static_cast<void>(draw(true));
+    device.WaitIdle();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes));
+    device.WaitIdle();
+    AgcDriver::Graphics::Recorder::CountPresent();
+    const bool kept = StartHolds(plane, 0.125f) && Holding(plane.Floats(), Depth) == plane.texels - WrittenTexels;
+    std::printf("frame-cost %ux%u K=%d: a CPU write of depth 0.125 into %zu texels before the pre-pass: the first pre-pass draw passed at %u of %zu texels, the store %s it\n", plane.extent.width, plane.extent.height, prePasses, WrittenTexels, seen, plane.texels, kept ? "kept" : "lost");
+    Require(seen == plane.texels - WrittenTexels && kept, Named(plane, "a CPU write before the pre-pass of a frame was not seen by its first draw and kept by its store"));
+}
+
 int UnwatchedTests(AgcDriver::VulkanDevice& device, const std::string& mode, int count) {
     const auto shaders = Compile(device);
     constexpr VkExtent2D Small{256, 128};
@@ -334,6 +442,8 @@ int UnwatchedTests(AgcDriver::VulkanDevice& device, const std::string& mode, int
         StoreKeepsWrite(device, shaders, MakePlane(Large));
     } else if (mode == "--unwatched-unchanged") UnchangedStaysUnsynced(device, shaders, MakePlane(Small));
     else if (mode == "--bind-cost") BindCost(device, shaders, MakePlane(Large), count);
+    else if (mode == "--frame-cost-720") FrameCost(device, shaders, MakePlane({1280, 720}), count);
+    else if (mode == "--frame-cost-1080") FrameCost(device, shaders, MakePlane(Large), count);
     else Require(false, "unknown mode " + mode);
     std::printf("depth plane %s tests passed\n", mode.c_str() + 2);
     return 0;
