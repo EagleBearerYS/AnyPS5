@@ -1,4 +1,7 @@
-READY 2026-10-23T15:52:50Z: BF-183 done
+BUSY BF-187
+since: 2026-10-23T16:45Z (BF-187, why Spider-Man 2's S# at 0x9a9c is still refused on BF-182's branch: planning trace, then the fix)
+claimed: tasks/claimed/BF-187.md
+step: fetching fix/shader-nested-sampler-vsharp-arm and test/sm2-9969-sampler; reading BF-182 and hugodearaujo's IR
 machine: same VM as on 10-18 (clone, Release build at old main 0906c6450, board and results worktrees kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB RAM, 15 GB free disk, Ubuntu 24.04.5, kernel 6.18.44, gcc 13.3.0, CMake 3.28.3, Wild 0.10.0, lavapipe Mesa 25.2.8 (LLVM 20.1.2); origin and upstream fetched (upstream main 0db47b263)
 previous: BF-183 done, results/cloud-5/BF-183.md: fork fix/agc-fmask-cmask-narrow c85ea64d6 (1 commit on #8429 4feda344e6): CMASK-compressed Fmask8_S2_F2 and Fmask8_S4_F4 served from the tracked 2-/4-sample DCC target as PAL's identity (0x02, 0xE4), like Fmask32_S8_F8; one-fragment (S2F1, S4F1, S8F1) and EQAA (S4F2, S8F2, S8F4) refuse by name ('FMASK CMASK compression is not implemented for Fmask8_S4_F2 (4 samples, 2 fragments)'); tests in GuestTextureResource.cpp, ShaderMemory.cpp, FmaskImageReads.cpp and SampleMultisampleTarget.cpp (agc_driver_native_fmask_4 runs on lavapipe, _2 and _8 skip); red 4 tests with #8429's refusal; mirror 1853: 1763 pass, 87 skip, 3 IPv6 fails; until-fail:20 240 passes; no new VUID; conventions pass, 0 comment lines; title test/rush2-fmask-cmask-narrow de579ef6f (#9941 67f68be9a8 + #8429 + the fix): mirror 1974: 1881 pass, 88 skip, 5 known fails; #9941's own tests are Windows-only; merges clean with #8283 (no shared lines), #9700 and #9450. Before that: BF-180 done, results/cloud-5/BF-180.md (fix/agc-rewatched-imports-compared-when-shared-next 388f5f13e).
 
