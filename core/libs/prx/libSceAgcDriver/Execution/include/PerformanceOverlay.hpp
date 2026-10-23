@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -123,10 +124,25 @@ struct OverlayRect {
 enum class OverlayColor : std::uint32_t { Background = 0, Text = 1, Graph = 2 };
 inline constexpr std::size_t OverlayColorCount = 3;
 
+struct OverlayMetrics {
+    static constexpr std::int32_t GlyphWidth = 5;
+    static constexpr std::int32_t GlyphHeight = 7;
+    static constexpr std::int32_t Advance = 6;
+    static constexpr std::int32_t LinePitch = 9;
+    static constexpr std::int32_t Columns = 27;
+    static constexpr std::int32_t Padding = 3;
+    static constexpr std::int32_t Margin = 4;
+    static constexpr std::int32_t GraphHeight = 20;
+    static constexpr std::int32_t GraphGap = 2;
+    static constexpr std::int32_t InnerWidth = Columns * Advance - 1;
+};
+
 struct OverlayContent {
     std::vector<std::string> above;
     std::vector<double> frameTimes;
     std::vector<std::string> below;
+    std::int32_t columns = OverlayMetrics::Columns;
+    bool graph = true;
 };
 
 struct OverlayMemory {
@@ -147,20 +163,8 @@ struct OverlayLayout {
     std::int32_t scale = 1;
 };
 
-struct OverlayMetrics {
-    static constexpr std::int32_t GlyphWidth = 5;
-    static constexpr std::int32_t GlyphHeight = 7;
-    static constexpr std::int32_t Advance = 6;
-    static constexpr std::int32_t LinePitch = 9;
-    static constexpr std::int32_t Columns = 27;
-    static constexpr std::int32_t Padding = 3;
-    static constexpr std::int32_t Margin = 4;
-    static constexpr std::int32_t GraphHeight = 20;
-    static constexpr std::int32_t GraphGap = 2;
-    static constexpr std::int32_t InnerWidth = Columns * Advance - 1;
-};
-
 const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char character);
+std::string_view OverlayFontCharacters();
 std::string FormatOverlayValue(double value);
 std::string FormatOverlayRate(double value);
 std::string FormatOverlayCount(double value);

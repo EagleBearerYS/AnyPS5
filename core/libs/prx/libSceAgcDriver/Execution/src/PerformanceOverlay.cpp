@@ -69,19 +69,20 @@ const OverlaySettings& settings() {
     return parsed;
 }
 
-std::int32_t panelWidth(std::int32_t scale) {
-    return (OverlayMetrics::InnerWidth + 2 * OverlayMetrics::Padding) * scale;
+std::int32_t panelWidth(std::int32_t columns, std::int32_t scale) {
+    return (columns * OverlayMetrics::Advance - 1 + 2 * OverlayMetrics::Padding) * scale;
 }
 
 std::int32_t panelHeight(const OverlayContent& content, std::int32_t scale) {
     const auto lines = static_cast<std::int32_t>(content.above.size() + content.below.size());
     const auto glyphGap = OverlayMetrics::LinePitch - OverlayMetrics::GlyphHeight;
-    return (2 * OverlayMetrics::Padding + lines * OverlayMetrics::LinePitch + OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap - glyphGap) * scale;
+    const auto graph = content.graph ? OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap : 0;
+    return (2 * OverlayMetrics::Padding + lines * OverlayMetrics::LinePitch + graph - glyphGap) * scale;
 }
 
 bool fits(VkExtent2D extent, const OverlayContent& content, std::int32_t scale) {
     const auto margins = 2 * OverlayMetrics::Margin * scale;
-    return panelWidth(scale) + margins <= static_cast<std::int32_t>(extent.width) && panelHeight(content, scale) + margins <= static_cast<std::int32_t>(extent.height);
+    return panelWidth(content.columns, scale) + margins <= static_cast<std::int32_t>(extent.width) && panelHeight(content, scale) + margins <= static_cast<std::int32_t>(extent.height);
 }
 
 float srgbDecode(float value) {
@@ -289,6 +290,10 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
     static constexpr Glyph period{0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c};
     static constexpr Glyph colon{0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00};
     static constexpr Glyph slash{0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00};
+    static constexpr Glyph percent{0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03};
+    static constexpr Glyph plus{0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00};
+    static constexpr Glyph minus{0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00};
+    static constexpr Glyph underscore{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f};
     static constexpr Glyph a{0x0e, 0x11, 0x11, 0x11, 0x1f, 0x11, 0x11};
     static constexpr Glyph b{0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e};
     static constexpr Glyph c{0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e};
@@ -298,12 +303,14 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
     static constexpr Glyph g{0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f};
     static constexpr Glyph h{0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11};
     static constexpr Glyph i{0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e};
+    static constexpr Glyph j{0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c};
     static constexpr Glyph k{0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
     static constexpr Glyph l{0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f};
     static constexpr Glyph m{0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11};
     static constexpr Glyph n{0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11};
     static constexpr Glyph o{0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
     static constexpr Glyph p{0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10};
+    static constexpr Glyph q{0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d};
     static constexpr Glyph r{0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11};
     static constexpr Glyph s{0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e};
     static constexpr Glyph t{0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
@@ -311,12 +318,18 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
     static constexpr Glyph v{0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04};
     static constexpr Glyph w{0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a};
     static constexpr Glyph x{0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11};
+    static constexpr Glyph y{0x11, 0x11, 0x11, 0x0a, 0x04, 0x04, 0x04};
+    static constexpr Glyph z{0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f};
     if (character >= '0' && character <= '9') return digits[static_cast<std::size_t>(character - '0')];
     switch (character) {
         case ' ': return space;
         case '.': return period;
         case ':': return colon;
         case '/': return slash;
+        case '%': return percent;
+        case '+': return plus;
+        case '-': return minus;
+        case '_': return underscore;
         case 'A': return a;
         case 'B': return b;
         case 'C': return c;
@@ -326,12 +339,14 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
         case 'G': return g;
         case 'H': return h;
         case 'I': return i;
+        case 'J': return j;
         case 'K': return k;
         case 'L': return l;
         case 'M': return m;
         case 'N': return n;
         case 'O': return o;
         case 'P': return p;
+        case 'Q': return q;
         case 'R': return r;
         case 'S': return s;
         case 'T': return t;
@@ -339,8 +354,14 @@ const std::array<std::uint8_t, OverlayMetrics::GlyphHeight>& OverlayGlyph(char c
         case 'V': return v;
         case 'W': return w;
         case 'X': return x;
+        case 'Y': return y;
+        case 'Z': return z;
         default: throw std::runtime_error(std::string("the performance overlay font has no glyph for '") + character + "'");
     }
+}
+
+std::string_view OverlayFontCharacters() {
+    return " .:/%+-_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 }
 
 std::string FormatOverlayValue(double value) {
@@ -393,7 +414,7 @@ OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, boo
         const auto size = [](VkExtent2D extent) { return std::to_string(extent.width) + "X" + std::to_string(extent.height); };
         for (const std::string_view separator : {" / ", "/"}) {
             auto line = "RES: " + size(details.display) + std::string(separator) + size(details.window);
-            if (line.size() > static_cast<std::size_t>(OverlayMetrics::Columns)) continue;
+            if (line.size() > static_cast<std::size_t>(content.columns)) continue;
             content.below.push_back(std::move(line));
             break;
         }
@@ -448,10 +469,12 @@ std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content) {
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner) {
     Graphics::Require(extent.width != 0 && extent.height != 0, "the performance overlay needs a destination");
     Graphics::Require(content.frameTimes.size() <= OverlayStatistics::FrameHistory, "the performance overlay graph holds at most 120 frames");
+    Graphics::Require(content.columns > 0, "the performance overlay panel needs at least one column");
+    Graphics::Require(content.graph ? content.columns * OverlayMetrics::Advance - 1 >= static_cast<std::int32_t>(OverlayStatistics::FrameHistory) : content.frameTimes.empty(), "the performance overlay graph needs a graph row as wide as its 120 frames");
     OverlayLayout layout;
     const auto scale = OverlayScale(extent, content);
     layout.scale = scale;
-    const auto width = panelWidth(scale);
+    const auto width = panelWidth(content.columns, scale);
     const auto height = panelHeight(content, scale);
     const auto margin = OverlayMetrics::Margin * scale;
     const bool right = corner == OverlayCorner::TopRight || corner == OverlayCorner::BottomRight;
@@ -461,7 +484,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
     layout.bounds = {left, top, width, height, static_cast<std::uint32_t>(OverlayColor::Background)};
     layout.rects.push_back(layout.bounds);
     const auto text = [&](const std::string& line, std::int32_t row) {
-        Graphics::Require(line.size() <= static_cast<std::size_t>(OverlayMetrics::Columns), "a performance overlay line is wider than the panel");
+        Graphics::Require(line.size() <= static_cast<std::size_t>(content.columns), "a performance overlay line is wider than the panel");
         for (std::size_t column = 0; column < line.size(); ++column) {
             const auto& glyph = OverlayGlyph(line[column]);
             const auto glyphLeft = left + (OverlayMetrics::Padding + static_cast<std::int32_t>(column) * OverlayMetrics::Advance) * scale;
@@ -487,7 +510,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
         row += OverlayMetrics::LinePitch;
     }
     const auto graphBottom = top + (row + OverlayMetrics::GraphHeight) * scale;
-    if (!content.frameTimes.empty()) {
+    if (content.graph && !content.frameTimes.empty()) {
         double maximum = 0;
         double sum = 0;
         for (const auto time : content.frameTimes) {
@@ -501,7 +524,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
             layout.rects.push_back({left + (OverlayMetrics::Padding + first + static_cast<std::int32_t>(i)) * scale, graphBottom - pixels, scale, pixels, static_cast<std::uint32_t>(OverlayColor::Graph)});
         }
     }
-    row += OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap;
+    if (content.graph) row += OverlayMetrics::GraphHeight + OverlayMetrics::GraphGap;
     for (const auto& line : content.below) {
         text(line, row);
         row += OverlayMetrics::LinePitch;
