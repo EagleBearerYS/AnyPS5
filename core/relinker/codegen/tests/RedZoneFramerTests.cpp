@@ -324,6 +324,69 @@ std::vector<std::uint8_t> inflateBody() {
     };
 }
 
+std::vector<std::uint8_t> inflateCompareBody(const std::vector<std::uint8_t>& prior, const std::uint8_t back) {
+    std::vector<std::uint8_t> bytes{
+        0x48, 0x89, 0x7c, 0x24, 0xe0,
+        0x48, 0x89, 0x7c, 0x24, 0x00,
+        0xb9, 0x04, 0x00, 0x00, 0x00,
+        0x31, 0xc0,
+        0x48, 0x03, 0x44, 0x24, 0xe0,
+    };
+    append(bytes, prior);
+    append(bytes, {0x48, 0x39, 0x3c, 0x24, 0x75, 0x03, 0x48, 0x01, 0xf0, 0xff, 0xc9, 0x75, back});
+    return bytes;
+}
+
+const std::vector<std::uint8_t> AddRdiToR8{0x49, 0x01, 0xf8};
+const std::vector<std::uint8_t> CompareRdiAtRspShifted{0x48, 0x39, 0x7c, 0x24, 0x20};
+
+void stubsShortOperandsAtRspBeforeABranchWithTheInstructionsBeforeThem() {
+    const auto withAdd = inflateCompareBody(AddRdiToR8, 0xeb);
+    std::vector<std::uint8_t> withLoad{
+        0x48, 0x89, 0x7c, 0x24, 0xe0,
+        0x48, 0x89, 0x7c, 0x24, 0x00,
+        0xb9, 0x04, 0x00, 0x00, 0x00,
+        0x31, 0xc0,
+        0x48, 0x03, 0x44, 0x24, 0xe0,
+        0x48, 0x39, 0x3c, 0x24, 0x75, 0x03, 0x48, 0x01, 0xf0, 0xff, 0xc9, 0x75, 0xee,
+    };
+    const auto input = image({framelessLeaf(InflatePrologue, withAdd, inflateExit()), framelessLeaf(InflatePrologue, withLoad, inflateExit())});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 2 && report.OperandStubs == 2 && report.StubbedOperands == 3 && report.MovedOperands == 5 && sites.size() == 6 && report.Skipped.empty(), "inflate_fast's 4-byte cmp at rsp between an instruction and a branch was not framed with a stub over the instruction before it");
+    const auto add = input.functions[0].Begin + InflatePrologue.size() + 22;
+    require(sites[2].Address == add && sites[2].Length == AddRdiToR8.size() + 4, "the stub site does not start at the add before the cmp at rsp");
+    std::vector<std::uint8_t> addBody = AddRdiToR8;
+    append(addBody, CompareRdiAtRspShifted);
+    require(sites[2].Body == stubBody(addBody), "the add was not copied ahead of the cmp re-encoded with a displacement of the shift");
+    const auto load = input.functions[1].Begin + InflatePrologue.size() + 17;
+    require(sites[5].Address == load && sites[5].Length == 9, "the stub site does not start at the load before the cmp at rsp");
+    std::vector<std::uint8_t> loadBody{0x48, 0x03, 0x44, 0x24, 0x00};
+    append(loadBody, CompareRdiAtRspShifted);
+    require(sites[5].Body == stubBody(loadBody), "the load before the cmp, itself an rsp operand, was not moved by the shift in the stub");
+    for (const auto& displacement : displacements) {
+        const auto at = Base + displacement.Offset;
+        require((at < sites[2].Address || at >= sites[2].Address + sites[2].Length) && (at < sites[5].Address || at >= sites[5].Address + sites[5].Length), "an rsp operand inside a stub site was also moved in place");
+    }
+}
+
+void skipsShortOperandsAtRspWhoseWidenedStubCoversABranchTarget() {
+    std::vector<std::uint8_t> body{
+        0x48, 0x89, 0x7c, 0x24, 0xe0,
+        0x48, 0x89, 0x7c, 0x24, 0x00,
+        0xb9, 0x04, 0x00, 0x00, 0x00,
+        0x31, 0xc0,
+    };
+    append(body, AddRdiToR8);
+    append(body, {0x48, 0x39, 0x3c, 0x24, 0x75, 0x03, 0x48, 0x01, 0xf0, 0xff, 0xc9, 0x75, 0xf3});
+    const auto input = image({framelessLeaf(InflatePrologue, body, inflateExit())});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 1 && report.Skipped.at("rsp operand that cannot move and has no room for a stub") == 1, "a cmp at rsp whose loop branches back to it was framed with a stub that starts at the add before it");
+}
+
 void framesLeavesThatAllocateBelowTheirPushes() {
     const auto body = inflateBody();
     const auto input = image({framelessLeaf(InflatePrologue, body, inflateExit())});
@@ -542,6 +605,8 @@ int main() {
         stubsOperandsAtRspWithTheInstructionsAfterThem();
         stubsVexOperandsAtRsp();
         stubsOperandsAtRspWithTheInstructionsBeforeThem();
+        stubsShortOperandsAtRspBeforeABranchWithTheInstructionsBeforeThem();
+        skipsShortOperandsAtRspWhoseWidenedStubCoversABranchTarget();
         skipsLeavesWithOperandsThatCannotMove();
         skipsLeavesThatCopyRsp();
         framesEachFunctionFromItsOwnFde();
