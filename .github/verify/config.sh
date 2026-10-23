@@ -1,0 +1,3 @@
+BASE=d01f290417a0cf0b0b6d75f749357bfbf5a9b5b5
+REPEAT=10
+EXTRA_TESTS='agc_driver_pointer_vsharp_word_table|agc_driver_pointer_vsharp_child_key_arm_table|agc_driver_pointer_vsharp_child_key_table|agc_driver_pointer_vsharp_shared_table'
