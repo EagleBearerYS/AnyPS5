@@ -1,4 +1,4 @@
-READY
-since: 2026-10-23T07:36:07Z
+BUSY BF-176 (PR branch for fable-void's fix 5: the presenter waits for the display keys' writer before it takes the device lock, with a test)
+since: 2026-10-23T08:32:51Z
 last: BF-172 done, results/cloud-1/BF-172.md: fork test/agc-execution-skip-without-device 49a892412 (one commit on main ef0d8ae3b5): of the ten sources' 22 registrations only agc_driver_pipelined_metadata_pass and its _draw_pipeline variant failed device-less ('vkCreateInstance: Vulkan result -9'); OpenVulkanTestDevice probe added there: no ICD Failed -> Skipped, no ICD + REQUIRE=1 still fails, lavapipe passes; the other 20 never open a device and were left alone; repeats 2x10 pass; mirror 1927/1837/86/4 (IPv6) identical to main; check_skips unchanged; conventions pass; before that BF-168
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.10 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
