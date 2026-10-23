@@ -1,4 +1,5 @@
-STOPPED 2026-10-23T05:29:46Z: account move
+READY 2026-10-23T05:44:36Z: resumed on the second account
+machine: same VM as on 10-18 (clone, Release build at old main 0906c6450, board and results worktrees kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB RAM, 15 GB free disk, Ubuntu 24.04.5, kernel 6.18.44, gcc 13.3.0, CMake 3.28.3, Wild 0.10.0, lavapipe Mesa 25.2.8 (LLVM 20.1.2); origin and upstream fetched (upstream main 0db47b263)
 previous: BF-167 done, results/cloud-5/BF-167.md (test/9136-shared-arming-diag 6e7bb1317c). Before that: BF-163 done, results/cloud-5/BF-163.md; PM-095 done, results/cloud-5/PM-095.md. No task held; board watcher stopped.
 
 RESULT (setup):
