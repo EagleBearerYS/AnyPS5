@@ -1,0 +1,3 @@
+BASE=809d8804c18ea0da9ae4b9a77531a0206ea014dd
+REPEAT=3
+EXTRA_TESTS='agc_driver_pointer_vsharp_shared_reuse_table|agc_driver_pointer_vsharp_shared_table|agc_driver_bda_anchor_reads|agc_shader_memory|agc_shader_bindless'
