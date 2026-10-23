@@ -1,0 +1,4 @@
+BASE=83462cc57ddecac5e5f3cdafafbe38d406e55953
+REPEAT=10
+EXTRA_TESTS='^agc_driver_partially|^agc_driver_large_tracked|^agc_driver_image_sample|^agc_driver_texture'
+BEFORE_REPEAT=3
