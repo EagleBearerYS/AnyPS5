@@ -1,0 +1,4 @@
+BASE=e84c529d6db31a9fb280627934d512e0bcae0b91
+REPEAT=10
+EXTRA_TESTS='^agc_import_settle|^agc_import_watch|agc_driver_native_fmask|^agc_driver_msaa_dcc|agc_driver_alpha_to_coverage_state|agc_driver_dithered_alpha_to_coverage|agc_driver_undithered_alpha_to_coverage_state|^agc_write_tracking|agc_write_watch_coverage|agc_resident_direct_remap'
+NO_BEFORE=1
