@@ -2137,9 +2137,11 @@ endif()
 
 if(BUILD_TESTING)
     add_test(NAME agc_driver_native_fmask COMMAND agc_driver_sample_multisample_target_tests --native-fmask)
-    set_tests_properties(agc_driver_native_fmask PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_native_fmask_4 COMMAND agc_driver_sample_multisample_target_tests --native-fmask-4)
+    add_test(NAME agc_driver_native_fmask_2 COMMAND agc_driver_sample_multisample_target_tests --native-fmask-2)
+    set_tests_properties(agc_driver_native_fmask agc_driver_native_fmask_4 agc_driver_native_fmask_2 PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_driver_native_fmask PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(agc_driver_native_fmask agc_driver_native_fmask_4 agc_driver_native_fmask_2 PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_native_msaa_vertex_input COMMAND agc_driver_sample_multisample_target_tests --native-vertex-input)
     set_tests_properties(agc_driver_native_msaa_vertex_input PROPERTIES
