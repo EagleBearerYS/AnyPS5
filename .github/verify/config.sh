@@ -1,0 +1,4 @@
+BASE=df2569d2c5fc6adb68f6eb8b56ad0d0ddf35686b
+REPEAT=1
+EXTRA_TESTS='windows_write_watch|agc_import_alias_shared|agc_rewatched_direct_shared'
+NO_BEFORE=1
