@@ -2527,6 +2527,12 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     Require(!Faulted(repointed) && !AddressFaulted(repointed), name + ": the T#s behind a moved V# faulted:\n" + repointed.log);
     Require(repointed.artifactId == taken.artifactId, name + ": moving the V# behind a record's pointer recompiled the shader");
     check(repointed, "the T#s after the V# behind records 0 and 1 moved to the other palette");
+    Table[1u * 4u + 2u] = 0x12345000u;
+    Table[1u * 4u + 3u] = 0x7fu;
+    const auto unmapped = run(shader);
+    std::puts((name + ": unmapped record pointer: faulted=" + std::to_string(Faulted(unmapped)) + " address=" + std::to_string(AddressFaulted(unmapped)) + "\n" + unmapped.log).c_str());
+    Require(Faulted(unmapped) || AddressFaulted(unmapped), name + ": an unmapped record pointer did not fault:\n" + unmapped.log);
+    link(1u, 0u);
     if (reuse) {
         std::puts((name + ": both T#s sampled at their own offsets, and T#2's dwords 0 and 1 re-read through the guest's V# as the later pointer, checked by the records' values").c_str());
         return;
