@@ -1,9 +1,8 @@
-BUSY BF-174
-since: 2026-10-23T10:36:48Z (claimed 2026-10-23T10:36:34Z)
-claimed: tasks/claimed/BF-174.md
+READY 2026-10-23T11:21:46Z: finished BF-174, watching the board
+since: 2026-10-23T11:21:46Z (BF-174 done)
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~11 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main b3e42bd1e)
-last: BF-179 done, result results/cloud-4/BF-179.md; branch feat/netctl-get-result-ipv4 at 0d0cb8298 on the fork
-baseline: CI Linux mirror on 0d0cb8298 (main b3e42bd1e + 1 commit): 1939 tests, 1849 passed, 86 skipped, 4 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
+last: BF-174 done, result results/cloud-4/BF-174.md; harness branch test/depth-plane-unwatched-frame-cost at b2c4c814d, writing-case bound fix/agc-depth-plane-unwatched-writes-bounded2 at b6003ec4b on the fork
+baseline: CI Linux mirror on b6003ec4b (fork e35998524, BF-171/173 on main 944677990, + 2 commits): 1933 tests, 1843 passed, 86 skipped, 4 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
