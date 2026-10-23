@@ -2170,6 +2170,8 @@ target_include_directories(agc_driver_color1555_target_tests PRIVATE $<TARGET_PR
 
 target_include_directories(agc_driver_color565_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
+target_include_directories(agc_driver_render_scale_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
 target_include_directories(agc_driver_depth_range_remap_draw_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 foreach(stage IN ITEMS vert frag)
@@ -2367,6 +2369,18 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_queued_raw_shader PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=8" TIMEOUT 30)
     add_test(NAME agc_driver_partially_resident_pending_stores COMMAND agc_driver_partially_resident_snapshot_tests --pending-stores)
     set_tests_properties(agc_driver_multisample_readback PROPERTIES TIMEOUT 20)
+    foreach(agcRenderScaleCase IN ITEMS compare unset mixed storage)
+        set(agcRenderScaleValue "0.5")
+        if(agcRenderScaleCase STREQUAL "unset")
+            set(agcRenderScaleValue "")
+        endif()
+        add_test(NAME agc_driver_render_scale_${agcRenderScaleCase} COMMAND agc_driver_render_scale_tests --${agcRenderScaleCase})
+        set_tests_properties(agc_driver_render_scale_${agcRenderScaleCase} PROPERTIES TIMEOUT 120 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_RENDER_SCALE=${agcRenderScaleValue}" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_render_scale_${agcRenderScaleCase} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     foreach(agcReadbackCase IN ITEMS uint8 uint16 uint64 uint128 depth upload retile depth_retile)
         add_test(NAME agc_driver_multisample_readback_${agcReadbackCase} COMMAND agc_driver_multisample_readback_tests ${agcReadbackCase})
         set_tests_properties(agc_driver_multisample_readback_${agcReadbackCase} PROPERTIES TIMEOUT 20 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
