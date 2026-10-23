@@ -1804,9 +1804,6 @@ bool TableCurrent(ReusedTable& table) {
         if (StorageTexture::AnyPendingOverlaps(table.ranges) || StorageTexture::PendingSerial() != serial) return false;
         table.pendingSerial = serial;
     }
-    for (const auto& entry : table.untracked) {
-        if (untrackedKey(entry.address, entry.bytes) != entry.key || Recorder::SnapshotWriteOverlaps(entry.address, entry.bytes)) return false;
-    }
     return GuestMemory::UnchangedSinceAll(table.queries);
 }
 
