@@ -1,4 +1,4 @@
-READY
-since: 2026-10-23T09:23:09Z
+BUSY BF-184 (#5640: frame a leaf whose short rsp operand sits before a branch, with tibzejoker's backward extension)
+since: 2026-10-23T14:41:30Z
 last: BF-176 done, results/cloud-1/BF-176.md: fork port/fable-fix-present-key-wait 54196438f on main 44a59edc3: his fix 96bccd4c9 (fablevoid authorship, date and message kept, identical to 9ed1466f35), our counter a3af6b114, our test 54196438f; agc_driver_present_key_writer_wait drives a headless PresentDisplayBuffer at GPU-mutex depth 1 behind a pending key-copy kernel: red without the fix line ('the presenter synchronized with the display keys' writer without releasing the GPU mutex'), green with it; set x20 pass; mirror 1934/1844/86/4 (IPv6); validation: no new VUID; conventions pass; before that BF-172
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.10 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
