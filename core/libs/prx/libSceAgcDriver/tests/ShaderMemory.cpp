@@ -8055,7 +8055,20 @@ void verifyFmaskImageMode() {
         descriptor.dwords[6] = compression;
         expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without decoding its metadata");
     }
+    descriptor.dwords[6] = (1u << 19u) | (1u << 21u) | (0x9au << 24u);
+    descriptor.dwords[7] = 0x12345678u;
+    for (const auto format : {159u, 161u, 166u}) {
+        descriptor.dwords[1] = format << 20u;
+        const auto compressed = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+        require(modes[compressed].numericClass == IrTextureNumericClass::Uint && modes[compressed].conversionFormat == (format == 166u ? IrBufferFormat::Invalid : FmaskExpansion), "CMASK-compressed FMASK with as many fragments as samples did not select its image mode");
+    }
+    for (const auto& [format, reason] : std::array<std::pair<std::uint32_t, const char*>, 6>{{{156u, "FMASK CMASK compression is not implemented for Fmask8_S2_F1 (2 samples, 1 fragment)"}, {157u, "FMASK CMASK compression is not implemented for Fmask8_S4_F1 (4 samples, 1 fragment)"}, {158u, "FMASK CMASK compression is not implemented for Fmask8_S8_F1 (8 samples, 1 fragment)"}, {160u, "FMASK CMASK compression is not implemented for Fmask8_S4_F2 (4 samples, 2 fragments)"}, {163u, "FMASK CMASK compression is not implemented for Fmask16_S8_F2 (8 samples, 2 fragments)"}, {165u, "FMASK CMASK compression is not implemented for Fmask32_S8_F4 (8 samples, 4 fragments)"}}}) {
+        descriptor.dwords[1] = format << 20u;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, reason, "CMASK-compressed FMASK with fewer fragments than samples was accepted");
+    }
+    descriptor.dwords[1] = 166u << 20u;
     descriptor.dwords[6] = 0u;
+    descriptor.dwords[7] = 0u;
     image.packed = true;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "packed FMASK image reads are not implemented", "packed FMASK was accepted");
     image.packed = false;

@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
@@ -48,17 +49,35 @@ std::uint64_t collectBlocks(std::uint64_t address, std::size_t bytes) {
     return generation != 0 ? generation : GuestMemory::CollectWritesUncached(address, bytes);
 }
 
+std::uint32_t fmaskStorageFormat(const ShaderRecompiler::FmaskLayout& layout) {
+    return static_cast<std::uint32_t>(layout.storageBits == 8u ? ShaderRecompiler::IrBufferFormat::Format8UInt : layout.storageBits == 16u ? ShaderRecompiler::IrBufferFormat::Format16UInt : ShaderRecompiler::IrBufferFormat::Format32UInt);
+}
+
+std::optional<ShaderRecompiler::IrBufferFormat> nativeFmaskFormat(std::uint32_t samples) {
+    switch (samples) {
+        case 2u: return ShaderRecompiler::IrBufferFormat::Fmask8_S2_F2;
+        case 4u: return ShaderRecompiler::IrBufferFormat::Fmask8_S4_F4;
+        case 8u: return ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8;
+        default: return std::nullopt;
+    }
+}
+
+bool tracksFmask(const ColorTarget& target) {
+    return nativeFmaskFormat(target.samples).has_value() && target.fmaskAddress != 0u && target.cmaskAddress != 0u;
+}
+
 GuestTextureResource fmaskSnapshotResource(const GuestTextureResource& resource) {
-    Require(resource.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32UInt) && resource.fmaskCmaskAddress != 0u, "FMASK image format read semantics are not implemented");
+    const auto layout = ShaderRecompiler::FmaskLayoutOf(static_cast<ShaderRecompiler::IrBufferFormat>(resource.fmaskFormat));
+    Require(layout.has_value() && resource.format == fmaskStorageFormat(*layout) && resource.fmaskCmaskAddress != 0u, "FMASK image format read semantics are not implemented");
     Require(resource.dimension == TextureDimension::k2D || resource.dimension == TextureDimension::k2DArray, "FMASK image dimension is not implemented");
     Require(resource.tileMode == TextureTileMode::kZ64KBX && (resource.pipeBankXor & ~0xcf00u) == 0u, "FMASK image swizzle or pipe/bank XOR is not implemented");
     Require(resource.width != 0u && resource.width <= 16384u && resource.height != 0u && resource.height <= 16384u && resource.depthOrLastArray < 8192u && resource.baseArray <= resource.depthOrLastArray, "invalid FMASK image extent or layer range");
     Require(resource.dimension == TextureDimension::k2DArray || (resource.depthOrLastArray == 0u && resource.baseArray == 0u), "FMASK 2D image has an array range");
     Require(resource.mipCount == 1u && resource.allocatedMipCount == 1u && resource.baseLevel == 0u && resource.lastLevel == 0u && resource.minLod == 0u, "FMASK image mip fields are not implemented");
     Require(resource.fmaskCmaskAddress == 0u || resource.dccPipeAligned, "FMASK image CMASK must be pipe aligned");
-    for (const auto selector : {resource.dstSelX, resource.dstSelY, resource.dstSelZ, resource.dstSelW}) Require(selector == 0u || selector == 1u || selector == 4u, "FMASK image selects an unverified channel");
+    const bool identity = resource.fmaskFormat != static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8) && resource.dstSelX == 4u && resource.dstSelY == 5u && resource.dstSelZ == 6u && resource.dstSelW == 7u;
+    for (const auto selector : {resource.dstSelX, resource.dstSelY, resource.dstSelZ, resource.dstSelW}) Require(identity || selector == 0u || selector == 1u || selector == 4u, "FMASK image selects an unverified channel");
     auto snapshot = resource;
-    snapshot.format = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32UInt);
     snapshot.tileMode = TextureTileMode::kLinear;
     snapshot.pipeBankXor = 0u;
     snapshot.dccAddress = 0u;
@@ -69,6 +88,7 @@ GuestTextureResource fmaskSnapshotResource(const GuestTextureResource& resource)
 }
 
 GuestTextureResource fmaskResource(const ColorTarget& target) {
+    const auto format = *nativeFmaskFormat(target.samples);
     GuestTextureResource resource{};
     resource.baseAddress = target.fmaskAddress;
     resource.width = target.extent.width;
@@ -77,10 +97,11 @@ GuestTextureResource fmaskResource(const ColorTarget& target) {
     resource.allocatedMipCount = 1u;
     resource.tileMode = TextureTileMode::kZ64KBX;
     resource.dimension = TextureDimension::k2D;
-    resource.format = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32UInt);
+    resource.format = fmaskStorageFormat(*ShaderRecompiler::FmaskLayoutOf(format));
     resource.dstSelX = 4u;
     resource.pipeBankXor = target.fmaskPipeBankXor;
     resource.fmaskCmaskAddress = target.cmaskAddress;
+    resource.fmaskFormat = static_cast<std::uint32_t>(format);
     resource.dccPipeAligned = true;
     return resource;
 }
@@ -282,7 +303,9 @@ public:
 
     std::shared_ptr<Texture> FmaskSampled(const GuestTextureResource& resource, VkComponentMapping components) {
         const auto snapshot = fmaskSnapshotResource(resource);
-        Require(target.samples == 8u && target.dccAddress != 0u && fmaskRange.has_value(), "native FMASK sampling requires a tracked eight-fragment DCC target");
+        const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(resource.fmaskFormat);
+        const auto layout = *ShaderRecompiler::FmaskLayoutOf(format);
+        if (layout.fragments != layout.samples || layout.samples != target.samples || target.dccAddress == 0u || !fmaskRange.has_value()) Require(false, "native FMASK sampling of " + ShaderRecompiler::FmaskLayoutName(format) + " requires a tracked DCC target of as many samples and fragments (target " + std::to_string(target.samples) + " samples" + (target.dccAddress == 0u ? ", no DCC)" : ")"));
         Require(target.tileMode == ColorTileMode::RenderTarget && target.depth == 1u && target.depthSlice == 0u && target.layers == 1u && target.arrayLastSlice == 0u && target.arraySlice == 0u && target.mip == 0u && target.mipCount == 1u, "native FMASK target layout is not implemented");
         Require(target.fmaskAddress == resource.baseAddress && target.fmaskPipeBankXor == resource.pipeBankXor && target.cmaskAddress == resource.fmaskCmaskAddress, "native FMASK descriptor does not match its resident target");
         Require(target.extent.width == resource.width && target.extent.height == resource.height && resource.baseArray == 0u && resource.depthOrLastArray == 0u, "native FMASK extent or subresource does not match its resident target");
@@ -295,8 +318,10 @@ public:
         if (texture == nullptr) {
             const auto geometry = DescribeSurface(snapshot);
             std::vector<std::byte> bytes(geometry.guestBytes);
-            constexpr std::uint32_t expanded = 0x76543210u;
-            for (std::size_t offset = 0; offset < bytes.size(); offset += sizeof(expanded)) std::memcpy(bytes.data() + offset, &expanded, sizeof(expanded));
+            std::uint32_t expanded = 0u;
+            for (std::uint32_t sample = 0u; sample < layout.samples; ++sample) expanded |= sample << (sample * layout.sampleBits);
+            const auto texelBytes = layout.storageBits / 8u;
+            for (std::size_t offset = 0; offset + texelBytes <= bytes.size(); offset += texelBytes) std::memcpy(bytes.data() + offset, &expanded, texelBytes);
             texture = std::make_unique<Texture>(context, *context.detiler, snapshot, components, bytes);
         }
         return {shared_from_this(), texture.get()};
@@ -585,7 +610,7 @@ private:
                 Require(a.address >= b.address + b.bytes || b.address >= a.address + a.bytes, "overlapping multisampled DCC color or metadata ranges are not implemented");
             }
         }
-        if (use.samples == 8u && use.fmaskAddress != 0u && use.cmaskAddress != 0u) {
+        if (tracksFmask(use)) {
             const auto resource = fmaskResource(use);
             static_cast<void>(fmaskSnapshotResource(resource));
             fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(DescribeSurface(resource).guestBytes), 0};
@@ -749,7 +774,7 @@ void guard(const Context& context, const ColorTarget& target, const std::shared_
     if (target.dccAddress != 0) {
         guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid});
         if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid});
-        if (target.samples == 8u && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid});
+        if (tracksFmask(target)) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid});
     }
     anyGuarded().store(true, std::memory_order_release);
     InstallResidentImageReadGuard_nid_no_patch();
