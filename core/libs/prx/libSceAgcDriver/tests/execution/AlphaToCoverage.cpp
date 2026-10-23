@@ -927,6 +927,9 @@ const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_
         AgcDriver::Graphics::ImportWatch decided;
         ~Restore() { AgcDriver::Graphics::SetImportWatch(context, decided); }
     } restore{context, decided};
+    const auto probe = AgcDriver::Graphics::ProbeImportWriteProtection(context);
+    const bool watchedImportsHold = probe.failure == nullptr && probe.writtenAtImport == 0 && probe.writtenAfterSubmit == 0;
+    if (!watchedImportsHold) std::cout << "the watched-import control case is skipped: the device reports watched host memory written when it imports or reads it\n";
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
     std::vector<std::unique_ptr<Block>> blocks;
     struct ClearTargets {
@@ -951,6 +954,7 @@ const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_
         if (selectedSamples != 0 && samples != selectedSamples) continue;
         for (const auto mode : {7u, 8u, 9u, 10u, 11u, 0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
             if (mode >= 7 && samples != 8) continue;
+            if (mode == 5 && !watchedImportsHold) continue;
             const bool watchedImports = mode == 5;
             AgcDriver::Graphics::SetImportWatch(context, watchedImports ? AgcDriver::Graphics::ImportWatch::Watch : decided);
             blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
