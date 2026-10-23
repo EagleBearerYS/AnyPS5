@@ -1,0 +1,4 @@
+BASE=4997726a5f6b8cd263461508945a4676647ef482
+REPEAT=10
+EXTRA_TESTS='agc_address_copy_cap|agc_address_copy_cap_remembered|agc_driver_graphics|agc_driver_host_import_failure_handles|agc_driver_host_import_lifetime|agc_driver_host_import_mutation_race'
+NO_BEFORE=1
