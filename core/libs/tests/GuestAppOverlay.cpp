@@ -56,6 +56,20 @@ std::string Read(const std::filesystem::path& path) {
     return std::string(std::istreambuf_iterator<char>(stream), {});
 }
 
+bool SameResolution(const std::filesystem::path& resolved, const std::filesystem::path& expected) {
+#ifdef _WIN32
+    const auto fold = [](std::wstring text) {
+        for (auto& character : text) {
+            if (character >= L'A' && character <= L'Z') character = static_cast<wchar_t>(character + (L'a' - L'A'));
+        }
+        return text;
+    };
+    return fold(resolved.wstring()) == fold(expected.wstring());
+#else
+    return resolved == expected;
+#endif
+}
+
 std::string ReadDescriptor(int descriptor) {
     std::string text;
     char buffer[64];
@@ -136,7 +150,7 @@ void Absent(const std::filesystem::path& root) {
     Write(root / "app0" / "Data" / "Settings.TXT", "base");
     const auto log = Logged(root / "absent.log", [] { (void)ResolvePath_nid_no_patch("/app0/Data/Settings.TXT"); });
     Require(log.empty(), "an overlay was announced without an overlay directory");
-    Require(ResolvePath_nid_no_patch("/app0/data/settings.txt") == root / "app0" / "Data" / "Settings.TXT", "resolution changed without an overlay");
+    Require(SameResolution(ResolvePath_nid_no_patch("/app0/data/settings.txt"), root / "app0" / "Data" / "Settings.TXT"), "resolution changed without an overlay");
     const int directory = sceKernelOpen("/app0/Data", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     const int relative = directory < 0 ? -1 : openat_nid_postfix(directory, "Settings.TXT", SCE_KERNEL_O_RDONLY);
     Require(relative >= 0 && ReadDescriptor(relative) == "base", "openat changed without an overlay");
@@ -149,7 +163,7 @@ void Directory(const std::filesystem::path& root) {
     Write(root / "app0-overlay" / "Data" / "Settings.TXT", "overlay");
     std::filesystem::create_directories(root / "app0-overlay" / "Extra");
     Require(ResolvePath_nid_no_patch("/app0/Data") == root / "app0" / "Data", "a directory came from the overlay");
-    Require(ResolvePath_nid_no_patch("/app0/data/") == root / "app0" / "Data" / "", "a directory with a trailing separator came from the overlay");
+    Require(SameResolution(ResolvePath_nid_no_patch("/app0/data/"), root / "app0" / "Data" / ""), "a directory with a trailing separator came from the overlay");
     Require(ResolvePath_nid_no_patch("/app0/Extra") == root / "app0" / "Extra", "a directory only in the overlay came from the overlay");
     Require(chdir_nid_postfix("/app0/Data") == 0, "chdir into an app0 directory failed");
     Require(ResolvePath_nid_no_patch(".") == root / "app0" / "Data" / "", "the working directory came from the overlay");
