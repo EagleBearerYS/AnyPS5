@@ -1,0 +1,4 @@
+BASE=9a030c2d504965cc646091030eaade1fd4a8b8d0
+REPEAT=10
+EXTRA_TESTS='guest_kernel_sys_pthread_np_rwlockattr|guest_kernel_sys_pthread_np_kind|guest_kernel_sys_thread_defaults'
+NO_BEFORE=1
