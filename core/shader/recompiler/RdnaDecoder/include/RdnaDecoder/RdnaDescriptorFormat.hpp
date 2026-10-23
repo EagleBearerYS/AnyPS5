@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 
 namespace ShaderRecompiler {
 
@@ -33,6 +34,7 @@ struct FmaskLayout {
 inline constexpr IrBufferFormat FmaskExpansion = IrBufferFormat::Fmask8_S2_F1;
 
 [[nodiscard]] std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format);
+[[nodiscard]] std::string FmaskLayoutName(IrBufferFormat format);
 [[nodiscard]] IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapTextureFormat(IrBufferFormat format);
 [[nodiscard]] std::uint32_t DepthBitsTextureWidth(std::uint32_t word1, std::uint32_t word3);

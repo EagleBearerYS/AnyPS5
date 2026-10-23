@@ -24,6 +24,7 @@ constexpr std::uint32_t Sentinel = 0xdeadbeef;
 alignas(4096) std::array<std::byte, 4 * 65536> TexelStorage{};
 const auto Texels = std::span(TexelStorage).subspan((0u - reinterpret_cast<std::uintptr_t>(TexelStorage.data())) & 0xffffu, 3 * 65536);
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
+alignas(256) std::array<std::byte, 65536> CmaskStorage{};
 alignas(256) std::array<std::uint32_t, Threads * 4 + 4> Output{};
 alignas(256) constexpr std::array<std::uint32_t, 10> Code{0x34020084u, 0xe0381000u, 0x80000201u, 0xbf8c3f70u, 0xf0001f08u, 0x00020602u, 0xbf8c3f70u, 0xe0781000u, 0x80010601u, 0xbf810000u};
 
@@ -207,6 +208,28 @@ void RunNarrow(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool l
     }
 }
 
+void RunNarrowCompressed(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool layered, bool registration) {
+    auto code = Code;
+    if (layered) code[4] = 0xf0001f28u;
+    const auto cmask = reinterpret_cast<std::uintptr_t>(CmaskStorage.data());
+    auto image = Image(layered, 0u, 4u, fmask.format);
+    image[6] = (1u << 19u) | (1u << 21u) | (static_cast<std::uint32_t>(cmask >> 8u) << 24u);
+    image[7] = static_cast<std::uint32_t>(cmask >> 16u);
+    const auto layout = "Fmask" + std::to_string(fmask.bytes * 8u) + "_S" + std::to_string(fmask.samples) + "_F" + std::to_string(fmask.fragments) + " (" + std::to_string(fmask.samples) + " samples, " + std::to_string(fmask.fragments) + (fmask.fragments == 1u ? " fragment)" : " fragments)");
+    const auto expected = fmask.fragments != fmask.samples ? "FMASK CMASK compression is not implemented for " + layout : layered ? std::string("native FMASK array sampling is not implemented") : std::string("compressed FMASK sampling without a matching resident native target is not implemented");
+    Output.fill(Sentinel);
+    std::string error;
+    try {
+        const auto shader = Compile(device, code, image, registration);
+        device.Dispatch(shader, 1u, 1u, 1u);
+        device.WaitIdle();
+    } catch (const std::runtime_error& failure) {
+        error = failure.what();
+    }
+    Require(error.find(expected) != std::string::npos, "CMASK-compressed FMASK " + std::to_string(fmask.format) + " without a resident target did not refuse with \"" + expected + "\": " + (error.empty() ? std::string("it was accepted") : error));
+    Require(std::all_of(Output.begin(), Output.end(), [](auto value) { return value == Sentinel; }), "a refused CMASK-compressed FMASK load wrote output");
+}
+
 }
 
 int main() {
@@ -217,9 +240,10 @@ int main() {
             for (const bool layered : {false, true}) {
                 for (const auto pipeXor : {0u, 0xf00u}) Run(*device, layered, registration, pipeXor);
                 for (const auto& fmask : NarrowFormats) RunNarrow(*device, fmask, layered, registration);
+                for (const auto& fmask : NarrowFormats) RunNarrowCompressed(*device, fmask, layered, registration);
             }
         }
-        std::cout << "FMASK image reads passed: 104 dispatches, 13312 component checks, 8 compression refusals\n";
+        std::cout << "FMASK image reads passed: 104 dispatches, 13312 component checks, 40 compression refusals\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

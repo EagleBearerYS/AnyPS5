@@ -1,6 +1,7 @@
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
+#include <string>
 #include <utility>
 
 namespace ShaderRecompiler {
@@ -125,6 +126,12 @@ std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format) {
         case IrBufferFormat::Fmask32_S8_F8: return FmaskLayout{8u, 8u, 4u, 32u};
         default: return std::nullopt;
     }
+}
+
+std::string FmaskLayoutName(IrBufferFormat format) {
+    const auto layout = FmaskLayoutOf(format);
+    if (!layout.has_value()) return "FMASK format " + std::to_string(static_cast<std::uint32_t>(format));
+    return "Fmask" + std::to_string(layout->storageBits) + "_S" + std::to_string(layout->samples) + "_F" + std::to_string(layout->fragments) + " (" + std::to_string(layout->samples) + " samples, " + std::to_string(layout->fragments) + (layout->fragments == 1u ? " fragment)" : " fragments)");
 }
 
 IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format) {
