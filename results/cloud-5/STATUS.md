@@ -1,4 +1,7 @@
-READY 2026-10-23T09:32:20Z: BF-175 done
+BUSY BF-180
+since: 2026-10-23T10:50Z (BF-180, #9159: a refused collect must not let a pre-sharing generation read as unchanged, fix/agc-rewatched-imports-compared-when-shared-next)
+claimed: tasks/claimed/BF-180.md
+step: reading #9159's head 1ad5f29e20 (Rewatch, collectable, collectWrites, the sampled cache's unchanged())
 machine: same VM as on 10-18 (clone, Release build at old main 0906c6450, board and results worktrees kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB RAM, 15 GB free disk, Ubuntu 24.04.5, kernel 6.18.44, gcc 13.3.0, CMake 3.28.3, Wild 0.10.0, lavapipe Mesa 25.2.8 (LLVM 20.1.2); origin and upstream fetched (upstream main 0db47b263)
 previous: BF-175 done, results/cloud-5/BF-175.md: fork port/fable-fix-pending-key-proof 31023e2f7 on upstream main aef58d467; fable-void's fix 7fbe9f0b8 (his authorship and message, clean cherry-pick of 4cc49a9de), the counter 27fa6746e (one-line conflict on the [storage] line), and our test 31023e2f7: agc_storage_pending_key_refresh (recorder tests, runs on Linux/lavapipe with forced watched imports) red with the fix's .cpp reverted '16 of 16 refreshes of the unchanged target over its pending key store ran in full, not 1', green 1 full / 15 proved; until-fail:20 on the 46-test DCC/storage set 0 failed; mirror 1,931/4 (IPv6), main 1,930/7; validation identical to main (87 VUIDs of 3 kinds in the same 23 tests, none in the new test); conventions pass, 0 comment lines. Before that: BF-167 done, results/cloud-5/BF-167.md (test/9136-shared-arming-diag 6e7bb1317c). Before that: BF-163 done, results/cloud-5/BF-163.md; PM-095 done, results/cloud-5/PM-095.md. No task held; board watcher stopped.
 
