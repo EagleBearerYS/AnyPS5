@@ -1,4 +1,7 @@
-READY 2026-10-23T05:44:36Z: resumed on the second account
+BUSY BF-175
+since: 2026-10-23T08:32Z (BF-175, PR branch for fable-void's fix 11, keep a DCC target's refresh proof while its keys are pending driver stores, port/fable-fix-pending-key-proof)
+claimed: tasks/claimed/BF-175.md
+step: reading the fix (4cc49a9de / 77e9ac4632) and main's DCC and storage-refresh tests
 machine: same VM as on 10-18 (clone, Release build at old main 0906c6450, board and results worktrees kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB RAM, 15 GB free disk, Ubuntu 24.04.5, kernel 6.18.44, gcc 13.3.0, CMake 3.28.3, Wild 0.10.0, lavapipe Mesa 25.2.8 (LLVM 20.1.2); origin and upstream fetched (upstream main 0db47b263)
 previous: BF-167 done, results/cloud-5/BF-167.md (test/9136-shared-arming-diag 6e7bb1317c). Before that: BF-163 done, results/cloud-5/BF-163.md; PM-095 done, results/cloud-5/PM-095.md. No task held; board watcher stopped.
 
