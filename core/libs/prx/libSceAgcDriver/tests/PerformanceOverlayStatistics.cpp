@@ -10,6 +10,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -431,6 +432,67 @@ void fullPanelLayoutTests() {
     }
 }
 
+void fontTests() {
+    const auto characters = AgcDriver::OverlayFontCharacters();
+    for (const char character : characters) {
+        const auto& glyph = AgcDriver::OverlayGlyph(character);
+        require(std::all_of(glyph.begin(), glyph.end(), [](std::uint8_t row) { return row <= 0x1f; }), std::string("the glyph of '") + character + "' is wider than 5 pixels");
+        require(character == ' ' || std::any_of(glyph.begin(), glyph.end(), [](std::uint8_t row) { return row != 0; }), std::string("the glyph of '") + character + "' is empty");
+        for (const char other : characters) {
+            if (other != character) require(glyph != AgcDriver::OverlayGlyph(other), std::string("'") + character + "' and '" + other + "' have the same glyph");
+        }
+    }
+    for (const char letter : std::string("JQYZ%+-_")) require(characters.find(letter) != std::string_view::npos, std::string("the font lists no '") + letter + "'");
+    for (const char missing : std::string("qjy(>,#")) {
+        bool refused = false;
+        try {
+            static_cast<void>(AgcDriver::OverlayGlyph(missing));
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        require(refused && characters.find(missing) == std::string_view::npos, std::string("'") + missing + "' is drawn or listed although the font has no glyph for it");
+    }
+}
+
+void widePanelTests() {
+    OverlayContent wide;
+    wide.columns = 48;
+    wide.graph = false;
+    for (int i = 0; i < 20; ++i) wide.below.push_back(std::string(48, i % 2 == 0 ? 'W' : 'Z'));
+    const VkExtent2D small{1280, 720};
+    const auto layout = AgcDriver::LayOutOverlay(wide, small, OverlayCorner::TopLeft);
+    const auto s = layout.scale;
+    require(layout.bounds.width == (48 * OverlayMetrics::Advance - 1 + 2 * OverlayMetrics::Padding) * s, "a 48-column panel is " + std::to_string(layout.bounds.width) + " pixels wide at scale " + std::to_string(s));
+    require(layout.bounds.height == (2 * OverlayMetrics::Padding + 20 * OverlayMetrics::LinePitch - (OverlayMetrics::LinePitch - OverlayMetrics::GlyphHeight)) * s, "a panel without a graph keeps the graph's rows");
+    const auto text = coverage(layout, static_cast<std::uint32_t>(AgcDriver::OverlayColor::Text));
+    for (std::size_t line = 0; line < wide.below.size(); ++line) requireLineDrawn(layout, text, wide.below[line], OverlayMetrics::Padding + static_cast<std::int32_t>(line) * OverlayMetrics::LinePitch);
+    for (const auto& rect : layout.rects) require(rect.color != static_cast<std::uint32_t>(AgcDriver::OverlayColor::Graph), "a panel without a graph draws graph bars");
+    const std::pair<VkExtent2D, std::int32_t> scales[] = {{{1280, 720}, 2}, {{1920, 1080}, 2}, {{3840, 2160}, 5}, {{320, 180}, 1}};
+    for (const auto& [extent, scale] : scales) require(AgcDriver::OverlayScale(extent, wide) == scale, "a 48-column panel at " + std::to_string(extent.width) + "x" + std::to_string(extent.height) + " is drawn at scale " + std::to_string(AgcDriver::OverlayScale(extent, wide)) + ", not " + std::to_string(scale));
+    auto widest = wide;
+    widest.columns = 140;
+    require(AgcDriver::OverlayScale({3840, 2160}, widest) == 4, "a 140-column panel at 3840x2160 is not shrunk from scale 5 to 4");
+    const auto refused = [](const OverlayContent& content) {
+        try {
+            static_cast<void>(AgcDriver::LayOutOverlay(content, {1920, 1080}, OverlayCorner::TopLeft));
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    auto longer = wide;
+    longer.below.push_back(std::string(49, 'W'));
+    require(refused(longer), "a line longer than the panel's columns was drawn");
+    auto graphless = wide;
+    graphless.frameTimes = {16.0};
+    require(refused(graphless), "frame times were laid out on a panel without a graph");
+    OverlayContent cramped{{"FPS: 60.0"}, {16.0}, {}};
+    cramped.columns = 20;
+    require(refused(cramped), "a graph of 120 frames was laid out on a 20-column panel");
+    cramped.columns = 21;
+    require(!refused(cramped), "a 21-column panel cannot hold the graph");
+}
+
 void sampleTests() {
     require(AgcDriver::OverlaySampleDue(std::nullopt, Start), "the first frame is not sampled");
     require(!AgcDriver::OverlaySampleDue(Start, Start + 999ms) && AgcDriver::OverlaySampleDue(Start, Start + 1000ms), "memory is sampled more than once a second, or not after a second");
@@ -489,6 +551,8 @@ int main() {
         countFormatTests();
         detailComposeTests();
         fullPanelLayoutTests();
+        fontTests();
+        widePanelTests();
         sampleTests();
         costReport();
         std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory and resolution tests passed\n";
