@@ -1,0 +1,4 @@
+BASE=f8f2e70456638e3a663fa50806b11e60e2930220
+REPEAT=1
+EXTRA_TESTS='agc_import_settle_initial_dcc|agc_import_watch|msaa_dcc|native_fmask|alpha_to_coverage'
+NO_BEFORE=1
