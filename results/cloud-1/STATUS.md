@@ -1,4 +1,4 @@
-READY
-since: 2026-10-23T06:34:50Z
+BUSY BF-172 (make the driver-driven execution tests skip without a Vulkan device, as the others do)
+since: 2026-10-23T07:07:54Z
 last: BF-168 done, results/cloud-1/BF-168.md: fork fix/shader-nested-table-child-key-next dff5a6759 (one commit on 839741f458, fast-forward): resolutionFootprint counts readRanges x4 for tables and nested; boundary check next to verifyNestedResolutionReuse puts 2^21 ranges (= the 8M-word budget) on a table, then a nested table, of a real fixture snapshot; red without the fix ('a table's read ranges past the memo budget were not counted', nested likewise), green with it; 37 shader/image-table tests x10 pass; mirror 1864 tests 1776/85/3 (IPv6 only) vs head 1775/85/4; conventions pass
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.10 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
