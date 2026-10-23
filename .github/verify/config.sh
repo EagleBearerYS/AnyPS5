@@ -1,0 +1,3 @@
+BASE=a376e37b88b8609c3d718587377e6f5e42606846
+REPEAT=10
+EXTRA_TESTS='^red_zone_framer|relinker_game_patch|relinker_conversion|relinker_executables'
