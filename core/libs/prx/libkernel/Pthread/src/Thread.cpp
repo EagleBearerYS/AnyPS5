@@ -35,7 +35,6 @@
 
 static constexpr int SCE_OK = 0;
 
-static constexpr std::size_t DEFAULT_STACK_SIZE = 1u << 20;
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
@@ -75,9 +74,9 @@ static GuestThreadState& CurrentGuestState() {
     return state;
 #endif
 }
-static std::mutex stackLock;
-static std::map<PthreadPrivate*, std::pair<std::uintptr_t, std::uintptr_t>> liveStacks;
-static std::map<std::uintptr_t, std::size_t> protectedStackPages;
+static std::mutex& stackLock = *new std::mutex();
+static auto& liveStacks = *new std::map<PthreadPrivate*, std::pair<std::uintptr_t, std::uintptr_t>>();
+static auto& protectedStackPages = *new std::map<std::uintptr_t, std::size_t>();
 #if defined(__linux__)
 struct GuestStackMapping {
     std::uintptr_t mappingEnd;
@@ -85,7 +84,7 @@ struct GuestStackMapping {
     std::uintptr_t stackEnd;
 };
 static std::mutex guestStackMappingsLock;
-static std::map<std::uintptr_t, GuestStackMapping> guestStackMappings;
+static auto& guestStackMappings = *new std::map<std::uintptr_t, GuestStackMapping>();
 
 static void RegisterGuestStackMapping(PthreadPrivate* thread) {
     const auto mappingStart = reinterpret_cast<std::uintptr_t>(thread->guestStack);
@@ -825,7 +824,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     bool detached = false;
     if (attr && *attr) detached = ((*attr)->_detachstate == DETACH_DETACHED);
     p->_detached = detached;
-    p->stackSize = attr ? (*attr)->_stacksize : DEFAULT_STACK_SIZE;
+    p->stackSize = attr ? (*attr)->_stacksize : GetDefaultStackSize_nid_no_patch();
     if (attr) {
         if ((*attr)->_inheritsched != GUEST_INHERIT_SCHED)
             p->scope = (*attr)->_scope;

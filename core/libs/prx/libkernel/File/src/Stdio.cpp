@@ -865,6 +865,9 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 #endif
     const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
     if (type == 0) return PosixFailure(GUEST_EBADF);
+#ifdef _WIN32
+    if (File::IsDirectoryDescriptor(d)) return 0;
+#endif
     if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         const auto error = ::GetLastError();
@@ -1135,6 +1138,35 @@ int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
 
 #else
 
+static bool InsideApp0(int fd) {
+    const int savedErrno = errno;
+    const bool inside = [fd] {
+        const auto directory = File::DirectoryDescriptorPath(fd);
+        if (!directory) return false;
+        std::error_code error;
+        const auto app0 = std::filesystem::weakly_canonical(ResolveDiskPath_nid_no_patch("/app0"), error);
+        if (error || app0.empty()) return false;
+        const auto relative = directory->lexically_relative(app0);
+        return !relative.empty() && *relative.begin() != "..";
+    }();
+    errno = savedErrno;
+    return inside;
+}
+
+static unsigned char GuestEntryType(int fd, const struct dirent64& entry, bool followLinks) {
+    if (entry.d_type != DT_LNK && entry.d_type != DT_UNKNOWN) return entry.d_type;
+    if (entry.d_type == DT_LNK && !followLinks) return DT_LNK;
+    const int savedErrno = errno;
+    struct stat target{};
+    const bool found = ::fstatat(fd, entry.d_name, &target, followLinks ? 0 : AT_SYMLINK_NOFOLLOW) == 0;
+    errno = savedErrno;
+    if (!found) return entry.d_type;
+    if (S_ISDIR(target.st_mode)) return DT_DIR;
+    if (S_ISREG(target.st_mode)) return DT_REG;
+    if (S_ISLNK(target.st_mode)) return DT_LNK;
+    return entry.d_type;
+}
+
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
     if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(fd, "getdirentries");
@@ -1156,6 +1188,7 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (read < 0) return SceErrorFromErrno(errno);
     std::size_t written = 0;
     off_t resume = base;
+    const bool followLinks = InsideApp0(fd);
     for (long offset = 0; offset < read;) {
         const auto* entry = reinterpret_cast<const struct dirent64*>(host.data() + offset);
         const auto nameLength = std::strlen(entry->d_name);
@@ -1172,7 +1205,7 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
         const auto nameBytes = static_cast<std::uint8_t>(nameLength);
         std::memcpy(out, &fileNumber, sizeof(fileNumber));
         std::memcpy(out + 4, &recordLength, sizeof(recordLength));
-        out[6] = static_cast<char>(entry->d_type);
+        out[6] = static_cast<char>(GuestEntryType(fd, *entry, followLinks));
         out[7] = static_cast<char>(nameBytes);
         std::memcpy(out + GuestHeaderBytes, entry->d_name, nameLength);
         written += record;
@@ -1463,6 +1496,7 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
 int APS5_VABI sceKernelRmdir(const char* path) {
     if (!path) return SceErrorFromErrno(GUEST_EFAULT);
     if (*path == '\0') return SceErrorFromErrno(GUEST_ENOENT);
+    if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     std::error_code error;
@@ -1472,7 +1506,6 @@ int APS5_VABI sceKernelRmdir(const char* path) {
         const bool blockedByFile = HasNonDirectoryPrefix(native) || std::filesystem::exists(WithoutTrailingSeparator(native), error);
         return SceErrorFromErrno(blockedByFile ? GUEST_ENOTDIR : GUEST_ENOENT);
     }
-    if (FinalPathComponentIsDot_nid_no_patch(path)) return SceErrorFromErrno(GUEST_EINVAL);
     if (!std::filesystem::is_empty(native, error)) return SceErrorFromErrno(GUEST_ENOTEMPTY);
     if (!RemoveEmptyDirectory(native)) return SceErrorFromErrno(GUEST_EIO);
     RecordWrittenPath_nid_no_patch(native);
