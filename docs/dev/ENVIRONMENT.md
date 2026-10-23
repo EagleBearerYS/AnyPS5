@@ -352,7 +352,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_RELEASE_ON_UNLOCK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | destroys deferred batches on the unlocking thread instead of a release thread |
 | `APS5_RELEASE_QUEUE_MAX` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` | 256 | maximum deferred batches handed to the release thread before a thread destroys its own |
 | `APS5_RELEASE_UNDER_LOCK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | destroys deferred batches in finish() under the lock instead of on a release thread |
-| `APS5_RENDER_SCALE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RenderScale.cpp` |  | experimental: renders color targets at least the video-out extent at this scale (`0.5`, `0.75` or `N/D`); native when unset |
+| `APS5_RENDER_SCALE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RenderScale.cpp` |  | experimental: renders color and depth targets at least the video-out extent at this scale (`0.5`, `0.75` or `N/D`), with pixel shader positions rescaled; native when unset |
 | `APS5_RESOURCE_CACHE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 1024 | maximum entries in the per-device shader-resource cache |
 | `APS5_RESOURCE_CACHE_TABLE_ELEMENTS` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 65536 | number of image-table elements the shader-resource cache keeps (0 keeps the default) |
 | `APS5_SAMPLE_COMMITTER` | string | `core/libs/prx/libSceAgcDriver/Execution/src/WorkerSampler.cpp` |  | samples queue 0's draw committer every millisecond and writes its stacks to a file (Windows only) |
