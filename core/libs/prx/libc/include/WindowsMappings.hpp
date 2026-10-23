@@ -216,7 +216,13 @@ public:
         auto& view = found->second;
         if (view.resident) {
             const auto memory = query(address);
-            return memory.State == MEM_COMMIT && writable(memory.Protect & 0xffu);
+            const bool resumable = memory.State == MEM_COMMIT && writable(memory.Protect & 0xffu);
+            if (const auto resident = ++residentWrites; resident <= 64 || resident % 1000 == 0) {
+                std::fprintf(stderr, "[shared-arming] resident write %llu at 0x%llx: page 0x%llx state 0x%lx protect 0x%lx resumed %d\n", static_cast<unsigned long long>(resident),
+                    static_cast<unsigned long long>(address), static_cast<unsigned long long>(base), static_cast<unsigned long>(memory.State), static_cast<unsigned long>(memory.Protect), resumable ? 1 : 0);
+                std::fflush(stderr);
+            }
+            return resumable;
         }
         const auto written = subpagesOf(base, address, address + 1);
         const auto cause = view.demotedBy != Demotion::None ? static_cast<std::size_t>(view.demotedBy) : view.mapResident ? 0 : demotionNames.size() - 1;
@@ -228,6 +234,8 @@ public:
                 static_cast<unsigned long long>(resumed), static_cast<unsigned long long>(address), static_cast<unsigned long long>(base), view.page->aliases.size(), view.slot->stored ? 1 : 0,
                 view.page->comparedWhenShared ? 1 : 0, view.aliasDemoted ? 1 : 0, demotionNames[cause], view.mapStored ? 1 : 0, view.mapResident ? 1 : 0, armedBy, view.armedCaller,
                 static_cast<unsigned long long>(view.armedFrom), static_cast<unsigned long long>(view.armedTo));
+            std::fprintf(stderr, "[shared-arming]   subpage armed %d (armed 0x%x), %llu ms after its demotion\n", (view.armed & written) != 0 ? 1 : 0, static_cast<unsigned>(view.armed),
+                static_cast<unsigned long long>(view.demotedAt == 0 ? 0 : GetTickCount64() - view.demotedAt));
             std::fflush(stderr);
         }
         if (const auto now = GetTickCount64(); resumed == 64 || resumed % 1000 == 0 || now - lastTotals >= 10000) {
@@ -620,6 +628,7 @@ private:
         std::uintptr_t armedFrom = 0;
         std::uintptr_t armedTo = 0;
         Demotion demotedBy = Demotion::None;
+        ULONGLONG demotedAt = 0;
         bool mapStored = false;
         bool mapResident = false;
     };
@@ -748,6 +757,7 @@ private:
             view.resident = false;
             view.aliasDemoted = reason == Demotion::Alias;
             view.demotedBy = reason == Demotion::SecondMappingPage && page != doubled ? Demotion::SecondMappingRun : reason;
+            view.demotedAt = GetTickCount64();
             view.seen.fill(0);
             view.armed = 0;
             view.collected = 0;
@@ -1038,6 +1048,7 @@ private:
     std::size_t granularity = 0x10000;
     bool watchResident = false;
     std::uint64_t resumedSharedWrites = 0;
+    std::uint64_t residentWrites = 0;
     std::array<std::uint64_t, 8> resumedByCause{};
     ULONGLONG lastTotals = 0;
     std::mutex mutex;
