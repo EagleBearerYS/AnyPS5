@@ -784,6 +784,31 @@ extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const 
     return resolved;
 }
 
+namespace {
+std::optional<std::vector<std::string>> NamesUnderApp0(const std::filesystem::path& normal, const std::filesystem::path& app0) {
+    std::vector<std::string> names;
+    auto part = normal.begin();
+    bool prefixed = true;
+    for (const auto& component : app0) {
+        if (part == normal.end() || !SameName(part->string(), component.string())) {
+            prefixed = false;
+            break;
+        }
+        ++part;
+    }
+    if (prefixed) {
+        for (; part != normal.end(); ++part) names.push_back(part->string());
+        return names;
+    }
+    for (auto cursor = normal; cursor.has_relative_path(); cursor = cursor.parent_path()) {
+        std::error_code error;
+        if (std::filesystem::equivalent(cursor, app0, error)) return names;
+        names.insert(names.begin(), cursor.filename().string());
+    }
+    return std::nullopt;
+}
+}
+
 extern "C" std::filesystem::path AppOverlayPath_nid_no_patch(const std::filesystem::path& native) {
     const auto normal = native.lexically_normal();
     if (!normal.has_filename()) return native;
@@ -791,15 +816,10 @@ extern "C" std::filesystem::path AppOverlayPath_nid_no_patch(const std::filesyst
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
     if (state.overlay.scanned && state.overlay.files.empty()) return native;
-    const auto app0 = HostPath(state, {"app0"}).lexically_normal();
-    auto part = normal.begin();
-    for (const auto& component : app0) {
-        if (part == normal.end() || !SameName(part->string(), component.string())) return native;
-        ++part;
-    }
+    const auto relative = NamesUnderApp0(normal, HostPath(state, {"app0"}).lexically_normal());
+    if (!relative) return native;
     std::vector<std::string> names{"app0"};
-    for (; part != normal.end(); ++part) {
-        const auto name = part->string();
+    for (const auto& name : *relative) {
         if (name == "..") return native;
         if (!name.empty() && name != ".") names.push_back(name);
     }
