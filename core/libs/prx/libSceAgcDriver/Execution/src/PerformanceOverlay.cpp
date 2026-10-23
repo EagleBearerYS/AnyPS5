@@ -37,6 +37,7 @@ struct OverlayParameters {
 };
 
 std::atomic<std::uint64_t> toggleCount{0};
+std::atomic<std::uint32_t> currentPage{0};
 std::atomic<std::uint64_t> gpuTotal{0};
 std::atomic<std::uint64_t> driverTotal{0};
 std::atomic<std::uint64_t> pipelineTotal{0};
@@ -65,7 +66,11 @@ struct PacketCounterLease {
 constexpr double GigabyteBytes = 1024.0 * 1024.0 * 1024.0;
 
 const OverlaySettings& settings() {
-    static const OverlaySettings parsed = ParseOverlaySettings(std::getenv("ANYPS5_OVERLAY"), std::getenv("ANYPS5_OVERLAY_POS"));
+    static const OverlaySettings parsed = [] {
+        const auto read = ParseOverlaySettings(std::getenv("ANYPS5_OVERLAY"), std::getenv("ANYPS5_OVERLAY_POS"));
+        currentPage.store(read.page, std::memory_order_relaxed);
+        return read;
+    }();
     return parsed;
 }
 
@@ -107,9 +112,10 @@ bool srgbFormat(VkFormat format) {
 
 OverlaySettings ParseOverlaySettings(const char* enabled, const char* position) {
     OverlaySettings parsed;
-    const std::string_view visible = enabled != nullptr ? enabled : "";
-    if (visible == "1") parsed.visible = true;
-    else if (!visible.empty() && visible != "0") throw std::runtime_error("ANYPS5_OVERLAY must be 1 or 0, not '" + std::string(visible) + "'");
+    const std::string_view page = enabled != nullptr ? enabled : "";
+    if (page == "1") parsed.page = 1;
+    else if (page == "2") parsed.page = 2;
+    else if (!page.empty() && page != "0") throw std::runtime_error("ANYPS5_OVERLAY must be 0, 1 or 2, not '" + std::string(page) + "'");
     const std::string_view corner = position != nullptr ? position : "";
     if (corner.empty() || corner == "tl") parsed.corner = OverlayCorner::TopLeft;
     else if (corner == "tr") parsed.corner = OverlayCorner::TopRight;
@@ -117,6 +123,11 @@ OverlaySettings ParseOverlaySettings(const char* enabled, const char* position) 
     else if (corner == "br") parsed.corner = OverlayCorner::BottomRight;
     else throw std::runtime_error("ANYPS5_OVERLAY_POS must be tl, tr, bl or br, not '" + std::string(corner) + "'");
     return parsed;
+}
+
+std::uint32_t OverlayPageAfter(std::uint32_t start, std::uint64_t presses) {
+    Graphics::Require(start < OverlayPageCount, "the performance overlay has no such page");
+    return static_cast<std::uint32_t>((start + presses % OverlayPageCount) % OverlayPageCount);
 }
 
 void PerformanceCounters::AddGpuNanoseconds(std::uint64_t nanoseconds) {
@@ -422,6 +433,78 @@ OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, boo
     return content;
 }
 
+std::string OverlayText(std::string_view text) {
+    const auto font = OverlayFontCharacters();
+    std::string shown;
+    shown.reserve(text.size());
+    for (const char character : text) {
+        const char upper = character >= 'a' && character <= 'z' ? static_cast<char>(character - 'a' + 'A') : character;
+        shown.push_back(font.find(upper) != std::string_view::npos ? upper : ' ');
+    }
+    return shown;
+}
+
+OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
+    OverlayContent content;
+    content.columns = OverlayMetrics::DetailColumns;
+    content.graph = false;
+    const auto width = static_cast<std::size_t>(content.columns);
+    const auto add = [&](std::string line) {
+        if (line.size() > width) line.resize(width);
+        content.below.push_back(std::move(line));
+    };
+    const auto joined = [&](const std::string& label, std::initializer_list<std::optional<std::string>> parts) {
+        std::string line = label;
+        bool any = false;
+        for (const auto& part : parts) {
+            if (!part) continue;
+            line += (line.empty() ? "" : any ? "  " : " ") + *part;
+            any = true;
+        }
+        if (any) add(std::move(line));
+    };
+    const auto shown = [](const auto& value, auto format) -> std::optional<std::string> {
+        if (!value) return std::nullopt;
+        return format(*value);
+    };
+    const auto value = [](double number) { return FormatOverlayValue(number); };
+    const auto count = [](double number) { return FormatOverlayCount(number); };
+    const auto rate = [](double number) { return FormatOverlayRate(number); };
+    add("FPS: " + rate(sample.fps) + "  FRAME: " + value(sample.frameMs) + " MS");
+    if (!sample.busy.empty()) {
+        const std::string label = "BUSY %:";
+        std::string line = label;
+        for (const auto& thread : sample.busy) {
+            const auto item = " " + OverlayText(thread.name) + " " + count(thread.percent);
+            if (line.size() > label.size() && line.size() + item.size() > width) {
+                add(std::move(line));
+                line = std::string(label.size(), ' ');
+            }
+            line += item;
+        }
+        add(std::move(line));
+    }
+    for (const auto& phase : sample.phases) {
+        const auto amount = " " + value(phase.msPerFrame) + " MS/FRAME";
+        auto name = OverlayText(phase.name);
+        name.resize(std::min(name.size(), width - amount.size()));
+        add(name + std::string(width - name.size() - amount.size(), ' ') + amount);
+    }
+    if (sample.queueWaits) add("Q0 WAIT MS/FRAME: MEM " + value(sample.queueWaits->memoryMs) + " LOCK " + value(sample.queueWaits->lockMs) + " GPU " + value(sample.queueWaits->gpuMs));
+    joined("RENDER PASSES/FRAME:", {shown(sample.renderPassesPerFrame, value)});
+    joined("PIPELINES:", {shown(sample.pipelinesCompiling, [&](std::uint64_t pending) { return "COMPILING " + count(static_cast<double>(pending)); }), shown(sample.pipelinesPerSecond, [&](double made) { return "NEW/S " + count(made); })});
+    joined("HIT %:", {shown(sample.drawCacheHitPercent, [&](double percent) { return "DRAW CACHE " + value(percent); }), shown(sample.pipelineCacheHitPercent, [&](double percent) { return "PIPELINES " + value(percent); })});
+    joined("", {shown(sample.flipsPerSecond, [&](double flips) { return "FLIPS/S: " + rate(flips); }), shown(sample.presentsPerSecond, [&](double presents) { return "PRESENTS/S: " + rate(presents); })});
+    joined("", {shown(sample.droppedFrames, [&](std::uint64_t dropped) { return "DROPPED/S: " + count(static_cast<double>(dropped)); }), shown(sample.repeatedPresents, [&](std::uint64_t repeated) { return "REPEATED/S: " + count(static_cast<double>(repeated)); })});
+    joined("", {shown(sample.commit, [](const OverlayMemory& memory) { return "COMMIT: " + FormatOverlayGigabytes(memory.used) + "/" + FormatOverlayGigabytes(memory.budget) + " GB"; }), shown(sample.pageFaultsPerSecond, [&](double faults) { return "FAULTS/S: " + count(faults); })});
+    joined("HOST IMPORTS:", {shown(sample.hostImports, [&](std::uint64_t imports) { return count(static_cast<double>(imports)); }), shown(sample.hostImportBytes, [](const OverlayMemory& memory) { return FormatOverlayGigabytes(memory.used) + "/" + FormatOverlayGigabytes(memory.budget) + " GB"; })});
+    joined("CPU COPIES:", {shown(sample.cpuCopyMegabytesPerSecond, [&](double megabytes) { return value(megabytes) + " MB/S"; }), shown(sample.addressCopyCapPercent, [&](double percent) { return "CAP: " + value(percent) + "%"; })});
+    joined("UNIMPLEMENTED:", {shown(sample.unimplementedPerSecond, [&](double calls) { return count(calls) + "/S"; }), shown(sample.unimplementedTotal, [&](std::uint64_t calls) { return count(static_cast<double>(calls)) + " TOTAL"; })});
+    joined("REFUSED SHADERS:", {shown(sample.refusedShaders, [&](std::uint64_t refused) { return count(static_cast<double>(refused)); })});
+    joined("", {sample.title.empty() ? std::nullopt : std::optional<std::string>("TITLE: " + OverlayText(sample.title)), sample.presentMode.empty() ? std::nullopt : std::optional<std::string>("PRESENT: " + OverlayText(sample.presentMode))});
+    return content;
+}
+
 bool OverlaySampleDue(std::optional<OverlayStatistics::Clock::time_point> sampledAt, OverlayStatistics::Clock::time_point now) {
     return !sampledAt || now - *sampledAt >= std::chrono::seconds(1);
 }
@@ -603,11 +686,21 @@ void PerformanceOverlay::release() noexcept {
 }
 
 bool PerformanceOverlay::Visible() {
-    return settings().visible != ((toggleCount.load(std::memory_order_relaxed) & 1u) != 0);
+    static_cast<void>(settings());
+    return currentPage.load(std::memory_order_relaxed) != 0;
+}
+
+std::uint32_t PerformanceOverlay::Page() {
+    static_cast<void>(settings());
+    return currentPage.load(std::memory_order_relaxed);
 }
 
 void PerformanceOverlay::Toggle() {
-    toggleCount.fetch_add(1, std::memory_order_relaxed);
+    static std::mutex toggleMutex;
+    std::lock_guard lock(toggleMutex);
+    const auto presses = toggleCount.load(std::memory_order_relaxed) + 1;
+    currentPage.store(OverlayPageAfter(settings().page, presses), std::memory_order_relaxed);
+    toggleCount.store(presses, std::memory_order_relaxed);
 }
 
 OverlayCorner PerformanceOverlay::Corner() {
@@ -616,6 +709,14 @@ OverlayCorner PerformanceOverlay::Corner() {
 
 void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display) {
     restartIfToggled();
+    if (page == 2) {
+        statistics.AddPresent(at, OverlayCounters{0, 0, 0, 0, PerformanceCounters::Pipelines()});
+        detailSample.fps = statistics.Fps();
+        detailSample.frameMs = statistics.LastFrameMs();
+        detailSample.presentsPerSecond = statistics.Fps();
+        detailSample.pipelinesPerSecond = static_cast<double>(statistics.PipelinesInWindow());
+        return;
+    }
     if (OverlaySampleDue(sampledAt, at)) {
         details.vram = ReadVramBudget(context);
         details.ram = ReadProcessPrivateBytes();
@@ -628,9 +729,11 @@ void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at, Vk
 
 void PerformanceOverlay::restartIfToggled() {
     const auto current = toggleCount.load(std::memory_order_relaxed);
+    page = Page();
     if (current == toggles) return;
     statistics.Reset();
     details = {};
+    detailSample = {};
     sampledAt.reset();
     toggles = current;
 }
@@ -734,6 +837,7 @@ VkPipeline PerformanceOverlay::pipeline(VkFormat format, VkRenderPass compatible
 }
 
 OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
+    if (page == 2) return Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, ComposeOverlayDetails(detailSample), Corner());
     auto shown = details;
     shown.window = extent;
     return Record(commands, slot, destination, format, colorSpace, extent, initialLayout, finalLayout, ComposeOverlay(statistics, PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled(), shown), Corner());
