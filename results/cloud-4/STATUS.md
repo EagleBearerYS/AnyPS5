@@ -1,5 +1,4 @@
-READY
-last: PM-098 done 2026-10-23T05:06:47Z, result: results/cloud-4/PM-098.md
+STOPPED 2026-10-23T05:29:27Z: account move
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
