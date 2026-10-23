@@ -27,12 +27,15 @@ class Buffer;
 
 enum class OverlayCorner : std::uint8_t { TopLeft, TopRight, BottomLeft, BottomRight };
 
+inline constexpr std::uint32_t OverlayPageCount = 3;
+
 struct OverlaySettings {
-    bool visible = false;
+    std::uint32_t page = 0;
     OverlayCorner corner = OverlayCorner::TopLeft;
 };
 
 OverlaySettings ParseOverlaySettings(const char* enabled, const char* position);
+std::uint32_t OverlayPageAfter(std::uint32_t start, std::uint64_t presses);
 
 class PerformanceCounters {
 public:
@@ -135,6 +138,7 @@ struct OverlayMetrics {
     static constexpr std::int32_t GraphHeight = 20;
     static constexpr std::int32_t GraphGap = 2;
     static constexpr std::int32_t InnerWidth = Columns * Advance - 1;
+    static constexpr std::int32_t DetailColumns = 46;
 };
 
 struct OverlayContent {
@@ -157,6 +161,50 @@ struct OverlayDetails {
     VkExtent2D window{};
 };
 
+struct OverlayThreadBusy {
+    std::string name;
+    double percent = 0;
+};
+
+struct OverlayPhase {
+    std::string name;
+    double msPerFrame = 0;
+};
+
+struct OverlayQueueWaits {
+    double memoryMs = 0;
+    double lockMs = 0;
+    double gpuMs = 0;
+};
+
+struct OverlayDetailSample {
+    double fps = 0;
+    double frameMs = 0;
+    std::vector<OverlayThreadBusy> busy;
+    std::vector<OverlayPhase> phases;
+    std::optional<OverlayQueueWaits> queueWaits;
+    std::optional<double> renderPassesPerFrame;
+    std::optional<std::uint64_t> pipelinesCompiling;
+    std::optional<double> pipelinesPerSecond;
+    std::optional<double> drawCacheHitPercent;
+    std::optional<double> pipelineCacheHitPercent;
+    std::optional<double> flipsPerSecond;
+    std::optional<double> presentsPerSecond;
+    std::optional<std::uint64_t> droppedFrames;
+    std::optional<std::uint64_t> repeatedPresents;
+    std::optional<OverlayMemory> commit;
+    std::optional<double> pageFaultsPerSecond;
+    std::optional<std::uint64_t> hostImports;
+    std::optional<OverlayMemory> hostImportBytes;
+    std::optional<double> cpuCopyMegabytesPerSecond;
+    std::optional<double> addressCopyCapPercent;
+    std::optional<double> unimplementedPerSecond;
+    std::optional<std::uint64_t> unimplementedTotal;
+    std::optional<std::uint64_t> refusedShaders;
+    std::string title;
+    std::string presentMode;
+};
+
 struct OverlayLayout {
     OverlayRect bounds;
     std::vector<OverlayRect> rects;
@@ -171,6 +219,8 @@ std::string FormatOverlayCount(double value);
 std::string FormatOverlayGigabytes(std::uint64_t bytes);
 OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, bool driver);
 OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, bool driver, const OverlayDetails& details);
+std::string OverlayText(std::string_view text);
+OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample);
 bool OverlaySampleDue(std::optional<OverlayStatistics::Clock::time_point> sampledAt, OverlayStatistics::Clock::time_point now);
 std::optional<OverlayMemory> ReadVramBudget(const Graphics::Context& context);
 std::optional<std::uint64_t> ReadProcessPrivateBytes();
@@ -186,12 +236,15 @@ public:
     PerformanceOverlay& operator=(const PerformanceOverlay&) = delete;
 
     static bool Visible();
+    static std::uint32_t Page();
     static void Toggle();
     static OverlayCorner Corner();
 
     void NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display);
     const OverlayStatistics& Statistics() const { return statistics; }
     const OverlayDetails& Details() const { return details; }
+    const OverlayDetailSample& DetailSample() const { return detailSample; }
+    std::uint32_t ShownPage() const { return page; }
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner);
     void Release(std::size_t slot) noexcept;
@@ -218,8 +271,10 @@ private:
     std::vector<Slot> slots;
     OverlayStatistics statistics;
     OverlayDetails details;
+    OverlayDetailSample detailSample;
     std::optional<OverlayStatistics::Clock::time_point> sampledAt;
     std::uint64_t toggles = 0;
+    std::uint32_t page = 0;
 };
 
 }

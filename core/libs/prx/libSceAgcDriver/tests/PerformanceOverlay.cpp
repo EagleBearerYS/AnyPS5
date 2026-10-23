@@ -533,6 +533,99 @@ void fullPanelTest(const Device& device, PerformanceOverlay& overlay) {
     for (const auto& line : content.below) std::printf("  %s\n", line.c_str());
 }
 
+AgcDriver::OverlayDetailSample pageTwoSample() {
+    AgcDriver::OverlayDetailSample sample;
+    sample.fps = 59.94;
+    sample.frameMs = 16.7;
+    sample.busy = {{"Q0", 63}, {"Q20", 4}, {"COMMIT", 12}, {"FINISH", 3}, {"PRESENT", 6}};
+    sample.phases = {{"Driver.Packet", 3.2}, {"Vulkan.GraphicsPipeline.pipeline_create", 1.5}, {"Recorder.Sync", 0.4}};
+    sample.queueWaits = AgcDriver::OverlayQueueWaits{0.4, 0.2, 1.3};
+    sample.renderPassesPerFrame = 12;
+    sample.pipelinesCompiling = 3;
+    sample.pipelinesPerSecond = 12;
+    sample.drawCacheHitPercent = 97.1;
+    sample.pipelineCacheHitPercent = 99.9;
+    sample.flipsPerSecond = 60;
+    sample.presentsPerSecond = 59.94;
+    sample.droppedFrames = 0;
+    sample.repeatedPresents = 0;
+    sample.commit = AgcDriver::OverlayMemory{12ull << 30u, 31ull << 30u};
+    sample.pageFaultsPerSecond = 1234;
+    sample.hostImports = 123;
+    sample.hostImportBytes = AgcDriver::OverlayMemory{1ull << 30u, 6ull << 30u};
+    sample.cpuCopyMegabytesPerSecond = 12.3;
+    sample.addressCopyCapPercent = 3;
+    sample.unimplementedPerSecond = 0;
+    sample.unimplementedTotal = 4;
+    sample.refusedShaders = 2;
+    sample.title = "PPSA01234";
+    sample.presentMode = "fifo";
+    return sample;
+}
+
+void pageTwoTest(const Context& context, PerformanceOverlay& overlay) {
+    const VkExtent2D extent{1280, 720};
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.25f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.75f;
+    clear.float32[3] = 1.0f;
+    const auto content = AgcDriver::ComposeOverlayDetails(pageTwoSample());
+    OverlayRect bounds{};
+    const auto reference = clearAndOverlay(context, nullptr, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, content, OverlayCorner::TopRight, nullptr);
+    const auto drawn = clearAndOverlay(context, &overlay, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, content, OverlayCorner::TopRight, &bounds);
+    const auto layout = AgcDriver::LayOutOverlay(content, extent, OverlayCorner::TopRight);
+    Require(bounds.x == layout.bounds.x && bounds.y == layout.bounds.y && bounds.width == layout.bounds.width && bounds.height == layout.bounds.height, "page 2 is not drawn where its layout puts it");
+    onlyInside(reference, drawn, extent, bounds, "page 2 at 1280x720");
+    std::int32_t row = OverlayMetrics::Padding;
+    for (const auto& line : content.below) {
+        requireTextDrawn(drawn, extent, bounds, layout.scale, reference.front(), line, row);
+        row += OverlayMetrics::LinePitch;
+    }
+    std::printf("page 2 at 1280x720: %dx%d at %d,%d (scale %d), every line drawn bit for bit, nothing changed outside it:\n", bounds.width, bounds.height, bounds.x, bounds.y, layout.scale);
+    for (const auto& line : content.below) std::printf("  |%-46s|\n", line.c_str());
+}
+
+void pageCycleTest(const Device& device) {
+    const auto& context = device.GetContext();
+    const VkExtent2D extent{1280, 720};
+    Require(PerformanceOverlay::Page() == 0 && !PerformanceOverlay::Visible(), "the performance overlay does not start hidden without ANYPS5_OVERLAY");
+    PerformanceOverlay overlay(context, 1);
+    const auto start = AgcDriver::OverlayStatistics::Clock::now();
+    const auto present = [&](int frame) { overlay.NotePresent(start + std::chrono::milliseconds(16) * frame, VkExtent2D{640, 360}); };
+    const auto record = [&] {
+        Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        OverlayRect bounds{};
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+        bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        batch.SubmitAndWait();
+        overlay.Release(0);
+        return bounds;
+    };
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 1 && PerformanceOverlay::Visible(), "the first F10 does not show page 1");
+    for (int frame = 0; frame < 5; ++frame) present(frame);
+    Require(overlay.ShownPage() == 1 && overlay.Statistics().FrameTimes().size() == 4, "page 1 did not keep its frames");
+    const auto pageOne = record();
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 2 && PerformanceOverlay::Visible(), "the second F10 does not show page 2");
+    present(5);
+    Require(overlay.ShownPage() == 2 && overlay.Statistics().FrameTimes().empty(), "changing to page 2 kept page 1's statistics");
+    for (int frame = 6; frame < 10; ++frame) present(frame);
+    const auto& sample = overlay.DetailSample();
+    Require(std::abs(sample.frameMs - 16.0) < 1e-6 && sample.presentsPerSecond.has_value() && sample.pipelinesPerSecond.has_value(), "page 2 did not sample its frames");
+    const auto pageTwo = record();
+    const auto expected = AgcDriver::LayOutOverlay(AgcDriver::ComposeOverlayDetails(sample), extent, PerformanceOverlay::Corner()).bounds;
+    Require(pageTwo.width == expected.width && pageTwo.height == expected.height && pageTwo.width > pageOne.width, "page 2 is not drawn from its own composer: " + std::to_string(pageTwo.width) + "x" + std::to_string(pageTwo.height));
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 0 && !PerformanceOverlay::Visible(), "the third F10 does not hide the overlay");
+    present(10);
+    Require(overlay.ShownPage() == 0 && overlay.Statistics().FrameTimes().empty() && overlay.DetailSample().fps == 0, "hiding the overlay kept page 2's state");
+    std::printf("F10 cycle: off, page 1 (%dx%d), page 2 (%dx%d), off; each change of page resets the statistics\n", pageOne.width, pageOne.height, pageTwo.width, pageTwo.height);
+}
+
 void notePresentTest(const Device& device) {
     const auto& context = device.GetContext();
     const VkExtent2D extent{1280, 720};
@@ -646,7 +739,10 @@ void disabledIsUnchangedTest(const Context& context) {
     onlyInside(drawnBefore, presenter.Drawn(&bounds), Presenter::Extent, bounds, "presentation pass with the overlay", false);
     onlyInside(blittedBefore, presenter.Blitted(&bounds), Presenter::Extent, bounds, "blit with the overlay", false);
     PerformanceOverlay::Toggle();
-    Require(!PerformanceOverlay::Visible(), "F10 does not hide the performance overlay again");
+    Require(PerformanceOverlay::Visible() && PerformanceOverlay::Page() == 2, "a second F10 does not show page 2");
+    onlyInside(drawnBefore, presenter.Drawn(&bounds), Presenter::Extent, bounds, "presentation pass with page 2", false);
+    PerformanceOverlay::Toggle();
+    Require(!PerformanceOverlay::Visible(), "a third F10 does not hide the performance overlay again");
     Require(presenter.Drawn(&unused) == drawnBefore, "the presentation pass output differs after the overlay was hidden");
     Require(presenter.Blitted(&unused) == blittedBefore, "the blit output differs after the overlay was hidden");
     std::printf("overlay hidden: presentation pass and blit output bit-identical before and after showing it\n");
@@ -725,9 +821,11 @@ int main(int argc, char** argv) {
             hdrOverlayTest(context, overlay);
             cornerTest(context, overlay);
             fullPanelTest(*device, overlay);
+            pageTwoTest(context, overlay);
             costReport(*device, overlay);
         }
         notePresentTest(*device);
+        pageCycleTest(*device);
         disabledIsUnchangedTest(context);
         std::cout << "performance overlay tests passed\n";
         return 0;
