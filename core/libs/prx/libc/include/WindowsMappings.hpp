@@ -49,7 +49,7 @@ public:
                     placeholderEnd = reinterpret_cast<std::uintptr_t>(next.BaseAddress) + next.RegionSize;
                 }
                 const auto size = std::min(limit, placeholderEnd) - cursor;
-                reset(cursor, size);
+                reset(cursor, size, Demotion::BreakRunCommit);
                 const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
                 if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
                 if (!created.empty() && created.back().first + created.back().second == cursor) created.back().second += size;
@@ -73,7 +73,7 @@ public:
 
     void Reset(void* address, std::size_t bytes) {
         std::lock_guard lock(mutex);
-        reset(reinterpret_cast<std::uintptr_t>(address), bytes);
+        reset(reinterpret_cast<std::uintptr_t>(address), bytes, Demotion::BreakRunReset);
     }
 
     void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false, DWORD viewProtection = PAGE_EXECUTE_READWRITE, std::size_t sectionBytes = SIZE_MAX, std::vector<std::pair<std::uintptr_t, std::size_t>>* createdPrivate = nullptr) {
@@ -82,7 +82,7 @@ public:
         collectableRanges.clear();
         auto cursor = reinterpret_cast<std::uintptr_t>(address);
         if (createdPrivate != nullptr) createdPrivate->reserve(createdPrivate->size() + bytes / pageBytes);
-        reset(cursor, bytes);
+        reset(cursor, bytes, Demotion::BreakRunMap);
         if (resident) watchResident = watched;
         HANDLE duplicate = nullptr;
         if (!DuplicateHandle(GetCurrentProcess(), section, GetCurrentProcess(), &duplicate, 0, FALSE, DUPLICATE_SAME_ACCESS)) fail("keep shared guest section");
@@ -126,7 +126,9 @@ public:
                         slot->saved.reset();
                     }
                     shared->aliases.push_back(base + at);
-                    views.emplace(base + at, View{shared, protection, {}, 0, owned, offset + done + at, 0, 0, true, slot});
+                    auto& made = views.emplace(base + at, View{shared, protection, {}, 0, owned, offset + done + at, 0, 0, true, slot}).first->second;
+                    made.mapStored = slot->stored;
+                    made.mapResident = true;
                     invalidate(*shared);
                 }
                 remember(freshRanges, base, base + runBytes);
@@ -139,15 +141,16 @@ public:
             const auto shared = pageOf(*slot);
             const auto aliases = shared->aliases;
             for (const auto alias : aliases) {
-                if (views.at(alias).resident) demote(alias);
+                if (views.at(alias).resident) demote(alias, Demotion::SecondMappingPage, alias);
                 views.at(alias).aliasDemoted = false;
             }
             const auto viewBytes = std::min(pageBytes, sectionBytes - done);
             split(base, pageBytes);
             mapShared(base, section, offset + done, protection, viewProtection, viewBytes);
+            const bool mapStored = slot->stored;
             slot->stored = true;
             shared->aliases.push_back(base);
-            views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot, hostPages(viewBytes)});
+            views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot, hostPages(viewBytes)}).first->second.mapStored = mapStored;
             remember(freshRanges, base, base + pageBytes);
             invalidate(*shared);
             done += pageBytes;
@@ -220,11 +223,23 @@ public:
             resumeResidentWrites(base);
             return true;
         }
-        if (const auto resumed = ++resumedSharedWrites; resumed <= 64 || resumed % 1000 == 0) {
+        const auto cause = view.demotedBy != Demotion::None ? static_cast<std::size_t>(view.demotedBy) : view.mapResident ? 0 : demotionNames.size() - 1;
+        ++resumedByCause[cause];
+        const auto resumed = ++resumedSharedWrites;
+        if (resumed <= 64 || resumed % 1000 == 0) {
             const char* armedBy = view.armedBy == 0 ? "none" : view.armedBy == 1 ? "All" : view.armedBy == 2 ? "Armed" : "Fresh";
-            std::fprintf(stderr, "[shared-arming] resumed write %llu at 0x%llx: page 0x%llx aliases %zu stored %d comparedWhenShared %d aliasDemoted %d armed by %s collect from %p over 0x%llx-0x%llx\n",
+            std::fprintf(stderr, "[shared-arming] resumed write %llu at 0x%llx: page 0x%llx aliases %zu stored %d comparedWhenShared %d aliasDemoted %d demotedBy %s mapStored %d mappedResident %d armed by %s collect from %p over 0x%llx-0x%llx\n",
                 static_cast<unsigned long long>(resumed), static_cast<unsigned long long>(address), static_cast<unsigned long long>(base), view.page->aliases.size(), view.slot->stored ? 1 : 0,
-                view.page->comparedWhenShared ? 1 : 0, view.aliasDemoted ? 1 : 0, armedBy, view.armedCaller, static_cast<unsigned long long>(view.armedFrom), static_cast<unsigned long long>(view.armedTo));
+                view.page->comparedWhenShared ? 1 : 0, view.aliasDemoted ? 1 : 0, demotionNames[cause], view.mapStored ? 1 : 0, view.mapResident ? 1 : 0, armedBy, view.armedCaller,
+                static_cast<unsigned long long>(view.armedFrom), static_cast<unsigned long long>(view.armedTo));
+            std::fflush(stderr);
+        }
+        if (const auto now = GetTickCount64(); resumed == 64 || resumed % 1000 == 0 || now - lastTotals >= 10000) {
+            lastTotals = now;
+            std::fprintf(stderr, "[shared-arming] totals after %llu resumed writes:", static_cast<unsigned long long>(resumed));
+            for (std::size_t index = 0; index < demotionNames.size(); ++index) std::fprintf(stderr, " %s %llu", demotionNames[index], static_cast<unsigned long long>(resumedByCause[index]));
+            std::fprintf(stderr, "\n");
+            std::fflush(stderr);
         }
         invalidate(*view.page, written);
         protectSubpages(base, written, view.protection, "resume shared memory write", view.viewBytes);
@@ -311,7 +326,7 @@ public:
         }
         for (std::size_t done = 0; done < bytes; done += pageBytes) {
             const auto found = views.find(address + done);
-            if (found != views.end() && found->second.resident) demote(address + done, true);
+            if (found != views.end() && found->second.resident) demote(address + done, Demotion::Alias);
         }
         auto view = views.find(address);
         if (view == views.end()) throw refuse("the range does not start at a shared view");
@@ -544,6 +559,8 @@ private:
     static constexpr std::size_t subpages = pageBytes / subpageBytes;
     static constexpr std::uint8_t allSubpages = (1u << subpages) - 1;
     static constexpr std::size_t chunkBytes = 0x200000;
+    enum class Demotion : std::uint8_t { None, Alias, SecondMappingPage, SecondMappingRun, BreakRunMap, BreakRunReset, BreakRunCommit };
+    static constexpr std::array<const char*, 8> demotionNames{"none", "alias", "secondMapping(page)", "secondMapping(run)", "breakRun(Map)", "breakRun(Reset)", "breakRun(Commit)", "sharedFromStart"};
     struct SharedPage {
         std::array<std::uint64_t, subpages> generation = [] {
             std::array<std::uint64_t, subpages> initial{};
@@ -606,6 +623,9 @@ private:
         void* armedCaller = nullptr;
         std::uintptr_t armedFrom = 0;
         std::uintptr_t armedTo = 0;
+        Demotion demotedBy = Demotion::None;
+        bool mapStored = false;
+        bool mapResident = false;
     };
     struct Run {
         std::uintptr_t end;
@@ -753,7 +773,7 @@ private:
         return true;
     }
 
-    void demote(std::uintptr_t address, bool alias = false) {
+    void demote(std::uintptr_t address, Demotion reason, std::uintptr_t doubled = 0) {
         const auto run = std::prev(residentRuns.upper_bound(address));
         const auto start = run->first;
         const auto stop = run->second.end;
@@ -771,7 +791,8 @@ private:
             mapShared(page, view.section->handle, view.offset, view.protection);
             view.slot->stored = true;
             view.resident = false;
-            view.aliasDemoted = alias;
+            view.aliasDemoted = reason == Demotion::Alias;
+            view.demotedBy = reason == Demotion::SecondMappingPage && page != doubled ? Demotion::SecondMappingRun : reason;
             view.seen.fill(0);
             view.armed = 0;
             view.collected = 0;
@@ -783,11 +804,11 @@ private:
         residentRuns.erase(run);
     }
 
-    void breakRun(std::uintptr_t at) {
+    void breakRun(std::uintptr_t at, Demotion reason) {
         const auto next = residentRuns.upper_bound(at);
         if (next == residentRuns.begin()) return;
         const auto run = std::prev(next);
-        if (at > run->first && at < run->second.end) demote(at);
+        if (at > run->first && at < run->second.end) demote(at, reason);
     }
 
     void evict(std::map<std::uintptr_t, Run>::iterator run) {
@@ -945,12 +966,12 @@ private:
         if (memory.RegionSize != bytes && !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("split guest placeholder suffix");
     }
 
-    void reset(std::uintptr_t address, std::size_t bytes) {
+    void reset(std::uintptr_t address, std::size_t bytes, Demotion reason) {
         collectableRanges.clear();
         const auto end = address + bytes;
         forgetClean(address, end);
-        breakRun(address);
-        breakRun(end);
+        breakRun(address, reason);
+        breakRun(end, reason);
         if (const auto run = residentRuns.find(address); run != residentRuns.end() && run->second.end == end) {
             const auto memory = query(address);
             if (reinterpret_cast<std::uintptr_t>(memory.AllocationBase) != address) throw std::runtime_error("cannot release part of a host allocation");
@@ -1062,6 +1083,8 @@ private:
     std::size_t granularity = 0x10000;
     bool watchResident = false;
     std::uint64_t resumedSharedWrites = 0;
+    std::array<std::uint64_t, 8> resumedByCause{};
+    ULONGLONG lastTotals = 0;
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;
