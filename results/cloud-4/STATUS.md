@@ -1,5 +1,5 @@
-BUSY PM-097
-since: 2026-10-23T02:47Z (claimed PM-097: render-scale step 2a, depth surfaces at the scaled extent and FragCoord rescaling)
+READY
+last: PM-097 done 2026-10-23T04:14Z, result: results/cloud-4/PM-097.md
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
