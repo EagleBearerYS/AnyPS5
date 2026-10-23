@@ -650,6 +650,31 @@ private:
         std::vector<VkImageView> views;
     };
     std::vector<RetiredImage> retiredImages;
+    RetiredImage blitImage(VkExtent2D extent);
+    class NativeStore {
+    public:
+        explicit NativeStore(StorageTexture& texture);
+        ~NativeStore();
+        NativeStore(const NativeStore&) = delete;
+        NativeStore& operator=(const NativeStore&) = delete;
+
+    private:
+        void restore() noexcept;
+        StorageTexture& texture;
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceSize memoryBytes = 0;
+        std::uint32_t memoryType = 0;
+        VkImageView view = VK_NULL_HANDLE;
+        decltype(StorageTexture::extraViews) extraViews;
+        decltype(StorageTexture::firstLayerViews) firstLayerViews;
+        decltype(StorageTexture::atomicViews) atomicViews;
+        decltype(StorageTexture::uintViews) uintViews;
+        VkImageView elementView = VK_NULL_HANDLE;
+        decltype(StorageTexture::elementLayerViews) elementLayerViews;
+        decltype(StorageTexture::attachmentViews) attachmentViews;
+        VkExtent2D scaledExtent{0, 0};
+    };
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     std::uint64_t version = 0;

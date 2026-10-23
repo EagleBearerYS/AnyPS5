@@ -55,6 +55,8 @@ void NoteRenderScaleDemotion(RenderScaleDemotion reason, std::uint64_t address, 
 bool RenderScaleDemoted(std::uint64_t address, VkExtent2D native);
 std::array<std::uint64_t, RenderScaleDemotionCount> RenderScaleDemotions();
 std::uint64_t RenderScaledSurfaces();
+void NoteRenderScaledStore(std::uint64_t address, VkExtent2D native);
+std::uint64_t RenderScaledStores();
 bool ReadsFragmentPosition(std::span<const std::uint32_t> spirv);
 
 }

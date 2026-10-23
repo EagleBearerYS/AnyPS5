@@ -167,6 +167,19 @@ bool anyUnit(const std::vector<bool>& units) {
     return std::find(units.begin(), units.end(), true) != units.end();
 }
 
+struct TransientDepthImage {
+    TransientDepthImage(const Context& context, VkImage image, VkDeviceMemory memory) : context(context), image(image), memory(memory) {}
+    TransientDepthImage(const TransientDepthImage&) = delete;
+    TransientDepthImage& operator=(const TransientDepthImage&) = delete;
+    ~TransientDepthImage() {
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    }
+    const Context context;
+    const VkImage image;
+    const VkDeviceMemory memory;
+};
+
 bool renderScaleBlittable(const Context& context, VkFormat format) {
     VkFormatProperties properties{};
     context.formatProperties(context.physical, format, &properties);
@@ -823,8 +836,9 @@ public:
     }
 
     std::shared_ptr<StorageTexture> StoreDepthPlane(const GuestTextureResource& resource, std::vector<bool>& units) {
-        static_cast<void>(DemoteRenderScale(RenderScaleDemotion::DepthWriteBack));
         ApplyFastClear();
+        std::optional<NativePlane> native;
+        if (RenderScaled()) native.emplace(*this);
         auto mirror = Mirror(resource);
         auto& counters = depthPlaneStoreCounters();
         ++counters.stores;
@@ -1011,6 +1025,26 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         std::vector<VkImageView> views;
     };
+    class NativePlane {
+    public:
+        explicit NativePlane(DepthSurface& surface) : surface(surface), scaled(surface.image) {
+            const auto created = surface.blitImage(surface.target.extent);
+            transient = std::make_shared<TransientDepthImage>(surface.context, created.image, created.memory);
+            surface.image = created.image;
+            NoteRenderScaledStore(surface.target.address, surface.target.extent);
+        }
+        ~NativePlane() {
+            surface.image = scaled;
+            if (auto* recorder = Recorder::Active()) recorder->Keep(std::move(transient));
+        }
+        NativePlane(const NativePlane&) = delete;
+        NativePlane& operator=(const NativePlane&) = delete;
+
+    private:
+        DepthSurface& surface;
+        VkImage scaled;
+        std::shared_ptr<TransientDepthImage> transient;
+    };
     std::map<std::array<std::uint32_t, 13>, std::shared_ptr<Texture>> textures;
     VkImageCreateInfo imageInfo{};
     VkExtent2D scaledExtent{0, 0};
@@ -1092,14 +1126,13 @@ private:
         sampleShadowWritten = written;
     }
 
-    void swapImage(VkExtent2D extent) {
+    RetiredImage blitImage(VkExtent2D extent) {
         const auto from = ImageExtent();
         const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         auto createInfo = imageInfo;
         createInfo.extent = {extent.width, extent.height, 1};
         Require(extent.width <= context.limits.maxFramebufferWidth && extent.height <= context.limits.maxFramebufferHeight, "render-scaled depth target exceeds framebuffer limits");
         RetiredImage created;
-        VkImageView createdView = VK_NULL_HANDLE;
         try {
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &createInfo, nullptr, &created.image), "vkCreateImage render-scaled depth");
             VkMemoryRequirements requirements{};
@@ -1109,12 +1142,6 @@ private:
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             created.memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory render-scaled depth");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, created.image, created.memory, 0), "vkBindImageMemory render-scaled depth");
-            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            viewInfo.image = created.image;
-            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = hostFormat;
-            viewInfo.subresourceRange = {aspects, 0, 1, 0, 1};
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &createdView), "vkCreateImageView render-scaled depth");
         } catch (...) {
             if (created.image != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, created.image, nullptr);
             if (created.memory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, created.memory, nullptr);
@@ -1156,6 +1183,20 @@ private:
         barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &blitted);
         if (batch) batch->SubmitAndWait();
         else Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
+        return created;
+    }
+
+    void swapImage(VkExtent2D extent) {
+        auto created = blitImage(extent);
+        VkImageView createdView = VK_NULL_HANDLE;
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image = created.image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = hostFormat;
+        viewInfo.subresourceRange = {static_cast<VkImageAspectFlags>(VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u)), 0, 1, 0, 1};
+        const auto viewResult = context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &createdView);
+        if (viewResult != VK_SUCCESS) retiredImages.push_back(std::move(created));
+        Check(viewResult, "vkCreateImageView render-scaled depth");
         RetiredImage retired{image, memory, {}};
         if (view != VK_NULL_HANDLE) retired.views.push_back(view);
         if (depthView != VK_NULL_HANDLE) retired.views.push_back(depthView);

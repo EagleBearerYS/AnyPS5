@@ -55,6 +55,11 @@ std::atomic<std::uint64_t>& ScaledCount() {
     return count;
 }
 
+std::atomic<std::uint64_t>& ScaledStoreCount() {
+    static std::atomic<std::uint64_t> count{0};
+    return count;
+}
+
 struct DemotedSurfaces {
     std::mutex mutex;
     std::set<std::tuple<std::uint64_t, std::uint32_t, std::uint32_t>> surfaces;
@@ -229,6 +234,15 @@ std::array<std::uint64_t, RenderScaleDemotionCount> RenderScaleDemotions() {
 
 std::uint64_t RenderScaledSurfaces() {
     return ScaledCount().load(std::memory_order_relaxed);
+}
+
+void NoteRenderScaledStore(std::uint64_t address, VkExtent2D native) {
+    const auto count = ScaledStoreCount().fetch_add(1, std::memory_order_relaxed) + 1;
+    if (logDue(count)) std::fprintf(stderr, "[render-scale] 0x%llx stored scaled at its native size %ux%u (%llu scaled stores)\n", static_cast<unsigned long long>(address), native.width, native.height, static_cast<unsigned long long>(count));
+}
+
+std::uint64_t RenderScaledStores() {
+    return ScaledStoreCount().load(std::memory_order_relaxed);
 }
 
 bool ReadsFragmentPosition(std::span<const std::uint32_t> spirv) {

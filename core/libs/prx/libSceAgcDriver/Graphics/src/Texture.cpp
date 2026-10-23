@@ -1917,7 +1917,7 @@ std::vector<std::byte> StorageTexture::ReadImageTexels() {
     return {mapped.begin(), mapped.begin() + static_cast<std::ptrdiff_t>(bytes)};
 }
 
-void StorageTexture::swapImage(VkExtent2D extent) {
+StorageTexture::RetiredImage StorageTexture::blitImage(VkExtent2D extent) {
     const auto from = ImageExtent();
     auto createInfo = imageCreateInfo;
     createInfo.extent = {extent.width, extent.height, 1};
@@ -1983,6 +1983,11 @@ void StorageTexture::swapImage(VkExtent2D extent) {
     blitted.newLayout = VK_IMAGE_LAYOUT_GENERAL;
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &blitted);
     if (batch) batch->SubmitAndWait();
+    return {created, createdMemory, requirements.size, createdType, {}};
+}
+
+void StorageTexture::swapImage(VkExtent2D extent) {
+    const auto created = blitImage(extent);
     RetiredImage retired{image, memory, memoryBytes, memoryType, {}};
     const auto retire = [&](VkImageView retiredView) {
         if (retiredView != VK_NULL_HANDLE) retired.views.push_back(retiredView);
@@ -2003,13 +2008,94 @@ void StorageTexture::swapImage(VkExtent2D extent) {
     elementLayerViews.clear();
     attachmentViews.clear();
     retiredImages.push_back(std::move(retired));
-    image = created;
-    memory = createdMemory;
-    memoryBytes = requirements.size;
-    memoryType = createdType;
+    image = created.image;
+    memory = created.memory;
+    memoryBytes = created.bytes;
+    memoryType = created.type;
     view = createView(defaultMip, false, storageFormat);
     ++version;
     BumpPendingSerial();
+}
+
+namespace {
+
+struct TransientImage {
+    TransientImage(const Context& context, VkImage image, VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t type) : owned(context, image, memory) {
+        owned.memoryBytes = bytes;
+        owned.memoryType = type;
+    }
+    TransientImage(const TransientImage&) = delete;
+    TransientImage& operator=(const TransientImage&) = delete;
+    ~TransientImage() {
+        for (const auto view : views) owned.context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(owned.context.device, view, nullptr);
+    }
+    OwnedImage owned;
+    std::vector<VkImageView> views;
+};
+
+}
+
+StorageTexture::NativeStore::NativeStore(StorageTexture& texture) : texture(texture) {
+    const VkExtent2D native{texture.descriptor.width, texture.descriptor.height};
+    const auto created = texture.blitImage(native);
+    image = texture.image;
+    memory = texture.memory;
+    memoryBytes = texture.memoryBytes;
+    memoryType = texture.memoryType;
+    view = texture.view;
+    extraViews = std::exchange(texture.extraViews, {});
+    firstLayerViews = std::exchange(texture.firstLayerViews, {});
+    atomicViews = std::exchange(texture.atomicViews, {});
+    uintViews = std::exchange(texture.uintViews, {});
+    elementView = std::exchange(texture.elementView, VK_NULL_HANDLE);
+    elementLayerViews = std::exchange(texture.elementLayerViews, {});
+    attachmentViews = std::exchange(texture.attachmentViews, {});
+    scaledExtent = std::exchange(texture.scaledExtent, VkExtent2D{0, 0});
+    texture.image = created.image;
+    texture.memory = created.memory;
+    texture.memoryBytes = created.bytes;
+    texture.memoryType = created.type;
+    try {
+        texture.view = texture.createView(texture.defaultMip, false, texture.storageFormat);
+    } catch (...) {
+        texture.view = VK_NULL_HANDLE;
+        restore();
+        throw;
+    }
+    NoteRenderScaledStore(texture.descriptor.baseAddress, native);
+}
+
+StorageTexture::NativeStore::~NativeStore() {
+    restore();
+}
+
+void StorageTexture::NativeStore::restore() noexcept {
+    auto transient = std::make_shared<TransientImage>(texture.context, texture.image, texture.memory, texture.memoryBytes, texture.memoryType);
+    const auto take = [&](VkImageView taken) {
+        if (taken != VK_NULL_HANDLE) transient->views.push_back(taken);
+    };
+    take(texture.view);
+    for (const auto& [mip, extra] : texture.extraViews) take(extra);
+    for (const auto& [mip, extra] : texture.firstLayerViews) take(extra);
+    for (const auto& [key, atomic] : texture.atomicViews) take(atomic);
+    for (const auto& [key, uint] : texture.uintViews) take(uint);
+    take(texture.elementView);
+    for (const auto& [key, element] : texture.elementLayerViews) take(element);
+    for (const auto& [key, attachment] : texture.attachmentViews) take(attachment);
+    texture.image = image;
+    texture.memory = memory;
+    texture.memoryBytes = memoryBytes;
+    texture.memoryType = memoryType;
+    texture.view = view;
+    texture.extraViews = std::move(extraViews);
+    texture.firstLayerViews = std::move(firstLayerViews);
+    texture.atomicViews = std::move(atomicViews);
+    texture.uintViews = std::move(uintViews);
+    texture.elementView = elementView;
+    texture.elementLayerViews = std::move(elementLayerViews);
+    texture.attachmentViews = std::move(attachmentViews);
+    texture.scaledExtent = scaledExtent;
+    if (auto* recorder = Recorder::Active()) recorder->Keep(std::move(transient));
 }
 
 VkImageView StorageTexture::AttachmentProxyView() {
@@ -5450,7 +5536,6 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
 }
 
 void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
-    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::WriteBack));
     // Block units are stored per access; an image whose units keep being asked for in pieces (a
     // consumer touching it through many small ranges, each piece re-arming the pending memos of
     // the next dispatch) stores every pending unit once more than `pieces` partial stores fall
@@ -5507,7 +5592,8 @@ bool StorageTexture::unchangedSinceBaseline(std::uint64_t from, std::uint64_t to
 }
 
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
-    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::WriteBack));
+    std::optional<NativeStore> nativeStore;
+    if (RenderScaled()) nativeStore.emplace(*this);
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
