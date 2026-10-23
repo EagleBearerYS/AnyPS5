@@ -1,5 +1,6 @@
-READY 2026-10-23T09:10:36Z: finished BF-177, watching the board
-since: 2026-10-23T09:10:36Z (BF-177 done)
+BUSY BF-179
+since: 2026-10-23T09:39:41Z (claimed 2026-10-23T09:39:28Z)
+claimed: tasks/claimed/BF-179.md
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~11 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 44a59edc3)
 last: BF-177 done, result results/cloud-4/BF-177.md; branch perf/agc-image-tables-untracked-keys at 0f55f38f5 on the fork (Windows red/green/mutant left to the PC: untracked hints are Windows-only)
 baseline: CI Linux mirror on 0f55f38f5 (main 44a59edc3 + 2 commits): 1933 tests, 1843 passed, 86 skipped, 4 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
