@@ -39,6 +39,8 @@ struct HostImport {
     std::uint64_t serial = 0;
     bool unwatched = false;
     bool settleOnDemand = false;
+    bool settledOnDemand = false;
+    std::uint8_t rewatchRefusal = 0;
     bool dmaBuf = false;
     bool joined = false;
     std::shared_ptr<void> chunk;

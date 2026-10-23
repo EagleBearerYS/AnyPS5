@@ -1099,6 +1099,16 @@ bool comparedImportShares(const HostImports& state, std::uint64_t own, std::uint
     return false;
 }
 
+bool parkedImportShares(const HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    for (const auto& [device, list] : state.parked) {
+        for (const auto& retired : list) {
+            const auto& entry = retired->node.mapped();
+            if (entry.unwatched && entry.memoryBase < end && begin < entry.memoryBase + entry.pinnedBytes) return true;
+        }
+    }
+    return false;
+}
+
 void rewatchSettledImports(HostImports& state) {
     if (state.settleReady.empty()) return;
     std::vector<std::uint64_t> bases;
@@ -1111,9 +1121,13 @@ void rewatchSettledImports(HostImports& state) {
         if (import == state.imports.end() || !import->second.unwatched) continue;
         const auto first = base & ~(settleBlockBytes - 1);
         const auto stop = (base + import->second.bytes + settleBlockBytes - 1) & ~(settleBlockBytes - 1);
-        if ((first != base || stop != base + import->second.bytes) && comparedImportShares(state, base, first, stop)) continue;
+        if ((first != base || stop != base + import->second.bytes) && comparedImportShares(state, base, first, stop)) {
+            import->second.rewatchRefusal = parkedImportShares(state, first, stop) ? 2u : 1u;
+            continue;
+        }
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{first, stop}}};
         if (StorageTexture::AnyLiveOverlaps(span)) {
+            import->second.rewatchRefusal = 3u;
             ++state.settlesKeptCompared;
             continue;
         }
@@ -1125,7 +1139,12 @@ void rewatchSettledImports(HostImports& state) {
     GuestMemory::Rewatch(ranges);
     for (const auto base : bases) {
         const auto import = state.imports.find(base);
-        if (import == state.imports.end() || !GuestMemory::Watched(base, static_cast<std::size_t>(import->second.bytes))) continue;
+        if (import == state.imports.end()) continue;
+        if (!GuestMemory::Watched(base, static_cast<std::size_t>(import->second.bytes))) {
+            import->second.rewatchRefusal = 4u;
+            continue;
+        }
+        import->second.rewatchRefusal = 0u;
         import->second.unwatched = false;
         ++state.settlesRewatched;
     }
@@ -1153,6 +1172,7 @@ void settleImportsNow(const Context& context, HostImports& state, std::uint64_t 
         if (settle == state.pendingSettles.end()) {
             if (!entry.settleOnDemand || !deferredSettles.load(std::memory_order_relaxed)) continue;
             entry.settleOnDemand = false;
+            entry.settledOnDemand = true;
             settle = state.pendingSettles.insert_or_assign(it->first, PendingSettle{}).first;
         }
         if (settle->second.phase == SettlePhase::Wanted) {

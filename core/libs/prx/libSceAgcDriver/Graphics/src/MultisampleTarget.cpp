@@ -617,7 +617,7 @@ private:
             if (import == nullptr) {
                 std::snprintf(text, sizeof(text), "; %s: no host import", which);
             } else {
-                std::snprintf(text, sizeof(text), "; %s: host import 0x%llx+0x%llx, unwatched %d, settle on demand %d, alias %d, dma-buf %d, joined %d, memory 0x%llx+0x%llx", which, static_cast<unsigned long long>(import->base), static_cast<unsigned long long>(import->bytes), import->unwatched ? 1 : 0, import->settleOnDemand ? 1 : 0, import->alias != nullptr ? 1 : 0, import->dmaBuf ? 1 : 0, import->joined ? 1 : 0, static_cast<unsigned long long>(import->memoryBase), static_cast<unsigned long long>(import->pinnedBytes));
+                std::snprintf(text, sizeof(text), "; %s: host import 0x%llx+0x%llx, unwatched %d, settle on demand %d, settled on demand %d, rewatch refusal %u (%s), alias %d, dma-buf %d, joined %d, memory 0x%llx+0x%llx", which, static_cast<unsigned long long>(import->base), static_cast<unsigned long long>(import->bytes), import->unwatched ? 1 : 0, import->settleOnDemand ? 1 : 0, import->settledOnDemand ? 1 : 0, static_cast<unsigned>(import->rewatchRefusal), import->rewatchRefusal < 5u ? std::array<const char*, 5>{"none or not reached", "a live compared import shares its rounded span", "a parked import shares its rounded span", "a live storage image overlaps it", "Rewatch left it unwatched"}[import->rewatchRefusal] : "unknown", import->alias != nullptr ? 1 : 0, import->dmaBuf ? 1 : 0, import->joined ? 1 : 0, static_cast<unsigned long long>(import->memoryBase), static_cast<unsigned long long>(import->pinnedBytes));
             }
             report += text;
         };
