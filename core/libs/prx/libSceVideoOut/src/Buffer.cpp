@@ -8,6 +8,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RenderScale.hpp"
 
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group) {
     const auto& attribute = group.attribute;
@@ -61,6 +62,7 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
     cfg.groups[setIndex] = group;
     cfg.width = group.attribute.width;
     cfg.height = group.attribute.height;
+    AgcDriverNoteVideoOutExtent_nid_postfix(group.attribute.width, group.attribute.height);
     for (int i = 0; i < bufferNum; i++) {
         cfg.buffers[bufferIndexStart + i] = registered[i];
         auto& label = cfg.bufferLabels[bufferIndexStart + i];

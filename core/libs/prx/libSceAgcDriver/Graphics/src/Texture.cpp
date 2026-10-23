@@ -609,6 +609,7 @@ bool Texture::CanRepackCopyFrom(const StorageTexture& source, const GuestTexture
 }
 
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, RepackCopyTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse), repackCopy(true) {
+    if (source != nullptr) static_cast<void>(source->DemoteRenderScale(RenderScaleDemotion::Copy));
     try {
         Require(source != nullptr && CanRepackCopyFrom(*source, descriptor), "storage image cannot serve a repacked copy of the sampled texture");
         const auto format = SampledTextureFormat(context, descriptor.format);
@@ -668,6 +669,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
 }
 
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, BlockCopyTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse) {
+    if (source != nullptr) static_cast<void>(source->DemoteRenderScale(RenderScaleDemotion::Copy));
     try {
         Require(source != nullptr && CanBlockCopyFrom(*source, descriptor), "storage image cannot serve a block copy of the sampled texture");
         blockFormat = SampledTextureFormat(context, descriptor.format);
@@ -723,6 +725,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
 }
 
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, DepthCopyTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse) {
+    if (source != nullptr) static_cast<void>(source->DemoteRenderScale(RenderScaleDemotion::Copy));
     try {
         Require(source != nullptr && CanDepthCopyFrom(*source, descriptor), "storage image cannot serve a depth copy of the sampled texture");
         const auto colorFormat = ResolveTextureFormat(descriptor.format);
@@ -792,6 +795,7 @@ bool Texture::CanSrgbExpandFrom(const Context& context, const StorageTexture& so
 }
 
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, SrgbExpandTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse), srgbExpand(true) {
+    if (source != nullptr) static_cast<void>(source->DemoteRenderScale(RenderScaleDemotion::Copy));
     try {
         Require(source != nullptr && CanSrgbExpandFrom(context, *source, descriptor), "storage image cannot serve an sRGB copy of the sampled texture");
         const auto geometry = DescribeSurface(descriptor);
@@ -1425,6 +1429,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage storage");
+        imageCreateInfo = imageInfo;
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -1864,8 +1869,152 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, s
     return created;
 }
 
+bool StorageTexture::RenderScalable() const {
+    if (scaleDemoted || !attachable || proxyImage != VK_NULL_HANDLE || descriptor.dimension != TextureDimension::k2D || descriptor.mipCount != 1 || geometry.imageLayers != 1 || geometry.imageDepth != 1) return false;
+    if (RenderScaleDemoted(descriptor.baseAddress, {descriptor.width, descriptor.height})) return false;
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, storageFormat, &properties);
+    constexpr VkFormatFeatureFlags blit = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+    return (properties.optimalTilingFeatures & blit) == blit;
+}
+
+VkExtent2D StorageTexture::ImageExtent() const {
+    return scaledExtent.width != 0 ? scaledExtent : VkExtent2D{descriptor.width, descriptor.height};
+}
+
+void StorageTexture::RenderScaleTo(VkExtent2D extent) {
+    if (scaledExtent.width == extent.width && scaledExtent.height == extent.height) return;
+    Require(RenderScalable(), "a render-scaled image needs a blittable single-mip 2D surface that was not demoted");
+    swapImage(extent);
+    scaledExtent = extent;
+    NoteRenderScaled(descriptor.baseAddress, {descriptor.width, descriptor.height}, extent);
+}
+
+bool StorageTexture::DemoteRenderScale(RenderScaleDemotion reason) {
+    if (scaledExtent.width == 0) return false;
+    const VkExtent2D native{descriptor.width, descriptor.height};
+    swapImage(native);
+    scaledExtent = {0, 0};
+    scaleDemoted = true;
+    NoteRenderScaleDemotion(reason, descriptor.baseAddress, native);
+    return true;
+}
+
+std::vector<std::byte> StorageTexture::ReadImageTexels() {
+    const auto extent = ImageExtent();
+    const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * BytesPerElement(descriptor.format);
+    Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    CommandBatch batch(context);
+    const auto commands = batch.Handle();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {extent.width, extent.height, 1};
+    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    batch.SubmitAndWait();
+    const auto mapped = readback.Bytes();
+    return {mapped.begin(), mapped.begin() + static_cast<std::ptrdiff_t>(bytes)};
+}
+
+void StorageTexture::swapImage(VkExtent2D extent) {
+    const auto from = ImageExtent();
+    auto createInfo = imageCreateInfo;
+    createInfo.extent = {extent.width, extent.height, 1};
+    VkImage created = VK_NULL_HANDLE;
+    Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &createInfo, nullptr, &created), "vkCreateImage render scale");
+    VkMemoryRequirements requirements{};
+    context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, created, &requirements);
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "storage texture");
+    std::uint32_t createdType = 0;
+    VkDeviceMemory createdMemory = VK_NULL_HANDLE;
+    try {
+        createdMemory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory render scale", &createdType);
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, created, createdMemory, 0), "vkBindImageMemory render scale");
+    } catch (...) {
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, created, nullptr);
+        if (createdMemory != VK_NULL_HANDLE) ReleaseImageMemory(context, createdMemory, requirements.size, createdType);
+        throw;
+    }
+    auto* recorder = Recorder::Active();
+    std::unique_ptr<CommandBatch> batch;
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+    if (recorder != nullptr) {
+        commands = recorder->Commands();
+        if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
+        Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
+    } else {
+        batch = std::make_unique<CommandBatch>(context);
+        commands = batch->Handle();
+    }
+    VkImageMemoryBarrier barriers[2]{};
+    for (auto& barrier : barriers) {
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    }
+    barriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barriers[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barriers[0].image = image;
+    barriers[1].srcAccessMask = 0;
+    barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barriers[1].image = created;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, storageFormat, &properties);
+    const VkFilter filter = (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    VkImageBlit blit{};
+    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1] = {static_cast<std::int32_t>(from.width), static_cast<std::int32_t>(from.height), 1};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.dstOffsets[1] = {static_cast<std::int32_t>(extent.width), static_cast<std::int32_t>(extent.height), 1};
+    context.Function<PFN_vkCmdBlitImage>("vkCmdBlitImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, created, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, filter);
+    VkImageMemoryBarrier blitted = barriers[1];
+    blitted.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    blitted.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    blitted.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    blitted.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &blitted);
+    if (batch) batch->SubmitAndWait();
+    RetiredImage retired{image, memory, memoryBytes, memoryType, {}};
+    const auto retire = [&](VkImageView retiredView) {
+        if (retiredView != VK_NULL_HANDLE) retired.views.push_back(retiredView);
+    };
+    retire(view);
+    for (const auto& [mip, extra] : extraViews) retire(extra);
+    for (const auto& [mip, extra] : firstLayerViews) retire(extra);
+    for (const auto& [key, atomic] : atomicViews) retire(atomic);
+    for (const auto& [key, uint] : uintViews) retire(uint);
+    retire(elementView);
+    for (const auto& [key, element] : elementLayerViews) retire(element);
+    for (const auto& [key, attachment] : attachmentViews) retire(attachment);
+    extraViews.clear();
+    firstLayerViews.clear();
+    atomicViews.clear();
+    uintViews.clear();
+    elementView = VK_NULL_HANDLE;
+    elementLayerViews.clear();
+    attachmentViews.clear();
+    retiredImages.push_back(std::move(retired));
+    image = created;
+    memory = createdMemory;
+    memoryBytes = requirements.size;
+    memoryType = createdType;
+    view = createView(defaultMip, false, storageFormat);
+    ++version;
+    BumpPendingSerial();
+}
+
 VkImageView StorageTexture::AttachmentProxyView() {
     if (proxyView != VK_NULL_HANDLE) return proxyView;
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::MixedAttachment));
     Require(storageFormat == VK_FORMAT_R8_UNORM && descriptor.dimension == TextureDimension::k2D && descriptor.mipCount == 1 && geometry.imageLayers == 1, "an RGBA8_SRGB attachment proxy is only modeled for a single-mip 2D R8 surface");
     try {
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -1954,6 +2103,7 @@ void StorageTexture::RecordAttachmentProxyStore(VkCommandBuffer commands, VkImag
 }
 
 VkImageView StorageTexture::View(std::uint32_t mip) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::StorageAccess));
     if (mip == defaultMip) return view;
     const auto found = extraViews.find(mip);
     if (found != extraViews.end()) return found->second;
@@ -1963,6 +2113,7 @@ VkImageView StorageTexture::View(std::uint32_t mip) {
 }
 
 VkImageView StorageTexture::FirstLayerView(std::uint32_t mip) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::StorageAccess));
     const auto found = firstLayerViews.find(mip);
     if (found != firstLayerViews.end()) return found->second;
     const auto created = createView(mip, true, storageFormat);
@@ -1971,6 +2122,7 @@ VkImageView StorageTexture::FirstLayerView(std::uint32_t mip) {
 }
 
 VkImageView StorageTexture::StorageView(std::uint32_t mip, bool firstLayer) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::StorageAccess));
     const auto format = UintFormatOfSint(storageFormat);
     if (format == VK_FORMAT_UNDEFINED) return firstLayer ? FirstLayerView(mip) : View(mip);
     if (format == VK_FORMAT_R32_UINT) return AtomicView(mip, firstLayer);
@@ -1983,6 +2135,7 @@ VkImageView StorageTexture::StorageView(std::uint32_t mip, bool firstLayer) {
 }
 
 VkImageView StorageTexture::ElementView() {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::StorageAccess));
     if (elementView != VK_NULL_HANDLE) return elementView;
     if (descriptor.dimension != TextureDimension::k2D || geometry.imageLayers != 1) return VK_NULL_HANDLE;
     const auto bytes = BytesPerElement(descriptor.format);
@@ -1993,6 +2146,7 @@ VkImageView StorageTexture::ElementView() {
 }
 
 VkImageView StorageTexture::AtomicView(std::uint32_t mip, bool firstLayer) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::StorageAccess));
     if (storageFormat == VK_FORMAT_R32_UINT) return firstLayer ? FirstLayerView(mip) : View(mip);
     Require(storageFormat == VK_FORMAT_R32_SINT || storageFormat == VK_FORMAT_R32_SFLOAT, "storage image atomics need a surface of one 32-bit component");
     const auto found = atomicViews.find({mip, firstLayer});
@@ -2003,6 +2157,7 @@ VkImageView StorageTexture::AtomicView(std::uint32_t mip, bool firstLayer) {
 }
 
 VkImageView StorageTexture::Atomic64View(std::uint32_t mip, bool firstLayer) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::StorageAccess));
     if (storageFormat == VK_FORMAT_R64_UINT) return firstLayer ? FirstLayerView(mip) : View(mip);
     Require(storageFormat == VK_FORMAT_R32G32_UINT || storageFormat == VK_FORMAT_R32G32_SINT || storageFormat == VK_FORMAT_R32G32_SFLOAT, "64-bit storage image atomics need a surface of two 32-bit components");
     const auto found = atomicViews.find({mip, firstLayer});
@@ -2639,6 +2794,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadClear, start);
         return;
     }
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::GuestWrite));
     if (const auto* import = uploadedKeys == DccKeys::Uncompressed ? HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) : nullptr) {
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
@@ -3102,6 +3258,7 @@ void StorageTexture::recordDirectUploadDone(VkCommandBuffer commands) {
 }
 
 std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::GuestWrite));
     const auto elementBytes = BytesPerElement(descriptor.format);
     // Each run's pieces by source (a unit shadow's slab while fresh, else the import), the tail
     // blocks moved whole by one window each; the windows are built per piece.
@@ -4907,6 +5064,8 @@ const char* StorageTexture::CopyRefusal(const Context& context, const StorageTex
 bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
     refusal = CopyRefusal(context, this, source, descriptor.baseAddress);
     if (refusal != nullptr) return false;
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::Copy));
+    static_cast<void>(source.DemoteRenderScale(RenderScaleDemotion::Copy));
     auto* recorder = Recorder::Active();
     // The source image must hold the surface: a stale one uploads first (and other images'
     // results pending over its memory land first, as the transfer's flush would have them).
@@ -5224,6 +5383,8 @@ void StorageTexture::forgetBorrowed(std::uint32_t first, std::uint32_t count) {
 }
 
 std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vector<bool>& units) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::Copy));
+    static_cast<void>(source.DemoteRenderScale(RenderScaleDemotion::Copy));
     const auto runs = unitRuns(units);
     const auto windows = sliceWindows(runs);
     Require(!windows.empty(), "storage image borrows no unit");
@@ -5289,6 +5450,7 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
 }
 
 void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::WriteBack));
     // Block units are stored per access; an image whose units keep being asked for in pieces (a
     // consumer touching it through many small ranges, each piece re-arming the pending memos of
     // the next dispatch) stores every pending unit once more than `pieces` partial stores fall
@@ -5345,6 +5507,7 @@ bool StorageTexture::unchangedSinceBaseline(std::uint64_t from, std::uint64_t to
 }
 
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
+    static_cast<void>(DemoteRenderScale(RenderScaleDemotion::WriteBack));
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
@@ -5802,6 +5965,12 @@ StorageTexture::~StorageTexture() {
 }
 
 void StorageTexture::release() noexcept {
+    for (const auto& retired : retiredImages) {
+        for (const auto retiredView : retired.views) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, retiredView, nullptr);
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, retired.image, nullptr);
+        ReleaseImageMemory(context, retired.memory, retired.bytes, retired.type);
+    }
+    retiredImages.clear();
     for (const auto& [mip, extra] : extraViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);
     extraViews.clear();
     for (const auto& [mip, extra] : firstLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);

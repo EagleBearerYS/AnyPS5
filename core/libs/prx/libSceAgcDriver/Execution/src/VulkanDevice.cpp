@@ -3091,6 +3091,7 @@ std::shared_ptr<Graphics::StorageTexture> PresentableResident(const Graphics::Co
     layer = 0;
     if (resident == nullptr) return resident;
     const auto path = ResidentPresentable(context, *resident, buffer, filter, layer);
+    if (path == ResidentPresent::Convert) static_cast<void>(resident->DemoteRenderScale(Graphics::RenderScaleDemotion::Presentation));
     if (path == ResidentPresent::None) resident.reset();
     convert = path == ResidentPresent::Convert;
     return resident;
@@ -3342,6 +3343,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     require(uniform == nullptr || (pixels.empty() && display == nullptr && resident == nullptr), "a uniform presentation has no other source");
     const bool direct = resident != nullptr && !residentConvert;
     const bool drawn = resident != nullptr && residentConvert && !DisplayHalfFloat(display->pixelFormat);
+    const VkExtent2D residentExtent = resident != nullptr ? resident->ImageExtent() : VkExtent2D{width, height};
     require(passthrough == (state->surfaceColorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT) || clearOnly, "a presentation's dynamic range differs from its swapchain's");
     require(!passthrough || drawn || clearOnly || (state->hdrScaler != nullptr && !dumpFrame), "an HDR10 presentation through the scaler needs the HDR10 scaler and dumps on the CPU");
     auto* scaler = passthrough && !drawn ? state->hdrScaler.get() : state->scaler.get();
@@ -3451,7 +3453,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             state->presentation->RecordPresent(commands, slotIndex, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         } else {
             scaler->RecordLetterbox(commands, width, height, barrier.image, state->extent.width, state->extent.height);
-            if (direct) PresentationScaler::RecordBlitFrom(graphicsContext(), commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, width, height, residentFilter, barrier.image, state->extent.width, state->extent.height, residentLayer);
+            if (direct) PresentationScaler::RecordBlitFrom(graphicsContext(), commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, residentExtent.width, residentExtent.height, residentFilter, barrier.image, state->extent.width, state->extent.height, residentLayer);
             else scaler->RecordBlit(commands, barrier.image, state->extent.width, state->extent.height);
         }
         if (dumpFrame) {
@@ -3473,7 +3475,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             } else if (direct) {
                 if (!slot.dumpScaler) slot.dumpScaler = std::make_unique<PresentationScaler>(graphicsContext(), VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM);
                 slot.dumpScaler->EnsureSourceImage(slot.dumpWidth, slot.dumpHeight);
-                slot.dumpScaler->RecordBlitInto(commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, VK_FILTER_NEAREST, width, height, residentLayer);
+                slot.dumpScaler->RecordBlitInto(commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, VK_FILTER_NEAREST, residentExtent.width, residentExtent.height, residentLayer);
                 slot.dumpScaler->RecordReadback(commands, slot.dumpBuffer->Handle());
             } else {
                 scaler->RecordReadback(commands, slot.dumpBuffer->Handle());

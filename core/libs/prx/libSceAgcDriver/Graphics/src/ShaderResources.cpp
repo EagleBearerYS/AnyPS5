@@ -122,6 +122,7 @@ struct CachedTexture {
     // write watch; zero when none was taken.
     std::array<std::uint64_t, 4> untracked{};
     std::uint64_t surfaceBytes = 0;
+    VkImage sourceImage = VK_NULL_HANDLE;
 };
 
 // Entries in use order (front = most recent) with a hash index by key: a lookup is O(1) and the
@@ -870,7 +871,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             // The view follows the storage image, whatever the GPU wrote to it since; guest memory
             // written meanwhile is taken in by refreshing the image. A fast clear the image cannot
             // see (keys, and no pending results to prefer) ends the view: a snapshot holds the clear.
-            if (!stagedFlushed && (source == nullptr || source == it->source) && (source != nullptr || *keys == DccKeys::Uncompressed) && StorageImageServesKeys(*it->source, resource.dccAddress)) {
+            if (!stagedFlushed && (source == nullptr || source == it->source) && (source != nullptr || *keys == DccKeys::Uncompressed) && StorageImageServesKeys(*it->source, resource.dccAddress) && it->sourceImage == it->source->Image()) {
                 if (!GuestMemory::UnchangedSince(address, bytes, it->source->GenerationFor(address, bytes))) refreshForView(*it->source, resource);
                 if (it->texture->IsDepthCopy()) it->texture->RefreshDepthCopy();
                 it->keys = *keys;
@@ -935,6 +936,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         } else {
             entry.texture = std::make_shared<Texture>(context, source, resource, components);
         }
+        entry.sourceImage = source->Image();
         entry.accounted = source->Cached() ? 0u : heldBytes(*source);
         counters.fromStorage.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -1543,6 +1545,7 @@ bool UsesAddressTables(const CompiledShader& compute) {
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), deferredCompute(compute), deferredSnapshots(snapshots) {
     Require(compute.stage == ShaderRecompiler::ShaderStage::Compute, "compute resources require a compute shader");
+    computeBuild = true;
     // Every use of a compute build is a recorded dispatch that calls MarkGpuWrites, which staged
     // buffers need (a synchronous draw's use would not).
     guestMemory.AllowDeviceStaging();
@@ -4612,6 +4615,7 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(const ImageRecord& record)
     std::lock_guard lock(cache.mutex);
     const auto it = findSampledEntry(cache, context.device, record.words, record.components);
     if (it == cache.entries.end() || it->texture != record.texture || it->committed.has_value()) return nullptr;
+    if (it->source != nullptr && it->sourceImage != it->source->Image()) return nullptr;
     if (it->source == nullptr) it->generation = record.generation;
     touchTexture(cache, it);
     logLookup({record.texture.get(), record.resource, record.guestBytes, keys, record.source != nullptr ? 0 : record.generation, record.source.get()});
@@ -4663,6 +4667,17 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             const auto guestBytes = record != nullptr && record->decoded ? record->guestBytes : DescribeSurface(resource).guestBytes;
             CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
             if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
+            if (ActiveRenderScale().has_value()) {
+                const bool unnormalized = element < binding.imageUnnormalized.size() && binding.imageUnnormalized[element];
+                const bool fetched = element < binding.imageFetched.size() && binding.imageFetched[element];
+                const bool queried = element < binding.imageQueried.size() && binding.imageQueried[element];
+                if (unnormalized || fetched || queried) {
+                    const auto reason = queried && !unnormalized && !fetched ? RenderScaleDemotion::SizeQuery : RenderScaleDemotion::TexelFetch;
+                    for (const auto& image : {StorageTexture::FindPending(resource.baseAddress, guestBytes), StorageTexture::FindLive(resource.baseAddress, guestBytes)}) {
+                        if (image != nullptr) static_cast<void>(image->DemoteRenderScale(reason));
+                    }
+                }
+            }
             std::shared_ptr<Texture> texture;
             const VkImageViewType multisampleViewType = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
             if (previousSampled.texture != nullptr && previousSampled.depthCompare == depthCompare && previousSampled.multisampleViewType == multisampleViewType && words.size() == 8 && std::equal(words.begin(), words.end(), previousSampled.words.begin())) texture = previousSampled.texture;
@@ -4753,6 +4768,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         // The same surface as the previous element: its image was just looked up and refreshed.
         if (sameAsPrevious && StorageDedupeEnabled()) storageTextures.push_back(storageTextures.back());
         else storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes, written));
+        if (storageTextures.back() != nullptr) static_cast<void>(storageTextures.back()->DemoteRenderScale(computeBuild ? RenderScaleDemotion::ComputeWrite : RenderScaleDemotion::StorageAccess));
         storageMips.push_back(mip);
         storageKeys.push_back(resource.dccAddress);
         storageFirstLayer.push_back(firstLayer);

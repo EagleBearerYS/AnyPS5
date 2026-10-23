@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RenderScale.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -2204,6 +2205,7 @@ struct PreparedDraw {
     bool lean = false;
     bool multisampled = false;
     std::optional<State> masked;
+    std::optional<State> scaled;
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
     std::shared_ptr<Pipeline> pipeline;
     std::vector<std::shared_ptr<StorageTexture>> owners;
@@ -2213,6 +2215,55 @@ struct PreparedDraw {
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
 };
+
+void rebindTargetViews(std::vector<TargetBinding>& targets, std::vector<VkImageView>& targetViews) {
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        const auto& binding = targets[index];
+        if (binding.resident == nullptr || binding.proxied || binding.multisampled) continue;
+        const auto& color = binding.color;
+        targetViews[index] = binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
+    }
+}
+
+void demoteRenderTargets(std::vector<TargetBinding>& targets, std::vector<VkImageView>& targetViews, RenderScaleDemotion reason) {
+    bool demoted = false;
+    for (auto& binding : targets) {
+        if (binding.resident == nullptr) continue;
+        if (binding.resident->DemoteRenderScale(reason)) demoted = true;
+        else if (RenderScaleCoversVideoOut(binding.color.extent) && binding.resident->RenderScalable()) {
+            const auto& descriptor = binding.resident->Descriptor();
+            NoteRenderScaleDemotion(reason, descriptor.baseAddress, {descriptor.width, descriptor.height});
+        }
+    }
+    if (demoted) rebindTargetViews(targets, targetViews);
+}
+
+std::optional<State> renderScaledState(const State& state, std::span<const CompiledShader> shaders, std::vector<TargetBinding>& targets, std::vector<VkImageView>& targetViews) {
+    const auto scale = ActiveRenderScale();
+    if (!scale.has_value() || targets.empty()) return std::nullopt;
+    const auto scalable = [](const TargetBinding& binding) {
+        const auto& color = binding.color;
+        return binding.resident != nullptr && !binding.proxied && !binding.multisampled && color.mip == 0 && color.layers == 1 && color.depth == 1 && color.arraySlice == 0 && color.arrayLastSlice == 0 && RenderScaleCoversVideoOut(color.extent) && binding.resident->RenderScalable();
+    };
+    const bool scaled = std::ranges::any_of(targets, [](const TargetBinding& binding) { return binding.resident != nullptr && binding.resident->RenderScaled(); });
+    if (!scaled && !std::ranges::any_of(targets, scalable)) return std::nullopt;
+    const bool readsPosition = std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment && shader.program != nullptr && ReadsFragmentPosition(shader.program->spirv.Words()); });
+    std::optional<RenderScaleDemotion> refusal;
+    if (state.depth.has_value()) refusal = RenderScaleDemotion::DepthAttachment;
+    else if (!std::ranges::all_of(targets, scalable) || state.samples != 1 || DumpTargetLimit() != 0) refusal = RenderScaleDemotion::MixedAttachment;
+    else if (readsPosition) refusal = RenderScaleDemotion::FragmentPosition;
+    if (refusal.has_value()) {
+        demoteRenderTargets(targets, targetViews, *refusal);
+        return std::nullopt;
+    }
+    for (auto& binding : targets) binding.resident->RenderScaleTo(ScaleExtent(binding.color.extent, *scale));
+    rebindTargetViews(targets, targetViews);
+    State result = state;
+    result.renderExtent = ScaleExtent(state.renderExtent, *scale);
+    result.viewport = ScaleViewport(state.viewport, *scale);
+    result.scissor = ScaleScissor(state.scissor, *scale, result.renderExtent);
+    return result;
+}
 
 bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
     auto*& recipeOut = prepared.recipeOut;
@@ -2361,6 +2412,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         binding.target = std::make_unique<RenderTarget>(context, color, state.blends.at(color.exportIndex).blendEnable != 0);
         targetViews.push_back(binding.target->View());
     }
+    prepared.scaled = renderScaledState(state, shaders, targets, targetViews);
     if (state.depth) {
         targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite));
         if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
@@ -2372,6 +2424,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& resolved = prepared.resolved;
     resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
     auto& resources = resolved.resources;
+    if (prepared.scaled.has_value() && std::ranges::any_of(targets, [](const TargetBinding& binding) { return binding.resident != nullptr && !binding.resident->RenderScaled(); })) {
+        demoteRenderTargets(targets, targetViews, RenderScaleDemotion::MixedAttachment);
+        prepared.scaled.reset();
+    }
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
         const auto readImages = resources->StorageImages();
@@ -2557,7 +2613,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         framebufferOwners.push_back(binding.multisampled ? binding.multisampleOwner : binding.resident);
     }
     auto& framebuffer = prepared.framebuffer;
-    framebuffer = pipeline->AcquireFramebuffer(targetViews, framebufferOwners, state.renderExtent, state.renderLayers);
+    framebuffer = pipeline->AcquireFramebuffer(targetViews, framebufferOwners, prepared.scaled.has_value() ? prepared.scaled->renderExtent : state.renderExtent, state.renderLayers);
     auto& reordered = prepared.reordered;
     auto& reorderPass = prepared.reorderPass;
     if (pipeline->ReordersSamples()) {
@@ -2941,8 +2997,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PreparedDraw prepared(profile);
-    prepared.recipeOut = recipeOut;
-    if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
+    prepared.recipeOut = ActiveRenderScale().has_value() ? nullptr : recipeOut;
+    if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, prepared.scaled.has_value() ? *prepared.scaled : state, draw, shaders, prepared);
 }
 
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe) {
@@ -2967,6 +3023,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     };
     Require(!draw.indirect, "a draw recipe covers direct draws only");
     auto* recorder = Recorder::Active();
+    if (ActiveRenderScale().has_value()) return miss(DrawRecipeMiss::NotRecordable);
     if (state.quadList || StripPatches(state, shaders) || !RecordDraws() || recorder == nullptr || DumpTargetLimit() != 0) return miss(DrawRecipeMiss::NotRecordable);
     if (recipe.hasDepth != state.depth.has_value()) return miss(DrawRecipeMiss::TargetGone);
     const std::size_t expectedViews = state.colors.size() + (recipe.hasDepth ? 1u : 0u);
@@ -3089,6 +3146,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         Require(destination.tileMode != ColorTileMode::Linear && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
         const auto resident = CachedStorageSurface(context, SurfaceForTarget(destination));
         Require(resident->Attachable(), "storage format cannot be a color attachment");
+        static_cast<void>(resident->DemoteRenderScale(RenderScaleDemotion::Copy));
         ResolveMultisampleTarget(context, *pass.source, *resident, resident->AttachmentView(destination.format, destination.mip));
         return;
     }
