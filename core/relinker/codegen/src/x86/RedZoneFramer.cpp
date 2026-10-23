@@ -370,6 +370,18 @@ void frameSegment(
                 stub.End += covered.Length;
                 ++stub.Last;
             }
+            while (stub.End - stub.Begin < kJumpBytes && stub.First > p) {
+                const auto j = stub.First - 1;
+                const auto& prior = body[j];
+                if (prior.Offset + prior.Length != stub.Begin || prior.Info.FlowKind != ControlFlowKind::Sequential || prior.Info.HasRipRelativeDisp || frees.contains(j)) break;
+                const auto use = memoryUse(at(j), prior);
+                const auto bytes = use.RspBased ? withDisplacement(at(j), prior, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(j), at(j) + prior.Length);
+                if (!bytes) break;
+                stub.Body.insert(stub.Body.begin(), bytes->begin(), bytes->end());
+                if (use.RspBased) ++stub.Operands;
+                stub.Begin = prior.Offset;
+                stub.First = j;
+            }
             if (stub.End - stub.Begin < kJumpBytes || targetInside(stub.Begin, stub.End) || overlapsSite(stub.Begin, stub.End) || overlapsExisting(stub.Begin, stub.End)) reason = "rsp operand that cannot move and has no room for a stub";
             else stubs.push_back(std::move(stub));
         }
