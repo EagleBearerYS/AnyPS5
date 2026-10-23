@@ -1,0 +1,4 @@
+BASE=0db47b263d1019043f7d28fad4e7ee0a1ea5ec6a
+REPEAT=20
+EXTRA_TESTS='^agc_driver_queued_index_read_order$'
+NO_BEFORE=1
