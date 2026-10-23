@@ -1,0 +1,4 @@
+BASE=eb8dcfebaa015115bc054cfb37001a334b8e4f61
+REPEAT=10
+EXTRA_TESTS='agc_resident_direct_remap|agc_write_tracking|agc_write_tracking_metadata_commit|agc_write_tracking_rewatch_import_pages|agc_write_watch_coverage'
+NO_BEFORE=1
