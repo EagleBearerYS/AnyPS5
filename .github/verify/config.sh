@@ -1,0 +1,3 @@
+BASE=594b34659a97084c2d8fe5cb29896f1f216b4cf6
+REPEAT=10
+EXTRA_TESTS='agc_shader_device_pointer_columns|agc_driver_device_image_path_pointer'
