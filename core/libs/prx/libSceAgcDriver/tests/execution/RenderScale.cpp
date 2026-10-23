@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RenderScale.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
@@ -29,7 +30,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <initializer_list>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,6 +42,10 @@ namespace {
 
 using AgcDriver::Graphics::ColorTargetLayout;
 using AgcDriver::Graphics::ColorTileMode;
+using AgcDriver::Graphics::DepthTarget;
+using AgcDriver::Graphics::GuestTextureResource;
+using AgcDriver::Graphics::TextureDimension;
+using AgcDriver::Graphics::TextureTileMode;
 using AgcDriver::Graphics::RenderScale;
 using AgcDriver::Graphics::RenderScaleDemotion;
 using AgcDriver::Graphics::Require;
@@ -47,12 +54,18 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Rgba8Info = 0x8028u;
+constexpr std::uint32_t R32FloatInfo = 0x8710u;
+constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format8Unorm = 1;
+constexpr std::uint32_t PositionInputs = 0x300u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
+
+alignas(256) constexpr std::array<std::uint32_t, 3> NullExportCode{0xf8001890u, 0x00000000u, 0xbf810000u};
 
 using Vertices = std::array<std::array<float, 4>, 3>;
 
@@ -62,6 +75,18 @@ constexpr Vertices FullTriangle{{
 
 constexpr Vertices SlantedTriangle{{
     {-0.5f, -0.7f, 0.5f, 1.0f}, {0.8f, -0.2f, 0.5f, 1.0f}, {0.1f, 0.9f, 0.5f, 1.0f}
+}};
+
+constexpr Vertices FarTriangle{{
+    {-1.0f, -1.0f, 0.75f, 1.0f}, {3.0f, -1.0f, 0.75f, 1.0f}, {-1.0f, 3.0f, 0.75f, 1.0f}
+}};
+
+constexpr Vertices NearSlantedTriangle{{
+    {-0.5f, -0.7f, 0.2f, 1.0f}, {0.8f, -0.2f, 0.45f, 1.0f}, {0.1f, 0.9f, 0.3f, 1.0f}
+}};
+
+constexpr Vertices CrossingTriangle{{
+    {0.2f, -0.9f, 0.35f, 1.0f}, {0.95f, -0.9f, 0.6f, 1.0f}, {0.95f, 0.9f, 0.6f, 1.0f}
 }};
 
 using Color = std::array<float, 4>;
@@ -87,6 +112,19 @@ std::span<const std::uint32_t> Program(const Color& color) {
     code[at++] = 0x07060504u;
     code[at++] = 0xbf810000u;
     return std::span<const std::uint32_t>(code.data(), at);
+}
+
+std::span<const std::uint32_t> PositionProgram(VkExtent2D extent) {
+    auto& code = programs.emplace_back().words;
+    const std::array<std::uint32_t, 10> words{
+        0x100800ffu, std::bit_cast<std::uint32_t>(1.0f / static_cast<float>(extent.width)),
+        0x100a02ffu, std::bit_cast<std::uint32_t>(1.0f / static_cast<float>(extent.height)),
+        0xf800100fu, 0x04040404u,
+        0xf800181fu, 0x05050505u,
+        0xbf810000u, 0u,
+    };
+    std::copy(words.begin(), words.end(), code.begin());
+    return std::span<const std::uint32_t>(code.data(), 9);
 }
 
 std::array<std::uint8_t, 4> Texel(const Color& color) {
@@ -154,18 +192,19 @@ struct Block {
 };
 
 struct Surface {
-    Surface(std::uint32_t width, std::uint32_t height) : width(width), height(height), layout(width, height, ColorTileMode::RenderTarget, 4), block(layout.Bytes()) {}
+    Surface(std::uint32_t width, std::uint32_t height, std::uint32_t info = Rgba8Info) : width(width), height(height), info(info), layout(width, height, ColorTileMode::RenderTarget, 4), block(layout.Bytes()) {}
     AgcDriver::Graphics::ColorTarget Decode() const {
         AgcDriver::Registers cx;
         cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
         cx[0x31b] = 0;
-        cx[0x31c] = Rgba8Info;
+        cx[0x31c] = info;
         cx[0x31d] = 0;
         cx[0x3b0] = ((width - 1u) << 14u) | (height - 1u);
         cx[0x3b8] = TiledAttrib3;
         cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
         auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-        Require(color.format == VK_FORMAT_R8G8B8A8_UNORM && color.elementBytes == 4 && color.bytes == block.bytes, "the 8_8_8_8 unorm target did not decode as an R8G8B8A8 surface");
+        const auto expected = info == R32FloatInfo ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+        Require(color.format == expected && color.elementBytes == 4 && color.bytes == block.bytes, "the color target did not decode as its 32-bit surface format");
         return color;
     }
     std::shared_ptr<StorageTexture> Image() const {
@@ -175,8 +214,53 @@ struct Surface {
     }
     std::uint32_t width;
     std::uint32_t height;
+    std::uint32_t info;
     ColorTargetLayout layout;
     Block block;
+};
+
+struct DepthPlane {
+    DepthPlane(std::uint32_t width, std::uint32_t height, std::uint32_t layers = 1, bool stencil = false) : width(width), height(height), stencil(stencil), block(static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes({width, height}, 4u)) * layers + (stencil ? static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes({width, height}, 1u)) + BlockBytes : 0u)) {
+        auto* words = reinterpret_cast<std::uint32_t*>(block.data);
+        for (std::size_t i = 0; i < block.bytes / 4u; ++i) words[i] = std::bit_cast<std::uint32_t>(1.0f);
+    }
+    std::uint64_t StencilAddress() const {
+        if (!stencil) return 0;
+        const auto depthBytes = AgcDriver::Graphics::DepthSliceBytes({width, height}, 4u);
+        return block.Address() + (depthBytes + BlockBytes - 1u) / BlockBytes * BlockBytes;
+    }
+    DepthTarget Target() const {
+        DepthTarget target{block.Address(), StencilAddress(), {width, height}, stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+        target.depthSwizzle = AgcDriver::Graphics::XorSwizzleMode(TextureTileMode::kZ64KBX);
+        return target;
+    }
+    GuestTextureResource View(std::uint32_t format, std::uint32_t lastLayer = 0) const {
+        GuestTextureResource resource{};
+        resource.baseAddress = format == Format8Unorm ? StencilAddress() : block.Address();
+        resource.width = width;
+        resource.height = height;
+        resource.mipCount = 1;
+        resource.allocatedMipCount = 1;
+        resource.tileMode = TextureTileMode::kZ64KBX;
+        resource.dimension = lastLayer != 0 ? TextureDimension::k2DArray : TextureDimension::k2D;
+        resource.depthOrLastArray = lastLayer;
+        resource.format = format;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        return resource;
+    }
+    std::uint32_t width;
+    std::uint32_t height;
+    bool stencil;
+    Block block;
+};
+
+struct DepthPass {
+    DepthTarget target;
+    VkCompareOp compare = VK_COMPARE_OP_LESS;
+    bool write = true;
 };
 
 struct Pass {
@@ -185,6 +269,10 @@ struct Pass {
     VkRect2D scissor;
     const Vertices* vertices;
     Color color;
+    std::optional<DepthPass> depth = std::nullopt;
+    std::span<const std::uint32_t> program = {};
+    std::uint32_t inputs = 0;
+    std::uint32_t exports = Float32Export;
 };
 
 void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
@@ -209,8 +297,14 @@ void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
     state.colors = pass.colors;
     for (std::size_t index = 0; index < state.colors.size(); ++index) state.colors[index].exportIndex = static_cast<std::uint32_t>(index);
-    state.color = state.colors.front();
-    state.hasColorTarget = true;
+    if (!state.colors.empty()) state.color = state.colors.front();
+    state.hasColorTarget = !state.colors.empty();
+    if (pass.depth.has_value()) {
+        state.depth = pass.depth->target;
+        state.depthTest = true;
+        state.depthWrite = pass.depth->write;
+        state.depthCompare = pass.depth->compare;
+    }
     state.renderExtent = pass.extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(pass.extent.height), static_cast<float>(pass.extent.width), -static_cast<float>(pass.extent.height), 0, 1};
@@ -224,9 +318,9 @@ void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
     state.blend = blend;
     state.blendConstants = {};
 
-    const auto pixelCode = Program(pass.color);
+    const auto pixelCode = pass.program.empty() ? Program(pass.color) : pass.program;
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
-    const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, Float32Export}};
+    const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, pass.inputs}, {0x1b4, pass.inputs}, {0x203, 0}, {0x1c5, pass.exports}};
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{codeAddress, std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
@@ -446,6 +540,293 @@ void StorageTests(AgcDriver::VulkanDevice& device) {
     std::puts("render scale storage tests passed");
 }
 
+std::array<std::uint64_t, AgcDriver::Graphics::RenderScaleDemotionCount> Counts(std::initializer_list<RenderScaleDemotion> reasons) {
+    std::array<std::uint64_t, AgcDriver::Graphics::RenderScaleDemotionCount> counts{};
+    for (const auto reason : reasons) ++counts[static_cast<std::size_t>(reason)];
+    return counts;
+}
+
+void DepthStream(AgcDriver::VulkanDevice& device, const Surface& surface, const DepthPlane& depth) {
+    const auto color = surface.Decode();
+    const VkExtent2D extent{surface.width, surface.height};
+    const VkRect2D full{{0, 0}, extent};
+    const DepthPass test{depth.Target()};
+    Draw(device, {{color}, extent, full, &FullTriangle, ColorA, test});
+    Draw(device, {{color}, extent, full, &NearSlantedTriangle, ColorC, test});
+    Draw(device, {{color}, extent, full, &FarTriangle, ColorB, test});
+    Draw(device, {{color}, extent, full, &CrossingTriangle, ColorB, test});
+}
+
+std::vector<std::byte> DepthTexels(AgcDriver::VulkanDevice& device, const DepthPlane& depth) {
+    device.WaitIdle();
+    return AgcDriver::Graphics::ReadDepthSurfaceTexels(device.graphicsContext(), depth.Target());
+}
+
+float FloatAt(std::span<const std::byte> texels, std::uint32_t width, std::uint32_t x, std::uint32_t y) {
+    float value = 0;
+    std::memcpy(&value, texels.data() + (static_cast<std::size_t>(y) * width + x) * sizeof(float), sizeof(value));
+    return value;
+}
+
+void ExpectDepthExtent(AgcDriver::VulkanDevice& device, const DepthPlane& depth, VkExtent2D extent, bool scaled, const std::string& what) {
+    const auto context = device.graphicsContext();
+    const auto actual = AgcDriver::Graphics::DepthSurfaceImageExtent(context, depth.Target());
+    const bool isScaled = AgcDriver::Graphics::DepthSurfaceRenderScaled(context, depth.Target());
+    if (actual.width == extent.width && actual.height == extent.height && isScaled == scaled) return;
+    throw std::runtime_error(what + ": the depth image is " + std::to_string(actual.width) + "x" + std::to_string(actual.height) + (isScaled ? " (scaled)" : " (native)") + ", expected " + std::to_string(extent.width) + "x" + std::to_string(extent.height));
+}
+
+std::size_t CountTexels(std::span<const std::byte> texels, const Color& color) {
+    const auto expected = Texel(color);
+    std::size_t count = 0;
+    for (std::size_t offset = 0; offset + 4u <= texels.size(); offset += 4u) {
+        bool same = true;
+        for (std::size_t i = 0; i < 4; ++i) same = same && std::to_integer<std::uint8_t>(texels[offset + i]) == expected[i];
+        count += same;
+    }
+    return count;
+}
+
+void ExpectSameBytes(std::span<const std::byte> scaled, std::span<const std::byte> native, const std::string& what) {
+    Require(scaled.size() == native.size(), what + ": the scaled and native images differ in size");
+    std::size_t differing = 0;
+    for (std::size_t i = 0; i < scaled.size(); ++i) differing += scaled[i] != native[i];
+    if (differing != 0) throw std::runtime_error(what + ": the scaled stream differs from the native stream in " + std::to_string(differing) + " bytes");
+}
+
+void DepthTests(AgcDriver::VulkanDevice& device) {
+    Require(AgcDriver::Graphics::ActiveRenderScale() == RenderScale{1, 2}, "the depth test runs with APS5_RENDER_SCALE=0.5");
+    AgcDriver::Graphics::NoteVideoOutExtent(3840, 2160);
+    Surface big(3840, 2160);
+    DepthPlane bigDepth(3840, 2160);
+    Surface small(1920, 1080);
+    DepthPlane smallDepth(1920, 1080);
+    DepthStream(device, big, bigDepth);
+    DepthStream(device, small, smallDepth);
+    device.WaitIdle();
+    const auto bigImage = big.Image();
+    ExpectExtent(*bigImage, {1920, 1080}, true, "the 3840x2160 color target drawn with depth at scale 0.5");
+    ExpectExtent(*small.Image(), {1920, 1080}, false, "the 1920x1080 color target");
+    ExpectDepthExtent(device, bigDepth, {1920, 1080}, true, "the 3840x2160 depth surface at scale 0.5");
+    ExpectDepthExtent(device, smallDepth, {1920, 1080}, false, "the 1920x1080 depth surface");
+    ExpectDemotions({}, "the scaled depth-tested stream");
+    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 2, "the color target and the depth surface scale");
+    const auto scaledColor = bigImage->ReadImageTexels();
+    const auto nativeColor = small.Image()->ReadImageTexels();
+    ExpectSameBytes(scaledColor, nativeColor, "the color target of the depth-tested stream");
+    const auto scaledDepth = DepthTexels(device, bigDepth);
+    const auto nativeDepth = DepthTexels(device, smallDepth);
+    ExpectSameBytes(scaledDepth, nativeDepth, "the depth surface of the depth-tested stream");
+    ExpectImageTexel(scaledColor, 1920, 50, 50, ColorA, "the scaled color image");
+    ExpectImageTexel(scaledColor, 1920, 1088, 540, ColorC, "the scaled color image");
+    const auto crossing = CountTexels(scaledColor, ColorB);
+    Require(crossing != 0 && crossing < std::size_t{1920} * 1080 / 4, "the crossing triangle passes the depth test only in part, and the far one nowhere");
+    Require(FloatAt(scaledDepth, 1920, 50, 50) == 0.5f && FloatAt(scaledDepth, 1920, 1088, 540) < 0.5f, "the scaled depth image does not hold the tested depths");
+    std::printf("scaled 3840x2160 color and D32 depth at 0.5 equal native 1920x1080: color %zu bytes fnv %016llx, depth %zu bytes fnv %016llx, %zu crossing texels\n", scaledColor.size(), static_cast<unsigned long long>(Fnv(scaledColor)), scaledDepth.size(), static_cast<unsigned long long>(Fnv(scaledDepth)), crossing);
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(bigDepth.block.Address(), bigDepth.block.bytes));
+    device.WaitIdle();
+    ExpectDepthExtent(device, bigDepth, {3840, 2160}, false, "the depth surface after its plane is stored to guest memory");
+    ExpectDemotions(Only(RenderScaleDemotion::DepthWriteBack), "a depth plane stored to guest memory");
+    const auto demotedDepth = DepthTexels(device, bigDepth);
+    Require(FloatAt(demotedDepth, 3840, 100, 100) == 0.5f && FloatAt(demotedDepth, 3840, 2176, 1080) < 0.5f, "the demoted depth image does not hold the tested depths");
+    Draw(device, {{big.Decode()}, {3840, 2160}, {{0, 0}, {3840, 2160}}, &FullTriangle, ColorB, DepthPass{bigDepth.Target(), VK_COMPARE_OP_LESS_OR_EQUAL}});
+    device.WaitIdle();
+    ExpectExtent(*bigImage, {3840, 2160}, false, "the color target drawn with the demoted depth surface");
+    ExpectDemotions(Counts({RenderScaleDemotion::DepthWriteBack, RenderScaleDemotion::DepthAttachment}), "a color target drawn with a demoted depth surface");
+    const auto redrawn = bigImage->ReadImageTexels();
+    ExpectImageTexel(redrawn, 3840, 100, 100, ColorB, "the redrawn color image");
+    ExpectImageTexel(redrawn, 3840, 2176, 1080, ColorC, "the redrawn color image");
+    std::puts("render scale depth tests passed");
+}
+
+void PrepassStream(AgcDriver::VulkanDevice& device, const Surface& surface, const DepthPlane& depth) {
+    const auto color = surface.Decode();
+    const VkExtent2D extent{surface.width, surface.height};
+    const VkRect2D full{{0, 0}, extent};
+    const DepthPass prepass{depth.Target()};
+    const DepthPass equal{depth.Target(), VK_COMPARE_OP_EQUAL, false};
+    Draw(device, {{}, extent, full, &FullTriangle, ColorA, prepass, NullExportCode, 0, 0});
+    Draw(device, {{}, extent, full, &NearSlantedTriangle, ColorA, prepass, NullExportCode, 0, 0});
+    Draw(device, {{color}, extent, full, &FullTriangle, ColorA, equal});
+    Draw(device, {{color}, extent, full, &NearSlantedTriangle, ColorC, equal});
+}
+
+void DepthPrepassTests(AgcDriver::VulkanDevice& device) {
+    Require(AgcDriver::Graphics::ActiveRenderScale() == RenderScale{1, 2}, "the depth prepass test runs with APS5_RENDER_SCALE=0.5");
+    AgcDriver::Graphics::NoteVideoOutExtent(3840, 2160);
+    Surface big(3840, 2160);
+    DepthPlane bigDepth(3840, 2160);
+    Surface small(1920, 1080);
+    DepthPlane smallDepth(1920, 1080);
+    PrepassStream(device, big, bigDepth);
+    PrepassStream(device, small, smallDepth);
+    device.WaitIdle();
+    ExpectExtent(*big.Image(), {1920, 1080}, true, "the 3840x2160 color target after a depth prepass at scale 0.5");
+    ExpectDepthExtent(device, bigDepth, {1920, 1080}, true, "the 3840x2160 depth surface drawn by depth-only draws at scale 0.5");
+    ExpectDepthExtent(device, smallDepth, {1920, 1080}, false, "the 1920x1080 depth surface");
+    ExpectDemotions({}, "the scaled depth prepass and color pass");
+    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 2, "the depth surface and the color target scale");
+    const auto scaledColor = big.Image()->ReadImageTexels();
+    const auto nativeColor = small.Image()->ReadImageTexels();
+    ExpectSameBytes(scaledColor, nativeColor, "the color target of the prepass stream");
+    const auto scaledDepth = DepthTexels(device, bigDepth);
+    const auto nativeDepth = DepthTexels(device, smallDepth);
+    ExpectSameBytes(scaledDepth, nativeDepth, "the depth surface of the prepass stream");
+    ExpectImageTexel(scaledColor, 1920, 50, 50, ColorA, "the scaled color image");
+    ExpectImageTexel(scaledColor, 1920, 1088, 540, ColorC, "the scaled color image");
+    Require(CountTexels(scaledColor, ColorA) + CountTexels(scaledColor, ColorC) == std::size_t{1920} * 1080, "the equal-tested color pass misses texels the prepass wrote");
+    std::printf("scaled 3840x2160 depth prepass and color pass at 0.5 equal native 1920x1080: color fnv %016llx, depth fnv %016llx\n", static_cast<unsigned long long>(Fnv(scaledColor)), static_cast<unsigned long long>(Fnv(scaledDepth)));
+    std::puts("render scale depth prepass tests passed");
+}
+
+void DepthUnsetTests(AgcDriver::VulkanDevice& device) {
+    Require(!AgcDriver::Graphics::ActiveRenderScale().has_value(), "the unset depth test runs without APS5_RENDER_SCALE");
+    AgcDriver::Graphics::NoteVideoOutExtent(3840, 2160);
+    Surface big(3840, 2160);
+    DepthPlane depth(3840, 2160);
+    DepthStream(device, big, depth);
+    device.WaitIdle();
+    ExpectExtent(*big.Image(), {3840, 2160}, false, "the 3840x2160 color target without APS5_RENDER_SCALE");
+    ExpectDepthExtent(device, depth, {3840, 2160}, false, "the 3840x2160 depth surface without APS5_RENDER_SCALE");
+    const auto color = big.Image()->ReadImageTexels();
+    const auto texels = DepthTexels(device, depth);
+    ExpectImageTexel(color, 3840, 100, 100, ColorA, "the native color image");
+    ExpectImageTexel(color, 3840, 2176, 1080, ColorC, "the native color image");
+    Require(FloatAt(texels, 3840, 100, 100) == 0.5f && FloatAt(texels, 3840, 2176, 1080) < 0.5f, "the native depth image does not hold the tested depths");
+    const auto storedColor = GuestTexels(device, big);
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(depth.block.Address(), depth.block.bytes));
+    StorageTexture::FlushPending(depth.block.Address(), depth.block.bytes, nullptr, "test read-back");
+    device.WaitIdle();
+    std::vector<std::byte> storedDepth(depth.block.bytes);
+    AgcDriver::GuestMemory::Read(depth.block.Address(), storedDepth, 1);
+    ExpectDemotions({}, "the unset depth-tested stream");
+    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 0, "a surface scaled without APS5_RENDER_SCALE");
+    std::printf("unset 3840x2160 depth-tested stream: color image fnv %016llx, depth image fnv %016llx, guest color fnv %016llx, guest depth fnv %016llx\n", static_cast<unsigned long long>(Fnv(color)), static_cast<unsigned long long>(Fnv(texels)), static_cast<unsigned long long>(Fnv(storedColor)), static_cast<unsigned long long>(Fnv(storedDepth)));
+    std::puts("render scale depth unset tests passed");
+}
+
+void DepthDemotionTests(AgcDriver::VulkanDevice& device, const std::string& mode) {
+    Require(AgcDriver::Graphics::ActiveRenderScale() == RenderScale{1, 2}, "the depth demotion test runs with APS5_RENDER_SCALE=0.5");
+    AgcDriver::Graphics::NoteVideoOutExtent(256, 128);
+    Surface color(256, 128);
+    DepthPlane depth(256, 128, mode == "--depth-copy" ? 2u : 1u, mode == "--stencil-copy");
+    const VkRect2D full{{0, 0}, {256, 128}};
+    Draw(device, {{color.Decode()}, {256, 128}, full, &FullTriangle, ColorA, DepthPass{depth.Target()}});
+    device.WaitIdle();
+    const auto image = color.Image();
+    ExpectExtent(*image, {128, 64}, true, "the 256x128 color target at scale 0.5");
+    ExpectDepthExtent(device, depth, {128, 64}, true, "the 256x128 depth surface at scale 0.5");
+    ExpectDemotions({}, "the scaled depth-tested draw");
+    const auto context = device.graphicsContext();
+    RenderScaleDemotion reason = RenderScaleDemotion::DepthGuestWrite;
+    if (mode == "--depth-guest-write") {
+        const std::array<float, 4> written{0.125f, 0.125f, 0.125f, 0.125f};
+        AgcDriver::GuestMemory::Write(depth.block.Address(), std::as_bytes(std::span(written)), 4);
+    } else {
+        if (mode == "--depth-write-back") {
+            reason = RenderScaleDemotion::DepthWriteBack;
+            static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(depth.block.Address(), depth.block.bytes));
+        } else if (mode == "--depth-storage") {
+            reason = RenderScaleDemotion::DepthStorage;
+            Require(AgcDriver::Graphics::DepthSurfaceStorage(context, {}, depth.View(Format32Float), 0) != nullptr, "the depth plane has no storage image");
+        } else if (mode == "--depth-copy") {
+            reason = RenderScaleDemotion::DepthCopy;
+            Require(AgcDriver::Graphics::DepthSurfaceTexture(context, {}, depth.View(Format32Float, 1), {}) != nullptr, "the two-layer view of the depth plane has no texture");
+        } else if (mode == "--stencil-copy") {
+            reason = RenderScaleDemotion::StencilCopy;
+            Require(AgcDriver::Graphics::DepthSurfaceTexture(context, {}, depth.View(Format8Unorm), {}) != nullptr, "the unorm view of the stencil plane has no texture");
+        } else {
+            throw std::runtime_error("unknown depth demotion mode " + mode);
+        }
+        device.WaitIdle();
+        ExpectDepthExtent(device, depth, {256, 128}, false, "the depth surface after " + mode.substr(2));
+        ExpectDemotions(Only(reason), "the depth surface after " + mode.substr(2));
+    }
+    Draw(device, {{color.Decode()}, {256, 128}, full, &NearSlantedTriangle, ColorC, DepthPass{depth.Target()}});
+    device.WaitIdle();
+    ExpectExtent(*image, {256, 128}, false, "the color target drawn after " + mode.substr(2));
+    ExpectDepthExtent(device, depth, {256, 128}, false, "the depth surface drawn after " + mode.substr(2));
+    ExpectDemotions(Counts({reason, RenderScaleDemotion::DepthAttachment}), "a color target drawn with the demoted depth surface after " + mode.substr(2));
+    const auto texels = image->ReadImageTexels();
+    ExpectImageTexel(texels, 256, 2, 2, ColorA, "the demoted color image");
+    ExpectImageTexel(texels, 256, 145, 64, ColorC, "the demoted color image");
+    std::printf("render scale %s demotion tests passed\n", mode.substr(2).c_str());
+}
+
+void PositionStream(AgcDriver::VulkanDevice& device, const Surface& u, const Surface& v, std::optional<VkExtent2D> divisor = std::nullopt) {
+    const VkExtent2D extent{u.width, u.height};
+    Draw(device, {{u.Decode(), v.Decode()}, extent, {{0, 0}, extent}, &FullTriangle, ColorA, std::nullopt, PositionProgram(divisor.value_or(extent)), PositionInputs, Float32Export | (Float32Export << 4u)});
+}
+
+void ExpectPositions(std::span<const std::byte> u, std::span<const std::byte> v, VkExtent2D extent, const std::string& what, std::optional<VkExtent2D> divisor = std::nullopt) {
+    Require(u.size() == static_cast<std::size_t>(extent.width) * extent.height * sizeof(float) && v.size() == u.size(), what + ": the position images have the wrong size");
+    const float stepX = 1.0f / static_cast<float>(divisor.value_or(extent).width);
+    const float stepY = 1.0f / static_cast<float>(divisor.value_or(extent).height);
+    for (std::uint32_t y = 0; y < extent.height; ++y) {
+        for (std::uint32_t x = 0; x < extent.width; ++x) {
+            const float expectedU = (static_cast<float>(x) + 0.5f) * stepX;
+            const float expectedV = (static_cast<float>(y) + 0.5f) * stepY;
+            const float actualU = FloatAt(u, extent.width, x, y);
+            const float actualV = FloatAt(v, extent.width, x, y);
+            if (std::bit_cast<std::uint32_t>(actualU) == std::bit_cast<std::uint32_t>(expectedU) && std::bit_cast<std::uint32_t>(actualV) == std::bit_cast<std::uint32_t>(expectedV)) continue;
+            char detail[192];
+            std::snprintf(detail, sizeof(detail), ": pixel (%u, %u) reads position (%.9g, %.9g), expected (%.9g, %.9g)", x, y, actualU, actualV, expectedU, expectedV);
+            throw std::runtime_error(what + detail);
+        }
+    }
+}
+
+void FragCoordTests(AgcDriver::VulkanDevice& device) {
+    Require(AgcDriver::Graphics::ActiveRenderScale() == RenderScale{1, 2}, "the position test runs with APS5_RENDER_SCALE=0.5");
+    AgcDriver::Graphics::NoteVideoOutExtent(3840, 2160);
+    Surface bigU(3840, 2160, R32FloatInfo);
+    Surface bigV(3840, 2160, R32FloatInfo);
+    Surface smallU(1920, 1080, R32FloatInfo);
+    Surface smallV(1920, 1080, R32FloatInfo);
+    PositionStream(device, bigU, bigV);
+    PositionStream(device, smallU, smallV);
+    device.WaitIdle();
+    ExpectExtent(*bigU.Image(), {1920, 1080}, true, "the 3840x2160 u target at scale 0.5");
+    ExpectExtent(*bigV.Image(), {1920, 1080}, true, "the 3840x2160 v target at scale 0.5");
+    ExpectExtent(*smallU.Image(), {1920, 1080}, false, "the 1920x1080 u target");
+    ExpectDemotions({}, "the scaled position pass");
+    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 2, "both position targets scale");
+    const auto scaledU = bigU.Image()->ReadImageTexels();
+    const auto scaledV = bigV.Image()->ReadImageTexels();
+    const auto nativeU = smallU.Image()->ReadImageTexels();
+    const auto nativeV = smallV.Image()->ReadImageTexels();
+    ExpectPositions(nativeU, nativeV, {1920, 1080}, "the native 1920x1080 position pass");
+    ExpectSameBytes(scaledU, nativeU, "the u target of the position pass");
+    ExpectSameBytes(scaledV, nativeV, "the v target of the position pass");
+    std::printf("scaled 3840x2160 position pass at 0.5 equals native 1920x1080: u fnv %016llx, v fnv %016llx\n", static_cast<unsigned long long>(Fnv(scaledU)), static_cast<unsigned long long>(Fnv(scaledV)));
+    Surface sharedU(1920, 1080, R32FloatInfo);
+    Surface sharedV(1920, 1080, R32FloatInfo);
+    PositionStream(device, sharedU, sharedV, VkExtent2D{3840, 2160});
+    device.WaitIdle();
+    ExpectExtent(*sharedU.Image(), {1920, 1080}, false, "the 1920x1080 u target drawn by the scaled pass's shader");
+    ExpectPositions(sharedU.Image()->ReadImageTexels(), sharedV.Image()->ReadImageTexels(), {1920, 1080}, "an unscaled draw with the shader of the scaled position pass", VkExtent2D{3840, 2160});
+    std::puts("render scale fragment position tests passed");
+}
+
+void FragCoordUnsetTests(AgcDriver::VulkanDevice& device) {
+    Require(!AgcDriver::Graphics::ActiveRenderScale().has_value(), "the unset position test runs without APS5_RENDER_SCALE");
+    AgcDriver::Graphics::NoteVideoOutExtent(3840, 2160);
+    Surface u(3840, 2160, R32FloatInfo);
+    Surface v(3840, 2160, R32FloatInfo);
+    PositionStream(device, u, v);
+    device.WaitIdle();
+    ExpectExtent(*u.Image(), {3840, 2160}, false, "the u target without APS5_RENDER_SCALE");
+    const auto texelsU = u.Image()->ReadImageTexels();
+    const auto texelsV = v.Image()->ReadImageTexels();
+    ExpectPositions(texelsU, texelsV, {3840, 2160}, "the unset 3840x2160 position pass");
+    const auto storedU = GuestTexels(device, u);
+    const auto storedV = GuestTexels(device, v);
+    ExpectDemotions({}, "the unset position pass");
+    Require(AgcDriver::Graphics::RenderScaledSurfaces() == 0, "a surface scaled without APS5_RENDER_SCALE");
+    std::printf("unset 3840x2160 position pass: u fnv %016llx, v fnv %016llx, guest u fnv %016llx, guest v fnv %016llx\n", static_cast<unsigned long long>(Fnv(texelsU)), static_cast<unsigned long long>(Fnv(texelsV)), static_cast<unsigned long long>(Fnv(storedU)), static_cast<unsigned long long>(Fnv(storedV)));
+    std::puts("render scale fragment position unset tests passed");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -462,6 +843,12 @@ int main(int argc, char** argv) {
         else if (mode == "--mixed") MixedTests(*device, true);
         else if (mode == "--mixed-native") MixedTests(*device, false);
         else if (mode == "--storage") StorageTests(*device);
+        else if (mode == "--depth") DepthTests(*device);
+        else if (mode == "--depth-unset") DepthUnsetTests(*device);
+        else if (mode == "--depth-prepass") DepthPrepassTests(*device);
+        else if (mode == "--depth-guest-write" || mode == "--depth-write-back" || mode == "--depth-storage" || mode == "--depth-copy" || mode == "--stencil-copy") DepthDemotionTests(*device, mode);
+        else if (mode == "--fragcoord") FragCoordTests(*device);
+        else if (mode == "--fragcoord-unset") FragCoordUnsetTests(*device);
         else throw std::runtime_error("unknown mode " + mode);
         return 0;
     } catch (const std::exception& error) {
