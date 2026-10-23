@@ -175,6 +175,7 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
                         case StageInputKind::SampleMask:
                         case StageInputKind::RasterPrimitive:
                         case StageInputKind::LayerExported:
+                        case StageInputKind::FragCoordScale:
                             if (program.Resources().stage != IrShaderStage::Pixel || component != 0u) {
                                 return Fail("typed pixel scalar input is invalid");
                             }
@@ -457,6 +458,7 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     break;
                 case StageInputKind::PackedAncillary:
                 case StageInputKind::Parameter:
+                case StageInputKind::FragCoordScale:
                     break;
             }
         }

@@ -4676,6 +4676,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
                     for (const auto& image : {StorageTexture::FindPending(resource.baseAddress, guestBytes), StorageTexture::FindLive(resource.baseAddress, guestBytes)}) {
                         if (image != nullptr) static_cast<void>(image->DemoteRenderScale(reason));
                     }
+                    DemoteDepthSurfaceRenderScaleAt(context, resource.baseAddress, reason);
                 }
             }
             std::shared_ptr<Texture> texture;

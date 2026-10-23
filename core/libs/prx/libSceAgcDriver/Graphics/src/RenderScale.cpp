@@ -112,7 +112,7 @@ std::optional<RenderScale> ActiveRenderScale() {
                 std::fprintf(stderr, "[render-scale] APS5_RENDER_SCALE=%s is not 0.5, 0.75 or N/D with 0 < N <= D <= 64; rendering at native size\n", text);
             } else if (parsed->numerator != parsed->denominator) {
                 setting.scale = parsed;
-                std::fprintf(stderr, "[render-scale] color targets at least the video-out extent render at %u/%u of their size\n", parsed->numerator, parsed->denominator);
+                std::fprintf(stderr, "[render-scale] color and depth targets at least the video-out extent render at %u/%u of their size\n", parsed->numerator, parsed->denominator);
             }
         }
     }
@@ -185,10 +185,15 @@ const char* RenderScaleDemotionName(RenderScaleDemotion reason) {
         case RenderScaleDemotion::TexelFetch: return "texel fetch with integer coordinates";
         case RenderScaleDemotion::SizeQuery: return "size query";
         case RenderScaleDemotion::Copy: return "copy or resolve at native size";
-        case RenderScaleDemotion::DepthAttachment: return "drawn with a depth attachment";
+        case RenderScaleDemotion::DepthAttachment: return "drawn with a depth attachment that does not scale";
         case RenderScaleDemotion::MixedAttachment: return "drawn with an unscaled color attachment";
         case RenderScaleDemotion::FragmentPosition: return "drawn by a pixel shader reading its position";
         case RenderScaleDemotion::Presentation: return "presented through a converting path";
+        case RenderScaleDemotion::DepthGuestWrite: return "guest memory written to a depth plane";
+        case RenderScaleDemotion::DepthWriteBack: return "depth plane stored to guest memory";
+        case RenderScaleDemotion::DepthStorage: return "depth plane accessed as a storage image";
+        case RenderScaleDemotion::DepthCopy: return "depth plane copied at native size";
+        case RenderScaleDemotion::StencilCopy: return "stencil plane copied for sampling";
         case RenderScaleDemotion::Count: break;
     }
     return "unknown";

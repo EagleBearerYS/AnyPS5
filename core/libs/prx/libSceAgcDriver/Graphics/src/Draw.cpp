@@ -2238,22 +2238,27 @@ void demoteRenderTargets(std::vector<TargetBinding>& targets, std::vector<VkImag
     if (demoted) rebindTargetViews(targets, targetViews);
 }
 
-std::optional<State> renderScaledState(const State& state, std::span<const CompiledShader> shaders, std::vector<TargetBinding>& targets, std::vector<VkImageView>& targetViews) {
+std::optional<State> renderScaledState(const Context& context, const State& state, std::span<const CompiledShader> shaders, std::vector<TargetBinding>& targets, std::vector<VkImageView>& targetViews) {
     const auto scale = ActiveRenderScale();
-    if (!scale.has_value() || targets.empty()) return std::nullopt;
+    if (!scale.has_value() || (targets.empty() && !state.depth.has_value())) return std::nullopt;
     const auto scalable = [](const TargetBinding& binding) {
         const auto& color = binding.color;
         return binding.resident != nullptr && !binding.proxied && !binding.multisampled && color.mip == 0 && color.layers == 1 && color.depth == 1 && color.arraySlice == 0 && color.arrayLastSlice == 0 && RenderScaleCoversVideoOut(color.extent) && binding.resident->RenderScalable();
     };
-    const bool scaled = std::ranges::any_of(targets, [](const TargetBinding& binding) { return binding.resident != nullptr && binding.resident->RenderScaled(); });
-    if (!scaled && !std::ranges::any_of(targets, scalable)) return std::nullopt;
-    const bool readsPosition = std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment && shader.program != nullptr && ReadsFragmentPosition(shader.program->spirv.Words()); });
+    const bool depthScaled = state.depth.has_value() && DepthSurfaceRenderScaled(context, *state.depth);
+    const bool depthScalable = state.depth.has_value() && DepthSurfaceRenderScalable(context, *state.depth);
+    const bool scaled = depthScaled || std::ranges::any_of(targets, [](const TargetBinding& binding) { return binding.resident != nullptr && binding.resident->RenderScaled(); });
+    if (!scaled && !depthScalable && !std::ranges::any_of(targets, scalable)) return std::nullopt;
+    const bool unscaledPosition = std::ranges::any_of(shaders, [](const CompiledShader& shader) {
+        return shader.stage == ShaderRecompiler::ShaderStage::Fragment && shader.program != nullptr && ReadsFragmentPosition(shader.program->spirv.Words()) && std::ranges::none_of(shader.program->specialization, [](const auto& constant) { return constant.id == ShaderRecompiler::PipelineSpecialization::FragCoordScale; });
+    });
     std::optional<RenderScaleDemotion> refusal;
-    if (state.depth.has_value()) refusal = RenderScaleDemotion::DepthAttachment;
-    else if (!std::ranges::all_of(targets, scalable) || state.samples != 1 || DumpTargetLimit() != 0) refusal = RenderScaleDemotion::MixedAttachment;
-    else if (readsPosition) refusal = RenderScaleDemotion::FragmentPosition;
+    if (!std::ranges::all_of(targets, scalable) || state.samples != 1 || DumpTargetLimit() != 0) refusal = RenderScaleDemotion::MixedAttachment;
+    else if (state.depth.has_value() && !depthScalable) refusal = RenderScaleDemotion::DepthAttachment;
+    else if (unscaledPosition) refusal = RenderScaleDemotion::FragmentPosition;
     if (refusal.has_value()) {
         demoteRenderTargets(targets, targetViews, *refusal);
+        if (depthScaled || depthScalable) static_cast<void>(DemoteDepthSurfaceRenderScale(context, *state.depth, *refusal));
         return std::nullopt;
     }
     for (auto& binding : targets) binding.resident->RenderScaleTo(ScaleExtent(binding.color.extent, *scale));
@@ -2262,6 +2267,7 @@ std::optional<State> renderScaledState(const State& state, std::span<const Compi
     result.renderExtent = ScaleExtent(state.renderExtent, *scale);
     result.viewport = ScaleViewport(state.viewport, *scale);
     result.scissor = ScaleScissor(state.scissor, *scale, result.renderExtent);
+    result.fragCoordScale = static_cast<float>(scale->denominator) / static_cast<float>(scale->numerator);
     return result;
 }
 
@@ -2412,10 +2418,15 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         binding.target = std::make_unique<RenderTarget>(context, color, state.blends.at(color.exportIndex).blendEnable != 0);
         targetViews.push_back(binding.target->View());
     }
-    prepared.scaled = renderScaledState(state, shaders, targets, targetViews);
+    prepared.scaled = renderScaledState(context, state, shaders, targets, targetViews);
     if (state.depth) {
-        targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite));
+        const auto scaledDepth = prepared.scaled.has_value() ? std::optional<VkExtent2D>(ScaleExtent(state.depth->extent, *ActiveRenderScale())) : std::nullopt;
+        targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite, scaledDepth));
         if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
+        if (scaledDepth.has_value() && !DepthSurfaceRenderScaled(context, *state.depth)) {
+            demoteRenderTargets(targets, targetViews, RenderScaleDemotion::DepthAttachment);
+            prepared.scaled.reset();
+        }
     }
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
@@ -2424,9 +2435,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& resolved = prepared.resolved;
     resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
     auto& resources = resolved.resources;
-    if (prepared.scaled.has_value() && std::ranges::any_of(targets, [](const TargetBinding& binding) { return binding.resident != nullptr && !binding.resident->RenderScaled(); })) {
-        demoteRenderTargets(targets, targetViews, RenderScaleDemotion::MixedAttachment);
-        prepared.scaled.reset();
+    if (prepared.scaled.has_value()) {
+        const bool colorDemoted = std::ranges::any_of(targets, [](const TargetBinding& binding) { return binding.resident != nullptr && !binding.resident->RenderScaled(); });
+        const bool depthDemoted = state.depth.has_value() && !DepthSurfaceRenderScaled(context, *state.depth);
+        if (colorDemoted || depthDemoted) {
+            demoteRenderTargets(targets, targetViews, colorDemoted ? RenderScaleDemotion::MixedAttachment : RenderScaleDemotion::DepthAttachment);
+            if (state.depth) targetViews.back() = DemoteDepthSurfaceRenderScale(context, *state.depth, RenderScaleDemotion::MixedAttachment);
+            prepared.scaled.reset();
+        }
     }
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
@@ -2582,6 +2598,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (!masked.has_value()) masked = state;
         masked->colors[index].format = AttachmentProxyFormat(context, state.colors[index].format);
         masked->blends.at(state.colors[index].exportIndex).colorWriteMask &= VK_COLOR_COMPONENT_R_BIT;
+    }
+    if (prepared.scaled.has_value() && prepared.scaled->fragCoordScale != 1.0f) {
+        if (!masked.has_value()) masked = state;
+        masked->fragCoordScale = prepared.scaled->fragCoordScale;
     }
     const State& pipelineState = masked.has_value() ? *masked : state;
     static const bool verifySetLayouts = std::getenv("APS5_VERIFY_SET_LAYOUTS") != nullptr;

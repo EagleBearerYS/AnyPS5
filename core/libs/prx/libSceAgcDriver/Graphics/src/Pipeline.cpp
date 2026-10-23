@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -257,6 +258,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     appendKey(keys.preRasterization, state.depth.has_value() && state.depthBias);
     appendKey(keys.preRasterization, state.stages.tessellation.has_value());
     if (state.stages.tessellation) appendKey(keys.preRasterization, state.stages.tessellation->inputControlPoints);
+    appendKey(keys.fragmentShader, state.fragCoordScale);
     appendKey(keys.fragmentShader, state.samples);
     appendKey(keys.fragmentOutput, state.samples);
     appendKey(keys.fragmentShader, state.perSampleShading);
@@ -385,7 +387,13 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             stages[i].module = _modules[i];
             stages[i].pName = "main";
             if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh && context.meshWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &meshSubgroup;
-            specializations.emplace_back(shader);
+            const bool scalesPosition = shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && state.fragCoordScale != 1.0f && std::ranges::any_of(shader.specialization, [](const auto& constant) { return constant.id == ShaderRecompiler::PipelineSpecialization::FragCoordScale; });
+            if (scalesPosition) {
+                const std::array<ShaderRecompiler::PipelineSpecializationConstant, 1> scale{{{ShaderRecompiler::PipelineSpecialization::FragCoordScale, std::bit_cast<std::uint32_t>(state.fragCoordScale)}}};
+                specializations.emplace_back(shader, scale);
+            } else {
+                specializations.emplace_back(shader);
+            }
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
@@ -894,6 +902,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.frontFace);
     append(key, state.provokingVertexMode);
     append(key, state.negativeOneToOne);
+    append(key, state.fragCoordScale);
     append(key, state.depthClamp && context.depthClamp);
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());

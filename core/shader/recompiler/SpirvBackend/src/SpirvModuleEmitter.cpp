@@ -175,6 +175,9 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
     if (kind == StageInputKind::LayerExported) {
         return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::LayerExported, 0u);
     }
+    if (kind == StageInputKind::FragCoordScale) {
+        return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::FragCoordScale, 0x3f800000u);
+    }
     if ((state.laneCount == 2 || state.spannedWave) && (kind == StageInputKind::LocalInvocationId || kind == StageInputKind::GlobalInvocationId)) {
         const auto* workgroup = ShaderWorkgroupInputFor(state);
         if (workgroup == nullptr) {

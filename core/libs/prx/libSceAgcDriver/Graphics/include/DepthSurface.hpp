@@ -2,9 +2,11 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_DEPTHSURFACE_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RenderScale.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -17,7 +19,13 @@ namespace AgcDriver::Graphics {
 class Texture;
 class StorageTexture;
 
-VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true);
+VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true, std::optional<VkExtent2D> scaledExtent = std::nullopt);
+bool DepthSurfaceRenderScalable(const Context& context, const DepthTarget& target);
+bool DepthSurfaceRenderScaled(const Context& context, const DepthTarget& target);
+VkImageView DemoteDepthSurfaceRenderScale(const Context& context, const DepthTarget& target, RenderScaleDemotion reason);
+void DemoteDepthSurfaceRenderScaleAt(const Context& context, std::uint64_t address, RenderScaleDemotion reason);
+VkExtent2D DepthSurfaceImageExtent(const Context& context, const DepthTarget& target);
+std::vector<std::byte> ReadDepthSurfaceTexels(const Context& context, const DepthTarget& target);
 SampleOrderTarget DepthSurfaceOrderTarget(const Context& context, const DepthTarget& target);
 DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const DepthTarget& target);
 enum class DepthPlaneScope { Overlapped, Whole };

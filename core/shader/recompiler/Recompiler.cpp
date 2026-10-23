@@ -737,6 +737,16 @@ struct SpecializedModule {
     bool pushData = false;
 };
 
+bool declaresSpecId(std::span<const std::uint32_t> words, std::uint32_t id) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        if (count == 0u || count > words.size() - cursor) return false;
+        if ((words[cursor] & 0xffffu) == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId && words[cursor + 3u] == id) return true;
+        cursor += count;
+    }
+    return false;
+}
+
 std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     auto source = SpecializeVertexInputTypes(artifact, classes);
     std::map<std::uint32_t, std::uint32_t> supplied;
@@ -756,9 +766,9 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
         if (count == 0u || count > words.size() - cursor) throw std::runtime_error("truncated prepared specialization instruction");
         if (!artifact.stencilReferences.empty() && op == spv::OpTypePointer && count == 4u && words[cursor + 2u] == spv::StorageClassPushConstant) pushTypes.insert(words[cursor + 3u]);
         if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId) {
-            if (PipelineSpecialization::IsWorkgroupOffset(words[cursor + 3u])) {
-                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a workgroup offset is supplied at dispatch, not prepared");
-                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate workgroup offset specialization");
+            if (PipelineSpecialization::SuppliedAtPipeline(words[cursor + 3u])) {
+                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a workgroup offset or fragment position scale is supplied at pipeline creation, not prepared");
+                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate workgroup offset or fragment position scale specialization");
                 cursor += count;
                 continue;
             }
@@ -1131,6 +1141,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     if (request.shader.stage == ShaderStage::Compute) {
         for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
     }
+    if (request.shader.stage == ShaderStage::Fragment && declaresSpecId(result.spirv.Words(), PipelineSpecialization::FragCoordScale)) result.specialization.push_back({PipelineSpecialization::FragCoordScale, 0x3f800000u});
     if (!artifact.stencilReferences.empty()) {
         if (artifact.stencilReferenceDword * sizeof(std::uint32_t) != result.pushConstants.size() || result.pushConstants.size() + sizeof(std::uint32_t) > request.layout.pushConstantSizeBytes) throw std::runtime_error("stencil replay push constant lies outside the stage range");
         result.pushConstants.resize(result.pushConstants.size() + sizeof(std::uint32_t));

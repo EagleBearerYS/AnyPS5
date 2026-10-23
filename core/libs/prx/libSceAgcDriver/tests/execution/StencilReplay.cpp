@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <functional>
 #include <iostream>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -123,10 +124,16 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     if (!pixelResult.stencilReferences.empty()) {
         Require(pixelResult.stencilReferenceDword * sizeof(std::uint32_t) + sizeof(std::uint32_t) == pixelResult.pushConstants.size(), "dynamic reference is not reserved after the stage payload");
+        std::set<std::uint32_t> positionScales;
         for (std::size_t cursor = 5; cursor < pixelResult.spirv.size();) {
             const auto count = pixelResult.spirv[cursor] >> 16u;
             Require(count != 0u && count <= pixelResult.spirv.size() - cursor, "invalid materialized replay module");
-            Require((pixelResult.spirv[cursor] & 0xffffu) != spv::OpSpecConstant, "expected reference remains a pipeline specialization");
+            if ((pixelResult.spirv[cursor] & 0xffffu) == spv::OpDecorate && count == 4u && pixelResult.spirv[cursor + 2u] == spv::DecorationSpecId && pixelResult.spirv[cursor + 3u] == ShaderRecompiler::PipelineSpecialization::FragCoordScale) positionScales.insert(pixelResult.spirv[cursor + 1u]);
+            cursor += count;
+        }
+        for (std::size_t cursor = 5; cursor < pixelResult.spirv.size();) {
+            const auto count = pixelResult.spirv[cursor] >> 16u;
+            Require((pixelResult.spirv[cursor] & 0xffffu) != spv::OpSpecConstant || positionScales.contains(pixelResult.spirv[cursor + 2u]), "expected reference remains a pipeline specialization");
             cursor += count;
         }
     }

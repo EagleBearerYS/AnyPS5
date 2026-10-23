@@ -405,11 +405,16 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             if (location == PixelPositionLocation::UpperLeft) return entryIr.BitCastU32(corner);
             return entryIr.BitCastU32(entryIr.Emit(IrOpcode::FPAdd32, IrOpcodeType(IrOpcode::FPAdd32), {&corner, &entryIr.ConstantF32(0.5f)}));
         };
+        IrValue* positionScale = nullptr;
+        const auto scaled = [&](IrValue& bits) -> IrValue& {
+            if (positionScale == nullptr) positionScale = &entryIr.BitCastF32(builtin(StageInputKind::FragCoordScale));
+            return entryIr.BitCastU32(entryIr.Emit(IrOpcode::FPMul32, IrOpcodeType(IrOpcode::FPMul32), {&entryIr.BitCastF32(bits), positionScale}));
+        };
         if (loaded(PixelInput::PositionX)) {
-            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionX)), position(0u));
+            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionX)), scaled(position(0u)));
         }
         if (loaded(PixelInput::PositionY)) {
-            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionY)), position(1u));
+            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionY)), scaled(position(1u)));
         }
         if (loaded(PixelInput::PositionZ)) {
             setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionZ)), builtin(StageInputKind::FragCoord, 2u));
@@ -435,8 +440,8 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             setVector(static_cast<VectorReg>(vgpr(PixelInput::LineStipple)), entryIr.Constant(0u));
         }
         if (loaded(PixelInput::PositionFixedPoint)) {
-            IrValue& x = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(builtin(StageInputKind::FragCoord, 0u))});
-            IrValue& y = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(builtin(StageInputKind::FragCoord, 1u))});
+            IrValue& x = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(scaled(builtin(StageInputKind::FragCoord, 0u)))});
+            IrValue& y = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(scaled(builtin(StageInputKind::FragCoord, 1u)))});
             setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionFixedPoint)), entryIr.BitwiseOr(entryIr.BitwiseAnd(x, entryIr.Constant(0xffffu)), entryIr.ShiftLeftLogical(y, entryIr.Constant(16u))));
         }
     } else if (options.stage == ShaderStageKind::Vertex) {

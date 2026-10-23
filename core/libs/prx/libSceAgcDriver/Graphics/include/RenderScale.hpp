@@ -29,6 +29,11 @@ enum class RenderScaleDemotion : std::uint8_t {
     MixedAttachment,
     FragmentPosition,
     Presentation,
+    DepthGuestWrite,
+    DepthWriteBack,
+    DepthStorage,
+    DepthCopy,
+    StencilCopy,
     Count
 };
 

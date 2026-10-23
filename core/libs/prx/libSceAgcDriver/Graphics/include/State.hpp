@@ -126,6 +126,7 @@ struct State {
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
     VkViewport viewport;
+    float fragCoordScale = 1.0f;
     bool negativeOneToOne;
     bool depthClamp = false;
     float depthScale = 1;
