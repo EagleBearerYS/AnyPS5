@@ -4,6 +4,7 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -13,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -205,6 +207,31 @@ struct OverlayDetailSample {
     std::string presentMode;
 };
 
+struct OverlayHits {
+    std::uint64_t lookups = 0;
+    std::uint64_t hits = 0;
+};
+
+struct OverlayDriverCounters {
+    std::uint64_t flips = 0;
+    std::optional<OverlayHits> drawCache;
+};
+
+struct OverlayPresentInfo {
+    std::uint64_t displayAddress = 0;
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
+    std::uint64_t acquireDrops = 0;
+};
+
+struct OverlayTraceFigures {
+    std::vector<OverlayThreadBusy> busy;
+    std::vector<OverlayPhase> phases;
+    std::optional<OverlayQueueWaits> queueWaits;
+    std::optional<double> renderPassesPerFrame;
+};
+
+inline constexpr std::size_t OverlayTopPhases = 5;
+
 struct OverlayLayout {
     OverlayRect bounds;
     std::vector<OverlayRect> rects;
@@ -221,9 +248,15 @@ OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, boo
 OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, bool driver, const OverlayDetails& details);
 std::string OverlayText(std::string_view text);
 OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample);
+OverlayTraceFigures OverlayTraceDeltas(std::span<const TraceThreadTotals> before, std::span<const TraceThreadTotals> now, OverlayStatistics::Clock::duration elapsed, std::uint64_t presents, bool passes);
+std::optional<double> OverlayHitPercent(const OverlayHits& before, const OverlayHits& now);
+std::string_view OverlayPresentModeName(VkPresentModeKHR mode);
 bool OverlaySampleDue(std::optional<OverlayStatistics::Clock::time_point> sampledAt, OverlayStatistics::Clock::time_point now);
 std::optional<OverlayMemory> ReadVramBudget(const Graphics::Context& context);
 std::optional<std::uint64_t> ReadProcessPrivateBytes();
+std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo);
+std::optional<OverlayMemory> ReadCommitCharge();
+std::optional<std::uint64_t> ReadPageFaults();
 std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content);
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner);
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace);
@@ -239,8 +272,9 @@ public:
     static std::uint32_t Page();
     static void Toggle();
     static OverlayCorner Corner();
+    static void SetDriverCounters(OverlayDriverCounters (*source)());
 
-    void NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display);
+    void NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display, const OverlayPresentInfo& info = {});
     const OverlayStatistics& Statistics() const { return statistics; }
     const OverlayDetails& Details() const { return details; }
     const OverlayDetailSample& DetailSample() const { return detailSample; }
@@ -260,7 +294,29 @@ private:
     VkPipeline pipeline(VkFormat format, VkRenderPass compatible);
     void releaseTransient(Slot& slot) noexcept;
     void release() noexcept;
+    struct DetailCounters {
+        std::optional<OverlayDriverCounters> driver;
+        OverlayHits pipelines;
+        std::uint64_t copiedBytes = 0;
+        std::optional<std::uint64_t> pageFaults;
+        std::uint64_t unimplemented = 0;
+        std::uint64_t acquireDrops = 0;
+    };
+
+    struct DetailState {
+        std::optional<OverlayStatistics::Clock::time_point> sampledAt;
+        DetailCounters base;
+        std::uint64_t repeats = 0;
+        std::uint64_t lastDisplayAddress = 0;
+        std::optional<OverlayStatistics::Clock::time_point> traceSampledAt;
+        std::vector<TraceThreadTotals> traceBase;
+        std::uint64_t tracePresents = 0;
+    };
+
     void restartIfToggled();
+    void noteDetailPresent(OverlayStatistics::Clock::time_point at, const OverlayPresentInfo& info);
+    void sampleDetails(OverlayStatistics::Clock::time_point at, const OverlayPresentInfo& info);
+    void sampleTrace(OverlayStatistics::Clock::time_point at);
 
     Graphics::Context context;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
@@ -272,6 +328,7 @@ private:
     OverlayStatistics statistics;
     OverlayDetails details;
     OverlayDetailSample detailSample;
+    DetailState detail;
     std::optional<OverlayStatistics::Clock::time_point> sampledAt;
     std::uint64_t toggles = 0;
     std::uint32_t page = 0;

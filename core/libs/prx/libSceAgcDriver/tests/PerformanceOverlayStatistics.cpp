@@ -1,4 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -658,6 +662,187 @@ void sampleTests() {
     require(touched[Bytes - 1] == 0x5a, "the touched block was not written");
 }
 
+constexpr const char* PacketScope = "Driver.Packet";
+constexpr const char* WorkerWaitScope = "Driver.WorkerWait";
+constexpr const char* LockScope = "GpuMutex.wait";
+constexpr const char* SyncScope = "Recorder.Sync";
+constexpr const char* SerialScope = "Recorder.WaitSerial";
+constexpr const char* WaitScope = "Graphics.Wait";
+constexpr const char* FinishScope = "Driver.DrawFinish";
+constexpr const char* MemoryStage = "memory_wait";
+constexpr const char* RenderingStage = "rendering_wait";
+constexpr const char* DrawSite = "draw";
+constexpr const char* PresentSite = "present";
+constexpr const char* FenceStage = "fence_wait";
+
+AgcDriver::TraceThread::Total total(const char* scope, const char* stage, std::chrono::milliseconds length, std::uint64_t count) {
+    return AgcDriver::TraceThread::Total{scope, stage, std::chrono::duration_cast<Clock::duration>(length), count};
+}
+
+void traceDeltaTests() {
+    using AgcDriver::TraceThreadTotals;
+    const std::vector<TraceThreadTotals> before{
+        {"queue worker 0x0", {total(PacketScope, nullptr, 100ms, 10), total(PacketScope, MemoryStage, 5ms, 1), total(WorkerWaitScope, nullptr, 50ms, 2)}},
+        {"queue worker 0x1", {total(PacketScope, nullptr, 10ms, 1)}},
+    };
+    const std::vector<TraceThreadTotals> now{
+        {"queue worker 0x0", {total(PacketScope, nullptr, 500ms, 60), total(PacketScope, MemoryStage, 35ms, 3), total(PacketScope, RenderingStage, 10ms, 1), total(LockScope, DrawSite, 20ms, 4), total(LockScope, PresentSite, 5ms, 1), total(SyncScope, nullptr, 6ms, 2), total(SerialScope, nullptr, 4ms, 1), total(WaitScope, FenceStage, 5ms, 1), total(WaitScope, nullptr, 9ms, 1), total(WorkerWaitScope, nullptr, 450ms, 40)}},
+        {"queue worker 0x1", {total(PacketScope, nullptr, 110ms, 2)}},
+        {"queue worker 0xa", {total(PacketScope, nullptr, 50ms, 1)}},
+        {"draw committer", {total(AgcDriver::PerformanceTrace::RenderPassScope, nullptr, 0ms, 120), total(FinishScope, nullptr, 80ms, 40), total(SyncScope, nullptr, 7ms, 1)}},
+    };
+    const auto figures = AgcDriver::OverlayTraceDeltas(before, now, 1s, 40, true);
+    require(figures.busy.size() == 3 && figures.busy[0].name == "Q0" && figures.busy[1].name == "Q1" && figures.busy[2].name == "Qa", "the busy queues are not Q0, Q1 and Qa in that order");
+    require(within(figures.busy[0].percent, 40) && within(figures.busy[1].percent, 10) && within(figures.busy[2].percent, 5), "the busy shares over a second are not 40, 10 and 5 %");
+    const std::vector<std::pair<std::string, double>> phases{{"Driver.Packet", 13.75}, {"Driver.DrawFinish", 2}, {"Driver.Packet.memory_wait", 0.75}, {"GpuMutex.wait.draw", 0.5}, {"Recorder.Sync", 0.325}};
+    require(figures.phases.size() == phases.size(), "page 2 does not keep the top 5 phases");
+    for (std::size_t index = 0; index < phases.size(); ++index) require(figures.phases[index].name == phases[index].first && within(figures.phases[index].msPerFrame, phases[index].second), "phase " + std::to_string(index) + " is " + figures.phases[index].name + " at " + std::to_string(figures.phases[index].msPerFrame) + " ms per frame, not " + phases[index].first);
+    require(figures.queueWaits && within(figures.queueWaits->memoryMs, 1.0) && within(figures.queueWaits->lockMs, 0.625) && within(figures.queueWaits->gpuMs, 0.375), "queue 0's waits per frame are not 1 ms on memory, 0.625 ms on the lock and 0.375 ms on the GPU");
+    require(figures.renderPassesPerFrame && within(*figures.renderPassesPerFrame, 3), "120 render passes over 40 frames are not 3 per frame");
+    require(!AgcDriver::OverlayTraceDeltas(before, now, 1s, 40, false).renderPassesPerFrame, "render passes are shown while they are not counted");
+    const auto noFrames = AgcDriver::OverlayTraceDeltas(before, now, 1s, 0, true);
+    require(noFrames.busy.size() == 3 && noFrames.phases.empty() && !noFrames.queueWaits && !noFrames.renderPassesPerFrame, "per-frame figures are shown for a second without frames");
+    require(AgcDriver::OverlayTraceDeltas(before, now, Clock::duration{}, 40, true).busy.empty(), "busy shares are shown for no elapsed time");
+    const auto noQueue = AgcDriver::OverlayTraceDeltas({}, std::vector<TraceThreadTotals>{now[3]}, 1s, 40, true);
+    require(noQueue.busy.empty() && !noQueue.queueWaits && noQueue.renderPassesPerFrame, "a trace without queue workers shows busy shares or queue waits");
+    AgcDriver::OverlayDetailSample sample;
+    sample.busy = figures.busy;
+    sample.phases = figures.phases;
+    sample.queueWaits = figures.queueWaits;
+    sample.renderPassesPerFrame = figures.renderPassesPerFrame;
+    requireDrawable(AgcDriver::ComposeOverlayDetails(sample), "page 2 from trace totals");
+}
+
+void hitRateTests() {
+    require(within(AgcDriver::OverlayHitPercent({100, 80}, {300, 230}).value_or(-1), 75), "150 hits of 200 lookups are not 75 %");
+    require(within(AgcDriver::OverlayHitPercent({1000, 900}, {200, 150}).value_or(-1), 75), "counters that restarted (the draw cache's 10 s report) are not read from zero");
+    require(!AgcDriver::OverlayHitPercent({5, 5}, {5, 5}), "a hit rate is shown without lookups");
+    require(!AgcDriver::OverlayHitPercent({0, 0}, {4, 5}), "more hits than lookups give a hit rate");
+}
+
+void presentModeTests() {
+    require(AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_KHR) == "fifo" && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_LATEST_READY_KHR) == "fifo_latest_ready" && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_MAILBOX_KHR) == "mailbox" && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_IMMEDIATE_KHR) == "immediate", "the present modes are not named as ANYPS5_PRESENT_MODE names them");
+    require(AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_RELAXED_KHR).empty() && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_MAX_ENUM_KHR).empty(), "a present mode the driver never selects has a name");
+    AgcDriver::OverlayDetailSample sample;
+    sample.title = "PPSA01234";
+    sample.presentMode = AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_LATEST_READY_KHR);
+    const auto content = AgcDriver::ComposeOverlayDetails(sample);
+    require(content.below.back() == "TITLE: PPSA01234  PRESENT: FIFO_LATEST_READY", "the longest present mode is drawn as '" + content.below.back() + "'");
+}
+
+void operatingSystemTests() {
+    const auto parsed = AgcDriver::ParseCommitCharge("MemTotal:       16318412 kB\nCommitLimit:     8159204 kB\nCommitted_AS:   12345678 kB\nVmallocTotal:   34359738367 kB\n");
+    require(parsed && parsed->used == 12345678ull * 1024 && parsed->budget == 8159204ull * 1024, "Committed_AS and CommitLimit are not read from /proc/meminfo's text");
+    require(!AgcDriver::ParseCommitCharge("Committed_AS:   12345678 kB\n"), "a commit charge is shown without its limit");
+    require(!AgcDriver::ParseCommitCharge("CommitLimit:     8159204 kB\nCommitted_AS:   12 MB\n"), "a value in another unit is read as kB");
+    require(!AgcDriver::ParseCommitCharge(""), "an empty /proc/meminfo gives a commit charge");
+    const auto commit = AgcDriver::ReadCommitCharge();
+    require(commit && commit->used != 0 && commit->budget != 0, "the system's commit charge and limit cannot be read");
+    static std::uint8_t* volatile touched = nullptr;
+    const auto before = AgcDriver::ReadPageFaults();
+    require(before.has_value(), "the process's page faults cannot be read");
+    constexpr std::size_t Bytes = std::size_t{16} << 20u;
+    const auto block = std::make_unique<std::uint8_t[]>(Bytes);
+    touched = block.get();
+    std::memset(touched, 0x3c, Bytes);
+    const auto after = AgcDriver::ReadPageFaults();
+    require(after && *after > *before, "touching 16 MiB of new memory did not raise the page faults from " + std::to_string(*before));
+    require(touched[Bytes - 1] == 0x3c, "the touched block was not written");
+}
+
+void addressCopyFoldTests() {
+    using AgcDriver::Graphics::AddressCopyCounters;
+    const auto start = AddressCopyCounters::Fold();
+    auto& counters = AddressCopyCounters::ThisThread();
+    require(&counters == &AddressCopyCounters::ThisThread(), "one thread got two address copy counters");
+    counters.Count(std::uint64_t{3} << 20u);
+    counters.Count(std::uint64_t{1} << 20u);
+    bool separate = false;
+    std::thread worker([&] {
+        auto& own = AddressCopyCounters::ThisThread();
+        separate = &own != &counters;
+        own.Count(std::uint64_t{5} << 20u);
+    });
+    worker.join();
+    require(separate, "two builders share address copy counters");
+    const auto folded = AddressCopyCounters::Fold();
+    require(folded.bytes - start.bytes == std::uint64_t{9} << 20u && folded.largest == std::uint64_t{5} << 20u, "two builders' 9 MiB of copies with a largest build of 5 MiB fold to " + std::to_string(folded.bytes - start.bytes) + " bytes, largest " + std::to_string(folded.largest));
+    const auto idle = AddressCopyCounters::Fold();
+    require(idle.bytes == folded.bytes && idle.largest == 0, "a second without copies keeps the previous second's largest build");
+    std::thread next([] { AddressCopyCounters::ThisThread().Count(std::uint64_t{2} << 20u); });
+    next.join();
+    const auto reused = AddressCopyCounters::Fold();
+    require(reused.bytes == idle.bytes + (std::uint64_t{2} << 20u) && reused.largest == std::uint64_t{2} << 20u, "the copies of a builder that ended were lost, or a new builder restarted them");
+    if (std::getenv("APS5_ADDRESS_COPY_MAX_MIB") == nullptr) require(AddressCopyCounters::Limit() == std::uint64_t{64} << 20u, "the address copy cap is not 64 MiB by default");
+    AgcDriver::Graphics::SetAddressCopyLimit(std::uint64_t{8} << 20u);
+    require(AddressCopyCounters::Limit() == std::uint64_t{8} << 20u, "the cap in use is not the one set");
+    AgcDriver::Graphics::SetAddressCopyLimit(0);
+}
+
+void driverSourceTests() {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    try {
+        NotImplemented_nid_no_patch("performance overlay test");
+    } catch (const std::runtime_error&) {
+    }
+    require(NotImplementedCalls_nid_no_patch() == before + 1, "an unimplemented-function call is not counted");
+    if (std::getenv("APS5_SKIP_REFUSED_DRAWS") == nullptr) require(!AgcDriver::DriverDetail::RefusedShaderCount(), "refused shaders are counted while a refused shader still stops the title");
+    require(AgcDriver::DriverDetail::RegistrationPreparationsPending() == std::optional<std::size_t>{0}, "a process that prepared no shaders has a compile backlog");
+}
+
+void traceSwitchTests() {
+    using AgcDriver::PerformanceOverlay;
+    using AgcDriver::PerformanceTrace;
+    require(!PerformanceTrace::Configured(), "the overlay statistics test runs with APS5_TRACE_* set");
+    require(PerformanceOverlay::Page() == 0 && !PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "the trace records before page 2 is shown");
+    std::string failure;
+    std::thread([&] {
+        if (PerformanceTrace::Thread() != nullptr) failure = "a thread is bound to the trace while nothing records";
+    }).join();
+    require(failure.empty(), failure);
+    PerformanceOverlay::Toggle();
+    require(PerformanceOverlay::Page() == 1 && !PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "page 1 turns the trace on");
+    PerformanceOverlay::Toggle();
+    require(PerformanceOverlay::Page() == 2 && PerformanceTrace::Recording() && PerformanceTrace::OverlayTotals(), "page 2 does not turn the trace totals on");
+    std::thread([&] {
+        PerformanceTrace::BindThread("queue worker 0x5");
+        auto* thread = PerformanceTrace::Thread();
+        if (thread == nullptr || thread != PerformanceTrace::Thread()) {
+            failure = "a named worker is not bound once while page 2 shows";
+            return;
+        }
+        const auto begin = Clock::now();
+        thread->Add(PacketScope, nullptr, begin, begin + 3ms);
+        PerformanceTrace::Count(AgcDriver::PerformanceTrace::RenderPassScope);
+        PerformanceTrace::Count(AgcDriver::PerformanceTrace::RenderPassScope);
+        const auto snapshot = thread->Collect();
+        if (!snapshot.slices.empty() || snapshot.dropped) failure = "page 2's trace totals buffer slices";
+    }).join();
+    require(failure.empty(), failure);
+    std::thread([&] {
+        if (PerformanceTrace::Thread() != nullptr) failure = "a thread that never named itself is bound while page 2 shows";
+    }).join();
+    require(failure.empty(), failure);
+    const auto threads = PerformanceTrace::ThreadTotals();
+    require(threads.has_value(), "the trace totals cannot be read");
+    const auto worker = std::find_if(threads->begin(), threads->end(), [](const AgcDriver::TraceThreadTotals& thread) { return thread.name == "queue worker 0x5"; });
+    require(worker != threads->end(), "the named worker's totals are missing");
+    std::uint64_t passes = 0;
+    Clock::duration packets{};
+    for (const auto& entry : worker->totals) {
+        if (std::string_view(entry.scope) == AgcDriver::PerformanceTrace::RenderPassScope) passes += entry.count;
+        if (std::string_view(entry.scope) == PacketScope && entry.stage == nullptr) packets += entry.length;
+    }
+    require(passes == 2 && packets == 3ms, "the worker's totals hold " + std::to_string(passes) + " render passes and " + std::to_string(std::chrono::duration<double, std::milli>(packets).count()) + " ms of packets, not 2 and 3 ms");
+    PerformanceOverlay::Toggle();
+    require(PerformanceOverlay::Page() == 0 && !PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "leaving page 2 leaves the trace totals on");
+    std::thread([&] {
+        PerformanceTrace::Count(AgcDriver::PerformanceTrace::RenderPassScope);
+        if (PerformanceTrace::Thread() != nullptr) failure = "a thread is bound to the trace after page 2 was left";
+    }).join();
+    require(failure.empty(), failure);
+}
+
 void costReport() {
     auto& counters = AgcDriver::PacketCounters::ThisThread();
     constexpr int Increments = 20'000'000;
@@ -707,8 +892,15 @@ int main() {
         pageTwoComposeTests();
         pageTwoLayoutTests();
         sampleTests();
+        traceDeltaTests();
+        hitRateTests();
+        presentModeTests();
+        operatingSystemTests();
+        addressCopyFoldTests();
+        driverSourceTests();
+        traceSwitchTests();
         costReport();
-        std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory and resolution tests passed\n";
+        std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory, resolution, page 2 source and trace switch tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

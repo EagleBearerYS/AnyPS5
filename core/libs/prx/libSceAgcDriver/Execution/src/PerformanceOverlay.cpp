@@ -1,19 +1,27 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/PerformanceOverlayFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/PerformanceOverlayVert_spv.h"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <charconv>
 #include <initializer_list>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -24,6 +32,8 @@
 #endif
 #include <windows.h>
 #include <psapi.h>
+#else
+#include <sys/resource.h>
 #endif
 
 namespace AgcDriver {
@@ -41,6 +51,7 @@ std::atomic<std::uint32_t> currentPage{0};
 std::atomic<std::uint64_t> gpuTotal{0};
 std::atomic<std::uint64_t> driverTotal{0};
 std::atomic<std::uint64_t> pipelineTotal{0};
+std::atomic<OverlayDriverCounters (*)()> driverCounters{nullptr};
 
 struct PacketCounterRegistry {
     std::mutex mutex;
@@ -69,9 +80,26 @@ const OverlaySettings& settings() {
     static const OverlaySettings parsed = [] {
         const auto read = ParseOverlaySettings(std::getenv("ANYPS5_OVERLAY"), std::getenv("ANYPS5_OVERLAY_POS"));
         currentPage.store(read.page, std::memory_order_relaxed);
+        if (read.page == 2) PerformanceTrace::SetOverlayTotals(true);
         return read;
     }();
     return parsed;
+}
+
+std::string busyName(std::string_view thread) {
+    auto queue = thread.substr(TraceFormat::WorkerPrefix.size());
+    if (queue.starts_with("0x")) queue.remove_prefix(2);
+    return "Q" + std::string(queue);
+}
+
+std::optional<std::uint64_t> meminfoKilobytes(std::string_view line, std::string_view name) {
+    if (!line.starts_with(name)) return std::nullopt;
+    auto rest = line.substr(name.size());
+    while (!rest.empty() && rest.front() == ' ') rest.remove_prefix(1);
+    std::uint64_t value = 0;
+    const auto [last, error] = std::from_chars(rest.data(), rest.data() + rest.size(), value);
+    if (error != std::errc{} || std::string_view(last, static_cast<std::size_t>(rest.data() + rest.size() - last)) != " kB") return std::nullopt;
+    return value * 1024u;
 }
 
 std::int32_t panelWidth(std::int32_t columns, std::int32_t scale) {
@@ -505,6 +533,68 @@ OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
     return content;
 }
 
+OverlayTraceFigures OverlayTraceDeltas(std::span<const TraceThreadTotals> before, std::span<const TraceThreadTotals> now, OverlayStatistics::Clock::duration elapsed, std::uint64_t presents, bool passes) {
+    using Duration = OverlayStatistics::Clock::duration;
+    const auto milliseconds = [](Duration length) { return std::chrono::duration<double, std::milli>(length).count(); };
+    std::map<std::string, Duration> busy;
+    std::map<std::string, Duration> phases;
+    std::optional<OverlayQueueWaits> waits;
+    std::uint64_t renderPasses = 0;
+    for (std::size_t index = 0; index < now.size(); ++index) {
+        const auto& thread = now[index];
+        const auto totals = TraceFormat::Since(thread.totals, index < before.size() ? std::span<const TraceThread::Total>(before[index].totals) : std::span<const TraceThread::Total>());
+        const bool worker = std::string_view(thread.name).starts_with(TraceFormat::WorkerPrefix);
+        const bool firstQueue = thread.name == std::string(TraceFormat::WorkerPrefix) + "0x0";
+        if (firstQueue && !waits) waits = OverlayQueueWaits{};
+        for (const auto& total : totals) {
+            const std::string_view scope = total.scope;
+            const std::string_view stage = total.stage != nullptr ? total.stage : "";
+            if (scope == PerformanceTrace::RenderPassScope) {
+                renderPasses += total.count;
+                continue;
+            }
+            if (worker && total.stage == nullptr && std::find(TraceFormat::WorkerBusyScopes.begin(), TraceFormat::WorkerBusyScopes.end(), scope) != TraceFormat::WorkerBusyScopes.end()) busy[thread.name] += total.length;
+            if (scope != TraceFormat::WorkerWaitScope) phases[TraceFormat::Name(total.scope, total.stage)] += total.length;
+            if (!firstQueue) continue;
+            if (scope == "Driver.Packet" && (stage == "memory_wait" || stage == "rendering_wait")) waits->memoryMs += milliseconds(total.length);
+            else if (scope == "GpuMutex.wait") waits->lockMs += milliseconds(total.length);
+            else if ((total.stage == nullptr && (scope == "Recorder.Sync" || scope == "Recorder.WaitSerial")) || (scope == "Graphics.Wait" && stage == "fence_wait")) waits->gpuMs += milliseconds(total.length);
+        }
+        if (worker && !busy.contains(thread.name)) busy[thread.name] = Duration{};
+    }
+    OverlayTraceFigures figures;
+    if (elapsed > Duration{}) {
+        for (const auto& [name, length] : busy) figures.busy.push_back({busyName(name), 100.0 * static_cast<double>(length.count()) / static_cast<double>(elapsed.count())});
+        std::stable_sort(figures.busy.begin(), figures.busy.end(), [](const OverlayThreadBusy& left, const OverlayThreadBusy& right) { return left.name.size() < right.name.size(); });
+    }
+    if (presents == 0) return figures;
+    const double perFrame = 1.0 / static_cast<double>(presents);
+    std::vector<std::pair<std::string, Duration>> top(phases.begin(), phases.end());
+    std::stable_sort(top.begin(), top.end(), [](const auto& left, const auto& right) { return left.second > right.second; });
+    for (std::size_t index = 0; index < top.size() && index < OverlayTopPhases; ++index) figures.phases.push_back({top[index].first, milliseconds(top[index].second) * perFrame});
+    if (waits) figures.queueWaits = OverlayQueueWaits{waits->memoryMs * perFrame, waits->lockMs * perFrame, waits->gpuMs * perFrame};
+    if (passes) figures.renderPassesPerFrame = static_cast<double>(renderPasses) * perFrame;
+    return figures;
+}
+
+std::optional<double> OverlayHitPercent(const OverlayHits& before, const OverlayHits& now) {
+    const bool reset = now.lookups < before.lookups || now.hits < before.hits;
+    const auto lookups = reset ? now.lookups : now.lookups - before.lookups;
+    const auto hits = reset ? now.hits : now.hits - before.hits;
+    if (lookups == 0 || hits > lookups) return std::nullopt;
+    return 100.0 * static_cast<double>(hits) / static_cast<double>(lookups);
+}
+
+std::string_view OverlayPresentModeName(VkPresentModeKHR mode) {
+    switch (mode) {
+        case VK_PRESENT_MODE_FIFO_KHR: return "fifo";
+        case VK_PRESENT_MODE_FIFO_LATEST_READY_KHR: return "fifo_latest_ready";
+        case VK_PRESENT_MODE_MAILBOX_KHR: return "mailbox";
+        case VK_PRESENT_MODE_IMMEDIATE_KHR: return "immediate";
+        default: return {};
+    }
+}
+
 bool OverlaySampleDue(std::optional<OverlayStatistics::Clock::time_point> sampledAt, OverlayStatistics::Clock::time_point now) {
     return !sampledAt || now - *sampledAt >= std::chrono::seconds(1);
 }
@@ -540,6 +630,51 @@ std::optional<std::uint64_t> ReadProcessPrivateBytes() {
     std::fclose(status);
     if (!anonymousKb) return std::nullopt;
     return (*anonymousKb + swapKb) * 1024u;
+#endif
+}
+
+std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo) {
+    std::optional<std::uint64_t> committed;
+    std::optional<std::uint64_t> limit;
+    while (!meminfo.empty()) {
+        const auto end = meminfo.find('\n');
+        const auto line = meminfo.substr(0, end);
+        meminfo = end == std::string_view::npos ? std::string_view{} : meminfo.substr(end + 1);
+        if (const auto value = meminfoKilobytes(line, "Committed_AS:")) committed = value;
+        else if (const auto value = meminfoKilobytes(line, "CommitLimit:")) limit = value;
+    }
+    if (!committed || !limit) return std::nullopt;
+    return OverlayMemory{*committed, *limit};
+}
+
+std::optional<OverlayMemory> ReadCommitCharge() {
+#ifdef _WIN32
+    PERFORMANCE_INFORMATION information{};
+    information.cb = sizeof(information);
+    if (K32GetPerformanceInfo(&information, sizeof(information)) == 0) return std::nullopt;
+    const auto page = static_cast<std::uint64_t>(information.PageSize);
+    return OverlayMemory{static_cast<std::uint64_t>(information.CommitTotal) * page, static_cast<std::uint64_t>(information.CommitLimit) * page};
+#else
+    std::FILE* meminfo = std::fopen("/proc/meminfo", "r");
+    if (meminfo == nullptr) return std::nullopt;
+    std::string text;
+    char block[1024];
+    for (std::size_t read = 0; (read = std::fread(block, 1, sizeof(block), meminfo)) != 0;) text.append(block, read);
+    std::fclose(meminfo);
+    return ParseCommitCharge(text);
+#endif
+}
+
+std::optional<std::uint64_t> ReadPageFaults() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(counters.PageFaultCount);
+#else
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return std::nullopt;
+    return static_cast<std::uint64_t>(usage.ru_minflt) + static_cast<std::uint64_t>(usage.ru_majflt);
 #endif
 }
 
@@ -699,22 +834,24 @@ void PerformanceOverlay::Toggle() {
     static std::mutex toggleMutex;
     std::lock_guard lock(toggleMutex);
     const auto presses = toggleCount.load(std::memory_order_relaxed) + 1;
-    currentPage.store(OverlayPageAfter(settings().page, presses), std::memory_order_relaxed);
+    const auto shown = OverlayPageAfter(settings().page, presses);
+    currentPage.store(shown, std::memory_order_relaxed);
     toggleCount.store(presses, std::memory_order_relaxed);
+    PerformanceTrace::SetOverlayTotals(shown == 2);
+}
+
+void PerformanceOverlay::SetDriverCounters(OverlayDriverCounters (*source)()) {
+    driverCounters.store(source, std::memory_order_release);
 }
 
 OverlayCorner PerformanceOverlay::Corner() {
     return settings().corner;
 }
 
-void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display) {
+void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at, VkExtent2D display, const OverlayPresentInfo& info) {
     restartIfToggled();
     if (page == 2) {
-        statistics.AddPresent(at, OverlayCounters{0, 0, 0, 0, PerformanceCounters::Pipelines()});
-        detailSample.fps = statistics.Fps();
-        detailSample.frameMs = statistics.LastFrameMs();
-        detailSample.presentsPerSecond = statistics.Fps();
-        detailSample.pipelinesPerSecond = static_cast<double>(statistics.PipelinesInWindow());
+        noteDetailPresent(at, info);
         return;
     }
     if (OverlaySampleDue(sampledAt, at)) {
@@ -734,8 +871,93 @@ void PerformanceOverlay::restartIfToggled() {
     statistics.Reset();
     details = {};
     detailSample = {};
+    detail = {};
     sampledAt.reset();
     toggles = current;
+}
+
+void PerformanceOverlay::noteDetailPresent(OverlayStatistics::Clock::time_point at, const OverlayPresentInfo& info) {
+    PerformanceTrace::BindThread("presenter");
+    statistics.AddPresent(at, OverlayCounters{0, 0, 0, 0, PerformanceCounters::Pipelines()});
+    if (info.displayAddress != 0 && info.displayAddress == detail.lastDisplayAddress) ++detail.repeats;
+    detail.lastDisplayAddress = info.displayAddress;
+    ++detail.tracePresents;
+    detailSample.fps = statistics.Fps();
+    detailSample.frameMs = statistics.LastFrameMs();
+    detailSample.presentsPerSecond = statistics.Fps();
+    detailSample.pipelinesPerSecond = static_cast<double>(statistics.PipelinesInWindow());
+    if (OverlaySampleDue(detail.sampledAt, at)) sampleDetails(at, info);
+}
+
+void PerformanceOverlay::sampleDetails(OverlayStatistics::Clock::time_point at, const OverlayPresentInfo& info) {
+    DetailCounters now;
+    if (const auto source = driverCounters.load(std::memory_order_acquire)) now.driver = source();
+    const auto pipelines = Graphics::PipelineStoreTotals();
+    now.pipelines = OverlayHits{pipelines.hits + pipelines.misses, pipelines.hits};
+    const auto copies = Graphics::AddressCopyCounters::Fold();
+    now.copiedBytes = copies.bytes;
+    now.pageFaults = ReadPageFaults();
+    now.unimplemented = NotImplementedCalls_nid_no_patch();
+    now.acquireDrops = info.acquireDrops;
+    const auto& before = detail.base;
+    if (detail.sampledAt) {
+        const double seconds = std::chrono::duration<double>(at - *detail.sampledAt).count();
+        const auto perSecond = [&](std::uint64_t count) { return static_cast<double>(count) / seconds; };
+        if (now.driver && before.driver) {
+            detailSample.flipsPerSecond = perSecond(now.driver->flips - before.driver->flips);
+            if (now.driver->drawCache && before.driver->drawCache) detailSample.drawCacheHitPercent = OverlayHitPercent(*before.driver->drawCache, *now.driver->drawCache);
+        }
+        detailSample.pipelineCacheHitPercent = OverlayHitPercent(before.pipelines, now.pipelines);
+        detailSample.cpuCopyMegabytesPerSecond = perSecond(now.copiedBytes - before.copiedBytes) / (1024.0 * 1024.0);
+        if (const auto limit = Graphics::AddressCopyCounters::Limit(); limit != 0) detailSample.addressCopyCapPercent = 100.0 * static_cast<double>(copies.largest) / static_cast<double>(limit);
+        if (now.pageFaults && before.pageFaults) detailSample.pageFaultsPerSecond = perSecond(*now.pageFaults - *before.pageFaults);
+        detailSample.unimplementedPerSecond = perSecond(now.unimplemented - before.unimplemented);
+        detailSample.droppedFrames = static_cast<std::uint64_t>(std::llround(perSecond(now.acquireDrops - before.acquireDrops)));
+        detailSample.repeatedPresents = static_cast<std::uint64_t>(std::llround(perSecond(detail.repeats)));
+    } else if (HasAppParamJson_nid_no_patch()) {
+        const auto id = GetAppTitleId_nid_postfix();
+        detailSample.title.assign(id.value, strnlen(id.value, sizeof(id.value)));
+    }
+    if (now.driver && before.driver && !now.driver->drawCache) now.driver->drawCache = before.driver->drawCache;
+    detailSample.unimplementedTotal = now.unimplemented;
+    if (const auto pending = DriverDetail::RegistrationPreparationsPending()) detailSample.pipelinesCompiling = *pending;
+    if (const auto refused = DriverDetail::RefusedShaderCount()) detailSample.refusedShaders = *refused;
+    else detailSample.refusedShaders.reset();
+    detailSample.commit = ReadCommitCharge();
+    if (context.hostImportAlignment != 0) {
+        const auto imports = Graphics::HostImportCounters();
+        detailSample.hostImports = imports.live;
+        detailSample.hostImportBytes = OverlayMemory{imports.liveBytes, imports.liveBytes + Graphics::HostImportBudgetRemaining(context)};
+    }
+    detailSample.presentMode = std::string(OverlayPresentModeName(info.presentMode));
+    sampleTrace(at);
+    detail.base = std::move(now);
+    detail.repeats = 0;
+    detail.sampledAt = at;
+}
+
+void PerformanceOverlay::sampleTrace(OverlayStatistics::Clock::time_point at) {
+    if (!PerformanceTrace::Recording()) {
+        detail.traceSampledAt.reset();
+        detail.traceBase.clear();
+        detailSample.busy.clear();
+        detailSample.phases.clear();
+        detailSample.queueWaits.reset();
+        detailSample.renderPassesPerFrame.reset();
+        return;
+    }
+    auto threads = PerformanceTrace::ThreadTotals();
+    if (!threads) return;
+    if (detail.traceSampledAt) {
+        auto figures = OverlayTraceDeltas(detail.traceBase, *threads, at - *detail.traceSampledAt, detail.tracePresents, PerformanceTrace::OverlayTotals());
+        detailSample.busy = std::move(figures.busy);
+        detailSample.phases = std::move(figures.phases);
+        detailSample.queueWaits = figures.queueWaits;
+        detailSample.renderPassesPerFrame = figures.renderPassesPerFrame;
+    }
+    detail.traceBase = std::move(*threads);
+    detail.traceSampledAt = at;
+    detail.tracePresents = 0;
 }
 
 VkRenderPass PerformanceOverlay::renderPass(VkFormat format, VkImageLayout initialLayout, VkImageLayout finalLayout) {
