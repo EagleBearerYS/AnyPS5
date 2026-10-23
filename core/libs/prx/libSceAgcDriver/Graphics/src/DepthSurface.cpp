@@ -589,7 +589,10 @@ public:
     bool OverwrittenInMemory() {
         GuestMemory::CollectWrites(target.address, static_cast<std::size_t>(depthBytes()));
         if (GuestMemory::WrittenSince(target.address, static_cast<std::size_t>(depthBytes()), depthMemory)) return true;
-        if (std::vector<std::uint8_t> blocks; mirrorPlane.storage != nullptr && GuestMemory::WriteWatched() && !GuestMemory::Watched(target.address, static_cast<std::size_t>(depthBytes())) && UnwatchedBlocks(mirrorPlane.storage->GuestBytes(), blocks) && std::find(blocks.begin(), blocks.end(), GuestMemory::BlockWritten) != blocks.end()) return true;
+        if (std::vector<std::uint8_t> blocks; mirrorPlane.storage != nullptr && GuestMemory::WriteWatched() && !GuestMemory::Watched(target.address, static_cast<std::size_t>(depthBytes())) && UnwatchedBlocks(mirrorPlane.storage->GuestBytes(), blocks)) {
+            unwatchedPresent = Recorder::Presents();
+            if (std::find(blocks.begin(), blocks.end(), GuestMemory::BlockWritten) != blocks.end()) return true;
+        }
         if (target.stencilAddress == 0) return false;
         GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilBytes()));
         return GuestMemory::WrittenSince(target.stencilAddress, static_cast<std::size_t>(stencilBytes()), stencilMemory);
@@ -849,14 +852,15 @@ public:
         }
     }
 
-    std::vector<bool> WrittenUnits(const GuestTextureResource& resource, std::uint64_t& generation) {
+    std::vector<bool> WrittenUnits(const GuestTextureResource& resource, std::uint64_t& generation, bool binding = false) {
         const auto bytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
         SizeUnits(bytes);
         GuestMemory::CollectWrites(resource.baseAddress, bytes);
         generation = GuestMemory::TrackerGeneration();
         std::vector<bool> changed(unitGeneration.size(), false);
         if (GuestMemory::WriteWatched() && !GuestMemory::Watched(resource.baseAddress, bytes)) {
-            UnwatchedUnits(bytes, changed);
+            const auto present = Recorder::Presents();
+            if ((!binding || unwatchedPresent != present) && UnwatchedUnits(bytes, changed)) unwatchedPresent = present;
             return changed;
         }
         if (unitGeneration.size() == 1u) {
@@ -885,9 +889,9 @@ public:
         return mirror->CompareUnwatched(blocks);
     }
 
-    void UnwatchedUnits(std::uint64_t bytes, std::vector<bool>& changed) {
+    bool UnwatchedUnits(std::uint64_t bytes, std::vector<bool>& changed) {
         std::vector<std::uint8_t> blocks;
-        if (changed.empty() || unitBytes == 0 || !UnwatchedBlocks(bytes, blocks)) return;
+        if (changed.empty() || unitBytes == 0 || !UnwatchedBlocks(bytes, blocks)) return false;
         constexpr std::uint64_t block = 65536;
         const auto first = target.address / block;
         for (std::size_t index = 0; index < blocks.size(); ++index) {
@@ -895,11 +899,12 @@ public:
             const auto offset = std::max(target.address, (first + index) * block) - target.address;
             changed[static_cast<std::size_t>(std::min<std::uint64_t>(offset / unitBytes, changed.size() - 1u))] = true;
         }
+        return true;
     }
 
-    void SyncFromMemory(const GuestTextureResource& resource) {
+    void SyncFromMemory(const GuestTextureResource& resource, bool binding = false) {
         std::uint64_t generation = 0;
-        const auto changed = WrittenUnits(resource, generation);
+        const auto changed = WrittenUnits(resource, generation, binding);
         if ((pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 || !anyUnit(changed)) {
             unitGeneration.assign(unitGeneration.size(), generation);
             return;
@@ -940,6 +945,7 @@ public:
     std::vector<std::uint64_t> unitGeneration;
     std::uint64_t unitBytes = 0;
     bool syncing = false;
+    std::optional<std::uint64_t> unwatchedPresent;
     std::uint64_t scannedEpoch = 0;
 
     const Context context;
@@ -2036,7 +2042,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         if (!created) surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
     }
     if (!created) surface->NoteHtileClear(htileCleared);
-    if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
+    if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target), !depthWritten && !cleared);
     surface->ApplyFastClear();
     if (drawnDepth != nullptr && drawnDepth != surface) drawnDepth->written = ++depthWrites;
     surface->written = ++depthWrites;

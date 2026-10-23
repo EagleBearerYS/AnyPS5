@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -169,6 +170,7 @@ void RequireKept(const Plane& plane, std::size_t unitTexels, const std::string& 
 void DrawSeesWrite(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
     StoreHalf(device, shaders, plane);
     WriteStart(plane);
+    AgcDriver::Graphics::Recorder::CountPresent();
     const auto covered = DrawAt(device, shaders, plane, 0.25f, false, VK_COMPARE_OP_LESS);
     Require(covered == plane.texels - WrittenTexels, Named(plane, "after a CPU write of depth 0.125 into " + std::to_string(WrittenTexels) + " texels of the stored plane, a draw at depth 0.25 passed LESS at " + std::to_string(covered) + " of " + std::to_string(plane.texels) + " texels, not " + std::to_string(plane.texels - WrittenTexels)));
     static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
@@ -183,6 +185,28 @@ void StoreKeepsWrite(AgcDriver::VulkanDevice& device, const DepthFastClearHarnes
     static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
     device.WaitIdle();
     RequireKept(plane, unitTexels, "a store after a CPU write into a stored plane the GPU wrote again");
+}
+
+void SameFrameWriteAtStore(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    const auto unitTexels = StoreHalf(device, shaders, plane);
+    AgcDriver::Graphics::Recorder::CountPresent();
+    Require(DrawAt(device, shaders, plane, 0.25f, true, VK_COMPARE_OP_ALWAYS) == plane.texels, Named(plane, "the draw writing depth 0.25 over the stored plane did not cover the target"));
+    WriteStart(plane);
+    static_cast<void>(DrawAt(device, shaders, plane, 0.25f, false, VK_COMPARE_OP_LESS));
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
+    device.WaitIdle();
+    RequireKept(plane, unitTexels, "a store after a CPU write and a draw in the same present");
+}
+
+void WriteOrderAtStore(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    StoreHalf(device, shaders, plane);
+    AgcDriver::Graphics::Recorder::CountPresent();
+    Require(DrawAt(device, shaders, plane, 0.25f, false, VK_COMPARE_OP_LESS) == plane.texels, Named(plane, "a draw at depth 0.25 over the stored plane failed LESS against 0.5"));
+    WriteStart(plane);
+    Require(DrawAt(device, shaders, plane, 0.25f, true, VK_COMPARE_OP_ALWAYS) == plane.texels, Named(plane, "the draw writing depth 0.25 after the CPU write did not cover the target"));
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
+    device.WaitIdle();
+    Require(StartHolds(plane, 0.25f) && Holding(plane.Floats(), 0.25f) == plane.texels, Named(plane, "a store after a CPU write and a later depth-writing draw in the same present kept the CPU's bytes over the draw: the start holds " + std::to_string(plane.data[0]) + ", " + std::to_string(Holding(plane.Floats(), 0.25f)) + " of " + std::to_string(plane.texels) + " texels hold the draw's 0.25"));
 }
 
 void RetireKeepsWrite(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
@@ -231,27 +255,68 @@ void UnchangedStaysUnsynced(AgcDriver::VulkanDevice& device, const DepthFastClea
     std::printf("%d draws over the stored, unwritten plane: %llu syncs from memory, %llu stores, %llu unwatched texture comparisons\n", Draws, static_cast<unsigned long long>(after.syncs - before.syncs), static_cast<unsigned long long>(after.stores - before.stores), static_cast<unsigned long long>(AgcDriver::Graphics::StorageTexture::UntrackedCompares() - compares));
 }
 
+AgcDriver::Graphics::DepthTarget TargetOf(const Plane& plane) {
+    AgcDriver::Graphics::DepthTarget target{plane.surface.depth, 0, plane.extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.depthSwizzle = plane.surface.swizzle;
+    return target;
+}
+
+void BindBound(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane) {
+    StoreHalf(device, shaders, plane);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto target = TargetOf(plane);
+    constexpr int Binds = 8;
+    const auto binds = [&] {
+        const auto compares = AgcDriver::Graphics::StorageTexture::UntrackedCompares();
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        for (int bind = 0; bind < Binds; ++bind) {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, Named(plane, "a bind returned no view"));
+        }
+        return AgcDriver::Graphics::StorageTexture::UntrackedCompares() - compares;
+    };
+    AgcDriver::Graphics::Recorder::CountPresent();
+    const auto first = binds();
+    const auto second = binds();
+    AgcDriver::Graphics::Recorder::CountPresent();
+    const auto third = binds();
+    Require(first == 1u && second == 0u && third == 1u, Named(plane, "binds over the stored, unwritten plane, each in a new collect epoch, compared it " + std::to_string(first) + " and " + std::to_string(second) + " times in one present and " + std::to_string(third) + " times in the next, not once per present"));
+    AgcDriver::Graphics::Recorder::CountPresent();
+    Require(DrawAt(device, shaders, plane, 0.25f, true, VK_COMPARE_OP_ALWAYS) == plane.texels, Named(plane, "the draw writing depth 0.25 before the store did not cover the target"));
+    AgcDriver::Graphics::Recorder::CountPresent();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto beforeStore = AgcDriver::Graphics::StorageTexture::UntrackedCompares();
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(plane.surface.depth, plane.bytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
+    device.WaitIdle();
+    const auto store = AgcDriver::Graphics::StorageTexture::UntrackedCompares() - beforeStore;
+    const auto afterStore = binds();
+    Require(store != 0u && afterStore == 0u, Named(plane, "a store at the start of a present compared the plane " + std::to_string(store) + " times, and the binds after it in that present " + std::to_string(afterStore) + " times"));
+    std::printf("%d binds per run, each in a new collect epoch: %llu, %llu (same present), %llu (next present) comparisons; a store opening a present: %llu comparisons, then %llu in %d binds\n", Binds, static_cast<unsigned long long>(first), static_cast<unsigned long long>(second), static_cast<unsigned long long>(third), static_cast<unsigned long long>(store), static_cast<unsigned long long>(afterStore), Binds);
+}
+
 void BindCost(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Plane& plane, int binds) {
     StoreHalf(device, shaders, plane);
     Require(DrawAt(device, shaders, plane, 0.25f, false, VK_COMPARE_OP_LESS) == plane.texels, Named(plane, "the draw before the timed binds failed LESS against 0.5"));
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    AgcDriver::Graphics::DepthTarget target{plane.surface.depth, 0, plane.extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
-    target.depthSwizzle = plane.surface.swizzle;
-    const auto timed = [&](bool epochPerBind) {
+    const auto target = TargetOf(plane);
+    const auto timed = [&](bool epochPerBind, int presentEvery, const char* what, bool written = false) {
         const auto syncs = AgcDriver::Graphics::DepthPlaneStoreCounts().syncs;
         const auto compares = AgcDriver::Graphics::StorageTexture::UntrackedCompares();
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         AgcDriver::GuestMemory::BumpCollectEpoch();
         const auto start = std::chrono::steady_clock::now();
         for (int bind = 0; bind < binds; ++bind) {
+            if (presentEvery != 0 && bind % presentEvery == 0) AgcDriver::Graphics::Recorder::CountPresent();
             if (epochPerBind) AgcDriver::GuestMemory::BumpCollectEpoch();
-            Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, Named(plane, "a timed bind returned no view"));
+            Require(AgcDriver::Graphics::DepthSurfaceView(context, target, written) != VK_NULL_HANDLE, Named(plane, "a timed bind returned no view"));
         }
         const auto spent = std::chrono::steady_clock::now() - start;
-        std::printf("%ux%u plane, %s, %s: %d binds, %.0f ns per bind; %llu syncs from memory, %llu unwatched texture comparisons\n", plane.extent.width, plane.extent.height, AgcDriver::GuestMemory::Watched(plane.surface.depth, plane.bytes) ? "write-watched" : "outside the write watch", epochPerBind ? "a collect epoch per bind" : "one collect epoch", binds, std::chrono::duration<double, std::nano>(spent).count() / binds, static_cast<unsigned long long>(AgcDriver::Graphics::DepthPlaneStoreCounts().syncs - syncs), static_cast<unsigned long long>(AgcDriver::Graphics::StorageTexture::UntrackedCompares() - compares));
+        std::printf("%ux%u plane, %s, %s: %d binds, %.0f ns per bind; %llu syncs from memory, %llu unwatched texture comparisons\n", plane.extent.width, plane.extent.height, AgcDriver::GuestMemory::Watched(plane.surface.depth, plane.bytes) ? "write-watched" : "outside the write watch", what, binds, std::chrono::duration<double, std::nano>(spent).count() / binds, static_cast<unsigned long long>(AgcDriver::Graphics::DepthPlaneStoreCounts().syncs - syncs), static_cast<unsigned long long>(AgcDriver::Graphics::StorageTexture::UntrackedCompares() - compares));
     };
-    timed(false);
-    timed(true);
+    timed(false, 0, "one collect epoch");
+    timed(true, 0, "a collect epoch per bind, no present");
+    timed(true, 16, "a collect epoch per bind, a present every 16 binds");
+    timed(true, 16, "a collect epoch per bind, a present every 16 binds, binds writing depth", true);
 }
 
 int UnwatchedTests(AgcDriver::VulkanDevice& device, const std::string& mode, int count) {
@@ -260,6 +325,9 @@ int UnwatchedTests(AgcDriver::VulkanDevice& device, const std::string& mode, int
     constexpr VkExtent2D Large{1920, 1080};
     if (mode == "--unwatched-draw") DrawSeesWrite(device, shaders, MakePlane(Small));
     else if (mode == "--unwatched-store") StoreKeepsWrite(device, shaders, MakePlane(Small));
+    else if (mode == "--unwatched-same-frame") SameFrameWriteAtStore(device, shaders, MakePlane(Small));
+    else if (mode == "--unwatched-write-order") WriteOrderAtStore(device, shaders, MakePlane(Small));
+    else if (mode == "--unwatched-bind-bound") BindBound(device, shaders, MakePlane(Small));
     else if (mode == "--unwatched-retire") RetireKeepsWrite(device, shaders, MakePlane(Small));
     else if (mode == "--unwatched-large") {
         DrawSeesWrite(device, shaders, MakePlane(Large));
