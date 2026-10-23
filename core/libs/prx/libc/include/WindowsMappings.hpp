@@ -96,6 +96,7 @@ public:
             auto shared = slot.page.lock();
             if (!shared) {
                 shared = std::make_shared<SharedPage>();
+                shared->comparedWhenShared = slot.comparedWhenShared;
                 slot.page = shared;
             }
             return shared;
@@ -139,6 +140,7 @@ public:
             const auto aliases = shared->aliases;
             for (const auto alias : aliases) {
                 if (views.at(alias).resident) demote(alias);
+                views.at(alias).aliasDemoted = false;
             }
             const auto viewBytes = std::min(pageBytes, sectionBytes - done);
             split(base, pageBytes);
@@ -183,6 +185,23 @@ public:
             auto& page = *it->second.page;
             if (page.pins != 0) --page.pins;
             invalidate(page);
+        }
+    }
+
+    void CompareWhenShared(std::uintptr_t address, std::size_t bytes, bool residentOnly = false) {
+        std::lock_guard lock(mutex);
+        collectableRanges.clear();
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
+            if (residentOnly && !it->second.resident && !it->second.aliasDemoted) continue;
+            auto& page = *it->second.page;
+            page.comparedWhenShared = true;
+            it->second.slot->comparedWhenShared = true;
+            for (const auto alias : page.aliases) {
+                auto& view = views.at(alias);
+                if (view.resident || view.armed == 0) continue;
+                protectSubpages(alias, view.armed, view.protection, "stop arming a compared shared page", view.viewBytes);
+                view.armed = 0;
+            }
         }
     }
 
@@ -286,7 +305,7 @@ public:
         }
         for (std::size_t done = 0; done < bytes; done += pageBytes) {
             const auto found = views.find(address + done);
-            if (found != views.end() && found->second.resident) demote(address + done);
+            if (found != views.end() && found->second.resident) demote(address + done, true);
         }
         auto view = views.find(address);
         if (view == views.end()) throw refuse("the range does not start at a shared view");
@@ -350,6 +369,7 @@ public:
                     if (!watchResident) return false;
                     continue;
                 }
+                if (it->second.page->comparedWhenShared) return false;
                 if (it->second.protection != PAGE_NOACCESS) continue;
                 for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
                     if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
@@ -496,7 +516,7 @@ private:
         for (auto cursor = address; cursor < end;) {
             const auto base = cursor & ~(pageBytes - 1);
             if (const auto found = viewAt(base, position); found != views.end()) {
-                if (found->second.protection == PAGE_NOACCESS || (found->second.resident && !watchResident)) return false;
+                if (found->second.protection == PAGE_NOACCESS || (found->second.resident ? !watchResident : found->second.page->comparedWhenShared)) return false;
                 cursor = std::min(end, base + pageBytes);
                 continue;
             }
@@ -522,6 +542,7 @@ private:
         }();
         std::vector<std::uintptr_t> aliases;
         std::uint32_t pins = 0;
+        bool comparedWhenShared = false;
     };
     struct Section {
         HANDLE handle;
@@ -553,6 +574,7 @@ private:
     struct Physical {
         std::weak_ptr<SharedPage> page;
         bool stored = false;
+        bool comparedWhenShared = false;
         std::shared_ptr<Saved> saved;
         std::size_t savedOffset = 0;
     };
@@ -569,6 +591,7 @@ private:
         std::shared_ptr<Physical> slot;
         std::size_t viewBytes = pageBytes;
         std::uint32_t hostImports = 0;
+        bool aliasDemoted = false;
     };
     struct Run {
         std::uintptr_t end;
@@ -716,7 +739,7 @@ private:
         return true;
     }
 
-    void demote(std::uintptr_t address) {
+    void demote(std::uintptr_t address, bool alias = false) {
         const auto run = std::prev(residentRuns.upper_bound(address));
         const auto start = run->first;
         const auto stop = run->second.end;
@@ -734,6 +757,7 @@ private:
             mapShared(page, view.section->handle, view.offset, view.protection);
             view.slot->stored = true;
             view.resident = false;
+            view.aliasDemoted = alias;
             view.seen.fill(0);
             view.armed = 0;
             view.collected = 0;

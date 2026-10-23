@@ -1569,7 +1569,9 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     for (const auto& [begin, end] : ranges) {
         if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WriteBlockBytes != 0 || (end - tracker.base) % WriteBlockBytes != 0) continue;
         const auto bytes = static_cast<std::size_t>(end - begin);
-        if (tracker.coverage.Covers(begin, bytes) || !walkWrites(tracker, begin, end, StampKind::Cpu) || !tracker.coverage.Restore(begin, bytes)) continue;
+        if (tracker.coverage.Covers(begin, bytes)) continue;
+        GuestArena::GuestArenaCompareWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), bytes);
+        if (!walkWrites(tracker, begin, end, StampKind::Cpu) || !tracker.coverage.Restore(begin, bytes)) continue;
         ++tracker.generation;
         tracker.noteCpuStore(begin, end, tracker.generation);
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
@@ -1640,6 +1642,9 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     auto unwatchedFrom = first;
     for (const auto& [begin, end] : spans) {
         if (!walkWrites(tracker, begin, end, StampKind::Cpu, true, &window)) continue;
+#ifdef _WIN32
+        GuestArena::GuestArenaCompareResidentWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin));
+#endif
         if (unwatchedFrom < begin) unwatchLocked(tracker, unwatchedFrom, static_cast<std::size_t>(begin - unwatchedFrom));
         unwatchedFrom = end;
     }

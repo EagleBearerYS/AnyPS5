@@ -35,6 +35,8 @@ constexpr std::size_t Block = 65536;
 #ifdef _WIN32
 constexpr wchar_t HostHoleMode[] = L"--host-hole";
 constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
+constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
+constexpr wchar_t ImportAliasSharedMode[] = L"--import-alias-shared";
 #endif
 
 void Require(bool condition, const std::string& message) {
@@ -734,6 +736,160 @@ void CheckRewatch() {
     Require(!Watched(base + 2 * Block, Block), "a block with uncommitted pages returned to the write watch");
     GuestArena::GuestArenaReset_nid_postfix(memory, 4 * Block);
     GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
+}
+
+void CheckRewatchedDirectMemoryComparedWhenShared() {
+    constexpr std::size_t bytes = 2 * Block;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * bytes, Block));
+    Require(memory != nullptr, "cannot reserve the compared sharing fixture");
+    struct Cleanup {
+        std::uint8_t* memory;
+        HANDLE section = nullptr;
+        ~Cleanup() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, 2 * bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, 2 * bytes);
+            if (section == nullptr) return;
+            GuestArena::GuestArenaForgetSection_nid_postfix(section);
+            CloseHandle(section);
+        }
+    } cleanup{memory};
+    cleanup.section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(cleanup.section != nullptr, "cannot create the compared sharing backing");
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto native = [](const std::uint8_t* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "cannot query the compared sharing fixture");
+        return info;
+    };
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_PRIVATE && Watched(base, bytes), "the direct memory is not resident and watched");
+    Unwatch(base, Block);
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> imported{{{base, base + Block}}};
+    Rewatch(imported);
+    Require(Watched(base, Block), "the rewatched direct memory is not watched");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) != 0, "rewatched resident direct memory is not collected");
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + bytes, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_MAPPED && native(memory + bytes).Type == MEM_MAPPED, "a second mapping kept the direct memory resident");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) == 0 && CollectWritesUncached(base + bytes, Block) == 0, "rewatched direct memory was collected once shared");
+    Require(native(memory).Protect == PAGE_READWRITE && native(memory + bytes).Protect == PAGE_READWRITE, "rewatched direct memory was armed once shared");
+    memory[8] = 0x5a;
+    Require(memory[bytes + 8] == 0x5a, "the second mapping does not see a store into the first");
+    Require(CollectWritesUncached(base + Block, Block) != 0, "shared direct memory that never left the watch stopped being collected");
+    std::cout << "rewatched direct memory: compared once shared, not armed; other shared direct memory still collected\n";
+}
+
+void CheckImportedDirectMemoryComparedWhenShared() {
+    constexpr std::size_t bytes = 2 * Block;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * bytes, Block));
+    Require(memory != nullptr, "cannot reserve the imported sharing fixture");
+    struct Cleanup {
+        std::uint8_t* memory;
+        HANDLE section = nullptr;
+        ~Cleanup() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, 2 * bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, 2 * bytes);
+            if (section == nullptr) return;
+            GuestArena::GuestArenaForgetSection_nid_postfix(section);
+            CloseHandle(section);
+        }
+    } cleanup{memory};
+    cleanup.section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(cleanup.section != nullptr, "cannot create the imported sharing backing");
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto native = [](const std::uint8_t* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "cannot query the imported sharing fixture");
+        return info;
+    };
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_PRIVATE && Watched(base, bytes), "the imported direct memory is not resident and watched");
+    Require(ImportWatched(base, Block, [] { return true; }), "the watched import of resident direct memory failed");
+    Require(Watched(base, Block), "a watched import of resident direct memory left the write watch");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) != 0, "imported resident direct memory is not collected");
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + bytes, bytes, cleanup.section, 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_MAPPED && native(memory + bytes).Type == MEM_MAPPED, "a second mapping kept the imported direct memory resident");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, Block) == 0 && CollectWritesUncached(base + bytes, Block) == 0, "imported direct memory was collected once shared");
+    Require(native(memory).Protect == PAGE_READWRITE && native(memory + bytes).Protect == PAGE_READWRITE, "imported direct memory was armed once shared");
+    memory[8] = 0x5a;
+    Require(memory[bytes + 8] == 0x5a, "the second mapping does not see a store into the imported first");
+    Require(CollectWritesUncached(base + Block, Block) != 0, "shared direct memory that was never imported stopped being collected");
+    std::cout << "imported direct memory: compared once shared, not armed; unimported shared direct memory still collected\n";
+}
+
+void CheckImportAliasDemotedComparedWhenShared() {
+    constexpr std::size_t page = 0x4000;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(5 * Block, Block));
+    Require(memory != nullptr, "cannot reserve the import alias fixture");
+    struct Cleanup {
+        std::uint8_t* memory;
+        std::array<HANDLE, 3> sections{};
+        std::array<void*, 3> aliases{};
+        ~Cleanup() {
+            for (const auto alias : aliases) GuestArena::GuestArenaUnmapAlias_nid_postfix(alias);
+            GuestArena::GuestArenaReset_nid_postfix(memory, 5 * Block);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, 5 * Block);
+            for (const auto section : sections) {
+                if (section == nullptr) continue;
+                GuestArena::GuestArenaForgetSection_nid_postfix(section);
+                CloseHandle(section);
+            }
+        }
+    } cleanup{memory};
+    for (auto& section : cleanup.sections) {
+        section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, Block, nullptr);
+        Require(section != nullptr, "cannot create the import alias backing");
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+    }
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto native = [](const std::uint8_t* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "cannot query the import alias fixture");
+        return info;
+    };
+    const auto clearingCollect = [](std::uint64_t address) {
+        std::array<void*, 4> pages{};
+        std::size_t count = pages.size();
+        return GuestArena::GuestArenaCollectWrites_nid_postfix(static_cast<std::uintptr_t>(address), page, pages.data(), &count, true);
+    };
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, page, cleanup.sections[0], 0, PAGE_READWRITE);
+    Require(native(memory).Type == MEM_PRIVATE && Watched(base, page), "the aliased direct memory is not resident and watched");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, page) != 0, "resident direct memory is not collected before its import");
+    cleanup.aliases[0] = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), page);
+    Require(cleanup.aliases[0] != nullptr && native(memory).Type == MEM_MAPPED, "the import alias did not demote the resident run");
+    Require(ImportWatched(base, page, [] { return true; }) && Watched(base, page), "the import of aliased direct memory did not stay watched");
+    Require(native(memory).Protect == PAGE_READWRITE, "memory an import's alias demoted was armed by the import");
+    Require(!clearingCollect(base), "a clearing collect over memory an import's alias demoted was not refused");
+    Require(native(memory).Protect == PAGE_READWRITE, "memory an import's alias demoted was armed by a clearing collect");
+    BumpCollectEpoch();
+    Require(CollectWritesUncached(base, page) == 0, "memory an import's alias demoted was collected once shared");
+    memory[8] = 0x5a;
+    Require(static_cast<const std::uint8_t*>(cleanup.aliases[0])[8] == 0x5a, "the import alias does not see a store into the guest view");
+
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + Block, page, cleanup.sections[1], 0, PAGE_READWRITE);
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + 2 * Block, page, cleanup.sections[1], 0, PAGE_READWRITE);
+    Require(native(memory + Block).Type == MEM_MAPPED && native(memory + 2 * Block).Type == MEM_MAPPED, "a second mapping kept the control direct memory resident");
+    cleanup.aliases[1] = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base + Block), page);
+    Require(cleanup.aliases[1] != nullptr, "the control import alias was refused");
+    Require(ImportWatched(base + Block, page, [] { return true; }) && Watched(base + Block, page), "the control import did not stay watched");
+    Require(clearingCollect(base + Block), "memory shared by a second mapping before its import alias stopped being collected");
+    Require(native(memory + Block).Protect == PAGE_READONLY && native(memory + 2 * Block).Protect == PAGE_READONLY, "memory shared by a second mapping before its import alias was not armed");
+
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + 3 * Block, page, cleanup.sections[2], 0, PAGE_READWRITE);
+    auto* failed = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base + 3 * Block), page);
+    Require(failed != nullptr && native(memory + 3 * Block).Type == MEM_MAPPED, "the alias of a failed import did not demote the resident run");
+    GuestArena::GuestArenaUnmapAlias_nid_postfix(failed);
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + 4 * Block, page, cleanup.sections[2], 0, PAGE_READWRITE);
+    cleanup.aliases[2] = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base + 3 * Block), page);
+    Require(cleanup.aliases[2] != nullptr, "the import alias after a second mapping was refused");
+    Require(ImportWatched(base + 3 * Block, page, [] { return true; }) && Watched(base + 3 * Block, page), "the import after a second mapping did not stay watched");
+    Require(clearingCollect(base + 3 * Block), "memory a second mapping shared after an earlier alias demoted it stopped being collected");
+    Require(native(memory + 3 * Block).Protect == PAGE_READONLY && native(memory + 4 * Block).Protect == PAGE_READONLY, "memory a second mapping shared after an earlier alias demoted it was not armed");
+    std::cout << "direct memory an import's alias demoted: compared once shared, not armed; memory shared before the alias still collected\n";
 }
 
 void CheckResidentDirectMappingReuse() {
@@ -1530,6 +1686,15 @@ int main() {
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(ResidentRemapMode)) {
             CheckResidentDirectMappingReuse();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(RewatchedSharedMode)) {
+            CheckRewatchedDirectMemoryComparedWhenShared();
+            CheckImportedDirectMemoryComparedWhenShared();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(ImportAliasSharedMode)) {
+            CheckImportAliasDemotedComparedWhenShared();
             return 0;
         }
 #endif
