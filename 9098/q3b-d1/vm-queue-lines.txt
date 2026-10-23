@@ -1,0 +1,3 @@
+07:35:02 q3b-d1: Yes pressed at launch + 12:31; frames 5360; pid 19188: private 19,710 MB, working set 1,629 MB; system free RAM 587 MB, current-limit free 8,847 MB, page file 35,345 MB allocated, commit free 14,462 MB; GPU shared 7,109 MB, dedicated 3,411 MB
+07:35:49 q3b-d1: loading screen (dark) from Yes + 0:47
+08:03:36 q3b-d1: CONTROL: first lit frame 28:34 after the Yes press (launch + 41:05); frames 6425; pid 19188: private 26,922 MB, working set 918 MB; system free RAM 519 MB, current-limit free 1,416 MB, page file 35,345 MB allocated, commit free 7,031 MB; GPU shared 7,249 MB, dedicated 6,607 MB

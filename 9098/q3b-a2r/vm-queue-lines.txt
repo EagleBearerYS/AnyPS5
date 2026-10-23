@@ -1,0 +1,4 @@
+13:17:58 q3b-a2r: Yes pressed at launch + 12:46; frames 4294; pid 19620: private 20,545 MB, working set 1,292 MB; system free RAM 849 MB, current-limit free 7,783 MB, page file 37,347 MB allocated, commit free 11,396 MB; GPU shared 7,022 MB, dedicated 3,604 MB
+13:22:56 q3b-a2r: Yes pressed again at launch + 17:45 (the retry); frames 4374; pid 19620: private 23,308 MB, working set 1,583 MB; system free RAM 427 MB, current-limit free 5,048 MB, page file 37,347 MB allocated, commit free 8,661 MB; GPU shared 6,783 MB, dedicated 3,599 MB
+13:23:11 q3b-a2r: loading screen (dark) from Yes + 0:15
+13:41:02 q3b-a2r: CONTROL: first lit frame 18:06 after the Yes press (launch + 35:51); frames 5403; pid 19620: private 28,611 MB, working set 977 MB; system free RAM 130 MB, current-limit free 1,588 MB, page file 39,409 MB allocated, commit free 3,139 MB; GPU shared 7,250 MB, dedicated 6,710 MB

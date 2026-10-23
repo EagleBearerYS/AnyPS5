@@ -1,0 +1,18 @@
+q3b-a1: upper bound with each missing interval at its 8th phase: 1,191
+q3b-a1: intervals 302, presents 749, dispatch 1,111 (missing->0); intervals without it 8 (8 presents); over intervals with it 1,123; the 8th phase where it's missing is at most 22,953 ms/frame
+q3b-b1: upper bound with each missing interval at its 8th phase: 1,190
+q3b-b1: intervals 300, presents 757, dispatch 1,115 (missing->0); intervals without it 6 (6 presents); over intervals with it 1,124; the 8th phase where it's missing is at most 26,151 ms/frame
+q3b-b2r: upper bound with each missing interval at its 8th phase: 1,191
+q3b-b2r: intervals 300, presents 762, dispatch 1,055 (missing->0); intervals without it 11 (12 presents); over intervals with it 1,071; the 8th phase where it's missing is at most 26,742 ms/frame
+q3b-c1: upper bound with each missing interval at its 8th phase: 956
+q3b-c1: intervals 333, presents 761, dispatch 569 (missing->0); intervals without it 75 (77 presents); over intervals with it 634; the 8th phase where it's missing is at most 32,825 ms/frame
+q3b-a2r: upper bound with each missing interval at its 8th phase: 507
+q3b-a2r: intervals 351, presents 1020, dispatch 285 (missing->0); intervals without it 121 (121 presents); over intervals with it 324; the 8th phase where it's missing is at most 34,751 ms/frame
+q3b-a3: upper bound with each missing interval at its 8th phase: 736
+q3b-a3: intervals 323, presents 1008, dispatch 681 (missing->0); intervals without it 5 (5 presents); over intervals with it 684; the 8th phase where it's missing is at most 27,941 ms/frame
+q3b-c2: upper bound with each missing interval at its 8th phase: 804
+q3b-c2: intervals 321, presents 1054, dispatch 735 (missing->0); intervals without it 8 (8 presents); over intervals with it 740; the 8th phase where it's missing is at most 32,150 ms/frame
+q3b-d1: upper bound with each missing interval at its 8th phase: 872
+q3b-d1: intervals 331, presents 1049, dispatch 800 (missing->0); intervals without it 7 (7 presents); over intervals with it 806; the 8th phase where it's missing is at most 41,273 ms/frame
+q3b-d2: upper bound with each missing interval at its 8th phase: 836
+q3b-d2: intervals 309, presents 1023, dispatch 732 (missing->0); intervals without it 10 (10 presents); over intervals with it 740; the 8th phase where it's missing is at most 32,569 ms/frame
