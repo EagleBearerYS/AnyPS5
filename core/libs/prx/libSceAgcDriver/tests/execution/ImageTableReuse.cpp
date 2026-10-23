@@ -244,6 +244,57 @@ void RunImageStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Require(Row(block.Texels(23)) == Row(stored.data()), "image table reuse: the image store wrote the wrong values");
 }
 
+void RunUntracked(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(block, texture, 0.375f);
+        SetRecord(block, texture, texture);
+    }
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    SetOutput(Output.data());
+    const auto result = Compile(device, block);
+    const auto textures = AddressOf(block.Texels(0));
+    const auto texturesBytes = BlockBytes - TexturesOffset;
+    if (!AgcDriver::GuestMemory::Watched(textures, texturesBytes)) {
+        std::puts("image table reuse: the textures are not write-watched, so they cannot be moved outside the watch; untracked tables are not tested");
+        return;
+    }
+    AgcDriver::GuestMemory::Unwatch(textures, texturesBytes);
+    Require(!AgcDriver::GuestMemory::Watched(textures, texturesBytes), "image table reuse: the textures are still write-watched after Unwatch");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const bool hinted = AgcDriver::GuestMemory::UntrackedHint(AddressOf(block.Texels(0)), TextureBytes) != 0;
+    const std::uint64_t reuses = hinted ? 1u : 0u;
+
+    auto before = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, result, 5) == Row(block.Texels(5)), "image table reuse: the first dispatch over untracked textures sampled the wrong entry");
+    Require(Dispatch(device, result, 9) == Row(block.Texels(9)), "image table reuse: the second dispatch over untracked textures sampled the wrong entry");
+    Expect(before, reuses, 2 - reuses, hinted ? "two dispatches of one table over textures outside the write watch" : "two dispatches of one table over textures without an untracked hint");
+    const auto kept = AgcDriver::Graphics::ImageTableReuses().untrackedKept - before.untrackedKept;
+    Require(kept == reuses * Records, "image table reuse: a reuse over untracked textures kept " + std::to_string(kept) + " untracked entries, expected " + std::to_string(reuses * Records));
+
+    before = AgcDriver::Graphics::ImageTableReuses();
+    std::vector<float> stored(Width * Height);
+    for (std::uint32_t texel = 0; texel < Width * Height; ++texel) stored[texel] = -2.0f - static_cast<float>(texel);
+    AgcDriver::GuestMemory::Write(AddressOf(block.Texels(11)), std::as_bytes(std::span(stored)));
+    Require(Dispatch(device, result, 11) == Row(stored.data()), "image table reuse: an untracked entry the driver stored over kept its old texels");
+    Expect(before, 0, 1, "a driver store over an untracked entry");
+    before = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, result, 11) == Row(stored.data()), "image table reuse: the untracked table resolved after a driver store sampled the wrong entry");
+    Expect(before, reuses, 1 - reuses, "the untracked table after a driver store");
+
+    SetOutput(block.Texels(13));
+    const auto writer = Compile(device, block);
+    SetOutput(Output.data());
+    before = AgcDriver::Graphics::ImageTableReuses();
+    static_cast<void>(Dispatch(device, writer, 7));
+    const auto sampled = Dispatch(device, result, 13);
+    const std::vector<float> written(block.Texels(13), block.Texels(13) + Width * Height);
+    Require(std::bit_cast<std::uint32_t>(written[0]) == Row(block.Texels(7))[0], "image table reuse: the dispatch writing into an untracked entry's texels stored the wrong values");
+    Require(sampled == Row(written.data()), "image table reuse: an untracked entry a dispatch wrote kept its old texels");
+    Expect(before, reuses, 2 - reuses, "a dispatch writing an untracked entry's texels");
+    std::printf("image table reuse over untracked textures: %s\n", hinted ? "reused by their untracked keys, refused after a driver store and a GPU write" : "this platform has no untracked hint, so the tables are not reused; driver stores and GPU writes were sampled");
+}
+
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& stores) {
     for (std::uint32_t texture = 0; texture < Records; ++texture) {
         Fill(block, texture, 0.25f);
@@ -352,9 +403,11 @@ int main() {
     try {
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
+        GuestBlock untracked;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         RunTests(*device, block, stores);
+        RunUntracked(*device, untracked);
         std::puts("image table reuse tests passed");
         return 0;
     } catch (const std::exception& error) {
