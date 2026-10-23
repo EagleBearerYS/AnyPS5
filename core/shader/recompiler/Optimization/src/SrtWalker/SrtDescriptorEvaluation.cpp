@@ -137,7 +137,19 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
         if (!evaluateFlat || active[sourceIndex]) {
             for (std::uint32_t index = 0; index < source->dwordCount; index++) {
                 inaccessible = {};
-                if (!evaluator.Evaluate(TNode::SourceDword(program, sourceIndex, index), value.dwords[index])) {
+                bool evaluatedDword = false;
+                try {
+                    evaluatedDword = evaluator.Evaluate(TNode::SourceDword(program, sourceIndex, index), value.dwords[index]);
+                } catch (const std::exception& error) {
+                    std::string detail = DescribeValue(source->dwords[index], 4);
+                    const IrValue* failing = source->dwords[index]->Resolve();
+                    if (failing->Opcode() == IrOpcode::ReadConst && failing->ArgumentCount() == 2 && failing->Argument(1)->Resolve()->HasImmediate()) {
+                        const auto slot = failing->Argument(1)->Resolve()->ImmediateU32();
+                        if (slot < program.srtReads.size()) detail += " where slot " + std::to_string(slot) + " = " + DescribeValue(program.srtReads[slot].value, 8);
+                    }
+                    throw std::runtime_error(std::string(error.what()) + " (descriptor source " + std::to_string(sourceIndex) + " dword " + std::to_string(index) + ": " + detail + ")");
+                }
+                if (!evaluatedDword) {
                     if (inaccessible.read != nullptr) {
                         if (debug) std::fprintf(stderr, "[srt] descriptor source %u reads inaccessible 0x%llx at pc 0x%x: zero words\n", sourceIndex, static_cast<unsigned long long>(inaccessible.address), inaccessible.read->Flags<MemoryFlags>().pc);
                         value.dwords.fill(0u);

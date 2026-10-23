@@ -239,7 +239,9 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
 bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* value) {
     auto& self = *static_cast<ShaderMemory*>(context);
     if (address % sizeof(*value) != 0 || address > std::numeric_limits<std::uint64_t>::max() - sizeof(*value)) {
-        throw std::runtime_error("AGC driver: invalid shader memory read address");
+        char addressText[96];
+        std::snprintf(addressText, sizeof(addressText), "AGC driver: invalid shader memory read address 0x%llx", static_cast<unsigned long long>(address));
+        throw std::runtime_error(addressText);
     }
     if (CaptureProfiled()) ++CaptureTotals().reads;
     if (!self.initial.empty() && address + sizeof(*value) > self.initial.begin()->first && address < InitialEnd(self.initial)) {
