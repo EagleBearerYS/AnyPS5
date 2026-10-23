@@ -220,6 +220,12 @@ public:
             resumeResidentWrites(base);
             return true;
         }
+        if (const auto resumed = ++resumedSharedWrites; resumed <= 64 || resumed % 1000 == 0) {
+            const char* armedBy = view.armedBy == 0 ? "none" : view.armedBy == 1 ? "All" : view.armedBy == 2 ? "Armed" : "Fresh";
+            std::fprintf(stderr, "[shared-arming] resumed write %llu at 0x%llx: page 0x%llx aliases %zu stored %d comparedWhenShared %d aliasDemoted %d armed by %s collect from %p over 0x%llx-0x%llx\n",
+                static_cast<unsigned long long>(resumed), static_cast<unsigned long long>(address), static_cast<unsigned long long>(base), view.page->aliases.size(), view.slot->stored ? 1 : 0,
+                view.page->comparedWhenShared ? 1 : 0, view.aliasDemoted ? 1 : 0, armedBy, view.armedCaller, static_cast<unsigned long long>(view.armedFrom), static_cast<unsigned long long>(view.armedTo));
+        }
         invalidate(*view.page, written);
         protectSubpages(base, written, view.protection, "resume shared memory write", view.viewBytes);
         view.armed &= static_cast<std::uint8_t>(~written);
@@ -356,7 +362,7 @@ public:
         return true;
     }
 
-    bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
+    bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All, void* caller = nullptr) {
         std::lock_guard lock(mutex);
         const auto capacity = *count;
         *count = 0;
@@ -465,6 +471,10 @@ public:
                         const DWORD protection = other.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY;
                         protectSubpages(alias, arming, protection, "arm shared memory write tracking", other.viewBytes);
                         other.armed |= arming;
+                        other.armedBy = static_cast<std::uint8_t>(collection) + 1;
+                        other.armedCaller = caller;
+                        other.armedFrom = address;
+                        other.armedTo = end;
                     }
                     const auto tracked = static_cast<std::uint8_t>(settled & ~untracked);
                     for (std::size_t sub = 0; sub < subpages; ++sub) {
@@ -592,6 +602,10 @@ private:
         std::size_t viewBytes = pageBytes;
         std::uint32_t hostImports = 0;
         bool aliasDemoted = false;
+        std::uint8_t armedBy = 0;
+        void* armedCaller = nullptr;
+        std::uintptr_t armedFrom = 0;
+        std::uintptr_t armedTo = 0;
     };
     struct Run {
         std::uintptr_t end;
@@ -1047,6 +1061,7 @@ private:
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;
     bool watchResident = false;
+    std::uint64_t resumedSharedWrites = 0;
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;

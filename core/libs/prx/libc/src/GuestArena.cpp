@@ -427,15 +427,15 @@ bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* pro
 }
 
 bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear) {
-    return WindowsMappings::Get().Collect(address, bytes, pages, count, clear);
+    return WindowsMappings::Get().Collect(address, bytes, pages, count, clear, WindowsMappings::Collection::All, __builtin_return_address(0));
 }
 
 bool GuestArenaCollectArmedWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear) {
-    return WindowsMappings::Get().Collect(address, bytes, pages, count, clear, WindowsMappings::Collection::Armed);
+    return WindowsMappings::Get().Collect(address, bytes, pages, count, clear, WindowsMappings::Collection::Armed, __builtin_return_address(0));
 }
 
 bool GuestArenaCollectFreshWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear) {
-    return WindowsMappings::Get().Collect(address, bytes, pages, count, clear, WindowsMappings::Collection::Fresh);
+    return WindowsMappings::Get().Collect(address, bytes, pages, count, clear, WindowsMappings::Collection::Fresh, __builtin_return_address(0));
 }
 
 bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes) {
