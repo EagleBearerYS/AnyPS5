@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <initializer_list>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -122,6 +124,12 @@ public:
         }
         if (!m_program.Resources().srtPlanComplete) {
             fail("SRT plan is not ready");
+        }
+        if (TablePlanTraceEnabled()) {
+            for (const IrBlock* block : m_program.BlockOrder()) {
+                for (const IrValue* inst : block->Instructions()) m_traceIds.emplace(inst, m_traceIds.size() + 1u);
+            }
+            std::fprintf(stderr, "[table-plan] planning a program of %zu values; the ids are APS5_DUMP_IR's after srt\n", m_traceIds.size());
         }
         SplitDescriptorPhis();
         PlanTableColumns();
@@ -631,6 +639,41 @@ private:
         return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
     }
 
+    static bool TablePlanTraceEnabled() {
+        static const bool enabled = [] {
+            const char* text = std::getenv("APS5_TRACE_TABLE_PLAN");
+            return text != nullptr && std::string_view(text) == "1";
+        }();
+        return enabled;
+    }
+
+    std::string TraceName(const IrValue* value) const {
+        if (value == nullptr) return "null";
+        auto found = m_traceIds.find(value);
+        if (found == m_traceIds.end()) found = m_traceIds.find(value->Resolve());
+        if (found != m_traceIds.end()) return "%" + std::to_string(found->second) + " " + std::string(IrOpcodeName(found->first->Opcode()));
+        const IrValue* resolved = value->Resolve();
+        if (resolved->HasImmediate() && resolved->Type() == IrType::U32) return "#" + formatHex32(resolved->ImmediateU32());
+        return std::string(resolved->HasImmediate() ? "immediate " : "new ") + std::string(IrOpcodeName(resolved->Opcode()));
+    }
+
+    bool TracePlan(const char* function, const char* reason, const IrValue* handle, std::initializer_list<std::pair<const char*, const IrValue*>> values) const {
+        if (TablePlanTraceEnabled()) {
+            std::string line = "[table-plan] depth=" + std::to_string(m_traceDepth) + " " + function + ": " + reason + "; handle " + TraceName(handle);
+            for (const auto& [label, value] : values) line += "; " + std::string(label) + " " + TraceName(value);
+            std::fprintf(stderr, "%s\n", line.c_str());
+        }
+        return false;
+    }
+
+    struct TraceDepth {
+        std::uint32_t& depth;
+        explicit TraceDepth(std::uint32_t& value) : depth(++value) {}
+        ~TraceDepth() { --depth; }
+        TraceDepth(const TraceDepth&) = delete;
+        TraceDepth& operator=(const TraceDepth&) = delete;
+    };
+
     static bool DescriptorUser(const IrValue* user) {
         return user->Opcode() == IrOpcode::GetImageResource || user->Opcode() == IrOpcode::GetSamplerResource;
     }
@@ -676,7 +719,10 @@ private:
     bool ChildKeyWord(const IrValue& read, const IrValue& vsharp) const {
         std::uint32_t memoryIndex = 0;
         std::uint32_t immediate = 0;
-        if (ScalarReadMemory(read, memoryIndex) == nullptr || !immediateU32(read.Argument(1), immediate) || read.Uses().empty() || WrittenThrough(vsharp)) return false;
+        if (ScalarReadMemory(read, memoryIndex) == nullptr) return TracePlan("ChildKeyWord", "the key is not a scalar read", &vsharp, {{"key", &read}});
+        if (!immediateU32(read.Argument(1), immediate)) return TracePlan("ChildKeyWord", "the key's offset is not an immediate", &vsharp, {{"key", &read}, {"offset", read.Argument(1)}});
+        if (read.Uses().empty()) return TracePlan("ChildKeyWord", "the key has no uses", &vsharp, {{"key", &read}});
+        if (WrittenThrough(vsharp)) return TracePlan("ChildKeyWord", "the V# is written through", &vsharp, {{"key", &read}});
         std::vector<const IrValue*> pending{&read};
         std::unordered_set<const IrValue*> seen;
         bool keys = false;
@@ -691,15 +737,20 @@ private:
                     std::uint32_t stride = 0;
                     std::uint32_t addend = 0;
                     KeyDomain domain;
-                    if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameHandle(*buffer, vsharp) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
+                    if (buffer->Opcode() != IrOpcode::GetBufferResource) return TracePlan("ChildKeyWord", "a read at the key is not through a buffer handle", &vsharp, {{"key", &read}, {"value", value}, {"read", use}, {"buffer", buffer}});
+                    if (!SameHandle(*buffer, vsharp)) return TracePlan("ChildKeyWord", "a read at the key is through another handle than the V#", &vsharp, {{"key", &read}, {"value", value}, {"read", use}, {"buffer", buffer}});
+                    if (!std::ranges::any_of(use->Uses(), DescriptorUser)) return TracePlan("ChildKeyWord", "a read at the key feeds no descriptor", &vsharp, {{"key", &read}, {"value", value}, {"read", use}});
+                    if (!MatchAffineOffset(use->Argument(1), key, stride, addend)) return TracePlan("ChildKeyWord", "a read at the key has no affine offset", &vsharp, {{"key", &read}, {"value", value}, {"read", use}, {"offset", use->Argument(1)}});
+                    if (ChildKeyWordOf(key, domain) != &read) return TracePlan("ChildKeyWord", "a read's affine key is not this key word", &vsharp, {{"key", &read}, {"value", value}, {"read", use}, {"affineKey", key}, {"keyWord", ChildKeyWordOf(key, domain)}});
                     keys = true;
                     continue;
                 }
                 const auto stepped = [&](IrOpcode op) { return ImmediateStep(*use, op, immediate) == value; };
-                if (!stepped(IrOpcode::ShiftRightLogical32) && !stepped(IrOpcode::BitwiseAnd32) && !stepped(IrOpcode::ShiftLeftLogical32) && !stepped(IrOpcode::IMul32) && !stepped(IrOpcode::IAdd32)) return false;
+                if (!stepped(IrOpcode::ShiftRightLogical32) && !stepped(IrOpcode::BitwiseAnd32) && !stepped(IrOpcode::ShiftLeftLogical32) && !stepped(IrOpcode::IMul32) && !stepped(IrOpcode::IAdd32)) return TracePlan("ChildKeyWord", "a use of the key is not an immediate shift, AND, multiply or add, nor a read through the V#", &vsharp, {{"key", &read}, {"value", value}, {"use", use}});
                 pending.push_back(use);
             }
         }
+        if (!keys) return TracePlan("ChildKeyWord", "the key indexes no read through the V#", &vsharp, {{"key", &read}});
         return keys;
     }
 
@@ -711,48 +762,59 @@ private:
         std::uint32_t memoryIndex = 0;
         std::uint32_t immediate = 0;
         const MemoryInfo* memory = ScalarReadMemory(*word, memoryIndex);
-        if (memory == nullptr || !immediateU32(word->Argument(1), immediate) || static_cast<std::uint64_t>(memory->offset) + immediate > 0xffffffffull || !ChildKeyWord(*word, vsharp)) return std::nullopt;
+        if (memory == nullptr || !immediateU32(word->Argument(1), immediate) || static_cast<std::uint64_t>(memory->offset) + immediate > 0xffffffffull || !ChildKeyWord(*word, vsharp)) {
+            TracePlan("MatchChildKey", "no child key domain (the key falls back to MatchKeyDomain)", &vsharp, {{"key", key}, {"keyWord", word}});
+            return std::nullopt;
+        }
         const IrValue* buffer = word->Argument(0)->Resolve();
-        if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameHandle(*buffer, vsharp)) return std::nullopt;
+        if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameHandle(*buffer, vsharp)) {
+            TracePlan("MatchChildKey", "the key word is read through another handle than the V# (the key falls back to MatchKeyDomain)", &vsharp, {{"keyWord", word}, {"buffer", buffer}});
+            return std::nullopt;
+        }
         domain.offset = memory->offset + immediate;
         return domain;
     }
 
     bool DescriptorWordReads(const IrValue& buffer, bool rereadable, const IrValue& vsharp) const {
         return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
-            if (read->Opcode() != IrOpcode::ReadConstBuffer) return false;
+            if (read->Opcode() != IrOpcode::ReadConstBuffer) return TracePlan("DescriptorWordReads", "a use of the second handle is not a constant-buffer read", &vsharp, {{"buffer", &buffer}, {"use", read}});
             if (rereadable ? std::ranges::any_of(read->Uses(), DescriptorUser) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)) return true;
-            return rereadable && ChildKeyWord(*read, vsharp);
+            if (!rereadable) return TracePlan("DescriptorWordReads", "a read through the second handle feeds data and the V# is not rereadable", &vsharp, {{"buffer", &buffer}, {"read", read}});
+            if (!ChildKeyWord(*read, vsharp)) return TracePlan("DescriptorWordReads", "a read through the second handle is neither a descriptor word nor a child key", &vsharp, {{"buffer", &buffer}, {"read", read}});
+            return true;
         });
     }
 
-    static bool DataWord(const IrValue& user) {
+    bool DataWord(const IrValue& user) const {
         std::vector<const IrValue*> pending{&user};
         std::unordered_set<const IrValue*> seen;
         while (!pending.empty()) {
             const IrValue* value = pending.back();
             pending.pop_back();
             if (!seen.insert(value).second) continue;
-            if (value->Opcode() == IrOpcode::GetBufferResource || value->Opcode() == IrOpcode::GetAddressResource || DescriptorUser(value)) return false;
+            if (value->Opcode() == IrOpcode::GetBufferResource || value->Opcode() == IrOpcode::GetAddressResource || DescriptorUser(value)) return TracePlan("DataWord", "a V# word used as data reaches a handle", &user, {{"reached", value}});
             for (const IrValue* use : value->Uses()) pending.push_back(use);
         }
         return true;
     }
 
     bool RereadableVsharp(const IrValue& handle, const TableColumnPlan& parent) const {
-        if (handle.ArgumentCount() != parent.reads.size()) return false;
+        if (handle.ArgumentCount() != parent.reads.size()) return TracePlan("RereadableVsharp", "the V# has a different word count than its column", &handle, {});
         for (std::uint32_t dword = 0; dword < handle.ArgumentCount(); dword++) {
             const IrValue* read = parent.reads[dword];
-            if (handle.Argument(dword)->Resolve() != read || read->Opcode() != IrOpcode::LoadAddressU32 || m_program.Resources().memoryInfo[read->Flags<MemoryFlags>().index].planningOnly) return false;
+            if (handle.Argument(dword)->Resolve() != read) return TracePlan("RereadableVsharp", "a V# word is not its column's read (a Phi or copy)", &handle, {{"word", handle.Argument(dword)}, {"read", read}});
+            if (read->Opcode() != IrOpcode::LoadAddressU32) return TracePlan("RereadableVsharp", "a V# word is not a load through the record pointer", &handle, {{"read", read}});
+            if (m_program.Resources().memoryInfo[read->Flags<MemoryFlags>().index].planningOnly) return TracePlan("RereadableVsharp", "a V# word's read is planning-only", &handle, {{"read", read}});
         }
         return true;
     }
 
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
         const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
+        const TraceDepth traceDepth(m_traceDepth);
         const std::uint32_t width = sampler || buffer ? 4u : 8u;
         if (handle.Opcode() != expected || handle.ArgumentCount() != width) {
-            return false;
+            return TracePlan("TryMakeTableColumn", "the handle is not a descriptor of the expected kind and width", &handle, {});
         }
         std::uint32_t words = width;
         if (!sampler && r128) {
@@ -777,12 +839,12 @@ private:
         bool laneBase = false;
         for (std::uint32_t dword = 0; dword < words; dword++) {
             IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
-            if (read == nullptr) return false;
+            if (read == nullptr) return TracePlan("TryMakeTableColumn", "a descriptor word is a Phi of different values", &handle, {{"word", handle.Argument(dword)}});
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
-                return false;
+                return TracePlan("TryMakeTableColumn", "a descriptor word is not a scalar or address read", &handle, {{"word", read}});
             }
             std::uint32_t readAddend = 0;
             IrValue* readBase = SplitImmediateAddend(read->Argument(1), readAddend);
@@ -801,23 +863,23 @@ private:
                 baseAddend = readAddend;
                 laneBase = ParseFirstLaneOffset(read->Argument(1)->Resolve(), nullptr, baseLane, phiSearchDepth) && baseLane.addend == baseAddend;
             } else if (addressRead != address || memory->offset + readAddend != first + baseAddend + dword * static_cast<std::uint32_t>(sizeof(std::uint32_t))) {
-                return false;
+                return TracePlan("TryMakeTableColumn", "the descriptor words are not consecutive reads of one kind", &handle, {{"word", read}, {"first", plan.reads.empty() ? nullptr : plan.reads.front()}});
             } else if (readAddend != baseAddend) {
                 if (readAddend < baseAddend || static_cast<std::uint64_t>(memory->offset) + (readAddend - baseAddend) > 0x7fffffffu) {
-                    return false;
+                    return TracePlan("TryMakeTableColumn", "a descriptor word's folded addend is out of range", &handle, {{"word", read}});
                 }
                 folded = true;
                 carry = std::max(carry, readAddend - baseAddend);
             }
             IrValue* currentHandle = read->Argument(0)->Resolve();
             if (heapHandle != nullptr && currentHandle != heapHandle && !EquivalentValue(m_program.Resources(), heapHandle, currentHandle)) {
-                return false;
+                return TracePlan("TryMakeTableColumn", "the descriptor words are read through different handles", &handle, {{"word", read}, {"firstHandle", heapHandle}, {"thisHandle", currentHandle}});
             }
             if (heapHandle == nullptr) heapHandle = currentHandle;
             if (dword == 0u) {
                 offset = read->Argument(1)->Resolve();
             } else if (!sameBase) {
-                return false;
+                return TracePlan("TryMakeTableColumn", "the descriptor words are read at different bases", &handle, {{"word", read}, {"firstBase", base}, {"thisBase", readBase}});
             }
             plan.memory.push_back(memoryIndex);
             plan.reads.push_back(read);
@@ -827,7 +889,7 @@ private:
             MakeSource(handle, width, false, false, direct);
             std::uint32_t badDword = 0;
             if (ValidateSource(direct, badDword)) {
-                return false;
+                return TracePlan("TryMakeTableColumn", "the address-read descriptor is valid at runtime, so it is not a table", &handle, {});
             }
         }
         IrValue* key = nullptr;
@@ -846,16 +908,21 @@ private:
             addend = fixedOffset;
         } else if (!MatchAffineOffset(offset, key, stride, addend)) {
             if (!MatchMaskedOffset(offset, key, stride)) {
-                return false;
+                return TracePlan("TryMakeTableColumn", "the offset is neither affine nor masked", &handle, {{"offset", offset}});
             }
             masked = true;
         }
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
         if (MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
-            if (fixed) return false;
+            if (fixed) return TracePlan("TryMakeTableColumn", "a fixed offset through a runtime handle", &handle, {{"heap", heapHandle}});
         } else {
-            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
+            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource) return TracePlan("TryMakeTableColumn", "nested: the words' handle is not a buffer handle", &handle, {{"heap", heapHandle}});
+            const IrValue* other = nullptr;
+            for (const IrValue* use : heapHandle->Uses()) {
+                if (other == nullptr && std::ranges::find(plan.reads, use) == plan.reads.end()) other = use;
+            }
+            if (other != nullptr) return TracePlan("TryMakeTableColumn", "nested: the words' handle has a use other than these words", &handle, {{"heap", heapHandle}, {"use", other}});
             const auto sameHandle = [&](const IrValue* user) {
                 if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
                 for (std::uint32_t argument = 0; argument < handle.ArgumentCount(); argument++) {
@@ -865,17 +932,21 @@ private:
             };
             const bool otherUsers = !std::ranges::all_of(plan.reads, [&](const IrValue* read) { return std::ranges::all_of(read->Uses(), sameHandle); });
             TableColumnPlan parent;
-            if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return false;
-            if (parent.parentPointer == nullptr) return false;
+            if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return TracePlan("TryMakeTableColumn", "nested: the V#'s own column was refused", &handle, {{"vsharp", heapHandle}});
+            if (parent.parentPointer == nullptr) return TracePlan("TryMakeTableColumn", "nested: the V#'s column has no record pointer", &handle, {{"vsharp", heapHandle}});
             const bool rereadable = RereadableVsharp(*heapHandle, parent);
-            if (otherUsers && !rereadable) return false;
+            if (otherUsers && !rereadable) return TracePlan("TryMakeTableColumn", "nested: the descriptor words have other users and the V# is not rereadable", &handle, {{"vsharp", heapHandle}});
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    if (user->Opcode() != IrOpcode::GetBufferResource) return rereadable && DataWord(*user);
+                    if (user->Opcode() != IrOpcode::GetBufferResource) {
+                        if (!rereadable) return TracePlan("TryMakeTableColumn", "nested: a V# word feeds a non-handle user and the V# is not rereadable", &handle, {{"vsharp", heapHandle}, {"word", read}, {"user", user}});
+                        return DataWord(*user);
+                    }
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
-                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);
+                    if (!SameHandle(*user, *heapHandle)) return TracePlan("TryMakeTableColumn", "nested: another handle on the V#'s words is not the same handle", &handle, {{"vsharp", heapHandle}, {"word", read}, {"other", user}});
+                    return DescriptorWordReads(*user, rereadable, *heapHandle);
                 });
-            })) return false;
+            })) return TracePlan("TryMakeTableColumn", "nested: a user of the V#'s words was refused", &handle, {{"vsharp", heapHandle}});
             heapIndex = parent.source;
             heapSource = m_sources[heapIndex];
             plan.parentPointer = parent.parentPointer;
@@ -1014,9 +1085,10 @@ private:
     bool PointerRecordRead(IrValue& read, std::vector<IrValue*>& reads) const {
         std::uint32_t memory = 0;
         const MemoryInfo* info = ScalarReadMemory(read, memory);
-        if (info == nullptr || !MemoryIndexBelongsTo(memory, read)) return false;
+        if (info == nullptr || !MemoryIndexBelongsTo(memory, read)) return TracePlan("PointerRecordRead", "a pointer word is not a scalar read", &read, {});
         if (std::ranges::find(reads, &read) != reads.end()) return true;
-        if (!reads.empty() && (ScalarReadMemory(*reads.back(), memory)->offset != info->offset || !SameRecordColumn(*reads.back(), read))) return false;
+        if (!reads.empty() && ScalarReadMemory(*reads.back(), memory)->offset != info->offset) return TracePlan("PointerRecordRead", "a record read is at another offset than the first", &read, {{"first", reads.back()}});
+        if (!reads.empty() && !SameRecordColumn(*reads.back(), read)) return TracePlan("PointerRecordRead", "a record read is not in the first one's column (handle, stride or addend)", &read, {{"first", reads.back()}, {"firstHandle", reads.back()->Argument(0)}, {"thisHandle", read.Argument(0)}, {"firstOffset", reads.back()->Argument(1)}, {"thisOffset", read.Argument(1)}});
         reads.push_back(&read);
         return true;
     }
@@ -1033,7 +1105,7 @@ private:
                 const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
                 for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
                     IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
-                    if (edge == nullptr) return false;
+                    if (edge == nullptr) return TracePlan("PointerRecordPairs", "the high word's Phi has no incoming value on the low word's edge", lowWord, {{"high", highWord}});
                     pending.emplace_back(lowWord->Argument(index), edge);
                 }
                 continue;
@@ -1042,16 +1114,17 @@ private:
                 pending.emplace_back(word, highWord);
                 continue;
             }
-            if (!PointerRecordRead(*lowWord, lowReads)) return false;
+            if (!PointerRecordRead(*lowWord, lowReads)) return TracePlan("PointerRecordPairs", "a low pointer word is not a record read", lowWord, {{"high", highWord}});
             if (highWord->IsPhi()) {
                 for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
             } else if (IrValue* word = MaskedRecordWord(*highWord)) {
                 pending.emplace_back(lowWord, word);
             } else if (!PointerFreeWord(*highWord) && !PointerRecordRead(*highWord, highReads)) {
-                return false;
+                return TracePlan("PointerRecordPairs", "a high pointer word is not a record read", highWord, {{"low", lowWord}});
             }
         }
-        return !lowReads.empty() && !highReads.empty();
+        if (lowReads.empty() || highReads.empty()) return TracePlan("PointerRecordPairs", "the pointer has no record read in one of its words", low, {{"high", high}});
+        return true;
     }
 
     bool Precedes(const IrValue* value, const IrValue& use) const {
@@ -1096,14 +1169,14 @@ private:
                 const MemoryInfo* memory = ScalarAddressMemory(*read, memoryIndex);
                 std::uint32_t readOffset = 0;
                 if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read) || !immediateU32(read->Argument(1), readOffset)) {
-                    return false;
+                    return TracePlan("TryMakeIndirectColumn", "a pointer hop word is not an address read at an immediate offset", &handle, {{"hop", read}});
                 }
                 IrValue* readPointer = read->Argument(0)->Resolve();
                 if (dword == 0u) {
                     hop = PointerHop{readOffset, memory->offset};
                     next = readPointer;
                 } else if (readOffset != hop.offset || memory->offset != hop.immediate + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (readPointer != next && !EquivalentValue(m_program.Resources(), next, readPointer))) {
-                    return false;
+                    return TracePlan("TryMakeIndirectColumn", "a pointer hop's high word is not the next word through the same pointer", &handle, {{"hop", read}});
                 }
                 plan.hopMemory.push_back(memoryIndex);
                 plan.hopReads.push_back(read);
@@ -1112,19 +1185,24 @@ private:
             pointer = next;
         }
         if (pointer->Opcode() != IrOpcode::GetAddressResource || pointer->ArgumentCount() != 2u) {
-            return false;
+            return TracePlan("TryMakeIndirectColumn", "the descriptor pointer is not an address handle", &handle, {{"pointer", pointer}});
         }
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
         const bool merged = pointer->Argument(0)->Resolve()->IsPhi();
         const bool pointerKeyed = merged && !buffer;
-        if (!hops.empty() && buffer) return false;
+        if (!hops.empty() && buffer) return TracePlan("TryMakeIndirectColumn", "a V# behind pointer hops", &handle, {{"pointer", pointer}});
         std::vector<IrValue*> lowReads;
         std::vector<IrValue*> highReads;
-        if (merged && !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads)) return false;
+        if (merged && !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads)) return TracePlan("TryMakeIndirectColumn", "the merged record pointer's walk was refused", &handle, {{"pointer", pointer}, {"low", pointer->Argument(0)}, {"high", pointer->Argument(1)}});
         const auto same = [&](const std::vector<IrValue*>& reads) { return std::ranges::all_of(reads, [&](const IrValue* read) { return EquivalentValue(m_program.Resources(), read, reads.front()); }); };
-        if (merged && buffer && (!same(lowReads) || !same(highReads))) return false;
+        const auto differing = [&](const std::vector<IrValue*>& reads) -> const IrValue* {
+            const auto found = std::ranges::find_if(reads, [&](const IrValue* read) { return !EquivalentValue(m_program.Resources(), read, reads.front()); });
+            return found == reads.end() ? nullptr : *found;
+        };
+        if (merged && buffer && !same(lowReads)) return TracePlan("TryMakeIndirectColumn", "a V# whose merged record pointer's low words come from different record reads", &handle, {{"pointer", pointer}, {"first", lowReads.front()}, {"other", differing(lowReads)}});
+        if (merged && buffer && !same(highReads)) return TracePlan("TryMakeIndirectColumn", "a V# whose merged record pointer's high words come from different record reads", &handle, {{"pointer", pointer}, {"first", highReads.front()}, {"other", differing(highReads)}});
         auto* low = merged ? lowReads.back() : pointer->Argument(0)->Resolve();
         auto* high = pointer->Argument(1)->Resolve();
         std::uint32_t first = 0;
@@ -1133,14 +1211,14 @@ private:
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
-                return false;
+                return TracePlan("TryMakeIndirectColumn", "a record pointer word is not a scalar read", &handle, {{"word", read}});
             }
             if (dword == 0u) {
                 first = memory->offset;
                 bufferHandle = read->Argument(0)->Resolve();
                 offset = read->Argument(1)->Resolve();
             } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (pointerKeyed ? !SameRecordColumn(*low, *read) : read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1)))) {
-                return false;
+                return TracePlan("TryMakeIndirectColumn", "the record pointer's high word is not the next word of the low word's record", &handle, {{"low", low}, {"high", read}});
             }
         }
         IrValue* recordOffset = offset;
@@ -1155,7 +1233,7 @@ private:
                     }
                     return true;
                 });
-                if (found == lowReads.end()) return false;
+                if (found == lowReads.end()) return TracePlan("TryMakeIndirectColumn", "no record read's table precedes the handle", &handle, {{"pointer", pointer}});
                 source = *found;
             }
             bufferHandle = source->Argument(0)->Resolve();
@@ -1166,12 +1244,12 @@ private:
         std::uint32_t stride = 0;
         std::uint32_t addend = 0;
         if (!MatchAffineOffset(recordOffset, key, stride, addend)) {
-            return false;
+            return TracePlan("TryMakeIndirectColumn", "the record offset is not affine", &handle, {{"offset", recordOffset}});
         }
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
         if (!MakeRuntimeSource(*bufferHandle, IrOpcode::GetBufferResource, 4u, heapIndex, heapSource)) {
-            return false;
+            return TracePlan("TryMakeIndirectColumn", "the record table's handle is not a runtime source", &handle, {{"table", bufferHandle}});
         }
         TableColumn column;
         column.heapSource = heapIndex;
@@ -2460,6 +2538,8 @@ private:
     std::vector<const IrValue*> m_tablePlanningReads;
     std::vector<std::uint32_t> m_tablePlanningMemory;
     std::vector<const IrValue*> m_unselectedHandles;
+    std::unordered_map<const IrValue*, std::size_t> m_traceIds;
+    std::uint32_t m_traceDepth = 0;
     struct EdgeSelectorEntry {
         IrBlock* block = nullptr;
         std::vector<bool> edges;
