@@ -15,6 +15,7 @@
 #ifdef __GLIBC__
 #include <malloc.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -37,6 +38,7 @@ constexpr wchar_t HostHoleMode[] = L"--host-hole";
 constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
 constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
 constexpr wchar_t ImportAliasSharedMode[] = L"--import-alias-shared";
+constexpr wchar_t SharedGenerationsMode[] = L"--compared-shared-generations";
 #endif
 
 void Require(bool condition, const std::string& message) {
@@ -694,6 +696,89 @@ void CheckRewatchedDirectMemoryComparedWhenShared() {
     Require(memory[bytes + 8] == 0x5a, "the second mapping does not see a store into the first");
     Require(CollectWritesUncached(base + Block, Block) != 0, "shared direct memory that never left the watch stopped being collected");
     std::cout << "rewatched direct memory: compared once shared, not armed; other shared direct memory still collected\n";
+}
+
+struct ComparedSharing {
+    static constexpr std::size_t bytes = 2 * Block;
+    std::uint8_t* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * bytes, Block));
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    std::uint64_t base = reinterpret_cast<std::uint64_t>(memory);
+
+    ComparedSharing() {
+        Require(memory != nullptr && section != nullptr, "cannot create the compared sharing generation fixture");
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory, bytes, section, 0, PAGE_READWRITE);
+        Require(Watched(base, bytes), "the compared sharing generation fixture is not watched");
+        Unwatch(base, Block);
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> imported{{{base, base + Block}}};
+        Rewatch(imported);
+        Require(Watched(base, Block), "the rewatched direct memory of the generation fixture is not watched");
+        BumpCollectEpoch();
+        Require(CollectWritesUncached(base, Block) != 0, "rewatched resident direct memory of the generation fixture is not collected");
+    }
+    ~ComparedSharing() {
+        GuestArena::GuestArenaReset_nid_postfix(memory, 2 * bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, 2 * bytes);
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        CloseHandle(section);
+    }
+    ComparedSharing(const ComparedSharing&) = delete;
+    ComparedSharing& operator=(const ComparedSharing&) = delete;
+
+    void Share() {
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory + bytes, bytes, section, 0, PAGE_READWRITE);
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(memory, &info, sizeof(info)) == sizeof(info) && info.Type == MEM_MAPPED, "a second mapping kept the generation fixture resident");
+    }
+    std::uint64_t Collect(std::uint64_t address) {
+        BumpCollectEpoch();
+        return CollectWrites(address, Block);
+    }
+};
+
+void CheckComparedSharingGenerations() {
+    {
+        ComparedSharing fixture;
+        const auto g0 = TrackerGeneration();
+        Require(UnchangedSince(fixture.base, Block, g0) && !WrittenSince(fixture.base, Block, g0), "rewatched resident direct memory reads as written before any store");
+        fixture.memory[16] = 0x21;
+        Require(fixture.Collect(fixture.base) != 0 && !UnchangedSince(fixture.base, Block, g0) && WrittenSince(fixture.base, Block, g0), "a store into rewatched resident direct memory was missed before it was shared");
+        const auto cached = TrackerGeneration();
+        Require(UnchangedSince(fixture.base, Block, cached), "rewatched resident direct memory reads as changed after its collect");
+        fixture.Share();
+        fixture.memory[8] = 0x5a;
+        Require(fixture.memory[ComparedSharing::bytes + 8] == 0x5a, "the second mapping does not see the store into the generation fixture");
+        Require(fixture.Collect(fixture.base) == 0, "rewatched direct memory was collected once shared");
+        Require(!UnchangedSince(fixture.base, Block, cached), "a store into rewatched direct memory once shared reads as unchanged since a generation before the sharing");
+        Require(WrittenSince(fixture.base, Block, cached), "a store into rewatched direct memory once shared reads as not written since a generation before the sharing");
+    }
+    {
+        ComparedSharing fixture;
+        const auto g0 = TrackerGeneration();
+        fixture.Share();
+        Require(fixture.Collect(fixture.base) == 0, "rewatched direct memory was collected once shared, before any store");
+        Require(!UnchangedSince(fixture.base, Block, g0) && WrittenSince(fixture.base, Block, g0), "sharing rewatched direct memory did not report it written once");
+        const auto g1 = TrackerGeneration();
+        Require(fixture.Collect(fixture.base) == 0 && fixture.Collect(fixture.base) == 0, "rewatched direct memory was collected again once shared");
+        std::array<std::uint64_t, 1> generations{g1};
+        std::array<std::uint8_t, 1> changed{};
+        std::array<std::uint8_t, 1> cpu{};
+        Require(!WrittenSince(fixture.base, Block, g1) && ChangedBlocks(fixture.base, Block, generations, changed, cpu) && changed[0] == BlockUnchanged && cpu[0] == 0, "refused collects of shared compared memory reported it written again without a store");
+        Require(!UnchangedSince(fixture.base, Block, g1), "shared compared memory read as unchanged since a generation taken after a refused collect");
+        const auto neighbour = fixture.Collect(fixture.base + Block);
+        const auto spanned = std::max(fixture.Collect(fixture.base), neighbour);
+        Require(spanned != 0 && UnchangedSince(fixture.base + Block, Block, spanned), "shared direct memory that never left the watch is not collected beside compared memory");
+        fixture.memory[24] = 0x3c;
+        Require(fixture.Collect(fixture.base) == 0, "rewatched direct memory was collected once shared, after a store");
+        Require(!UnchangedSince(fixture.base, Block, g1), "a store into shared compared memory reads as unchanged since a generation taken after a refused collect");
+        Require(!UnchangedSince(fixture.base, Block, spanned), "a store into shared compared memory reads as unchanged since the newest generation of a collect over several ranges");
+        Require(fixture.Collect(fixture.base + Block) != 0 && UnchangedSince(fixture.base + Block, Block, spanned), "a refused collect of compared memory made its never-compared neighbour read as changed");
+        const std::array<UnchangedQuery, 2> queries{{{fixture.base + Block, Block, spanned}, {fixture.base, Block, spanned}}};
+        Require(!UnchangedSinceAll(queries), "a batch of queries over shared compared memory read as unchanged");
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> committed{{{fixture.base, fixture.base + Block}}};
+        Require(!UnchangedCommittedSince(committed, spanned), "committed ranges over shared compared memory read as unchanged");
+    }
+    std::cout << "shared compared memory: reported written once at the sharing, never unchanged since an older generation, its neighbour still trusted\n";
 }
 
 void CheckImportedDirectMemoryComparedWhenShared() {
@@ -1611,6 +1696,10 @@ int main() {
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(ImportAliasSharedMode)) {
             CheckImportAliasDemotedComparedWhenShared();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(SharedGenerationsMode)) {
+            CheckComparedSharingGenerations();
             return 0;
         }
 #endif

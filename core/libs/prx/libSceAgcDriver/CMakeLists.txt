@@ -715,7 +715,9 @@ if(BUILD_TESTING)
         set_tests_properties(agc_rewatched_direct_shared PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
         add_test(NAME agc_import_alias_shared COMMAND agc_write_tracking_tests --import-alias-shared)
         set_tests_properties(agc_import_alias_shared PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
-        set_tests_properties(agc_write_tracking agc_write_tracking_metadata_commit agc_resident_direct_remap agc_rewatched_direct_shared agc_import_alias_shared PROPERTIES ENVIRONMENT_MODIFICATION
+        add_test(NAME agc_compared_shared_generations COMMAND agc_write_tracking_tests --compared-shared-generations)
+        set_tests_properties(agc_compared_shared_generations PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+        set_tests_properties(agc_write_tracking agc_write_tracking_metadata_commit agc_resident_direct_remap agc_rewatched_direct_shared agc_import_alias_shared agc_compared_shared_generations PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
