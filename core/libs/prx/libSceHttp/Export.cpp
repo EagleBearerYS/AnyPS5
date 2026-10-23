@@ -317,9 +317,8 @@ int APS5_VABI sceHttpSendRequest(int request_id, const void* post_data, size_t s
 }
 
 int APS5_VABI sceHttpSetAuthEnabled(int id, int enable) {
-    (void)id;
-    (void)enable;
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpOption(id, &HttpOptions::authEnabled, enable != 0) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, void* userArg) {
@@ -727,12 +726,17 @@ int APS5_VABI sceHttpAddRequestHeaderRaw(int id, const char* header, int mode) {
 }
 
 int APS5_VABI sceHttpRemoveRequestHeader(int id, const char* name) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)id;
+    (void)name;
     return 0;
 }
 
-int APS5_VABI sceHttpGetAuthEnabled(int id, int* enabled) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpGetAuthEnabled(int id, int* enable) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!enable) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(id);
+    if (!options) return ERROR_INVALID_ID;
+    *enable = options->authEnabled ? 1 : 0;
     return 0;
 }
 
@@ -822,9 +826,10 @@ int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int http_ctx_id, int en
     return SetHttpContextAcceptEncodingGzip(http_ctx_id, enable != 0) ? 0 : ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceHttpSetProxy(int id, int mode, int authentication, const char* hostname, std::uint16_t port) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttpSetProxy(int id, int, int, const char* hostname, std::uint16_t) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!hostname) return ERROR_INVALID_VALUE;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreationCallback callback, void* userArg) {
