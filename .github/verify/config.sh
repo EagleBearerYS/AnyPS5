@@ -1,0 +1,4 @@
+BASE=ef0d8ae3b5f2ee0e24bd1011beca63a53721dae3
+REPEAT=3
+EXTRA_TESTS='agc_import_alias_shared|agc_rewatched_direct_shared|windows_write_watch|guest_memory|agc_write_tracking'
+NO_BEFORE=1
