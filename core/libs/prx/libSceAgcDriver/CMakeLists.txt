@@ -2695,7 +2695,7 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_storage_cache_retained_batch PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    foreach(agcUnwatchedDepthCase IN ITEMS draw same-frame write-order store retire large unchanged bind-bound)
+    foreach(agcUnwatchedDepthCase IN ITEMS draw same-frame write-order store retire large unchanged bind-bound write-bound write-after-store write-after-read)
         add_test(NAME agc_driver_depth_plane_unwatched_${agcUnwatchedDepthCase} COMMAND agc_driver_depth_plane_buffer_memory_tests --unwatched-${agcUnwatchedDepthCase})
         set_tests_properties(agc_driver_depth_plane_unwatched_${agcUnwatchedDepthCase} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)

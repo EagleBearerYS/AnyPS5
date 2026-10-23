@@ -814,9 +814,11 @@ public:
     void ClearStale() {
         staleUnits.assign(staleUnits.size(), false);
         staleCount = 0;
+        unwatchedWritten.reset();
     }
 
     void ClearStale(const std::vector<bool>& units) {
+        unwatchedWritten.reset();
         for (std::size_t unit = 0; unit < units.size() && unit < staleUnits.size(); ++unit) {
             if (!units[unit] || !staleUnits[unit]) continue;
             staleUnits[unit] = false;
@@ -852,7 +854,7 @@ public:
         }
     }
 
-    std::vector<bool> WrittenUnits(const GuestTextureResource& resource, std::uint64_t& generation, bool binding = false) {
+    std::vector<bool> WrittenUnits(const GuestTextureResource& resource, std::uint64_t& generation, bool binding = false, bool writing = false) {
         const auto bytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
         SizeUnits(bytes);
         GuestMemory::CollectWrites(resource.baseAddress, bytes);
@@ -860,7 +862,9 @@ public:
         std::vector<bool> changed(unitGeneration.size(), false);
         if (GuestMemory::WriteWatched() && !GuestMemory::Watched(resource.baseAddress, bytes)) {
             const auto present = Recorder::Presents();
-            if ((!binding || unwatchedPresent != present) && UnwatchedUnits(bytes, changed)) unwatchedPresent = present;
+            if ((binding && unwatchedPresent == present) || (writing && unwatchedWritten == present) || !UnwatchedUnits(bytes, changed)) return changed;
+            unwatchedPresent = present;
+            if (writing) unwatchedWritten = present;
             return changed;
         }
         if (unitGeneration.size() == 1u) {
@@ -902,9 +906,9 @@ public:
         return true;
     }
 
-    void SyncFromMemory(const GuestTextureResource& resource, bool binding = false) {
+    void SyncFromMemory(const GuestTextureResource& resource, bool binding = false, bool writing = false) {
         std::uint64_t generation = 0;
-        const auto changed = WrittenUnits(resource, generation, binding);
+        const auto changed = WrittenUnits(resource, generation, binding, writing);
         if ((pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 || !anyUnit(changed)) {
             unitGeneration.assign(unitGeneration.size(), generation);
             return;
@@ -946,6 +950,7 @@ public:
     std::uint64_t unitBytes = 0;
     bool syncing = false;
     std::optional<std::uint64_t> unwatchedPresent;
+    std::optional<std::uint64_t> unwatchedWritten;
     std::uint64_t scannedEpoch = 0;
 
     const Context context;
@@ -2042,7 +2047,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         if (!created) surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
     }
     if (!created) surface->NoteHtileClear(htileCleared);
-    if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target), !depthWritten && !cleared);
+    if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target), !depthWritten && !cleared, depthWritten && !cleared);
     surface->ApplyFastClear();
     if (drawnDepth != nullptr && drawnDepth != surface) drawnDepth->written = ++depthWrites;
     surface->written = ++depthWrites;
