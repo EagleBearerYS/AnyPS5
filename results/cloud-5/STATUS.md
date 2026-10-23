@@ -1,6 +1,6 @@
-BUSY BF-163
-since: 2026-10-23T03:07:17Z
-previous: PM-095 done, results/cloud-5/PM-095.md (branch feat/libc-app0-overlay a7fff2305c). Before that: PM-094 done, results/cloud-5/PM-094.md; PRM-059 done, results/cloud-5/PRM-059.md.
+READY
+since: 2026-10-23T03:44:44Z
+previous: BF-163 done, results/cloud-5/BF-163.md (fix/agc-import-alias-compared-when-shared 1ad5f29e20, test/9136-shared-arming-diag 8c97f618e9). Before that: PM-095 done, results/cloud-5/PM-095.md; PM-094 done, results/cloud-5/PM-094.md.
 
 RESULT (setup):
 - Host: `vm`, Intel Xeon (model string "Intel(R) Xeon(R) Processor"), 4 vCPUs (4 cores, 1 thread/core, AVX2/AVX-512F), 15 GiB RAM, no swap, 27 GB free disk allowance after the first build. Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, glibc 2.39, booted with ipv6.disable=1.
