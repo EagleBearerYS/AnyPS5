@@ -1,0 +1,4 @@
+BASE=0db47b263d1019043f7d28fad4e7ee0a1ea5ec6a
+REPEAT=10
+EXTRA_TESTS='^agc_driver_depth_expand|^agc_driver_pipelined_metadata_pass$|^agc_metadata_pass$|^agc_driver_draw_pipeline_trace'
+NO_BEFORE=1
