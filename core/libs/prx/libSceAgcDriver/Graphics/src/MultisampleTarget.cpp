@@ -559,7 +559,9 @@ private:
         if (use.cmaskAddress != 0) dccRanges.push_back({use.cmaskAddress, use.cmaskBytes, 0});
         for (auto& range : dccRanges) {
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 256);
-            Require(WatchedAfterSettle(context, range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
+            const bool watched = WatchedAfterSettle(context, range.address, range.bytes);
+            if (!watched) reportUnwatchedDccRange(range);
+            Require(watched, "initial multisampled DCC contents require watched guest memory");
             range.generation = collectBlocks(range.address, range.bytes);
             Require(range.generation != 0, "initial multisampled DCC contents have no write generation");
         }
@@ -596,6 +598,30 @@ private:
         char text[384];
         std::snprintf(text, sizeof(text), "%s (%s range 0x%llx+0x%zx, %u samples)", reason, plane, static_cast<unsigned long long>(range.address), range.bytes, target.samples);
         Require(false, text);
+    }
+
+    void reportUnwatchedDccRange(const GuestMemory::UnchangedQuery& range) const {
+        const auto* plane = range.address == target.address ? "color" : range.address == target.dccAddress ? "DCC" : "CMASK";
+        std::size_t unwatchedPages = 0;
+        std::uint64_t first = 0;
+        std::uint64_t last = 0;
+        for (std::uint64_t offset = 0; offset < range.bytes; offset += 4096u) {
+            const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(4096u, range.bytes - offset));
+            if (GuestMemory::Watched(range.address + offset, bytes)) continue;
+            if (unwatchedPages++ == 0) first = offset;
+            last = offset;
+        }
+        std::fprintf(stderr, "[msaa-dcc-diag] %s range 0x%llx+0x%zx (%u samples) is not watched: write watch %s, host import alignment %llu, GPU mutex %s, %zu of %zu 4 KiB pages unwatched (first +0x%llx, last +0x%llx)\n", plane, static_cast<unsigned long long>(range.address), range.bytes, target.samples, GuestMemory::WriteWatched() ? "on" : "off", static_cast<unsigned long long>(context.hostImportAlignment), GuestMemory::GpuMutex().HeldByThisThread() ? "held" : "not held", unwatchedPages, static_cast<std::size_t>((range.bytes + 4095u) / 4096u), static_cast<unsigned long long>(first), static_cast<unsigned long long>(last));
+        const auto describe = [&](const char* which, const HostImport* import) {
+            if (import == nullptr) {
+                std::fprintf(stderr, "[msaa-dcc-diag]   %s: no host import\n", which);
+                return;
+            }
+            std::fprintf(stderr, "[msaa-dcc-diag]   %s: host import 0x%llx+0x%llx, unwatched %d, settle on demand %d, alias %d, dma-buf %d, joined %d, memory 0x%llx+0x%llx\n", which, static_cast<unsigned long long>(import->base), static_cast<unsigned long long>(import->bytes), import->unwatched ? 1 : 0, import->settleOnDemand ? 1 : 0, import->alias != nullptr ? 1 : 0, import->dmaBuf ? 1 : 0, import->joined ? 1 : 0, static_cast<unsigned long long>(import->memoryBase), static_cast<unsigned long long>(import->pinnedBytes));
+        };
+        describe("whole range", ExistingHostImportFor(context, range.address, range.bytes));
+        describe("first page", ExistingHostImportFor(context, range.address, 4096u));
+        describe("first unwatched page", ExistingHostImportFor(context, range.address + first, 4096u));
     }
 
     void checkDccCurrent(const ColorTarget& use, bool metadataRefilled) const {
