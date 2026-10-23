@@ -2564,7 +2564,7 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values; a data read through the V# refused").c_str());
 }
 
-void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
+void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool word = false) {
     constexpr std::uint32_t KeyWord = 0x14u;
     constexpr std::uint32_t SamplerWord = 0x20u;
     constexpr std::uint32_t Entries = 64u;
@@ -2603,7 +2603,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
         Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
     };
     for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
-    const std::string name = arm ? "pointer V# table with a T# at an offset read from the V#'s own buffer, behind a record pointer that may take a T#'s words" : "pointer V# table with a T# at an offset read from the V#'s own buffer";
+    const std::string name = word ? "pointer V# table whose V# word also feeds the output, behind a record pointer that may take a T#'s words" : arm ? "pointer V# table with a T# at an offset read from the V#'s own buffer, behind a record pointer that may take a T#'s words" : "pointer V# table with a T# at an offset read from the V#'s own buffer";
     auto shown = palettes;
     const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 2> live{{
         {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
@@ -2656,10 +2656,21 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
                 const auto texel = std::bit_cast<std::uint32_t>(second != 0u ? OtherFloatTexels[lane % Width] : FloatTexels[lane % Width]);
                 const auto sampled = outcome.words[(group * Lanes + lane) * 4u + 1u];
                 Require(sampled == texel, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " read " + Hex(sampled) + " through the T# at 0x4c0, expected " + Hex(texel));
+                if (!word) continue;
+                const auto vsharp = outcome.words[(group * Lanes + lane) * 4u + 2u];
+                Require(vsharp == records[palette][0], name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " wrote " + Hex(vsharp) + " for dword 0 of the V# behind its record's pointer, expected " + Hex(records[palette][0]));
             }
         }
     };
-    const std::span<const std::uint32_t> shader = arm ? std::span<const std::uint32_t>(PointerChildKeyArmCode) : std::span<const std::uint32_t>(PointerChildKeyCode);
+    constexpr std::size_t LoopEnd = 67u;
+    const auto withWord = [&](std::vector<std::uint32_t> data, std::initializer_list<std::uint32_t> inserted) {
+        Require(data[LoopEnd - 1u] == 0x7e0a030bu && data[LoopEnd + 1u] == 0xbf89ffd3u, name + ": the waterfall loop's end is not where the test inserts");
+        data.insert(data.begin() + LoopEnd, inserted);
+        data[LoopEnd + 1u + inserted.size()] = 0xbf89ffd3u - static_cast<std::uint32_t>(inserted.size());
+        return data;
+    };
+    const auto wordCode = withWord(std::vector<std::uint32_t>(PointerChildKeyArmCode.begin(), PointerChildKeyArmCode.end()), {0x7e0c0234u});
+    const std::span<const std::uint32_t> shader = word ? std::span<const std::uint32_t>(wordCode) : arm ? std::span<const std::uint32_t>(PointerChildKeyArmCode) : std::span<const std::uint32_t>(PointerChildKeyCode);
     const auto taken = run(shader);
     check(taken, "keys 2 and 5 at offset 0x14 of the V# behind the record's pointer");
     const auto rekey = [&](std::uint32_t first, std::uint32_t second) {
@@ -2682,14 +2693,27 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
     Require(moved.artifactId == taken.artifactId, name + ": moving a record's pointer recompiled the shader");
     check(moved, "keys after record 1's pointer moved to the other V#");
     if (arm) {
-        auto fixed = std::vector<std::uint32_t>(PointerChildKeyArmCode.begin(), PointerChildKeyArmCode.end());
+        auto fixed = std::vector<std::uint32_t>(shader.begin(), shader.end());
         Require(fixed[51] == 0xf420101au && fixed[52] == 0xfa000014u, name + ": the key read is not where the test replaces it");
         fixed[51] = 0xbec003ffu;
         fixed[52] = 0x00030000u;
+        if (word) {
+            Require(fixed[LoopEnd] == 0x7e0c0234u, name + ": the V# word's use is not where the test replaces it");
+            fixed[LoopEnd] = 0x7e0c0280u;
+        }
         Keys[3] = 1u;
         const auto armed = run(fixed);
         Keys[3] = 0u;
         Require(Faulted(armed) && armed.log.find("outside the snapshot") != std::string::npos, name + ": group 0, whose record pointer took dwords 0 and 1 of the T# at 0x4c0, did not fault outside the snapshot:\n" + armed.log);
+        if (word) {
+            const auto derived = withWord(std::vector<std::uint32_t>(PointerChildKeyArmCode.begin(), PointerChildKeyArmCode.end()), {0x874dff35u, 0x0000ffffu, 0xbecc0334u, 0xbece0336u, 0xbecf0337u, 0xf4201426u, 0xfa000000u, 0xbf8cc07fu, 0x7e0c0250u});
+            std::string message;
+            try { static_cast<void>(run(derived)); }
+            catch (const std::runtime_error& error) { message = error.what(); }
+            Require(message.find("GetSamplerResource dword 0 is not a valid runtime value") != std::string::npos, name + ": a data read through a V# made from the V#'s words with dword 1 masked was not refused by resource planning: " + message);
+            std::puts((name + ": the T# at the key, its S# read through the V# whose dword 0 feeds the output, that dword and the T# at 0x4c0 checked; the pointer arm holding that T#'s dwords faults outside the snapshot, and a read through a V# made from the V#'s words is refused").c_str());
+            return;
+        }
         std::puts((name + ": the T# at the key read through the V# reloaded behind the merged pointer, its S# and the T# at 0x4c0 checked; the pointer arm holding that T#'s dwords faults outside the snapshot").c_str());
         return;
     }
@@ -3026,6 +3050,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-child-key-arm") == 0) {
             RunPointerChildKeyTests(*device, true);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-word-arm") == 0) {
+            RunPointerChildKeyTests(*device, true, true);
             return 0;
         }
         RunTests(*device);
