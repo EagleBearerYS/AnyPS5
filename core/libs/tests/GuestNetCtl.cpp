@@ -22,6 +22,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
+#include <string>
 
 #ifdef __APPLE__
 struct NetCtlDefaultRoute {
@@ -290,14 +291,17 @@ int main() {
     Require(sceNetCtlGetStateV6(&stateV6) == 0);
     Require(stateV6 == 0 || stateV6 == kStateIpObtained);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
-    int errorCode = -1;
-    bool resultUnsupported = false;
-    try {
-        sceNetCtlGetResult(0, &errorCode);
-    } catch (const std::logic_error&) {
-        resultUnsupported = true;
+    Require(sceNetCtlGetResult(kEventDisconnected, nullptr) == kErrInvalidAddr);
+    for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
+        int errorCode = -1;
+        Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
     }
-    Require(resultUnsupported && errorCode == -1);
+    for (const int eventType : {0, 4, -1}) {
+        int errorCode = -1;
+        std::string what;
+        try { sceNetCtlGetResult(eventType, &errorCode); } catch (const std::runtime_error& error) { what = error.what(); }
+        Require(what == "sceNetCtlGetResult: event type " + std::to_string(eventType) + " is not implemented" && errorCode == -1);
+    }
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCodeV6 = -1;
