@@ -1,0 +1,4 @@
+b1: presents [4673, 5717), 334 lines over 1044 presents, Driver.Packet.dispatch missing in 11 lines (11 presents); weighted 668 to 748 ms per frame; median per line 282.0 to 341.5 ms (missing as 0, then as the 8th phase)
+a1: presents [4260, 5359), 404 lines over 1099 presents, Driver.Packet.dispatch missing in 9 lines (9 presents); weighted 827 to 904 ms per frame; median per line 354.2 to 369.8 ms (missing as 0, then as the 8th phase)
+a2: presents [4777, 5535), 292 lines over 758 presents, Driver.Packet.dispatch missing in 7 lines (8 presents); weighted 1,039 to 1,120 ms per frame; median per line 296.8 to 307.0 ms (missing as 0, then as the 8th phase)
+b2: presents [4264, 5332), 336 lines over 1068 presents, Driver.Packet.dispatch missing in 10 lines (10 presents); weighted 771 to 854 ms per frame; median per line 262.0 to 280.9 ms (missing as 0, then as the 8th phase)

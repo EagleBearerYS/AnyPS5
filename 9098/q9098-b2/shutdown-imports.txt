@@ -1,0 +1,1 @@
+[gpu] host imports at shutdown: 4388 live (6400.0 MiB); made 26548 (14358.8 MiB), refused 5745286 (426783.2 MiB, 5725559 remembered), failed 1; by requester (made/refused/failed): map 22350/9523/0, build 4001/5735763/1, access 14/0/0, join 170/0/0, segment 13/0/0

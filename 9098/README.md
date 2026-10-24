@@ -36,3 +36,33 @@ One four-arm session on an RTX 3070 Laptop GPU (NVIDIA 617.42), Windows 11, with
 | d2 | D | low (13,935) | 10 of 309 | 732 | 740 | 836 | 38:16 |
 
 a2r is left out of the PR's figures: its load began from a menu-warmed state after a late Yes, a retry.
+
+## Second session: B A A B load runs (q9098, 2026-10-24)
+
+The same machine, driver and warm shader cache. The environment is the same as the first session's, with no trace directory and no other profiling switch. GPU clocks weren't held: nvidia-smi, sampled every 100 ms over each whole run, read P0 for 97.3 % (b1), 96.5 % (a1), 84.2 % (a2) and 98.2 % (b2) of the samples, and P3 or P5 for the rest.
+
+**The arms:**
+- A: tree d56bdc5155, as in the first session;
+- B: tree 5ced89cd25, A plus #9098's earlier change 74dee0062c and its follow-up 156fa1f175.
+
+**The route:** Continue, then Yes at the menu, and the run closes 180 s after the first lit frame. Times are Pacific:
+
+| run | arm | launch | Yes | first lit | Yes to first lit | mode (MiB made) |
+|---|---|---|---|---|---|---|
+| b1 | B | 01:21:17 | 01:33:45 | 01:57:19 | 23:34 | low (13,912) |
+| a1 | A | 02:00:53 | 02:15:46 | 02:43:32 | 27:46 | low (13,807) |
+| a2 | A | 02:48:04 | 03:00:26 | 03:23:04 | 22:38 | high (135,861) |
+| b2 | B | 03:26:54 | 03:37:46 | 04:04:06 | 26:20 | low (14,359) |
+
+a2 ran in the high import mode, so it isn't compared with the low-mode runs.
+
+**What each run's folder (`q9098-<run>/`) holds:** `aps5-summary.jsonl`, `summary-stamps.txt`, `launch.txt` and `shutdown-imports.txt`, as in the first session.
+
+**The figure:** `q9098_check.py` takes the summary lines whose `first_present` lies between the present at Yes and the present at the first lit frame. That window starts at Yes, 13-23 s before the dark load screen where the first session's window starts. Over it, the script takes the presents-weighted mean of `Driver.Packet.dispatch`, as `q3b_report.py` does, with a missing interval counted as 0 and then set to its eighth phase. Its output is in `q9098_check-output.txt`, which also lists the median per line.
+
+| run | arm | intervals without dispatch | dispatch, missing = 0 | upper bound |
+|---|---|---|---|---|
+| b1 | B | 11 of 334 | 668 | 748 |
+| a1 | A | 9 of 404 | 827 | 904 |
+| a2 | A (high) | 7 of 292 | 1,039 | 1,120 |
+| b2 | B | 10 of 336 | 771 | 854 |
