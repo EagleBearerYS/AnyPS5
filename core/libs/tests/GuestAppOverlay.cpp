@@ -129,7 +129,15 @@ void Shadow(const std::filesystem::path& root) {
     const auto again = Logged(root / "again.log", [] { (void)ResolvePath_nid_no_patch("/app0/Data/Settings.TXT"); });
     Require(again.empty(), "a file was announced twice");
     Require(ResolvePath_nid_no_patch("/app0/Data/Level.bin") == root / "app0" / "Data" / "Level.bin", "a file the overlay lacks did not resolve to app0");
-    Require(!Contains(ResolvePath_nid_no_patch("/app0/Data/Settings.TXT/").string(), "app0-overlay"), "a path with a trailing separator came from the overlay");
+    std::error_code trailing;
+    std::string trailingPath;
+    try {
+        (void)ResolvePath_nid_no_patch("/app0/Data/Settings.TXT/");
+    } catch (const std::filesystem::filesystem_error& error) {
+        trailing = error.code();
+        trailingPath = error.path1().string();
+    }
+    Require(trailing == std::errc::not_a_directory && !Contains(trailingPath, "app0-overlay"), "a file with a trailing separator was not refused as the app0 file");
 
     const int file = sceKernelOpen("/app0/Data/Settings.TXT", SCE_KERNEL_O_RDONLY, 0);
     Require(file >= 0 && ReadDescriptor(file) == "overlay" && sceKernelClose(file) == 0, "sceKernelOpen did not read the overlay copy");
