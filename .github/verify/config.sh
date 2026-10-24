@@ -1,0 +1,3 @@
+BASE=4997726a5f6b8cd263461508945a4676647ef482
+REPEAT=10
+EXTRA_TESTS='agc_driver_graphics|^agc_address_copy_cap'
