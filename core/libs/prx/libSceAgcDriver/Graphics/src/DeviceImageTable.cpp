@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferRangeRecords.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -101,6 +102,7 @@ DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup looku
     chunkStride = (RingBytes + alignment - 1u) / alignment * alignment;
     ring = std::make_unique<Buffer>(context, static_cast<std::size_t>(chunkStride * RingChunks), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     if (table->DeviceAddress() == 0 || ring->DeviceAddress() == 0) throw std::runtime_error("AGC device image table: its table or miss ring has no device address");
+    NoteDeviceTable(table->DeviceAddress(), TableBytes, ring->DeviceAddress(), chunkStride * RingChunks);
     std::memset(ring->Bytes().data(), 0, ring->Bytes().size());
     chunks.resize(RingChunks);
     slotSerial = this->slots.serial();
@@ -601,6 +603,7 @@ void DeviceImageTable::upload(Recorder& recorder) {
         fields[Abi::HeaderVersion] = Abi::Version;
         fields[Abi::HeaderMask] = keys.Buckets() - 1u;
         fields[Abi::HeaderRingCapacity] = RingCapacity;
+        NoteDeviceTableHeader(fields[Abi::HeaderMask], fields[Abi::HeaderRingCapacity]);
         updateBuffer(commands, table->Handle(), 0, sizeof(fields), fields.data());
         uploadedBuckets = keys.Buckets();
         bytes += sizeof(fields);

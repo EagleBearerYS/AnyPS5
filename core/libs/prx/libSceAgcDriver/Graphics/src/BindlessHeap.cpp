@@ -552,6 +552,10 @@ bool BindlessHeap::Held(const SpanMark& mark) {
     return true;
 }
 
+const std::uint32_t* BindlessHeap::RingWords(std::uint32_t offset) const {
+    return reinterpret_cast<const std::uint32_t*>(ring->Bytes().data() + offset);
+}
+
 BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark) {
     const auto bytes = words * sizeof(std::uint32_t);
     if (bytes > RingChunkBytes) throw std::runtime_error("AGC bindless heap: per-draw data exceeds a ring chunk");

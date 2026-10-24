@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferRangeRecords.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -284,6 +285,106 @@ std::vector<std::string> BufferRangeReport(std::uint64_t address, std::uint64_t 
     std::snprintf(line, sizeof(line), "[device-fault] 0x%llx: %zu live and %zu destroyed buffers hold it; %zu live buffers, %zu destroyed kept, %llu dropped, now %llu ms",
         static_cast<unsigned long long>(address), liveHits, freedHits, state.live.size(), state.freed.size(), static_cast<unsigned long long>(state.dropped), static_cast<unsigned long long>(Now()));
     lines.emplace_back(line);
+    return lines;
+}
+
+namespace {
+
+struct TableMapNote {
+    std::uint64_t high = 0;
+    std::uint64_t low = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t base = 0;
+    std::array<std::uint32_t, 4> written{};
+    const std::uint32_t* live = nullptr;
+    std::uint64_t at = 0;
+};
+
+struct TableNotes {
+    std::mutex mutex;
+    std::uint64_t table = 0;
+    std::uint64_t tableBytes = 0;
+    std::uint64_t ring = 0;
+    std::uint64_t ringBytes = 0;
+    std::uint32_t mask = 0;
+    std::uint32_t capacity = 0;
+    std::uint64_t headerAt = 0;
+    std::uint64_t headers = 0;
+    std::array<TableMapNote, 16> maps{};
+    std::size_t next = 0;
+    std::uint64_t noted = 0;
+};
+
+TableNotes& tableNotes() {
+    static auto& value = *new TableNotes();
+    return value;
+}
+
+}
+
+void NoteDeviceTable(std::uint64_t table, std::uint64_t tableBytes, std::uint64_t ring, std::uint64_t ringBytes) {
+    auto& notes = tableNotes();
+    {
+        std::lock_guard lock(notes.mutex);
+        notes.table = table;
+        notes.tableBytes = tableBytes;
+        notes.ring = ring;
+        notes.ringBytes = ringBytes;
+    }
+    std::fprintf(stderr, "[device-images] diagnostic: key table at 0x%llx-0x%llx, miss ring at 0x%llx-0x%llx, %llu ms\n", static_cast<unsigned long long>(table), static_cast<unsigned long long>(table + tableBytes), static_cast<unsigned long long>(ring), static_cast<unsigned long long>(ring + ringBytes), static_cast<unsigned long long>(Now()));
+}
+
+void NoteDeviceTableHeader(std::uint32_t mask, std::uint32_t capacity) {
+    auto& notes = tableNotes();
+    std::lock_guard lock(notes.mutex);
+    notes.mask = mask;
+    notes.capacity = capacity;
+    notes.headerAt = Now();
+    ++notes.headers;
+}
+
+void NoteTableMap(std::uint64_t identityHigh, std::uint64_t identityLow, std::uint32_t offset, std::uint32_t base, const std::uint32_t* written, const std::uint32_t* live) {
+    auto& notes = tableNotes();
+    std::lock_guard lock(notes.mutex);
+    auto& note = notes.maps[notes.next];
+    notes.next = (notes.next + 1u) % notes.maps.size();
+    ++notes.noted;
+    note.high = identityHigh;
+    note.low = identityLow;
+    note.offset = offset;
+    note.base = base;
+    std::copy(written, written + note.written.size(), note.written.begin());
+    note.live = live;
+    note.at = Now();
+}
+
+std::vector<std::string> DeviceTableReport(std::uint64_t address) {
+    std::vector<std::string> lines;
+    auto& notes = tableNotes();
+    std::lock_guard lock(notes.mutex);
+    char line[512];
+    std::snprintf(line, sizeof(line), "[device-fault] device table: keys 0x%llx-0x%llx, ring 0x%llx-0x%llx, header mask 0x%x capacity %u (%llu uploads, last %llu ms), %llu maps noted",
+        static_cast<unsigned long long>(notes.table), static_cast<unsigned long long>(notes.table + notes.tableBytes), static_cast<unsigned long long>(notes.ring), static_cast<unsigned long long>(notes.ring + notes.ringBytes),
+        notes.mask, notes.capacity, static_cast<unsigned long long>(notes.headers), static_cast<unsigned long long>(notes.headerAt), static_cast<unsigned long long>(notes.noted));
+    lines.emplace_back(line);
+    if (notes.table != 0 && address >= notes.table) {
+        std::snprintf(line, sizeof(line), "[device-fault] 0x%llx: key table + 0x%llx (word %llu)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(address - notes.table), static_cast<unsigned long long>((address - notes.table) / 4u));
+        lines.emplace_back(line);
+    }
+    if (notes.ring != 0 && address >= notes.ring) {
+        std::snprintf(line, sizeof(line), "[device-fault] 0x%llx: miss ring + 0x%llx (word %llu)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(address - notes.ring), static_cast<unsigned long long>((address - notes.ring) / 4u));
+        lines.emplace_back(line);
+    }
+    const auto count = std::min<std::uint64_t>(notes.noted, notes.maps.size());
+    for (std::uint64_t index = 0; index < count; ++index) {
+        const auto& note = notes.maps[(notes.next + notes.maps.size() - 1u - index) % notes.maps.size()];
+        std::array<std::uint32_t, 4> now{};
+        if (note.live != nullptr) std::copy(note.live, note.live + now.size(), now.begin());
+        std::snprintf(line, sizeof(line), "[device-fault] map %llu: identity %016llx%016llx at heap +0x%x, element base %u, %llu ms: trailer written %08x %08x %08x %08x, now %08x %08x %08x %08x%s",
+            static_cast<unsigned long long>(index), static_cast<unsigned long long>(note.high), static_cast<unsigned long long>(note.low), note.offset, note.base, static_cast<unsigned long long>(note.at),
+            note.written[0], note.written[1], note.written[2], note.written[3], now[0], now[1], now[2], now[3], note.written == now ? "" : " (changed)");
+        lines.emplace_back(line);
+    }
     return lines;
 }
 

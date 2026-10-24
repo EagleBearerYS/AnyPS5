@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferRangeRecords.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -6174,6 +6175,10 @@ void ShaderResources::writeHeapTableMap(const CompiledShader& shader, std::size_
     }
     if (map.size() == base) map.push_back(sampledAbsent);
     heapTableMaps[stageIndex] = heapSpan(heapStages[stageIndex].map, map);
+    if (shader.program->deviceImageTables) {
+        const auto identity = shader.program->Identity();
+        NoteTableMap(identity.high, identity.low, heapTableMaps[stageIndex], base, map.data() + base - TableAbi::TrailerWords, heap.RingWords(heapTableMaps[stageIndex]) + base - TableAbi::TrailerWords);
+    }
     heapTableMapSet[stageIndex] = true;
 }
 

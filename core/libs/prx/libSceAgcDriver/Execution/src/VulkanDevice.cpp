@@ -2143,6 +2143,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                 unsigned long long precision = 0;
                 if (at == std::string::npos || std::sscanf(line.c_str() + at, " invalid at 0x%llx (precision 0x%llx)", &address, &precision) != 2) continue;
                 for (const auto& range : Graphics::BufferRangeReport(address, precision)) std::fprintf(stderr, "%s\n", range.c_str());
+                for (const auto& range : Graphics::DeviceTableReport(address)) std::fprintf(stderr, "%s\n", range.c_str());
             }
         };
         Graphics::DeviceLostOwner() = state.get();
