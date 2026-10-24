@@ -2543,6 +2543,30 @@ void RunPointerChaseTests(AgcDriver::VulkanDevice& device) {
     Require(Faulted(outside) && outside.log.find("outside the snapshot") != std::string::npos, name + ": a link outside the snapshot did not fault as outside the snapshot:\n" + outside.log);
     Require(untouched(outside), name + ": a link outside the snapshot published copied output");
     Require(outside.artifactId == taken.artifactId, name + ": a link outside the snapshot recompiled the shader");
+    chase(1u, 2u, links[1].data());
+    const std::array<std::array<std::uint32_t, 2>, 4> speculativeKeys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {1u, 1u}}};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = speculativeKeys[group][0];
+        Keys[group * 4u + 1u] = speculativeKeys[group][1];
+    }
+    nodes[2][0x60u / 4u] += 1u;
+    const auto unaligned = run(PointerChaseCode);
+    Require(!Faulted(unaligned), name + ": a V# with an unaligned base on a step no group takes stopped the dispatch:\n" + unaligned.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        const auto expected = std::function<std::uint32_t(std::uint32_t)>([&, group](std::uint32_t x) {
+            auto node = recordNode[speculativeKeys[group][x < 32u ? 0u : 1u]];
+            for (std::uint32_t step = 0; step < 2u; ++step) {
+                if ((group >> step) & 1u) node = next[node];
+            }
+            return std::bit_cast<std::uint32_t>(imageOf[node] != 0u ? OtherFloatTexels[x] : FloatTexels[x]);
+        });
+        RequireRed(unaligned, group, Lanes, expected, name + ": the T# beside a V# with an unaligned base on a step no group takes, in group " + std::to_string(group));
+    }
+    chase(2u, 0u, links[2].data());
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = keys[group][0];
+        Keys[group * 4u + 1u] = keys[group][1];
+    }
     const auto refused = [&](std::span<const std::uint32_t> code, const std::string& what) {
         std::string refusal;
         try {
@@ -2554,7 +2578,7 @@ void RunPointerChaseTests(AgcDriver::VulkanDevice& device) {
     };
     refused(PointerChaseLoopCode, "a chase repeated in a loop");
     refused(PointerChaseDeepCode, "five conditional chase steps");
-    std::puts("pointer table with a conditional V# chase: a T# at a record pointer chased up to twice through a V# at the pointer plus 0x60 checked for every taken and skipped step, a moved link and a link outside the snapshot, and a chase in a loop and five chase steps refused");
+    std::puts("pointer table with a conditional V# chase: a T# at a record pointer chased up to twice through a V# at the pointer plus 0x60 checked for every taken and skipped step, a moved link, a link outside the snapshot and a V# with an unaligned base on a step no group takes, and a chase in a loop and five chase steps refused");
 }
 
 void RunPointerChaseSplitTests(AgcDriver::VulkanDevice& device) {
