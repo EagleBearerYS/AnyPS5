@@ -20,7 +20,6 @@ struct ImageTableElement {
     bool depthCompare = false;
     DescriptorBindingKind kind = DescriptorBindingKind::Buffers;
     std::uint32_t samplers = 0;
-    bool atomic = false;
 };
 
 struct ImageTableSamplerElement {
