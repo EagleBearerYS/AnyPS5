@@ -1,0 +1,4 @@
+BASE=1e20650e8458f4e8916a85576ae231b5e144b581
+REPEAT=10
+EXTRA_TESTS='windows_write_watch|windows_write_watch_verify_direct|windows_shared_map_cost|agc_private_collect|agc_import_watch|guest_shm_open|guest_memory|guest_jit_shared_memory'
+NO_BEFORE=1
