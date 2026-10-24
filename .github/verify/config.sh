@@ -1,0 +1,4 @@
+BASE=f81fa2098f84ec7cf2ca62ad27fba638fe66e254
+REPEAT=3
+EXTRA_TESTS='agc_driver_heap_draw_sample_heap|agc_pooled_buffer_address|agc_buffer_pool|^agc_driver_heap_'
+NO_BEFORE=1
