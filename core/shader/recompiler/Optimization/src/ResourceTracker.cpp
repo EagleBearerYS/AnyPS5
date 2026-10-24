@@ -1054,7 +1054,8 @@ private:
         std::vector<IrValue*> lowReads;
         std::vector<IrValue*> highReads;
         if (pointerKeyed ? !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads) : merged && !PointerRecordReads(pointer->Argument(0), lowReads)) return false;
-        auto* low = merged ? lowReads.back() : pointer->Argument(0)->Resolve();
+        auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
+        if (low == nullptr) return false;
         auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : UnwrapTableRead(pointer->Argument(1));
         if (high == nullptr) return false;
         std::uint32_t first = 0;
