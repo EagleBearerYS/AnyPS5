@@ -1,0 +1,4 @@
+BASE=df9cf83c418405d05824bcda71094ca1735d04c4
+REPEAT=5
+EXTRA_TESTS='^agc_driver_sgpr_pattern_fill_keys|^agc_driver_pipelined_metadata_pass'
+NO_BEFORE=1
