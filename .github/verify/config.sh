@@ -1,0 +1,4 @@
+BASE=522e32e3b618154e0e221a9f4d28da87dd2cf187
+REPEAT=1
+EXTRA_TESTS='^agc_submit_progress|^agc_driver_pipelined_metadata_pass|agc_driver_queued_index_read_order'
+NO_BEFORE=1
