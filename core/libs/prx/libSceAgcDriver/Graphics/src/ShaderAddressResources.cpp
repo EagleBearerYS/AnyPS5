@@ -218,7 +218,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
                 ++tables;
             } else {
                 ++faults;
-                faultReportOnly = faultReportOnly && faultReportOnlyCached(shader.program->spirv, binding.descriptorSet, binding.binding);
+                static_cast<void>(faultReportOnlyCached(shader.program->spirv, binding.descriptorSet, binding.binding));
             }
         }
         const bool faultOnly = tables == 0 && faults == 1 && shader.program->bdaAbiVersion == ShaderRecompiler::BdaAbi::Version;
