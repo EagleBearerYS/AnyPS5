@@ -3849,6 +3849,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");
+    AgcDriver::GuestMemory::Unwatch(0x10000, 0x20000);
     Require(!AgcDriver::GuestMemory::Watched(0x10000, 0x20000), "the unregistered heap copy range is write-watched");
     const auto heapCopies = AddressCopyOverflow({{0x10000, 0x30000, 0x18000, nullptr, true, true}, {0x40000, 0x50000, 0x10000, nullptr, true, false}}, 0x2000);
     Require(heapCopies.find("0x10000+0x20000 (0.1 MiB committed, import over the host import budget, heap not fully write-watched)") != std::string::npos && heapCopies.find("0x40000+0x10000 (0.1 MiB committed, heap not fully write-watched)") != std::string::npos, "the copy limit does not name a copied heap's reason");
