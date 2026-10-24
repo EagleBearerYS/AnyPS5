@@ -1177,7 +1177,7 @@ private:
         if (merged && buffer && (!same(lowReads) || !same(highReads))) return false;
         auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
         if (low == nullptr) return false;
-        auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : UnwrapTableRead(pointer->Argument(1));
+        auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : merged ? highReads.back() : UnwrapTableRead(pointer->Argument(1));
         if (high == nullptr) return false;
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
