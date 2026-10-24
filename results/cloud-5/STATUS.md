@@ -1,4 +1,7 @@
-READY 2026-10-23T17:37:32Z: BF-187 done
+BUSY BF-188
+since: 2026-10-24T23:51Z (BF-188, recount PM-089's unclaimed library functions against today's open PRs and main, with title hits flagged)
+claimed: tasks/claimed/BF-188.md
+step: reading PM-088/PM-089 inputs and method; fetching upstream main and the 1,291 PR heads
 machine: same VM as on 10-18 (clone, Release build at old main 0906c6450, board and results worktrees kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB RAM, 15 GB free disk, Ubuntu 24.04.5, kernel 6.18.44, gcc 13.3.0, CMake 3.28.3, Wild 0.10.0, lavapipe Mesa 25.2.8 (LLVM 20.1.2); origin and upstream fetched (upstream main 0db47b263)
 previous: BF-187 done, results/cloud-5/BF-187.md: Part A trace test/sm2-9969-sampler-trace 5b13142ad (APS5_TRACE_TABLE_PLAN=1, ids of APS5_DUMP_IR after srt); cause reproduced: ChildKeyWord refuses a key read through V# A that indexes T#s read through V# B, a second load of the same address at another width (x8 vs x4; MemoryInfo componentCount), so the S# is refused with the title text while the T# plans; fix fix/shader-nested-sampler-vsharp-arm f65f7d7ee (SameDescriptorWords in ChildKeyWord, MatchChildKey, WrittenThrough; other addresses and the pinned refusals stay refused), cherry-picked as test/sm2-9969-sampler dca71ef7e; new ctest agc_driver_pointer_vsharp_copy_table (four nested pointer Phis, loop-carried record reads, width/height, key at 0x0), red with the title's chain; mirror 1935: 1845 pass, 86 skip, 4 IPv6 fails; until-fail:20 580 passes; no new VUID; conventions pass, 0 comment lines; FormatVersion unchanged. Before that: BF-183 done, results/cloud-5/BF-183.md (fix/agc-fmask-cmask-narrow c85ea64d6).
 
