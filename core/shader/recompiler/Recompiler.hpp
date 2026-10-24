@@ -298,6 +298,7 @@ struct SpirvTarget {
     bool float32FlushToZero = false;
     bool waveLdsMemoryBarriers = false;
     bool float32DenormPreserve = false;
+    bool fusedExactArithmetic = false;
 };
 
 struct BindingLayout {
@@ -634,6 +635,8 @@ private:
     std::shared_ptr<Holder> holder;
 };
 
+[[nodiscard]] SharedSpirv InternSpirv(std::vector<std::uint32_t> words);
+
 struct VertexInput {
     std::uint32_t location;
     std::uint32_t components;
@@ -677,6 +680,7 @@ struct CompiledShaderArtifact {
     std::optional<MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
+    bool bdaWrites = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };
