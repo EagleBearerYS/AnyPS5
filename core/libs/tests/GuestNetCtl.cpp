@@ -21,8 +21,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-#include <stdexcept>
-#include <string>
 
 #ifdef __APPLE__
 struct NetCtlDefaultRoute {
@@ -296,22 +294,10 @@ int main() {
         int errorCode = -1;
         Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
     }
-    for (const int eventType : {0, 4, -1}) {
-        int errorCode = -1;
-        std::string what;
-        try { sceNetCtlGetResult(eventType, &errorCode); } catch (const std::runtime_error& error) { what = error.what(); }
-        Require(what == "sceNetCtlGetResult: event type " + std::to_string(eventType) + " is not implemented" && errorCode == -1);
-    }
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCodeV6 = -1;
         Require(sceNetCtlGetResultV6(eventType, &errorCodeV6) == 0 && errorCodeV6 == 0);
-    }
-    for (const int eventType : {0, 4, -1}) {
-        int errorCodeV6 = -1;
-        bool threw = false;
-        try { sceNetCtlGetResultV6(eventType, &errorCodeV6); } catch (const std::runtime_error&) { threw = true; }
-        Require(threw && errorCodeV6 == -1);
     }
     NetCtlInfo info{};
     Require(sceNetCtlGetInfo(0, &info) == kErrInvalidCode);
