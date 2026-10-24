@@ -273,7 +273,7 @@ bool BdaResources::TakeFaultSlot(const Context& context) {
     const auto withFree = [&] { return std::find_if(arena.chunks.rbegin(), arena.chunks.rend(), [&](const std::shared_ptr<BdaFaultChunk>& chunk) { return chunk->slotBytes == slotBytes && !chunk->free.empty(); }); };
     auto source = shared ? withFree() : arena.chunks.rend();
     bool reclaimed = false;
-    if (shared && source == arena.chunks.rend() && GuestMemory::GpuMutex().HeldByThisThread()) {
+    if (false) {
         std::vector<BdaResources*> idle;
         for (auto* holder : arena.holders) {
             if (holder->faultChunk->slotBytes == slotBytes && holder->lastUse <= arena.finished && faultSlotClean(holder->faultBytes())) idle.push_back(holder);
