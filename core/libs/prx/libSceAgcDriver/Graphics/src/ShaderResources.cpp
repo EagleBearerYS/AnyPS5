@@ -395,7 +395,34 @@ std::list<CachedTexture>::iterator findSampledEntry(TextureCache& cache, VkDevic
 // pending read is a snapshot compare or read made while recorded work still wrote the surface (the
 // flush hook may find that work already signaled, so this bounds the hook syncs from above; the
 // [hooksync] line attributes the actual waits).
+enum class TableGate : std::size_t {
+    LookupStorageTable,
+    LookupNoItem,
+    LookupEpochZero,
+    ErasedByState,
+    LookupMiss,
+    StalePending,
+    StaleUntracked,
+    StaleUnchanged,
+    CachedMiss,
+    EpochZero,
+    Capacity,
+    Written,
+    NoItem,
+    LogEmpty,
+    OtherObject,
+    Source,
+    GenerationZero,
+    Compressed,
+    Dcc,
+    StateChanged,
+    PendingAtRemember,
+    Remembered,
+    Count,
+};
+
 struct TextureCounters {
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(TableGate::Count)> tableGates{};
     std::atomic<std::uint64_t> fromStorage{0};
     std::atomic<std::uint64_t> snapshots{0};
     std::atomic<std::uint64_t> pendingReads{0};
@@ -426,6 +453,10 @@ TextureCounters& TextureCounts() {
     return counters;
 }
 
+void noteGate(TableGate gate, std::uint64_t count = 1) {
+    TextureCounts().tableGates[static_cast<std::size_t>(gate)].fetch_add(count, std::memory_order_relaxed);
+}
+
 thread_local std::uint64_t sampledLookupKeyScans = 0;
 
 void reportTextureCounters() {
@@ -437,6 +468,8 @@ void reportTextureCounters() {
     if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
     AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved (%llu untracked entries kept); untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.tableUntrackedKept), count(counters.untrackedKept), count(counters.untrackedCompared));
+    const auto gate = [&](TableGate value) { return count(counters.tableGates[static_cast<std::size_t>(value)]); };
+    AgcDriver::ProfilePrint_nid_no_patch("[table-gates] lookups: storage table %llu, no item %llu, epoch 0 %llu, kept tables erased by a state change %llu, not kept %llu, stale by pending %llu, by untracked key %llu, by write generation %llu, cached texture gone %llu; fresh tables refused first by: epoch 0 %llu, capacity %llu, written element %llu, no item %llu, empty lookup log %llu, other object %llu, storage source %llu, generation 0 without key %llu, compressed keys %llu, DCC %llu, state changed %llu; pending at remember %llu, remembered %llu\n", gate(TableGate::LookupStorageTable), gate(TableGate::LookupNoItem), gate(TableGate::LookupEpochZero), gate(TableGate::ErasedByState), gate(TableGate::LookupMiss), gate(TableGate::StalePending), gate(TableGate::StaleUntracked), gate(TableGate::StaleUnchanged), gate(TableGate::CachedMiss), gate(TableGate::EpochZero), gate(TableGate::Capacity), gate(TableGate::Written), gate(TableGate::NoItem), gate(TableGate::LogEmpty), gate(TableGate::OtherObject), gate(TableGate::Source), gate(TableGate::GenerationZero), gate(TableGate::Compressed), gate(TableGate::Dcc), gate(TableGate::StateChanged), gate(TableGate::PendingAtRemember), gate(TableGate::Remembered));
 }
 
 // What the sampled-texture lookups on this thread proved their returned objects current against,
@@ -1869,25 +1902,40 @@ bool SameTable(const ReusedTable& table, VkDevice device, const ShaderRecompiler
 }
 
 ReusedTable* FindReusedTable(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, const TableState& state) {
-    if (state.epoch == 0) return nullptr;
+    if (state.epoch == 0) {
+        noteGate(TableGate::LookupEpochZero);
+        return nullptr;
+    }
     auto& tables = ReusedTables();
-    std::erase_if(tables, [&](const ReusedTable& table) { return table.state != state; });
+    const auto erased = std::erase_if(tables, [&](const ReusedTable& table) { return table.state != state; });
+    if (erased != 0) noteGate(TableGate::ErasedByState, erased);
     for (auto& table : tables) {
         if (SameTable(table, device, binding)) return &table;
     }
+    noteGate(TableGate::LookupMiss);
     return nullptr;
 }
 
 bool TableCurrent(ReusedTable& table) {
     const auto serial = StorageTexture::PendingSerial();
     if (serial != table.pendingSerial) {
-        if (StorageTexture::AnyPendingOverlaps(table.ranges) || StorageTexture::PendingSerial() != serial) return false;
+        if (StorageTexture::AnyPendingOverlaps(table.ranges) || StorageTexture::PendingSerial() != serial) {
+            noteGate(TableGate::StalePending);
+            return false;
+        }
         table.pendingSerial = serial;
     }
     for (const auto& entry : table.untracked) {
-        if (untrackedKey(entry.address, entry.bytes) != entry.key || Recorder::SnapshotWriteOverlaps(entry.address, entry.bytes)) return false;
+        if (untrackedKey(entry.address, entry.bytes) != entry.key || Recorder::SnapshotWriteOverlaps(entry.address, entry.bytes)) {
+            noteGate(TableGate::StaleUntracked);
+            return false;
+        }
     }
-    return GuestMemory::UnchangedSinceAll(table.queries);
+    if (!GuestMemory::UnchangedSinceAll(table.queries)) {
+        noteGate(TableGate::StaleUnchanged);
+        return false;
+    }
+    return true;
 }
 
 bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<Texture>>& cached) {
@@ -1898,7 +1946,10 @@ bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<T
     for (const auto& element : table.elements) {
         if (element.rejected) continue;
         const auto it = findTexture(cache, element.key);
-        if (it == cache.entries.end() || it->texture != element.texture.lock()) return false;
+        if (it == cache.entries.end() || it->texture != element.texture.lock()) {
+            noteGate(TableGate::CachedMiss);
+            return false;
+        }
         entries.push_back(it);
     }
     cached.reserve(entries.size());
@@ -5149,6 +5200,8 @@ void ShaderResources::resolveImageTables() {
         const auto state = CurrentTableState();
         std::vector<std::shared_ptr<Texture>> cached;
         const bool storageTable = std::find(binding.imageWritten.begin(), binding.imageWritten.end(), true) != binding.imageWritten.end();
+        if (storageTable) noteGate(TableGate::LookupStorageTable);
+        else if (item == nullptr) noteGate(TableGate::LookupNoItem);
         if (auto* reused = storageTable || item == nullptr ? nullptr : FindReusedTable(context.device, binding, state); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
@@ -5185,12 +5238,17 @@ void ShaderResources::resolveImageTables() {
         ReusedTable fresh;
         fresh.bound.assign(binding.count, {});
         bool reusable = state.epoch != 0;
+        auto refusedBy = reusable ? TableGate::Count : TableGate::EpochZero;
+        const auto refuse = [&](TableGate gate) {
+            if (reusable) refusedBy = gate;
+            reusable = false;
+        };
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
             const auto absolute = static_cast<std::uint64_t>(table.elementBase) + element;
             if (absolute >= context.imageTableCapacity) {
                 table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
-                reusable = false;
+                refuse(TableGate::Capacity);
                 continue;
             }
             GuestTextureResource resource{};
@@ -5213,7 +5271,7 @@ void ShaderResources::resolveImageTables() {
                 continue;
             }
             if (element < binding.imageWritten.size() && binding.imageWritten[element]) {
-                reusable = false;
+                refuse(TableGate::Written);
                 const auto storageBinding = storageTableBindings[table.set];
                 if (storageBinding == std::numeric_limits<std::size_t>::max()) {
                     table.map[faults + element] = rejectTableElement(table, words, "set " + std::to_string(table.set) + " has no image storage table, but the shader stores to its table element " + std::to_string(absolute));
@@ -5248,7 +5306,7 @@ void ShaderResources::resolveImageTables() {
             }
             if (item == nullptr) {
                 table.map[faults + element] = rejectTableElement(table, words, "a sampled image table entry has no sampled image table binding");
-                reusable = false;
+                refuse(TableGate::NoItem);
                 continue;
             }
             std::array<std::uint32_t, 8> narrowed{};
@@ -5273,7 +5331,14 @@ void ShaderResources::resolveImageTables() {
             if (reusable) {
                 const auto& log = lookupLog();
                 const auto* looked = log.empty() ? nullptr : &log.back();
-                reusable = looked != nullptr && looked->object == texture.get() && looked->source == nullptr && (looked->generation != 0 || looked->untracked[0] != 0) && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0;
+                const auto gate = looked == nullptr ? TableGate::LogEmpty
+                    : looked->object != texture.get() ? TableGate::OtherObject
+                    : looked->source != nullptr ? TableGate::Source
+                    : looked->generation == 0 && looked->untracked[0] == 0 ? TableGate::GenerationZero
+                    : looked->keys != DccKeys::Uncompressed ? TableGate::Compressed
+                    : resource.dccAddress != 0 ? TableGate::Dcc
+                    : TableGate::Count;
+                if (gate != TableGate::Count) refuse(gate);
                 if (reusable) {
                     fresh.elements.push_back({MakeTextureKey(context.device, sampledWords, components, depthCompare), texture, resource, guestBytes, firstLayer, false, {}});
                     if (looked->generation != 0) fresh.queries.push_back({resource.baseAddress, static_cast<std::size_t>(guestBytes), looked->generation});
@@ -5284,7 +5349,9 @@ void ShaderResources::resolveImageTables() {
             fresh.bound[element] = bind(element, sampledWords, std::move(texture), resource, guestBytes, firstLayer);
         }
         counters.tablesResolved.fetch_add(1, std::memory_order_relaxed);
-        if (reusable && CurrentTableState() == state) {
+        if (reusable && CurrentTableState() != state) refuse(TableGate::StateChanged);
+        if (refusedBy != TableGate::Count) noteGate(refusedBy);
+        if (reusable) {
             const auto serial = StorageTexture::PendingSerial();
             if (!StorageTexture::AnyPendingOverlaps(fresh.ranges) && StorageTexture::PendingSerial() == serial) {
                 fresh.device = context.device;
@@ -5294,6 +5361,9 @@ void ShaderResources::resolveImageTables() {
                 fresh.samplers = std::move(samplerKey);
                 fresh.replayable = static_cast<std::uint64_t>(table.elementBase) + binding.count <= context.imageTableCapacity;
                 RememberTable(std::move(fresh), binding);
+                noteGate(TableGate::Remembered);
+            } else {
+                noteGate(TableGate::PendingAtRemember);
             }
         }
     }
