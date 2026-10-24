@@ -163,7 +163,7 @@ bool sharedFaultSlots() {
 constexpr VkDeviceSize FaultChunkBytes = VkDeviceSize{512} * 1024;
 
 VkDeviceSize faultSlotBytes(bool reportOnly) {
-    return reportOnly ? sizeof(ShaderRecompiler::BdaAbi::Fault) : ShaderRecompiler::BdaAbi::FaultBufferBytes;
+    return reportOnly ? ShaderRecompiler::BdaAbi::FaultBufferBytes : ShaderRecompiler::BdaAbi::FaultBufferBytes;
 }
 
 VkDeviceSize faultStride(const Context& context, VkDeviceSize bytes) {
