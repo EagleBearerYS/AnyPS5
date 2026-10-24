@@ -144,6 +144,7 @@ void Driver::run(std::uint32_t id) noexcept {
     if (id == 0) StartWorkerSampler();
     Submission submission;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static const bool idleStore = std::getenv("APS5_NO_IDLE_STORE") == nullptr;
     auto& costs = submissionCosts(id);
     try {
         if (PerformanceTrace::Configured()) PerformanceTrace::BindThread(role);
@@ -183,7 +184,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         && std::all_of(workers.begin(), workers.end(), [](const auto& item) { return item.second.pending.empty(); });
                 };
                 const auto idleResultsPending = [&] {
-                    return id == 0 && Graphics::StorageTexture::AnyPending() && allQueuesIdle() && !completionsPending();
+                    return idleStore && id == 0 && Graphics::StorageTexture::AnyPending() && allQueuesIdle() && !completionsPending();
                 };
                 const auto poll = [&](const auto& done) {
 #ifdef _WIN32
