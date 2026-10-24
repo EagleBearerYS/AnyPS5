@@ -145,8 +145,11 @@ public:
             queue.queueFamilyIndex = family;
             queue.queueCount = 1;
             queue.pQueuePriorities = &priority;
+            VkPhysicalDeviceFeatures supported{};
+            function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderInt64 = VK_TRUE;
+            enabled.textureCompressionBC = supported.textureCompressionBC;
             address.pNext = &bytes;
             const std::array<const char*, 2> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
@@ -162,6 +165,7 @@ public:
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
             context.limits = properties.limits;
             context.bufferDeviceAddress = true;
+            context.textureCompressionBC = supported.textureCompressionBC == VK_TRUE;
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
@@ -862,6 +866,10 @@ int main(int argc, char** argv) {
             const bool large = argc == 2 && std::string_view(argv[1]) == "--large-tracked";
             ReservedSurface surface(large ? LargeSurfaceBytes : SurfaceBytes);
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            if (committed.has_value() && committed->format == FormatBc1UNorm && !context.textureCompressionBC) {
+                std::puts("skipped, the device has no BC texture compression");
+                return Skipped;
+            }
             if (committed.has_value()) CommittedSurface(context, *committed, mode == "--committed-volume", mode == "--committed-volume-compare");
             else if (large) {
                 LargeTracked(context, surface, LargeSurfaceBytes);
