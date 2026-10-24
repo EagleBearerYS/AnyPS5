@@ -1,0 +1,3 @@
+BASE=b3e42bd1ebe52133afabd45911a43203164669be
+REPEAT=10
+EXTRA_TESTS='guest_net_ctl|guest_netctl_ap|guest_netctl_ap_dialog'
