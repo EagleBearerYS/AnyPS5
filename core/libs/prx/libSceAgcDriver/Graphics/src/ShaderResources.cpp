@@ -6104,8 +6104,14 @@ void ShaderResources::writeHeapTableMap(const CompiledShader& shader, std::size_
     namespace TableAbi = ShaderRecompiler::ImageTableAbi;
     heapTableMapSet[stageIndex] = false;
     const auto table = std::find_if(tableStages.begin(), tableStages.end(),
-                                    [&](const TableStage& candidate) { return candidate.program == shader.program && candidate.heap; });
+                                    [&](const TableStage& candidate) { return candidate.stage == shader.stage && candidate.heap; });
     if (table == tableStages.end() || table->mapAllocation == noElement) return;
+    table->program = shader.program;
+    table->images = nullptr;
+    for (const auto& binding : shader.program->bindings) {
+        const bool imageTable = binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable;
+        if (imageTable) table->images = &binding;
+    }
     auto& heap = BindlessHeap::For(context);
     struct MapStorage {};
     auto& map = HostThreadLocal<std::vector<std::uint32_t>, MapStorage>();
