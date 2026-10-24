@@ -1,0 +1,4 @@
+BASE=15e71dbe1116517913c5fbf309aa86d102285da3
+REPEAT=3
+EXTRA_TESTS='agc_driver_device_image_table|agc_driver_device_image_table_heap|agc_pooled_buffer_address|agc_buffer_pool'
+NO_BEFORE=1
