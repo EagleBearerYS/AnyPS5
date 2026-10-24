@@ -912,7 +912,7 @@ private:
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
-        const bool merged = pointer->Argument(0)->Resolve()->IsPhi();
+        const bool merged = pointer->Argument(0)->Resolve()->IsPhi() && UnwrapTableRead(pointer->Argument(0)) == nullptr;
         const bool pointerKeyed = merged && !buffer;
         if (!hops.empty() && (buffer || merged)) return false;
         auto* low = merged ? PointerRecordOrigin(pointer->Argument(0), pointerKeyed) : pointer->Argument(0)->Resolve();
