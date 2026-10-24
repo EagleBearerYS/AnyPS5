@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferRangeRecords.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -1187,7 +1188,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->window = window->context;
         APS5_LOG_OUT("Vulkan surface created surface=%p window=%p", reinterpret_cast<void*>(state->surface), state->window);
     }
-    state->deviceProc = state->InstanceFunction<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
+    state->deviceProc = Graphics::BufferRangeDeviceProc(state->InstanceFunction<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr"));
     const auto enumerate = state->InstanceFunction<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
     std::uint32_t count = 0;
     check(enumerate(state->instance, &count, nullptr), "vkEnumeratePhysicalDevices");
@@ -2135,7 +2136,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                 std::memcpy(words, owner->markerMapping, sizeof(words));
                 for (const auto& line : owner->markerLog.Report(words[0], words[1])) std::fprintf(stderr, "%s\n", line.c_str());
             }
-            for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData)) std::fprintf(stderr, "%s\n", line.c_str());
+            for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData)) {
+                std::fprintf(stderr, "%s\n", line.c_str());
+                const auto at = line.find(" invalid at 0x");
+                unsigned long long address = 0;
+                unsigned long long precision = 0;
+                if (at == std::string::npos || std::sscanf(line.c_str() + at, " invalid at 0x%llx (precision 0x%llx)", &address, &precision) != 2) continue;
+                for (const auto& range : Graphics::BufferRangeReport(address, precision)) std::fprintf(stderr, "%s\n", range.c_str());
+            }
         };
         Graphics::DeviceLostOwner() = state.get();
         state->deviceLostHook = true;
