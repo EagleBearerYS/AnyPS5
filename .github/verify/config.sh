@@ -1,0 +1,4 @@
+BASE=c55d7c8e7b8ac4e1fbd2dfb72e18ce34076bf9a0
+REPEAT=1
+EXTRA_TESTS='agc_shader_memory|agc_driver_image_table'
+NO_BEFORE=1
