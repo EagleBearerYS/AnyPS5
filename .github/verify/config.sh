@@ -1,0 +1,4 @@
+BASE=db6af9e0fd8c75366dabc2066dbf90117f7490d0
+REPEAT=3
+EXTRA_TESTS='agc_driver_graphics|agc_shader_memory|agc_driver_fmask_image_reads|agc_driver_native_fmask_4'
+NO_BEFORE=1
