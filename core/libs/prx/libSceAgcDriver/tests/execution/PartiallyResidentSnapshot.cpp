@@ -477,6 +477,7 @@ std::optional<CommittedCase> CommittedCaseFor(std::string_view mode) {
     if (mode == "--committed-volume-mips") return CommittedCase{"the partially committed mipmapped volume", Format16x4Float, TileR64KBX, Type3D, false, 2u * VolumeSide, CommittedSlabs, 2u};
     if (mode == "--committed-volume-bc") return CommittedCase{"the partially committed BC1 volume", FormatBc1UNorm, TileR64KBX, Type3D, false, 4u * VolumeSide};
     if (mode == "--committed-array") return CommittedCase{"the partially committed 2D array", Format16x4Float, TileR64KBX, Type2DArray};
+    if (mode == "--committed-volume-empty") return CommittedCase{"the uncommitted volume", Format16x4Float, TileR64KBX, Type3D, false, VolumeSide, 0u};
     return std::nullopt;
 }
 
