@@ -1,4 +1,4 @@
-READY 2026-10-23T16:48:47Z
-since: 2026-10-23T16:48:47Z
+BUSY BF-189 (libkernel_sys, the AMPR command writers (18))
+since: 2026-10-24T23:51:26Z
 last: BF-185 done, results/cloud-1/BF-185.md: fork feat/shader-max-images-128 f150256af (feat 15148eadf + test f150256af on #10000 51a0116de): MaxImages 128, refusals 'image resource limit exceeded (129 of 128)' and 'runtime image count exceeds the static capacity (N of 128)', FormatVersion 51; every per-image spec range fits (ImageBase to 1663, MipCount to 8447, StoreQuantize to 12799, Compare to 49919), ImageCapacity 256, no image-indexed mask; direct sampled images stay capped at 64 by the typed heaps (each takes a slot in all 9 mode heaps), so 65+ need image tables; new agc_shader_image_limits (65/128 table, 64+64 with image 127's constants, 129 refused at both sites) and agc_driver_many_images (65 images on lavapipe, 2.0 s cold) red at the base; ^agc_shader_ and image_table x20 pass; mirror 1917/1826/86/5 (IPv6 + sgpr race); validation identical (only VUID-VkDeviceCreateInfo-pNext-pNext); conventions pass; lavapipe readfirstlane-keyed table reads 0 past lane 7 (subgroup 8), noted, not changed; before that BF-184
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
