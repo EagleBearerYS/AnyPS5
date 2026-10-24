@@ -1,0 +1,4 @@
+BASE=a9e21414311c62f8c8c7b75356c3f429a8014077
+REPEAT=1
+EXTRA_TESTS='^agc_driver_image_table|^agc_driver_device_image|^agc_driver_bda_span'
+NO_BEFORE=1
