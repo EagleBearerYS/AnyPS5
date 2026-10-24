@@ -34,6 +34,8 @@ int APS5_VABI sceVoiceResumePortAll(void);
 int APS5_VABI sceVoiceGetResourceInfo(VoiceResourceInfo*);
 int APS5_VABI sceVoiceEnableChat(void);
 int APS5_VABI sceVoiceDisableChat(void);
+int APS5_VABI sceVoiceInitHQ(const VoiceInitParam*, std::int32_t);
+int APS5_VABI sceVoiceVADSetVersion(std::int32_t);
 int APS5_VABI sceVoiceSetMuteFlagAll(bool);
 int APS5_VABI sceVoiceSetBitRate(std::uint32_t, std::uint32_t);
 int APS5_VABI sceVoiceUpdatePort(std::uint32_t, const VoicePortParam*);
@@ -482,4 +484,17 @@ int main() {
     }
     Require(sceVoiceEnd_nid_postfix() == 0);
 
+    Require(sceVoiceVADSetVersion(0) == 0 && sceVoiceVADSetVersion(1) == 0);
+    Require(sceVoiceVADSetVersion(2) == invalidArgument && sceVoiceVADSetVersion(-1) == invalidArgument);
+    init.app_type = 0x10000000;
+    start.mem_size = 0x40000;
+    Require(sceVoiceInitHQ(nullptr, 100) == invalidArgument && sceVoiceInitHQ(&init, 0) == invalidArgument);
+    Require(sceVoiceInitHQ(&init, 100) == 0);
+    Require(sceVoiceInitHQ(&init, 100) == AlreadyInitialized);
+    Require(sceVoiceInit(&init, 100) == AlreadyInitialized);
+    Require(sceVoiceStart(&start) == 0);
+    Require(sceVoiceEnd_nid_postfix() == 0);
+    Require(sceVoiceInit(&init, 100) == 0);
+    Require(sceVoiceInitHQ(&init, 100) == AlreadyInitialized);
+    Require(sceVoiceEnd_nid_postfix() == 0);
 }
