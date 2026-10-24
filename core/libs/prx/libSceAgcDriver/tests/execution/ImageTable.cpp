@@ -55,6 +55,9 @@ constexpr std::uint32_t DepthSwizzleMode = 0x18;
 
 alignas(256) std::array<float, Width * Height> FloatTexels{};
 alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
+constexpr std::uint32_t PlacedTexelStride = 512;
+constexpr std::array<std::uint32_t, 2> PlacedTexelOffsets{0x100u, 0x300u};
+alignas(1024) std::array<float, 2u * PlacedTexelStride> PlacedTexels{};
 alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
 alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
 alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
@@ -201,6 +204,22 @@ alignas(256) constexpr std::array<std::uint32_t, 15> StoreTableCode{
 alignas(256) constexpr std::array<std::uint32_t, 16> StoreLaneTableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
     0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0xf0208f08u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 16> AtomicAddLaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0xf0448108u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 16> AtomicSwapLaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0xf03c8108u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 18> AtomicCmpSwapLaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0x7e0a0304u, 0x3a080881u, 0xf0408308u,
+    0x00090401u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 17> StoreTableCutCode{
@@ -1319,6 +1338,41 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     const auto null = Run(device, StoreLaneTableCode, 1, Lanes, 64);
     AgcDriver::Graphics::StorageTexture::FlushAllPending("image table store test");
     Require(untouched(), "image table store: a store through a null entry reached an image:\n" + null.log);
+}
+
+void RunAtomicTests(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registeredUint(UintTexels.data(), sizeof(UintTexels)), registeredFloat(FloatTexels.data(), sizeof(FloatTexels)), registeredSint(SintTexels.data(), sizeof(SintTexels));
+    SetClassRecords();
+    for (std::uint32_t x = 0; x < Width; ++x) UintTexels[x] = 0x5000u + x;
+    for (std::uint32_t x = 0; x < Width; ++x) FloatTexels[x] = 1.0f;
+    Keys = {};
+    Keys[0] = 1;
+    const auto added = Run(device, AtomicAddLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(added), "image table atomic: an add through a table faulted:\n" + added.log);
+    Require(added.imageTableCount != 0u, "image table atomic: the add bound no storage table elements");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == 0x5000u + x + x, "image table atomic: texel " + std::to_string(x) + " of the selected image is " + Hex(UintTexels[x]) + ", expected " + Hex(0x5000u + x + x));
+    const auto swapped = Run(device, AtomicSwapLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(swapped), "image table atomic: an exchange through a table faulted:\n" + swapped.log);
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == x, "image table atomic: texel " + std::to_string(x) + " of the selected image is " + Hex(UintTexels[x]) + ", expected " + Hex(x));
+    const auto compared = Run(device, AtomicCmpSwapLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(compared), "image table atomic: a compare exchange through a table faulted:\n" + compared.log);
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == (x ^ 1u), "image table atomic: texel " + std::to_string(x) + " of the selected image is " + Hex(UintTexels[x]) + ", expected " + Hex(x ^ 1u));
+    Keys[0] = 8;
+    const auto addedFloat = Run(device, AtomicAddLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(addedFloat), "image table atomic: an add on a float record through a table faulted:\n" + addedFloat.log);
+    for (std::uint32_t x = 0; x < Width; ++x) Require(std::bit_cast<std::uint32_t>(FloatTexels[x]) == 0x3f800000u + x, "image table atomic: float texel " + std::to_string(x) + " is " + Hex(std::bit_cast<std::uint32_t>(FloatTexels[x])) + ", expected " + Hex(0x3f800000u + x));
+    Keys[0] = 6;
+    const auto null = Run(device, AtomicAddLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == (x ^ 1u) && std::bit_cast<std::uint32_t>(FloatTexels[x]) == 0x3f800000u + x, "image table atomic: an add through a null entry reached an image:\n" + null.log);
 }
 
 void RunSelectedStoreTests(AgcDriver::VulkanDevice& device) {
@@ -2458,7 +2512,11 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     alignas(256) std::array<std::array<std::uint32_t, 320>, 2> palettes{};
     Table = {};
     Keys = {};
-    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    const auto placed = [](std::uint32_t image) { return PlacedTexels.data() + image * PlacedTexelStride + PlacedTexelOffsets[image] / sizeof(float); };
+    std::copy(FloatTexels.begin(), FloatTexels.end(), placed(0u));
+    std::copy(OtherFloatTexels.begin(), OtherFloatTexels.end(), placed(1u));
+    const std::array images{Image(placed(0u), Format32Float), Image(placed(1u), Format32Float)};
+    Require((images[0][0] & 3u) == 1u && (images[1][0] & 3u) == 3u, "pointer V# tables: the T#s' first words do not end in the bits 01 and 11");
     const auto point = [&](std::uint32_t record, std::uint32_t palette) {
         const auto descriptor = Buffer(palettes[palette].data(), static_cast<std::uint32_t>(sizeof(palettes[palette])));
         std::copy(descriptor.begin(), descriptor.end(), records[record].begin());
@@ -3037,6 +3095,7 @@ int main(int argc, char** argv) {
         RunSelectedRecordTests(*device);
         RunModeTests(*device);
         RunStoreTests(*device);
+        RunAtomicTests(*device);
         RunSelectedStoreTests(*device);
         RunPointerTests(*device);
         RunPointerRecordTests(*device);
