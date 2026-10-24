@@ -1,0 +1,3 @@
+BASE=2fade7ef4e5732580db9cc18832a2e4d6f7da489
+REPEAT=10
+EXTRA_TESTS='^agc_driver_partially_|agc_driver_large_tracked_snapshot'
