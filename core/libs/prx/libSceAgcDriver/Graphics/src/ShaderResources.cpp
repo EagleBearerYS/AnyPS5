@@ -1890,7 +1890,7 @@ struct ReusedTable {
     bool replayable = false;
 };
 
-constexpr std::size_t ReusedTableCount = 4;
+constexpr std::size_t ReusedTableCount = 256;
 
 std::vector<ReusedTable>& ReusedTables() {
     thread_local std::vector<ReusedTable>* slot = nullptr;
