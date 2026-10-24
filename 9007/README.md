@@ -28,3 +28,7 @@ Two menu sessions on Windows, an RTX 3070 Laptop GPU (NVIDIA 617.42), with graph
 | 6f2 | a2 | A | 24,086 | 29,219 | 30,826 | 34,830 |
 
 All figures are MB. The Village agent's own 6f2 figures, taken at its own menu times, differ from these by up to 0.8 GB at menu + 1, where private memory climbs fastest, and by under 0.2 GB elsewhere.
+
+## Traces (6f2)
+
+`traces/` holds the four 6f2 runs' traces (`APS5_TRACE_SECONDS=1500:60`, about menu + 15 to 18 minutes), the `aps5-summary.jsonl` line over each traced window (`q6ft-<run>-summary.json`) and `tools/trace_digest.py`'s output for each (`q6ft-<run>-digest.txt`). a1 and a2 are A (a1f0750708), b1 and b2 are B (6ed8ff9aae).

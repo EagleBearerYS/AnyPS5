@@ -1,0 +1,49 @@
+**seconds 1500:60** from present 5342: 19 presents, frame p50 3248.1 / p90 3948.0 / p99 3956.2 / max 3956.2 ms, GPU busy 280.0 ms per present
+NVIDIA GeForce RTX 3070 Laptop GPU, NVIDIA 617.42, Windows 10.0.26300, 3840x2160, commit a1f075070825, dropped: no
+
+```json
+{"commit":"a1f075070825","dirty":false,"env":{"APS5_HOST_IMPORT_MIB":"6400","APS5_LAZY_SHADER_PREPARE":"1","APS5_PAD_INPUT_FILE":"<path>","APS5_TRACE_DIR":"<path>","APS5_TRACE_SECONDS":"1500:60","APS5_TRACE_SUMMARY_EVERY":"1"},"gpu":"NVIDIA GeForce RTX 3070 Laptop GPU","driver":"NVIDIA 617.42","os":"Windows 10.0.26300","cpu":"AMD Ryzen 9 5900HS with Radeon Graphics","cpu_threads":16,"memory_mib":15776,"title_id":"PPSA01556","title":"Resident Evil Village","content_version":"01.210.000","resolution":"3840x2160","window":{"spec":"seconds 1500:60","first_present":5342,"ms":61438.392},"presents":19,"frame_ms":{"p50":3248.134,"p90":3948.0,"p99":3956.171,"max":3956.171},"gpu_busy_ms_per_present":279.962,"worker_busy_pct":{"queue worker 0x0":99.667,"queue worker 0x38":0.141,"queue worker 0x28":96.757,"queue worker 0x20":92.158},"top_phases_ms_per_frame":{"Driver.Packet":9330.031,"Driver.Packet.memory_wait":5912.08,"Driver.Packet.draw":2816.109,"Driver.Draw":2814.258,"Graphics.Draw":2237.056,"Graphics.Draw.draw_and_resource_release":2205.44,"Resources.Complete":953.815,"Driver.Draw.draw_and_resource_release":768.355},"trace_dropped":false,"trace":"aps5-trace-a1f075070825-19952.json.gz"}
+```
+
+**Slowest frames** (largest slices inside each, inclusive)
+
+- present 5346: 3956.2 ms at 11273 ms: Driver.WorkerWait (queue worker 0x38) 3950.6, Driver.WorkerWait.dequeue_order (queue worker 0x38) 3947.7, Driver.Packet (queue worker 0x0) 3935.3, Driver.Packet (queue worker 0x28) 3870.3
+- present 5349: 3948.0 ms at 21161 ms: Driver.WorkerWait (queue worker 0x38) 3942.7, Driver.WorkerWait.dequeue_order (queue worker 0x38) 3936.6, Driver.Packet (queue worker 0x0) 3925.8, Driver.Packet (queue worker 0x28) 3830.0
+- present 5354: 3814.0 ms at 39089 ms: Driver.WorkerWait (queue worker 0x38) 3808.7, Driver.WorkerWait.dequeue_order (queue worker 0x38) 3806.3, Driver.Packet (queue worker 0x0) 3795.3, Driver.Packet (queue worker 0x28) 3692.8
+- present 5351: 3788.9 ms at 28673 ms: Driver.WorkerWait (queue worker 0x38) 3784.9, Driver.WorkerWait.dequeue_order (queue worker 0x38) 3780.6, Driver.Packet (queue worker 0x0) 3767.8, Driver.Packet (queue worker 0x28) 3654.3
+- present 5358: 3668.0 ms at 51928 ms: Driver.WorkerWait (queue worker 0x38) 3663.4, Driver.WorkerWait.dequeue_order (queue worker 0x38) 3659.6, Driver.Packet (queue worker 0x0) 3646.3, Driver.Packet (queue worker 0x28) 3548.1
+
+**Threads** (ms per frame)
+
+| thread | busy | wait | untraced | in slices < 20 us | largest |
+|---|---|---|---|---|---|
+| queue worker 0x0 | 2384.1 (74 %) | 836.1 (26 %) | 13.4 | 84.9 | Driver.Packet 3212.8 |
+| draw committer | 1483.0 (46 %) | 20.5 (1 %) | 1730.1 | 3.2 | Graphics.Draw 1497.3, Recorder.Submit 2.9 |
+| presenter | 4.2 (0 %) | 0.1 (0 %) | 3229.2 | 0.1 | VideoOut.Flip 4.4 |
+| queue worker 0x38 | 2.7 (0 %) | 3230.7 (100 %) | 0.2 | 0.7 | Driver.Packet 4.0, Driver.EndSubmission 0.4 |
+| queue worker 0x28 | 20.6 (1 %) | 3208.2 (99 %) | 4.8 | 0.2 | Driver.Packet 3128.2, Driver.EndSubmission 0.4 |
+| queue worker 0x20 | 133.8 (4 %) | 3086.7 (95 %) | 13.1 | 4.9 | Driver.Packet 2974.2, Driver.EndSubmission 5.1 |
+| gpu | 279.4 (9 %) | 0.0 (0 %) | 2954.2 | 0.0 | batch 279.4 |
+
+**Largest slices** (ms per frame, inclusive, all threads): Driver.Packet 9319.3, Driver.Packet.memory_wait 5912.0, Driver.WorkerWait 3577.5, Driver.WorkerWait.dequeue_order 3224.0, Driver.Packet.draw 2816.1, Driver.Draw 2814.3, Graphics.Draw 2236.9, Graphics.Draw.draw_and_resource_release 2205.1, Resources.Complete 951.6, Driver.Draw.draw_and_resource_release 767.5
+
+**Longest waits**
+
+- Driver.WorkerWait (queue worker 0x38) 3950.3 ms at 11279 ms, present 5346
+- Driver.WorkerWait (queue worker 0x38) 3942.6 ms at 21167 ms, present 5349
+- Driver.WorkerWait (queue worker 0x38) 3808.9 ms at 39095 ms, present 5354
+- Driver.WorkerWait (queue worker 0x38) 3785.1 ms at 28677 ms, present 5351
+- Driver.Packet.memory_wait (queue worker 0x28) 3676.1 ms at 11454 ms, present 5346
+- Driver.WorkerWait (queue worker 0x38) 3663.2 ms at 51933 ms, present 5358
+- Driver.Packet.memory_wait (queue worker 0x28) 3637.9 ms at 21338 ms, present 5349
+- Driver.WorkerWait (queue worker 0x38) 3558.0 ms at 25115 ms, present 5350
+- Driver.Packet.memory_wait (queue worker 0x20) 3545.2 ms at 11384 ms, present 5346
+- Driver.Packet.memory_wait (queue worker 0x20) 3456.8 ms at 21265 ms, present 5349
+
+**Largest GPU batches** (GPU ranges inside, and the CPU slices that recorded each, inclusive)
+
+- batch 68735: 66.9 ms at 32582 ms, present 5352: GPU no ranges; recorded by Driver.Packet (queue worker 0x20) 2937.1, Driver.Packet.memory_wait (queue worker 0x20) 2865.4, Driver.Dispatch (queue worker 0x20) 76.9, Driver.Packet.dispatch (queue worker 0x20) 71.3
+- batch 68948: 66.0 ms at 43026 ms, present 5355: GPU no ranges; recorded by Driver.Packet (queue worker 0x0) 64.3, Driver.Packet.dispatch (queue worker 0x0) 64.1, Driver.Dispatch (queue worker 0x0) 64.1, GpuMutex.wait.dispatch (queue worker 0x0) 55.8
+- batch 68804: 65.3 ms at 35960 ms, present 5353: GPU no ranges; recorded by Driver.Packet (queue worker 0x0) 66.9, Driver.Packet.dispatch (queue worker 0x0) 66.9, Driver.Dispatch (queue worker 0x0) 66.8, GpuMutex.wait.dispatch (queue worker 0x0) 58.2
+- batch 68597: 64.9 ms at 25233 ms, present 5350: GPU no ranges; recorded by Driver.Packet (queue worker 0x20) 3191.7, Driver.Packet.memory_wait (queue worker 0x20) 3118.6, Driver.Dispatch (queue worker 0x20) 76.2, Driver.Packet.dispatch (queue worker 0x20) 73.0
+- batch 68092: 64.1 ms at 122 ms, present 5342: GPU no ranges; recorded by Driver.Packet (queue worker 0x0) 64.6, Driver.Packet.dispatch (queue worker 0x0) 64.5, Driver.Dispatch (queue worker 0x0) 64.5, GpuMutex.wait.dispatch (queue worker 0x0) 55.8
