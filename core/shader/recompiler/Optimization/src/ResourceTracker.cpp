@@ -1212,7 +1212,7 @@ private:
             recordOffset = source->Argument(1)->Resolve();
             offset = source == high ? recordOffset : high;
         }
-        if (!AvailableAt(offset, handle.Parent())) {
+        if (!merged && !AvailableAt(offset, handle.Parent())) {
             return false;
         }
         IrValue* key = nullptr;
