@@ -77,6 +77,8 @@ constexpr std::uint32_t SampleWords = 32;
 constexpr std::uint32_t SampleResult = 8;
 constexpr std::uint32_t LoadResult = 12;
 constexpr std::uint64_t ElementSpan = 1024;
+constexpr std::size_t PageBytes = 4096;
+constexpr std::array<std::uint64_t, 2> KeptSlabs{21, 22};
 alignas(256) std::array<std::uint32_t, SampleThreads * SampleWords> Samples{};
 
 alignas(256) constexpr std::array<std::uint32_t, 36> VolumeSampleCode{
@@ -506,6 +508,10 @@ std::array<std::byte, 8> PatternElement(std::uint32_t format, std::uint64_t slab
     return std::bit_cast<std::array<std::byte, 8>>(words);
 }
 
+std::uint64_t ElementOffset(const std::array<float, 4>& value) {
+    return (static_cast<std::uint64_t>(value[1]) - 1u + (static_cast<std::uint64_t>(value[2]) - 1u) * ElementSpan) * 8u;
+}
+
 bool SameSlab(std::uint32_t format, const std::array<float, 4>& value, std::uint64_t slab) {
     if (format != FormatBc1UNorm) return value[0] == static_cast<float>(slab + 1u) && value[3] == 1.0f;
     return std::fabs(value[0] - static_cast<float>(Bc1Color(slab)[0]) / 31.0f) <= 1.0f / 128.0f && value[3] == 1.0f;
@@ -529,6 +535,7 @@ struct Commitment {
     std::set<std::uint64_t> full;
     std::optional<std::uint64_t> partial;
     std::size_t partialBytes = 0;
+    std::optional<std::pair<std::uint64_t, std::uint64_t>> hole;
 };
 
 Commitment CommitCase(ReservedSurface& surface, const SurfaceGeometry& geometry, const CommittedCase& layout) {
@@ -713,6 +720,7 @@ std::array<float, 4> SampledTexel(const std::vector<std::uint32_t>& samples, std
 
 void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std::uint32_t format, const Commitment& commitment, std::uint32_t lod, const std::vector<std::uint32_t>& reference) {
     std::map<std::uint64_t, std::array<std::uint32_t, 2>> partial;
+    std::array<std::uint32_t, 2> holed{};
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto results = lod != 0 ? std::vector<std::uint32_t>{SampleResult} : std::vector<std::uint32_t>{SampleResult, LoadResult};
     for (std::uint32_t tid = 0; tid < SampleThreads; ++tid) {
@@ -730,7 +738,11 @@ void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std:
             const bool texels = SameTexel(format, value, expected);
             const bool zeros = SameTexel(format, value, ZeroTexel(format));
             const auto where = name + ": " + (result == SampleResult ? "sample" : "load") + " of level " + std::to_string(lod) + " slice " + std::to_string(slice) + " (thread " + std::to_string(tid) + ") reads " + TexelText(value);
-            if (commitment.partial == slab) {
+            if (commitment.hole.has_value() && commitment.hole->first == slab) {
+                const bool inHole = ElementOffset(expected) / PageBytes * PageBytes == commitment.hole->second;
+                Require(inHole ? zeros : texels, where + (inHole ? ", expected the zeros of its decommitted page " + TexelText(ZeroTexel(format)) : ", expected its texel " + TexelText(expected)));
+                ++holed[inHole ? 1u : 0u];
+            } else if (commitment.partial == slab) {
                 Require(texels || zeros, where + ", neither its texels nor zeros");
                 ++partial[slab][texels ? 0u : 1u];
             } else if (commitment.full.contains(slab)) {
@@ -740,6 +752,7 @@ void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std:
             }
         }
     }
+    if (commitment.hole.has_value()) Require(holed[0] != 0 && holed[1] != 0, name + ": slab " + std::to_string(commitment.hole->first) + " was not sampled both inside and outside its decommitted page (" + std::to_string(holed[1]) + " inside, " + std::to_string(holed[0]) + " outside)");
     for (const auto& [slab, counts] : partial) Require(lod != 0 || (counts[0] != 0 && counts[1] != 0), name + ": the partially committed slab " + std::to_string(slab) + " did not read both its texels and zeros (" + std::to_string(counts[0]) + " texels, " + std::to_string(counts[1]) + " zeros)");
     std::printf("%s: level %u sample results hash %016llx\n", name.c_str(), lod, static_cast<unsigned long long>(hash));
 }
@@ -756,6 +769,34 @@ std::vector<std::vector<std::uint32_t>> ReferenceSamples(AgcDriver::VulkanDevice
         reference.emplace_back(Samples.begin(), Samples.end());
     }
     return reference;
+}
+
+int SampleDecommittedPage() {
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return Skipped;
+    const CommittedCase layout{"the volume with a page decommitted in a committed slab"};
+    const auto reference = ReferenceSamples(*device, layout);
+    const auto probe = DescribeCase(layout, BlockBytes);
+    ReservedSurface surface(static_cast<std::size_t>(probe.guestBytes));
+    const auto words = CaseDescriptor(layout, surface.Address());
+    const auto geometry = DescribeCase(layout, surface.Address());
+    Commitment commitment{geometry.guestBytes / geometry.layerBytes};
+    for (const auto slab : KeptSlabs) {
+        CommitSlab(surface, geometry, layout.format, slab, static_cast<std::size_t>(geometry.layerBytes));
+        commitment.full.insert(slab);
+    }
+    Sample(*device, words, true, layout.side, 0u);
+    CheckSamples(layout.name, geometry, layout.format, commitment, 0u, reference[0]);
+    const auto holeSlab = KeptSlabs.back();
+    std::uint32_t first = 0;
+    while (first < SampleThreads && geometry.GuestLayerOffset(SampledSlices[first / LanesPerSlice]) / geometry.layerBytes != holeSlab) ++first;
+    Require(first < SampleThreads, layout.name + ": no sampled slice lies in slab " + std::to_string(holeSlab));
+    const auto page = ElementOffset(SampledTexel(reference[0], first, SampleResult)) / PageBytes * PageBytes;
+    surface.Decommit(static_cast<std::size_t>(holeSlab * geometry.layerBytes + page), PageBytes);
+    commitment.hole = std::pair{holeSlab, page};
+    Sample(*device, words, true, layout.side, 0u);
+    CheckSamples(layout.name + " after the page at byte " + std::to_string(page) + " of slab " + std::to_string(holeSlab) + " was decommitted", geometry, layout.format, commitment, 0u, reference[0]);
+    return 0;
 }
 
 int SampleCommittedSurface(const CommittedCase& layout, bool changes) {
@@ -794,6 +835,11 @@ int main(int argc, char** argv) {
             return Skipped;
         }
         const std::string_view mode = argc == 2 ? std::string_view(argv[1]) : std::string_view();
+        if (mode == "--committed-volume-page-samples") {
+            const auto status = SampleDecommittedPage();
+            if (status == 0) std::puts("partially resident snapshot tests passed");
+            return status;
+        }
         const auto committed = CommittedCaseFor(mode);
         if (committed.has_value() && mode.ends_with("-samples")) {
             const auto status = SampleCommittedSurface(*committed, mode == "--committed-volume-samples");
