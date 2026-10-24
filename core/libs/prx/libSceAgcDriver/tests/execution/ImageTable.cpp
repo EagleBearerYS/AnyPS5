@@ -2015,7 +2015,7 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     }
     const auto secondBuffer = Buffer(second.data() + 8u, 32u);
     std::copy(secondBuffer.begin(), secondBuffer.end(), second.begin());
-    const std::span<const std::uint32_t> code = shape == PointerMask::LaneAnd ? std::span<const std::uint32_t>(PointerLaneAndCode) : shape == PointerMask::High ? std::span<const std::uint32_t>(PointerHighCode) : shape == PointerMask::LaneNot ? std::span<const std::uint32_t>(PointerLaneNotCode) : shape == PointerMask::HighSecondLane ? std::span<const std::uint32_t>(PointerHighSecondLaneCode) : std::span<const std::uint32_t>(PointerHighSecondCode);
+    std::span<const std::uint32_t> code = shape == PointerMask::LaneAnd ? std::span<const std::uint32_t>(PointerLaneAndCode) : shape == PointerMask::High ? std::span<const std::uint32_t>(PointerHighCode) : shape == PointerMask::LaneNot ? std::span<const std::uint32_t>(PointerLaneNotCode) : shape == PointerMask::HighSecondLane ? std::span<const std::uint32_t>(PointerHighSecondLaneCode) : std::span<const std::uint32_t>(PointerHighSecondCode);
     const std::string name = shape == PointerMask::LaneAnd ? "pointer table with lane-mask ANDs" : shape == PointerMask::High ? "pointer table with a high-word Phi" : shape == PointerMask::LaneNot ? "pointer table with a lane bit cleared from a lane mask" : shape == PointerMask::HighSecondLane ? "pointer table with a second-buffer high word under a lane-mask low word" : "pointer table with a high word from a second buffer";
     const auto run = [&] {
         const auto table = Buffer(Table.data(), 64u);
@@ -2107,7 +2107,21 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
         std::puts("pointer table with a second-buffer high word under a lane-mask low word: a T# through a record pointer whose high word reads a second buffer only on the edge whose low word is a lane mask checked, and that pair faults outside the snapshot");
         return;
     }
-    std::puts("pointer table with a high-word Phi: a T# through a record pointer whose high word passes a Phi of reads under other keys and a constant checked, by the pointer's value");
+    alignas(256) static std::array<std::uint32_t, PointerHighCode.size()> nullArm{};
+    nullArm = PointerHighCode;
+    nullArm[40] = 0xbeac0380u;
+    nullArm[41] = 0xbead0380u;
+    for (const std::size_t index : std::array<std::size_t, 4>{44u, 45u, 52u, 53u}) nullArm[index] = 0xbf800000u;
+    code = nullArm;
+    bool refused = false;
+    try {
+        static_cast<void>(run());
+    } catch (const std::exception& error) {
+        Require(std::string(error.what()).find("GetImageResource dword 0 is not a valid runtime value") != std::string::npos, name + ": a record pointer arm whose two words are both immediates was refused for another reason: " + error.what());
+        refused = true;
+    }
+    Require(refused, name + ": a record pointer arm whose two words are both immediates was planned");
+    std::puts("pointer table with a high-word Phi: a T# through a record pointer whose high word passes a Phi of reads under other keys and a constant checked, by the pointer's value, and an arm whose two words are both immediates is refused");
 }
 
 void RunPointerVsharpTests(AgcDriver::VulkanDevice& device) {

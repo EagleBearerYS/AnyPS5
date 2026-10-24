@@ -897,6 +897,7 @@ private:
             auto* lowWord = pending.back().first->Resolve();
             auto* highWord = pending.back().second->Resolve();
             pending.pop_back();
+            if (lowWord->HasImmediate() && highWord->HasImmediate()) return false;
             if (!seen.emplace(lowWord, highWord).second || PointerFreeWord(*lowWord)) continue;
             if (lowWord->IsPhi()) {
                 const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
