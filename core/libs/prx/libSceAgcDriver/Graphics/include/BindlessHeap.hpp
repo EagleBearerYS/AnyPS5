@@ -19,6 +19,7 @@ namespace AgcDriver::Graphics {
 class Buffer;
 class Recorder;
 class Sampler;
+class StorageTexture;
 class Texture;
 
 class BindlessHeap {
@@ -47,6 +48,7 @@ public:
     std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view,
                                              VkImageLayout layout);
     std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, std::shared_ptr<void> owner, VkImageView view);
+    std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, const std::shared_ptr<StorageTexture>& owner, VkImageView view);
     std::optional<std::uint32_t> ViewSlot(std::uint32_t kind, const void* owner, VkImageView view);
     void ReleaseViewSlots(const void* owner);
     std::uint32_t SlotGeneration(std::uint32_t slot) const;
@@ -132,6 +134,7 @@ private:
     struct SlotOwner {
         std::shared_ptr<Texture> texture;
         std::shared_ptr<void> storage;
+        const StorageTexture* storageTexture = nullptr;
         TextureKey key{};
         std::uint32_t generation = 0;
     };
@@ -139,6 +142,8 @@ private:
     std::vector<std::uint32_t> freeSlots;
     std::uint32_t slotCap = 0;
     std::uint64_t slotRequests = 0;
+    std::int64_t lastHoldReport = 0;
+    void reportHoldsLocked();
     void sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped);
     std::optional<std::uint32_t> takeSlotLocked();
     std::optional<std::uint32_t> takeOrSweepLocked(std::vector<std::shared_ptr<Texture>>& dropped);

@@ -241,6 +241,7 @@ std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const
     std::vector<std::shared_ptr<Texture>> dropped;
     SweptStorageRelease swept;
     std::lock_guard lock(mutex);
+    reportHoldsLocked();
     const TextureKey key{kind, texture.get(), view, layout};
     if (const auto found = textureSlots.find(key); found != textureSlots.end()) return found->second;
     if (++slotRequests % 1024u == 0u) NoteSweepDue();
@@ -260,6 +261,7 @@ std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, std::
     std::vector<std::shared_ptr<Texture>> dropped;
     SweptStorageRelease swept;
     std::lock_guard lock(mutex);
+    reportHoldsLocked();
     const TextureKey key{kind, owner.get(), view, VK_IMAGE_LAYOUT_GENERAL};
     if (const auto found = textureSlots.find(key); found != textureSlots.end()) return found->second;
     if (++slotRequests % 1024u == 0u) NoteSweepDue();
@@ -269,6 +271,61 @@ std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, std::
     writeImageSlot(kind, *slot, view, VK_IMAGE_LAYOUT_GENERAL);
     claimSlotLocked(key, *slot).storage = std::move(owner);
     return slot;
+}
+
+std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, const std::shared_ptr<StorageTexture>& owner, VkImageView view) {
+    const auto slot = StorageSlot(kind, std::static_pointer_cast<void>(owner), view);
+    if (slot) {
+        std::lock_guard lock(mutex);
+        if (*slot < owners.size() && owners[*slot].storage.get() == static_cast<const void*>(owner.get())) owners[*slot].storageTexture = owner.get();
+    }
+    return slot;
+}
+
+void BindlessHeap::reportHoldsLocked() {
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now - lastHoldReport < 10000) return;
+    lastHoldReport = now;
+    std::uint64_t textures = 0, texturesHeapOnly = 0, textureBytes = 0, textureHeapOnlyBytes = 0;
+    std::uint64_t storages = 0, storagesHeapOnly = 0, storageBytes = 0, storageHeapOnlyBytes = 0;
+    std::uint64_t originalBytes = 0, originalHeapOnlyBytes = 0, untyped = 0;
+    for (const auto& owner : owners) {
+        if (owner.texture != nullptr) {
+            ++textures;
+            const auto bytes = static_cast<std::uint64_t>(owner.texture->AllocationBytes());
+            textureBytes += bytes;
+            if (owner.texture.use_count() <= static_cast<long>(owner.texture->HeapHolds())) {
+                ++texturesHeapOnly;
+                textureHeapOnlyBytes += bytes;
+            }
+        } else if (owner.storage != nullptr) {
+            ++storages;
+            const bool heapOnly = owner.storage.use_count() == 1;
+            if (heapOnly) ++storagesHeapOnly;
+            if (owner.storageTexture == nullptr || owner.storage.get() != static_cast<const void*>(owner.storageTexture)) {
+                ++untyped;
+                continue;
+            }
+            const auto bytes = static_cast<std::uint64_t>(owner.storageTexture->AllocationBytes());
+            const auto original = static_cast<std::uint64_t>(owner.storageTexture->OriginalSnapshotBytes());
+            storageBytes += bytes;
+            originalBytes += original;
+            if (heapOnly) {
+                storageHeapOnlyBytes += bytes;
+                originalHeapOnlyBytes += original;
+            }
+        }
+    }
+    std::size_t viewSlotCount = 0;
+    for (const auto& [owner, slots] : viewSlots) viewSlotCount += slots.size();
+    std::size_t samplersHeld = 0;
+    for (const auto& sampler : heldSamplers) samplersHeld += sampler != nullptr ? 1u : 0u;
+    const auto mib = [](std::uint64_t bytes) { return static_cast<double>(bytes) / (1024.0 * 1024.0); };
+    const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
+    std::fprintf(stderr, "[heap-hold] slots %zu (cap %u, %zu free); textures %llu (%.1f MiB), held only by the heap %llu (%.1f MiB); storage images %llu (%.1f MiB, original snapshots %.1f MiB, %llu untyped), held only by the heap %llu (%.1f MiB, original snapshots %.1f MiB); view owners %zu (%zu slots); samplers %zu held, %zu free; texture keys %zu; sweeps %llu, slots freed %llu, reused %llu, full %llu\n",
+        owners.size(), slotCap, freeSlots.size(), count(textures), mib(textureBytes), count(texturesHeapOnly), mib(textureHeapOnlyBytes),
+        count(storages), mib(storageBytes), mib(originalBytes), count(untyped), count(storagesHeapOnly), mib(storageHeapOnlyBytes), mib(originalHeapOnlyBytes),
+        viewSlots.size(), viewSlotCount, samplersHeld, freeSamplerSlots.size(), textureSlots.size(), count(counts.sweeps), count(counts.slotsFreed), count(counts.slotsReused), count(counts.full));
 }
 
 std::optional<std::uint32_t> BindlessHeap::ViewSlot(std::uint32_t kind, const void* owner, VkImageView view) {
@@ -320,6 +377,7 @@ void BindlessHeap::freeSlotLocked(std::uint32_t slot) {
     auto& owner = owners[slot];
     textureSlots.erase(owner.key);
     owner.key = {};
+    owner.storageTexture = nullptr;
     ++owner.generation;
     freeSlots.push_back(slot);
     ++counts.slotsFreed;
