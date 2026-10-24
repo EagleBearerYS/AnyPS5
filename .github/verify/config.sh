@@ -1,0 +1,4 @@
+BASE=1d434151cb6ea7c21d26fa50c020ae7f6de11f7c
+REPEAT=10
+EXTRA_TESTS='agc_pooled_buffer_address|agc_buffer_pool|agc_driver_pooled_buffer_range|agc_copy_input_kept_bytes|agc_depth_copy_kept_bytes|agc_bda_staging'
+BEFORE_REPEAT=3
