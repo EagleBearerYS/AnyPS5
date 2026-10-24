@@ -1021,7 +1021,6 @@ private:
                 for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
                     IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
                     if (edge == nullptr) return false;
-                    if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) return false;
                     pending.emplace_back(lowWord->Argument(index), edge);
                 }
                 continue;
