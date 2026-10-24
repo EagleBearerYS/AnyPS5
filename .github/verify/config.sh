@@ -1,0 +1,4 @@
+BASE=4a90a1a1d0858d4a66cc13f99f6eecc0a9e166be
+REPEAT=10
+EXTRA_TESTS='^agc_driver_partially_'
+BEFORE_REPEAT=3
