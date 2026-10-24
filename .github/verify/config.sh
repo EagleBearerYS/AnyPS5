@@ -1,0 +1,4 @@
+BASE=672c38f70355fa46d3533c13bf404409374fa999
+REPEAT=10
+EXTRA_TESTS='^agc_driver_msaa_dcc_|agc_driver_native_fmask|agc_driver_sample_multisample_target|agc_driver_sample_order|agc_driver_multisample_retirement|agc_storage_write_back'
+NO_BEFORE=1
