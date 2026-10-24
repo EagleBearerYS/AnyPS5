@@ -1,0 +1,4 @@
+BASE=c9b75825f383e16a85d1859c2a18061a3a7e9beb
+REPEAT=10
+EXTRA_TESTS='^agc_driver_depth_|^agc_driver_unit_shadow|^agc_unit_shadow|agc_metadata_pass'
+NO_BEFORE=1
