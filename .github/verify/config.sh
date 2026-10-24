@@ -1,0 +1,4 @@
+BASE=db6af9e0fd8c75366dabc2066dbf90117f7490d0
+REPEAT=10
+EXTRA_TESTS='guest_net_ctl|guest_sce_net|guest_socket_error|guest_socket_options'
+NO_BEFORE=1
