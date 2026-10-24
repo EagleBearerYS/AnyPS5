@@ -1,0 +1,4 @@
+BASE=2fade7ef4e5732580db9cc18832a2e4d6f7da489
+REPEAT=1
+EXTRA_TESTS='agc_driver_queued_index_read_order|agc_idle_publish_wait|agc_driver_store_idle_results_wake'
+VALIDATION=1
