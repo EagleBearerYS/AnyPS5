@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -322,8 +323,8 @@ void BindlessHeap::reportHoldsLocked() {
     for (const auto& sampler : heldSamplers) samplersHeld += sampler != nullptr ? 1u : 0u;
     const auto mib = [](std::uint64_t bytes) { return static_cast<double>(bytes) / (1024.0 * 1024.0); };
     const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
-    std::fprintf(stderr, "[heap-hold] slots %zu (cap %u, %zu free); textures %llu (%.1f MiB), held only by the heap %llu (%.1f MiB); storage images %llu (%.1f MiB, original snapshots %.1f MiB, %llu untyped), held only by the heap %llu (%.1f MiB, original snapshots %.1f MiB); view owners %zu (%zu slots); samplers %zu held, %zu free; texture keys %zu; sweeps %llu, slots freed %llu, reused %llu, full %llu\n",
-        owners.size(), slotCap, freeSlots.size(), count(textures), mib(textureBytes), count(texturesHeapOnly), mib(textureHeapOnlyBytes),
+    std::fprintf(stderr, "[heap-hold] t=%lld slots %zu (cap %u, %zu free); textures %llu (%.1f MiB), held only by the heap %llu (%.1f MiB); storage images %llu (%.1f MiB, original snapshots %.1f MiB, %llu untyped), held only by the heap %llu (%.1f MiB, original snapshots %.1f MiB); view owners %zu (%zu slots); samplers %zu held, %zu free; texture keys %zu; sweeps %llu, slots freed %llu, reused %llu, full %llu\n",
+        static_cast<long long>(std::time(nullptr)), owners.size(), slotCap, freeSlots.size(), count(textures), mib(textureBytes), count(texturesHeapOnly), mib(textureHeapOnlyBytes),
         count(storages), mib(storageBytes), mib(originalBytes), count(untyped), count(storagesHeapOnly), mib(storageHeapOnlyBytes), mib(originalHeapOnlyBytes),
         viewSlots.size(), viewSlotCount, samplersHeld, freeSamplerSlots.size(), textureSlots.size(), count(counts.sweeps), count(counts.slotsFreed), count(counts.slotsReused), count(counts.full));
 }
@@ -401,21 +402,36 @@ std::optional<std::uint32_t> BindlessHeap::takeSlotLocked() {
 void BindlessHeap::sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped) {
     ++counts.sweeps;
     const auto firstDropped = dropped.size();
+    std::uint32_t freedTextures = 0, freedStorage = 0, keptTextures = 0, keptStorage = 0;
     for (std::uint32_t slot = SamplerKind; slot < owners.size(); ++slot) {
         auto& owner = owners[slot];
         if (owner.storage != nullptr) {
-            if (owner.storage.use_count() > 1) continue;
+            if (owner.storage.use_count() > 1) {
+                ++keptStorage;
+                continue;
+            }
             sweptStorage().push_back(std::move(owner.storage));
+            ++freedStorage;
         } else {
             const bool heldElsewhere =
                 owner.texture == nullptr || owner.texture.use_count() > static_cast<long>(owner.texture->HeapHolds());
-            if (heldElsewhere) continue;
+            if (heldElsewhere) {
+                if (owner.texture != nullptr) ++keptTextures;
+                continue;
+            }
             dropped.push_back(std::move(owner.texture));
+            ++freedTextures;
         }
         freeSlotLocked(slot);
         slotSerial.fetch_add(1, std::memory_order_release);
     }
     for (auto index = firstDropped; index < dropped.size(); ++index) dropped[index]->DropHeapHold();
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const double since = lastSweepMs == 0 ? 0.0 : static_cast<double>(nowMs - lastSweepMs) / 1000.0;
+    lastSweepMs = nowMs;
+    std::fprintf(stderr, "[heap-sweep] t=%lld sweep %llu, %.1f s after the last: freed %u texture and %u storage slots; %u textures and %u storage images still held elsewhere; %zu slots free, %u never used, of %u\n",
+        static_cast<long long>(std::time(nullptr)), static_cast<unsigned long long>(counts.sweeps), since, freedTextures, freedStorage, keptTextures, keptStorage,
+        freeSlots.size(), nextTextureSlot < slotCap ? slotCap - nextTextureSlot : 0u, slotCap);
 }
 
 void BindlessHeap::sweepSamplersLocked(std::vector<std::shared_ptr<Sampler>>& dropped) {

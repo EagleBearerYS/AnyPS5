@@ -143,6 +143,7 @@ private:
     std::uint32_t slotCap = 0;
     std::uint64_t slotRequests = 0;
     std::int64_t lastHoldReport = 0;
+    std::int64_t lastSweepMs = 0;
     void reportHoldsLocked();
     void sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped);
     std::optional<std::uint32_t> takeSlotLocked();
