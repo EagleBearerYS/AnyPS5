@@ -185,6 +185,7 @@ void RunGuestTextureResourceTests() {
     const auto fmaskArrayResource = DecodeTextureResource(pack(fmaskArray));
     Require(fmaskArrayResource.format == 20u && fmaskArrayResource.baseArray == 1u && fmaskArrayResource.depthOrLastArray == 2u, "FMASK normalization changed the array view");
     constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 8> narrowFormats{{{156u, 5u}, {157u, 5u}, {158u, 5u}, {159u, 5u}, {160u, 5u}, {161u, 5u}, {163u, 11u}, {165u, 20u}}};
+    constexpr std::array<std::pair<std::uint32_t, std::string_view>, 6> refusedCompression{{{156u, "Fmask8_S2_F1 (2 samples, 1 fragment)"}, {157u, "Fmask8_S4_F1 (4 samples, 1 fragment)"}, {158u, "Fmask8_S8_F1 (8 samples, 1 fragment)"}, {160u, "Fmask8_S4_F2 (4 samples, 2 fragments)"}, {163u, "Fmask16_S8_F2 (8 samples, 2 fragments)"}, {165u, "Fmask32_S8_F4 (8 samples, 4 fragments)"}}};
     for (const auto& [format, surface] : narrowFormats) {
         auto narrow = fmask;
         narrow.format = format;
@@ -198,7 +199,13 @@ void RunGuestTextureResourceTests() {
         auto compressedNarrow = narrow;
         compressedNarrow.metaCompress = compressedNarrow.metaPipeAligned = true;
         compressedNarrow.metaAddr = 0x123456789aull;
-        rejectFields(compressedNarrow, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+        const auto refused = std::ranges::find(refusedCompression, format, &std::pair<std::uint32_t, std::string_view>::first);
+        if (refused != refusedCompression.end()) {
+            rejectFields(compressedNarrow, "FMASK CMASK compression is not implemented for " + std::string(refused->second));
+            continue;
+        }
+        const auto compressedResource = DecodeTextureResource(pack(compressedNarrow));
+        Require(compressedResource.format == surface && compressedResource.fmaskCmaskAddress == compressedNarrow.metaAddr << 8u && compressedResource.dccAddress == 0u, "compressed FMASK " + std::to_string(format) + " with as many fragments as samples was refused or lost its CMASK");
     }
     auto identityWord = fmask;
     identityWord.dstSelX = 4u;

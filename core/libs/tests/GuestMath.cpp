@@ -126,6 +126,7 @@ float APS5_VABI nextafterf_nid_postfix(float, float);
 double APS5_VABI nextafter_nid_postfix(double, double);
 double APS5_VABI frexp_nid_postfix(double, int*);
 float APS5_VABI frexpf_nid_postfix(float, int*);
+float APS5_VABI logf_nid_postfix(float);
 std::int64_t APS5_VABI lround_nid_postfix(double);
 std::div_t APS5_VABI div_nid_postfix(int, int);
 double APS5_VABI sinh_nid_postfix(double);
@@ -960,6 +961,37 @@ static void CheckHyperbolic() {
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
 }
 
+static void CheckCoshfMsunBoundaries() {
+    static constexpr struct {
+        std::uint32_t input;
+        std::uint32_t output;
+    } cases[] = {
+        {0x00000000u, 0x3f800000u},
+        {0x80000000u, 0x3f800000u},
+        {0x00000001u, 0x3f800000u},
+        {0x397fffffu, 0x3f800000u},
+        {0x39800000u, 0x3f800000u},
+        {0x3eb17217u, 0x3f87c3b6u},
+        {0x3eb17218u, 0x3f87c3b6u},
+        {0x3f800000u, 0x3fc583aau},
+        {0xbf800000u, 0x3fc583aau},
+        {0x410fffffu, 0x457d389cu},
+        {0x41100000u, 0x457d38acu},
+        {0x42b17216u, 0x7effff04u},
+        {0x42b17217u, 0x7effff84u},
+        {0x42b17218u, 0x7f000002u},
+        {0x42b2d4fbu, 0x7f7fff6cu},
+        {0x42b2d4fcu, 0x7f7fffecu},
+        {0xc2b2d4fcu, 0x7f7fffecu},
+    };
+    for (const auto& test : cases)
+        Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(test.input))) == test.output);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x42b2d4fdu))) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(INFINITY)) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(-INFINITY)) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x7fc12345u))) == 0x7fc12345u);
+}
+
 static void CheckScaledHyperbolic() {
     const int rounding = std::fegetround();
     Require(std::fesetround(FE_TONEAREST) == 0);
@@ -1148,6 +1180,26 @@ static void RequireBytes(const void* constant, std::initializer_list<unsigned ch
     int index = 0;
     for (const unsigned char byte : expected) Require(bytes[index++] == byte);
     while (index < 16) Require(bytes[index++] == 0);
+}
+
+static void CheckLogfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t expected;
+        int error;
+    } cases[] = {
+        {0x00000983u, 0xc2bef664u, 0}, {0x3e003791u, 0xc004f9cfu, 0}, {0x3f7f0a10u, 0xbb76666fu, 0}, {0x3f81086bu, 0x3c03adacu, 0},
+        {0x40400de0u, 0x3f8ca894u, 0}, {0x5f00a041u, 0x422eb14eu, 0}, {0x3f800000u, 0x00000000u, 0}, {0x40000000u, 0x3f317218u, 0},
+        {0x00000001u, 0xc2ce8ed0u, 0}, {0x00800000u, 0xc2aeac50u, 0}, {0x7f7fffffu, 0x42b17218u, 0}, {0x7f800000u, 0x7f800000u, 0},
+        {0x3f800001u, 0x33ffffffu, 0}, {0x3f7fffffu, 0xb3800000u, 0}, {0x7fc00001u, 0x7fc00001u, 0},
+        {0x00000000u, 0xff800000u, ERANGE}, {0x80000000u, 0xff800000u, ERANGE}, {0x80000001u, 0xffc00000u, EDOM},
+        {0xbf800000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, EDOM}, {0xffc00002u, 0xffc00002u, EDOM},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(logf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
 }
 
 static void CheckDinkumwareConstants() {
@@ -1692,9 +1744,11 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckCoshfMsunBoundaries();
     CheckScaledHyperbolic();
     CheckSinhf();
     CheckAtanhf();
+    CheckLogfConsoleBits();
     CheckHypotSpecialValue();
     CheckAtanfConsoleBits();
     CheckFloatUnderflowErrno();
