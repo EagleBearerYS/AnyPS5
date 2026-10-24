@@ -1,0 +1,4 @@
+BASE=408ee4a0fd7c84c946a9fd865bfac158c968e5bb
+REPEAT=5
+EXTRA_TESTS='^agc_driver_image_table_atomics'
+NO_BEFORE=1
