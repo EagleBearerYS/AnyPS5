@@ -9,6 +9,8 @@
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "ThreadOwned.hpp"
 #include "ImageTableAbi.hpp"
+#include "IntermediateRepresentation/IrOpcode.hpp"
+#include "IntermediateRepresentation/IrValue.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
@@ -39,6 +41,20 @@ static_assert(ShaderInfo::MaxSamplers <= std::numeric_limits<std::uint64_t>::dig
 namespace {
 
 using ImageTableAbi::PoisonReason;
+
+std::string DescribeSourceValue(const IrValue* value, std::uint32_t depth) {
+    if (value == nullptr) return "null";
+    value = value->Resolve();
+    std::string text(IrOpcodeName(value->Opcode()));
+    if (value->HasImmediate() && value->Type() == IrType::U32) return text + "(" + std::to_string(value->ImmediateU32()) + ")";
+    if (depth == 0 || value->ArgumentCount() == 0) return text;
+    text += "(";
+    for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+        if (index != 0) text += ", ";
+        text += DescribeSourceValue(value->Argument(index), depth - 1);
+    }
+    return text + ")";
+}
 
 std::atomic<std::uint64_t> specializationNanoseconds{0};
 std::atomic<std::uint64_t> evaluateNanoseconds{0};
@@ -1001,7 +1017,9 @@ private:
         if (buffer.Type() != 0u) return std::nullopt;
         const auto low = ImageTableAbi::ScalarBufferDword(chase.readOffset, chase.readImmediate, buffer.GetSize());
         const auto high = ImageTableAbi::ScalarBufferDword(chase.readOffset, chase.readHighImmediate, buffer.GetSize());
-        if (!low.has_value() || !high.has_value() || !AddressAccessible(buffer.Base48() + *low) || !AddressAccessible(buffer.Base48() + *high)) return std::nullopt;
+        if (!low.has_value() || !high.has_value()) return std::nullopt;
+        if (((buffer.Base48() + *low) & 3u) != 0u || ((buffer.Base48() + *high) & 3u) != 0u) return std::nullopt;
+        if (!AddressAccessible(buffer.Base48() + *low) || !AddressAccessible(buffer.Base48() + *high)) return std::nullopt;
         tables.ranges.emplace_back(buffer.Base48() + *low, sizeof(std::uint32_t));
         tables.ranges.emplace_back(buffer.Base48() + *high, sizeof(std::uint32_t));
         if (((buffer.Base48() + *low) | (buffer.Base48() + *high)) & 3u) readSite = "a pointer chase from 0x" + hexText(pointer) + " (V# at offset " + std::to_string(chase.offset) + " + " + std::to_string(chase.immediate) + ": " + hexText(descriptor.dwords[0]) + " " + hexText(descriptor.dwords[1]) + " " + hexText(descriptor.dwords[2]) + " " + hexText(descriptor.dwords[3]) + "; read at " + std::to_string(chase.readOffset) + " + " + std::to_string(chase.readImmediate) + "/" + std::to_string(chase.readHighImmediate) + ")";
@@ -1496,6 +1514,17 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
             descriptor.dwordCount = 8u;
         }
         if (!validImageDescriptor(descriptor, image.r128) && !nullImageDescriptor(image, descriptor)) {
+            const auto& failedSource = plan.descriptorSources[image.source];
+            std::fprintf(stderr, "[image-source] image %u source %u: %u dwords%s\n", i, static_cast<unsigned>(image.source), failedSource.dwordCount, failedSource.tableColumn ? ", a table column" : "");
+            for (std::uint32_t word = 0; word < failedSource.dwordCount && word < 8u; ++word) std::fprintf(stderr, "[image-source]   dword %u = %s\n", word, DescribeSourceValue(failedSource.dwords[word], 8).c_str());
+            for (std::size_t slot = 0; slot < plan.srtReads.size() && slot < 48u; ++slot) std::fprintf(stderr, "[image-source]   SRT read %zu at flat offset %u = %s\n", slot, plan.srtReads[slot].flatOffset, DescribeSourceValue(plan.srtReads[slot].value, 6).c_str());
+            std::string flatWords;
+            for (std::size_t word = 0; word < snapshot.flattenedSrt.size() && word < 64u; ++word) {
+                char text[12];
+                std::snprintf(text, sizeof(text), " %08x", snapshot.flattenedSrt[word]);
+                flatWords += text;
+            }
+            std::fprintf(stderr, "[image-source]   flattened SRT (%zu words):%s\n", snapshot.flattenedSrt.size(), flatWords.c_str());
             char invalidText[320];
             std::snprintf(invalidText, sizeof(invalidText), "runtime image descriptor is invalid: image %u source %u r128 %d active %d words %08x %08x %08x %08x %08x %08x %08x %08x", i, static_cast<unsigned>(image.source), image.r128 ? 1 : 0, activity < activeSources.size() ? static_cast<int>(activeSources[activity]) : -1, descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
             throw std::runtime_error(invalidText);
