@@ -344,9 +344,11 @@ int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
     _putenv_s("APS5_PIPELINE_DMA", "1");
+    _putenv_s("APS5_NO_IDLE_STORE", "1");
 #else
     setenv("APS5_PIPELINED_DRAWS", "1", 1);
     setenv("APS5_PIPELINE_DMA", "1", 1);
+    setenv("APS5_NO_IDLE_STORE", "1", 1);
 #endif
     try {
         {
