@@ -749,6 +749,10 @@ private:
 
     std::uint32_t Read(std::uint64_t address) const {
         std::uint32_t word = 0;
+        if ((address & 3u) != 0u) {
+            std::fprintf(stderr, "[table-snapshot] unaligned read at 0x%llx from %s; column: heap source %u, stride %u, addend %u, offset %u, %u dwords, address %d, indirect %d (offset %u, immediate %u), pointer-keyed %d, %zu hops, %zu chases, chase depth %u, selected %d\n", static_cast<unsigned long long>(address), readSite.c_str(), readColumn != nullptr ? readColumn->heapSource : 0u, readColumn != nullptr ? readColumn->stride : 0u, readColumn != nullptr ? readColumn->addend : 0u, readColumn != nullptr ? readColumn->offset : 0u, readColumn != nullptr ? readColumn->dwordCount : 0u, readColumn != nullptr && readColumn->address, readColumn != nullptr && readColumn->indirect, readColumn != nullptr ? readColumn->indirectOffset : 0u, readColumn != nullptr ? readColumn->indirectImmediate : 0u, readColumn != nullptr && readColumn->pointerKeyed, readColumn != nullptr ? readColumn->pointerHops.size() : std::size_t{0}, readColumn != nullptr ? readColumn->pointerChases.size() : std::size_t{0}, readColumn != nullptr ? readColumn->pointerChaseDepth : 0u, readColumn != nullptr && readColumn->selected);
+            std::fflush(stderr);
+        }
         if (!runtime.readMemory(runtime.userContext, address, &word)) {
             throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
         }
@@ -939,6 +943,8 @@ private:
     }
 
     void ReadColumn(const TableColumn& column, std::uint32_t source, ColumnRecords& records) {
+        readColumn = &column;
+        readSite = "a column read of source " + std::to_string(source);
         stamp = {};
         comparedRuns.clear();
         comparedWords.clear();
@@ -998,6 +1004,7 @@ private:
         if (!low.has_value() || !high.has_value() || !AddressAccessible(buffer.Base48() + *low) || !AddressAccessible(buffer.Base48() + *high)) return std::nullopt;
         tables.ranges.emplace_back(buffer.Base48() + *low, sizeof(std::uint32_t));
         tables.ranges.emplace_back(buffer.Base48() + *high, sizeof(std::uint32_t));
+        if (((buffer.Base48() + *low) | (buffer.Base48() + *high)) & 3u) readSite = "a pointer chase from 0x" + hexText(pointer) + " (V# at offset " + std::to_string(chase.offset) + " + " + std::to_string(chase.immediate) + ": " + hexText(descriptor.dwords[0]) + " " + hexText(descriptor.dwords[1]) + " " + hexText(descriptor.dwords[2]) + " " + hexText(descriptor.dwords[3]) + "; read at " + std::to_string(chase.readOffset) + " + " + std::to_string(chase.readImmediate) + "/" + std::to_string(chase.readHighImmediate) + ")";
         return (static_cast<std::uint64_t>(Read(buffer.Base48() + *high)) << 32u) | Read(buffer.Base48() + *low);
     }
 
@@ -1090,6 +1097,7 @@ private:
                     records.states[record] = RecordState::Unmapped;
                     continue;
                 }
+                if (((records.base + *lowWord) | (records.base + *highWord)) & 3u) readSite = "record " + std::to_string(record) + "'s pointer words of a table at 0x" + hexText(records.base) + " (size " + std::to_string(records.size) + ")";
                 const std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
                 if (column.pointerKeyed) records.pointers[record] = pointer;
                 readEntry(record, pointer);
@@ -1411,6 +1419,8 @@ private:
     std::unordered_map<std::uint64_t, bool> pages;
     std::unordered_map<std::uint64_t, bool> wholePages;
     SrtWriteStamp stamp;
+    const TableColumn* readColumn = nullptr;
+    std::string readSite = "a table read";
     std::vector<std::pair<std::uint64_t, std::uint32_t>> comparedRuns;
     std::vector<std::uint32_t> comparedWords;
     std::vector<std::uint32_t> keyWords;
