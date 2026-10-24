@@ -1,0 +1,4 @@
+BASE=c9b2660d5636923b7e2fc3a2cf1b60209d01e5e0
+REPEAT=1
+EXTRA_TESTS='agc_driver_many_images|agc_driver_many_direct_samplers|^agc_driver_image_table'
+VALIDATION=1
