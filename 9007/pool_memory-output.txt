@@ -1,0 +1,12 @@
+q6f-a1: menu + 1 24,165 MB, menu + 10 29,504 MB, peak 30,030 MB, page file 32,768 MB
+q6f-b1: menu + 1 23,400 MB, menu + 10 29,510 MB, peak 30,286 MB, page file 32,768 MB
+q6f-b2: menu + 1 22,869 MB, menu + 10 28,204 MB, peak 29,476 MB, page file 32,768 MB
+q6f-a2: menu + 1 23,971 MB, menu + 10 29,373 MB, peak 30,077 MB, page file 32,768 MB
+q6f: b1 - a1: menu + 1 -765, menu + 10 +6, peak +256, page file +0 MB
+q6f: b2 - a2: menu + 1 -1,102, menu + 10 -1,169, peak -601, page file +0 MB
+q6ft-a1: menu + 1 23,414 MB, menu + 10 28,372 MB, peak 29,210 MB, page file 33,798 MB
+q6ft-b1: menu + 1 22,328 MB, menu + 10 27,399 MB, peak 28,531 MB, page file 32,768 MB
+q6ft-b2: menu + 1 22,141 MB, menu + 10 27,671 MB, peak 29,070 MB, page file 32,768 MB
+q6ft-a2: menu + 1 24,086 MB, menu + 10 29,219 MB, peak 30,826 MB, page file 34,830 MB
+q6ft: b1 - a1: menu + 1 -1,086, menu + 10 -973, peak -679, page file -1,030 MB
+q6ft: b2 - a2: menu + 1 -1,945, menu + 10 -1,548, peak -1,756, page file -2,062 MB
