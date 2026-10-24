@@ -106,7 +106,8 @@ TextureKey MakeTextureKey(VkDevice device, std::span<const std::uint32_t> words,
 struct CommittedSlabs {
     std::vector<std::uint32_t> slabs;
     std::uint64_t slabBytes = 0;
-    bool operator==(const CommittedSlabs&) const = default;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    bool operator==(const CommittedSlabs& other) const { return slabs == other.slabs && slabBytes == other.slabBytes; }
 };
 
 struct CachedTexture {
@@ -721,7 +722,21 @@ std::optional<CommittedSlabs> committedSlabs(const GuestTextureResource& resourc
         if (range != ranges.end() && range->first < begin + slabBytes) result.slabs.push_back(static_cast<std::uint32_t>(slab));
     }
     if (result.slabs.size() == count) return std::nullopt;
+    const auto end = resource.baseAddress + guestBytes;
+    for (const auto& [first, last] : ranges) {
+        if (last > resource.baseAddress && first < end) result.ranges.emplace_back(std::max(first, resource.baseAddress) - resource.baseAddress, std::min(last, end) - resource.baseAddress);
+    }
     return result;
+}
+
+bool stillCommitted(const std::optional<CommittedSlabs>& now, const std::optional<CommittedSlabs>& snapshot) {
+    if (!now.has_value() || !snapshot.has_value()) return now.has_value() == snapshot.has_value();
+    auto range = now->ranges.begin();
+    for (const auto& [begin, end] : snapshot->ranges) {
+        while (range != now->ranges.end() && range->second <= begin) ++range;
+        if (range == now->ranges.end() || range->first > begin || range->second < end) return false;
+    }
+    return true;
 }
 
 std::size_t snapshotBytes(const std::optional<CommittedSlabs>& slabs, std::size_t guestBytes) {
@@ -983,7 +998,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 if (profile) LookupOutcomes::Add(*keys != DccKeys::Uncompressed ? LookupOutcomes::SampledHitClearedView : LookupOutcomes::SampledHitView, start);
                 return it->texture;
             }
-        } else if (source == nullptr && it->surfaceBytes == guestBytes && it->keys == *keys && it->slabs == slabs) {
+        } else if (source == nullptr && it->surfaceBytes == guestBytes && it->keys == *keys && it->slabs == slabs && stillCommitted(slabs, it->slabs)) {
             // Unwritten pages need no comparison; partially resident textures compare only committed
             // pages. The compare goes through the flush hook: it waits for recorded work over the
             // surface (counted, and named for the [hooksync] line).
