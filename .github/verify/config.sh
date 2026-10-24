@@ -1,0 +1,4 @@
+BASE=f45a8d2bdc337ed0601951d1c0abb76d116187f7
+REPEAT=1
+EXTRA_TESTS='^agc_driver_pointer_vsharp_'
+NO_BEFORE=1
