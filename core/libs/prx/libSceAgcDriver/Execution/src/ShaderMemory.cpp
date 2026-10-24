@@ -17,10 +17,46 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
+#if defined(__linux__)
+#include <cxxabi.h>
+#include <execinfo.h>
+#endif
 
 namespace AgcDriver {
 namespace {
+
+std::string InvalidReadCallers() {
+    std::string callers;
+#if defined(__linux__)
+    void* frames[32];
+    const int count = backtrace(frames, 32);
+    char** symbols = backtrace_symbols(frames, count);
+    for (int index = 1; index < count; ++index) {
+        std::string line = symbols != nullptr ? symbols[index] : "?";
+        const auto open = line.find('(');
+        const auto plus = line.find('+', open == std::string::npos ? 0 : open);
+        if (open != std::string::npos && plus != std::string::npos && plus > open + 1) {
+            int status = 0;
+            char* demangled = abi::__cxa_demangle(line.substr(open + 1, plus - open - 1).c_str(), nullptr, nullptr, &status);
+            if (status == 0 && demangled != nullptr) line = line.substr(0, open + 1) + demangled + line.substr(plus);
+            std::free(demangled);
+        }
+        callers += "\n[shader-memory]   #" + std::to_string(index) + " " + line;
+    }
+    std::free(symbols);
+#else
+    unsigned long long frames[16]{};
+    const auto count = GuestMemory::CaptureCallerOffsets(frames, 0);
+    for (std::size_t index = 0; index < count; ++index) {
+        char frame[48];
+        std::snprintf(frame, sizeof(frame), "\n[shader-memory]   #%zu +0x%llx", index, frames[index]);
+        callers += frame;
+    }
+#endif
+    return callers;
+}
 
 struct CaptureProfile {
     std::atomic<std::uint64_t> captures{0};
@@ -241,6 +277,8 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     if (address % sizeof(*value) != 0 || address > std::numeric_limits<std::uint64_t>::max() - sizeof(*value)) {
         char addressText[96];
         std::snprintf(addressText, sizeof(addressText), "AGC driver: invalid shader memory read address 0x%llx", static_cast<unsigned long long>(address));
+        std::fprintf(stderr, "[shader-memory] %s, read from:%s\n", addressText, InvalidReadCallers().c_str());
+        std::fflush(stderr);
         throw std::runtime_error(addressText);
     }
     if (CaptureProfiled()) ++CaptureTotals().reads;
