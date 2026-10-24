@@ -76,6 +76,7 @@ constexpr std::uint32_t SampleThreads = LanesPerSlice * SampledSlices.size();
 constexpr std::uint32_t SampleWords = 32;
 constexpr std::uint32_t SampleResult = 8;
 constexpr std::uint32_t LoadResult = 12;
+constexpr std::uint64_t ElementSpan = 1024;
 alignas(256) std::array<std::uint32_t, SampleThreads * SampleWords> Samples{};
 
 alignas(256) constexpr std::array<std::uint32_t, 36> VolumeSampleCode{
@@ -497,17 +498,17 @@ std::array<std::uint32_t, 3> Bc1Color(std::uint64_t slab) {
     return {static_cast<std::uint32_t>(slab % 31u) + 1u, 63u - static_cast<std::uint32_t>(slab % 64u), 31u};
 }
 
-std::array<std::byte, 8> PatternElement(std::uint32_t format, std::uint64_t slab) {
+std::array<std::byte, 8> PatternElement(std::uint32_t format, std::uint64_t slab, std::uint64_t element) {
     const auto color = Bc1Color(slab);
-    const auto words = format == FormatBc1UNorm ? std::array<std::uint16_t, 4>{static_cast<std::uint16_t>((color[0] << 11u) | (color[1] << 5u) | color[2]), 0u, 0u, 0u}
-                                                : std::array<std::uint16_t, 4>{HalfOf(static_cast<std::uint32_t>(slab) + 1u), HalfOf(2u), HalfOf(3u), HalfOf(1u)};
+    const auto mixed = static_cast<std::uint32_t>((element * 0x9e3779b1ull) >> 21u) & 0x7ffu;
+    const auto words = format == FormatBc1UNorm ? std::array<std::uint16_t, 4>{static_cast<std::uint16_t>((color[0] << 11u) | mixed), 0u, 0u, 0u}
+                                                : std::array<std::uint16_t, 4>{HalfOf(static_cast<std::uint32_t>(slab) + 1u), HalfOf(static_cast<std::uint32_t>(element % ElementSpan) + 1u), HalfOf(static_cast<std::uint32_t>(element / ElementSpan) + 1u), HalfOf(1u)};
     return std::bit_cast<std::array<std::byte, 8>>(words);
 }
 
-std::array<float, 4> PatternTexel(std::uint32_t format, std::uint64_t slab) {
-    if (format != FormatBc1UNorm) return {static_cast<float>(slab + 1u), 2.0f, 3.0f, 1.0f};
-    const auto color = Bc1Color(slab);
-    return {static_cast<float>(color[0]) / 31.0f, static_cast<float>(color[1]) / 63.0f, static_cast<float>(color[2]) / 31.0f, 1.0f};
+bool SameSlab(std::uint32_t format, const std::array<float, 4>& value, std::uint64_t slab) {
+    if (format != FormatBc1UNorm) return value[0] == static_cast<float>(slab + 1u) && value[3] == 1.0f;
+    return std::fabs(value[0] - static_cast<float>(Bc1Color(slab)[0]) / 31.0f) <= 1.0f / 128.0f && value[3] == 1.0f;
 }
 
 std::array<float, 4> ZeroTexel(std::uint32_t format) {
@@ -517,8 +518,10 @@ std::array<float, 4> ZeroTexel(std::uint32_t format) {
 void CommitSlab(ReservedSurface& surface, const SurfaceGeometry& geometry, std::uint32_t format, std::uint64_t slab, std::size_t bytes) {
     const auto offset = static_cast<std::size_t>(slab * geometry.layerBytes);
     surface.Commit(offset, bytes);
-    const auto element = PatternElement(format, slab);
-    for (std::size_t at = 0; at < bytes; at += element.size()) std::memcpy(surface.Data() + offset + at, element.data(), element.size());
+    for (std::size_t at = 0; at < bytes; at += 8u) {
+        const auto element = PatternElement(format, slab, at / 8u);
+        std::memcpy(surface.Data() + offset + at, element.data(), element.size());
+    }
 }
 
 struct Commitment {
@@ -702,7 +705,13 @@ std::string TexelText(const std::array<float, 4>& value) {
     return "(" + std::to_string(value[0]) + ", " + std::to_string(value[1]) + ", " + std::to_string(value[2]) + ", " + std::to_string(value[3]) + ")";
 }
 
-void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std::uint32_t format, const Commitment& commitment, std::uint32_t lod) {
+std::array<float, 4> SampledTexel(const std::vector<std::uint32_t>& samples, std::uint32_t tid, std::uint32_t result) {
+    std::array<float, 4> value{};
+    for (std::uint32_t component = 0; component < 4u; ++component) value[component] = std::bit_cast<float>(samples[tid * SampleWords + result + component]);
+    return value;
+}
+
+void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std::uint32_t format, const Commitment& commitment, std::uint32_t lod, const std::vector<std::uint32_t>& reference) {
     std::map<std::uint64_t, std::array<std::uint32_t, 2>> partial;
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto results = lod != 0 ? std::vector<std::uint32_t>{SampleResult} : std::vector<std::uint32_t>{SampleResult, LoadResult};
@@ -716,14 +725,16 @@ void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std:
                 value[component] = std::bit_cast<float>(word);
                 hash = (hash ^ word) * 0x100000001b3ull;
             }
-            const bool texels = SameTexel(format, value, PatternTexel(format, slab));
+            const auto expected = SampledTexel(reference, tid, result);
+            Require(SameSlab(format, expected, slab), name + ": the fully committed reference reads " + TexelText(expected) + " at level " + std::to_string(lod) + " slice " + std::to_string(slice) + " (thread " + std::to_string(tid) + "), not a texel of slab " + std::to_string(slab));
+            const bool texels = SameTexel(format, value, expected);
             const bool zeros = SameTexel(format, value, ZeroTexel(format));
             const auto where = name + ": " + (result == SampleResult ? "sample" : "load") + " of level " + std::to_string(lod) + " slice " + std::to_string(slice) + " (thread " + std::to_string(tid) + ") reads " + TexelText(value);
             if (commitment.partial == slab) {
                 Require(texels || zeros, where + ", neither its texels nor zeros");
                 ++partial[slab][texels ? 0u : 1u];
             } else if (commitment.full.contains(slab)) {
-                Require(texels, where + ", expected its texels " + TexelText(PatternTexel(format, slab)));
+                Require(texels, where + ", expected its texel " + TexelText(expected));
             } else {
                 Require(zeros, where + ", expected the zeros of uncommitted memory " + TexelText(ZeroTexel(format)));
             }
@@ -733,9 +744,24 @@ void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std:
     std::printf("%s: level %u sample results hash %016llx\n", name.c_str(), lod, static_cast<unsigned long long>(hash));
 }
 
+std::vector<std::vector<std::uint32_t>> ReferenceSamples(AgcDriver::VulkanDevice& device, const CommittedCase& layout) {
+    const auto probe = DescribeCase(layout, BlockBytes);
+    ReservedSurface surface(static_cast<std::size_t>(probe.guestBytes));
+    const auto words = CaseDescriptor(layout, surface.Address());
+    const auto geometry = DescribeCase(layout, surface.Address());
+    for (std::uint64_t slab = 0; slab < geometry.guestBytes / geometry.layerBytes; ++slab) CommitSlab(surface, geometry, layout.format, slab, static_cast<std::size_t>(geometry.layerBytes));
+    std::vector<std::vector<std::uint32_t>> reference;
+    for (std::uint32_t lod = 0; lod < layout.levels; ++lod) {
+        Sample(device, words, layout.type == Type3D, layout.side, lod);
+        reference.emplace_back(Samples.begin(), Samples.end());
+    }
+    return reference;
+}
+
 int SampleCommittedSurface(const CommittedCase& layout, bool changes) {
     const auto device = OpenVulkanTestDevice();
     if (!device) return Skipped;
+    const auto reference = ReferenceSamples(*device, layout);
     const auto probe = DescribeCase(layout, BlockBytes);
     ReservedSurface surface(static_cast<std::size_t>(probe.guestBytes));
     const auto words = CaseDescriptor(layout, surface.Address());
@@ -744,17 +770,17 @@ int SampleCommittedSurface(const CommittedCase& layout, bool changes) {
     const bool volume = layout.type == Type3D;
     for (std::uint32_t lod = 0; lod < layout.levels; ++lod) {
         Sample(*device, words, volume, layout.side, lod);
-        CheckSamples(layout.name, geometry, layout.format, commitment, lod);
+        CheckSamples(layout.name, geometry, layout.format, commitment, lod, reference[lod]);
     }
     if (changes) {
         CommitSlab(surface, geometry, layout.format, AddedSlab, static_cast<std::size_t>(geometry.layerBytes));
         commitment.full.insert(AddedSlab);
         Sample(*device, words, volume, layout.side, 0u);
-        CheckSamples(layout.name + " after slice " + std::to_string(AddedSlab) + " was committed", geometry, layout.format, commitment, 0u);
+        CheckSamples(layout.name + " after slice " + std::to_string(AddedSlab) + " was committed", geometry, layout.format, commitment, 0u, reference[0]);
         surface.Decommit(static_cast<std::size_t>(RemovedSlab * geometry.layerBytes), static_cast<std::size_t>(geometry.layerBytes));
         commitment.full.erase(RemovedSlab);
         Sample(*device, words, volume, layout.side, 0u);
-        CheckSamples(layout.name + " after slice " + std::to_string(RemovedSlab) + " was decommitted", geometry, layout.format, commitment, 0u);
+        CheckSamples(layout.name + " after slice " + std::to_string(RemovedSlab) + " was decommitted", geometry, layout.format, commitment, 0u, reference[0]);
     }
     return 0;
 }
