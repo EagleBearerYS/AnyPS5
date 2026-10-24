@@ -1015,13 +1015,13 @@ private:
             auto* lowWord = pending.back().first->Resolve();
             auto* highWord = pending.back().second->Resolve();
             pending.pop_back();
-            if (lowWord->HasImmediate() && highWord->HasImmediate()) return false;
             if (!seen.emplace(lowWord, highWord).second || PointerFreeWord(*lowWord)) continue;
             if (lowWord->IsPhi()) {
                 const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
                 for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
                     IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
                     if (edge == nullptr) return false;
+                    if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) return false;
                     pending.emplace_back(lowWord->Argument(index), edge);
                 }
                 continue;
@@ -1175,7 +1175,8 @@ private:
         if (merged && !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads)) return false;
         const auto same = [&](const std::vector<IrValue*>& reads) { return std::ranges::all_of(reads, [&](const IrValue* read) { return EquivalentValue(m_program.Resources(), read, reads.front()); }); };
         if (merged && buffer && (!same(lowReads) || !same(highReads))) return false;
-        auto* low = merged ? lowReads.back() : pointer->Argument(0)->Resolve();
+        auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
+        if (low == nullptr) return false;
         auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : UnwrapTableRead(pointer->Argument(1));
         if (high == nullptr) return false;
         std::uint32_t first = 0;
