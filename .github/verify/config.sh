@@ -1,0 +1,4 @@
+BASE=15e71dbe1116517913c5fbf309aa86d102285da3
+REPEAT=5
+EXTRA_TESTS='agc_driver_image_table_atomics|agc_driver_image_table_atomics_gpu_heap|^agc_driver_image_table'
+NO_BEFORE=1
