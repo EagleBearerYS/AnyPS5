@@ -1021,7 +1021,6 @@ private:
                 for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
                     IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
                     if (edge == nullptr) return false;
-                    if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) return false;
                     pending.emplace_back(lowWord->Argument(index), edge);
                 }
                 continue;
@@ -1167,7 +1166,7 @@ private:
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
         const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
-        const bool merged = pointer->Argument(0)->Resolve()->IsPhi() && UnwrapTableRead(pointer->Argument(0)) == nullptr;
+        const bool merged = pointer->Argument(0)->Resolve()->IsPhi();
         const bool pointerKeyed = merged && !buffer;
         if (!hops.empty() && buffer) return false;
         std::vector<IrValue*> lowReads;
@@ -1175,8 +1174,7 @@ private:
         if (merged && !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads)) return false;
         const auto same = [&](const std::vector<IrValue*>& reads) { return std::ranges::all_of(reads, [&](const IrValue* read) { return EquivalentValue(m_program.Resources(), read, reads.front()); }); };
         if (merged && buffer && (!same(lowReads) || !same(highReads))) return false;
-        auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
-        if (low == nullptr) return false;
+        auto* low = merged ? lowReads.back() : pointer->Argument(0)->Resolve();
         auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : UnwrapTableRead(pointer->Argument(1));
         if (high == nullptr) return false;
         std::uint32_t first = 0;
@@ -1214,7 +1212,7 @@ private:
             recordOffset = source->Argument(1)->Resolve();
             offset = source == high ? recordOffset : high;
         }
-        if (!merged && !AvailableAt(offset, handle.Parent())) {
+        if (!AvailableAt(offset, handle.Parent())) {
             return false;
         }
         IrValue* key = nullptr;
