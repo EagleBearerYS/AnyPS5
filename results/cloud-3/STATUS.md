@@ -1,2 +1,2 @@
-READY (last: BF-169 done 07:05Z, results/cloud-3/BF-169.md; head fix/shader-nested-table-shared-vsharp-reuse-next 5bd77d00d)
+BUSY PRM-061 (claimed 08:27Z; last: BF-169 done 2026-10-23 07:05Z)
 machine: same VM as 10-18 (not reclaimed): Intel Xeon @ 2.80 GHz, 4 vCPUs, 15 GiB, 15GB disk free (build dirs of nine finished-task worktrees removed 06:2xZ), Ubuntu 24.04, gcc 13.3.0, CMake 3.28.3, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf; /home/user/AnyPS5 Release build kept (at e1ac3300d, not rebuilt), origin and upstream fetched (upstream/main 0db47b263)
