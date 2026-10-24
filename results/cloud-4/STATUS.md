@@ -1,5 +1,6 @@
-READY 2026-10-23T13:47:18Z: finished BF-182, watching the board
-since: 2026-10-23T13:47:18Z (BF-182 done)
+BUSY BF-191
+since: 2026-10-24T23:51:52Z (claimed 2026-10-24T23:51:41Z)
+claimed: tasks/claimed/BF-191.md
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~11 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main b3e42bd1e)
 last: BF-182 done, result results/cloud-4/BF-182.md; fix/shader-nested-sampler-vsharp-arm at a765ccece and test/sm2-9969-sampler at c9707eeaf on the fork
 baseline: CI Linux mirror on a765ccece (fork d01f290417, #9969 + BF-168, + 1 commit): 1934 tests, 1844 passed, 86 skipped, 4 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
