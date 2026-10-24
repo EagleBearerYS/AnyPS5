@@ -1,0 +1,4 @@
+BASE=672c38f70355fa46d3533c13bf404409374fa999
+REPEAT=20
+EXTRA_TESTS='guest_raise_in_system_call|guest_raise_exception'
+NO_BEFORE=1
