@@ -6,12 +6,14 @@
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -65,9 +67,12 @@ struct MultisampleColorAlias {
     MultisampleColorContent newest = MultisampleColorContent::Unknown;
     std::optional<VkClearColorValue> value;
     std::optional<std::uint8_t> byte;
+    std::shared_ptr<std::atomic<bool>> active;
+    std::uint64_t contents = 0;
 };
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
+std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t address, std::size_t bytes);
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target);
 std::size_t MultisampledDccBytes(const ColorTarget& target);

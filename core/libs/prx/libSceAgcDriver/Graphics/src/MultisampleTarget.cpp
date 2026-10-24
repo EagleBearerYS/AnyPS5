@@ -348,6 +348,7 @@ public:
         });
         cleared = clear;
         drawn = false;
+        ++contents;
     }
 
     void Recreate(const ColorTarget& use) {
@@ -362,6 +363,7 @@ public:
         const auto initial = initialDccClear(use);
         cleared = initial;
         drawn = false;
+        ++contents;
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -405,6 +407,7 @@ public:
         });
         storageWritten = true;
         drawn = true;
+        ++contents;
         return storageView;
     }
 
@@ -545,9 +548,12 @@ public:
     std::string htileRefusal;
     std::optional<VkClearColorValue> cleared;
     bool drawn = false;
+    std::uint64_t contents = 0;
 
     MultisampleColorAlias Alias() const {
         MultisampleColorAlias alias{target.address, guardedColorBytes(target), target.format, target.samples};
+        alias.active = active;
+        alias.contents = contents;
         const auto newest = [&](MultisampleColorContent content, std::optional<VkClearColorValue> value) {
             alias.newest = content;
             alias.value = value;
@@ -1160,6 +1166,7 @@ SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const Col
     std::lock_guard lock(targetsMutex());
     auto& found = acquire(context, target);
     found.drawn = true;
+    ++found.contents;
     return {found.image, found.OrderView(), found.orderFormat, target.extent, target.samples, SampleOrderMethod::Storage, found.shared_from_this()};
 }
 
@@ -1167,6 +1174,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
     std::lock_guard lock(targetsMutex());
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
+    ++acquired.contents;
     if (image != nullptr) *image = acquired.image;
     return acquired.View(target.format);
 }
@@ -1175,6 +1183,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
     std::lock_guard lock(targetsMutex());
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
+    ++acquired.contents;
     owner = acquired.shared_from_this();
     if (image != nullptr) *image = acquired.image;
     return acquired.View(target.format);
@@ -1387,17 +1396,29 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
 }
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return std::nullopt;
+    const auto aliases = MultisampleColorTargetsOver(address, bytes);
+    if (aliases.empty()) return std::nullopt;
+    return aliases.front();
+}
+
+std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t address, std::size_t bytes) {
+    std::vector<MultisampleColorAlias> aliases;
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return aliases;
     std::lock_guard lock(targetsMutex());
     std::shared_lock guardLock(guardedMutex());
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
-        for (const auto& target : targets()) {
-            if (target->active == range.active) return target->Alias();
+        if (std::any_of(aliases.begin(), aliases.end(), [&](const MultisampleColorAlias& alias) { return alias.active == range.active; })) continue;
+        const auto target = std::find_if(targets().begin(), targets().end(), [&](const auto& candidate) { return candidate->active == range.active; });
+        if (target != targets().end()) {
+            aliases.push_back((*target)->Alias());
+            continue;
         }
-        return MultisampleColorAlias{range.address, range.bytes, VK_FORMAT_UNDEFINED, range.samples};
+        MultisampleColorAlias alias{range.address, range.bytes, VK_FORMAT_UNDEFINED, range.samples};
+        alias.active = range.active;
+        aliases.push_back(alias);
     }
-    return std::nullopt;
+    return aliases;
 }
 
 }
