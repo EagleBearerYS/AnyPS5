@@ -14,6 +14,7 @@ import unittest.mock
 from unittest.mock import patch
 
 import hw_oracle
+import probe_type0_store
 
 
 MODES = dict(ieee=0, denorm32=0, denorm16=3, dx10_clamp=1, round32=0, round16=0, fp16_overflow=0)
@@ -776,6 +777,128 @@ class HipOracleTests(unittest.TestCase):
                 text = text.replace(key, value)
             with self.subTest(wave64=wave64):
                 self.assertEqual(self.oracle_hip.assemble(text.encode(), "gfx1010", wave64)[:4], b"\x7fELF")
+
+
+class Type0StoreProbeTests(unittest.TestCase):
+    def lanes(self, changed=(), loaded=None, returned=None, base=4096):
+        lanes = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, base, probe_type0_store.SENTINEL, 0, 0, 0, 0] for _ in range(32)]
+        for lane, (count, first, first_value, last, last_value) in changed:
+            lanes[lane][0:5] = [count, first & 0xffffffff, first_value, last & 0xffffffff, last_value]
+        for lane in range(32):
+            lanes[lane][5] = loaded(lane) if loaded else 0
+            lanes[lane][9] = returned(lane) if returned else 0
+        return {"lanes": lanes}
+
+    def test_controls_run_before_the_type0_and_type1_cases(self):
+        self.assertEqual(probe_type0_store.CASES, ("control-store", "type0-store", "type1-store",
+                                                   "control-atomic", "type0-atomic", "type1-atomic"))
+
+    def test_descriptors_keep_the_reported_words_apart_from_type_and_base(self):
+        reported = (0x04efd000, 0x00040011, 0x00017a00, 0x00005204, 0x0af00000, 0x00000000, 0x00000612, 0x00fff000)
+        self.assertEqual(probe_type0_store.case_words("type0-store", "gfx1030"), reported)
+        type1 = probe_type0_store.case_words("type1-atomic", "gfx1030")
+        self.assertEqual(type1[:3] + type1[4:], reported[:3] + reported[4:])
+        self.assertEqual(type1[3], 0x10005204)
+        for target, level in (("gfx1010", 1), ("gfx1100", 0)):
+            control = probe_type0_store.case_words("control-store", target)
+            self.assertEqual(control[3] >> 28, 9)
+            self.assertEqual((control[1] >> 20) & 0x1ff, 20)
+            self.assertEqual(((control[2] & 0x3fff) << 2 | control[1] >> 30) + 1, 64)
+            self.assertEqual((control[2] >> 14) & 0xffff, 0)
+            self.assertEqual((control[3] >> 20) & 0x1f, 0)
+            self.assertEqual(control[2] >> 31, level)
+        text = probe_type0_store.body("type0-store", "gfx1030")
+        self.assertIn("s_or_b32 s9, s19, 0x00040000", text)
+        self.assertIn("s_mov_b32 s11, 0x00005204", text)
+        self.assertIn("image_store v[30:33], v[34:35], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D", text)
+        self.assertNotIn("@", text)
+        self.assertIn("image_atomic_add v36", probe_type0_store.body("type0-atomic", "gfx1030"))
+
+    def test_every_case_assembles_for_rdna_targets(self):
+        for name in ("clang", "ld.lld"):
+            try:
+                hw_oracle.tool(name)
+            except SystemExit as error:
+                self.skipTest(str(error))
+        targets = subprocess.run([hw_oracle.tool("clang"), "--print-targets"], capture_output=True, text=True).stdout
+        if "amdgcn" not in targets:
+            self.skipTest("clang has no AMDGPU target")
+        for target in ("gfx1010", "gfx1030", "gfx1100"):
+            for case in probe_type0_store.CASES:
+                with self.subTest(target=target, case=case), tempfile.TemporaryDirectory() as tmp, \
+                        patch.object(hw_oracle, "target", return_value=target):
+                    self.assertTrue(hw_oracle.assemble(probe_type0_store.body(case, target), Path(tmp), False, **MODES).is_file())
+
+    def test_pattern_fills_the_buffer_after_the_rows(self):
+        data = probe_type0_store.pattern()
+        self.assertEqual(len(data) + 32 * 16, probe_type0_store.INPUT_BYTES)
+        self.assertEqual(data[:4], (0xa5a50000 ^ 128).to_bytes(4, "little"))
+        self.assertEqual(data[-4:], (0xa5a50000 ^ 16383).to_bytes(4, "little"))
+
+    def test_summary_reports_changes_loads_and_controls(self):
+        store = self.lanes([(1, (32, 0, 0x5e5e0000, 124, 0x5e5e001f))], loaded=lambda lane: 0x5e5e0000 | lane)
+        self.assertEqual(probe_type0_store.summary("control-store", store),
+                         "control-store: ran; 32 dwords changed, first at base+0x0 = 5e5e0000, last at base+0x7c = 5e5e001f; "
+                         "image_load returned 5e5e0000 00000000 00000000 00000000")
+        wrong = self.lanes([(1, (31, 0, 0x5e5e0000, 124, 0x5e5e001f))], loaded=lambda lane: 0x5e5e0000 | lane)
+        self.assertTrue(probe_type0_store.summary("control-store", wrong).endswith("; control failed"))
+        before = lambda lane: 0xa5a50000 ^ (1024 + lane)
+        atomic = self.lanes([(1, (32, 0, 0, 124, 0))], loaded=lambda lane: before(lane) + (0x01000000 | lane), returned=before)
+        self.assertFalse(probe_type0_store.summary("control-atomic", atomic).endswith("control failed"))
+        self.assertTrue(probe_type0_store.summary("control-atomic", self.lanes([(1, (32, 0, 0, 124, 0))])).endswith("control failed"))
+        self.assertEqual(probe_type0_store.summary("type0-store", self.lanes()),
+                         "type0-store: ran; no dword changed in base-0xe00..base+0xf000; image_load returned 00000000 00000000 00000000 00000000")
+        written = self.lanes([(0, (2, -8, 0x11, -4, 0x22)), (3, (1, 0x40, 0x33, 0x40, 0x33))])
+        self.assertEqual(probe_type0_store.summary("type1-atomic", written),
+                         "type1-atomic: ran; 3 dwords changed, first at base-0x8 = 00000011, last at base+0x40 = 00000033; "
+                         "image_load returned 00000000 00000000 00000000 00000000; image_atomic_add returned 00000000")
+        unfinished = self.lanes()
+        unfinished["lanes"][7][11] = 0
+        self.assertEqual(probe_type0_store.summary("type0-store", unfinished), "type0-store: error: the kernel did not finish every lane")
+
+    def test_a_fault_hang_or_failed_control_stops_the_remaining_cases(self):
+        ran = json.dumps({"case": "control-store", "target": "gfx1030", "words": [],
+                          **self.lanes([(1, (32, 0, 0x5e5e0000, 124, 0x5e5e001f))], loaded=lambda lane: 0x5e5e0000 | lane)})
+        results = {"control-store": subprocess.CompletedProcess([], 0, ran, ""),
+                   "type0-store": subprocess.CompletedProcess([], -6, "", "Memory access fault by GPU node-1\n"),
+                   "type1-store": subprocess.TimeoutExpired([], 60)}
+
+        def child(command, *, capture_output, text, timeout):
+            self.assertEqual((capture_output, text, timeout), (True, True, 60))
+            result = results[command[-1]]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch.object(probe_type0_store, "assemble_only") as assemble, patch.object(probe_type0_store.subprocess, "run", side_effect=child), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            reports = probe_type0_store.measure(["control-store", "type0-store", "type1-store", "control-atomic"], 60, False)
+        assemble.assert_called_once()
+        self.assertEqual([report["outcome"] for report in reports], ["ran", "fault", "not run", "not run"])
+        self.assertIn("type0-store: fault: the GPU or runtime reported an error (exit status -6): Memory access fault by GPU node-1",
+                      output.getvalue())
+        with patch.object(probe_type0_store, "assemble_only"), patch.object(probe_type0_store.subprocess, "run", side_effect=child), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            reports = probe_type0_store.measure(["control-store", "type0-store", "type1-store"], 60, True)
+        self.assertEqual([report["outcome"] for report in reports], ["ran", "fault", "hang"])
+        self.assertIn("type1-store: hang: the dispatch did not finish within 60 s", output.getvalue())
+        timed_out = probe_type0_store.outcome("type0-store", subprocess.CompletedProcess([], 1, "", "kernel timed out\n"), 60)
+        self.assertEqual(timed_out["outcome"], "hang")
+        failed = json.dumps({"case": "control-store", "target": "gfx1030", "words": [], **self.lanes()})
+        self.assertEqual(probe_type0_store.outcome("control-store", subprocess.CompletedProcess([], 0, failed, ""), 60)["outcome"], "control failed")
+
+    def test_cli_selects_cases_and_assembles_without_running(self):
+        with patch.object(probe_type0_store, "assemble_only") as assemble, patch.object(probe_type0_store, "measure") as measure:
+            self.assertEqual(probe_type0_store.main(["--assemble-only", "--no-atomics"]), 0)
+            assemble.assert_called_once_with(["control-store", "type0-store", "type1-store"])
+            measure.assert_not_called()
+        with patch.object(probe_type0_store, "measure", return_value=[{"outcome": "ran"}]) as measure:
+            self.assertEqual(probe_type0_store.main(["--case", "type0-atomic", "--case", "control-atomic", "--timeout", "9"]), 0)
+            measure.assert_called_once_with(["control-atomic", "type0-atomic"], 9, False)
+        with patch.object(probe_type0_store, "measure", return_value=[{"outcome": "ran"}, {"outcome": "hang"}]):
+            self.assertEqual(probe_type0_store.main([]), 1)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            probe_type0_store.main(["--case", "type0-atomic", "--no-atomics"])
 
 
 if __name__ == "__main__":
