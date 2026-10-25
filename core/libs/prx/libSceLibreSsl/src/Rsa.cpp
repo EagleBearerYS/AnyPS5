@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <bit>
 #include <climits>
 #include <cstddef>
@@ -12,39 +13,6 @@ struct LibreSslBignum {
     int dmax;
     int neg;
     int flags;
-};
-
-struct LibreSslRsaMethod {
-    const char* name;
-    void* operations[8];
-    int flags;
-    char* appData;
-    void* sign;
-    void* verify;
-    void* keygen;
-};
-
-struct LibreSslRsa {
-    int pad;
-    std::int64_t version;
-    const LibreSslRsaMethod* meth;
-    void* engine;
-    void* n;
-    void* e;
-    void* d;
-    void* p;
-    void* q;
-    void* dmp1;
-    void* dmq1;
-    void* iqmp;
-    void* exData;
-    int references;
-    int flags;
-    void* methodModN;
-    void* methodModP;
-    void* methodModQ;
-    void* blinding;
-    void* mtBlinding;
 };
 
 static_assert(sizeof(LibreSslBignum) == 24);
