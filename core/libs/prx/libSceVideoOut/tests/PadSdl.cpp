@@ -46,6 +46,8 @@ void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     Require((Pad::ReadState(0).buttons & Cross) != 0);
     button(SDL_CONTROLLER_BUTTON_A, false);
     Require((Pad::ReadState(0).buttons & Cross) == 0);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    button(SDL_CONTROLLER_BUTTON_A, false);
 
     ImeSetHostPadSink_nid_no_patch(&Forward);
     padInput.Update(window);
@@ -59,7 +61,7 @@ void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     PadData queued[64]{};
     const int count = Pad::Read(queued, 64, 0);
     Require(count >= 1);
-    Require(queued[count - 1].buttons == Intercepted);
+    for (int index = 0; index < count; ++index) Require(queued[index].buttons == Intercepted);
     button(SDL_CONTROLLER_BUTTON_A, false);
     Require((forwarded.back().buttons & Cross) == 0);
     trigger(true);

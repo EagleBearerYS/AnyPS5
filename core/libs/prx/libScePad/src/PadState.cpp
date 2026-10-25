@@ -464,6 +464,10 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
         slot.state.touchLeft == input.touchLeft && slot.state.touchRight == input.touchRight &&
         slot.state.hasMotion == input.hasMotion && slot.state.accel == input.accel && slot.state.gyro == input.gyro &&
         slot.state.touch == input.touch && slot.state.deviceKind == input.deviceKind && slot.state.intercepted == input.intercepted) return;
+    if (input.intercepted) {
+        slot.pressedSinceRead = 0;
+        if (!slot.state.intercepted) slot.queue.clear();
+    }
     const std::uint32_t pressed = input.buttons & ~slot.state.buttons;
     slot.timestamp = sceKernelGetProcessTime();
     if (pressed != 0) {
