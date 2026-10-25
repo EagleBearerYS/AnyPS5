@@ -1,0 +1,117 @@
+function	class	basis
+sceCamera2Close	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:103), no prototype; no-camera answer not in tree
+sceCamera2Finalize	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:18), no prototype; no-camera answer not in tree
+sceCamera2GetAttribute	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:43), no prototype; no-camera answer not in tree
+sceCamera2GetAutoExposureGain	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:38), no prototype; no-camera answer not in tree
+sceCamera2GetAutoWhiteBalance	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:59), no prototype; no-camera answer not in tree
+sceCamera2GetCalibrationData	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:75), no prototype; no-camera answer not in tree
+sceCamera2GetConfig	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:92), no prototype; no-camera answer not in tree
+sceCamera2GetContrast	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:17), no prototype; no-camera answer not in tree
+sceCamera2GetExposureGain	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:69), no prototype; no-camera answer not in tree
+sceCamera2GetFieldOfView	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:88), no prototype; no-camera answer not in tree
+sceCamera2GetFrameData	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:65), no prototype; no-camera answer not in tree
+sceCamera2GetGamma	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:78), no prototype; no-camera answer not in tree
+sceCamera2GetHue	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:56), no prototype; no-camera answer not in tree
+sceCamera2GetSaturation	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:35), no prototype; no-camera answer not in tree
+sceCamera2GetSharpness	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:107), no prototype; no-camera answer not in tree
+sceCamera2GetWhiteBalance	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:93), no prototype; no-camera answer not in tree
+sceCamera2Initialize	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:50), no prototype; no-camera answer not in tree
+sceCamera2IsAttached	D	parameterless (PS5 3.20 inventory, debt libSceCamera.md:20); sceCameraIsAttached's no-camera answer (Export.cpp:11-14, debt :9) depends on an index argument this declaration lacks; no source for the Camera2 form
+sceCamera2IsValidFrameData	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:89), no prototype; no-camera answer not in tree
+sceCamera2Open	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:71), no prototype; no-camera answer not in tree
+sceCamera2SetAttribute	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:53), no prototype; no-camera answer not in tree
+sceCamera2SetAutoExposureGain	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:110), no prototype; no-camera answer not in tree
+sceCamera2SetAutoWhiteBalance	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:108), no prototype; no-camera answer not in tree
+sceCamera2SetConfig	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:47), no prototype; no-camera answer not in tree
+sceCamera2SetContrast	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:26), no prototype; no-camera answer not in tree
+sceCamera2SetExposureGain	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:28), no prototype; no-camera answer not in tree
+sceCamera2SetGamma	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:99), no prototype; no-camera answer not in tree
+sceCamera2SetHue	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:77), no prototype; no-camera answer not in tree
+sceCamera2SetSaturation	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:58), no prototype; no-camera answer not in tree
+sceCamera2SetSharpness	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:21), no prototype; no-camera answer not in tree
+sceCamera2SetVideoSync	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:104), no prototype; no-camera answer not in tree
+sceCamera2SetWhiteBalance	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:33), no prototype; no-camera answer not in tree
+sceCamera2Start	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:72), no prototype; no-camera answer not in tree
+sceCamera2Stop	D	sceCamera2 API; parameterless (PS5 3.20 inventory, debt libSceCamera.md:57), no prototype; no-camera answer not in tree
+sceCameraAccGetData	D	camera microphone/accelerometer data; parameterless (PS5 3.20 inventory, debt libSceCamera.md:52); data layout and no-camera answer unknown
+sceCameraAudioClose	D	camera microphone/accelerometer data; parameterless (PS5 3.20 inventory, debt libSceCamera.md:60); data layout and no-camera answer unknown
+sceCameraAudioGetData	D	camera microphone/accelerometer data; parameterless (PS5 3.20 inventory, debt libSceCamera.md:76); data layout and no-camera answer unknown
+sceCameraAudioGetData2	D	camera microphone/accelerometer data; parameterless (PS5 3.20 inventory, debt libSceCamera.md:82); data layout and no-camera answer unknown
+sceCameraAudioOpen	D	camera microphone/accelerometer data; parameterless (PS5 3.20 inventory, debt libSceCamera.md:37); data layout and no-camera answer unknown
+sceCameraAudioReset	D	camera microphone/accelerometer data; parameterless (PS5 3.20 inventory, debt libSceCamera.md:114); data layout and no-camera answer unknown
+sceCameraChangeAppModuleState	D	system app-module/process focus; parameterless (PS5 3.20 inventory, debt libSceCamera.md:64); private service behaviour, and the libSceMbus camera-focus calls also throw (PendingExports.cpp:168,183,443,483)
+sceCameraClose	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraCloseByHandle	D	handle/device open-start-stop variant; parameterless (PS5 3.20 inventory, debt libSceCamera.md:118); the base calls' no-camera answer is unknown (debt :5)
+sceCameraDeviceOpen	D	handle/device open-start-stop variant; parameterless (PS5 3.20 inventory, debt libSceCamera.md:95); the base calls' no-camera answer is unknown (debt :5)
+sceCameraGetAttribute	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:15); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetAutoExposureGain	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:97); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetAutoWhiteBalance	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:101); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetCalibData	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:79); record layout and no-camera answer unknown
+sceCameraGetCalibDataForEve	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:24); record layout and no-camera answer unknown
+sceCameraGetCalibDataFromDevice	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:25); record layout and no-camera answer unknown
+sceCameraGetCalibDataFromDeviceForEve	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:39); record layout and no-camera answer unknown
+sceCameraGetCalibrationData	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:54); record layout and no-camera answer unknown
+sceCameraGetConfig	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraGetConnectedDeviceAndDriverMode	D	connection query; parameterless (PS5 3.20 inventory, debt libSceCamera.md:19); return-vs-output form and no-camera value not in tree
+sceCameraGetContrast	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:66); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetDefectivePixelCancellation	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:102); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetDeviceConfig	D	device/product/registry info; parameterless (PS5 3.20 inventory, debt libSceCamera.md:36); output layout and no-camera answer unknown
+sceCameraGetDeviceConfigWithoutHandle	D	device/product/registry info; parameterless (PS5 3.20 inventory, debt libSceCamera.md:94); output layout and no-camera answer unknown
+sceCameraGetDeviceID	D	device/product/registry info; parameterless (PS5 3.20 inventory, debt libSceCamera.md:85); output layout and no-camera answer unknown
+sceCameraGetDeviceIDWithoutOpen	D	device/product/registry info; parameterless (PS5 3.20 inventory, debt libSceCamera.md:14); output layout and no-camera answer unknown
+sceCameraGetDeviceInfo	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraGetExposureGain	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:48); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetFrameData	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraGetGamma	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:62); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetHue	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:117); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetLensCorrection	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:63); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetMmapConnectedCount	D	connection query; parameterless (PS5 3.20 inventory, debt libSceCamera.md:34); return-vs-output form and no-camera value not in tree
+sceCameraGetProductInfo	D	device/product/registry info; parameterless (PS5 3.20 inventory, debt libSceCamera.md:61); output layout and no-camera answer unknown
+sceCameraGetRegister	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:98); private, no public source
+sceCameraGetRegistryInfo	D	device/product/registry info; parameterless (PS5 3.20 inventory, debt libSceCamera.md:81); output layout and no-camera answer unknown
+sceCameraGetSaturation	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:55); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetSharpness	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:68); handle and value layout unknown, no-camera answer not in tree
+sceCameraGetVrCaptureInfo	D	device/product/registry info; parameterless (PS5 3.20 inventory, debt libSceCamera.md:41); output layout and no-camera answer unknown
+sceCameraGetWhiteBalance	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:40); handle and value layout unknown, no-camera answer not in tree
+sceCameraInitializeRegistryCalibData	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:16); record layout and no-camera answer unknown
+sceCameraIsConfigChangeDone	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:111); handle and value layout unknown, no-camera answer not in tree
+sceCameraIsConnectedForSystem	D	connection query; parameterless (PS5 3.20 inventory, debt libSceCamera.md:27); return-vs-output form and no-camera value not in tree
+sceCameraIsValidFrameData	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraOpen	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraOpenByModuleId	D	handle/device open-start-stop variant; parameterless (PS5 3.20 inventory, debt libSceCamera.md:74); the base calls' no-camera answer is unknown (debt :5)
+sceCameraRemoveAppModuleFocus	D	system app-module/process focus; parameterless (PS5 3.20 inventory, debt libSceCamera.md:100); private service behaviour, and the libSceMbus camera-focus calls also throw (PendingExports.cpp:168,183,443,483)
+sceCameraSetAppModuleFocus	D	system app-module/process focus; parameterless (PS5 3.20 inventory, debt libSceCamera.md:83); private service behaviour, and the libSceMbus camera-focus calls also throw (PendingExports.cpp:168,183,443,483)
+sceCameraSetAttribute	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraSetAttributeInternal	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:32); private, no public source
+sceCameraSetAutoExposureGain	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:115); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetAutoWhiteBalance	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:116); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetCalibData	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:45); record layout and no-camera answer unknown
+sceCameraSetCalibDataForEve	D	calibration data read/write; parameterless (PS5 3.20 inventory, debt libSceCamera.md:42); record layout and no-camera answer unknown
+sceCameraSetConfig	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraSetConfigInternal	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:31); private, no public source
+sceCameraSetContrast	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:23); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetDebugStop	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:109); private, no public source
+sceCameraSetDefectivePixelCancellation	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:84); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetDefectivePixelCancellationInternal	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:106); private, no public source
+sceCameraSetExposureGain	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:112); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetForceActivate	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:86); private, no public source
+sceCameraSetGamma	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:91); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetHue	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:51); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetLensCorrection	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:44); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetLensCorrectionInternal	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:73); private, no public source
+sceCameraSetProcessFocus	D	system app-module/process focus; parameterless (PS5 3.20 inventory, debt libSceCamera.md:90); private service behaviour, and the libSceMbus camera-focus calls also throw (PendingExports.cpp:168,183,443,483)
+sceCameraSetProcessFocusByHandle	D	system app-module/process focus; parameterless (PS5 3.20 inventory, debt libSceCamera.md:46); private service behaviour, and the libSceMbus camera-focus calls also throw (PendingExports.cpp:168,183,443,483)
+sceCameraSetRegister	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:29); private, no public source
+sceCameraSetSaturation	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:67); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetSharpness	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:49); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetTrackerMode	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:22); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetUacModeInternal	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:96); private, no public source
+sceCameraSetVideoSync	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:113); handle and value layout unknown, no-camera answer not in tree
+sceCameraSetVideoSyncInternal	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:30); private, no public source
+sceCameraSetWhiteBalance	D	image control/config of an opened camera; parameterless (PS5 3.20 inventory, debt libSceCamera.md:87); handle and value layout unknown, no-camera answer not in tree
+sceCameraStart	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraStartByHandle	D	handle/device open-start-stop variant; parameterless (PS5 3.20 inventory, debt libSceCamera.md:70); the base calls' no-camera answer is unknown (debt :5)
+sceCameraStop	D	PS4-title import declared without parameters; no-camera answer unknown, so it throws (debt libSceCamera.md:5, GuestCamera.cpp:37-46); only sceCameraIsAttached's answer is in tree (Export.cpp:11)
+sceCameraStopByHandle	D	handle/device open-start-stop variant; parameterless (PS5 3.20 inventory, debt libSceCamera.md:13); the base calls' no-camera answer is unknown (debt :5)
+sceCameraWaitForEveReady	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:80); private, no public source
+sceCameraWaitForLukeReady	D	system-only internal/register/debug/readiness control; parameterless (PS5 3.20 inventory, debt libSceCamera.md:105); private, no public source

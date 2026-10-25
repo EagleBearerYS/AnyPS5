@@ -1,0 +1,41 @@
+function	class	basis
+sceHidControlConnectPswDeviceForNearby	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:40); record layouts and no-device answer not in tree
+sceHidControlEnableMicBeamForming	D	system-wide controller/HID switch; parameterless, unknown signature (debt libSceHidControl.md:5); game-process result and error domain unknown
+sceHidControlGetPswAllEqBandValues	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:35); record layouts and no-device answer not in tree
+sceHidControlGetPswBatteryState	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:22); record layouts and no-device answer not in tree
+sceHidControlGetPswCommand	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:43); record layouts and no-device answer not in tree
+sceHidControlGetPswDeviceIdFromIdxAdd	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:44); record layouts and no-device answer not in tree
+sceHidControlGetPswDeviceInfo	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:41); record layouts and no-device answer not in tree
+sceHidControlGetPswDeviceName	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:24); record layouts and no-device answer not in tree
+sceHidControlGetPswDeviceNameForNearby	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:39); record layouts and no-device answer not in tree
+sceHidControlGetPswEqBandValues	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:34); record layouts and no-device answer not in tree
+sceHidControlGetPswEqPresetName	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:32); record layouts and no-device answer not in tree
+sceHidControlGetPswEqPresetSelection	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:30); record layouts and no-device answer not in tree
+sceHidControlGetPswNetworkLocale	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:38); record layouts and no-device answer not in tree
+sceHidControlGetPswSidetoneLevel	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:28); record layouts and no-device answer not in tree
+sceHidControlGetPswState	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:21); record layouts and no-device answer not in tree
+sceHidControlIsForceUpdateNeeded	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:8); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:20); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateGetReconnectStatus	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:19); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateGetStatus	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:16); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateIsReady	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:14); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateIsUpdateNeeded	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:12); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateIsUpdateNeededForMultiDevice	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:13); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateSendAppendixData	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:18); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateSendData	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:17); status codes, payloads and no-device answer unknown
+sceHidControlPswUpdateStart	D	accessory firmware update; parameterless, unknown signature (debt libSceHidControl.md:15); status codes, payloads and no-device answer unknown
+sceHidControlSetAllVibrationMute	D	system-wide controller/HID switch; parameterless, unknown signature (debt libSceHidControl.md:6); game-process result and error domain unknown
+sceHidControlSetCollaboInputSettingOverrideProcess	D	system-wide controller/HID switch; parameterless, unknown signature (debt libSceHidControl.md:10); game-process result and error domain unknown
+sceHidControlSetForceAdvancedVibrationMode	D	system-wide controller/HID switch; parameterless, unknown signature (debt libSceHidControl.md:11); game-process result and error domain unknown
+sceHidControlSetPswCommand	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:42); record layouts and no-device answer not in tree
+sceHidControlSetPswConsoleMute	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:25); record layouts and no-device answer not in tree
+sceHidControlSetPswDeviceName	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:23); record layouts and no-device answer not in tree
+sceHidControlSetPswEqBandValues	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:33); record layouts and no-device answer not in tree
+sceHidControlSetPswEqPresetName	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:31); record layouts and no-device answer not in tree
+sceHidControlSetPswEqPresetSelection	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:29); record layouts and no-device answer not in tree
+sceHidControlSetPswNetworkLocale	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:37); record layouts and no-device answer not in tree
+sceHidControlSetPswResetSettings	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:36); record layouts and no-device answer not in tree
+sceHidControlSetPswSidetoneLevel	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:27); record layouts and no-device answer not in tree
+sceHidControlSetPswSpeakerVolume	D	Psw accessory state or setting; parameterless, unknown signature (debt libSceHidControl.md:26); record layouts and no-device answer not in tree
+sceHidControlSetRemoteMergeProcess	D	system-wide controller/HID switch; parameterless, unknown signature (debt libSceHidControl.md:9); game-process result and error domain unknown
+sceHidControlSetVibrationTriggerEffectWeakForce	D	system-wide controller/HID switch; parameterless, unknown signature (debt libSceHidControl.md:7); game-process result and error domain unknown; not the done scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse (libScePad/Export.cpp:414)

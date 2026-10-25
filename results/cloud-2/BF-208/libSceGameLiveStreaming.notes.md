@@ -1,0 +1,27 @@
+# libSceGameLiveStreaming (42 todo: D 42)
+
+- **What it is:** game-side control of PS live broadcasting: broadcast permission and settings, the separate-mode broadcast screen, social feedback (viewer comments and commands), standby-screen resources, callbacks, live-viewer launch and debug broadcast.
+- **Existing state** (`core/libs/prx/libSceGameLiveStreaming/Export.cpp`):
+  - `g_mutex` and `g_initialized` (`:12-13`).
+  - Errors: INVALID_ARGUMENT 0x80A00002, ALREADY_INITIALIZED 0x80A00003, NOT_INITIALIZED 0x80A00004 (`:14-16`).
+  - 5 done:
+    - Initialize requires a 0x4000-byte heap.
+    - Terminate returns NOT_INITIALIZED before Initialize.
+    - GetCurrentStatus2 (`:38`) writes a 72-byte inactive status: user -1, everything else 0, measured from the module.
+    - GetProgramInfo clears 0x134C bytes.
+    - EnableLiveStreaming (`:265`) throws before Initialize, because its error is unconfirmed; otherwise it accepts both values and changes nothing.
+  - The model is that no broadcast is ever on air.
+- **Counts:** A 0, B 0, C 0, D 42.
+- **D families:**
+  - Broadcast settings and permissions (15): PermitLiveStreaming, PermitServerSideRecording, SetMaxBitrate, SetMetadata, Set/ClearSpoilerTag, SetGuardAreas, SetCameraFrameSetting, Set(Default)ServiceProviderPermission, SetInvitationSessionId, SetLinkCommentPreset, SetStandbyScreenResource, Start/StopGenerateStandbyScreenResource.
+  - Social feedback (11): Enable, GetMessages(Count), Set/Clear preset commands and descriptions, ClearMessages, PostSocialMessage, and Start/Stop/Apply message filtering.
+  - Broadcast screen and separate mode (7): Screen Initialize, InitializeSeparateModeParameter, Terminate, Open/Configure/CloseSeparateMode and SetMode.
+  - Callbacks (3), status and layout queries (2: GetCurrentStatus, GetCurrentBroadcastScreenLayout), LaunchLiveViewer(A) (2) and Start/StopDebugBroadcast (2).
+  - Why they are D:
+    - Every row except GetCurrentStatus is `(void)` with "unknown signature" in the debt.
+    - Setters may validate pointers or values, and getters may write outputs, so 0 cannot be returned for every input.
+    - EnableLiveStreaming's "accepted, no effect" answer is not measured for any other call.
+  - CheckCallback: nothing can be registered while RegisterCallback throws, but its answer before and after Initialize is not in the tree.
+  - GetCurrentStatus has a typed declaration and a debt measurement (clears 72 bytes, copies 12 bytes from service command 9). The meaning of those bytes, their value with nothing on air, and the init and null checks are still unknown.
+- **Batch proposal:** none (no A/B/C rows). The existing test is `guest_game_live_streaming_tests` (`core/libs/tests/GuestGameLiveStreaming.cpp`, registered at `core/libs/CMakeLists.txt:603` and `:607`).
+- **Caveats:** the debt already cites fpPS4 `ps4_libscegamelivestreaming.pas` and Orbital `tools/ida/db_types.json` at pinned commits, but only for EnableLiveStreaming's signature. If those files also give PS4 prototypes for the Permit/Set/Screen/social-feedback calls (not checked here; no network), the inactive-broadcast setters could move to C or B-S. Their argument checks would still need the module.

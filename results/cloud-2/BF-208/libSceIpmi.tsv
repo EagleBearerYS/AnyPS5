@@ -1,0 +1,55 @@
+function	class	basis
+_ZN4IPMI4impl11SessionImpl27respondToAsyncMethodRequestEjiPKvm	D	IPMI session message call (parameter types only from the mangled name; debt: signatures and behaviour unverified): reply framing, return codes and SessionImpl layout private; no IPMI session exists without a server, and the kernel ipmimgr_call is D (libkernel_sys/Export.Discovery.cpp:110)
+_ZN4IPMI4impl11SessionImpl27respondToAsyncMethodRequestEjjiPKNS_8DataInfoEj	D	IPMI session message call (parameter types only from the mangled name; debt: signatures and behaviour unverified): reply framing, DataInfo layout, return codes and SessionImpl layout private; no IPMI session exists without a server
+_ZN4IPMI4impl11SessionImpl6getMsgEjPvPmmPj	D	IPMI session message call (parameter types only from the mangled name; debt: signatures and behaviour unverified): queue semantics, return codes and SessionImpl layout private; no IPMI session exists without a server
+_ZN4IPMI4impl11SessionImpl7destroyEv	D	IPMI::impl::SessionImpl lifetime (debt: signatures and behaviour unverified): class layout, vtable and ownership private
+_ZN4IPMI4impl11SessionImpl7sendMsgEjPKvmPj	D	IPMI session message call (parameter types only from the mangled name; debt: signatures and behaviour unverified): queue semantics, return codes and SessionImpl layout private; no IPMI session exists without a server
+_ZN4IPMI4impl11SessionImpl9getServerEv	D	IPMI::impl::SessionImpl accessor: return type and member offset not in the mangled name or any public source
+_ZN4IPMI4impl11SessionImpl9tryGetMsgEjPvPmm	D	IPMI session message call (parameter types only from the mangled name; debt: signatures and behaviour unverified): queue semantics, return codes and SessionImpl layout private; no IPMI session exists without a server
+_ZN4IPMI4impl11SessionImplC1Ev	D	IPMI::impl::SessionImpl constructor (Itanium C1): class layout, vtable and member defaults private
+_ZN4IPMI4impl11SessionImplC2Ev	D	IPMI::impl::SessionImpl constructor (Itanium C2): class layout, vtable and member defaults private
+_ZN4IPMI4impl11SessionImplD0Ev	D	IPMI::impl::SessionImpl destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI4impl11SessionImplD1Ev	D	IPMI::impl::SessionImpl destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI4impl11SessionImplD2Ev	D	IPMI::impl::SessionImpl destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI6Client6Config14MsgQueueConfig20estimateMsgQueueSizeEmj	D	IPMI client memory-size estimate: the console library's size formula and return type are not public
+_ZN4IPMI6Client6Config14MsgQueueConfigC1Ev	D	IPMI::Client::Config::MsgQueueConfig constructor: field layout and default values not public
+_ZN4IPMI6Client6Config14MsgQueueConfigC2Ev	D	IPMI::Client::Config::MsgQueueConfig constructor: field layout and default values not public
+_ZN4IPMI6Client6Config24estimateClientMemorySizeEv	D	IPMI client memory-size estimate: the console library's size formula and return type are not public
+_ZN4IPMI6Client6Config26SyncMethodInvocationConfigC1Ev	D	IPMI::Client::Config::SyncMethodInvocationConfig constructor: field layout and default values not public
+_ZN4IPMI6Client6Config26SyncMethodInvocationConfigC2Ev	D	IPMI::Client::Config::SyncMethodInvocationConfig constructor: field layout and default values not public
+_ZN4IPMI6Client6Config27AsyncMethodInvocationConfigC1Ev	D	IPMI::Client::Config::AsyncMethodInvocationConfig constructor: field layout and default values not public
+_ZN4IPMI6Client6Config27AsyncMethodInvocationConfigC2Ev	D	IPMI::Client::Config::AsyncMethodInvocationConfig constructor: field layout and default values not public
+_ZN4IPMI6Client6ConfigC1Ev	D	IPMI::Client::Config constructor: field layout and default values not public
+_ZN4IPMI6Client6ConfigC2Ev	D	IPMI::Client::Config constructor: field layout and default values not public
+_ZN4IPMI6Client6createEPPS0_PKNS0_6ConfigEPvS6_	D	IPMI::Client::create(Client**, const Config*, void*, void*) from the mangled name: object layout, vtable slot order (connect/invoke are virtual, not exported) and the two void* not public; no system service to connect to
+_ZN4IPMI6ClientC2Ev	D	IPMI::Client constructor (Itanium C2): class layout and vtable private
+_ZN4IPMI6ClientD0Ev	D	IPMI::Client destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI6ClientD1Ev	D	IPMI::Client destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI6ClientD2Ev	D	IPMI::Client destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI6Server12EventHandler15onSessionKilledEPNS_7SessionE	D	default virtual of IPMI::Server::EventHandler: the base-class result is not public; no IPMI server exists on the host to dispatch it
+_ZN4IPMI6Server12EventHandler20onSyncMethodDispatchEPNS_7SessionEjPKNS_8DataInfoEjPNS_10BufferInfoEj	D	default virtual of IPMI::Server::EventHandler: the base-class result and the DataInfo/BufferInfo layouts are not public; no IPMI server exists on the host to dispatch it
+_ZN4IPMI6Server12EventHandler20onSyncMethodDispatchEPNS_7SessionEjPvmmS4_m	D	default virtual of IPMI::Server::EventHandler: the base-class result is not public; no IPMI server exists on the host to dispatch it
+_ZN4IPMI6Server12EventHandler21onAsyncMethodDispatchEPNS_7SessionEjjPKNS_8DataInfoEj	D	default virtual of IPMI::Server::EventHandler: the base-class result and the DataInfo layout are not public; no IPMI server exists on the host to dispatch it
+_ZN4IPMI6Server12EventHandler21onAsyncMethodDispatchEPNS_7SessionEjjPvmS4_m	D	default virtual of IPMI::Server::EventHandler: the base-class result is not public; no IPMI server exists on the host to dispatch it
+_ZN4IPMI6Server12EventHandlerD0Ev	D	IPMI::Server::EventHandler destructor (Itanium D0/D1/D2): whether the base has members, and its vtable, are not public
+_ZN4IPMI6Server12EventHandlerD1Ev	D	IPMI::Server::EventHandler destructor (Itanium D0/D1/D2): whether the base has members, and its vtable, are not public
+_ZN4IPMI6Server12EventHandlerD2Ev	D	IPMI::Server::EventHandler destructor (Itanium D0/D1/D2): whether the base has members, and its vtable, are not public
+_ZN4IPMI6Server6ConfigC1Ev	D	IPMI::Server::Config constructor: field layout and default values not public
+_ZN4IPMI6Server6ConfigC2Ev	D	IPMI::Server::Config constructor: field layout and default values not public
+_ZN4IPMI6Server6createEPPS0_PKNS0_6ConfigEPvS6_	D	IPMI::Server::create(Server**, const Config*, void*, void*) from the mangled name: object layout, vtable and the two void* not public; serving needs the kernel IPMI manager (ipmimgr_call D, libkernel_sys/Export.Discovery.cpp:110)
+_ZN4IPMI6ServerC2Ev	D	IPMI::Server constructor (Itanium C2): class layout and vtable private
+_ZN4IPMI6ServerD0Ev	D	IPMI::Server destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI6ServerD1Ev	D	IPMI::Server destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI6ServerD2Ev	D	IPMI::Server destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI7Session6Config25estimateSessionMemorySizeEv	D	IPMI session memory-size estimate: the console library's size formula and return type are not public
+_ZN4IPMI7SessionC2Ev	D	IPMI::Session constructor (Itanium C2): class layout and vtable private
+_ZN4IPMI7SessionD0Ev	D	IPMI::Session destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI7SessionD1Ev	D	IPMI::Session destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZN4IPMI7SessionD2Ev	D	IPMI::Session destructor (Itanium D0/D1/D2): class layout, vtable and owned resources private
+_ZNK4IPMI4impl11SessionImpl16isPeerPrivilegedEv	D	IPMI::impl::SessionImpl accessor: return type, member offset and privilege rule not public; no session exists without a server
+_ZNK4IPMI6Server6Config29estimateTempWorkingMemorySizeEv	D	IPMI server memory-size estimate: the console library's size formula and return type are not public
+sceIpmiMgrGetIpcBlockerPid	D	parameterless declaration from the PS5 3.20 export table (debt), no public prototype; IPMI manager debugging of other processes (IPC blocker PID)
+sceIpmiMgrGetIpcBlockerPidByAppId	D	parameterless declaration from the PS5 3.20 export table (debt), no public prototype; IPMI manager debugging of other processes (IPC blocker PID)
+sceIpmiMgrPauseDump	D	parameterless declaration from the PS5 3.20 export table (debt), no public prototype; IPMI manager dump control, private dump format
+sceIpmiMgrRaiseExceptionToPid	D	parameterless declaration from the PS5 3.20 export table (debt), no public prototype; raises an exception in another process through the IPMI manager
+sceIpmiMgrStartDump	D	parameterless declaration from the PS5 3.20 export table (debt), no public prototype; IPMI manager dump control, private dump format

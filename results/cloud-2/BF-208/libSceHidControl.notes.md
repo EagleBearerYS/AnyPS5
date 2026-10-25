@@ -1,0 +1,24 @@
+# libSceHidControl (BF-208 classification, upstream main e7e3e9c198)
+
+- **What it is (by export names):** system-side HID control, in three groups.
+  - Controller-wide switches: vibration mute, a trigger-effect weak force, forced advanced vibration, mic beam forming, remote merge and collabo-input override processes.
+  - A "Psw" accessory's state and settings: state, battery, device name, console mute, speaker volume, sidetone, EQ presets and bands, reset, network locale, nearby pairing, and raw commands.
+  - That accessory's firmware update.
+  - 40 declared, 0 done, 40 todo.
+- **Existing state:**
+  - `core/libs/prx/libSceHidControl/Export.cpp:11-209`: all 40 bodies are `NotImplemented_nid_no_patch`, after `APS5_DUMMY_FUN` at `:9`. `include/Api.hpp` declares them `(void)`.
+  - No state objects and no CMakeLists.txt. The library is built by the generic rule in `core/libs/CMakeLists.txt:158-160`.
+  - Debt `docs/dev/debt/libSceHidControl.md:5-44` lists each function as "unknown signature".
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 40.
+- **B and C families:** none.
+  - The Psw accessory is never present here, but the tree has no answer for its absence: no error domain, no "not connected" code and no measured result.
+  - The controller-wide switches are system settings whose game-process result is unmeasured. PM-088 classed libScePad's comparable system switches (`scePadDisableVibration` and others) as D for the same reason.
+- **D families (40):**
+  - Psw accessory state and settings (24): `sceHidControlGetPsw*`/`SetPsw*`, `ConnectPswDeviceForNearby`, `GetPswDeviceIdFromIdxAdd`. Record layouts (EQ bands, names, locale, commands, device info) and the no-device answer are not in the tree.
+  - Accessory firmware update (10): the nine `sceHidControlPswUpdate*` and `sceHidControlIsForceUpdateNeeded`. Status codes, payloads and the no-device answer are unknown.
+  - Controller-wide switches (6): EnableMicBeamForming, SetAllVibrationMute, SetVibrationTriggerEffectWeakForce, SetForceAdvancedVibrationMode, SetRemoteMergeProcess, SetCollaboInputSettingOverrideProcess. The signature, error domain and game-process result are unknown.
+- **Batch proposal:** none, because there is no A, B or C family. No guest test exists: the library has no CMakeLists.txt and nothing under `core/libs/tests/` covers it.
+- **Caveats:**
+  - `sceHidControlSetVibrationTriggerEffectWeakForce` is not an A of the done `scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse` (`core/libs/prx/libScePad/Export.cpp:414`, which ignores its bool and returns PAD_OK). They are different exports in different libraries, and nothing in the tree says they share behaviour.
+  - `scePadRegisterCollaboInputMgrProcess` (`libScePad/Export.cpp:891`) also still throws, so the collabo-input pair has no implemented side.
+  - "Psw" is not explained anywhere in the tree. The grouping is by export name only.

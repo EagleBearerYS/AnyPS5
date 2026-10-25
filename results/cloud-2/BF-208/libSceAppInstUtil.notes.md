@@ -1,0 +1,35 @@
+# libSceAppInstUtil (117 todo: A 0, B-S 1, B-M 0, B-L 0, C 4, D 112)
+
+- **What it is:** the client of the console's app installer service. It installs packages and title directories, uninstalls apps, patches, add-ons and themes, and reports install status and progress. It also manages app slots, install location and storage, moves apps between storages, handles disc installs, data-disc copies and BD emulation, and makes PSN-linked installs (Share Play, PS Now, PS4 cloud). System software and homebrew package installers use it. Games reach their own install state through libScePlayGo and libSceAppContent.
+- **Existing state:** 0 done.
+  - All 117 bodies in `core/libs/prx/libSceAppInstUtil/Export.cpp` (lines 9-574) call `NotImplemented_nid_no_patch`. `include/Api.hpp` only forward-declares `struct AppInstallProgressInfo`. There is no state, no constants and no error codes.
+  - There is no CMakeLists.txt. The library is built by the default branch of the prx glob (`core/libs/CMakeLists.txt:159`). No guest test exists: `core/libs/tests` has no AppInstUtil source.
+- **Prototypes:**
+  - 16 are declared with real parameter lists or `(void)`. Per the debt file's history, seven follow SharpProspero (1b5004d77f): Initialize, Terminate, AppInstallAll, AppInstallTitleDir, AppIsInInstalling, AppExists and AppUnInstall. AppIsInUpdating, AppGetSize, AppInstallPkg, the three UnInstall variants and the three progress/slot queries were restored from a system module and its callers (99e5cb5c1a, 964fe11168).
+  - The debt still lists AppInstallPkg's second argument as opaque, and the 48-, 4- and 4-byte replies of GetInstallProgressInfo, GetInstallProgress and GetPrimaryAppSlot as unresolved.
+  - 3 have no prototype (PrepareOverwritePkg, RecoverApp, UnInstallTheme). 98 are `(void)` with "unknown signature" in `docs/dev/debt/libSceAppInstUtil.md`.
+- **Counts:** A 0, B-S 1, B-M 0, B-L 0, C 4 (2 real behaviour, 2 silent stubs), D 112.
+- **B-S (1):** `sceAppInstUtilAppExists(titleId, int32_t* exists)` reports that the running title exists. It compares the ID with `GetAppTitleId_nid_postfix` (`libkernel/AppMetadata/src/AppMetadata.cpp:131`), as `sceSystemServiceGetAppId` does (`libSceSystemService/Export.cpp:461`). Other title IDs and null throw. The "true" value (1) must be confirmed.
+- **C, real behaviour (2):**
+  - `AppIsInInstalling` returns 0 with `*installing = 0`.
+  - `AppIsInUpdating` returns 0 with `*updating = false` for the running title; other IDs throw.
+  - Both rest on the host having no installer or updater, and on the done neighbour libScePlayGo reporting the running title fully installed (`libScePlayGo/Export.cpp:184` LOCAL_FAST, `:153` ETA 0; `debt/libScePlayGo.md`). Null pointers throw.
+- **C, silent stubs (2):** `Initialize` and `Terminate` return 0 with no installer to connect to, as `sceRemoteplayInitialize`/`Terminate` do for their absent service (`libSceRemoteplay/Export.cpp:20, :25`). They need a title. CONTRIBUTING allows a silent stub only when it unblocks a title and only affects the UI, and these are not UI.
+- **D families (112):**
+  - Install and download job control (19): Install, StartInstall, InstallPatch, InstallAddons, InstallByPackage, RegisterDownload, Pause/Resume/Cancel of installs and patches, CancelInstallAddcont, CancelForMultiInstall, GetInstallOptions, AppInstallContentPush, AppInstallAll, AppInstallTitleDir and AppInstallPkg. Task IDs, enums and errors are not public, downloads need PSN, and packages need PKG/PFS keys that are not public (the same basis as libSceBgft in PM-088). Installing a title directory on a PC would mean relinking a new title.
+  - Disc install, copy and BD emulation (16): inserted-disc IDs, role and total, compilation-disc info, disc game install, data-disc copy and progress, multi-disc progress, Mount/UnmountBdEmu. The host has no BD drive, but these signatures and the no-disc answer are unknown, so they are not C.
+  - Uninstall (10): 5 with unknown signatures, 4 declared (`UnInstall`, `UnInstallAddcont`, `UnInstallPat`, `UnInstallTypes`), and the Theme variant with no prototype. The result for the running or an absent title, the type bits and the errors are not public.
+  - Size and move jobs (11): all-app and other-app sizes, request, cancel and progress of moves, move-error list, irremovable list, GetContentSize/2.
+  - Add-on database (10): AppGetAddcontInfo/ByContentId/Num/ListTotalSize, GetAddcontInfoList2/3, GetAddcontInstalledStatus, GetAddons, ClearAddcontInfoCache, NoRelatedAddcontTitleList. libSceAppContent's done title-side addcont calls are a different API with known prototypes. No forward is possible without these prototypes.
+  - Status and progress (6): the four install-status queries plus GetInstallProgress and GetInstallProgressInfo (reply fields unresolved).
+  - Slots and configs (6), restore and workspace (6), title mapping, system version and parental level (6), PSN install links (5), storage and location (4).
+  - Pairs and singletons: download-install policy (2), install-type changes (2), latest-patch check (2), package/metadata destroy (2), AppGetSize (what the size covers is not known), UpdateStartTime, PrepareOverwritePkg, RecoverApp, Json.
+- **Batch proposal:** none. No A, B or C family reaches 6 rows.
+  - The 5 non-D rows fit one small PR, `feat(appinstutil): answer installer queries for the running title`. It should go in only with a title that imports them.
+  - That PR adds `core/libs/prx/libSceAppInstUtil/CMakeLists.txt`, with the default library lines plus a `guest_app_inst_util_tests` executable registered the way `libScePlayGo/CMakeLists.txt` does (`add_test_executable` and `add_test(NAME guest_playgo ...)`).
+  - Tests: Initialize then Terminate return 0. IsInInstalling writes 0. IsInUpdating and Exists answer false and 1 for the running title ID. Another title ID and null pointers throw.
+- **Caveats:**
+  - The real-behaviour rows rest on PlayGo's all-installed model, not on a console measurement.
+  - `AppExists` could answer 0 for any other title, since the host installs nothing else. The tree's precedent (`sceSystemServiceGetAppId`) throws for other titles instead, so the row keeps that choice.
+  - Throws for unknown inputs should use `APS5_INVALID_ARG_EX` (`libc/include/General.hpp:96`) for null pointers. A `NotImplemented_nid_no_patch` branch keeps the row counted as todo by `tools/progress.py`, as it does for `sceSystemServiceGetAppId` today.
+  - The SharpProspero AppInstUtil link is no longer in the current debt file. Only its history and other debt files cite SharpProspero.

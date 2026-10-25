@@ -1,0 +1,47 @@
+function	class	basis
+sceAgcDriverAcquireHDRScopesACQ	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:163), signature and behaviour unverified (debt libSceAgcDriver.md:14); HDR-scopes asynchronous compute queue is a private driver service with no in-tree model
+sceAgcDriverAcquireRazorACQ	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:9), no debt entry; Razor GPU-profiler queue, a private tool interface with no prototype in the tree
+sceAgcDriverCreateQueue	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:14), no debt entry; the queue context is known only as SubmitCommandBuffer reads it (queue id 4 bytes in, Submit/src/CommandBuffer.cpp:15, KytyPS5 per debt :10); creation arguments and errors are not in the tree
+sceAgcDriverCwsrResumeAcq	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:19), no debt entry; compute wave save/restore of an asynchronous compute queue is driver/firmware state with no prototype
+sceAgcDriverCwsrSuspendAcq	D	same as sceAgcDriverCwsrResumeAcq (core/libs/prx/libSceAgcDriver/Export.cpp:24)
+sceAgcDriverDebugHardwareStatus	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:29), no debt entry; hardware status layout private
+sceAgcDriverDestroyQueue	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:34), no debt entry; pairs with sceAgcDriverCreateQueue, whose arguments are not in the tree
+sceAgcDriverGetHsOffchipParam	D	signature (uint16_t*, uint16_t*) from ps5-vulkan (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:54), but the two values' meaning, initial state and relation to sceAgcDriverSetHsOffchipParam (State/src/Configuration.cpp:24, keeps nothing) are unknown (debt :67)
+sceAgcDriverGetPaDebugInterfaceVersion	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:39), no debt entry; the version value is not in the tree (sceAgcDriverIsPaDebug returning 0, Unimplemented.cpp:108, gives no version)
+sceAgcDriverGetRegShadowInfo	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:44), no debt entry; register-shadow info layout private and the execution model keeps no shadow memory
+sceAgcDriverGetRegShadowInfoAgr	D	same as sceAgcDriverGetRegShadowInfo (core/libs/prx/libSceAgcDriver/Export.cpp:49)
+sceAgcDriverGetReservedDmemForAgc	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:54), no debt entry; the console's reserved direct-memory amount and how it is returned are not in the tree
+sceAgcDriverGetWorkloadStreamInfo	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:59), no debt entry; streams are kept only as a registered bitmask (Resource/src/Registration.cpp:54); the info layout and prototype are not in the tree
+sceAgcDriverHp3dLockEnd	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:172), signature and behaviour unverified (debt :14)
+sceAgcDriverHp3dLockStart	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:177), signature and behaviour unverified (debt :14)
+sceAgcDriverIDHSSubmit	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:64), no debt entry; IDHS submission is a private driver path with no prototype
+sceAgcDriverIsEsvmProcess	D	parameterless predicate (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:182, debt :14); no measured console answer for a PS5 title and no return encoding in the tree
+sceAgcDriverModuleRegistration	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:69), no debt entry; private driver registration
+sceAgcDriverNotifyDefaultStates	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:74), no debt entry; CLEAR_STATE defaults are executed (Execution/src/Pm4.cpp:300) but the notification's arguments are not in the tree
+sceAgcDriverPassInfoDownward	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:79), no debt entry; libSceAgc firmware sends {7: memory, 8: size, 0xb: AMM flag} through it (debt libSceAgc.md:43), but the prototype and the kernel-driver consumer are private
+sceAgcDriverPatchClearState	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:84), no debt entry; the patch format is not in the tree
+sceAgcDriverReleaseHDRScopesACQ	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:187, debt :14); pairs with sceAgcDriverAcquireHDRScopesACQ
+sceAgcDriverSetFlip	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:89), no debt entry; the 6-dword flip packet is already built by sceAgcDcbSetFlip (core/libs/prx/libSceAgc/DcbState/src/Display.cpp:13) and sized by sceAgcDriverGetSetFlipPacketSizeInDwords (Submit/src/Dcb.cpp:45), but the driver-level prototype is not in the tree (OpenAGC include/agcdriver.h is cited only for RegisterDefaultOwner, debt :5)
+sceAgcDriverSetHsOffchipParamDirect	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:94), no debt entry; sceAgcDriverSetHsOffchipParam keeps nothing (State/src/Configuration.cpp:24) and the direct variant's arguments are unknown
+sceAgcDriverSetValueToSharedGds	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:196, debt :14); shared GDS slot layout and arguments unknown
+sceAgcDriverSetWorkloadComplete	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:99), no debt entry; the 12-dword packet is built by sceAgcDcbSetWorkloadComplete (core/libs/prx/libSceAgc/DcbState/src/Workload.cpp:30) and sized by Submit/src/Dcb.cpp:53, but the driver-level prototype is not in the tree
+sceAgcDriverSetWorkloadStreamInactive	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:201, debt :14); only its 9-dword size is known (Submit/src/Dcb.cpp:57) and libSceAgc's sceAgcDcbSetWorkloadStreamInactive also throws for a registered stream (core/libs/prx/libSceAgc/DcbState/src/Workload.cpp:60), so the layout is unknown
+sceAgcDriverSetWorkloadsActive	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:104), no debt entry; the 18-dword packet is built by sceAgcDcbSetWorkloadsActive (core/libs/prx/libSceAgc/DcbState/src/Workload.cpp:41) and sized by Submit/src/Dcb.cpp:49, but the driver-level prototype is not in the tree
+sceAgcDriverSetupAsyncGraphics	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:109), no debt entry; asynchronous graphics queue setup is private
+sceAgcDriverSetupRegisterShadow	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:114), no debt entry; register-shadowing setup is private and the execution model keeps no shadow memory
+sceAgcDriverSubmitMultiCommandBuffersDirect	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:119), no debt entry; sceAgcDriverSubmitMultiCommandBuffers is implemented (Submit/src/CommandBuffer.cpp:25), but what the Direct variant takes instead of the queue context is not in the tree
+sceAgcDriverSubmitReprojectionAcb	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:206, debt :14); VR reprojection submission, private
+sceAgcDriverSubmitToHDRScopesACQ	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:124), no debt entry; HDR-scopes queue submission, private
+sceAgcDriverSubmitToRazorACQ	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:129), no debt entry; Razor profiler queue submission, a private tool interface
+sceAgcDriverSuspendPointSubmit	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:134), no debt entry; suspend points are absent (sceAgcDriverIsSuspendPointInFlight returns 0x8A6D0001, Unimplemented.cpp:104, a retail constant per debt :34) but this export is not among the retail constant bodies, so its answer is unknown
+sceAgcDriverSuspendPointSubmitCdbg	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:211, debt :14); suspend-point submission for the debugger, private
+sceAgcDriverSuspendPointSubmitDirect	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:139), no debt entry; as sceAgcDriverSuspendPointSubmit
+sceAgcDriverSysEnableSubmitDone45Exception	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:144), no debt entry; system-only driver switch
+sceAgcDriverSysGetClientNumber	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:149), no debt entry; system-only driver client query
+sceAgcDriverSysGetGfxAppGpuResetStatus	D	parameterless (core/libs/prx/libSceAgcDriver/Unimplemented.cpp:216, debt :14); system-only GPU reset status
+sceAgcDriverSysIsGameClosed	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:154), no debt entry; system-only predicate with no measured answer
+sceAgcDriverTmpInitIdhs	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:159), no debt entry; private IDHS initialisation
+sceAgcDriverUserDataWritePacket	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:164), no debt entry; the user-data packet size is known (sceAgcDriverUserDataGetPacketSize, Submit/src/Dcb.cpp:65: 3, 4 or payload+7 dwords) but its layout and prototype are not in the tree; the done UserDataImmediateWrite/Packet write nothing (Unimplemented.cpp:136, :140)
+sceAgcDriverUserDataWritePopMarker	D	parameterless (core/libs/prx/libSceAgcDriver/Export.cpp:169), no debt entry; the driver's user-data packets (payload+7 dwords, Submit/src/Dcb.cpp:65) are not libSceAgc's NOP marker packets (payload+1, core/libs/prx/libSceAgc/DcbState/src/Marker.cpp:62), and their layout and prototype are not in the tree
+sceAgcDriverUserDataWritePushMarker	D	as sceAgcDriverUserDataWritePopMarker (core/libs/prx/libSceAgcDriver/Export.cpp:174; libSceAgc counterpart Marker.cpp:66)
+sceAgcDriverUserDataWriteSetMarker	D	as sceAgcDriverUserDataWritePopMarker (core/libs/prx/libSceAgcDriver/Export.cpp:179; libSceAgc counterpart Marker.cpp:55)

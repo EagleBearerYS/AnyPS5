@@ -1,0 +1,43 @@
+function	class	basis
+sceGameLiveStreamingApplySocialFeedbackMessageFilter	D	social feedback (viewer messages and commands): unknown signature (docs/dev/debt/libSceGameLiveStreaming.md Unknown function info); filter/message layouts and the answer with no broadcast are not in the tree
+sceGameLiveStreamingCheckCallback	D	callback dispatch: unknown signature (debt); nothing can be registered while sceGameLiveStreamingRegisterCallback throws, but CheckCallback's answer then (and before Initialize) is not in the tree or a measurement
+sceGameLiveStreamingClearPresetSocialFeedbackCommands	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); whether it takes arguments and its answer with no broadcast are not in the tree
+sceGameLiveStreamingClearSocialFeedbackMessages	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); whether it takes arguments and its answer with no broadcast are not in the tree
+sceGameLiveStreamingClearSpoilerTag	D	broadcast setting: unknown signature (debt Unknown function info); whether it takes arguments is unknown, and the 0 that sceGameLiveStreamingEnableLiveStreaming (core/libs/prx/libSceGameLiveStreaming/Export.cpp:265) gives is not measured for it
+sceGameLiveStreamingEnableSocialFeedback	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); argument checks and the answer with no broadcast are not in the tree
+sceGameLiveStreamingGetCurrentBroadcastScreenLayout	D	broadcast screen layout query: unknown signature (debt Unknown function info); layout struct and its value with nothing on air are not in the tree
+sceGameLiveStreamingGetCurrentStatus	D	the debt measures the export (one output, clears 72 bytes, copies the first 12 bytes of service command 9's status), but the meaning of those 12 bytes and their value with nothing on air are unknown, as are its init and null checks; GetCurrentStatus2 (core/libs/prx/libSceGameLiveStreaming/Export.cpp:38) is a different layout
+sceGameLiveStreamingGetSocialFeedbackMessages	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); message layout, count/output form and the empty answer are not in the tree
+sceGameLiveStreamingGetSocialFeedbackMessagesCount	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); whether the count is returned or written, and the empty answer, are not in the tree
+sceGameLiveStreamingLaunchLiveViewer	D	launches the system live-viewer app: unknown signature (debt Unknown function info); the error when no viewer app exists is not in the tree
+sceGameLiveStreamingLaunchLiveViewerA	D	launches the system live-viewer app (account form): unknown signature (debt Unknown function info); the error when no viewer app exists is not in the tree
+sceGameLiveStreamingPermitLiveStreaming	D	broadcast setting: unknown signature (debt Unknown function info); argument checks unknown, and the 0 that sceGameLiveStreamingEnableLiveStreaming (core/libs/prx/libSceGameLiveStreaming/Export.cpp:265) gives is not measured for it
+sceGameLiveStreamingPermitServerSideRecording	D	broadcast setting: unknown signature (debt Unknown function info); argument checks unknown, and the 0 that sceGameLiveStreamingEnableLiveStreaming (core/libs/prx/libSceGameLiveStreaming/Export.cpp:265) gives is not measured for it
+sceGameLiveStreamingPostSocialMessage	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); message layout and the answer with no broadcast are not in the tree
+sceGameLiveStreamingRegisterCallback	D	callback registration: unknown signature (debt Unknown function info); callback type, user argument and event ids are not in the tree
+sceGameLiveStreamingScreenCloseSeparateMode	D	broadcast screen / separate-mode API: unknown signature (debt Unknown function info); its parameter struct and the answer with nothing on air are not in the tree
+sceGameLiveStreamingScreenConfigureSeparateMode	D	broadcast screen / separate-mode API: unknown signature (debt Unknown function info); its parameter struct and the answer with nothing on air are not in the tree
+sceGameLiveStreamingScreenInitialize	D	broadcast screen / separate-mode API: unknown signature (debt Unknown function info); its parameters and init-state errors are not in the tree
+sceGameLiveStreamingScreenInitializeSeparateModeParameter	D	broadcast screen / separate-mode API: unknown signature (debt Unknown function info); the defaults it writes into the parameter struct are not in the tree
+sceGameLiveStreamingScreenOpenSeparateMode	D	broadcast screen / separate-mode API: unknown signature (debt Unknown function info); its parameter struct and the answer with nothing on air are not in the tree
+sceGameLiveStreamingScreenSetMode	D	broadcast screen / separate-mode API: unknown signature (debt Unknown function info); mode values and the answer with nothing on air are not in the tree
+sceGameLiveStreamingScreenTerminate	D	broadcast screen / separate-mode API: unknown signature (debt Unknown function info); its init-state errors are not in the tree
+sceGameLiveStreamingSetCameraFrameSetting	D	broadcast setting (camera overlay): unknown signature (debt Unknown function info); setting struct and argument checks are not in the tree
+sceGameLiveStreamingSetDefaultServiceProviderPermission	D	broadcast setting: unknown signature (debt Unknown function info); permission values and argument checks are not in the tree
+sceGameLiveStreamingSetGuardAreas	D	broadcast setting (masked screen areas): unknown signature (debt Unknown function info); area struct, count limits and argument checks are not in the tree
+sceGameLiveStreamingSetInvitationSessionId	D	broadcast setting: unknown signature (debt Unknown function info); session-id form and argument checks are not in the tree
+sceGameLiveStreamingSetLinkCommentPreset	D	broadcast setting: unknown signature (debt Unknown function info); preset layout and argument checks are not in the tree
+sceGameLiveStreamingSetMaxBitrate	D	broadcast setting: unknown signature (debt Unknown function info); valid bitrate range and argument checks are not in the tree
+sceGameLiveStreamingSetMetadata	D	broadcast setting: unknown signature (debt Unknown function info); metadata layout and argument checks are not in the tree
+sceGameLiveStreamingSetPresetSocialFeedbackCommands	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); command layout and argument checks are not in the tree
+sceGameLiveStreamingSetPresetSocialFeedbackCommandsDescription	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); description layout and argument checks are not in the tree
+sceGameLiveStreamingSetServiceProviderPermission	D	broadcast setting: unknown signature (debt Unknown function info); provider/permission values and argument checks are not in the tree
+sceGameLiveStreamingSetSpoilerTag	D	broadcast setting: unknown signature (debt Unknown function info); argument checks unknown, and the 0 that sceGameLiveStreamingEnableLiveStreaming (core/libs/prx/libSceGameLiveStreaming/Export.cpp:265) gives is not measured for it
+sceGameLiveStreamingSetStandbyScreenResource	D	standby-screen resource: unknown signature (debt Unknown function info); resource format and argument checks are not in the tree
+sceGameLiveStreamingStartDebugBroadcast	D	debug broadcast control: unknown signature (debt Unknown function info); dev-kit only, answer not in the tree
+sceGameLiveStreamingStartGenerateStandbyScreenResource	D	standby-screen resource generation: unknown signature (debt Unknown function info); resource format, completion and answer not in the tree
+sceGameLiveStreamingStartSocialFeedbackMessageFiltering	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); filter parameters and the answer with no broadcast are not in the tree
+sceGameLiveStreamingStopDebugBroadcast	D	debug broadcast control: unknown signature (debt Unknown function info); dev-kit only, answer not in the tree
+sceGameLiveStreamingStopGenerateStandbyScreenResource	D	standby-screen resource generation: unknown signature (debt Unknown function info); answer when none is running not in the tree
+sceGameLiveStreamingStopSocialFeedbackMessageFiltering	D	social feedback (viewer messages and commands): unknown signature (debt Unknown function info); answer when no filtering runs not in the tree
+sceGameLiveStreamingUnregisterCallback	D	callback registration: unknown signature (debt Unknown function info); id form and the answer for an unknown id are not in the tree

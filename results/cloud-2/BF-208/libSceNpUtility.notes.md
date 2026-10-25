@@ -1,0 +1,46 @@
+# libSceNpUtility (77 todo: B-S 5, C 2, D 70)
+
+- **What it is:** PSN community utilities: NP Lookup (online id to NpId), NP Word Filter (censor or sanitize a comment) and the bandwidth test. The same module also exports system-side client families: AppInfoInt, AppLaunchLink(2)Int, ServiceChecker(2)Int, TitleMetadataInt and the NpLookupNet client.
+- **Existing state** (`core/libs/prx/libSceNpUtility/Export.cpp`):
+  - `Request` (`:29`: titleCtxId, async, used, aborted, finished, result) inside `Service` (`:38`: title contexts, requests, next ids, mutex).
+  - Two instances: `lookup` with ids from 1 (`:47`), and `wordFilter` with ids from 0x01000001 and 0x02000001 (`:48`). Each allows 32 contexts and 32 requests.
+  - Helpers: `CreateTitleContext` (`:50`), `DeleteTitleContext`, `CreateRequest` (`:66`), `DeleteRequest` (`:75`) and `StartOffline` (`:80`). `StartOffline` refuses an aborted request (ABORTED) or a used one (INVALID_TYPE). Otherwise it finishes the request with SIGNED_OUT at once, returning 0 for an async request and SIGNED_OUT for a sync one.
+  - 19 done:
+    - bandwidth test (5): InitStartDownload/Upload return SIGNED_OUT; Abort, GetStatus and Shutdown return INVALID_ARGUMENT;
+    - lookup (5): contexts, requests and NpId;
+    - word filter (9): contexts, requests, async, poll, abort, censor and sanitize.
+  - Errors: `SCE_NP_ERROR_INVALID_ARGUMENT` 0x80550003 and `SIGNED_OUT` 0x80550006. Community errors: INVALID_ARGUMENT 0x80550704, TOO_MANY_OBJECTS 0x80550706, ABORTED 0x80550707, INSUFFICIENT_ARGUMENT 0x8055070C, INVALID_ID 0x8055070E and INVALID_TYPE 0x80550711.
+  - Semantics source: shadPS4 `np_utility.cpp` at a pinned commit, lookup and word-filter sections (debt Functional). Offline only; nothing is measured on a console.
+- **Counts:** A 0, B-S 5, B-M 0, B-L 0, C 2, D 70.
+- **B-S (5): the lookup request calls the word filter already has, and WaitAsync for both.**
+  - `sceNpLookupAbortRequest` and `sceNpLookupPollAsync`: the word-filter bodies (`:463`, `:503`), moved into `Service&` helpers the way `CreateRequest` and `DeleteRequest` already are.
+  - `sceNpLookupCreateAsyncRequest`: `CreateRequest(lookup, id, true)` with the word filter's 0x18 parameter-size check (`:482`).
+  - `sceNpLookupWaitAsync` and `sceNpWordFilterWaitAsync`: `StartOffline` finishes a request when it starts, so a started request writes its result and returns 0, as `sceNpTusWaitAsync` does (`libSceNpTus/Export.cpp:212`).
+    - Null result, a sync request and an unknown id answer as PollAsync does.
+    - An unstarted async request should throw: its answer is unknown, and the tree disagrees with itself (TUS returns INVALID_ARGUMENT, NpAuth INVALID_ID).
+  - The debt lists all five without prototypes. The signatures come from two places:
+    - the done word-filter twins;
+    - every done NP community request API: `(int reqId)` for abort, `(int reqId, int* result)` for poll and wait, in NpTus, NpScoreRanking, NpAuth and NpManager.
+  - Confirm them against the shadPS4 file before relying on them.
+- **C (2), real behaviour:**
+  - `sceNpBandwidthTestInitStart` returns SIGNED_OUT, as InitStartDownload/Upload do (`:112`, `:117`).
+  - `sceNpBandwidthTestShutdownWithDetailedInfo` returns INVALID_ARGUMENT and writes nothing, as Shutdown does (`:122`): no test context can exist.
+  - Neither answer reads an argument, so the parameterless declarations can give them.
+  - InitStart is one of Limbo's (CUSA01664) imports, exported as not implemented by commit f04d16d702.
+- **D (70):**
+  - Private system-side clients, 48 rows: AppInfoInt 13, AppLaunchLink2Int 7, AppLaunchLinkInt 7, ServiceChecker2Int 8, ServiceCheckerInt 8, TitleMetadataInt 5.
+    - All are parameterless declarations from the PS5 3.20 export inventory with no credible prototype.
+    - Even their Create, Destroy and Abort calls cannot reuse `Service`: the id arguments, title-context relation and result encodings are unknown.
+  - NpLookupNet client (16): its own init forms (memory pool, function pointer), id spaces and comment calls have no prototype. The JID to NpId conversions also need a JID format that no cited source gives.
+  - `sceNpUtilityInit` and `sceNpUtilityTerm` (2): no prototype, and no done twin to give an answer.
+  - Lookup and word filter `CreateTitleCtxA` (2): the A-form argument list is unknown (a user id, maybe with a service label as `sceNpTusCreateNpTitleCtxA`). So is whether an invalid or signed-out user is refused.
+  - Lookup and word filter `SetTimeout` (2): the checks are unknown, as is whether the id names a context or a request. `sceNpTusSetTimeout` stays a throw for the same reason, and NpAuth's ranges belong to NpAuth.
+- **Batch proposal:** no A/B/C family reaches 6. The 5 B-S and 2 C rows fit one small PR, `feat(libSceNpUtility): lookup async requests, WaitAsync and the offline bandwidth test` (7). Tests extend `guest_np_utility_offline_tests` (`core/libs/tests/GuestNpUtilityOffline.cpp`, registered at `core/libs/prx/libSceNpUtility/CMakeLists.txt:6` and `:10`):
+  - lookup async: create with the 0x18 parameter, which takes the next lookup id; a wrong size or null gives INVALID_ARGUMENT; NpId returns 0, then PollAsync gives FINISHED with SIGNED_OUT;
+  - abort before start, then NpId gives ABORTED;
+  - WaitAsync on a finished request writes SIGNED_OUT; a sync request and an unknown id give INVALID_ID;
+  - InitStart gives 0x80550006 and ShutdownWithDetailedInfo gives 0x80550003, each leaving a canary output untouched.
+- **Caveats:**
+  - The B-S signatures are inferred from twins, the way PM-088 inferred `sceKernelWrite*Command`. The debt's "no credible prototypes" entry for these names must be updated when they are implemented.
+  - Whether the lookup async parameter is also 0x18 bytes is unconfirmed.
+  - The bandwidth-test answers are the tree's offline model; no console measurement is recorded.

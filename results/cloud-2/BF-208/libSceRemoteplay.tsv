@@ -1,0 +1,40 @@
+function	class	basis
+sceRemoteplayApprove	D	Remote Play consent/control: parameterless declaration from the PS5 3.20 export inventory, signature unknown (docs/dev/debt/libSceRemoteplay.md); whether it takes an argument and its answer with no session are not in the tree
+sceRemoteplayClearAllRegistData	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayClearConnectHistory	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayConfirmDeviceRegist	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayDisconnect	D	Remote Play consent/control: parameterless 3.20 declaration, signature unknown (debt); no session exists (sceRemoteplayGetConnectionStatus reports DISCONNECT, core/libs/prx/libSceRemoteplay/Export.cpp:13), but the answer for disconnecting none is not in the tree
+sceRemoteplayGeneratePinCode	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); PIN output form and private flow, no public protocol
+sceRemoteplayGetApMode	D	Remote Play mode query: parameterless 3.20 declaration, signature unknown (debt); whether the mode is returned or written, and its encoding, are unknown
+sceRemoteplayGetConnectHistory	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); history layout not in the tree
+sceRemoteplayGetConnectUserId	D	Remote Play status/user query: parameterless 3.20 declaration, signature unknown (debt); output form unknown; no session exists (sceRemoteplayGetConnectionStatus reports DISCONNECT, core/libs/prx/libSceRemoteplay/Export.cpp:13) but the no-user answer is not in the tree
+sceRemoteplayGetMbusDeviceInfo	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); Mbus device-info layout not in the tree
+sceRemoteplayGetOperationStatus	D	Remote Play status/user query: parameterless 3.20 declaration, signature unknown (debt); status encoding and output form unknown
+sceRemoteplayGetPrimaryUserId	D	Remote Play status/user query: parameterless 3.20 declaration, signature unknown (debt); output form unknown, and the answer with no session is not in the tree
+sceRemoteplayGetRemoteplayStatus	D	Remote Play status/user query: parameterless 3.20 declaration, signature unknown (debt); status encoding and output form unknown; no session exists (core/libs/prx/libSceRemoteplay/Export.cpp:13) but the value for that is not in the tree
+sceRemoteplayGetRpMode	D	Remote Play mode query: parameterless 3.20 declaration, signature unknown (debt); whether the mode is returned or written, and its encoding, are unknown
+sceRemoteplayImeClose	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME event, caret and text layouts not in the tree
+sceRemoteplayImeFilterResult	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME event, caret and text layouts not in the tree
+sceRemoteplayImeGetEvent	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME event layout and no-event answer not in the tree
+sceRemoteplayImeNotify	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME event, caret and text layouts not in the tree
+sceRemoteplayImeNotifyEventResult	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME event, caret and text layouts not in the tree
+sceRemoteplayImeOpen	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME parameter layout and the answer with no client are not in the tree
+sceRemoteplayImeSetCaret	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME event, caret and text layouts not in the tree
+sceRemoteplayImeSetText	D	remote on-screen keyboard bridge to the Remote Play client: parameterless 3.20 declaration, signature unknown (debt); IME event, caret and text layouts not in the tree
+sceRemoteplayIsRemoteOskReady	D	remote on-screen keyboard readiness: parameterless 3.20 declaration, signature unknown (debt); whether the flag is returned or written is unknown, so not-ready cannot be given as a plain return
+sceRemoteplayIsRemotePlaying	D	Remote Play state flag: parameterless 3.20 declaration, signature unknown (debt); no session exists (core/libs/prx/libSceRemoteplay/Export.cpp:13), but whether the flag is returned or written through a user-id/output pair is unknown, so false cannot be given as a plain return
+sceRemoteplayNotifyMbusDeviceRegistComplete	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayNotifyNpPushWakeup	D	NP push wake-up notification from the system: parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayNotifyPinCodeError	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayNotifySubmitCode	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayNotifyUserDelete	D	device registration and pairing store (ShellCore remote-play service): parameterless 3.20 declaration, signature unknown (debt); private system flow, no public protocol
+sceRemoteplayPrintAllRegistData	D	debug dump of the registration store: parameterless 3.20 declaration, signature unknown (debt); output and answer not in the tree
+sceRemoteplayProhibit	D	Remote Play consent/control: parameterless declaration from the PS5 3.20 export inventory, signature unknown (debt); whether it takes an argument and its answer with no session are not in the tree
+sceRemoteplayProhibitStreaming	D	Remote Play consent/control: parameterless 3.20 declaration, signature unknown (debt); mode argument and its checks are not in the tree
+sceRemoteplayServerLock	D	Remote Play server lock (system side): parameterless 3.20 declaration, signature unknown (debt); private system flow, answer not in the tree
+sceRemoteplayServerUnLock	D	Remote Play server lock (system side): parameterless 3.20 declaration, signature unknown (debt); private system flow, answer not in the tree
+sceRemoteplaySetApMode	D	Remote Play mode setter: parameterless 3.20 declaration, signature unknown (debt); mode values and checks are not in the tree
+sceRemoteplaySetLogLevel	D	debug log level: parameterless 3.20 declaration, signature unknown (debt); level values and checks are not in the tree
+sceRemoteplaySetProhibition	D	Remote Play consent/control: parameterless 3.20 declaration, signature unknown (debt); prohibition flags and their checks are not in the tree
+sceRemoteplaySetProhibitionForVsh	D	Remote Play consent/control for system software: parameterless 3.20 declaration, signature unknown (debt); prohibition flags and their checks are not in the tree
+sceRemoteplaySetRpMode	D	Remote Play mode setter: parameterless 3.20 declaration, signature unknown (debt); mode values and checks are not in the tree

@@ -1,0 +1,24 @@
+# libScePlayReady (BF-208 classification)
+
+- **What it is:** Microsoft PlayReady DRM on the console:
+  - the DRM agent lifecycle and license store;
+  - license acquisition against a license server;
+  - domain join/leave and domain certificates;
+  - envelope (protected file) reading;
+  - content decryption contexts and readers;
+  - the porting kit's buffer and heap helpers.
+- **Existing state:** 0 done, 50 todo.
+  - `core/libs/prx/libScePlayReady/Export.cpp:9-257` holds 50 parameterless `NotImplemented_nid_no_patch` declarations.
+  - There is no state, no CMakeLists.txt (it is built from the `prx/*` glob in `core/libs/CMakeLists.txt:146`) and no guest test.
+- **Debt:** `docs/dev/debt/libScePlayReady.md:5` says the names and NIDs come from the PS5 3.20 export inventory, that no credible prototypes were found, and that the declarations are not an ABI claim.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 50.
+- **D families (all for the same reason: no prototype, private DRM):**
+  - buffer helpers `sceBuffer*`/`scePlayReadyBuffer*` (9) and heap helpers `scePlayReadyMem*` (4): object layouts not public;
+  - API lifecycle/version `scePlayReadyApi*` (6) and agent lifecycle/store (5): init-parameter structs and version values not public;
+  - license acquisition (5) and domain (8): server challenge/response formats are private, and a PC has no device certificate or keys;
+  - envelope reader (6);
+  - content binding/decryption (7): needs licenses and device keys.
+- **C:** none. A "no DRM service" answer would need a measured console error code, and the tree has none.
+- **Batch proposals:** none; no A/B/C family. No guest test executable exists.
+- **Caveats:**
+  - `libScePlayReady2`'s 3.20 table repeats 39 of these names. They resolve through this library (`docs/dev/debt/libScePlayReady2.md`), so a title importing them from PlayReady2 also reaches these stubs.

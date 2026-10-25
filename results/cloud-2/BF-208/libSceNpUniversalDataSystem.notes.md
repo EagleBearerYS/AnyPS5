@@ -1,0 +1,25 @@
+# libSceNpUniversalDataSystem (43 todo: C 3, D 40)
+
+- **What it is:** Universal Data System. Titles post activity, statistics and trophy events through it, and PS5 trophies unlock this way. The public API is done (41). All 43 todo rows are the system-internal `sceNpUniversalDataSystemInt*` family.
+- **Existing state** (`core/libs/prx/libSceNpUniversalDataSystem/`):
+  - Contexts: a table keyed by id holding user and service label (`src/Context.cpp:17`, `FindContext` `:30`).
+  - Handles: always handle 1 (`src/Handle.cpp:8`); Destroy and Abort return 0 for any handle (`:16`, `:20`).
+  - Initialize refuses null (`src/System.cpp:11`). Terminate returns 0 (`:18`). Memory and storage stats are zero.
+  - Events, property objects and property arrays are owned through `Uds::Owned` (`src/NpUniversalDataSystem.hpp:27`), with registries in `src/Event.cpp:20`, `src/EventPropertyObject.cpp:13` and `src/EventPropertyArray.cpp:13`.
+  - PostEvent (`src/Event.cpp:85`) sends trophy unlocks and `udsNN.ucp` statistics to libSceNpTrophy2 (debt Functional).
+  - Errors: `SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT` 0x80553102 is defined, but invalid arguments throw (`APS5_INVALID_ARG_EX`) because no error code is measured.
+- **Counts:** A 0, B 0, C 3, D 40.
+- **C (3), silent stubs:** `IntAbortHandle`, `IntDestroyHandle` and `IntTerminate` return 0.
+  - Their public twins return 0 and read no argument, so the unknown Int argument lists do not matter. This is the rule PM-088 used for the NpManager Int twins.
+  - These are system-internal calls with no recorded importer, so each needs a title before it is added.
+- **D (40):**
+  - Int lifecycle calls that write an output or read an argument (5): IntCreateContext and IntCreateHandle (output position unknown), IntDestroyContext (its twin erases the context it is given), IntInitialize (its twin refuses null), IntGetMemoryStat (writes a stat).
+  - Server and system data management (5): IntCheckNetSyncTitles, IntNetSyncTitles, IntDeleteAllData, IntDeleteUserDataWithServerData, IntDeleteAllRecord. These are system-only; their arguments and offline answers are unknown.
+  - The Int record family (30): Create and Destroy for RecordArray, RecordData and RecordObject (6), IntPostRecordData, IntRecordDataEstimateSize, and the 11 IntRecordArraySet* plus 11 IntRecordObjectSet* setters.
+    - The debt says no credible prototype exists. The match to the public EventProperty setters (`src/EventPropertyObject.cpp:35-143`, `src/EventPropertyArray.cpp:35-142`) is by name only.
+    - Whether a "record" is the public event or property object is unknown, as are its argument order and copy ownership.
+    - The setters would be B-S over the `Owned` objects (or A forwards) only if a prototype shows they share the public argument lists. Without one, that would be a guessed ABI.
+- **Batch proposal:** none; no A/B/C family has 6 or more. Existing tests: `np_uds_events_tests` (`core/libs/prx/libSceNpUniversalDataSystem/tests/Events.cpp`, `CMakeLists.txt:19`, `add_test` `:32`) and `guest_np_trophy_unlocks_tests` / `guest_np_trophy_data_tests` / `guest_np_trophy_stats_tests` (`core/libs/tests/GuestNpTrophy{Unlocks,Data,Stats}.cpp`, `CMakeLists.txt:38/42`, `:48/52`, `:58/62`). The 3 C rows, when a title needs them, would add one check each to `guest_np_trophy_unlocks_tests`: 0 for handles 1, 0 and -1.
+- **Caveats:**
+  - **`Export.cpp` is not built.** The library's `CMakeLists.txt:1-9` lists `PendingExports.cpp` and `src/*.cpp` but not `Export.cpp`. The generic `Export.cpp` rule in `core/libs/CMakeLists.txt:159` applies only to libraries without their own CMakeLists. So the 11 Int functions in `Export.cpp` (IntAbortHandle, IntCheckNetSyncTitles, IntCreateContext, IntCreateHandle, IntDeleteAllData, IntDeleteUserDataWithServerData, IntDestroyContext, IntDestroyHandle, IntInitialize, IntNetSyncTitles, IntTerminate) are not exported at all, yet they count as todo. `Export.cpp` was added in e39d55fa24 without a CMake entry. Implementing any of them, the 3 C rows included, first needs `Export.cpp` added to `add_library`.
+  - The public twins' answers (handles always 1, Destroy and Abort always 0) are the tree's local model, not measurements.

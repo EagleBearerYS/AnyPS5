@@ -1,0 +1,118 @@
+function	class	basis
+sceAppInstUtilAppAllowDownloadInstall	D	unknown signature (debt); installer-service download-install policy switch: private IPC, result for a game process unknown
+sceAppInstUtilAppCancelGetAllAppSize	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilAppCancelGetAppOtherSize	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilAppCancelMoveApps	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilAppCancelUnInstall	D	unknown signature (debt); uninstall request to the installer service: arguments, result and errors not public
+sceAppInstUtilAppConvertAppDownloadToDisc	D	unknown signature (debt); install-type change in the app database: private IPC, no public semantics
+sceAppInstUtilAppDestroyMetadata	D	unknown signature (debt); installer package/metadata object lifetime: handle type and creator not public
+sceAppInstUtilAppDestroyPkg	D	unknown signature (debt); installer package/metadata object lifetime: handle type and creator not public
+sceAppInstUtilAppExists	B-S	(titleId, int32_t* exists) declared in include/Api.hpp, not unknown in the debt (follows SharpProspero per the debt history); the running title exists: compare with GetAppTitleId_nid_postfix (libkernel/AppMetadata/src/AppMetadata.cpp:131) as sceSystemServiceGetAppId does (libSceSystemService/Export.cpp:461); other title IDs and null throw; true value 1 to confirm
+sceAppInstUtilAppGetAddcontInfo	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilAppGetAddcontInfoByContentId	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilAppGetAddcontListTotalSize	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilAppGetAddcontNum	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilAppGetAllAppSize	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilAppGetAppInstallStatus	D	unknown signature (debt); installer-service status query: status enum and record layout not public
+sceAppInstUtilAppGetAppInstallStatusByAppInfo	D	unknown signature (debt); installer-service status query: status enum and record layout not public
+sceAppInstUtilAppGetAppOtherSize	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilAppGetCompilationDiscInfo	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilAppGetInsertedDiscMasterDataId	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilAppGetInsertedDiscTitleId	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilAppGetInsertedDiscTitleIdList	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilAppGetIrremovableAppList	D	unknown signature (debt); app-database list query: list layout and app set not public
+sceAppInstUtilAppGetMoveErrorAppList	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilAppGetNoRelatedAddcontTitleList	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilAppGetSize	D	(titleId, uint64_t* size) declared, but what the size covers (app, patch, add-ons, reserved space) and its unit are not public; no installed-app database on the host
+sceAppInstUtilAppGetStorageDestType	D	unknown signature (debt); install-location/storage query: storage enums and units not public
+sceAppInstUtilAppGetStoreCompilationDiscInfo	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilAppInstallAll	D	(void* reserved) declared; installs staged packages through the installer service: source location, async behaviour and errors not public; no installer on the host
+sceAppInstUtilAppInstallContentPush	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilAppInstallGetLinkState	D	unknown signature (debt); Share Play/PS Now/cloud install link on the installer service: needs PSN, link-state enum not public
+sceAppInstUtilAppInstallPkg	D	opaque 64-bit second argument unresolved (debt); installing a package needs PKG/PFS keys that are not public and an install service the host lacks
+sceAppInstUtilAppInstallPs4CloudGame	D	unknown signature (debt); Share Play/PS Now/cloud install link on the installer service: needs PSN, link-state enum not public
+sceAppInstUtilAppInstallPsNowIcon	D	unknown signature (debt); Share Play/PS Now/cloud install link on the installer service: needs PSN, link-state enum not public
+sceAppInstUtilAppInstallRequestCompilationDiscApp	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilAppInstallSharePlayLink	D	unknown signature (debt); Share Play/PS Now/cloud install link on the installer service: needs PSN, link-state enum not public
+sceAppInstUtilAppInstallSharePlayLinkByUser	D	unknown signature (debt); Share Play/PS Now/cloud install link on the installer service: needs PSN, link-state enum not public
+sceAppInstUtilAppInstallTitleDir	D	(titleId, titleDir, reserved) declared; installs a title from a directory through the installer service: copy/register semantics, async behaviour and errors not public; on the host it would mean relinking a new title
+sceAppInstUtilAppIsInInstalling	C	0 with *installing=0: the host has no installer and never installs anything, and PlayGo reports the running title fully installed (libScePlayGo/Export.cpp:184 LOCAL_FAST, :153 ETA 0; debt/libScePlayGo.md); null throws; real behaviour
+sceAppInstUtilAppIsInUpdating	C	0 with *updating=false for the running title: no update service runs on the host and PlayGo reports the title fully installed (libScePlayGo/Export.cpp:184); title match as sceSystemServiceGetAppId (libSceSystemService/Export.cpp:461); other title IDs and null throw; real behaviour
+sceAppInstUtilAppPrepareOverwritePkg	D	no prototype: absent from the supplied system module and callers (debt); installer package overwrite
+sceAppInstUtilAppProhibitDownloadInstall	D	unknown signature (debt); installer-service download-install policy switch: private IPC, result for a game process unknown
+sceAppInstUtilAppRecoverApp	D	no prototype: absent from the supplied system module and callers (debt); app database recovery
+sceAppInstUtilAppRequestMoveApps	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilAppSetRemasterInstallType	D	unknown signature (debt); install-type change in the app database: private IPC, no public semantics
+sceAppInstUtilAppStoreCompilationDiscInfo	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilAppUnInstall	D	(titleId) declared; uninstall request to the installer service: result for the running title or an absent title, and errors, not public
+sceAppInstUtilAppUnInstall2	D	unknown signature (debt); uninstall request to the installer service: arguments, result and errors not public
+sceAppInstUtilAppUnInstallAddcont	D	(titleId, contentLabel) declared; uninstall request to the installer service: result for the running title or an absent add-on, and errors, not public
+sceAppInstUtilAppUnInstallForMultiInstall	D	unknown signature (debt); uninstall request to the installer service: arguments, result and errors not public
+sceAppInstUtilAppUnInstallForRemote	D	unknown signature (debt); uninstall request to the installer service: arguments, result and errors not public
+sceAppInstUtilAppUnInstallForRemote2	D	unknown signature (debt); uninstall request to the installer service: arguments, result and errors not public
+sceAppInstUtilAppUnInstallPat	D	(titleId) declared; uninstall request to the installer service: result for the running title or an absent patch, and errors, not public
+sceAppInstUtilAppUnInstallTheme	D	no prototype: absent from the supplied system module and callers (debt); theme uninstall
+sceAppInstUtilAppUnInstallTypes	D	(titleId, uint32_t types) declared; uninstall request to the installer service: type-bit values, result and errors not public
+sceAppInstUtilAppUpdateStartTime	D	unknown signature (debt); app database timestamp update: private IPC, no public semantics
+sceAppInstUtilCancelCheckPatch	D	unknown signature (debt); latest-patch check against the PSN update server: result layout and errors not public
+sceAppInstUtilCancelDataDiscCopy	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilCancelForMultiInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilCancelGetInformation	D	unknown signature (debt); installer information job: job handle and result layout not public
+sceAppInstUtilCancelInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilCancelInstallAddcont	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilCancelInstallPatch	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilCheckAppSystemVer	D	unknown signature (debt); required-firmware check against the app database: arguments and result enum not public
+sceAppInstUtilCheckLatestPatch	D	unknown signature (debt); latest-patch check against the PSN update server: result layout and errors not public
+sceAppInstUtilClearAddcontInfoCache	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilDeleteWorkspace	D	unknown signature (debt); installer restore/workspace state: enums and layouts not public
+sceAppInstUtilGetAddcontInfoList2	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilGetAddcontInfoList3	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilGetAddcontInstalledStatus	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilGetAddons	D	unknown signature (debt); installer add-on database query: record layouts and not-found errors not public (libSceAppContent's title-side addcont calls are a different API)
+sceAppInstUtilGetAppEmptySlot	D	unknown signature (debt); app slot/config management in the app database: slot and config layouts not public
+sceAppInstUtilGetAppMoveProgressInfo	D	unknown signature (debt); app size/move job on the installer service: job handle, result layout and errors not public
+sceAppInstUtilGetAppSlotInfoList	D	unknown signature (debt); app slot/config management in the app database: slot and config layouts not public
+sceAppInstUtilGetAvailableStorage	D	unknown signature (debt); install-location/storage query: storage enums and units not public
+sceAppInstUtilGetConfigList	D	unknown signature (debt); app slot/config management in the app database: slot and config layouts not public
+sceAppInstUtilGetContentSize	D	unknown signature (debt); installer content-size query: content selector, unit and result layout not public
+sceAppInstUtilGetContentSize2	D	unknown signature (debt); installer content-size query: content selector, unit and result layout not public
+sceAppInstUtilGetDataDiscCopyProgress	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilGetInsertedDiscRoleType	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilGetInsertedDiscTotal	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilGetInstallOptions	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilGetInstallProgress	D	(titleId, void*) declared but the 4-byte reply's field type is unresolved (debt); answer for a title with no install in progress unknown
+sceAppInstUtilGetInstallProgressInfo	D	(titleId, AppInstallProgressInfo*) declared but the 48-byte reply's fields are unresolved (debt); answer for a title with no install in progress unknown
+sceAppInstUtilGetInstallProgressInfoForMultiDisc	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilGetInstallStatus	D	unknown signature (debt); installer-service status query: status enum and record layout not public
+sceAppInstUtilGetMainAppTitleId	D	unknown signature (debt); main/sub app title-ID mapping in the app database: arguments and buffer sizes not public
+sceAppInstUtilGetMainAppTitleIdForSP	D	unknown signature (debt); main/sub app title-ID mapping in the app database: arguments and buffer sizes not public
+sceAppInstUtilGetNeededStorageSize	D	unknown signature (debt); install-location/storage query: storage enums and units not public
+sceAppInstUtilGetParentalControlLevel	D	unknown signature (debt); per-app parental level from the app database: arguments and level encoding not public
+sceAppInstUtilGetPatchInstallStatus	D	unknown signature (debt); installer-service status query: status enum and record layout not public
+sceAppInstUtilGetPrimaryAppSlot	D	(titleId, void*) declared but the 4-byte reply's field type is unresolved (debt); slot numbering not public
+sceAppInstUtilGetRestoreState	D	unknown signature (debt); installer restore/workspace state: enums and layouts not public
+sceAppInstUtilGetSubAppTitleId	D	unknown signature (debt); main/sub app title-ID mapping in the app database: arguments and buffer sizes not public
+sceAppInstUtilGetSubAppTitleIdForSP	D	unknown signature (debt); main/sub app title-ID mapping in the app database: arguments and buffer sizes not public
+sceAppInstUtilGetWorkspaceStatus	D	unknown signature (debt); installer restore/workspace state: enums and layouts not public
+sceAppInstUtilInitialize	C	0: no installer service on the host to connect to; returns success only so a caller can continue, as sceRemoteplayInitialize/Terminate return 0 for the absent Remote Play service (libSceRemoteplay/Export.cpp:20, :25); later calls still throw; silent stub, needs a title
+sceAppInstUtilInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilInstallAddons	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilInstallByPackage	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; packages need non-public PKG keys
+sceAppInstUtilInstallPatch	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilIsRestoreState	D	unknown signature (debt); installer restore/workspace state: enums and layouts not public
+sceAppInstUtilJson	D	unknown signature (debt); meaning and payload unknown
+sceAppInstUtilMountBdEmu	D	unknown signature (debt); BD emulation mount for disc-image development: private, image format and mount point not public
+sceAppInstUtilPauseInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilPausePatchInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilRegisterDownload	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilRequestDataDiscCopy	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilRequestInstallDiscGame	D	unknown signature (debt); disc install/copy service: the host has no BD drive, but the no-disc answer and record layouts are not public
+sceAppInstUtilRestoreDataSource	D	unknown signature (debt); installer restore/workspace state: enums and layouts not public
+sceAppInstUtilResumeInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilResumePatchInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilSetPrimaryAppSlot	D	unknown signature (debt); app slot/config management in the app database: slot and config layouts not public
+sceAppInstUtilStartInstall	D	unknown signature (debt); install/download job control on the installer service: task IDs, status enums and errors not public; downloads need PSN
+sceAppInstUtilSwitchConfig	D	unknown signature (debt); app slot/config management in the app database: slot and config layouts not public
+sceAppInstUtilSwitchInstallLocation	D	unknown signature (debt); install-location/storage query: storage enums and units not public
+sceAppInstUtilTerminate	C	0: no installer connection to close; pairs with Initialize, as sceRemoteplayTerminate returns 0 (libSceRemoteplay/Export.cpp:25); silent stub, needs a title
+sceAppInstUtilUnmountBdEmu	D	unknown signature (debt); BD emulation mount for disc-image development: private, image format and mount point not public

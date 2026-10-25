@@ -1,0 +1,33 @@
+# libSceDepth (BF-208 classification, upstream main e7e3e9c198)
+
+- **What it is (by export names):** a depth engine for camera images.
+  - Lifecycle: initialize, query memory, terminate, save internal buffers.
+  - Frame processing: set commands, submit, update, wait-and-post-process, get image, ROI and ROI sets.
+  - Filters: pre/post filter, super-resolution and SR/TNR parameters, extended mode.
+  - Calibration and rectification, a "hetero" mode, and head/hand candidate detection and tracking.
+  - 38 declared, 0 done, 38 todo. libSceDepth2 (10 todo) is a separate library with the same kind of debt entry.
+- **Existing state:**
+  - `core/libs/prx/libSceDepth/Export.cpp:10-168` holds the 32 public exports, declared `(void)`.
+  - A second `extern "C"` block at `:171-201` holds the 6 underscore-prefixed exports, declared `()`.
+  - All bodies are `NotImplemented_nid_no_patch`.
+  - No state objects and no CMakeLists.txt. The library is built by the generic rule in `core/libs/CMakeLists.txt:158-160`.
+  - Debt `docs/dev/debt/libSceDepth.md`:
+    - `:5`: the 6 underscore exports' "signatures and behavior are unverified".
+    - `:7`: the 32 named exports are listed in the PS5 3.20 export table and "cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified".
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 38.
+- **B and C families:** none.
+  - This is a computation library. It works on frames and calibration data the caller supplies, so an absent camera does not by itself fix any answer.
+  - The tree has no prototype, no parameter record, no error code and no public description of the algorithm.
+- **D families (38):**
+  - Lifecycle and memory (4): Initialize, Terminate, QueryMemory, SaveInternalBuffers. Sizes and init parameters are not in the tree.
+  - Frame processing and submission (7): SetCommands, Submit, Update, WaitAndExecutePostProcess, GetImage, SetRoi, SetRoiset. The algorithm and the command/image records are private.
+  - Filter and super-resolution parameters (6): Get/SetSrParameter, SetSrTnrParameter, SetPre/PostFilterParameter, EnableExtendedMode. The parameter records are unknown.
+  - Calibration and rectification (9): Calculate/Get/SetRectificationInformation, Get/Set/Load/HasCalibrationData, ValidateCurrentCalibrationData, `_sceDepthSetCameraFactoryCalibrationData`. The record layout is unknown.
+  - Hetero mode (6): Enable/DisableHeteroMode, EnableHeteroModeAndGenerateInformation, `_sceDepthCalcHeteroAdjustParam`, `_sceDepthSetHeteroAdjustParam`, `_sceDepthSetHeteroMode`.
+  - Head/hand candidate detector and tracker (6): HandCandidateTrackerGetResult, HeadCandidateDetectorGetResults, HeadCandidateTrackerGetResult, HeadCandidateTrackerSetValidationInformation, `_sceDepthHeadCandidateTrackerGet/SetInformation`.
+- **Batch proposal:** none, because there is no A, B or C family. No guest test exists: the library has no CMakeLists.txt and nothing under `core/libs/tests/` covers it.
+- **Caveats:**
+  - The firmware 13.60 cross-check in the debt confirms names, not prototypes.
+  - Even with prototypes, the tree has no public specification of the depth algorithm. A real implementation would be at least B-L, a new subsystem, once a source exists.
+  - A title on this PC cannot get camera frames to feed it, because `sceCameraOpen` throws (libSceCamera debt `:5`).
+  - "Hetero" and the families are grouped by export name only.

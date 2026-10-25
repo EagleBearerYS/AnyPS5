@@ -1,0 +1,39 @@
+function	class	basis
+_sceDepthCalcHeteroAdjustParam	D	hetero mode; parameterless, signature and behaviour unverified (debt libSceDepth.md:5); mode and adjust-parameter records unknown
+_sceDepthHeadCandidateTrackerGetInformation	D	head/hand candidate detector/tracker; parameterless, signature and behaviour unverified (debt libSceDepth.md:5); result and validation records unknown
+_sceDepthHeadCandidateTrackerSetInformation	D	head/hand candidate detector/tracker; parameterless, signature and behaviour unverified (debt libSceDepth.md:5); result and validation records unknown
+_sceDepthSetCameraFactoryCalibrationData	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:5); record layout unknown, no-camera answer not in tree
+_sceDepthSetHeteroAdjustParam	D	hetero mode; parameterless, signature and behaviour unverified (debt libSceDepth.md:5); mode and adjust-parameter records unknown
+_sceDepthSetHeteroMode	D	hetero mode; parameterless, signature and behaviour unverified (debt libSceDepth.md:5); mode and adjust-parameter records unknown
+sceDepthCalculateRectificationInformation	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthDisableHeteroMode	D	hetero mode; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); mode and adjust-parameter records unknown
+sceDepthEnableExtendedMode	D	filter/super-resolution parameters and modes; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); parameter records unknown
+sceDepthEnableHeteroMode	D	hetero mode; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); mode and adjust-parameter records unknown
+sceDepthEnableHeteroModeAndGenerateInformation	D	hetero mode; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); mode and adjust-parameter records unknown
+sceDepthGetCalibrationData	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthGetImage	D	depth frame processing and submission; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); private algorithm and command/image records
+sceDepthGetRectificationInformation	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthGetSrParameter	D	filter/super-resolution parameters and modes; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); parameter records unknown
+sceDepthHandCandidateTrackerGetResult	D	head/hand candidate detector/tracker; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); result and validation records unknown
+sceDepthHasCalibrationData	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthHeadCandidateDetectorGetResults	D	head/hand candidate detector/tracker; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); result and validation records unknown
+sceDepthHeadCandidateTrackerGetResult	D	head/hand candidate detector/tracker; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); result and validation records unknown
+sceDepthHeadCandidateTrackerSetValidationInformation	D	head/hand candidate detector/tracker; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); result and validation records unknown
+sceDepthInitialize	D	depth-engine lifecycle or memory query; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); sizes and init parameters not in tree
+sceDepthLoadCalibrationData	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthQueryMemory	D	depth-engine lifecycle or memory query; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); sizes and init parameters not in tree
+sceDepthSaveInternalBuffers	D	depth-engine lifecycle or memory query; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); sizes and init parameters not in tree
+sceDepthSetCalibrationData	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthSetCommands	D	depth frame processing and submission; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); private algorithm and command/image records
+sceDepthSetPostFilterParameter	D	filter/super-resolution parameters and modes; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); parameter records unknown
+sceDepthSetPreFilterParameter	D	filter/super-resolution parameters and modes; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); parameter records unknown
+sceDepthSetRectificationInformation	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthSetRoi	D	depth frame processing and submission; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); private algorithm and command/image records
+sceDepthSetRoiset	D	depth frame processing and submission; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); private algorithm and command/image records
+sceDepthSetSrParameter	D	filter/super-resolution parameters and modes; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); parameter records unknown
+sceDepthSetSrTnrParameter	D	filter/super-resolution parameters and modes; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); parameter records unknown
+sceDepthSubmit	D	depth frame processing and submission; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); private algorithm and command/image records
+sceDepthTerminate	D	depth-engine lifecycle or memory query; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); sizes and init parameters not in tree
+sceDepthUpdate	D	depth frame processing and submission; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); private algorithm and command/image records
+sceDepthValidateCurrentCalibrationData	D	camera calibration/rectification data; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); record layout unknown, no-camera answer not in tree
+sceDepthWaitAndExecutePostProcess	D	depth frame processing and submission; parameterless, signature and behaviour unverified (debt libSceDepth.md:7); private algorithm and command/image records

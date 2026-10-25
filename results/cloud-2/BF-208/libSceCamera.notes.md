@@ -1,0 +1,36 @@
+# libSceCamera (BF-208 classification, upstream main e7e3e9c198)
+
+- **What it is:** the PlayStation Camera API. It has the PS4-era `sceCamera*` calls (open, start/stop, config, attributes, frame data), per-setting image controls, calibration data, camera audio and accelerometer, app-module and process focus, and `*Internal`/register/debug calls. It also has a second `sceCamera2*` set of 34 exports. 117 declared, 1 done, 116 todo.
+- **Existing state:**
+  - `core/libs/prx/libSceCamera/Export.cpp:7` defines `SCE_CAMERA_ERROR_PARAM` 0x802E0000. It is the only camera error code in the tree.
+  - `Export.cpp:11-14` `sceCameraIsAttached(int32_t index)` is the one done function. Index 0 returns 0 (not attached) and any other index returns 0x802E0000.
+  - No state objects. Every other export is declared `(void)` in `include/Api.hpp` and throws through `NotImplemented_nid_no_patch`.
+  - **How the tree answers for an absent camera** (debt `docs/dev/debt/libSceCamera.md`):
+    - `:9` (Functional): the IsAttached answer follows shadPS4's `camera.cpp`/`camera_error.h` without a configured camera, and is "Not measured on a console".
+    - `:5` (Unknown function info): for the 10 core calls imported by PS4 titles, "What the console returns from them while no camera is attached is not known, so every call throws."
+    - `:13-118`: 106 "Additional PS5 3.20 imports", each a parameterless declaration from the PS5 3.20 export inventory whose "signature and behavior are unverified".
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 116.
+- **B and C families:** none.
+  - No row has a no-camera value and a source for it in the tree. The tree holds one no-camera answer, sceCameraIsAttached's, and it depends on that function's index argument. No other camera result is recorded.
+  - Every todo declaration is parameterless, so no answer can check an argument or leave an output untouched without guessing the signature.
+  - The closest candidates are still D:
+    - `sceCamera2IsAttached`: parameterless. The neighbour's answer needs its index (0 → 0, otherwise 0x802E0000), and no source covers the Camera2 form.
+    - `sceCameraIsConnectedForSystem`, `sceCameraGetMmapConnectedCount` and `sceCameraGetConnectedDeviceAndDriverMode`: the tree does not say whether they return the state or write it through an output, or what the value is with no camera.
+- **D families (116):**
+  - PS4-title core calls (10): Open, Close, Start, Stop, Get/SetConfig, SetAttribute, GetDeviceInfo, GetFrameData, IsValidFrameData. The debt (`:5`) says the no-camera answer is unknown, and `core/libs/tests/GuestCamera.cpp:37-46` asserts they throw.
+  - `sceCamera2*` (34): open/initialize/finalize, start/stop, config/attribute, frame data, field of view, calibration, and the image-control getters and setters. All parameterless (PS5 3.20 inventory), with no prototype.
+  - Handle/device lifecycle variants (5): Start/Stop/CloseByHandle, DeviceOpen, OpenByModuleId. These are variants of the core calls, whose no-camera answer is unknown.
+  - Connection queries (3), as above.
+  - Image control and config on an opened camera (26): Get/Set of auto-exposure gain, auto white balance, contrast, exposure gain, gamma, hue, saturation, sharpness, white balance, lens correction and defective-pixel cancellation; GetAttribute, SetVideoSync, SetTrackerMode and IsConfigChangeDone. The handle and value layouts are unknown, and sceCameraOpen never issues a handle.
+  - Device, product and registry info (7): GetDeviceID(WithoutOpen), GetDeviceConfig(WithoutHandle), GetProductInfo, GetRegistryInfo, GetVrCaptureInfo. Output layouts are unknown.
+  - Calibration data (8): GetCalibData(ForEve/FromDevice/FromDeviceForEve), GetCalibrationData, SetCalibData(ForEve), InitializeRegistryCalibData. Record layouts are unknown.
+  - Camera audio and accelerometer (6): AudioOpen/Close/GetData/GetData2/Reset, AccGetData.
+  - App-module and process focus (5): ChangeAppModuleState, Set/RemoveAppModuleFocus, SetProcessFocus(ByHandle). This is system-service behaviour. The libSceMbus camera-focus counterparts also throw (`core/libs/prx/libSceMbus/PendingExports.cpp:168,183,443,483`).
+  - System-only internal, register, debug and readiness calls (12): the six `Set*Internal`, SetDebugStop, SetForceActivate, Get/SetRegister, WaitForEveReady, WaitForLukeReady. They are private, with no public source.
+- **Batch proposal:** none, because there is no A, B or C family.
+  - The existing guest test is `guest_camera_tests`. `core/libs/prx/libSceCamera/CMakeLists.txt:12` builds it with `add_test_executable(guest_camera_tests ${LIBS_INCLUDE_DIR}/tests/GuestCamera.cpp)`, and `:16` registers it with `add_test(NAME guest_camera COMMAND guest_camera_tests)`. A future change to any of these rows would extend `core/libs/tests/GuestCamera.cpp`.
+  - Moving the core 10 to C would need two things in the tree first: their prototypes, and a recorded no-camera answer. A measurement would be best (the way libSceHmd2's pre-init answers were probed, debt `libSceHmd2.md`). Failing that, the shadPS4 file the debt already cites, with its prototypes written down.
+- **Caveats:**
+  - The tree's own no-camera answer for IsAttached comes from shadPS4, a PS4 reimplementation, and is not measured on a console (debt `:9`). Even the standard these rows are measured against is not a console measurement.
+  - Family grouping is by export name only. "Eve" and "Luke" are not explained anywhere in the tree.
+  - The input lists all 116 as `(void)`, which matches `include/Api.hpp`. No row's real parameter list is known.

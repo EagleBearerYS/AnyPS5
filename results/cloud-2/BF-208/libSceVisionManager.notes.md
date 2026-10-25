@@ -1,0 +1,25 @@
+# libSceVisionManager (BF-208 classification, upstream main e7e3e9c198)
+
+- **What it is (by export names):** a camera-based vision service API. It has open/initialize, asynchronous request/result pairs, `WaitResponse`/`CancelRequest`, and update callbacks.
+  - The request/result pairs cover face, user, pad and head detection, pad tracking, and a stored camera Y image.
+  - It also calibrates the HMD, the stereo camera and the tracking LED, and keeps registered-user data.
+  - 56 declared, 0 done, 56 todo.
+- **Existing state:**
+  - `core/libs/prx/libSceVisionManager/Export.cpp:9-287`: all 56 bodies are `NotImplemented_nid_no_patch`. `include/Api.hpp` declares them with empty parameter lists.
+  - No state objects and no CMakeLists.txt. The library is built by the generic rule in `core/libs/CMakeLists.txt:158-160` (`add_library(${LIB_NAME} SHARED EXCLUDE_FROM_ALL ${LIB_DIR}/Export.cpp)`).
+  - Debt `docs/dev/debt/libSceVisionManager.md:5`, for all 56: the names and NIDs come from the PS5 3.20 export inventory, "but no credible prototypes were found". The declarations "have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified".
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 56.
+- **B and C families:** none.
+  - Every function works on camera input that this PC never has. But no no-camera answer for any of them is in the tree or its debt.
+  - The debt explicitly rules out treating the parameterless declarations as signatures.
+  - No other library implements any of these names.
+- **D families (56):**
+  - Lifecycle, request control, version and memory queries (12): Initialize, Finalize, Open, Close, RequestOpen, RequestClose, GetWorkingMemorySize, GetLibraryVersion, LoadSettings, RegistryClear, CancelRequest, WaitResponse. Values and prototypes are not in the tree.
+  - Recognition requests and results (19): Request/GetResultOf FindFace, FindPad, FindPadCorrespondRegion, FindUser, FindUserInRegion, FindUserWithoutIdentify and RegisterUserInRegion; RequestHeadDetection, RequestPadTracking, RequestRecogUtility, RequestStoreCameraImgY and GetStoreCameraImgYPtr.
+  - Calibration (9): Request/GetResultOf CalibrateHmd, CalibrateStereoCamera and CalibrateTrackingLed; ApplyCalibrateHmdResult, GetCalibrateTrackingLedInfo, GetCalibrateTrackingLedNecessity.
+  - Registered-user data (8): GenerateRegisterUserData plus its Initialize and Finalize, RequestInitializeRegisterUserData, GetHitCountOfRegisterUserData, GetNumOfRegisterUserDataSlot, GetRegisterUserDataSize, GetRegisterUserDataVersion. The data format and sizes are unknown.
+  - Update callbacks (8): the `SetCallbackForUpdate*` calls. The callback prototypes are unknown.
+- **Batch proposal:** none, because there is no A, B or C family. No guest test exists: the library has no CMakeLists.txt and nothing under `core/libs/tests/` covers it.
+- **Caveats:**
+  - Families are grouped by export name only. The tree records nothing about the service behind the request/response calls.
+  - Rows could move to C only after prototypes and a measured no-camera answer (request refused, or result "none") are recorded in the debt.

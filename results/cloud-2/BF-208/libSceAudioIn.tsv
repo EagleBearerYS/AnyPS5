@@ -1,0 +1,29 @@
+function	class	basis
+sceAudioInChangeAppModuleState	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:20), no public prototype; audio-service app/module state, private
+sceAudioInCountPorts	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:28), no public prototype; port selector and count semantics unknown
+sceAudioInDeviceHqOpen	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:14), no public prototype; once known it could reuse openPort (core/libs/prx/libSceAudioIn/Export.cpp:90), but the device id space is undocumented
+sceAudioInDeviceIdAsyncOpen	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:10), no public prototype; once known it could reuse openPort (core/libs/prx/libSceAudioIn/Export.cpp:90), but the device id space is undocumented
+sceAudioInDeviceIdHqOpen	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:13), no public prototype; once known it could reuse openPort (core/libs/prx/libSceAudioIn/Export.cpp:90), but the device id space is undocumented
+sceAudioInDeviceIdOpen	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:9), no public prototype; once known it could reuse openPort (core/libs/prx/libSceAudioIn/Export.cpp:90), but the device id space is undocumented
+sceAudioInDeviceOpenEx	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:19), no public prototype; once known it could reuse openPort (core/libs/prx/libSceAudioIn/Export.cpp:90), but the device id space is undocumented
+sceAudioInExtCtrl	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:37), no public prototype; extended control commands unknown
+sceAudioInGetHandleStatusInfo	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:18), no public prototype; status record layout unknown
+sceAudioInInputs	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:38), no public prototype; multi-port variant of sceAudioInInput (core/libs/prx/libSceAudioIn/Export.cpp:130) whose argument list is unknown
+sceAudioInIsSharedDevice	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:12), no public prototype; argument and the meaning of shared unknown
+sceAudioInSetConnections	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:15), no public prototype; system audio routing (connections and port statuses), private
+sceAudioInSetDevConnection	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:27), no public prototype; system audio routing (connections and port statuses), private
+sceAudioInSetDeviceMuteStatus	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:26), no public prototype; system gain, mute and mode controls, private
+sceAudioInSetMicLevel	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:25), no public prototype; system gain, mute and mode controls, private
+sceAudioInSetMode	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:35), no public prototype; system gain, mute and mode controls, private
+sceAudioInSetMode2	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:36), no public prototype; system gain, mute and mode controls, private
+sceAudioInSetPortConnections	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:16), no public prototype; system audio routing (connections and port statuses), private
+sceAudioInSetPortStatuses	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:17), no public prototype; system audio routing (connections and port statuses), private
+sceAudioInSetSparkParam	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:21), no public prototype; Spark (headset) processing parameters unknown
+sceAudioInSetSparkSideTone	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:22), no public prototype; Spark (headset) processing parameters unknown
+sceAudioInSetUsbGain	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:11), no public prototype; system gain, mute and mode controls, private
+sceAudioInSetUserMute	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:29), no public prototype; system gain, mute and mode controls, private
+sceAudioInVmicCreate	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:30), no public prototype; virtual-microphone (Vmic) feed whose buffer format and handle model are unknown
+sceAudioInVmicDestroy	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:31), no public prototype; virtual-microphone (Vmic) feed whose buffer format and handle model are unknown
+sceAudioInVmicGetStatus	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:33), no public prototype; virtual-microphone (Vmic) feed whose buffer format and handle model are unknown
+sceAudioInVmicSetMute	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:34), no public prototype; virtual-microphone (Vmic) feed whose buffer format and handle model are unknown
+sceAudioInVmicWrite	D	parameterless declaration, unknown signature (docs/dev/debt/libSceAudioIn.md:32), no public prototype; virtual-microphone (Vmic) feed whose buffer format and handle model are unknown

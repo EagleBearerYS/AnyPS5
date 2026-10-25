@@ -1,0 +1,27 @@
+# libSceSysCore (72 todo: A 0, B-S 0, B-M 0, B-L 0, C 0, D 72)
+
+- **What it is:** the client of SysCore, the console's process and application manager. ShellCore and system processes use it to spawn, kill, suspend, resume, save and restore applications and local processes, and to read application info, CPU usage and modes. It also moves application and controller focus, changes clocks, the memory p-state and the base/Neo rendering mode, and drives system reboot, shutdown and suspend and the VSH/ShellCore handshake. It handles crashes, exceptions and coredumps, answers debugger requests and reads the SysCore event queue. Titles do not call it; libSceSystemService's `sceLncUtil*` is the title-facing launcher API.
+- **Existing state:** 0 done.
+  - All 72 bodies in `core/libs/prx/libSceSysCore/Export.cpp` (lines 11-299) call `NotImplemented_nid_no_patch`.
+  - The only type is `ApplicationInfo`, an opaque 152-byte record (`include/Api.hpp:5`, `static_assert` at `Export.cpp:7`).
+  - There is no CMakeLists.txt; the default prx glob branch builds the library (`core/libs/CMakeLists.txt:159`). No guest test exists.
+- **Prototypes:** `docs/dev/debt/libSceSysCore.md` gives two cases.
+  - `sceApplicationGetAppInfoByAppId(uint32 appId, ApplicationInfo*)` fills the record through IPC, and its layout is unresolved. The SystemService caller reads a subrecord at byte 48.
+  - The other 71 are parameterless declarations whose names come from the PS5 3.20 export inventory and aerolib. They have "no credible prototypes" and are "not an ABI claim".
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 72.
+- **D families:**
+  - Process lifecycle of other processes (17): AddProcess2, Spawn2, ExitSpawn/2, Kill, BlockingKill2/3, LocalProcessKill/2/Suspend/Resume, Suspend, Resume, Continue, Save, Restore, OnAllResourceReleased. This is private SysCore IPC, and AnyPS5 runs one guest process.
+  - Crash, exception and coredump (13): CrashSyscore, CrashSystemProcess, RaiseException(ToPid/ToLocalPid), KickCoredump/2, coredump state, dir, package info, request progress and end, IsCrashReportBeingProcessed. The coredump-service protocol is private.
+  - Application and process queries (12): `_sceApplicationGetAppId`, GetAppInfoByAppId, GetCompiledSdkVersionByAppId, GetCpuUsage/2, GetDbgExecutablePath, GetMode, GetProcs, GetShellCoreAppId, IsPrimaryProcess, IsResumable, IsSuspendable. The arguments, result encodings and record layouts are unknown.
+  - Debugger replies and state (8): SendDebugSpawnResult2, the four SendResultOfDebugger*Request, SuspendSystemForDebugger, GetStateForDebugger, and its misspelled twin `sceApplictionGetStateForDebugger`.
+  - Clocks and modes (7): Begin/EndSclkChange, SetMemoryPstate, RequestToChangeRenderingMode, SwitchToBaseMode, SwitchToNeoMode/2.
+  - System power and VSH handshake (7): SystemReboot, SystemShutdown2, SystemSuspend/2, NotifyVshReady, NotifyVshMainOnStandby, SignalShellCoreHeartBeat.
+  - Client init and finalize (3), focus control (3), event queue (2).
+- **No C:** none of the absent-service answers can be given. The declarations are parameterless only because the prototypes are unknown, so a plain return value would be a guess about the ABI.
+- **No A:** no `sceApplication*` or `sceSysCore*` name is done anywhere in the tree (`main-libraries.json`).
+- **Batch proposal:** none (no A, B or C rows).
+- **Caveats, rows that would move once a prototype is confirmed (by a title or system-module call site, per `docs/dev/REVERSE_ENGINEERING.md`):**
+  - `sceApplicationGetCompiledSdkVersionByAppId` for app ID 1 could forward to `sceKernelGetCompiledSdkVersion` (`libkernel_sys/Export.cpp:314`).
+  - `_sceApplicationGetAppId` could answer `SYSTEM_SERVICE_RUNNING_APP_ID` (`libSceSystemService/SystemService.hpp:17`) for the running process.
+  - `IsSuspendable` and `IsResumable` could become C ("AnyPS5 never suspends", as PM-088's `sceLncUtilBlockAppSuspend` rows).
+  - Until then they stay D.

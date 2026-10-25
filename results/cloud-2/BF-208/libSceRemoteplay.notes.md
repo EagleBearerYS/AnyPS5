@@ -1,0 +1,22 @@
+# libSceRemoteplay (39 todo: D 39)
+
+- **What it is:** PS Remote Play. The game-facing calls are status, prohibit/approve and streaming prohibition. The system-facing ones are device registration and PIN pairing, connect history, Mbus devices, AP/RP modes, server lock, NP push wake-up, and the remote on-screen-keyboard bridge (`Ime*`).
+- **Existing state** (`core/libs/prx/libSceRemoteplay/Export.cpp`, built by the generic `Export.cpp` rule):
+  - 3 done, and no session or initialization state:
+    - `sceRemoteplayGetConnectionStatus` (`:13`) writes `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` 0 for any user and throws on null;
+    - `sceRemoteplayInitialize` (`:20`) throws on a null heap or zero size, otherwise returns 0;
+    - `sceRemoteplayTerminate` (`:25`) returns 0.
+  - No error constants are defined.
+- **Counts:** A 0, B 0, C 0, D 39.
+- **D families:** every row is a parameterless declaration from the PS5 3.20 export inventory with an unknown signature (debt Unknown function info).
+  - Consent and control (8): Approve, Prohibit, ProhibitStreaming, SetProhibition, SetProhibitionForVsh, Disconnect, ServerLock, ServerUnLock. Whether each takes a mode or flag, and its checks, are unknown.
+  - Status and user queries (10): GetApMode, GetRpMode, GetConnectUserId, GetPrimaryUserId, GetOperationStatus, GetRemoteplayStatus, GetConnectHistory, GetMbusDeviceInfo, IsRemotePlaying, IsRemoteOskReady.
+    - No session exists, as GetConnectionStatus already says.
+    - But whether each result is returned or written through an output, and its encoding, are unknown. So "not playing" or "no user" cannot be given as a plain return.
+  - Registration and pairing (10): ClearAllRegistData, ClearConnectHistory, ConfirmDeviceRegist, GeneratePinCode, NotifyMbusDeviceRegistComplete, NotifyNpPushWakeup, NotifyPinCodeError, NotifySubmitCode, NotifyUserDelete, PrintAllRegistData. This is a ShellCore system flow with no public protocol.
+  - Remote IME (8): Open, Close, GetEvent, Notify, NotifyEventResult, FilterResult, SetCaret, SetText. The event, caret and text layouts are not in the tree.
+  - Mode and log setters (3): SetApMode, SetRpMode, SetLogLevel. The values are unknown.
+- **Batch proposal:** none (no A/B/C rows). No guest test executable exists for libSceRemoteplay: the library has no CMakeLists.txt and no file under `core/libs/tests/` calls it.
+- **Caveats:**
+  - Prohibit, Approve and IsRemotePlaying are the calls most likely to come from a title. Once a title shows their import and a prototype is found, they would be C: 0 with no session for Prohibit and Approve, and not-playing for IsRemotePlaying, matching GetConnectionStatus.
+  - The library keeps no initialization state, so a NOT_INITIALIZED answer could not be modelled today.
