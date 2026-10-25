@@ -2339,9 +2339,8 @@ int APS5_VABI sigqueue_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI sigreturn_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sigreturn_nid_postfix(const UserUcontext* context) {
+    return SigreturnContext_nid_no_patch(context);
 }
 
 int APS5_VABI statfs_nid_postfix(void) {
