@@ -1,4 +1,4 @@
-READY
-since: 2026-10-25T18:20:06Z
+STOPPED 2026-10-25T22:03:03Z: low usage
+since: 2026-10-25T22:03:03Z
 last: BF-242 done, results/cloud-1/BF-242.md: fork fix/agc-failed-join-import-owner = 950722167b on main 7e4f6e0440 (1 commit + test); Village's Descriptor 'no GPU owner' not reproduced from main (trace + 4,300 mock fuzz rounds, PC logging asked); fixed the same failed-join sequence's write-back loss (space region falls back to a read-only copy, WriteBack 'exceeds its GPU owner'), red on main/green; set x10 62/1/1(IPv6), ^agc 954/66/0, mirror 2182/92/7 (IPv6), validation no new VUIDs; overlap 54 PRs, none same fix, no new conflicts; before that BF-230
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
