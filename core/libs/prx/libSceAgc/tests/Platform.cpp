@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libSceAgc/Misc/include/Platform.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -5,6 +6,7 @@
 #include <array>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -34,12 +36,23 @@ void testRejections() {
     expectFailure([] { sceAgcGetIsTrinityMode(nullptr); });
 }
 
+void testPendingExports() {
+    try {
+        sceAgcSuspendPointAndCheckStatus();
+    } catch (const std::runtime_error& error) {
+        check(std::string(error.what()) == "sceAgcSuspendPointAndCheckStatus not implemented", "sceAgcSuspendPointAndCheckStatus failed with another error");
+        return;
+    }
+    throw std::runtime_error("sceAgcSuspendPointAndCheckStatus returned instead of throwing");
+}
+
 }
 
 int main() {
     try {
         testTrinityMode();
         testRejections();
+        testPendingExports();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC platform tests passed");
         return 0;
