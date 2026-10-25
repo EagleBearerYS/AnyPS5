@@ -1,8 +1,7 @@
-BUSY BF-218
-since: 2026-10-25T08:07:25Z (claimed 2026-10-25T08:07:25Z)
-claimed: tasks/claimed/BF-218.md
+READY 2026-10-25T08:23:15Z: BF-218 done, waiting for a task
+since: 2026-10-25T08:23:15Z (BF-218 finished)
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 2742004ed)
-last: BF-213 done, result results/cloud-4/BF-213.md; feature batch stopped at the floor (0 settled unclaimed rows: #9524 claims the GLS setters, SysCore has no prototype, AgcDriver writers unsettled); docs/debt-gaps-bf208 at 18b4543ac on the fork (5 docs commits)
+last: BF-218 done, result results/cloud-4/BF-218.md; review of #10871 at 07798774b6: no defect found, red_zone_framer and red_zone_framer_execution 20/20, red/green per commit, 14 probes
 baseline: CI Linux mirror on bad1a7994 (upstream main d8db8faef + BF-200 3 commits + 4): 2210 tests, 2115 passed, 90 skipped, 5 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
