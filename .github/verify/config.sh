@@ -1,0 +1,3 @@
+BASE=88f99678bff7345c2a7f83aefcf1b2a8a81c7498
+REPEAT=10
+EXTRA_TESTS='guest_appcontent|^guest_rudp|public_headers'
