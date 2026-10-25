@@ -1,0 +1,3 @@
+BASE=e9db171018bfc5ec3ec6cbdf1aceccbc2b1b1272
+REPEAT=10
+EXTRA_TESTS='guest_sce_net'
