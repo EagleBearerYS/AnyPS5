@@ -1582,3 +1582,10 @@ void UnmapDirectMemoryViews(const std::vector<DirectMemoryView>& views) {
         UnmapRegistered(mutation, reinterpret_cast<void*>(view.address), view.bytes);
     }
 }
+
+std::uint64_t KernelDirectMappedBytes_nid_no_patch() {
+    std::lock_guard lock(g_directLock);
+    std::uint64_t bytes = 0;
+    for (const auto& [start, mapping] : g_directMappings) bytes += mapping.end - start;
+    return bytes;
+}

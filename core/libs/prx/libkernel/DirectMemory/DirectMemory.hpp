@@ -53,4 +53,12 @@ void ForgetJitSharedMemory(int descriptor);
 void DuplicateJitSharedMemory(int from, int to);
 void GuestPageTableUsage(std::uint64_t granularity, std::uint64_t* cpu_entries, std::uint64_t* gpu_entries);
 
+extern "C" {
+
+std::uint64_t KernelDirectMappedBytes_nid_no_patch();
+std::uint64_t KernelFlexibleMappedBytes_nid_no_patch();
+std::uint64_t KernelGuestStackBytes_nid_no_patch();
+
+}
+
 #endif

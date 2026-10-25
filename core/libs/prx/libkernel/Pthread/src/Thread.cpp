@@ -1352,4 +1352,11 @@ void APS5_VABI __pthread_cxa_finalize_nid_postfix(void* argument) {
     CxaFinalize_nid_no_patch(argument);
 }
 
+std::uint64_t KernelGuestStackBytes_nid_no_patch() {
+    std::lock_guard lock(stackLock);
+    std::uint64_t bytes = 0;
+    for (const auto& [thread, range] : liveStacks) bytes += range.second - range.first;
+    return bytes;
+}
+
 }

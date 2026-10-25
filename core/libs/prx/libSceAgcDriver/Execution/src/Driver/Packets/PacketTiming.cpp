@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketTiming.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
@@ -7,6 +8,7 @@
 namespace AgcDriver::DriverDetail {
 
 PacketTimer::~PacketTimer() {
+    MemoryCensus::Tick();
     if (!enabled) return;
     const auto now = std::chrono::steady_clock::now();
     auto& entry = profile.byOpcode[key];
