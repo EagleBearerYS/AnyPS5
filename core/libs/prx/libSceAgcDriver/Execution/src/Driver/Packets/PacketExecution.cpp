@@ -510,7 +510,7 @@ void Driver::execute(const Submission& submission) {
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());
                     if (const auto localDevice = device.Load()) localDevice->SealPassWriteOnly();
                 };
-                if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(seal, {});
+                if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(seal, {}, 0, {}, {}, false, CommitKind::Seal);
                 else seal();
             }
         } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
@@ -566,7 +566,7 @@ void Driver::execute(const Submission& submission) {
             DrawPipeline::Queue0().Enqueue([this, progress = submission.progress] {
                 submitOpenWork(progress);
                 wakeQueueZeroForCompletions();
-            }, {});
+            }, {}, 0, {}, {}, false, CommitKind::Label);
             endTiming.Finish();
             executeRewindTail(submission);
             return;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -4765,6 +4766,7 @@ void GuestBufferMemory::resolveOverlays() {
 }
 
 void GuestBufferMemory::UploadPrepare(bool addressable) {
+    const DriverDetail::CommitterTimed stagingTime(DriverDetail::CommitterPart::Staging);
     Require(!prepared && !uploaded, "guest memory was already uploaded");
     prepared = true;
     resolveOverlays();
@@ -4955,6 +4957,7 @@ void GuestBufferMemory::completeSpaceWrites() const {
 }
 
 void GuestBufferMemory::UploadFinish(bool addressable) {
+    const DriverDetail::CommitterTimed stagingTime(DriverDetail::CommitterPart::Staging);
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
@@ -5387,6 +5390,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
 }
 
 void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
+    const DriverDetail::CommitterTimed stagingTime(DriverDetail::CommitterPart::Staging);
     if (!uploaded || committed) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     // The written ranges, merged: a V# bound twice would otherwise copy the same bytes twice.
@@ -5799,6 +5803,7 @@ void GuestBufferMemory::takeHeapReferences() {
 }
 
 void GuestBufferMemory::WriteBack() {
+    const DriverDetail::CommitterTimed stagingTime(DriverDetail::CommitterPart::Staging);
     Require(uploaded && !committed, "guest memory cannot be committed twice or before upload");
     const auto merged = mergeWrites(writes);
     // The CPU keeps running while the GPU works, so storing whole ranges would roll back its writes to
@@ -5993,6 +5998,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::DeviceRe
 }
 
 void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
+    const DriverDetail::CommitterTimed stagingTime(DriverDetail::CommitterPart::Staging);
     ResidentBuffer::FlushChanged(context);
     if (!uploaded || committed) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;

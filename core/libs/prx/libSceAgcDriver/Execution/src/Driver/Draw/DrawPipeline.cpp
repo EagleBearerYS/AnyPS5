@@ -289,7 +289,7 @@ void DrawPipeline::rethrowFailure() {
     std::rethrow_exception(error);
 }
 
-void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes, std::vector<Range> reads, bool draw) {
+void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes, std::vector<Range> reads, bool draw, CommitKind kind) {
     if (DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) DrawFinisher::Get().Drain();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     struct ReclaimStorage {};
@@ -320,7 +320,7 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
     ++enqueued;
     heldReadRanges.fetch_add(reads.size(), std::memory_order_relaxed);
     countWrites(writes, true);
-    items.push_back({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw});
+    items.push_back({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw, kind});
     outstanding.fetch_add(1, std::memory_order_release);
     if (!thread.joinable()) {
         thread = std::thread([this] {
@@ -337,6 +337,28 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
     if (!profile && !stats) return;
     const auto now = std::chrono::steady_clock::now();
     if (now - lastReport >= std::chrono::seconds(10)) report(now);
+}
+
+namespace {
+
+constexpr std::size_t CommitterPartCount = static_cast<std::size_t>(CommitterPart::Count);
+constexpr std::array<const char*, static_cast<std::size_t>(CommitKind::Count)> CommitKindNames{"draw", "dispatch", "dma/copy", "fill", "label/progress", "seal", "other"};
+thread_local bool committerProfiled = false;
+thread_local std::array<std::uint64_t, CommitterPartCount> committerPartNs{};
+thread_local std::array<std::uint32_t, CommitterPartCount> committerPartDepth{};
+
+}
+
+CommitterTimed::CommitterTimed(CommitterPart part) : part(static_cast<std::size_t>(part)) {
+    if (!committerProfiled || committerPartDepth[this->part]++ != 0) return;
+    timing = true;
+    start = std::chrono::steady_clock::now();
+}
+
+CommitterTimed::~CommitterTimed() {
+    if (!committerProfiled) return;
+    --committerPartDepth[part];
+    if (timing) committerPartNs[part] += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
 void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
@@ -366,6 +388,20 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
     reportedDecodeDrains = decodeDrainCount;
     drainText += reads;
     AgcDriver::ProfilePrint_nid_no_patch("[draw] pipelined (10 s, depth %zu): %llu commits at %.1f us each on the committer, %llu failed; %llu enqueued behind %.2f on average, waiting %.1f us per draw for room, %.2f us for the lock; %llu committer wakes;%s; drains:%s\n", Depth(), static_cast<unsigned long long>(commits), perCommit, static_cast<unsigned long long>(commitErrors), static_cast<unsigned long long>(enqueued), queued, perDraw, enqueued == 0 ? 0.0 : static_cast<double>(lockWaitNs) / 1e3 / static_cast<double>(enqueued), static_cast<unsigned long long>(wakes), reads, drainText.c_str());
+    std::string kindText;
+    std::array<std::uint64_t, CommitterPartCount> partTotals{};
+    for (std::size_t kind = 0; kind < kindCommits.size(); ++kind) {
+        for (std::size_t part = 0; part < CommitterPartCount; ++part) partTotals[part] += kindPartNs[kind][part];
+        if (kindCommits[kind] == 0) continue;
+        const auto count = static_cast<double>(kindCommits[kind]);
+        char item[192];
+        std::snprintf(item, sizeof(item), "%s %s %llu x %.1f us (gpu wait %.1f, staging %.1f, submit %.1f, break proofs %.1f us)", kindText.empty() ? "" : ",", CommitKindNames[kind], static_cast<unsigned long long>(kindCommits[kind]), static_cast<double>(kindNs[kind]) / 1e3 / count, static_cast<double>(kindPartNs[kind][0]) / 1e3 / count, static_cast<double>(kindPartNs[kind][1]) / 1e3 / count, static_cast<double>(kindPartNs[kind][2]) / 1e3 / count, static_cast<double>(kindPartNs[kind][3]) / 1e3 / count);
+        kindText += item;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[draw] committer by kind (10 s):%s; in all commits: gpu wait %.1f ms, staging %.1f ms, submit %.1f ms, break proofs %.1f ms of %.1f ms\n", kindText.empty() ? " none" : kindText.c_str(), static_cast<double>(partTotals[0]) / 1e6, static_cast<double>(partTotals[1]) / 1e6, static_cast<double>(partTotals[2]) / 1e6, static_cast<double>(partTotals[3]) / 1e6, static_cast<double>(commitNs) / 1e6);
+    kindCommits = {};
+    kindNs = {};
+    kindPartNs = {};
     commits = commitNs = commitErrors = enqueued = fullWaitNs = depthSum = wakes = lockWaitNs = 0;
     drains = {};
     drainWaitNs = {};
@@ -375,9 +411,12 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 void DrawPipeline::run() {
     PerformanceTrace::BindThread("draw committer");
     StartCommitterSampler();
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    committerProfiled = profile;
     for (;;) {
         Commit* commit = nullptr;
         bool isDraw = false;
+        auto kind = CommitKind::Other;
         SpinUntil(HandoffSpinWindow(), [&] { return outstanding.load(std::memory_order_acquire) != 0; });
         {
             std::unique_lock lock(mutex);
@@ -387,14 +426,19 @@ void DrawPipeline::run() {
             if (items.empty()) break;
             commit = stopped ? nullptr : &items.front().commit;
             isDraw = items.front().draw;
+            kind = items.front().kind;
         }
+        const auto partsBefore = committerPartNs;
         const auto start = std::chrono::steady_clock::now();
         std::exception_ptr fatal;
         bool failed = false;
         bool shutdown = false;
         try {
             if (commit != nullptr) (*commit)();
-            if (!isDraw) GuestMemory::BreakProofs();
+            if (!isDraw) {
+                const CommitterTimed breakTime(CommitterPart::BreakProofs);
+                GuestMemory::BreakProofs();
+            }
         } catch (const std::exception&) {
             failed = true;
             fatal = std::current_exception();
@@ -416,6 +460,12 @@ void DrawPipeline::run() {
         retiredItems.fetch_add(1, std::memory_order_release);
         ++commits;
         commitNs += spent;
+        if (profile) {
+            const auto index = static_cast<std::size_t>(kind);
+            ++kindCommits[index];
+            kindNs[index] += spent;
+            for (std::size_t part = 0; part < CommitterPartCount; ++part) kindPartNs[index][part] += committerPartNs[part] - partsBefore[part];
+        }
         if (failed) ++commitErrors;
         if (fatal != nullptr && failure == nullptr) failure = fatal;
         outstanding.fetch_sub(1, std::memory_order_release);

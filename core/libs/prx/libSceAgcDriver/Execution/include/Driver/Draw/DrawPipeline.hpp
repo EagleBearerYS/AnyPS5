@@ -20,6 +20,22 @@
 
 namespace AgcDriver::DriverDetail {
 
+enum class CommitKind : std::uint8_t { Draw, Dispatch, Copy, Fill, Label, Seal, Other, Count };
+enum class CommitterPart : std::uint8_t { GpuWait, Staging, Submit, BreakProofs, Count };
+
+class CommitterTimed {
+public:
+    explicit CommitterTimed(CommitterPart part);
+    ~CommitterTimed();
+    CommitterTimed(const CommitterTimed&) = delete;
+    CommitterTimed& operator=(const CommitterTimed&) = delete;
+
+private:
+    std::size_t part;
+    bool timing = false;
+    std::chrono::steady_clock::time_point start;
+};
+
 class DrawPipeline {
 public:
     using Commit = std::function<void()>;
@@ -39,7 +55,7 @@ public:
     static void FollowEpoch(std::uint64_t token);
     static unsigned Committers();
 
-    void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
+    void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false, CommitKind kind = CommitKind::Other);
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
     void Stop();
     void ReleaseRetired();
@@ -68,6 +84,7 @@ private:
         std::vector<std::byte> labelBytes;
         std::vector<Range> reads;
         bool draw = false;
+        CommitKind kind = CommitKind::Other;
     };
     DrawPipeline() = default;
     void run();
@@ -97,6 +114,9 @@ private:
     std::uint64_t commits = 0;
     std::uint64_t commitNs = 0;
     std::uint64_t commitErrors = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(CommitKind::Count)> kindCommits{};
+    std::array<std::uint64_t, static_cast<std::size_t>(CommitKind::Count)> kindNs{};
+    std::array<std::array<std::uint64_t, static_cast<std::size_t>(CommitterPart::Count)>, static_cast<std::size_t>(CommitKind::Count)> kindPartNs{};
     std::uint64_t enqueued = 0;
     std::uint64_t fullWaitNs = 0;
     std::array<std::uint64_t, static_cast<std::size_t>(DrainReason::Count)> drains{};
