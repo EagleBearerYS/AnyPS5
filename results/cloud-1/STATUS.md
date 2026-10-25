@@ -1,4 +1,4 @@
-READY
-since: 2026-10-25T08:13:06Z
+BUSY BF-219 (build the Export.cpp files the 2026-10-21 batch added but never compiled (5 more libraries), plus a guard)
+since: 2026-10-25T08:13:40Z
 last: BF-214 done, results/cloud-1/BF-214.md: probe test/hw-oracle-type0-store 4f6c57e7d2 (probe_type0_store.py + type0_store.s: image_store and image_atomic_add through Tamalero's TYPE 0 words, TYPE 1, TYPE 9 control first; reports fault/hang/changed dwords/load-after; assembles gfx1010-gfx1103, test_hw_oracle.py 51 OK 1 skip; not run, no GPU); fix fix/shader-null-storage-image-type0 38288a49f6 on main e5f23554c9 (nullImageDescriptor accepts read or written non-atomic TYPE<=1 static slots; DrawWriteRanges skips IsNullTextureResource; IsNullTextureResource unchanged, already TYPE<=1); red 2 of 3, green 3 of 3, each line its own test; mirror 2214/2119/90/5 (all IPv6); validation same single VUID both sides; merge-tree 78 unmerged PRs, 4 new one-hunk conflicts (#10556, #7642, #6947, #10193); stencil-replay TYPE<=1 gap reported; debt L88 pending the probe; before that BF-207
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
