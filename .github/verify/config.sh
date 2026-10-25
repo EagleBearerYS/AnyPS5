@@ -1,0 +1,4 @@
+BASE=137a8fab8984506ec9359dbfc2651bc367e0d381
+REPEAT=1
+EXTRA_TESTS='agc_driver_image_table_reuse'
+NO_BEFORE=1
