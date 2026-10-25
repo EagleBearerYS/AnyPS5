@@ -554,6 +554,7 @@ public:
         MultisampleColorAlias alias{target.address, guardedColorBytes(target), target.format, target.samples};
         alias.active = active;
         alias.contents = contents;
+        alias.fills = colorFill.Noted();
         const auto newest = [&](MultisampleColorContent content, std::optional<VkClearColorValue> value) {
             alias.newest = content;
             alias.value = value;
@@ -570,6 +571,7 @@ public:
         }
         if (const auto fill = colorFill.Pending()) {
             VkClearColorValue clear{};
+            alias.filledBytes = MultisampledColorBytes(target);
             return MultisampledFillClearColor(target, *fill, clear) ? newest(MultisampleColorContent::Fill, clear) : newest(MultisampleColorContent::Unknown, std::nullopt);
         }
         if (drawn) return newest(MultisampleColorContent::Drawn, std::nullopt);
@@ -1125,6 +1127,7 @@ MultisampledColorFill::MultisampledColorFill(const ColorTarget& target) : addres
 
 void MultisampledColorFill::NoteFill(std::uint64_t fillAddress, std::size_t fillBytes, std::uint32_t pattern) {
     if (bytes == 0 ? fillAddress > address || address >= fillAddress + fillBytes : fillAddress >= address + bytes || address >= fillAddress + fillBytes) return;
+    ++noted;
     char text[192];
     if (bytes == 0) {
         std::snprintf(text, sizeof(text), "a fill of 0x%llx+0x%zx covers the color memory at 0x%llx of a multisampled target whose footprint is not modeled", static_cast<unsigned long long>(fillAddress), fillBytes, static_cast<unsigned long long>(address));
