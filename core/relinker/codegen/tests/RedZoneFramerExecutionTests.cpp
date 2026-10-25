@@ -144,6 +144,25 @@ std::vector<Leaf> widenedLeaves() {
             0x48, 0x03, 0x45, 0xf0, 0x48, 0x03, 0x45, 0xf8, 0xff, 0xc9, 0x75, 0xf4,
             0x48, 0x03, 0x45, 0xf0, 0x5d, 0xc3,
         }, 8 * (kA + kB) + kA},
+        {"leaf without pushes returning its first spill through the first of two widened exits", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x89, 0x74, 0x24, 0xf8, 0x48, 0x39, 0xf7, 0x74, 0x06,
+            0x48, 0x8b, 0x44, 0x24, 0xf0, 0xc3, 0x48, 0x8b, 0x44, 0x24, 0xf8, 0xc3,
+        }, kA},
+        {"leaf without pushes returning its second spill through the widened exit a jne reaches", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x89, 0x74, 0x24, 0xf8, 0x48, 0x39, 0xf7, 0x75, 0x06,
+            0x48, 0x8b, 0x44, 0x24, 0xf0, 0xc3, 0x48, 0x8b, 0x44, 0x24, 0xf8, 0xc3,
+        }, kB},
+        {"leaf without pushes whose widened exit carries a VEX andn below rsp", {
+            0x48, 0x89, 0x7c, 0x24, 0xf8, 0xc4, 0xe2, 0xf0, 0xf2, 0x44, 0x24, 0xf8, 0xc3,
+        }, ~kC & kA},
+        {"leaf allocating with a 4-byte sub widened over the spill after it", {
+            0x48, 0x83, 0xec, 0x08, 0x48, 0x89, 0x7c, 0x24, 0xf0, 0x31, 0xc0, 0x48, 0x03, 0x44, 0x24, 0xf0,
+            0x48, 0x83, 0xc4, 0x08, 0xc3,
+        }, kA},
+        {"frame-pointer leaf pushing and popping rbx in its body below a slot at rbp-0x10", {
+            0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0x7d, 0xf0, 0x53, 0x48, 0x89, 0xf3, 0x48, 0x8b, 0x45, 0xf0,
+            0x48, 0x01, 0xd8, 0x5b, 0x48, 0x01, 0xd0, 0x5d, 0xc3,
+        }, kA + kB + kC},
     };
 }
 
@@ -289,7 +308,7 @@ int main() {
         const auto backward = runLeaves(backwardStubbedLeaves());
         require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
         const auto widened = runLeaves(widenedLeaves());
-        require(widened.WidenedPrologues == 3 && widened.WidenedExits == 3 && widened.WidenedOperands == 3, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 3, 3 and 3");
+        require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
         std::cout << "red-zone framer execution tests passed\n";
         return 0;
     } catch (const std::exception& error) {

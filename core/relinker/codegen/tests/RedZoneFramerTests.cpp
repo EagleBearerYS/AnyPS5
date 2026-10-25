@@ -372,6 +372,95 @@ void skipsWideningOverBranchTargets() {
     require(report.Skipped.at("branch into the instructions before a short exit") == 1, "a short exit that a branch reaches past the add before it was not refused");
 }
 
+void skipsBranchesIntoTheInstructionsAfterAShortPrologue() {
+    std::vector<std::uint8_t> loopToStore = StoreBelowRsp;
+    append(loopToStore, {0xff, 0xc9, 0x75, 0xf7});
+    append(loopToStore, LoadBelowRsp);
+    const auto input = image({framelessLeaf(PushRbx, loopToStore, PopRbxExit)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 1, "a leaf whose loop branches to the store the widened prologue borrows was framed");
+    require(report.Skipped.at("branch into the instructions after a short prologue") == 1, "a loop to the instruction after a 1-byte push was not refused with its reason");
+}
+
+void widensAShortPrologueThatAllocates() {
+    const std::vector<std::uint8_t> allocate{0x48, 0x83, 0xec, 0x08};
+    const std::vector<std::uint8_t> freeExit{0x48, 0x83, 0xc4, 0x08, 0xc3};
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x31, 0xc0, 0x48, 0x03, 0x44, 0x24, 0xf0});
+    const auto input = image({framelessLeaf(allocate, body, freeExit)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 1 && report.FramedWithoutFramePointer == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 0 && report.WidenedOperands == 1 && report.MovedOperands == 1 && sites.size() == 2 && report.Skipped.empty(), "a leaf whose 4-byte sub is its whole prologue was not framed by widening the prologue over the store after it");
+    std::vector<std::uint8_t> entryBody = allocate;
+    append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00});
+    require(sites[0].Address == Base + 0x40 && sites[0].OriginalBytes.size() == allocate.size() + StoreBelowRsp.size() && sites[0].Body == stubBody(entryBody), "the store after the sub was not moved by the shift after the sub and the lowering lea");
+    std::vector<std::uint8_t> exitBody{0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
+    append(exitBody, freeExit);
+    require(sites[1].OriginalBytes == freeExit && sites[1].Body == stubBody(exitBody), "rsp is not raised by the shift before the add that frees the allocation");
+    require(displacements.size() == 1 && displacements[0].Offset == 0x40 + allocate.size() + StoreBelowRsp.size() + 2 + 4 && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the load between the widened prologue and the exit was not moved in place");
+}
+
+void widensBothExitsOfALeafWithoutPushes() {
+    const auto twoExits = [](const std::uint8_t branch) {
+        std::vector<std::uint8_t> bytes = StoreBelowRsp;
+        append(bytes, {0x48, 0x89, 0x74, 0x24, 0xf8, 0x48, 0x39, 0xf7, branch, 0x06});
+        append(bytes, LoadBelowRsp);
+        append(bytes, Ret);
+        append(bytes, {0x48, 0x8b, 0x44, 0x24, 0xf8});
+        append(bytes, Ret);
+        return bytes;
+    };
+    const auto input = image({twoExits(0x74), twoExits(0x75)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 2 && report.Exits == 4 && report.WidenedPrologues == 2 && report.WidenedExits == 4 && report.WidenedOperands == 6 && report.MovedOperands == 2 && sites.size() == 6 && report.Skipped.empty(), "leaves without pushes that return from two places were not framed with a widened prologue and two widened exits");
+    require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00}), "the entry stub does not lower rsp before the store moved by the shift");
+    std::vector<std::uint8_t> firstExit{0x48, 0x8b, 0x44, 0x24, 0x00, 0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
+    append(firstExit, Ret);
+    std::vector<std::uint8_t> secondExit{0x48, 0x8b, 0x44, 0x24, 0x08, 0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
+    append(secondExit, Ret);
+    require(sites[1].Address == Base + 0x40 + 15 && sites[1].Body == stubBody(firstExit), "the first ret was not widened over the load before it, moved by the shift");
+    require(sites[2].Address == Base + 0x40 + 21 && sites[2].Body == stubBody(secondExit), "the ret a branch reaches at its load was not widened over that load, moved by the shift");
+    require(displacements[0].Offset == 0x40 + 9 && displacements[0].Bytes == std::vector<std::uint8_t>{0x08}, "the second spill was not moved in place");
+}
+
+void widensExitsOverVexOperandsAtRsp() {
+    const std::vector<std::uint8_t> andnBelowRsp{0xc4, 0xe2, 0xf0, 0xf2, 0x44, 0x24, 0xf8};
+    std::vector<std::uint8_t> body{0x48, 0x89, 0x7c, 0x24, 0xf8};
+    append(body, andnBelowRsp);
+    const auto input = image({framelessLeaf({}, body, Ret)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 2 && sites.size() == 2 && displacements.empty(), "a leaf whose ret follows a VEX andn below rsp was not framed by widening its exit over the andn");
+    require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x08}), "the spill was not moved by the shift after rsp is lowered");
+    std::vector<std::uint8_t> exitBody{0xc4, 0xe2, 0xf0, 0xf2, 0x44, 0x24, 0x08, 0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
+    append(exitBody, Ret);
+    require(sites[1].OriginalBytes.size() == andnBelowRsp.size() + Ret.size() && sites[1].Body == stubBody(exitBody), "the VEX andn was not re-encoded with its displacement moved by the shift ahead of raising rsp");
+}
+
+void framesFramePointerLeavesThatPushInTheirBody() {
+    const std::vector<std::uint8_t> framePrologue{0x55, 0x48, 0x89, 0xe5};
+    std::vector<std::uint8_t> body = StoreBelowPushes;
+    append(body, {0x53, 0x48, 0x89, 0xf3});
+    append(body, LoadBelowPushes);
+    append(body, {0x48, 0x01, 0xd8, 0x5b, 0x48, 0x01, 0xd0});
+    const auto input = image({framelessLeaf(framePrologue, body, {0x5d, 0xc3})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 1 && report.FramedWithoutFramePointer == 0 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 0 && sites.size() == 2 && displacements.empty() && report.Skipped.empty(), "a frame-pointer leaf that pushes and pops rbx in its body was not framed");
+    std::vector<std::uint8_t> entryBody = framePrologue;
+    append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0x80});
+    append(entryBody, StoreBelowPushes);
+    require(sites[0].Body == stubBody(entryBody), "the store through rbp was not copied unchanged after rsp is lowered by the whole red zone");
+    require(sites[1].Body == stubBody({0x48, 0x01, 0xd0, 0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, 0x5d, 0xc3}), "the add before pop rbp was not copied ahead of raising rsp");
+}
+
 void skipsLeavesThatCopyRsp() {
     std::vector<std::uint8_t> withCmov = StoreBelowRsp;
     append(withCmov, {0x48, 0x0f, 0x45, 0xc4});
@@ -700,6 +789,11 @@ int main() {
         framesLeavesWithoutPushes();
         skipsFragmentsThatPopWithoutPushing();
         skipsWideningOverBranchTargets();
+        skipsBranchesIntoTheInstructionsAfterAShortPrologue();
+        widensAShortPrologueThatAllocates();
+        widensBothExitsOfALeafWithoutPushes();
+        widensExitsOverVexOperandsAtRsp();
+        framesFramePointerLeavesThatPushInTheirBody();
         skipsLeavesThatCopyRsp();
         framesEachFunctionFromItsOwnFde();
         treatsATailCallPastTheFdeEndAsLeaving();
