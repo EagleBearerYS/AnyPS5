@@ -1,0 +1,4 @@
+BASE=25c1aa1e79329e0e2957b4fdd731144dad8be724
+REPEAT=10
+EXTRA_TESTS='guest_system_font|guest_font'
+NO_BEFORE=1
