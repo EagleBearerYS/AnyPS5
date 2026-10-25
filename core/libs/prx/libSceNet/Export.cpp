@@ -2421,8 +2421,8 @@ int APS5_VABI sceNetGetSystemMemInfo(NetSystemMemoryInfo* info, std::uint32_t fl
 }
 
 int APS5_VABI sceNetInitParam(const NetInitializeParameter* parameter) {
-    if (parameter == nullptr) throw std::runtime_error("sceNetInitParam: a null parameter is not supported");
-    return sceNetInit_nid_postfix();
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int) {
