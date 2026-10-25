@@ -1,0 +1,4 @@
+BASE=b3e6311c1fafe0556c786304d2cba5e9d5872d20
+REPEAT=1
+EXTRA_TESTS='agc_driver_native_depth_aliased_depth|agc_driver_native_depth_aliased_stencil'
+VALIDATION=1
