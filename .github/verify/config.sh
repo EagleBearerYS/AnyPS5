@@ -1,0 +1,3 @@
+BASE=75227c7cdc3d261214d7fd1c2a57c2e8b13499ff
+REPEAT=10
+EXTRA_TESTS='guest_sce_net|guest_tcp|guest_floating_point'
