@@ -1,0 +1,3 @@
+BASE=9a2020c220b7e601f1e82882c05c7ff361edc552
+REPEAT=10
+EXTRA_TESTS='guest_kernel_sys|guest_user_context|guest_user_context_exit|guest_sched_priority|guest_semaphore|guest_pthread_sem'
