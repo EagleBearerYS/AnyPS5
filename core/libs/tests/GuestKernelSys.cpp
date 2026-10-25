@@ -101,13 +101,21 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
     Require(fchownat_nid_postfix(-100, missing.c_str(), 1000, 0, 0) == -1 && Error() == 2);
     Require(fchownat_nid_postfix(4321, "owned.txt", 1000, 0, 0) == -1 && Error() == 9);
     Require(fchownat_nid_postfix(-100, file.c_str(), 1000, 0, 0x400) == -1 && Error() == 22);
-    Require(ThrowsNaming([&] { chown_nid_postfix(file.c_str(), 1000, 0); }, "chown: an owner"));
-    Require(ThrowsNaming([&] { lchown_nid_postfix(file.c_str(), 0, 1000); }, "lchown: a group"));
-    Require(ThrowsNaming([&] { fchownat_nid_postfix(-100, file.c_str(), 5, Unchanged, 0); }, "fchownat: an owner"));
+    for (const auto call : {chown_nid_postfix, lchown_nid_postfix}) {
+        Require(call(file.c_str(), 1000, 0) == -1 && Error() == 1);
+        Require(call(file.c_str(), 0, 1000) == -1 && Error() == 1);
+        Require(call(file.c_str(), 1000, Unchanged) == -1 && Error() == 1);
+        Require(call(file.c_str(), Unchanged, 1000) == -1 && Error() == 1);
+        Require(call(file.c_str(), 1, 1) == -1 && Error() == 1);
+    }
+    Require(fchownat_nid_postfix(-100, file.c_str(), 5, Unchanged, 0) == -1 && Error() == 1);
+    Require(fchownat_nid_postfix(-100, file.c_str(), Unchanged, 5, 0x200) == -1 && Error() == 1);
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     Require(fchownat_nid_postfix(directory, "owned.txt", 0, 0, 0) == 0);
     Require(fchownat_nid_postfix(directory, "missing.txt", 0, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(directory, "owned.txt", 1000, 1000, 0) == -1 && Error() == 1);
+    Require(fchownat_nid_postfix(directory, "missing.txt", 1000, 0, 0) == -1 && Error() == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0) == 0);
     Require(std::filesystem::hard_link_count(file) == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0x400) == -1 && Error() == 17);
