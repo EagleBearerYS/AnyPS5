@@ -1,0 +1,4 @@
+BASE=2742004ed28f765c7147db0e0269ff5868e9eb6f
+REPEAT=10
+EXTRA_TESTS='guest_np_trophy_unlocks'
+NO_BEFORE=1
