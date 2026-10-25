@@ -1,5 +1,6 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -316,9 +317,33 @@ static void CheckPendingExports() {
     }
 }
 
+template <typename Call>
+static bool CallThrowsNotImplemented(Call call, const char* name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void CheckCorePendingExports() {
+    std::uintptr_t handles[1] = {};
+    const auto require = [](bool thrown, const char* name) {
+        if (!thrown) throw std::runtime_error(std::string(name) + " did not throw its not-implemented error");
+    };
+    require(ThrowsNotImplemented(sceNgs2FftInit, "sceNgs2FftInit"), "sceNgs2FftInit");
+    require(ThrowsNotImplemented(sceNgs2FftProcess, "sceNgs2FftProcess"), "sceNgs2FftProcess");
+    require(ThrowsNotImplemented(sceNgs2FftQuerySize, "sceNgs2FftQuerySize"), "sceNgs2FftQuerySize");
+    require(CallThrowsNotImplemented([] { sceNgs2ParseWaveformUser(0, 0, nullptr); }, "sceNgs2ParseWaveformUser"), "sceNgs2ParseWaveformUser");
+    require(CallThrowsNotImplemented([&] { sceNgs2SystemEnumHandles(handles, 1); }, "sceNgs2SystemEnumHandles"), "sceNgs2SystemEnumHandles");
+    require(CallThrowsNotImplemented([&] { sceNgs2SystemEnumRackHandles(0, handles, 1); }, "sceNgs2SystemEnumRackHandles"), "sceNgs2SystemEnumRackHandles");
+}
+
 int main() {
     try {
         CheckPendingExports();
+        CheckCorePendingExports();
         constexpr int systemError = static_cast<int>(0x804A8201u);
         constexpr int rackError = static_cast<int>(0x804A8202u);
         constexpr int outputError = static_cast<int>(0x804A8010u);
