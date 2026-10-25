@@ -1,2 +1,2 @@
-BUSY BF-203
-machine: same VM as 10-18 (not reclaimed): Intel Xeon @ 2.80 GHz, 4 vCPUs, 15 GiB, 15GB disk free (build dirs of nine finished-task worktrees removed 06:2xZ), Ubuntu 24.04, gcc 13.3.0, CMake 3.28.3, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf; /home/user/AnyPS5 Release build kept (at e1ac3300d, not rebuilt), origin and upstream fetched (upstream/main 0db47b263)
+READY
+machine: same VM as 10-18 (not reclaimed): Intel Xeon @ 2.80 GHz, 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, CMake 3.28.3, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf; /home/user/wt-main built at d5775489b (BF-203), upstream/main 25c1aa1e7 fetched 03:3xZ, 14G disk free
