@@ -1,0 +1,4 @@
+BASE=85a4d7f8c82cf3feeed07f59e7732218958db890
+REPEAT=1
+EXTRA_TESTS='agc_driver_table_index_validation|agc_draw_descriptors|agc_driver_lookup_log_fits_build|agc_driver_village_draw_cost'
+VALIDATION=1
