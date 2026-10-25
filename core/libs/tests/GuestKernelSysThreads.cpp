@@ -32,6 +32,7 @@ static void Require(bool value, std::source_location location = std::source_loca
 static void* LoadLibraryFile(const std::filesystem::path& path) {
 #ifdef _WIN32
     auto* module = reinterpret_cast<void*>(LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH));
+    if (!module) std::fprintf(stderr, "LoadLibraryExW %s failed: %lu\n", path.string().c_str(), static_cast<unsigned long>(GetLastError()));
 #else
     auto* module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
