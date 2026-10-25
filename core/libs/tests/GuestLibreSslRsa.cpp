@@ -228,6 +228,22 @@ constexpr const char* CavpSpki =
     "713bb6b835cb08098ed15ba31ee4ba728a8c8e10f7294e1b4163b7aee57277bfd881a6f9d43e02c6925aa3a043fb7fb7"
     "8d0203260445";
 
+constexpr const char* CavpPrivateExponent =
+    "0997634c477c1a039d44c810b2aaa3c7862b0b88d3708272e1e15f66fc9389709f8a11f3ea6a5af7effa2d01c189c50f"
+    "0d5bcbe3fa272e56cfc4a4e1d388a9dcd65df8628902556c8b6bb6a641709b5a35dd2622c73d4640bfa1359d0e76e1f2"
+    "19f8e33eb9bd0b59ec198eb2fccaae0346bd8b401e12e3c67cb629569c185a2e0f35a2f741644c1cca5ebb139d77a89a"
+    "2953fc5e30048c0e619f07c8d21d1e56b8af07193d0fdf3f49cd49f2ef3138b5138862f1470bd2d16e34a2b9e7777a6c"
+    "8c8d4cb94b4e8b5d616cd5393753e7b0f31cc7da559ba8e98d888914e334773baf498ad88d9631eb5fe32e53a4145bf0"
+    "ba548bf2b0a50c63f67b14e398a34b0d";
+constexpr const char* CavpSignature =
+    "6b8be97d9e518a2ede746ff4a7d91a84a1fc665b52f154a927650db6e7348c69f8c8881f7bcf9b1a6d3366eed30c3aed"
+    "4e93c203c43f5528a45de791895747ade9c5fa5eee81427edee02082147aa311712a6ad5fb1732e93b3d6cd23ffd46a0"
+    "b3caf62a8b69957cc68ae39f9993c1a779599cdda949bdaababb77f248fcfeaa44059be5459fb9b899278e929528ee13"
+    "0facd53372ecbc42f3e8de2998425860406440f248d817432de687112e504d734028e6c5620fa282ca07647006cf0a2f"
+    "f83e19a916554cc61810c2e855305db4e5cf893a6a96767365794556ff033359084d7e38a8456e68e21155b76151314a"
+    "29875feee09557161cbc654541e89e42";
+constexpr const char* CavpDigest = "077877895a428028f60998b985550820025a2a42c0beab27165c0802d3098150";
+
 static Bytes Hex(const char* text) {
     const auto nibble = [](char digit) { return static_cast<unsigned char>(digit <= '9' ? digit - '0' : digit - 'a' + 10); };
     Bytes bytes;
@@ -373,6 +389,262 @@ static void TestPublicKeyInfoVariants() {
     RequireThrows([&] { Decode(constructedBits, static_cast<long>(constructedBits.size())); });
 }
 
+constexpr int PaddingPkcs1 = 1;
+constexpr int PaddingSslv23 = 2;
+constexpr int PaddingNone = 3;
+constexpr int PaddingOaep = 4;
+constexpr int PaddingX931 = 5;
+
+struct StaticNumber {
+    std::vector<std::uint64_t> words;
+    TestBignum number;
+};
+
+static void SetNumber(StaticNumber& storage, const Bytes& bigEndian) {
+    storage.words.assign(bigEndian.size() / 8 + 1, 0);
+    for (std::size_t position = 0; position < bigEndian.size(); ++position)
+        storage.words[position / 8] |= std::uint64_t(bigEndian[bigEndian.size() - 1 - position]) << (8 * (position % 8));
+    int top = static_cast<int>(storage.words.size());
+    while (top > 0 && !storage.words[static_cast<std::size_t>(top) - 1]) --top;
+    storage.number = {storage.words.data(), top, static_cast<int>(storage.words.size()), 0, BignumStaticData};
+}
+
+struct TestKey {
+    StaticNumber modulus;
+    StaticNumber exponent;
+    LibreSslRsa* rsa;
+
+    TestKey(const Bytes& n, const Bytes& e) : rsa(RSA_new_nid_postfix()) {
+        SetNumber(modulus, n);
+        SetNumber(exponent, e);
+        rsa->n = &modulus.number;
+        rsa->e = &exponent.number;
+    }
+    TestKey(const TestKey&) = delete;
+    ~TestKey() { RSA_free_nid_postfix(rsa); }
+};
+
+static Bytes Pattern(std::size_t length, unsigned seed) {
+    Bytes bytes(length);
+    for (std::size_t index = 0; index < length; ++index) bytes[index] = static_cast<unsigned char>(seed + 29 * index);
+    return bytes;
+}
+
+static Bytes Sha1(const Bytes& data) {
+    Sha1Context context {};
+    unsigned char digest[20];
+    Require(SHA1_Init_nid_postfix(&context) == 1 && SHA1_Update_nid_postfix(&context, data.data(), data.size()) == 1);
+    Require(SHA1_Final_nid_postfix(digest, &context) == 1);
+    return Bytes(digest, digest + 20);
+}
+
+static Bytes Mgf1(const Bytes& seed, std::size_t length) {
+    Bytes mask;
+    for (std::uint32_t counter = 0; mask.size() < length; ++counter) {
+        auto input = seed;
+        for (int shift = 24; shift >= 0; shift -= 8) input.push_back(static_cast<unsigned char>(counter >> shift));
+        const auto digest = Sha1(input);
+        mask.insert(mask.end(), digest.begin(), digest.end());
+    }
+    mask.resize(length);
+    return mask;
+}
+
+static Bytes Recover(const Bytes& encrypted) {
+    TestKey privateKey(Hex(CavpModulus), Hex(CavpPrivateExponent));
+    Bytes block(256);
+    Require(RSA_public_decrypt_nid_postfix(256, encrypted.data(), block.data(), privateKey.rsa, PaddingNone) == 256);
+    return block;
+}
+
+static bool Pkcs1Block(const Bytes& block, const Bytes& message) {
+    if (block[0] != 0 || block[1] != 2) return false;
+    const std::size_t separator = block.size() - message.size() - 1;
+    for (std::size_t index = 2; index < separator; ++index)
+        if (!block[index]) return false;
+    return block[separator] == 0 && Bytes(block.begin() + static_cast<long>(separator) + 1, block.end()) == message;
+}
+
+static bool OaepBlock(const Bytes& block, const Bytes& message) {
+    if (block[0]) return false;
+    const Bytes maskedSeed(block.begin() + 1, block.begin() + 21);
+    const Bytes maskedData(block.begin() + 21, block.end());
+    auto seed = maskedSeed;
+    const auto seedMask = Mgf1(maskedData, 20);
+    for (std::size_t index = 0; index < 20; ++index) seed[index] ^= seedMask[index];
+    auto data = maskedData;
+    const auto dataMask = Mgf1(seed, data.size());
+    for (std::size_t index = 0; index < data.size(); ++index) data[index] ^= dataMask[index];
+    if (Bytes(data.begin(), data.begin() + 20) != Sha1({})) return false;
+    const std::size_t one = data.size() - message.size() - 1;
+    for (std::size_t index = 20; index < one; ++index)
+        if (data[index]) return false;
+    return data[one] == 1 && Bytes(data.begin() + static_cast<long>(one) + 1, data.end()) == message;
+}
+
+static void TestPublicDecrypt() {
+    const auto spki = Hex(CavpSpki);
+    auto* rsa = Decode(spki, static_cast<long>(spki.size()));
+    const auto signature = Hex(CavpSignature);
+    const auto digestInfo = Concat({Hex("3031300d060960864801650304020105000420"), Hex(CavpDigest)});
+    Bytes out(300, 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(256, signature.data(), out.data(), rsa, PaddingPkcs1) == 51);
+    Require(Bytes(out.begin(), out.begin() + 51) == digestInfo && out[51] == 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(256, signature.data(), out.data(), rsa, PaddingNone) == 256);
+    Require(out[0] == 0 && out[1] == 1 && out[2] == 0xFF && out[204] == 0 && Bytes(out.begin() + 205, out.begin() + 256) == digestInfo);
+    auto tampered = signature;
+    tampered[255] ^= 1;
+    Require(RSA_public_decrypt_nid_postfix(256, tampered.data(), out.data(), rsa, PaddingPkcs1) == -1);
+    Require(RSA_public_decrypt_nid_postfix(256, tampered.data(), out.data(), rsa, PaddingNone) == 256);
+    Require(RSA_public_decrypt_nid_postfix(257, Concat({signature, {0}}).data(), out.data(), rsa, PaddingPkcs1) == -1);
+    Require(RSA_public_decrypt_nid_postfix(-1, signature.data(), out.data(), rsa, PaddingPkcs1) == -1);
+    const Bytes large(256, 0xFF);
+    Require(RSA_public_decrypt_nid_postfix(256, large.data(), out.data(), rsa, PaddingNone) == -1);
+    Require(RSA_public_decrypt_nid_postfix(256, Hex(CavpModulus).data(), out.data(), rsa, PaddingNone) == -1);
+    std::memset(out.data(), 0xEE, out.size());
+    Require(RSA_public_decrypt_nid_postfix(0, nullptr, out.data(), rsa, PaddingNone) == 256);
+    Require(Zero(out.data(), 256) && out[256] == 0xEE);
+    Require(RSA_public_decrypt_nid_postfix(0, nullptr, out.data(), rsa, PaddingPkcs1) == -1);
+    for (int padding : {0, PaddingSslv23, PaddingOaep, 6, 7}) Require(RSA_public_decrypt_nid_postfix(256, signature.data(), out.data(), rsa, padding) == -1);
+    RequireThrows([&] { RSA_public_decrypt_nid_postfix(256, signature.data(), out.data(), rsa, PaddingX931); });
+    RequireThrows([&] { RSA_public_decrypt_nid_postfix(256, nullptr, out.data(), rsa, PaddingPkcs1); });
+    RequireThrows([&] { RSA_public_decrypt_nid_postfix(256, signature.data(), nullptr, rsa, PaddingPkcs1); });
+    RSA_free_nid_postfix(rsa);
+}
+
+static void TestPublicEncrypt() {
+    const auto spki = Hex(CavpSpki);
+    auto* rsa = Decode(spki, static_cast<long>(spki.size()));
+    const auto message = Pattern(32, 5);
+    Bytes first(256);
+    Bytes second(256);
+    for (int padding : {PaddingPkcs1, PaddingOaep}) {
+        Require(RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, padding) == 256);
+        Require(RSA_public_encrypt_nid_postfix(32, message.data(), second.data(), rsa, padding) == 256);
+        Require(first != second);
+        for (const auto* encrypted : {&first, &second}) {
+            const auto block = Recover(*encrypted);
+            Require(padding == PaddingPkcs1 ? Pkcs1Block(block, message) : OaepBlock(block, message));
+        }
+    }
+    for (auto [padding, longest] : {std::pair {PaddingPkcs1, 245}, std::pair {PaddingOaep, 214}}) {
+        const auto longMessage = Pattern(static_cast<std::size_t>(longest) + 1, 9);
+        Require(RSA_public_encrypt_nid_postfix(longest, longMessage.data(), first.data(), rsa, padding) == 256);
+        const Bytes accepted(longMessage.begin(), longMessage.begin() + longest);
+        Require(padding == PaddingPkcs1 ? Pkcs1Block(Recover(first), accepted) : OaepBlock(Recover(first), accepted));
+        Require(RSA_public_encrypt_nid_postfix(longest + 1, longMessage.data(), first.data(), rsa, padding) == -1);
+        Require(RSA_public_encrypt_nid_postfix(0, nullptr, first.data(), rsa, padding) == 256);
+        Require(padding == PaddingPkcs1 ? Pkcs1Block(Recover(first), {}) : OaepBlock(Recover(first), {}));
+        RequireThrows([&] { RSA_public_encrypt_nid_postfix(-1, message.data(), first.data(), rsa, padding); });
+    }
+    auto raw = Concat({{0x00}, Pattern(255, 3)});
+    Require(RSA_public_encrypt_nid_postfix(256, raw.data(), first.data(), rsa, PaddingNone) == 256 && Recover(first) == raw);
+    Require(RSA_public_encrypt_nid_postfix(255, raw.data(), first.data(), rsa, PaddingNone) == -1);
+    Require(RSA_public_encrypt_nid_postfix(257, Concat({raw, {0}}).data(), first.data(), rsa, PaddingNone) == -1);
+    Require(RSA_public_encrypt_nid_postfix(-1, raw.data(), first.data(), rsa, PaddingNone) == -1);
+    Require(RSA_public_encrypt_nid_postfix(256, Hex(CavpModulus).data(), first.data(), rsa, PaddingNone) == -1);
+    for (int padding : {0, PaddingX931, 6, 7}) Require(RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, padding) == -1);
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, PaddingSslv23); });
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), nullptr, rsa, PaddingPkcs1); });
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingPkcs1); });
+    RSA_free_nid_postfix(rsa);
+}
+
+struct Crypts {
+    int calls;
+    int length;
+    const unsigned char* from;
+    unsigned char* to;
+    LibreSslRsa* rsa;
+    int padding;
+};
+
+static Crypts crypts;
+
+static int APS5_VABI RecordCrypt(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    crypts = {crypts.calls + 1, length, from, to, rsa, padding};
+    return 77;
+}
+
+static int APS5_VABI OtherModExp(void*, const void*, const void*, const void*, void*, void*) {
+    return 1;
+}
+
+static void TestPublicKeyChecks() {
+    const auto modulus = Hex(CavpModulus);
+    const auto message = Pattern(256, 1);
+    Bytes out(4096);
+    {
+        TestKey key(modulus, {});
+        Require(RSA_public_encrypt_nid_postfix(256, Concat({{0}, Pattern(255, 1)}).data(), out.data(), key.rsa, PaddingNone) == 256);
+        Require(Zero(out.data(), 255) && out[255] == 1);
+    }
+    {
+        TestKey key(modulus, modulus);
+        Require(RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1) == -1);
+        Require(RSA_public_decrypt_nid_postfix(256, message.data(), out.data(), key.rsa, PaddingNone) == -1);
+    }
+    {
+        auto even = modulus;
+        even.back() &= 0xFE;
+        TestKey key(even, CavpExponent);
+        Require(RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1) == -1);
+        Require(RSA_public_decrypt_nid_postfix(255, message.data(), out.data(), key.rsa, PaddingNone) == -1);
+    }
+    Bytes large(385, 0);
+    large[0] = 0x01;
+    large.back() = 0x03;
+    Bytes wideExponent(9, 0);
+    wideExponent[0] = 0x01;
+    wideExponent.back() = 0x01;
+    {
+        TestKey key(large, wideExponent);
+        Require(RSA_public_encrypt_nid_postfix(385, Bytes(385, 0).data(), out.data(), key.rsa, PaddingNone) == -1);
+        Require(RSA_public_decrypt_nid_postfix(1, message.data(), out.data(), key.rsa, PaddingNone) == -1);
+    }
+    {
+        TestKey key(large, Bytes(wideExponent.begin() + 1, wideExponent.end()));
+        Require(RSA_public_decrypt_nid_postfix(1, message.data(), out.data(), key.rsa, PaddingNone) == 385);
+    }
+    Bytes huge(2049, 0);
+    huge[0] = 0x01;
+    huge.back() = 0x01;
+    {
+        TestKey key(huge, {0x03});
+        Require(RSA_public_decrypt_nid_postfix(1, message.data(), out.data(), key.rsa, PaddingNone) == -1);
+    }
+    {
+        Bytes wide(1025, 0);
+        wide[0] = 0x01;
+        wide.back() = 0x01;
+        TestKey key(wide, {0x03});
+        RequireThrows([&] { RSA_public_decrypt_nid_postfix(1, message.data(), out.data(), key.rsa, PaddingNone); });
+    }
+    {
+        TestKey key(modulus, CavpExponent);
+        const auto* defaultMethod = key.rsa->meth;
+        LibreSslRsaMethod method = *defaultMethod;
+        method.operations[0] = reinterpret_cast<void*>(RecordCrypt);
+        method.operations[1] = reinterpret_cast<void*>(RecordCrypt);
+        key.rsa->meth = &method;
+        crypts = {};
+        Require(RSA_public_encrypt_nid_postfix(5, message.data(), out.data(), key.rsa, 9) == 77);
+        Require(crypts.calls == 1 && crypts.length == 5 && crypts.from == message.data() && crypts.to == out.data() && crypts.rsa == key.rsa && crypts.padding == 9);
+        Require(RSA_public_decrypt_nid_postfix(6, message.data(), out.data(), key.rsa, 8) == 77 && crypts.calls == 2 && crypts.length == 6);
+        method = *defaultMethod;
+        method.operations[5] = reinterpret_cast<void*>(OtherModExp);
+        RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
+        method.operations[0] = nullptr;
+        RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
+        key.rsa->meth = nullptr;
+        RequireThrows([&] { RSA_public_decrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
+        key.rsa->meth = defaultMethod;
+        key.rsa->e = nullptr;
+        RequireThrows([&] { RSA_public_decrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
+    }
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), nullptr, PaddingPkcs1); });
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -381,5 +653,8 @@ int main() {
     TestFree();
     TestPublicKeyInfo();
     TestPublicKeyInfoVariants();
+    TestPublicDecrypt();
+    TestPublicEncrypt();
+    TestPublicKeyChecks();
     std::puts("libSceLibreSsl RSA tests passed");
 }
