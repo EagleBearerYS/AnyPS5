@@ -1,0 +1,3 @@
+BASE=7e4f6e0440b3b39206f0a6e21b1d177f6975d930
+REPEAT=10
+EXTRA_TESTS='^agc_storage_|agc_unchanged_cpu_stamps|^agc_driver_linear_target'
