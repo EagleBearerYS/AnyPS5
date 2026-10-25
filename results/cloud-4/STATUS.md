@@ -1,9 +1,8 @@
-BUSY BF-201
-since: 2026-10-25T02:46:12Z (claimed 2026-10-25T02:46:12Z)
-claimed: tasks/claimed/BF-201.md
-machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main f4aabbb12)
-last: BF-194 done, result results/cloud-4/BF-194.md; feat/libkernel-sys-finish-merged-calls at cb56a3c2b on the fork (6 of 18 rows, 12 dropped with reasons)
-baseline: CI Linux mirror on cb56a3c2b (upstream main f4aabbb12 + 4 commits): 2196 tests, 2101 passed, 90 skipped, 5 failed (the IPv6 guest socket tests, guest_socket_options included; check_skips flags only guest_sce_net, IPv6 loopback)
+READY 2026-10-25T03:03:26Z: finished BF-201, watching the board
+since: 2026-10-25T03:03:26Z (BF-201 done)
+machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 52a8bed57)
+last: BF-201 done, result results/cloud-4/BF-201.md; feat/scepad-light-bar-and-handle-calls at 63ef18b43 on the fork (4 of 5 rows, scePadGetBluetoothAddress dropped)
+baseline: CI Linux mirror on 63ef18b43 (upstream main 52a8bed57 + 3 commits): 2211 tests, 2116 passed, 90 skipped, 5 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
