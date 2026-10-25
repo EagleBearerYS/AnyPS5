@@ -33,6 +33,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileIdentity.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/Amd64OnlyConverter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/RedZoneFramer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/InstructionScanner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionRewriter.cpp
@@ -301,6 +302,16 @@ if(BUILD_TESTING)
     add_test(NAME rewrite_boundaries COMMAND rewrite_boundaries_tests)
     set_tests_properties(rewrite_boundaries PROPERTIES TIMEOUT 20)
 
+    add_test_executable(red_zone_framer_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerTests.cpp)
+    target_link_libraries(red_zone_framer_tests PRIVATE relinker_core)
+    add_test(NAME red_zone_framer COMMAND red_zone_framer_tests)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        add_test_executable(red_zone_framer_execution_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerExecutionTests.cpp)
+        target_link_libraries(red_zone_framer_execution_tests PRIVATE relinker_core)
+        add_test(NAME red_zone_framer_execution COMMAND red_zone_framer_execution_tests)
+        set_tests_properties(red_zone_framer_execution PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    endif()
+
     add_test_executable(cli_args_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/CliArgsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/CliArgs.cpp
@@ -565,6 +576,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_executable_exports.py $<TARGET_FILE:relinker>)
         add_test(NAME executable_tls_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_tls_relocations.py $<TARGET_FILE:relinker>)
+        add_test(NAME executable_export_bounds COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_export_bounds.py $<TARGET_FILE:relinker>)
         add_test(NAME macos_empty_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_empty_tls.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_empty_tls PROPERTIES TIMEOUT 60)
@@ -615,6 +628,13 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executables.py $<TARGET_FILE:relinker>)
         add_test(NAME game_patches COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_game_patches.py $<TARGET_FILE:relinker>)
+        if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME patch_advisor_unit COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tools/tests/test_suggest_patches.py)
+            add_test(NAME patch_advisor_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_advisor.py $<TARGET_FILE:relinker>)
+            set_tests_properties(patch_advisor_integration PROPERTIES TIMEOUT 40)
+        endif()
         add_test(NAME sce_module_path COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_sce_module_path.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_guest_stack COMMAND ${Python3_EXECUTABLE}
@@ -764,6 +784,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_call_registry.py $<TARGET_FILE:relinker>)
         add_test(NAME jmprel_table_bounds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_jmprel_table_bounds.py $<TARGET_FILE:relinker>)
+        add_test(NAME copy_relocations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_copy_relocations.py $<TARGET_FILE:relinker>)
         if(WIN32)
             add_test(NAME windows_diagnostic_fixture_isolation COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/test_windows_diagnostic_fixture_isolation.py $<TARGET_FILE:windows_dependency_diagnostics_tests>)

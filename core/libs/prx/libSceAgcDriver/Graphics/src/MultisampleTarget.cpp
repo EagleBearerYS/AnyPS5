@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -574,7 +575,7 @@ private:
         if (use.cmaskAddress != 0) dccRanges.push_back({use.cmaskAddress, use.cmaskBytes, 0});
         for (auto& range : dccRanges) {
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 256);
-            Require(GuestMemory::Watched(range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
+            Require(WatchedAfterSettle(context, range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
             range.generation = collectBlocks(range.address, range.bytes);
             Require(range.generation != 0, "initial multisampled DCC contents have no write generation");
         }
@@ -591,7 +592,7 @@ private:
             fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(DescribeSurface(resource).guestBytes), 0};
             auto& range = *fmaskRange;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 65536u);
-            Require(GuestMemory::Watched(range.address, range.bytes), "native FMASK contents require watched guest memory");
+            Require(WatchedAfterSettle(context, range.address, range.bytes), "native FMASK contents require watched guest memory");
             range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
             Require(range.generation != 0, "native FMASK contents have no write generation");
             for (const auto& other : dccRanges) Require(range.address >= other.address + other.bytes || other.address >= range.address + range.bytes, "native FMASK overlaps its color or metadata planes");
@@ -631,7 +632,7 @@ private:
         if (fmaskRange) {
             Require(use.fmaskAddress == target.fmaskAddress && use.fmaskPipeBankXor == target.fmaskPipeBankXor, "native FMASK target layout changed");
             const auto& range = *fmaskRange;
-            requireDccRange(GuestMemory::Watched(range.address, range.bytes), range, "native FMASK sampling requires watched guest memory");
+            requireDccRange(WatchedAfterSettle(context, range.address, range.bytes), range, "native FMASK sampling requires watched guest memory");
             GuestMemory::CollectWritesUncached(range.address, range.bytes);
             requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident native FMASK are not implemented");
@@ -660,6 +661,7 @@ struct GuardedRange {
     std::uint32_t samples;
     std::shared_ptr<std::atomic<bool>> active;
     std::shared_ptr<std::atomic<bool>> metadataValid;
+    bool fmask = false;
 };
 
 class PrimedSharedMutex : public std::shared_mutex {
@@ -1321,6 +1323,17 @@ void ClearMultisampleTargets(VkDevice device) {
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
+void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
+    const auto bits = static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.coverageSamples;
+    const auto bytes = std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
+    std::unique_lock lock(guardedMutex());
+    const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
+    if (!known) guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, true});
+    anyGuarded().store(true, std::memory_order_release);
+    lock.unlock();
+    InstallResidentImageReadGuard_nid_no_patch();
+}
+
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
     RequireNoResidentDepthRead_nid_no_patch(address, bytes);
     RequireNoMultisampleColorTarget(address, bytes, access);
@@ -1332,6 +1345,10 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
         char text[256];
+        if (range.fmask) {
+            std::snprintf(text, sizeof(text), "AGC graphics: %s of 0x%llx+0x%zx overlaps the FMASK 0x%llx+0x%llx of a one-fragment color target of %u samples drawn on the host, which does not write it: guest access to it is not implemented", access, static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
+            throw std::runtime_error(text);
+        }
         std::snprintf(text, sizeof(text), "AGC graphics: %s of 0x%llx+0x%zx overlaps multisampled color target 0x%llx+0x%llx (%u samples), whose samples are only on the host: guest access to it is not implemented", access, static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
         throw std::runtime_error(text);
     }
