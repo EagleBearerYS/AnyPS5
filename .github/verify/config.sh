@@ -1,0 +1,3 @@
+BASE=e5f23554c9c7b1929f1ef7a65f6ea33a24fd189e
+REPEAT=10
+EXTRA_TESTS='guest_http|guest_http_options|guest_net_ctl|guest_np_utility_offline'
