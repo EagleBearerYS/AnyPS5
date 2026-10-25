@@ -1,0 +1,3 @@
+BASE=a5a780eaaa7f187fe8f5c7f2ef244f6a6dab2762
+REPEAT=10
+EXTRA_TESTS='^agc_spanned_wave|agc_driver_span_table_choice|^agc_driver_nested_|^agc_driver_pointer_phi|agc_driver_table_image_per_workgroup|agc_driver_wave32_sampler_per_workgroup|request_serializer'
