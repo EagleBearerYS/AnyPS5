@@ -1,0 +1,4 @@
+BASE=2742004ed28f765c7147db0e0269ff5868e9eb6f
+REPEAT=10
+EXTRA_TESTS='^agc_driver_guest_memory_lifetime|agc_driver_host_import_lifetime|agc_driver_host_import_mutation_race|agc_driver_host_import_failure_handles'
+NO_BEFORE=1
