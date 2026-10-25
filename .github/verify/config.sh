@@ -1,0 +1,3 @@
+BASE=5949d8bf924b0f3b01c1c4e5e82b2e8ddabd9b97
+REPEAT=20
+EXTRA_TESTS='guest_raise_in_system_call'
