@@ -557,6 +557,7 @@ public:
         alias.active = active;
         alias.contents = contents;
         alias.fills = colorFill.Noted();
+        alias.sameRun = colorFill.SameRun();
         const auto newest = [&](MultisampleColorContent content, std::optional<VkClearColorValue> value) {
             alias.newest = content;
             alias.value = value;
@@ -1151,25 +1152,30 @@ void MultisampledColorFill::NoteFill(std::uint64_t fillAddress, std::size_t fill
     if (bytes == 0) {
         std::snprintf(text, sizeof(text), "a fill of 0x%llx+0x%zx covers the color memory at 0x%llx of a multisampled target whose footprint is not modeled", static_cast<unsigned long long>(fillAddress), fillBytes, static_cast<unsigned long long>(address));
         refusal = text;
+        sameRun = 0;
         return;
     }
     if (fillAddress > address || fillAddress + fillBytes < address + bytes) {
         std::snprintf(text, sizeof(text), "a fill of 0x%llx+0x%zx partly covers the color memory 0x%llx+0x%llx of a multisampled target, leaving its samples mixed", static_cast<unsigned long long>(fillAddress), fillBytes, static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
         refusal = text;
+        sameRun = 0;
         return;
     }
     refusal.clear();
+    sameRun = filled == pattern ? sameRun + 1u : 1u;
     filled = pattern;
 }
 
 std::optional<std::uint32_t> MultisampledColorFill::TakeFill() {
     Require(refusal.empty(), refusal);
+    sameRun = 0;
     return std::exchange(filled, std::nullopt);
 }
 
 void MultisampledColorFill::Discard() {
     refusal.clear();
     filled.reset();
+    sameRun = 0;
 }
 
 bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colorFill, const ColorTarget& use, VkClearColorValue& clear) {
