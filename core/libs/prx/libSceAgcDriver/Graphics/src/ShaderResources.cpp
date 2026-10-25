@@ -17,6 +17,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -418,6 +419,13 @@ enum class TableGate : std::size_t {
     StateChanged,
     PendingAtRemember,
     Remembered,
+    EraseEpoch,
+    EraseUnwatched,
+    EraseAllocations,
+    EraseDepth,
+    MissNeverKept,
+    MissSameThread,
+    MissOtherThread,
     Count,
 };
 
@@ -457,6 +465,24 @@ void noteGate(TableGate gate, std::uint64_t count = 1) {
     TextureCounts().tableGates[static_cast<std::size_t>(gate)].fetch_add(count, std::memory_order_relaxed);
 }
 
+struct TableOwners {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, std::thread::id> owners;
+    std::unordered_set<std::thread::id> threads;
+    std::unordered_set<std::thread::id> lookers;
+};
+
+TableOwners& Owners() {
+    static auto* owners = new TableOwners;
+    return *owners;
+}
+
+std::uint64_t TableIdentity(VkDevice device, const std::vector<std::uint32_t>& words) {
+    std::uint64_t hash = 1469598103934665603ull ^ static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(device));
+    for (const auto word : words) hash = (hash ^ word) * 1099511628211ull;
+    return hash ^ words.size();
+}
+
 thread_local std::uint64_t sampledLookupKeyScans = 0;
 
 void reportTextureCounters() {
@@ -469,6 +495,15 @@ void reportTextureCounters() {
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
     AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved (%llu untracked entries kept); untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.tableUntrackedKept), count(counters.untrackedKept), count(counters.untrackedCompared));
     const auto gate = [&](TableGate value) { return count(counters.tableGates[static_cast<std::size_t>(value)]); };
+    std::size_t rememberingThreads = 0;
+    std::size_t lookingThreads = 0;
+    {
+        auto& owners = Owners();
+        std::lock_guard lock(owners.mutex);
+        rememberingThreads = owners.threads.size();
+        lookingThreads = owners.lookers.size();
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[table-threads] erased tables whose state differs in: collect epoch %llu, unwatch serial %llu, allocations %llu, depth surfaces %llu; lookups that found nothing kept: never remembered %llu, last remembered on this thread %llu, on another thread %llu; threads that remembered tables %zu, that looked them up %zu\n", gate(TableGate::EraseEpoch), gate(TableGate::EraseUnwatched), gate(TableGate::EraseAllocations), gate(TableGate::EraseDepth), gate(TableGate::MissNeverKept), gate(TableGate::MissSameThread), gate(TableGate::MissOtherThread), rememberingThreads, lookingThreads);
     AgcDriver::ProfilePrint_nid_no_patch("[table-gates] lookups: storage table %llu, no item %llu, epoch 0 %llu, kept tables erased by a state change %llu, not kept %llu, stale by pending %llu, by untracked key %llu, by write generation %llu, cached texture gone %llu; fresh tables refused first by: epoch 0 %llu, capacity %llu, written element %llu, no item %llu, empty lookup log %llu, other object %llu, storage source %llu, generation 0 without key %llu, compressed keys %llu, DCC %llu, state changed %llu; pending at remember %llu, remembered %llu\n", gate(TableGate::LookupStorageTable), gate(TableGate::LookupNoItem), gate(TableGate::LookupEpochZero), gate(TableGate::ErasedByState), gate(TableGate::LookupMiss), gate(TableGate::StalePending), gate(TableGate::StaleUntracked), gate(TableGate::StaleUnchanged), gate(TableGate::CachedMiss), gate(TableGate::EpochZero), gate(TableGate::Capacity), gate(TableGate::Written), gate(TableGate::NoItem), gate(TableGate::LogEmpty), gate(TableGate::OtherObject), gate(TableGate::Source), gate(TableGate::GenerationZero), gate(TableGate::Compressed), gate(TableGate::Dcc), gate(TableGate::StateChanged), gate(TableGate::PendingAtRemember), gate(TableGate::Remembered));
 }
 
@@ -1907,12 +1942,26 @@ ReusedTable* FindReusedTable(VkDevice device, const ShaderRecompiler::Descriptor
         return nullptr;
     }
     auto& tables = ReusedTables();
-    const auto erased = std::erase_if(tables, [&](const ReusedTable& table) { return table.state != state; });
+    const auto erased = std::erase_if(tables, [&](const ReusedTable& table) {
+        if (table.state == state) return false;
+        if (table.state.epoch != state.epoch) noteGate(TableGate::EraseEpoch);
+        if (table.state.unwatched != state.unwatched) noteGate(TableGate::EraseUnwatched);
+        if (table.state.allocations != state.allocations) noteGate(TableGate::EraseAllocations);
+        if (table.state.depthSurfaces != state.depthSurfaces) noteGate(TableGate::EraseDepth);
+        return true;
+    });
     if (erased != 0) noteGate(TableGate::ErasedByState, erased);
     for (auto& table : tables) {
         if (SameTable(table, device, binding)) return &table;
     }
     noteGate(TableGate::LookupMiss);
+    {
+        auto& owners = Owners();
+        std::lock_guard lock(owners.mutex);
+        owners.lookers.insert(std::this_thread::get_id());
+        const auto found = owners.owners.find(TableIdentity(device, binding.guestDescriptor));
+        noteGate(found == owners.owners.end() ? TableGate::MissNeverKept : found->second == std::this_thread::get_id() ? TableGate::MissSameThread : TableGate::MissOtherThread);
+    }
     return nullptr;
 }
 
@@ -1961,6 +2010,12 @@ bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<T
 }
 
 void RememberTable(ReusedTable&& table, const ShaderRecompiler::DescriptorBinding& binding) {
+    {
+        auto& owners = Owners();
+        std::lock_guard lock(owners.mutex);
+        owners.owners[TableIdentity(table.device, binding.guestDescriptor)] = std::this_thread::get_id();
+        owners.threads.insert(std::this_thread::get_id());
+    }
     auto& tables = ReusedTables();
     std::erase_if(tables, [&](const ReusedTable& entry) { return SameTable(entry, table.device, binding); });
     table.words = binding.guestDescriptor;
