@@ -1,0 +1,3 @@
+BASE=3a47ea6ea4d401d6d7071935a9dc78492c934b59
+REPEAT=1
+EXTRA_TESTS='guest_kernel_sys_threads_main|guest_kernel_sys_threads_main_patched'
