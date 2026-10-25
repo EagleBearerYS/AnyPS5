@@ -1,0 +1,5 @@
+BASE=e5f23554c9c7b1929f1ef7a65f6ea33a24fd189e
+REPEAT=10
+EXTRA_TESTS='agc_shader_type_zero_image_materialization|agc_driver_draw_write_ranges|agc_driver_graphics|agc_placeholder_images|agc_driver_stencil_null_feedback'
+BEFORE_REPEAT=1
+VALIDATION=1
