@@ -226,6 +226,25 @@ void CheckSchedSetscheduler() {
     Require(scePthreadSetschedparam(self, savedPolicy, &saved) == 0);
 }
 
+void CheckSemSetname() {
+    void* sem = nullptr;
+    Require(sem_init_nid_postfix(&sem, 0, 2) == 0);
+    Require(sem_setname_nid_postfix(&sem, "kernel-sys-sem") == 0);
+    Require(sem_setname_nid_postfix(&sem, "") == 0);
+    Require(sem_setname_nid_postfix(&sem, nullptr) == -1 && Error() == 22);
+    int value = -1;
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 2);
+    Require(sem_destroy_nid_postfix(&sem) == 0);
+    Require(sem_setname_nid_postfix(&sem, "destroyed") == -1 && Error() == 22);
+    Require(sem_setname_nid_postfix(nullptr, "null") == -1 && Error() == 22);
+    void* uninitialized = nullptr;
+    Require(sem_setname_nid_postfix(&uninitialized, "zero") == -1 && Error() == 22);
+    void* named = sem_open_nid_postfix("/kernel-sys-setname", 0x200, 0600, 1);
+    Require(named != nullptr);
+    Require(sem_setname_nid_postfix(named, "named") == 0);
+    Require(sem_close_nid_postfix(named) == 0 && sem_unlink_nid_postfix("/kernel-sys-setname") == 0);
+}
+
 void CheckCondattrClock() {
     constexpr KernelClockid Realtime = 0;
     constexpr KernelClockid Monotonic = 4;
@@ -436,6 +455,7 @@ int main() {
     Require(umask_nid_postfix(022) == 07777);
     CheckCondattrClock();
     CheckSchedSetscheduler();
+    CheckSemSetname();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));

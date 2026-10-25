@@ -2314,8 +2314,13 @@ int APS5_VABI sched_setscheduler_nid_postfix(int pid, int policy, const KernelSc
     return 0;
 }
 
-int APS5_VABI sem_setname_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
+    int value = 0;
+    if (sem_getvalue_nid_postfix(sem, &value) != 0) return -1;
+    if (name == nullptr) {
+        *__error_nid_postfix() = 22;
+        return -1;
+    }
     return 0;
 }
 

@@ -531,7 +531,7 @@ int APS5_VABI sched_getparam_nid_postfix(void);
 int APS5_VABI sched_getscheduler_nid_postfix(void);
 int APS5_VABI sched_setparam_nid_postfix(void);
 int APS5_VABI sched_setscheduler_nid_postfix(int pid, int policy, const KernelSchedParam* param);
-int APS5_VABI sem_setname_nid_postfix(void);
+int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name);
 int APS5_VABI set_phys_fmem_limit_nid_postfix(void);
 int APS5_VABI setlogin_nid_postfix(void);
 int APS5_VABI settimeofday_nid_postfix(void);

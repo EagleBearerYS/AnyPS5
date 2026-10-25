@@ -2,6 +2,7 @@
 
 ### Silent stubs
 - [fchmodat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - `AT_SYMLINK_NOFOLLOW` on a symbolic link (on Windows and Linux)
+- [sem_setname](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - returns 0 for a valid semaphore and a name without keeping the name, since nothing here reads a semaphore's name. An invalid semaphore (null, never initialised or destroyed) returns `EINVAL`, through `sem_getvalue`, as every `sem_*` call checks with FreeBSD 11.4's [`sem_check_validity`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/sem_new.c#L112-L120). A null name returns `EINVAL`, as shadPS4's [`posix_sem_setname`](https://github.com/shadps4-emu/shadPS4/blob/a808e76/src/core/libraries/kernel/threads/semaphore.cpp#L464-L470) does for the same NID (`-wUggz2S5yk`), with its `(sem_t*, const char*)` signature. FreeBSD has no `sem_setname`, and the console's checks are unverified
 
 ### Unknown function info
 
