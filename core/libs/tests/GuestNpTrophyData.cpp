@@ -233,6 +233,35 @@ static void ReportUnimplemented() {
     Require(false, "sceNpUniversalDataSystemIntInitialize must report that it is not implemented");
 }
 
+static bool ThrowsNotImplemented(int (APS5_VABI* function)(void), const char* name) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void ResolveInternalExports() {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNpUniversalDataSystemIntAbortHandle, "sceNpUniversalDataSystemIntAbortHandle"},
+        {sceNpUniversalDataSystemIntCheckNetSyncTitles, "sceNpUniversalDataSystemIntCheckNetSyncTitles"},
+        {sceNpUniversalDataSystemIntCreateContext, "sceNpUniversalDataSystemIntCreateContext"},
+        {sceNpUniversalDataSystemIntCreateHandle, "sceNpUniversalDataSystemIntCreateHandle"},
+        {sceNpUniversalDataSystemIntDeleteAllData, "sceNpUniversalDataSystemIntDeleteAllData"},
+        {sceNpUniversalDataSystemIntDeleteUserDataWithServerData, "sceNpUniversalDataSystemIntDeleteUserDataWithServerData"},
+        {sceNpUniversalDataSystemIntDestroyContext, "sceNpUniversalDataSystemIntDestroyContext"},
+        {sceNpUniversalDataSystemIntDestroyHandle, "sceNpUniversalDataSystemIntDestroyHandle"},
+        {sceNpUniversalDataSystemIntNetSyncTitles, "sceNpUniversalDataSystemIntNetSyncTitles"},
+        {sceNpUniversalDataSystemIntTerminate, "sceNpUniversalDataSystemIntTerminate"},
+    };
+    for (const auto& entry : exports) Require(ThrowsNotImplemented(entry.function, entry.name), entry.name);
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-data-" + std::to_string(std::random_device{}()));
@@ -247,6 +276,7 @@ int main() {
     PostUnlocks(context);
     ReportPlaceholders();
     ReportUnimplemented();
+    ResolveInternalExports();
 
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
