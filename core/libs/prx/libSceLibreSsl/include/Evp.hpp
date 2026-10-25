@@ -12,6 +12,7 @@ inline constexpr std::uint64_t CipherModeCbc = 2;
 inline constexpr std::uint64_t CipherModeCfb = 3;
 inline constexpr std::uint64_t CipherModeOfb = 4;
 inline constexpr std::uint64_t CipherModeCtr = 5;
+inline constexpr std::uint64_t CipherModeGcm = 6;
 inline constexpr std::uint64_t CipherFlagCustomIv = 0x10;
 inline constexpr std::uint64_t CipherFlagAlwaysCallInit = 0x20;
 inline constexpr std::uint64_t CipherFlagCtrlInit = 0x40;
@@ -64,5 +65,7 @@ static_assert(sizeof(LibreSslEvpCipherCtx) == 168);
 static_assert(offsetof(LibreSslEvpCipherCtx, num) == 88);
 static_assert(offsetof(LibreSslEvpCipherCtx, flags) == 112);
 static_assert(offsetof(LibreSslEvpCipherCtx, final) == 136);
+
+extern "C" int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(LibreSslEvpCipherCtx* ctx, int type, int arg, void* pointer);
 
 #endif
