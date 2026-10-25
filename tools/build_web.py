@@ -71,7 +71,8 @@ def publish_libraries(output, release=None):
                     raise ValueError("Invalid library archive")
                 names = {}
                 for file in files:
-                    if not file.filename.startswith("libs/") or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename:
+                    if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
+                            or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename):
                         raise ValueError("Invalid library archive layout")
                     name = file.filename.rstrip("/").lower()
                     if name in names:
@@ -167,7 +168,7 @@ def publish_release(output):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--release", "--libraries", dest="release", action="store_true",

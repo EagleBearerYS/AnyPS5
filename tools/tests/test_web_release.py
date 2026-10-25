@@ -105,6 +105,20 @@ class WebReleaseTests(unittest.TestCase):
         self.assertTrue((self.output / ".nojekyll").is_file())
         self.assertEqual(self.requests.count(LATEST), 1)
 
+    def test_rewritten_library_paths_preserve_the_previous_site(self):
+        invalid = zipped([("libs/libkernel.prx!ignored", b"content")])
+        invalid = invalid.replace(b"libs/libkernel.prx!ignored", b"libs/libkernel.prx\0ignored")
+        for platform in ("windows", "linux"):
+            with self.subTest(platform=platform):
+                self.requests.clear()
+                name = f"prx-{platform}-v1.zip"
+                original = self.responses["https://example.test/" + name]
+                self.set_asset(name, invalid)
+                try:
+                    self.assert_rejected("Invalid library archive layout")
+                finally:
+                    self.set_asset(name, original)
+
     def test_libraries_flag_also_replaces_an_incompatible_local_converter(self):
         self.seed_previous()
         source = self.root / "source/demo/web"
@@ -420,10 +434,17 @@ class TestWebRunnerTests(unittest.TestCase):
                 self.encoding = encoding
                 self.errors = errors
 
+            def write(self, text):
+                return len(text)
+
+            def flush(self):
+                pass
+
         out, err = Stream(), Stream()
         with patch.object(test_web.sys, "stdout", out), patch.object(test_web.sys, "stderr", err):
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(SystemExit) as error:
                 test_web.main([])
+        self.assertEqual(error.exception.code, 2)
         self.assertEqual(out.encoding, "utf-8")
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
