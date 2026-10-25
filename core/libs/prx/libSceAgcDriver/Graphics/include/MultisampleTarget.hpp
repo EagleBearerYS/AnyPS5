@@ -49,12 +49,14 @@ public:
     void Discard();
     std::optional<std::uint32_t> Pending() const { return filled; }
     const std::string& Refusal() const { return refusal; }
+    std::uint64_t Noted() const { return noted; }
 
 private:
     std::uint64_t address = 0;
     std::uint64_t bytes = 0;
     std::optional<std::uint32_t> filled;
     std::string refusal;
+    std::uint64_t noted = 0;
 };
 
 enum class MultisampleColorContent { Unknown, Fill, FastClear, Clear, Drawn };
@@ -69,6 +71,8 @@ struct MultisampleColorAlias {
     std::optional<std::uint8_t> byte;
     std::shared_ptr<std::atomic<bool>> active;
     std::uint64_t contents = 0;
+    std::uint64_t filledBytes = 0;
+    std::uint64_t fills = 0;
 };
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
