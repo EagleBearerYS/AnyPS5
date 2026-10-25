@@ -182,6 +182,11 @@ public:
         return std::unique_lock(mutex);
     }
 
+    std::size_t QueuedBytes() {
+        std::lock_guard lock(mutex);
+        return bytes;
+    }
+
 private:
     struct Window {
         Clock::time_point first;

@@ -765,4 +765,9 @@ int APS5_VABI sceKernelMunlockall_nid_postfix() {
     return 0;
 }
 
+std::uint64_t KernelFlexibleMappedBytes_nid_no_patch() {
+    std::lock_guard lock(g_flexibleLock);
+    return _flexibleUsedLocked();
+}
+
 }
