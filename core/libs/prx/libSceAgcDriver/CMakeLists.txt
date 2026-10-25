@@ -315,6 +315,8 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceOverlay.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/MemoryCensus.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/MemoryCensusParse.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Screenshot.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DepthSurface.cpp
@@ -426,6 +428,9 @@ target_link_libraries(libSceAgcDriver PRIVATE
 if(APS5_ENABLE_TRACY)
     target_link_libraries(libSceAgcDriver PUBLIC TracyClient)
 endif()
+if(WIN32)
+    target_include_directories(libSceAgcDriver PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/mimalloc/include)
+endif()
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-libs,$<TARGET_FILE_NAME:decoder_png>)
 endif()
@@ -507,6 +512,17 @@ if(BUILD_TESTING)
     add_test(NAME agc_write_watch_coverage COMMAND agc_write_watch_coverage_tests)
     if(WIN32)
         set_tests_properties(agc_write_watch_coverage PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(agc_memory_census_tests tests/MemoryCensus.cpp Execution/src/MemoryCensusParse.cpp)
+    target_include_directories(agc_memory_census_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_link_libraries(agc_memory_census_tests PRIVATE libc)
+    configure_windows_unwind(agc_memory_census_tests)
+    add_test(NAME agc_memory_census COMMAND agc_memory_census_tests)
+    set_tests_properties(agc_memory_census PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_memory_census PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 

@@ -64,6 +64,11 @@ Driver::DispatchCacheFootprint Driver::DispatchCacheSize() {
     return {dispatchCache.size(), dispatchCacheVariantBytes};
 }
 
+Driver::DispatchCacheFootprint Driver::DrawCacheFootprint() {
+    std::lock_guard lock(drawCacheMutex);
+    return {drawCache.size(), drawCacheVariantBytes};
+}
+
 std::uint64_t Driver::variantBytes(const DispatchVariant& variant) {
     const auto held = [](const auto& values) { return static_cast<std::uint64_t>(values.capacity() * sizeof(values[0])); };
     return sizeof(DispatchVariant) + held(variant.runs) + held(variant.words) + held(variant.shared) + held(variant.dataPositions) + held(variant.dataSlots) + held(variant.runBases) + held(variant.shaderDataPatches) + held(variant.captured) + held(variant.spans) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0) + (variant.memory != nullptr ? variant.memory->Bytes() : 0);

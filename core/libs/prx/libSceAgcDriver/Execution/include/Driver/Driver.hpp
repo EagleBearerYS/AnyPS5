@@ -104,6 +104,7 @@ public:
     };
     DispatchCacheFootprint DispatchCacheSize();
     DispatchCacheFootprint DrawCacheSize();
+    DispatchCacheFootprint DrawCacheFootprint();
     static std::uint64_t DispatchCacheBytes();
     static std::uint64_t DrawCacheBytes();
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
