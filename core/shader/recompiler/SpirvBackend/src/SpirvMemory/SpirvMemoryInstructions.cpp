@@ -1395,7 +1395,10 @@ std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, std::uint32_t type, std:
     state.module.AddFunction(spv::OpBranchConditional, acquired, critical, attemptMerge);
     EmitLabel(state, critical);
     state.insideLdsLock = true;
-    const auto old = update();
+    const auto old = [&] {
+        PerLaneConstruct construct(state, "the LDS lock loop");
+        return update();
+    }();
     state.insideLdsLock = false;
     const auto released = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicExchange, TypeU32(state), released, lock, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsReleaseMask | LdsMemorySemantics(state)), ConstantU32(state, 0u));

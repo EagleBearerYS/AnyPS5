@@ -2109,7 +2109,12 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     for (std::uint32_t index = 0u; index < modes.size(); ++index) {
         if (labels[index] == 0u) continue;
         EmitLabel(state, labels[index]);
-        emitMode(modes[index]);
+        if (tables) {
+            PerLaneConstruct construct(state, "an image table's mode switch");
+            emitMode(modes[index]);
+        } else {
+            emitMode(modes[index]);
+        }
         if (returnsValue) incoming.insert(incoming.end(), {ctx.Def(&inst), state.currentLabel});
         ctx.definitions.erase(&inst);
         state.module.AddFunction(spv::OpBranch, merge);

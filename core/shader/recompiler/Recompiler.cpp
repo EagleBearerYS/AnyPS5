@@ -605,6 +605,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
+    targetOptions.spanTableWaves = request.target.spanTableWaves;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
     targetOptions.float32DenormPreserve = request.target.float32DenormPreserve;
@@ -654,8 +655,10 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     try {
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     } catch (const SpannedWaveUnsupported& error) {
-        std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
+        const bool tables = !targetOptions.spannedWaves;
+        std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s%s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what(), tables ? "; the fused-thread texture and sampler handle hazard remains for this program" : "");
         targetOptions.spannedWaves = false;
+        targetOptions.spanTableWaves = false;
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     }
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
