@@ -681,6 +681,17 @@ int main() {
     Require(replay41.request.context.pixel.has_value() && replay41.request.context.pixel->sampleLocations == pixel.sampleLocations && replay41.request.context.pixel->sampleOrder == std::array<std::uint32_t, 4>{});
     pixel.sampleOrder = {};
     request.context.pixel = pixel;
+    for (const bool tables : {false, true}) {
+        auto spanning = request;
+        spanning.target.spanTableWaves = tables;
+        auto version47 = DecodeBase64(serializer.Serialize(spanning));
+        Require(version47[4] == 47u && version47.back() == (tables ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version47)).request.target.spanTableWaves == tables);
+        version47.pop_back();
+        version47[4] = 46u;
+        const auto replay46 = serializer.Deserialize(EncodeBase64(version47));
+        Require(!replay46.request.target.spanTableWaves && serializer.Serialize(replay46.request) == serializer.Serialize(request));
+    }
     for (const bool spanned : {false, true}) {
         request.target.spannedWaves = spanned;
         Require(serializer.Deserialize(serializer.Serialize(request)).request.target.spannedWaves == spanned);

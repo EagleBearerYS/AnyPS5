@@ -6,6 +6,7 @@
 #include "Recompiler.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -19,6 +20,9 @@
 #include <span>
 #include <string>
 #include <vector>
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+#include <spirv-tools/libspirv.hpp>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -94,6 +98,13 @@ alignas(256) constexpr std::array<std::uint32_t, 30> TableSamplerCode{
     0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u, 0xf4280802u, 0x24000000u, 0x360200bfu, 0x7e020d01u,
     0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u, 0x01090401u, 0x7e120202u,
     0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 31> Wave32TableSamplerCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080900u, 0xfa000040u,
+    0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u, 0xf4280802u, 0x24000000u, 0x360200bfu, 0x7e020d01u,
+    0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u, 0x01090401u,
+    0x7e120202u, 0x34101285u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 30> TableCutCode{
@@ -446,6 +457,7 @@ struct Outcome {
     std::vector<std::array<std::uint32_t, 4>> samplerTable;
     std::vector<std::uint32_t> tableMap;
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
+    bool fullSubgroups = false;
 };
 
 std::vector<std::array<std::uint32_t, 4>> SamplerWords(const std::vector<std::uint32_t>& words) {
@@ -454,18 +466,22 @@ std::vector<std::array<std::uint32_t, 4>> SamplerWords(const std::vector<std::ui
     return result;
 }
 
-Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize) {
+ShaderRecompiler::RecompileResult Compile(std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t threads, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
     const auto rootAddress = reinterpret_cast<std::uintptr_t>(root);
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
-    std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
     const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, 0u, {true, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(span.data()), span, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
-    const auto result = ShaderRecompiler::Recompile(request);
+    return ShaderRecompiler::Recompile(request);
+}
+
+Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize) {
+    std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
+    const auto result = Compile(span, root, memory, threads, waveSize, device.Target());
     Outcome outcome;
     outcome.variantId = result.PipelineVariantId();
     outcome.artifactId = result.variantId;
@@ -473,6 +489,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.poisonedSrtReads = result.poisonedSrtReads;
     outcome.cacheable = AgcDriver::DriverDetail::CacheableResult(result);
     outcome.imageTableReadRanges = result.imageTableReadRanges;
+    outcome.fullSubgroups = result.fullSubgroups;
     for (const auto& binding : result.bindings) {
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable) outcome.imageTableCount = binding.count;
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap) outcome.tableMap = binding.guestDescriptor;
@@ -492,21 +509,25 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     return outcome;
 }
 
-template <std::size_t CodeWords>
-Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize, bool outputIntoTable = false) {
+std::array<ShaderRecompiler::MemoryRegion, 4> TableMemory(std::span<const std::uint32_t> span, bool outputIntoTable) {
     const auto table = Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table)));
     const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
     const auto output = outputIntoTable ? Buffer(Table.data(), static_cast<std::uint32_t>(sizeof(Table))) : Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
     std::copy(table.begin(), table.end(), Srt.begin());
     std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
-    const std::span<const std::uint32_t> span(code);
-    const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
+    return {{
         {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
         {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
         {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
         {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
     }};
+}
+
+template <std::size_t CodeWords>
+Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups, std::uint32_t threads, std::uint32_t waveSize, bool outputIntoTable = false) {
+    const std::span<const std::uint32_t> span(code);
+    const auto memory = TableMemory(span, outputIntoTable);
     return Execute(device, span, Srt.data(), memory, groups, threads, waveSize);
 }
 
@@ -2176,6 +2197,168 @@ void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     Require(first == second, "image table graphics: other table keys built another pipeline");
 }
 
+std::array<std::uint32_t, 3> LocalSize(std::span<const std::uint32_t> words) {
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0u; at += words[at] >> 16u) {
+        if ((words[at] & 0xffffu) == spv::OpExecutionMode && words[at + 2u] == spv::ExecutionModeLocalSize) return {words[at + 3u], words[at + 4u], words[at + 5u]};
+    }
+    return {};
+}
+
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+void RequireValidSpirv(const ShaderRecompiler::RecompileResult& result, const ShaderRecompiler::SpirvTarget& target, const std::string& what) {
+    std::string diagnostics;
+    spvtools::SpirvTools validator(target.spirvVersion >= 0x00010400u ? SPV_ENV_VULKAN_1_1_SPIRV_1_4 : SPV_ENV_VULKAN_1_1);
+    validator.SetMessageConsumer([&](spv_message_level_t, const char*, const spv_position_t&, const char* message) {
+        if (message != nullptr) diagnostics += std::string(message) + '\n';
+    });
+    const auto words = result.spirv.Words();
+    Require(validator.Validate(words.data(), words.size()), what + ": the spanned module does not pass spirv-val:\n" + diagnostics);
+}
+#endif
+
+struct SpanChoice {
+    const char* name;
+    std::span<const std::uint32_t> code;
+    std::uint32_t threads;
+    bool spanTableWaves;
+    bool spannedWaves;
+    bool spans;
+};
+
+void RunSpanChoiceTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    SetClassRecords();
+    Keys = {};
+    for (std::uint32_t group = 0; group < MaxGroups; ++group) Keys[group] = group % 2u;
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    std::copy(PointClamp.begin(), PointClamp.end(), Srt.begin() + 12);
+    std::fill(Srt.begin() + 16, Srt.begin() + 24, 0u);
+    std::copy(floatImage.begin(), floatImage.end(), Srt.begin() + 16);
+    const std::array choices{
+        SpanChoice{"a sampler table read", TableSamplerCode, Lanes, true, false, true},
+        SpanChoice{"an image table read under a direct sampler", TableDirectSamplerCode, Lanes, true, false, true},
+        SpanChoice{"an image and sampler table read", TableCode, Lanes, true, false, true},
+        SpanChoice{"no table read", DirectCode, Lanes, true, false, false},
+        SpanChoice{"a sampler table read in a 128-thread workgroup", TableSamplerCode, 2u * Lanes, true, false, false},
+        SpanChoice{"a sampler table read without the option", TableSamplerCode, Lanes, false, false, false},
+        SpanChoice{"no table read with every program spanned", DirectCode, Lanes, false, true, true},
+    };
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    std::uint32_t validated = 0;
+#endif
+    for (const auto& choice : choices) {
+        auto target = device.Target();
+        target.subgroupSize = 32u;
+        target.spanTableWaves = choice.spanTableWaves;
+        target.spannedWaves = choice.spannedWaves;
+        const auto memory = TableMemory(choice.code, false);
+        const auto result = Compile(choice.code, Srt.data(), memory, choice.threads, 64u, target);
+        const std::string what = std::string("span choice, ") + choice.name;
+        Require(result.fullSubgroups == choice.spans, what + (choice.spans ? ": the program kept two lanes per invocation" : ": the program spans two host subgroups"));
+        const std::array<std::uint32_t, 3> local{choice.spans ? choice.threads : choice.threads / 2u, 1u, 1u};
+        const auto emitted = LocalSize(result.spirv.Words());
+        Require(emitted == local, what + ": LocalSize is " + std::to_string(emitted[0]) + "x" + std::to_string(emitted[1]) + "x" + std::to_string(emitted[2]) + ", expected " + std::to_string(local[0]) + "x1x1");
+        if (!choice.spans) continue;
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        RequireValidSpirv(result, target, what);
+        ++validated;
+#endif
+    }
+    alignas(512) std::array<std::array<std::uint32_t, 64>, 2> records{};
+    alignas(256) std::array<std::array<std::uint32_t, 16>, 2> palettes{};
+    for (std::uint32_t outer = 0; outer < 2u; ++outer) {
+        auto descriptor = Buffer(palettes[outer].data(), 1u);
+        descriptor[1] |= 64u << 16u;
+        std::copy(descriptor.begin(), descriptor.end(), records[outer].begin() + 40u);
+        std::copy(PointWrap.begin(), PointWrap.end(), palettes[outer].begin());
+        std::copy(PointClamp.begin(), PointClamp.end(), palettes[outer].begin() + 4u);
+    }
+    Table = {};
+    for (std::uint32_t record = 0; record < 2u; ++record) {
+        const auto pointer = reinterpret_cast<std::uintptr_t>(records[record].data());
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    }
+    const std::array<std::uint32_t, 8> nestedKeys{0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u};
+    Keys = {};
+    std::copy(nestedKeys.begin(), nestedKeys.end(), Keys.begin());
+    const auto table = Buffer(Table.data(), 64u);
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    Srt = {};
+    std::copy(table.begin(), table.end(), Srt.begin());
+    std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+    std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+    std::copy(floatImage.begin(), floatImage.end(), Srt.begin() + 12u);
+    const std::span<const std::uint32_t> nested(NestedSamplerCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 6> nestedMemory{{
+        {reinterpret_cast<std::uintptr_t>(nested.data()), std::as_bytes(nested)},
+        {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+        {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+        {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+        {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+        {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(palettes))},
+    }};
+    for (const bool spanTableWaves : {false, true}) {
+        auto target = device.Target();
+        target.subgroupSize = 32u;
+        target.spanTableWaves = spanTableWaves;
+        const auto result = Compile(nested, Srt.data(), nestedMemory, Lanes, 64u, target);
+        const std::string what = std::string("span choice, the nested sampler table program") + (spanTableWaves ? "" : " without the option");
+        Require(result.fullSubgroups == spanTableWaves, what + (spanTableWaves ? ": the program kept two lanes per invocation" : ": the program spans two host subgroups"));
+        const std::array<std::uint32_t, 3> local{spanTableWaves ? Lanes : Lanes / 2u, 1u, 1u};
+        Require(LocalSize(result.spirv.Words()) == local, what + ": LocalSize is not " + std::to_string(local[0]) + "x1x1");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        if (spanTableWaves) {
+            RequireValidSpirv(result, target, what);
+            ++validated;
+        }
+#endif
+    }
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    std::printf("span choice: %zu wave64 programs and the nested sampler table program on a 32-lane host, %u spanned modules pass spirv-val\n", choices.size(), validated);
+#else
+    std::printf("span choice: %zu wave64 programs and the nested sampler table program on a 32-lane host, spirv-val not run (SPIRV-Tools not built)\n", choices.size());
+#endif
+}
+
+void RunTableImagePerWorkgroupTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    const auto otherImage = Image(OtherFloatTexels.data(), Format32Float);
+    SetRecord(0, PointClamp, floatImage);
+    SetRecord(1, PointClamp, otherImage);
+    std::copy(PointClamp.begin(), PointClamp.end(), Srt.begin() + 12);
+    Keys = {};
+    for (std::uint32_t group = 0; group < MaxGroups; ++group) Keys[group] = group % 2u;
+    const auto outcome = Run(device, TableDirectSamplerCode, MaxGroups, Lanes, 64);
+    Require(!Faulted(outcome), "image table per workgroup: valid keys faulted:\n" + outcome.log);
+    for (std::uint32_t group = 0; group < MaxGroups; ++group) {
+        const auto& texels = group % 2u == 0u ? FloatTexels : OtherFloatTexels;
+        RequireRed(outcome, group, Lanes, [&texels](std::uint32_t x) { return std::bit_cast<std::uint32_t>(texels[x]); }, "image table per workgroup, workgroup " + std::to_string(group) + " (T# of record " + std::to_string(group % 2u) + ")");
+    }
+    std::printf("image table per workgroup: %u wave64 workgroups of %u threads alternate two T#s under one direct S#, each read its own image (spanned %d)\n", MaxGroups, Lanes, outcome.fullSubgroups);
+}
+
+void RunWave32SamplerPerWorkgroupTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    SetRecord(0, PointClamp, floatImage);
+    SetRecord(1, PointWrap, floatImage);
+    std::fill(Srt.begin() + 16, Srt.begin() + 24, 0u);
+    std::copy(floatImage.begin(), floatImage.end(), Srt.begin() + 16);
+    Keys = {};
+    for (std::uint32_t group = 0; group < MaxGroups; ++group) Keys[group] = group % 2u;
+    constexpr std::uint32_t Threads = 32;
+    const auto outcome = Run(device, Wave32TableSamplerCode, MaxGroups, Threads, 32);
+    Require(!Faulted(outcome), "wave32 sampler per workgroup: valid keys faulted:\n" + outcome.log);
+    for (std::uint32_t group = 0; group < MaxGroups; ++group) {
+        const bool wrap = group % 2u != 0u;
+        RequireRed(outcome, group, Threads, [wrap](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[wrap ? x : Width - 1u]); }, std::string("wave32 sampler per workgroup, workgroup ") + std::to_string(group) + (wrap ? " (wrapping S#)" : " (clamping S#)"));
+    }
+    std::printf("wave32 sampler per workgroup: %u wave32 workgroups of %u threads alternate a clamping and a wrapping table S#, each sampled with its own\n", MaxGroups, Threads);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2213,6 +2396,18 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-copies") == 0) {
             RunPointerArmTests(*device, true);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--span-choice") == 0) {
+            RunSpanChoiceTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--table-image-per-workgroup") == 0) {
+            RunTableImagePerWorkgroupTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--wave32-sampler-per-workgroup") == 0) {
+            RunWave32SamplerPerWorkgroupTests(*device);
             return 0;
         }
         RunTests(*device);
