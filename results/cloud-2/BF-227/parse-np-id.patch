@@ -1,0 +1,179 @@
+From a45422d6473908a43aee0baa8880eedd82751d91 Mon Sep 17 00:00:00 2001
+From: Yunus Shaikh <75296019+EagleBearerYS@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 12:27:16 +0000
+Subject: [PATCH 2/2] feat(libSceNpWebApi): parse a serialized NP ID with
+ sceNpWebApiUtilityParseNpId
+
+shadPS4 implements the call (np_web_api.cpp L598-L630 at e0845a12dc):
+a null string returns NP_ERROR_INVALID_ARGUMENT. Otherwise the string
+is base64-decoded and split at '@': the online ID is the part before it
+(at most 16 bytes), and opt is the part after it with '/' and '.'
+removed (at most 8 bytes). With an output, the 36-byte NP ID is cleared,
+both are copied in and reserved[0] is set to 1. The call returns 0.
+
+The output is the tree's 36-byte NpIdFull from libSceNpCommon, which
+matches shadPS4's OrbisNpId, not the shared 24-byte NpId.
+
+guest_np_web_api checks the null string, a null output, user01@ab/c.d
+(online ID user01, opt abcd, reserved[0] 1, everything else cleared) and
+a long ID cut to 16 online ID bytes and 8 opt bytes.
+---
+ core/libs/prx/libSceNpWebApi/Export.cpp      | 44 +++++++++++++++++++-
+ core/libs/prx/libSceNpWebApi/include/Api.hpp |  4 +-
+ core/libs/tests/GuestNpWebApi.cpp            | 26 ++++++++++++
+ docs/dev/debt/libSceNpWebApi.md              |  1 +
+ 4 files changed, 72 insertions(+), 3 deletions(-)
+
+diff --git a/core/libs/prx/libSceNpWebApi/Export.cpp b/core/libs/prx/libSceNpWebApi/Export.cpp
+index c78414d680..2651460073 100644
+--- a/core/libs/prx/libSceNpWebApi/Export.cpp
++++ b/core/libs/prx/libSceNpWebApi/Export.cpp
+@@ -1,12 +1,17 @@
+ #include "prx/libSceNpWebApi/include/Api.hpp"
++#include "prx/libSceNpCommon/include/Api.hpp"
+ #include "SceTypes.hpp"
+ #include "prx/libc/include/General.hpp"
++#include <algorithm>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstring>
+ #include <mutex>
++#include <string>
+ #include <unordered_map>
+ #include <unordered_set>
+ 
++static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
+ static constexpr int SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80552902);
+ static constexpr int SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552904);
+ static constexpr int SCE_NP_WEBAPI_ERROR_PUSH_EVENT_FILTER_NOT_FOUND = static_cast<int>(0x8055290B);
+@@ -174,8 +179,43 @@ int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback() {
+     return 0;
+ }
+ 
+-int APS5_VABI sceNpWebApiUtilityParseNpId() {
+-    NotImplemented_nid_no_patch(__func__);
++int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpIdFull* npId) {
++    if (jsonNpId == nullptr) return SCE_NP_ERROR_INVALID_ARGUMENT;
++    const auto sextet = [](char c) {
++        if (c >= 'A' && c <= 'Z') return c - 'A';
++        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
++        if (c >= '0' && c <= '9') return c - '0' + 52;
++        if (c == '+') return 62;
++        if (c == '/') return 63;
++        return -1;
++    };
++    std::string decoded;
++    std::uint32_t buffer = 0;
++    int bits = 0;
++    for (const char* cursor = jsonNpId; *cursor != '\0' && *cursor != '='; ++cursor) {
++        const int value = sextet(*cursor);
++        if (value < 0) continue;
++        buffer = (buffer << 6) | static_cast<std::uint32_t>(value);
++        bits += 6;
++        if (bits >= 8) {
++            bits -= 8;
++            decoded.push_back(static_cast<char>((buffer >> bits) & 0xffu));
++        }
++    }
++    const auto at = decoded.find('@');
++    const std::string handle = decoded.substr(0, at);
++    std::string opt;
++    if (at != std::string::npos) {
++        for (std::size_t index = at + 1; index < decoded.size(); ++index) {
++            if (decoded[index] != '/' && decoded[index] != '.') opt.push_back(decoded[index]);
++        }
++    }
++    if (npId != nullptr) {
++        std::memset(npId, 0, sizeof(NpIdFull));
++        std::memcpy(npId->handle.data, handle.data(), std::min<std::size_t>(handle.size(), 16));
++        std::memcpy(npId->opt, opt.data(), std::min(opt.size(), sizeof(npId->opt)));
++        npId->reserved[0] = 1;
++    }
+     return 0;
+ }
+ 
+diff --git a/core/libs/prx/libSceNpWebApi/include/Api.hpp b/core/libs/prx/libSceNpWebApi/include/Api.hpp
+index 567364a9bf..16e5bee9df 100644
+--- a/core/libs/prx/libSceNpWebApi/include/Api.hpp
++++ b/core/libs/prx/libSceNpWebApi/include/Api.hpp
+@@ -2,6 +2,8 @@
+ 
+ #include "SceTypes.hpp"
+ 
++struct NpIdFull;
++
+ extern "C" {
+ 
+ int APS5_VABI sceNpWebApiAbortRequest();
+@@ -26,6 +28,6 @@ int APS5_VABI sceNpWebApiSendRequest();
+ int APS5_VABI sceNpWebApiTerminate(int libCtxId);
+ int APS5_VABI sceNpWebApiUnregisterPushEventCallback();
+ int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback();
+-int APS5_VABI sceNpWebApiUtilityParseNpId();
++int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpIdFull* npId);
+ 
+ }
+diff --git a/core/libs/tests/GuestNpWebApi.cpp b/core/libs/tests/GuestNpWebApi.cpp
+index 55fc787258..92193545ab 100644
+--- a/core/libs/tests/GuestNpWebApi.cpp
++++ b/core/libs/tests/GuestNpWebApi.cpp
+@@ -1,11 +1,15 @@
+ #include "prx/libSceNpWebApi/include/Api.hpp"
++#include "prx/libSceNpCommon/include/Api.hpp"
+ #include "prx/libc/include/general/VabiMacros.hpp"
++#include <algorithm>
+ #include <cstddef>
+ #include <cstdio>
+ #include <cstdlib>
++#include <cstring>
+ 
+ namespace {
+ 
++constexpr int NpInvalidArgument = static_cast<int>(0x80550003u);
+ constexpr int InvalidArgument = static_cast<int>(0x80552902u);
+ constexpr int LibContextNotFound = static_cast<int>(0x80552904u);
+ constexpr int PushEventFilterNotFound = static_cast<int>(0x8055290Bu);
+@@ -20,9 +24,31 @@ void Require(bool condition, const char* message) {
+     }
+ }
+ 
++void ParseNpId() {
++    NpIdFull npId;
++    std::memset(&npId, 0xa5, sizeof(npId));
++    const auto untouched = [&] { const auto* bytes = reinterpret_cast<const unsigned char*>(&npId); return std::all_of(bytes, bytes + sizeof(npId), [](unsigned char value) { return value == 0xa5; }); };
++    Require(sceNpWebApiUtilityParseNpId(nullptr, &npId) == NpInvalidArgument && untouched(), "a null serialized NP ID returns INVALID_ARGUMENT without writing the output");
++    Require(sceNpWebApiUtilityParseNpId("dXNlcjAxQGFiL2MuZA==", nullptr) == 0, "parse without an output");
++    Require(sceNpWebApiUtilityParseNpId("dXNlcjAxQGFiL2MuZA==", &npId) == 0, "parse user01@ab/c.d");
++    NpIdFull expected{};
++    std::memcpy(expected.handle.data, "user01", 6);
++    std::memcpy(expected.opt, "abcd", 4);
++    expected.reserved[0] = 1;
++    Require(std::memcmp(&npId, &expected, sizeof(npId)) == 0, "user01@ab/c.d gives online ID user01, opt abcd and reserved[0] 1 in a cleared NP ID");
++    std::memset(&npId, 0xa5, sizeof(npId));
++    Require(sceNpWebApiUtilityParseNpId("YWJjZGVmZ2hpamtsbW5vcHFyc3RAMTIzNC81Njc4Ljkw", &npId) == 0, "parse a long NP ID");
++    expected = {};
++    std::memcpy(expected.handle.data, "abcdefghijklmnop", 16);
++    std::memcpy(expected.opt, "12345678", 8);
++    expected.reserved[0] = 1;
++    Require(std::memcmp(&npId, &expected, sizeof(npId)) == 0, "a long NP ID keeps 16 online ID bytes and 8 opt bytes");
++}
++
+ }
+ 
+ int main() {
++    ParseNpId();
+     const int context = sceNpWebApiInitialize(1, 0x10000);
+     Require(context > 0 && context <= 0x7fff, "library context id out of range");
+     const int other = sceNpWebApiInitialize(1, 0x10000);
+diff --git a/docs/dev/debt/libSceNpWebApi.md b/docs/dev/debt/libSceNpWebApi.md
+index 95fb314c74..7c956a0b7f 100644
+--- a/docs/dev/debt/libSceNpWebApi.md
++++ b/docs/dev/debt/libSceNpWebApi.md
+@@ -4,3 +4,4 @@
+ 
+ - [sceNpWebApiInitialize, sceNpWebApiTerminate, sceNpWebApiCreateHandle, sceNpWebApiDeleteHandle, sceNpWebApiCreatePushEventFilter, sceNpWebApiDeletePushEventFilter](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - signatures, id ranges (library contexts 1 to 0x7fff, handles and filters below 0xf0000000) and errors (`LIB_CONTEXT_NOT_FOUND`, `HANDLE_NOT_FOUND`, `PUSH_EVENT_FILTER_NOT_FOUND`, `INVALID_ARGUMENT` for a missing filter parameter) follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/np/np_web_api/np_web_api_internal.cpp); they are not checked on a console. The libHttp context and pool size are kept but not used, since no request is ever sent. Limbo (CUSA01664) creates a context, a handle and filters when its game starts.
+ - [sceNpWebApiCreateServicePushEventFilter](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - a filter for a PSN service needs the signed-in user, and no user is signed in to PSN, so a valid call returns `SIGNED_IN_USER_NOT_FOUND` after the context and handle checks, as shadPS4 does with its network disabled. shadPS4 also rejects an invalid service label for titles built with SDK 2.00 or later; AnyPS5 has no compiled-SDK version for libraries yet, so such a call returns `SIGNED_IN_USER_NOT_FOUND` instead of `INVALID_ARGUMENT`. `sceNpWebApiDeleteServicePushEventFilter` therefore never finds a filter.
++- [sceNpWebApiUtilityParseNpId](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - decodes and splits the serialized NP ID as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/e0845a12dc05f2fde85e7b203c76de03f93a585d/src/core/libraries/np/np_web_api/np_web_api.cpp#L598-L630) does, which is not checked on a console: base64 decoding skips characters outside the alphabet and stops at `=`, the online ID keeps at most 16 bytes before `@`, `opt` keeps the first 8 bytes after it without `/` and `.`, and `reserved[0]` is set to 1 in an otherwise cleared 36-byte `NpIdFull`.
+-- 
+2.43.0
+
