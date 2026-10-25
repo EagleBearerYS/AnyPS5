@@ -1,5 +1,6 @@
-READY 2026-10-25T10:04:05Z: BF-225 done, waiting for a task
-since: 2026-10-25T10:04:05Z (BF-225 finished)
+BUSY BF-228
+since: 2026-10-25T12:15:37Z (claimed 2026-10-25T12:15:37Z)
+claimed: tasks/claimed/BF-228.md
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 7929303f2f)
 last: BF-225 done, result results/cloud-4/BF-225.md; fix/count-throwing-done-exports at eacd1ad610 on the fork (4 throwing done exports now NotImplemented, 6070 -> 6066 done); sweep lists 21 coverage gaps and 14 intended throws
 baseline: CI Linux mirror on eacd1ad610 (upstream main 7929303f2f + 2): 2219 tests, 2124 passed, 90 skipped, 5 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
