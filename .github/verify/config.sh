@@ -1,0 +1,3 @@
+BASE=bad1a7994d5175b2ad8147913fefd76693671d01
+REPEAT=10
+EXTRA_TESTS='guest_np_manager|guest_np_reachability'
