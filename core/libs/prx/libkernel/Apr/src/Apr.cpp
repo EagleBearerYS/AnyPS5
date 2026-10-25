@@ -815,6 +815,7 @@ void _waitSubmitted(std::uint32_t id, bool amm) {
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
     const auto id = _submit(static_cast<const std::uint8_t*>(base), bytes, true);
+    std::this_thread::sleep_for(std::chrono::microseconds(200));
     _amm().lastSubmit.store(id);
     return id;
 }

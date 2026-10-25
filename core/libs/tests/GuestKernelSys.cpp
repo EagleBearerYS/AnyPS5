@@ -13,6 +13,7 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -24,7 +25,9 @@
 #include <stdexcept>
 #include <set>
 #include <string>
+#include <thread>
 #include <tuple>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #include <winioctl.h>
@@ -311,6 +314,37 @@ void CheckAmmWaitCompletion() {
     Require(sceKernelWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH && sceAmprAmmWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH);
 }
 
+void CheckAmmWaitConcurrentSubmits() {
+    constexpr int submitters = 4;
+    constexpr int submissions = 4000;
+    std::array<std::uint8_t, 16> empty{};
+    std::atomic<std::uint32_t> newest{0};
+    std::atomic<int> running{submitters};
+    std::atomic<int> rejected{0};
+    std::vector<std::thread> threads;
+    for (int thread = 0; thread < submitters; ++thread) {
+        threads.emplace_back([&] {
+            for (int index = 0; index < submissions; ++index) {
+                std::uint32_t id = 0;
+                if (sceAmprAmmSubmitCommandBuffer3(empty.data(), 0, 0, &id) != 0 || id == 0) ++rejected;
+                auto seen = newest.load();
+                while (seen < id && !newest.compare_exchange_weak(seen, id)) {}
+            }
+            --running;
+        });
+    }
+    std::thread waiter([&] {
+        while (running.load() != 0) {
+            const auto id = newest.load();
+            if (id != 0 && (sceKernelWaitCommandBufferCompletion(id) != 0 || sceAmprAmmWaitCommandBufferCompletion(id) != 0)) ++rejected;
+        }
+    });
+    for (auto& thread : threads) thread.join();
+    waiter.join();
+    Require(rejected.load() == 0);
+    Require(sceKernelWaitCommandBufferCompletion(newest.load()) == 0);
+}
+
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
     const auto directory = root.generic_string();
     for (const auto& path : {file, directory}) {
@@ -502,6 +536,7 @@ int main() {
     CheckCondattrClock();
     CheckAmmWriteCommands();
     CheckAmmWaitCompletion();
+    CheckAmmWaitConcurrentSubmits();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
