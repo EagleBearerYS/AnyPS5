@@ -1,0 +1,3 @@
+BASE=7929303f2fdb6ae31121ac431ad8c90e0ea2d94d
+REPEAT=10
+EXTRA_TESTS='guest_entitlements|guest_entitlements_missing|guest_offline_imports|guest_content_delete'
