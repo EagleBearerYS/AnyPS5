@@ -183,7 +183,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
         const auto& range = state.initial[index];
         const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
         if (!alias) continue;
-        if (index == 0u && target.htileDepthOnly) {
+        if (index == 0u) {
             if (const auto sole = soleDepthAlias(range, target.samples)) {
                 reportAlias(*sole, range, "depth");
                 state.depthAlias = sole;
