@@ -1,0 +1,1032 @@
+library	function	class	status	claimed_by	title_hits	batch
+libSceAudioOut	sceAudioOut2MasteringInit	B-S	done on main	#9818 (Delciob, implements); #9826 (Delciob, implements)		
+libSceBgft	sceBgftServiceInit	B-S	unclaimed			BGFT-1
+libSceBgft	sceBgftServiceIntInit	B-S	unclaimed			BGFT-1
+libSceBgft	sceBgftServiceIntTerm	B-S	unclaimed			BGFT-1
+libSceBgft	sceBgftServiceTerm	B-S	unclaimed			BGFT-1
+libSceCesCs	sceCesBig5ToUcs2	B-S	done on main			
+libSceCesCs	sceCesBig5ToUtf16	B-S	done on main			
+libSceCesCs	sceCesBig5ToUtf16be	B-S	done on main			
+libSceCesCs	sceCesBig5ToUtf16le	B-S	done on main			
+libSceCesCs	sceCesBig5ToUtf32	B-S	done on main			
+libSceCesCs	sceCesBig5ToUtf32be	B-S	done on main			
+libSceCesCs	sceCesBig5ToUtf32le	B-S	done on main			
+libSceCesCs	sceCesEucCnToUcs2	B-S	done on main			
+libSceCesCs	sceCesEucCnToUtf16	B-S	done on main			
+libSceCesCs	sceCesEucCnToUtf16be	B-S	done on main			
+libSceCesCs	sceCesEucCnToUtf16le	B-S	done on main			
+libSceCesCs	sceCesEucCnToUtf32	B-S	done on main			
+libSceCesCs	sceCesEucCnToUtf32be	B-S	done on main			
+libSceCesCs	sceCesEucCnToUtf32le	B-S	done on main			
+libSceCesCs	sceCesEucCnToUtf8	B-S	done on main			
+libSceCesCs	sceCesEucJpToUtf16	B-S	done on main			
+libSceCesCs	sceCesEucJpToUtf16be	B-S	done on main			
+libSceCesCs	sceCesEucJpToUtf16le	B-S	done on main			
+libSceCesCs	sceCesEucJpToUtf32	B-S	done on main			
+libSceCesCs	sceCesEucJpToUtf32be	B-S	done on main			
+libSceCesCs	sceCesEucJpToUtf32le	B-S	done on main			
+libSceCesCs	sceCesEucKrToUcs2	B-S	done on main			
+libSceCesCs	sceCesEucKrToUtf16	B-S	done on main			
+libSceCesCs	sceCesEucKrToUtf16be	B-S	done on main			
+libSceCesCs	sceCesEucKrToUtf16le	B-S	done on main			
+libSceCesCs	sceCesEucKrToUtf32	B-S	done on main			
+libSceCesCs	sceCesEucKrToUtf32be	B-S	done on main			
+libSceCesCs	sceCesEucKrToUtf32le	B-S	done on main			
+libSceCesCs	sceCesGbToUcs2	B-S	done on main			
+libSceCesCs	sceCesGbToUtf16	B-S	done on main			
+libSceCesCs	sceCesGbToUtf16be	B-S	done on main			
+libSceCesCs	sceCesGbToUtf16le	B-S	done on main			
+libSceCesCs	sceCesGbToUtf32	B-S	done on main			
+libSceCesCs	sceCesGbToUtf32be	B-S	done on main			
+libSceCesCs	sceCesGbToUtf32le	B-S	done on main			
+libSceCesCs	sceCesGbToUtf8	B-S	done on main			
+libSceCesCs	sceCesIso2022StrGetUcs2Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022StrGetUtf16Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022StrGetUtf32Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022StrGetUtf8Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022StrToUcs2Str	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022StrToUtf16Str	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022StrToUtf32Str	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022StrToUtf8Str	B-M	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022UcsContextInit	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesIso2022UcsContextInitCopy	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesJisX0208ToSJisCode	B-S	done on main			
+libSceCesCs	sceCesJisX0213ToSJisCode	B-S	done on main			
+libSceCesCs	sceCesMbcToUcs2	B-S	done on main			
+libSceCesCs	sceCesMbcToUtf16	B-S	done on main			
+libSceCesCs	sceCesMbcToUtf16be	B-S	done on main			
+libSceCesCs	sceCesMbcToUtf16le	B-S	done on main			
+libSceCesCs	sceCesMbcToUtf32	B-S	done on main			
+libSceCesCs	sceCesMbcToUtf32be	B-S	done on main			
+libSceCesCs	sceCesMbcToUtf32le	B-S	done on main			
+libSceCesCs	sceCesMbcToUtf8	B-S	done on main			
+libSceCesCs	sceCesMbcsStrGetUtf16Len	B-S	done on main			
+libSceCesCs	sceCesMbcsStrGetUtf32Len	B-S	done on main			
+libSceCesCs	sceCesMbcsStrToUtf16Str	B-S	done on main			
+libSceCesCs	sceCesMbcsStrToUtf32Str	B-S	done on main			
+libSceCesCs	sceCesMbcsUcsContextInitCopy	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileAscii	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileAsciiWithKatakana	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileBs4730	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileCp1253	B-S	claimed	#9912 (SkillzTech1, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileCp1254	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp1255	B-S	claimed	#9912 (SkillzTech1, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileCp1256	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp1257	B-S	claimed	#9912 (SkillzTech1, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileCp1258	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp437	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp737	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp775	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp850	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp852	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp855	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp857	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileCp858	B-S	claimed	#10214 (VakzOs, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileCp860	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp861	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp862	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp863	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp864	B-S	unclaimed			CES-2R
+libSceCesCs	sceCesRefersUcsProfileCp865	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp866	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileCp869	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileCp874	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileGbT1988	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileGbT1988Tilde0x7e	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileIso8859_1	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_10	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_11	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileIso8859_13	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_14	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_15	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_16	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_2	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_3	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileIso8859_4	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_5	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileIso8859_6	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileIso8859_7	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileIso8859_8	B-S	claimed	#10056 (atharvjairath, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileIso8859_9	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileJisX0201	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileJisX0201Katakana	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileJisX0201Roman	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileJisX0201RomanTilde0x7e	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileJisX0201Tilde0x7e	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileKoi8R	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileKoi8U	B-S	done on main			
+libSceCesCs	sceCesRefersUcsProfileKsX1003	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesRefersUcsProfileKsX1003Tilde0x7e	B-S	claimed	#10430 (rooklz, implements); #10431 (rooklz, implements)		BF-193, drop
+libSceCesCs	sceCesSJisCodeToJisX0208	B-S	done on main			
+libSceCesCs	sceCesSJisCodeToJisX0213	B-S	done on main			
+libSceCesCs	sceCesSJisGetCode	B-S	done on main			
+libSceCesCs	sceCesSJisPutCode	B-S	done on main			
+libSceCesCs	sceCesSJisToUcs2	B-S	done on main			
+libSceCesCs	sceCesSJisToUtf16	B-S	done on main			
+libSceCesCs	sceCesSJisToUtf16be	B-S	done on main			
+libSceCesCs	sceCesSJisToUtf16le	B-S	done on main			
+libSceCesCs	sceCesSJisToUtf32	B-S	done on main			
+libSceCesCs	sceCesSJisToUtf32be	B-S	done on main			
+libSceCesCs	sceCesSJisToUtf32le	B-S	done on main			
+libSceCesCs	sceCesSJisToUtf8	B-S	done on main			
+libSceCesCs	sceCesSbcToUcs2	B-S	done on main			
+libSceCesCs	sceCesSbcToUtf16	B-S	done on main			
+libSceCesCs	sceCesSbcToUtf16be	B-S	done on main			
+libSceCesCs	sceCesSbcToUtf16le	B-S	done on main			
+libSceCesCs	sceCesSbcToUtf32	B-S	done on main			
+libSceCesCs	sceCesSbcToUtf32be	B-S	done on main			
+libSceCesCs	sceCesSbcToUtf32le	B-S	done on main			
+libSceCesCs	sceCesUcs2StrGetIso2022Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUcs2StrToIso2022Str	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUcs2ToBig5	B-S	done on main			
+libSceCesCs	sceCesUcs2ToEucCn	B-S	done on main			
+libSceCesCs	sceCesUcs2ToEucJp	B-S	done on main			
+libSceCesCs	sceCesUcs2ToEucKr	B-S	done on main			
+libSceCesCs	sceCesUcs2ToGb	B-S	done on main			
+libSceCesCs	sceCesUcs2ToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUcs2ToSJis	B-S	done on main			
+libSceCesCs	sceCesUcs2ToSbc	B-S	done on main			
+libSceCesCs	sceCesUcs2ToUhc	B-S	done on main			
+libSceCesCs	sceCesUcsProfileInitEucCnGb2312	B-M	done on main			
+libSceCesCs	sceCesUcsProfileInitEucJpX0208	B-M	done on main			
+libSceCesCs	sceCesUcsProfileInitEucJpX0208Ss2	B-S	done on main			
+libSceCesCs	sceCesUcsProfileInitEucJpX0208Ss2Ss3	B-S	done on main			
+libSceCesCs	sceCesUcsProfileInitGb18030_2000	B-M	done on main			
+libSceCesCs	sceCesUcsProfileInitGb18030_2005	B-M	done on main			
+libSceCesCs	sceCesUcsProfileInitGbkCp936	B-M	done on main			
+libSceCesCs	sceCesUcsProfileInitIso2022JpCp50221	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUcsProfileInitIso2022JpCp50222	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUcsProfileInitIso2022JpRfc1468	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUcsProfileInitSJis1997X0208	B-M	done on main			
+libSceCesCs	sceCesUhcToUcs2	B-S	done on main			
+libSceCesCs	sceCesUhcToUtf16	B-S	done on main			
+libSceCesCs	sceCesUhcToUtf16be	B-S	done on main			
+libSceCesCs	sceCesUhcToUtf16le	B-S	done on main			
+libSceCesCs	sceCesUhcToUtf32	B-S	done on main			
+libSceCesCs	sceCesUhcToUtf32be	B-S	done on main			
+libSceCesCs	sceCesUhcToUtf32le	B-S	done on main			
+libSceCesCs	sceCesUtf16StrGetIso2022Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUtf16StrGetMbcsLen	B-S	done on main			
+libSceCesCs	sceCesUtf16StrToIso2022Str	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUtf16StrToMbcsStr	B-S	done on main			
+libSceCesCs	sceCesUtf16ToBig5	B-S	done on main			
+libSceCesCs	sceCesUtf16ToEucCn	B-S	done on main			
+libSceCesCs	sceCesUtf16ToEucJp	B-S	done on main			
+libSceCesCs	sceCesUtf16ToEucKr	B-S	done on main			
+libSceCesCs	sceCesUtf16ToGb	B-S	done on main			
+libSceCesCs	sceCesUtf16ToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUtf16ToSJis	B-S	done on main			
+libSceCesCs	sceCesUtf16ToSbc	B-S	done on main			
+libSceCesCs	sceCesUtf16ToUhc	B-S	done on main			
+libSceCesCs	sceCesUtf16beToBig5	B-S	done on main			
+libSceCesCs	sceCesUtf16beToEucCn	B-S	done on main			
+libSceCesCs	sceCesUtf16beToEucJp	B-S	done on main			
+libSceCesCs	sceCesUtf16beToEucKr	B-S	done on main			
+libSceCesCs	sceCesUtf16beToGb	B-S	done on main			
+libSceCesCs	sceCesUtf16beToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUtf16beToSJis	B-S	done on main			
+libSceCesCs	sceCesUtf16beToSbc	B-S	done on main			
+libSceCesCs	sceCesUtf16beToUhc	B-S	done on main			
+libSceCesCs	sceCesUtf16leToBig5	B-S	done on main			
+libSceCesCs	sceCesUtf16leToEucCn	B-S	done on main			
+libSceCesCs	sceCesUtf16leToEucJp	B-S	done on main			
+libSceCesCs	sceCesUtf16leToEucKr	B-S	done on main			
+libSceCesCs	sceCesUtf16leToGb	B-S	done on main			
+libSceCesCs	sceCesUtf16leToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUtf16leToSJis	B-S	done on main			
+libSceCesCs	sceCesUtf16leToSbc	B-S	done on main			
+libSceCesCs	sceCesUtf16leToUhc	B-S	done on main			
+libSceCesCs	sceCesUtf32StrGetIso2022Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUtf32StrGetMbcsLen	B-S	done on main			
+libSceCesCs	sceCesUtf32StrToIso2022Str	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUtf32StrToMbcsStr	B-S	done on main			
+libSceCesCs	sceCesUtf32ToBig5	B-S	done on main			
+libSceCesCs	sceCesUtf32ToEucCn	B-S	done on main			
+libSceCesCs	sceCesUtf32ToEucJp	B-S	done on main			
+libSceCesCs	sceCesUtf32ToEucKr	B-S	done on main			
+libSceCesCs	sceCesUtf32ToGb	B-S	done on main			
+libSceCesCs	sceCesUtf32ToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUtf32ToSJis	B-S	done on main			
+libSceCesCs	sceCesUtf32ToSbc	B-S	done on main			
+libSceCesCs	sceCesUtf32ToUhc	B-S	done on main			
+libSceCesCs	sceCesUtf32beToBig5	B-S	done on main			
+libSceCesCs	sceCesUtf32beToEucCn	B-S	done on main			
+libSceCesCs	sceCesUtf32beToEucJp	B-S	done on main			
+libSceCesCs	sceCesUtf32beToEucKr	B-S	done on main			
+libSceCesCs	sceCesUtf32beToGb	B-S	done on main			
+libSceCesCs	sceCesUtf32beToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUtf32beToSJis	B-S	done on main			
+libSceCesCs	sceCesUtf32beToSbc	B-S	done on main			
+libSceCesCs	sceCesUtf32beToUhc	B-S	done on main			
+libSceCesCs	sceCesUtf32leToBig5	B-S	done on main			
+libSceCesCs	sceCesUtf32leToEucCn	B-S	done on main			
+libSceCesCs	sceCesUtf32leToEucJp	B-S	done on main			
+libSceCesCs	sceCesUtf32leToEucKr	B-S	done on main			
+libSceCesCs	sceCesUtf32leToGb	B-S	done on main			
+libSceCesCs	sceCesUtf32leToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUtf32leToSJis	B-S	done on main			
+libSceCesCs	sceCesUtf32leToSbc	B-S	done on main			
+libSceCesCs	sceCesUtf32leToUhc	B-S	done on main			
+libSceCesCs	sceCesUtf8StrGetIso2022Len	B-S	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUtf8StrToIso2022Str	B-M	claimed	#10428 (rooklz, implements)		
+libSceCesCs	sceCesUtf8ToBig5	B-S	done on main			
+libSceCesCs	sceCesUtf8ToEucCn	B-S	done on main			
+libSceCesCs	sceCesUtf8ToEucJp	B-S	done on main			
+libSceCesCs	sceCesUtf8ToEucKr	B-S	done on main			
+libSceCesCs	sceCesUtf8ToGb	B-S	done on main			
+libSceCesCs	sceCesUtf8ToMbc	B-S	claimed	#9175 (rooklz, implements)		
+libSceCesCs	sceCesUtf8ToSJis	B-S	done on main			
+libSceCesCs	sceCesUtf8ToUhc	B-S	done on main			
+libSceFont	sceFontGlyphRenderImage	B-M	unclaimed			FONT-1
+libSceFont	sceFontGlyphRenderImageHorizontal	B-M	unclaimed			FONT-1
+libSceFont	sceFontGlyphRenderImageVertical	B-M	unclaimed			FONT-1
+libSceGnmDriverForNeoMode	sceGnmDriverTraceInProgress	C-real	done on main			
+libSceGnmDriverForNeoMode	sceGnmValidateOnSubmitEnabled	C-real	done on main			
+libSceHmd	sceHmdDistortionGet2dVrCommand	C-real	unclaimed			HMD-1R
+libSceHmd	sceHmdDistortionGetCorrectionCommand	C-real	unclaimed			HMD-1R
+libSceHmd	sceHmdDistortionGetWideNearCorrectionCommand	C-real	unclaimed			HMD-1R
+libSceHmd	sceHmdGet2dVrCommand	C-real	unclaimed			HMD-1R
+libSceHmd	sceHmdGetDistortionCorrectionCommand	C-real	unclaimed			HMD-1R
+libSceHmd	sceHmdGetWideNearDistortionCorrectionCommand	C-real	unclaimed			HMD-1R
+libSceHmd	sceHmdInternalIsCommonDlgMiniAppVr2d	C-real	done on main			
+libSceHmd	sceHmdInternalIsCommonDlgVr2d	C-real	done on main			
+libSceHmd	sceHmdInternalIsGameVr2d	C-real	done on main			
+libSceHmd	sceHmdInternalIsMiniAppVr2d	C-real	done on main			
+libSceHmd2	Hmd2BeforeInitializeError0004	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeError002C	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeError1002	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeError1003	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeMinusOne	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeNotInitialized	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeParameterInvalid	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeParameterNull	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeReprojectionNotInitialized	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeValue0400	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeValue20000	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2BeforeInitializeZero	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckAllSixThenZero	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstAndThirdThenError1003	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstAndThirdThenZero	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenError0004	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenError1002	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenError1003	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenError1010	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenError800d0203	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenMinusOne	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenParameterInvalid	C-real	unclaimed			HMD2-2a
+libSceHmd2	Hmd2CheckFirstThenZero	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2CheckFirstTwoThenError1002	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2CheckFirstTwoThenError1003	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2CheckFirstTwoThenParameterInvalid	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2CheckSecondThenError002C	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2CheckSecondThenError1002	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2CheckSecondThenInvalidHandle	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2CheckSecondThenParameterInvalid	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2IndexZeroCheckSecondThenZero	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo1CheckSecondThenError1002	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo1ThenError1002	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo1ThenMinusOne	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo2CheckSecondThenError002C	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo2ThenError1002	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo2ThenError1003	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo2ThenMinusOne	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2SlotUpTo3CheckSecondThirdThenZero	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2WriteFourConstants	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2WriteSixHalvesThenInvalidHandle	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2WriteSize0x2000Align0x100	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2WriteStateTwo	C-real	unclaimed			HMD2-2b
+libSceHmd2	Hmd2WriteTwelveHalvesThenInvalidHandle	C-real	unclaimed			HMD2-2b
+libSceHmd2	sceHmd2GazeActivateGazeTracking	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeGetCalibrationData	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeGetCalibrationDataMaxSize	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeGetDeviceStatus	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeGetUserCalibrationStatus	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeInsertRawDataWithHandle	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeObjectSelectionGetSelectedObject	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeObjectSelectionInitialize	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeObjectSelectionQueryMemory	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeObjectSelectionTerminate	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeSetEnabledEye	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeSetUserCalibrationData	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeSetUserCalibrationPoint	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeStartUserCalibration	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2GazeStopUserCalibration	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2ReprojectionClearUserEventEnd	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2ReprojectionClearUserEventStart	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2ReprojectionGetCurrentOutput	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2ReprojectionSetUserEventEnd	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2ReprojectionSetUserEventStart	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2SetFieldOfView	C-real	unclaimed			HMD2-1
+libSceHmd2	sceHmd2SetIpdOffset	C-real	unclaimed			HMD2-1
+libSceLibreSsl	AES_cbc_encrypt_nid_postfix	B-S	done on main			
+libSceLibreSsl	AES_cfb128_encrypt_nid_postfix	B-S	done on main			
+libSceLibreSsl	AES_ctr128_encrypt_nid_postfix	B-S	done on main			
+libSceLibreSsl	AES_decrypt_nid_postfix	B-S	done on main			
+libSceLibreSsl	AES_ecb_encrypt_nid_postfix	B-S	done on main			
+libSceLibreSsl	AES_encrypt_nid_postfix	B-S	done on main			
+libSceLibreSsl	AES_set_decrypt_key_nid_postfix	B-S	done on main			
+libSceLibreSsl	AES_set_encrypt_key_nid_postfix	B-S	done on main			
+libSceLibreSsl	ASN1_INTEGER_get_nid_postfix	B-S	claimed	#10005 (AZLisme, changes)		
+libSceLibreSsl	ASN1_STRING_data_nid_postfix	B-S	claimed	#10005 (AZLisme, changes)		
+libSceLibreSsl	ASN1_STRING_length_nid_postfix	B-S	claimed	#10005 (AZLisme, changes)		
+libSceLibreSsl	ASN1_STRING_to_UTF8_nid_postfix	B-M	claimed	#10005 (AZLisme, changes)		
+libSceLibreSsl	ASN1_STRING_type_nid_postfix	B-S	claimed	#10005 (AZLisme, changes)		
+libSceLibreSsl	BN_CTX_end_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_CTX_free_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_CTX_new_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_CTX_start_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_add_word_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_bin2bn_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_bn2bin_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_free_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_hex2bn_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_mod_inverse_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_mul_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_new_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_num_bits_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_set_word_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	BN_sub_word_nid_postfix	B-S	claimed	#9446 (AlxcBTW, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	CMAC_CTX_free_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, changes)		
+libSceLibreSsl	CMAC_CTX_new_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, implements)		
+libSceLibreSsl	CMAC_Final_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, changes)		
+libSceLibreSsl	CMAC_Init_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, changes)		
+libSceLibreSsl	CMAC_Update_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, changes)		
+libSceLibreSsl	CONF_modules_free_nid_postfix	B-S	claimed	#10475 (Daniil15DDD, implements)		
+libSceLibreSsl	CRYPTO_THREADID_set_callback_nid_postfix	B-S	claimed	#10248 (mantavisual, implements)		
+libSceLibreSsl	CRYPTO_THREADID_set_numeric_nid_postfix	B-S	claimed	#10248 (mantavisual, implements)		
+libSceLibreSsl	CRYPTO_cleanup_all_ex_data_nid_postfix	B-S	unclaimed			SSL-4R
+libSceLibreSsl	CRYPTO_free_nid_postfix	B-S	done on main			
+libSceLibreSsl	CRYPTO_malloc_nid_postfix	B-S	done on main			
+libSceLibreSsl	CRYPTO_num_locks_nid_postfix	B-S	claimed	#10248 (mantavisual, implements)		
+libSceLibreSsl	CRYPTO_set_add_lock_callback_nid_postfix	B-S	claimed	#10248 (mantavisual, implements)		
+libSceLibreSsl	CRYPTO_set_locking_callback_nid_postfix	B-S	claimed	#10248 (mantavisual, implements)		
+libSceLibreSsl	CRYPTO_set_mem_functions_nid_postfix	B-S	done on main			
+libSceLibreSsl	DES_ecb_encrypt_nid_postfix	B-S	done on main			
+libSceLibreSsl	DES_set_key_nid_postfix	B-S	done on main			
+libSceLibreSsl	DES_set_odd_parity_nid_postfix	B-S	done on main			
+libSceLibreSsl	ECDH_compute_key_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	ECDSA_sign_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	ECDSA_size_nid_postfix	B-S	claimed	#10395 (MatteoSid, implements)		
+libSceLibreSsl	ECDSA_verify_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_GROUP_free_nid_postfix	B-S	claimed	#10395 (MatteoSid, implements)		
+libSceLibreSsl	EC_GROUP_get_degree_nid_postfix	B-S	claimed	#10395 (MatteoSid, implements)		
+libSceLibreSsl	EC_GROUP_new_by_curve_name_nid_postfix	B-S	claimed	#10395 (MatteoSid, changes)		
+libSceLibreSsl	EC_KEY_check_key_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_KEY_free_nid_postfix	B-S	claimed	#10395 (MatteoSid, implements)		
+libSceLibreSsl	EC_KEY_generate_key_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_KEY_get0_group_nid_postfix	B-S	claimed	#10395 (MatteoSid, implements)		
+libSceLibreSsl	EC_KEY_get0_private_key_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_KEY_get0_public_key_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_KEY_new_by_curve_name_nid_postfix	B-S	claimed	#10395 (MatteoSid, changes)		
+libSceLibreSsl	EC_KEY_new_nid_postfix	B-S	claimed	#10395 (MatteoSid, implements)		
+libSceLibreSsl	EC_KEY_set_group_nid_postfix	B-S	claimed	#10395 (MatteoSid, implements)		
+libSceLibreSsl	EC_KEY_set_private_key_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_KEY_set_public_key_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_POINT_free_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_POINT_mul_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_POINT_new_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EC_POINT_oct2point_nid_postfix	B-M	unclaimed			SSL-3R
+libSceLibreSsl	EC_POINT_point2oct_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	ENGINE_by_id_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_cleanup_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_ctrl_cmd_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_ctrl_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_finish_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_free_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_get_first_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_get_next_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_init_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_load_builtin_engines_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ENGINE_load_private_key_nid_postfix	C-real	unclaimed			SSL-4R
+libSceLibreSsl	ERR_clear_error_nid_postfix	B-S	claimed	#9529 (2Swagger, implements); #9535 (Felipebmaitan, implements); #9536 (Felipebmaitan, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	ERR_error_string_n_nid_postfix	B-M	claimed	#9535 (Felipebmaitan, changes); #9536 (Felipebmaitan, changes); #9571 (Felipebmaitan, changes)		
+libSceLibreSsl	ERR_error_string_nid_postfix	B-S	claimed	#9535 (Felipebmaitan, implements); #9536 (Felipebmaitan, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	ERR_free_strings_nid_postfix	B-S	claimed	#9535 (Felipebmaitan, implements); #9536 (Felipebmaitan, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	ERR_get_error_nid_postfix	B-S	claimed	#9529 (2Swagger, implements); #9535 (Felipebmaitan, implements); #9536 (Felipebmaitan, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	ERR_peek_error_nid_postfix	B-S	claimed	#9529 (2Swagger, implements); #9535 (Felipebmaitan, implements); #9536 (Felipebmaitan, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl	ERR_remove_thread_state_nid_postfix	B-S	claimed	#9529 (2Swagger, changes); #9535 (Felipebmaitan, changes); #9536 (Felipebmaitan, changes); #9571 (Felipebmaitan, changes)		
+libSceLibreSsl	EVP_CIPHER_CTX_cleanup_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_CIPHER_CTX_ctrl_nid_postfix	B-M	unclaimed			SSL-1R
+libSceLibreSsl	EVP_CIPHER_CTX_free_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_CIPHER_CTX_init_nid_postfix	B-S	claimed	#10488 (alvaroelpob, implements)		
+libSceLibreSsl	EVP_CIPHER_CTX_new_nid_postfix	B-S	claimed	#10488 (alvaroelpob, implements)		
+libSceLibreSsl	EVP_CIPHER_CTX_set_padding_nid_postfix	B-S	claimed	#10488 (alvaroelpob, implements)		
+libSceLibreSsl	EVP_CIPHER_block_size_nid_postfix	B-S	claimed	#10450 (alvaroelpob, implements)		
+libSceLibreSsl	EVP_CipherFinal_ex_nid_postfix	B-M	unclaimed			SSL-1R
+libSceLibreSsl	EVP_CipherInit_ex_nid_postfix	B-M	unclaimed			SSL-1R
+libSceLibreSsl	EVP_CipherUpdate_nid_postfix	B-M	unclaimed			SSL-1R
+libSceLibreSsl	EVP_DecryptFinal_ex_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_DecryptInit_ex_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_DecryptUpdate_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_DigestFinal_ex_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_DigestInit_ex_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	EVP_DigestUpdate_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_DigestVerifyFinal_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	EVP_DigestVerifyInit_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	EVP_Digest_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	EVP_EncryptFinal_ex_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_EncryptInit_ex_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_EncryptUpdate_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_MD_CTX_cleanup_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	EVP_MD_CTX_create_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_MD_CTX_destroy_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	EVP_MD_CTX_init_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_MD_size_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_PKEY_copy_parameters_nid_postfix	B-S	unclaimed			SSL-2R
+libSceLibreSsl	EVP_PKEY_free_nid_postfix	B-S	claimed	#10570 (MarcZX10, changes)		
+libSceLibreSsl	EVP_PKEY_get1_EC_KEY_nid_postfix	B-S	unclaimed			SSL-3R
+libSceLibreSsl	EVP_PKEY_get1_RSA_nid_postfix	B-S	unclaimed			SSL-2R
+libSceLibreSsl	EVP_PKEY_id_nid_postfix	B-S	claimed	#10418 (MarcZX10, changes)		
+libSceLibreSsl	EVP_PKEY_new_nid_postfix	B-S	claimed	#10570 (MarcZX10, implements)		
+libSceLibreSsl	EVP_PKEY_set1_RSA_nid_postfix	B-S	unclaimed			SSL-2R
+libSceLibreSsl	EVP_PKEY_type_nid_postfix	B-S	claimed	#10398 (alvaroelpob, implements)		
+libSceLibreSsl	EVP_aes_128_cbc_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, implements)		
+libSceLibreSsl	EVP_aes_128_cfb8_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_128_ctr_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_128_gcm_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_192_cbc_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, implements)		
+libSceLibreSsl	EVP_aes_192_cfb8_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_192_ctr_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_192_gcm_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_256_cbc_nid_postfix	B-S	claimed	#9571 (Felipebmaitan, implements)		
+libSceLibreSsl	EVP_aes_256_cfb8_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_256_ctr_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_aes_256_gcm_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_cleanup_nid_postfix	B-S	unclaimed			SSL-1R
+libSceLibreSsl	EVP_md5_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_sha256_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_sha384_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	EVP_sha512_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	HMAC_CTX_cleanup_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	HMAC_CTX_init_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	HMAC_Final_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	HMAC_Init_ex_nid_postfix	B-M	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	HMAC_Init_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	HMAC_Update_nid_postfix	B-S	claimed	#9448 (HQasper, implements)		
+libSceLibreSsl	HMAC_nid_postfix	B-S	claimed	#9448 (HQasper, changes)		
+libSceLibreSsl	MD4_Final_nid_postfix	B-S	done on main			
+libSceLibreSsl	MD4_Init_nid_postfix	B-S	done on main			
+libSceLibreSsl	MD4_Update_nid_postfix	B-M	done on main			
+libSceLibreSsl	MD5_Final_nid_postfix	B-S	done on main			
+libSceLibreSsl	MD5_Init_nid_postfix	B-S	done on main			
+libSceLibreSsl	MD5_Update_nid_postfix	B-S	done on main			
+libSceLibreSsl	OBJ_cleanup_nid_postfix	B-S	unclaimed			SSL-4R
+libSceLibreSsl	OBJ_create_nid_postfix	B-M	unclaimed			SSL-6R
+libSceLibreSsl	OBJ_nid2sn_nid_postfix	B-M	claimed	#10508 (Ab1jithK, implements)		
+libSceLibreSsl	OBJ_obj2nid_nid_postfix	B-M	claimed	#10571 (MarcZX10, changes)		
+libSceLibreSsl	OBJ_sn2nid_nid_postfix	B-M	claimed	#10508 (Ab1jithK, implements)		
+libSceLibreSsl	OCSP_cert_status_str_nid_postfix	B-S	claimed	#9949 (wrocketdev, implements)		
+libSceLibreSsl	OCSP_check_validity_nid_postfix	B-M	unclaimed			SSL-6R
+libSceLibreSsl	OCSP_crl_reason_str_nid_postfix	B-S	claimed	#9949 (wrocketdev, implements)		
+libSceLibreSsl	OCSP_response_status_str_nid_postfix	B-S	claimed	#9949 (wrocketdev, implements)		
+libSceLibreSsl	OPENSSL_add_all_algorithms_noconf_nid_postfix	B-S	claimed	#10475 (Daniil15DDD, implements)		
+libSceLibreSsl	OPENSSL_load_builtin_modules_nid_postfix	B-S	claimed	#10475 (Daniil15DDD, implements)		
+libSceLibreSsl	PEM_read_RSAPrivateKey_nid_postfix	B-M	unclaimed			SSL-6R
+libSceLibreSsl	PKCS12_PBE_add_nid_postfix	B-S	unclaimed			SSL-4R
+libSceLibreSsl	RAND_add_nid_postfix	B-S	done on main			
+libSceLibreSsl	RAND_bytes_nid_postfix	B-S	done on main			
+libSceLibreSsl	RAND_file_name_nid_postfix	B-S	done on main			
+libSceLibreSsl	RAND_load_file_nid_postfix	B-S	done on main			
+libSceLibreSsl	RAND_status_nid_postfix	B-S	done on main			
+libSceLibreSsl	RSA_flags_nid_postfix	B-S	claimed	#10449 (alvaroelpob, implements)		
+libSceLibreSsl	RSA_free_nid_postfix	B-S	unclaimed			SSL-2R
+libSceLibreSsl	RSA_generate_key_ex_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	RSA_new_nid_postfix	B-S	unclaimed			SSL-2R
+libSceLibreSsl	RSA_padding_add_PKCS1_PSS_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	RSA_private_decrypt_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	RSA_private_encrypt_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	RSA_public_decrypt_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	RSA_public_encrypt_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	RSA_sign_nid_postfix	B-S	unclaimed			SSL-2R
+libSceLibreSsl	RSA_size_nid_postfix	B-S	claimed	#10449 (alvaroelpob, implements)		
+libSceLibreSsl	RSA_verify_PKCS1_PSS_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	RSA_verify_nid_postfix	B-S	unclaimed			SSL-2R
+libSceLibreSsl	SHA1_Final_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA1_Init_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA1_Update_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA224_Final_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA224_Init_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA224_Update_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA256_Final_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA256_Init_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA256_Update_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA256_nid_postfix	B-S	claimed	#10484 (jacob6769, implements)		
+libSceLibreSsl	SHA384_Final_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA384_Init_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA384_Update_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA512_Final_nid_postfix	B-S	claimed	#10484 (jacob6769, implements)		
+libSceLibreSsl	SHA512_Init_nid_postfix	B-S	done on main			
+libSceLibreSsl	SHA512_Update_nid_postfix	B-S	done on main			
+libSceLibreSsl	SSL_alert_desc_string_long_nid_postfix	B-S	claimed	#9870 (lost9409, implements)		
+libSceLibreSsl	SSL_library_init_nid_postfix	B-S	unclaimed			SSL-4R
+libSceLibreSsl	SSL_load_error_strings_nid_postfix	B-S	unclaimed			SSL-4R
+libSceLibreSsl	SSL_select_next_proto_nid_postfix	B-S	claimed	#9785 (santhoshkumar-dev, changes)		
+libSceLibreSsl	SSLeay_nid_postfix	B-S	claimed	#9745 (KernelPanicNT, implements)		
+libSceLibreSsl	UI_OpenSSL_nid_postfix	B-S	unclaimed			SSL-4R
+libSceLibreSsl	UI_create_method_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_destroy_method_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_get0_user_data_nid_postfix	B-S	claimed	#10486 (alvaroelpob, implements)		
+libSceLibreSsl	UI_get_input_flags_nid_postfix	B-S	claimed	#10486 (alvaroelpob, implements)		
+libSceLibreSsl	UI_get_string_type_nid_postfix	B-S	claimed	#10486 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_get_closer_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_get_opener_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_get_reader_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_get_writer_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_set_closer_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_set_opener_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_set_reader_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_method_set_writer_nid_postfix	B-S	claimed	#10376 (alvaroelpob, implements)		
+libSceLibreSsl	UI_set_result_nid_postfix	B-S	unclaimed			SSL-4R
+libSceLibreSsl	X509_EXTENSION_get_critical_nid_postfix	B-S	claimed	#10078 (atharvjairath, implements)		
+libSceLibreSsl	X509_EXTENSION_get_data_nid_postfix	B-S	claimed	#10078 (atharvjairath, implements)		
+libSceLibreSsl	X509_EXTENSION_get_object_nid_postfix	B-S	claimed	#10078 (atharvjairath, implements)		
+libSceLibreSsl	X509_NAME_ENTRY_get_data_nid_postfix	B-S	claimed	#10477 (alvaroelpob, implements)		
+libSceLibreSsl	X509_NAME_get_entry_nid_postfix	B-S	claimed	#10477 (alvaroelpob, implements)		
+libSceLibreSsl	X509_NAME_get_index_by_NID_nid_postfix	B-S	unclaimed			SSL-6R
+libSceLibreSsl	X509_NAME_get_text_by_NID_nid_postfix	B-S	unclaimed			SSL-6R
+libSceLibreSsl	X509_NAME_oneline_nid_postfix	B-M	unclaimed			SSL-6R
+libSceLibreSsl	X509_STORE_CTX_get1_chain_nid_postfix	B-S	unclaimed			SSL-6R
+libSceLibreSsl	X509_STORE_CTX_get_chain_nid_postfix	B-S	claimed	#10447 (alvaroelpob, implements)		
+libSceLibreSsl	X509_STORE_CTX_get_current_cert_nid_postfix	B-S	claimed	#10447 (alvaroelpob, implements)		
+libSceLibreSsl	X509_STORE_CTX_get_error_depth_nid_postfix	B-S	claimed	#10447 (alvaroelpob, implements)		
+libSceLibreSsl	X509_STORE_CTX_get_error_nid_postfix	B-S	claimed	#10447 (alvaroelpob, implements)		
+libSceLibreSsl	X509_STORE_CTX_get_ex_data_nid_postfix	B-S	unclaimed			SSL-6R
+libSceLibreSsl	X509_STORE_CTX_set_error_nid_postfix	B-S	claimed	#10447 (alvaroelpob, implements)		
+libSceLibreSsl	X509_get_issuer_name_nid_postfix	B-S	claimed	#10478 (alvaroelpob, implements)		
+libSceLibreSsl	X509_get_serialNumber_nid_postfix	B-S	claimed	#10478 (alvaroelpob, implements)		
+libSceLibreSsl	X509_get_subject_name_nid_postfix	B-S	claimed	#10478 (alvaroelpob, implements)		
+libSceLibreSsl	X509_verify_cert_error_string_nid_postfix	B-M	done on main			
+libSceLibreSsl	d2i_RSA_PUBKEY_nid_postfix	B-M	unclaimed			SSL-2R
+libSceLibreSsl	i2t_ASN1_OBJECT_nid_postfix	B-M	unclaimed			SSL-6R
+libSceLibreSsl	sk_num_nid_postfix	B-S	claimed	#10373 (alvaroelpob, implements)		
+libSceLibreSsl	sk_pop_free_nid_postfix	B-S	claimed	#10373 (alvaroelpob, implements)		
+libSceLibreSsl	sk_pop_nid_postfix	B-S	claimed	#10373 (alvaroelpob, implements)		
+libSceLibreSsl	sk_value_nid_postfix	B-S	claimed	#10373 (alvaroelpob, implements)		
+libSceLibreSsl3	ASN1_INTEGER_free_nid_postfix	B-S	claimed	#10452 (alvaroelpob, implements)		
+libSceLibreSsl3	ASN1_OBJECT_free_nid_postfix	B-S	claimed	#10461 (MarcZX10, implements)		
+libSceLibreSsl3	ASN1_STRING_get0_data_nid_postfix	B-S	claimed	#10452 (alvaroelpob, implements)		
+libSceLibreSsl3	CRYPTO_memcmp_nid_postfix	B-S	done on main			
+libSceLibreSsl3	DH_get0_key_nid_postfix	B-S	claimed	#10490 (alvaroelpob, implements)		
+libSceLibreSsl3	DH_get0_pqg_nid_postfix	B-S	claimed	#10490 (alvaroelpob, implements)		
+libSceLibreSsl3	DSA_get0_key_nid_postfix	B-S	claimed	#10490 (alvaroelpob, implements)		
+libSceLibreSsl3	DSA_get0_pqg_nid_postfix	B-S	claimed	#10490 (alvaroelpob, implements)		
+libSceLibreSsl3	EC_KEY_up_ref_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	ERR_load_crypto_strings_nid_postfix	B-S	claimed	#9535 (Felipebmaitan, implements); #9536 (Felipebmaitan, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl3	ERR_peek_last_error_nid_postfix	B-S	claimed	#9535 (Felipebmaitan, implements); #9536 (Felipebmaitan, implements); #9571 (Felipebmaitan, implements)		
+libSceLibreSsl3	ERR_print_errors_cb_nid_postfix	B-M	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_CIPHER_CTX_set_flags_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_DigestInit_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_DigestSignFinal_nid_postfix	B-M	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_DigestSignInit_nid_postfix	B-M	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_EncryptInit_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_MD_CTX_free_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_MD_CTX_new_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_PKEY_CTX_ctrl_nid_postfix	B-M	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_CTX_new_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_decrypt_init_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_decrypt_nid_postfix	B-M	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_encrypt_init_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_encrypt_nid_postfix	B-M	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_get0_DH_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_PKEY_get0_DSA_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_PKEY_get0_RSA_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_new_mac_key_nid_postfix	B-M	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_PKEY_set1_EC_KEY_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_size_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_PKEY_up_ref_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_SignFinal_nid_postfix	B-M	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_VerifyFinal_nid_postfix	B-M	unclaimed			SSL3-2R
+libSceLibreSsl3	EVP_aes_128_wrap_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_aes_192_wrap_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_aes_256_wrap_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_sha1_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	EVP_sha224_nid_postfix	B-S	unclaimed			SSL3-1R
+libSceLibreSsl3	MD5_nid_postfix	B-S	claimed	#10484 (jacob6769, implements)		
+libSceLibreSsl3	OBJ_cmp_nid_postfix	B-S	claimed	#10631 (MarcZX10, implements)		
+libSceLibreSsl3	OBJ_txt2obj_nid_postfix	B-M	unclaimed			SSL3-4R
+libSceLibreSsl3	RSA_check_key_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	RSA_get0_key_nid_postfix	B-S	claimed	#10490 (alvaroelpob, implements)		
+libSceLibreSsl3	RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix	B-M	unclaimed			SSL3-2R
+libSceLibreSsl3	RSA_up_ref_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceLibreSsl3	SHA1_nid_postfix	B-S	claimed	#10484 (jacob6769, implements)		
+libSceLibreSsl3	X509_PUBKEY_get0_param_nid_postfix	B-S	claimed	#10557 (MarcZX10, implements)		
+libSceLibreSsl3	X509_get0_extensions_nid_postfix	B-S	claimed	#10493 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_get0_notAfter_nid_postfix	B-S	claimed	#10491 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_get0_notBefore_nid_postfix	B-S	claimed	#10491 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_get0_signature_nid_postfix	B-S	claimed	#10491 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_get_ext_count_nid_postfix	B-S	claimed	#10493 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_get_ext_nid_postfix	B-S	claimed	#10493 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_get_version_nid_postfix	B-S	unclaimed			SSL3-4R
+libSceLibreSsl3	X509_getm_notAfter_nid_postfix	B-S	claimed	#10491 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_getm_notBefore_nid_postfix	B-S	claimed	#10491 (alvaroelpob, implements)		
+libSceLibreSsl3	X509_up_ref_nid_postfix	B-S	unclaimed			SSL3-4R
+libSceLibreSsl3	d2i_ASN1_INTEGER_nid_postfix	B-M	unclaimed			SSL3-4R
+libSceLibreSsl3	d2i_ECParameters_nid_postfix	B-M	unclaimed			SSL3-2R
+libSceLibreSsl3	o2i_ECPublicKey_nid_postfix	B-S	unclaimed			SSL3-2R
+libSceMbus	sceMbusEventCallbackFuncsInit_	B-S	unclaimed			MBUS-1
+libSceNet	sceNetConfigGetDefaultRoute	B-S	claimed	#9578 (EagleBearerYS, implements)		
+libSceNet	sceNetConfigGetDefaultRoute6	B-M	unclaimed			NET-1R
+libSceNet	sceNetConfigGetIfFlags	B-M	unclaimed			NET-1R
+libSceNet	sceNetEtherStrton	B-S	unclaimed			NET-1R
+libSceNet	sceNetGetDns6Info	B-M	claimed	#9506 (Noxy-HNR, implements)		
+libSceNet	sceNetGetIfnameNumList	B-S	unclaimed			NET-1R
+libSceNet	sceNetGetsockoptEx	B-S	claimed	#9578 (EagleBearerYS, implements)		
+libSceNet	sceNetInetNtopWithScopeId	B-S	claimed	#9578 (EagleBearerYS, implements)		
+libSceNet	sceNetInetPtonWithScopeId	B-S	claimed	#9578 (EagleBearerYS, implements)		
+libSceNet	sceNetInitParam	B-S	unclaimed			NET-1R
+libSceNet	sceNetIoctl	B-S	done on main			
+libSceNet	sceNetSetsockoptEx	B-S	claimed	#9578 (EagleBearerYS, implements)		
+libSceNet	sceNetSocketInternal	B-S	claimed	#9578 (EagleBearerYS, implements)		
+libSceNet	sceNetSysctl	B-S	claimed	#9578 (EagleBearerYS, implements)		
+libSceNet	sceNetThreadExit	B-S	done on main			
+libSceNpCommon	sceNpCmpNpIdInOrder	B-S	done on main			
+libSceNpCommon	sceNpCmpOnlineId	B-S	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi12getContainerEiRKNS4_23ParameterToGetContainerERNS1_6Common11TransactionINS8_12IntrusivePtrINS8_6VectorINSA_INS3_9ContainerEEEEEEENSA_INS8_18ResponseHeaderBaseEEEEE	C-real	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi26getMultiDataStatusesByUserEiRKNS4_37ParameterToGetMultiDataStatusesByUserERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_32GetMultiDataStatusesResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE	C-real	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V57ProductEEC1ERS7_	B-S	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V57ProductEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEC1ERS7_	B-S	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V59ContainerEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEC1Ev	B-S	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V15OwnerEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V53SkuEEEEEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V57ProductEEEEEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEC1Ev	B-S	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_17TitleCloudStorage2V110DataStatusEEEEEED1Ev	B-S	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEED2Ev	B-S	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEED2Ev	B-S	done on main			
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE	C-real	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE	C-real	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_	C-real	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERSB_	C-real	unclaimed			WEBAPI-2
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V57ProductEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStorage2V15OwnerEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V53SkuEEEEEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V57ProductEEEEEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEdeEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEptEv	B-S	done on main			
+libSceNpCppWebApi	_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_17TitleCloudStorage2V110DataStatusEEEEEEdeEv	B-S	done on main			
+libSceNpManager	sceNpCheckCallbackForLib	C-real	done on main			
+libSceNpManager	sceNpCheckNpAvailabilityA	C-real	done on main			
+libSceNpManager	sceNpGetAccountDateOfBirthA	C-real	done on main			
+libSceNpManager	sceNpGetAccountLanguageA	C-real	done on main			
+libSceNpManager	sceNpGetGamePresenceStatus	C-real	done on main			
+libSceNpManager	sceNpGetGamePresenceStatusA	C-real	done on main			
+libSceNpManager	sceNpGetParentalControlInfoA	C-real	done on main			
+libSceNpManager	sceNpIdMapperAbortRequest	B-S	unclaimed			NPM-1a
+libSceNpManager	sceNpIdMapperAccountIdToNpId	C-real	unclaimed			NPM-1a
+libSceNpManager	sceNpIdMapperAccountIdToOnlineId	C-real	unclaimed			NPM-1a
+libSceNpManager	sceNpIdMapperCreateRequest	B-S	unclaimed			NPM-1a
+libSceNpManager	sceNpIdMapperDeleteRequest	B-S	unclaimed			NPM-1a
+libSceNpManager	sceNpIdMapperNpIdToAccountId	C-real	unclaimed			NPM-1a
+libSceNpManager	sceNpIdMapperOnlineIdToAccountId	C-real	unclaimed			NPM-1a
+libSceNpManager	sceNpManagerIntAbortRequest	B-S	unclaimed			NPM-1a
+libSceNpManager	sceNpManagerIntAuthGetAuthorizationCode	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntAuthGetIdToken	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntCreateAuthenticationTicket	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntCreateRequest	B-S	unclaimed			NPM-1a
+libSceNpManager	sceNpManagerIntDeleteRequest	B-S	unclaimed			NPM-1a
+libSceNpManager	sceNpManagerIntGetAccessTokenViaImplicitFlow	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetAccountAge	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetAccountCountryA	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetAccountId	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetAccountIdSdk	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetAccountLanguageA	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetAuthorizationCode	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetAuthorizationCodeWithPsnoUri	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetGameAccessToken	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetNpId	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetNpIdByOnlineId	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetNpIdSdk	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetOnlineId	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetOnlineIdSdk	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetTicket	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetTicketA	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetTitleToken	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetTitleTokenWithCheck	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetUserIdByAccountId	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetUserIdByNpId	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetUserIdByOnlineId	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpManagerIntGetUserIdByOnlineIdSdk	C-real	unclaimed			NPM-1b
+libSceNpManager	sceNpSetContentRestriction	C-real	done on main	#9826 (Delciob, implements)		
+libSceNpTus	sceNpTssGetDataAsync	C-real	claimed	#10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusAddAndGetVariable	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableA	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableAVUser	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableAVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableAsync	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableForCrossSave	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableForCrossSaveAsync	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableForCrossSaveVUser	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableForCrossSaveVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableVUser	C-real	done on main			
+libSceNpTus	sceNpTusAddAndGetVariableVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusDeleteMultiSlotData	C-real	done on main			
+libSceNpTus	sceNpTusDeleteMultiSlotDataA	C-real	done on main			
+libSceNpTus	sceNpTusDeleteMultiSlotDataAAsync	C-real	done on main			
+libSceNpTus	sceNpTusDeleteMultiSlotDataAsync	C-real	done on main			
+libSceNpTus	sceNpTusDeleteMultiSlotDataVUser	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusDeleteMultiSlotDataVUserAsync	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetDataA	C-real	done on main			
+libSceNpTus	sceNpTusGetDataAAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetDataAVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetDataAVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetDataAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetDataForCrossSave	C-real	done on main			
+libSceNpTus	sceNpTusGetDataForCrossSaveAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetDataForCrossSaveVUser	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetDataForCrossSaveVUserAsync	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetDataVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetFriendsDataStatus	C-real	done on main			
+libSceNpTus	sceNpTusGetFriendsDataStatusA	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetFriendsDataStatusAAsync	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetFriendsDataStatusAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetFriendsDataStatusForCrossSave	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetFriendsDataStatusForCrossSaveAsync	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetFriendsVariable	C-real	done on main			
+libSceNpTus	sceNpTusGetFriendsVariableA	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetFriendsVariableAAsync	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetFriendsVariableAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetFriendsVariableForCrossSave	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetFriendsVariableForCrossSaveAsync	C-real	claimed	#10675 (MarcZX10, implements); #10693 (MarcZX10, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetMultiSlotDataStatus	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusA	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusAAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusAVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusAVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSave	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSaveAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSaveVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiSlotDataStatusVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatus	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusA	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusAAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusAVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusAVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSave	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSaveAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSaveVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusForCrossSaveVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserDataStatusVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariable	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableA	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableAAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableAVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableAVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableForCrossSave	C-real	claimed	#10523 (YossiYad, implements)		BF-192, drop
+libSceNpTus	sceNpTusGetMultiUserVariableForCrossSaveAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableForCrossSaveVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableForCrossSaveVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableVUser	C-real	done on main			
+libSceNpTus	sceNpTusGetMultiUserVariableVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusSetDataA	C-real	done on main			
+libSceNpTus	sceNpTusSetDataAAsync	C-real	done on main			
+libSceNpTus	sceNpTusSetDataAVUser	C-real	done on main			
+libSceNpTus	sceNpTusSetDataAVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusSetDataAsync	C-real	done on main			
+libSceNpTus	sceNpTusSetDataVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusSetThreadParam	C-real	unclaimed			TUS-1R
+libSceNpTus	sceNpTusTryAndSetVariable	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableA	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableAAsync	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableAVUser	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableAVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableAsync	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableForCrossSave	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveAsync	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveVUser	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableForCrossSaveVUserAsync	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableVUser	C-real	done on main			
+libSceNpTus	sceNpTusTryAndSetVariableVUserAsync	C-real	done on main			
+libScePad	scePadGetBluetoothAddress	B-S	unclaimed			PAD-1R
+libScePad	scePadIsBlasterConnected	C-real	done on main			
+libScePad	scePadIsDS4Connected	C-real	done on main			
+libScePad	scePadIsMoveConnected	C-real	done on main			
+libScePad	scePadIsValidHandle	B-S	unclaimed			PAD-1R
+libScePad	scePadOutputReport	B-M	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadResetLightBarAll	B-S	unclaimed			PAD-1R
+libScePad	scePadResetLightBarAllByPortType	B-S	unclaimed			PAD-1R
+libScePad	scePadSetAngularVelocityBiasCorrectionState	B-S	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadSetVibrationForce	B-S	unclaimed			PAD-1R
+libScePad	scePadVrControllerGetDeviceInformation	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerGetTriggerEffectState	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerGetTriggerEffectStates	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerRead	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerReadCombinedState	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerReadState	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerSetTriggerEffect	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerSetTriggerEffects	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerSetVibration	C-real	claimed	#5038 (coptergui-ops, implements)		
+libScePad	scePadVrControllerSetVibrationMode	C-real	claimed	#5038 (coptergui-ops, implements)		
+libSceSaveData	sceSaveDataAbort	A	claimed	#7780 (savvaniss, moves to libSceSaveData.native, todo); #8285 (DealPotato, moves to libSceSaveData.native, todo)		
+libSceSaveData	sceSaveDataCheckBackupData	B-M	claimed	#7780 (savvaniss, moves to libSceSaveData.native, todo); #8285 (DealPotato, moves to libSceSaveData.native, todo)		
+libSceSaveData	sceSaveDataClearProgress	B-S	claimed	#7780 (savvaniss, moves to libSceSaveData.native, todo); #8285 (DealPotato, moves to libSceSaveData.native, todo)		
+libSceSaveData	sceSaveDataGetProgress	B-S	claimed	#7780 (savvaniss, moves to libSceSaveData.native, todo); #8285 (DealPotato, moves to libSceSaveData.native, todo)		
+libSceSaveData	sceSaveDataInitialize2	A	claimed	#7780 (savvaniss, moves to libSceSaveData.native, todo); #8285 (DealPotato, moves to libSceSaveData.native, todo)		
+libSceSaveData	sceSaveDataRestoreBackupData	B-M	claimed	#7780 (savvaniss, moves to libSceSaveData.native, todo); #8285 (DealPotato, moves to libSceSaveData.native, todo)		
+libSceSaveData	sceSaveDataUmountWithBackup	B-S	claimed	#7780 (savvaniss, moves to libSceSaveData.native, todo); #8285 (DealPotato, moves to libSceSaveData.native, todo)		
+libSceSystemService	sceLncUtilBlockAppSuspend	C-real	claimed	#9586 (EagleBearerYS, changes)		
+libSceSystemService	sceLncUtilDisableSuspendNotification	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceLncUtilEnableSuspendNotification	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceLncUtilGetAppId	B-S	unclaimed			BF-191
+libSceSystemService	sceLncUtilGetAppIdListOfBigApp	B-S	unclaimed			BF-191
+libSceSystemService	sceLncUtilGetAppIdOfRunningBigApp	A	unclaimed			BF-191
+libSceSystemService	sceLncUtilGetAppLaunchedUser	B-S	unclaimed			BF-191
+libSceSystemService	sceLncUtilGetAppTitleId	B-S	unclaimed			SYS-3
+libSceSystemService	sceLncUtilIsAppLaunched	B-S	unclaimed			BF-191
+libSceSystemService	sceLncUtilIsAppSuspended	B-S	unclaimed			BF-191
+libSceSystemService	sceLncUtilIsPs2Emu	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceLncUtilIsShellUiFgAndGameBgCpuMode	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceLncUtilIsSpeculativeLaunch	B-S	unclaimed			BF-191
+libSceSystemService	sceLncUtilLoadExec	A	unclaimed			BF-191
+libSceSystemService	sceLncUtilUnblockAppSuspend	C-real	claimed	#9586 (EagleBearerYS, changes)		
+libSceSystemService	sceShellCoreUtilGetAppEnterButtonAssign	B-S	unclaimed			BF-191
+libSceSystemService	sceShellCoreUtilGetGameLiveStreamingStatus	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceShellCoreUtilGetRemotePlayStatus	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceShellCoreUtilGetSharePlayStatus	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceShellCoreUtilGetSocialScreenStatus	C-real	claimed	#9586 (EagleBearerYS, changes)		
+libSceSystemService	sceShellCoreUtilGetUserFocus	B-S	unclaimed			BF-191
+libSceSystemService	sceShellCoreUtilIsBgmPlaying	C-real	done on main			
+libSceSystemService	sceShellCoreUtilIsExternalStorageAppMoveInProgress	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceShellCoreUtilIsEyeToEyeDistanceAdjusted	C-real	claimed	#9586 (EagleBearerYS, changes)		
+libSceSystemService	sceShellCoreUtilIsGameLiveStreamingOnAir	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceShellCoreUtilIsImposeScreenOverlaid	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceShellCoreUtilIsScreenSaverOn	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceShellCoreUtilIsUsbMassStorageMounted	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemServiceDisableSuspendNotification	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemServiceEnableSuspendNotification	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemServiceGetAppId	B-S	unclaimed			SYS-3
+libSceSystemService	sceSystemServiceGetAppIdListOfBigApp	B-S	unclaimed			BF-191
+libSceSystemService	sceSystemServiceGetAppLaunchedUser	B-S	unclaimed			BF-191
+libSceSystemService	sceSystemServiceGetAppTitleId	B-S	unclaimed			SYS-3
+libSceSystemService	sceSystemServiceGetRemoteplayStatus	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemServiceIsAppSuspended	B-S	unclaimed			BF-191
+libSceSystemService	sceSystemServiceIsBgmPlaying	C-real	done on main			
+libSceSystemService	sceSystemServiceIsEyeToEyeDistanceAdjusted	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemServiceIsGameLiveStreamingOnAir	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemServiceIsScreenSaverOn	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemServiceIsShellUiFgAndGameBgCpuMode	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemStateMgrIsBdDriveReady	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libSceSystemService	sceSystemStateMgrIsShellUIShutdownInProgress	C-real	claimed	#9586 (EagleBearerYS, implements)		
+libkernel_sys	aio_cancel_nid_postfix	B-S	done on main			
+libkernel_sys	aio_error_nid_postfix	B-S	done on main			
+libkernel_sys	aio_fsync_nid_postfix	B-S	unclaimed			KSYS-5
+libkernel_sys	aio_read_nid_postfix	B-M	unclaimed			KSYS-5
+libkernel_sys	aio_return_nid_postfix	B-S	done on main			
+libkernel_sys	aio_suspend_nid_postfix	B-S	done on main			
+libkernel_sys	aio_waitcomplete_nid_postfix	B-S	done on main			
+libkernel_sys	aio_write_nid_postfix	B-M	unclaimed			KSYS-5
+libkernel_sys	chown_nid_postfix	B-S	unclaimed			KSYS-5
+libkernel_sys	cpuset_getid_nid_postfix	B-S	claimed	#10741 (camezaro-intc, implements)		BF-190, drop
+libkernel_sys	cpuset_nid_postfix	B-S	claimed	#10741 (camezaro-intc, implements)		BF-190, drop
+libkernel_sys	cpuset_setid_nid_postfix	B-S	claimed	#10741 (camezaro-intc, implements)		BF-190, drop
+libkernel_sys	fchown_nid_postfix	B-M	claimed	#8457 (vaibhavindalia, implements); #10016 (xXPBSXx, changes)		
+libkernel_sys	fchownat_nid_postfix	B-S	unclaimed			KSYS-5
+libkernel_sys	fstat_nid_postfix	A	done on main			
+libkernel_sys	futimesat_nid_postfix	B-S	claimed	#9161 (yabanana, implements)		
+libkernel_sys	getfsstat_nid_postfix	B-M	unclaimed			KSYS-5
+libkernel_sys	getlogin_nid_postfix	B-S	claimed	#9171 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	kmq_notify_nid_postfix	B-M	claimed	#9302 (DavidSamir, changes)		
+libkernel_sys	kmq_setattr_nid_postfix	B-S	claimed	#9297 (DavidSamir, implements); #9302 (DavidSamir, implements)		
+libkernel_sys	kmq_timedreceive_nid_postfix	B-M	claimed	#9297 (DavidSamir, implements); #9302 (DavidSamir, implements)		
+libkernel_sys	kmq_timedsend_nid_postfix	B-M	claimed	#9297 (DavidSamir, implements); #9302 (DavidSamir, implements)		
+libkernel_sys	kmq_unlink_nid_postfix	B-S	claimed	#9297 (DavidSamir, implements); #9302 (DavidSamir, implements)		
+libkernel_sys	ksem_close_nid_postfix	B-S	claimed	#9293 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_destroy_nid_postfix	B-S	claimed	#9284 (DavidSamir, moves to libkernel, implemented); #9293 (DavidSamir, moves to libkernel, implemented); #9297 (DavidSamir, moves to libkernel, implemented); #9302 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_getvalue_nid_postfix	B-S	claimed	#9284 (DavidSamir, moves to libkernel, implemented); #9293 (DavidSamir, moves to libkernel, implemented); #9297 (DavidSamir, moves to libkernel, implemented); #9302 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_init_nid_postfix	B-S	claimed	#9284 (DavidSamir, moves to libkernel, implemented); #9293 (DavidSamir, moves to libkernel, implemented); #9297 (DavidSamir, moves to libkernel, implemented); #9302 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_open_nid_postfix	B-M	claimed	#9293 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_post_nid_postfix	B-S	claimed	#9284 (DavidSamir, moves to libkernel, implemented); #9293 (DavidSamir, moves to libkernel, implemented); #9297 (DavidSamir, moves to libkernel, implemented); #9302 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_timedwait_nid_postfix	B-S	claimed	#9284 (DavidSamir, moves to libkernel, implemented); #9293 (DavidSamir, moves to libkernel, implemented); #9297 (DavidSamir, moves to libkernel, implemented); #9302 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_trywait_nid_postfix	B-S	claimed	#9284 (DavidSamir, moves to libkernel, implemented); #9293 (DavidSamir, moves to libkernel, implemented); #9297 (DavidSamir, moves to libkernel, implemented); #9302 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_unlink_nid_postfix	B-S	claimed	#9293 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ksem_wait_nid_postfix	B-S	claimed	#9284 (DavidSamir, moves to libkernel, implemented); #9293 (DavidSamir, moves to libkernel, implemented); #9297 (DavidSamir, moves to libkernel, implemented); #9302 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	ktimer_create_nid_postfix	B-M	unclaimed (todo in libkernel)			KSYS-5
+libkernel_sys	ktimer_delete_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	ktimer_getoverrun_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	ktimer_gettime_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	ktimer_settime_nid_postfix	B-M	done on main (in libkernel)			
+libkernel_sys	lchflags_nid_postfix	B-S	claimed	#9442 (Gruzzberry, implements)		
+libkernel_sys	lchmod_nid_postfix	A	claimed	#9423 (AliZedan1A, changes)		
+libkernel_sys	lchown_nid_postfix	B-S	unclaimed			KSYS-5
+libkernel_sys	linkat_nid_postfix	B-S	claimed	#10434 (Retr0G28, changes)		
+libkernel_sys	pselect_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	pthread_attr_getaffinity_np_nid_postfix	B-S	claimed	#9156 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	pthread_attr_getsolosched_np_nid_postfix	A	claimed	#9156 (DavidSamir, moves to libkernel, implemented); #10745 (pushkarreddyy, moves to libkernel, implemented)		
+libkernel_sys	pthread_attr_setaffinity_np_nid_postfix	B-S	claimed	#9156 (DavidSamir, moves to libkernel, todo)		
+libkernel_sys	pthread_attr_setcreatesuspend_np_nid_postfix	B-M	claimed	#9573 (zaryabzip, implements)		
+libkernel_sys	pthread_attr_setstackaddr_nid_postfix	A	claimed	#9156 (DavidSamir, moves to libkernel, todo); #10745 (pushkarreddyy, moves to libkernel, implemented)		
+libkernel_sys	pthread_barrier_setname_np_nid_postfix	B-S	claimed	#10385 (alvaroelpob, moves to libkernel, implemented)		
+libkernel_sys	pthread_cond_setname_np_nid_postfix	B-S	claimed	#9962 (kallmek3nny, moves to libkernel, implemented)		
+libkernel_sys	pthread_main_np_nid_postfix	B-S	claimed	#9160 (yabanana, implements)		
+libkernel_sys	pthread_multi_np_nid_postfix	B-S	claimed	#9573 (zaryabzip, implements)		
+libkernel_sys	pthread_mutex_getprioceiling_nid_postfix	B-S	claimed	#9326 (erickerxhalli, moves to libkernel, implemented)		
+libkernel_sys	pthread_mutex_setname_np_nid_postfix	B-S	claimed	#10385 (alvaroelpob, moves to libkernel, implemented)		
+libkernel_sys	pthread_mutex_setprioceiling_nid_postfix	B-S	claimed	#9326 (erickerxhalli, moves to libkernel, implemented)		
+libkernel_sys	pthread_resume_all_np_nid_postfix	B-S	claimed	#9573 (zaryabzip, implements)		
+libkernel_sys	pthread_resume_np_nid_postfix	B-M	claimed	#9573 (zaryabzip, implements)		
+libkernel_sys	pthread_rwlock_reltimedrdlock_np_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	pthread_rwlock_reltimedwrlock_np_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	pthread_rwlock_setname_np_nid_postfix	B-S	claimed	#10385 (alvaroelpob, moves to libkernel, implemented)		
+libkernel_sys	pthread_rwlockattr_settype_np_nid_postfix	A	claimed	#9632 (EagleBearerYS, moves to libkernel, implemented)		
+libkernel_sys	pthread_set_defaultstacksize_np_nid_postfix	B-S	done on main			
+libkernel_sys	pthread_single_np_nid_postfix	B-S	unclaimed			KSYS-3R
+libkernel_sys	pthread_suspend_all_np_nid_postfix	B-S	unclaimed			KSYS-3R
+libkernel_sys	pthread_switch_add_np_nid_postfix	C-real	claimed	#9172 (hypermoist, implements); #9713 (simonbronk, implements)		
+libkernel_sys	pthread_switch_delete_np_nid_postfix	C-real	claimed	#9172 (hypermoist, implements); #9713 (simonbronk, implements)		
+libkernel_sys	pthread_timedjoin_np_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	pwrite_nid_postfix	A	claimed	#9019 (yabanana, implements)		
+libkernel_sys	readlink_nid_postfix	B-S	done on main	#9826 (Delciob, implements)		
+libkernel_sys	readlinkat_nid_postfix	B-S	done on main	#9826 (Delciob, implements)		
+libkernel_sys	revoke_nid_postfix	B-S	claimed	#9537 (DavidSamir, changes)		
+libkernel_sys	rtld_printf_nid_postfix	B-S	claimed	#9383 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	sceCoredumpGetStopInfoGpu	B-S	unclaimed			KSYS-5
+libkernel_sys	sceKernelCloseEventFlag	B-S	done on main (in libkernel)			
+libkernel_sys	sceKernelCloseSema	B-S	unclaimed			KSYS-5
+libkernel_sys	sceKernelFlock	A	claimed	#9097 (DavidSamir, implements)		
+libkernel_sys	sceKernelGetCompiledSdkVersion	B-S	done on main			
+libkernel_sys	sceKernelGetGPO	B-S	unclaimed			KSYS-5
+libkernel_sys	sceKernelMlockall	A	claimed	#10657 (joucknuck-br, implements)		BF-190, drop
+libkernel_sys	sceKernelMsync	A	done on main			
+libkernel_sys	sceKernelOpenSema	B-S	unclaimed			KSYS-5
+libkernel_sys	sceKernelSettimeofday	B-S	unclaimed			KSYS-5
+libkernel_sys	sceKernelWaitCommandBufferCompletion	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteEventQueueOnCompletionCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteMapCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteMapDirectCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteMapDirectWithGpuMaskIdCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteMapWithGpuMaskIdCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteModifyProtectCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteModifyProtectWithGpuMaskIdCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteMultiMapCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteMultiMapWithGpuMaskIdCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteRemapCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteRemapWithGpuMaskIdCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteUnmapCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteWaitOnAddressCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteWaitOnCounterCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteWriteAddressCommand	B-S	unclaimed			BF-189
+libkernel_sys	sceKernelWriteWriteCounterCommand	B-S	unclaimed			BF-189
+libkernel_sys	scePthreadAtfork	A	done on main			
+libkernel_sys	scePthreadAttrGetscope	A	done on main			
+libkernel_sys	scePthreadAttrSetcreatesuspend	B-S	claimed	#9573 (zaryabzip, implements)		
+libkernel_sys	scePthreadAttrSetscope	A	done on main			
+libkernel_sys	scePthreadBarrierDestroy	A	done on main			
+libkernel_sys	scePthreadBarrierInit	B-S	done on main			
+libkernel_sys	scePthreadBarrierWait	B-S	done on main			
+libkernel_sys	scePthreadBarrierattrDestroy	A	done on main			
+libkernel_sys	scePthreadBarrierattrGetpshared	A	done on main			
+libkernel_sys	scePthreadBarrierattrInit	A	done on main			
+libkernel_sys	scePthreadBarrierattrSetpshared	A	done on main			
+libkernel_sys	scePthreadCondattrGetclock	B-S	done on main			
+libkernel_sys	scePthreadGetconcurrency	A	done on main			
+libkernel_sys	scePthreadGetcpuclockid	A	done on main			
+libkernel_sys	scePthreadMain	B-S	unclaimed			KSYS-5
+libkernel_sys	scePthreadMulti	B-S	unclaimed			KSYS-3R
+libkernel_sys	scePthreadMutexGetprioceiling	B-S	claimed	#9326 (erickerxhalli, moves to libkernel, implemented)		
+libkernel_sys	scePthreadMutexIsowned	A	claimed	#9713 (simonbronk, implements)		
+libkernel_sys	scePthreadMutexSetprioceiling	B-S	claimed	#9326 (erickerxhalli, moves to libkernel, implemented)		
+libkernel_sys	scePthreadMutexattrGetkind	B-S	claimed	#9632 (EagleBearerYS, moves to libkernel, implemented)		
+libkernel_sys	scePthreadMutexattrSetkind	B-S	claimed	#9632 (EagleBearerYS, moves to libkernel, todo)		
+libkernel_sys	scePthreadResume	B-S	unclaimed			KSYS-3R
+libkernel_sys	scePthreadResumeAll	B-S	unclaimed			KSYS-3R
+libkernel_sys	scePthreadSetDefaultstacksize	B-S	done on main			
+libkernel_sys	scePthreadSetconcurrency	A	done on main			
+libkernel_sys	scePthreadSingle	B-S	unclaimed			KSYS-3R
+libkernel_sys	scePthreadSuspend	B-S	unclaimed			KSYS-3R
+libkernel_sys	scePthreadSuspendAll	B-S	unclaimed			KSYS-3R
+libkernel_sys	scePthreadTimedjoin	B-S	unclaimed			KSYS-5
+libkernel_sys	sched_getparam_nid_postfix	B-S	claimed	#9187 (slider, moves to libkernel, implemented)		
+libkernel_sys	sched_getscheduler_nid_postfix	B-S	claimed	#9187 (slider, moves to libkernel, implemented)		
+libkernel_sys	sched_setparam_nid_postfix	B-S	claimed	#9187 (slider, moves to libkernel, implemented)		
+libkernel_sys	sched_setscheduler_nid_postfix	B-S	unclaimed			KSYS-5
+libkernel_sys	sem_close_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	sem_open_nid_postfix	B-M	done on main (in libkernel)			
+libkernel_sys	sem_setname_nid_postfix	B-S	unclaimed			KSYS-5
+libkernel_sys	sem_unlink_nid_postfix	B-S	done on main (in libkernel)			
+libkernel_sys	setlogin_nid_postfix	B-S	claimed	#9693 (Gruzzberry, implements)		
+libkernel_sys	settimeofday_nid_postfix	B-S	claimed	#9682 (Gruzzberry, implements)		BF-190, drop
+libkernel_sys	sigqueue_nid_postfix	B-M	claimed	#9389 (GitamarT045T3R, implements)		
+libkernel_sys	sigreturn_nid_postfix	B-S	unclaimed			KSYS-5
+libkernel_sys	statfs_nid_postfix	B-S	claimed	#9161 (yabanana, implements)		
+libkernel_sys	swapcontext_nid_postfix	B-S	claimed	#9379 (DavidSamir, removes)		
+libkernel_sys	symlink_nid_postfix	B-M	claimed	#9161 (yabanana, changes); #9423 (AliZedan1A, changes); #9693 (Gruzzberry, changes); #9826 (Delciob, implements); #10625 (Dom3005, changes)		
+libkernel_sys	symlinkat_nid_postfix	B-S	claimed	#9161 (yabanana, changes)		
+libkernel_sys	tcgetsid_nid_postfix	B-S	claimed	#9242 (DavidSamir, moves to libkernel, implemented)		
+libkernel_sys	tcsetsid_nid_postfix	B-S	claimed	#9713 (simonbronk, implements)		
+libkernel_sys	utrace_nid_postfix	B-S	claimed	#9713 (simonbronk, implements)		BF-190, drop
+libkernel_sys	uuidgen_nid_postfix	B-S	claimed	#9195 (gazaret, implements)		
+libkernel_sys	wait3_nid_postfix	B-S	claimed	#9162 (yabanana, implements)		
+libkernel_sys	wait4_nid_postfix	B-S	claimed	#9162 (yabanana, implements)		
