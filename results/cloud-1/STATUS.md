@@ -1,4 +1,4 @@
-READY
-since: 2026-10-25T09:26:56Z
+BUSY BF-224 (source check of the rows in our open coverage PRs that rest on a sibling, twin or convention)
+since: 2026-10-25T09:27:41Z
 last: BF-219 done, results/cloud-1/BF-219.md: fork fix/npuds-build-export 1f44cebc4c..b1a84d6cf9 (8 commits, fast-forward): Export.cpp now built in libSceAgc (1), libSceAgcDriver (35, missed by BF-211's list), libSceAudiodec.native (14), libSceAvPlayer.native (2, per-source -fvisibility=default), libSceNgs2.native (15, same), libSceNpTrophy2 (23), each with a not-implemented test red (link fails) / green, nm 307-308, 11731-11766, 22-36, 48-50, 54-69, 138-161; libScePlayerInvitationDialog's stale duplicate Export.cpp removed; guard in check_test_registration.py (compdb, includes followed) + test_unbuilt_exports.py 7 OK: red on main 2816bd2754 (8 files), green on head; each commit builds; mirror 2219/2124/90/5 (all IPv6); validation 0 VUID both sides; merge-tree 515 PRs, 7 new one-hunk debt-file conflicts; #9649/#9653 overlap on libSceAgc line and debt entries; before that BF-214
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
