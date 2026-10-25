@@ -119,8 +119,43 @@ static void TestRequestFlow(const RequestFlow& flow) {
     Require(flow.transactionDestroy(transaction) == 0);
 }
 
+using Start = int (APS5_VABI*)(void*, void*);
+using GetResponse = int (APS5_VABI*)(const void*, void*);
+
+struct UninstantiatedTransaction {
+    Start start;
+    GetResponse getResponse;
+};
+
+static const UninstantiatedTransaction uninstantiatedTransactions[] = {
+    {
+        _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE,
+        _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERSB_,
+    },
+    {
+        _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE,
+        _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_,
+    },
+};
+
+static void TestUninstantiatedTransaction(const UninstantiatedTransaction& transaction) {
+    alignas(16) unsigned char state[0x100];
+    alignas(16) unsigned char response[0x18];
+    alignas(16) unsigned char expected[0x18];
+    std::uint64_t context = 1;
+    std::memset(state, 0x5a, sizeof(state));
+    std::memset(response, 0x5a, sizeof(response));
+    std::memset(expected, 0x5a, sizeof(expected));
+
+    Require(transaction.start(state, &context) == NotSignedIn);
+    Require(transaction.getResponse(state, response) == NotSignedIn);
+    Require(std::memcmp(response, expected, sizeof(response)) == 0);
+}
+
 int main() {
     for (const auto& flow : flows) TestRequestFlow(flow);
+    for (const auto& transaction : uninstantiatedTransactions) TestUninstantiatedTransaction(transaction);
+    Require(_ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi26getMultiDataStatusesByUserEiRKNS4_37ParameterToGetMultiDataStatusesByUserERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_32GetMultiDataStatusesResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE() == NotSignedIn);
     Require(_ZN3sce2Np9CppWebApi15ProfanityFilter2V226WebApiFilterRequestFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_19WebApiFilterRequestEEE() == NotSignedIn);
     return 0;
 }
