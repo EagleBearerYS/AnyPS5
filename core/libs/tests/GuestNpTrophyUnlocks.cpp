@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <random>
+#include <stdexcept>
 #include <string>
 
 struct NpUniversalDataSystemEvent;
@@ -84,11 +85,42 @@ static void UnlockThroughEvents() {
     Require(Read("_trophy/268435456_0.txt") == "12 " + std::to_string(unlocked.timestamp_tick) + "\n", "the unlock was not stored in the title folder");
 }
 
+static bool ThrowsNotImplemented(int (APS5_VABI* function)(void), const char* name) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void ResolveInternalExports() {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNpUniversalDataSystemIntAbortHandle, "sceNpUniversalDataSystemIntAbortHandle"},
+        {sceNpUniversalDataSystemIntCheckNetSyncTitles, "sceNpUniversalDataSystemIntCheckNetSyncTitles"},
+        {sceNpUniversalDataSystemIntCreateContext, "sceNpUniversalDataSystemIntCreateContext"},
+        {sceNpUniversalDataSystemIntCreateHandle, "sceNpUniversalDataSystemIntCreateHandle"},
+        {sceNpUniversalDataSystemIntDeleteAllData, "sceNpUniversalDataSystemIntDeleteAllData"},
+        {sceNpUniversalDataSystemIntDeleteUserDataWithServerData, "sceNpUniversalDataSystemIntDeleteUserDataWithServerData"},
+        {sceNpUniversalDataSystemIntDestroyContext, "sceNpUniversalDataSystemIntDestroyContext"},
+        {sceNpUniversalDataSystemIntDestroyHandle, "sceNpUniversalDataSystemIntDestroyHandle"},
+        {sceNpUniversalDataSystemIntInitialize, "sceNpUniversalDataSystemIntInitialize"},
+        {sceNpUniversalDataSystemIntNetSyncTitles, "sceNpUniversalDataSystemIntNetSyncTitles"},
+        {sceNpUniversalDataSystemIntTerminate, "sceNpUniversalDataSystemIntTerminate"},
+    };
+    for (const auto& entry : exports) Require(ThrowsNotImplemented(entry.function, entry.name), entry.name);
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-unlocks-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root);
     std::filesystem::current_path(root);
+    ResolveInternalExports();
     UnlockThroughEvents();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
