@@ -1,0 +1,3 @@
+BASE=a512780d5867af46cc6e0a5c246b67322cd8f8b9
+REPEAT=10
+EXTRA_TESTS='guest_net_ctl|guest_sce_net|guest_socket_error|guest_socket_options|public_headers'
