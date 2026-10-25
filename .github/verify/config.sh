@@ -1,0 +1,3 @@
+BASE=50bc72bbbc3d1b04f90bfe215a95665b25fb0dbf
+REPEAT=10
+EXTRA_TESTS='^guest_kernel_sys|public_headers'
