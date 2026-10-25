@@ -44,6 +44,24 @@ struct Sha512Context {
     std::uint32_t num, mdLength;
 };
 
+struct LibreSslEvpCipherCtx {
+    const void* cipher;
+    void* engine;
+    int encrypt;
+    int bufLen;
+    unsigned char oiv[16];
+    unsigned char iv[16];
+    unsigned char buf[32];
+    int num;
+    void* appData;
+    int keyLen;
+    std::uint64_t flags;
+    void* cipherData;
+    int finalUsed;
+    int blockMask;
+    unsigned char final[32];
+};
+
 extern "C" {
 
 int APS5_VABI ASN1_INTEGER_get_nid_postfix(void);
@@ -145,9 +163,9 @@ void APS5_VABI ERR_remove_thread_state_nid_postfix(const void* threadId);
 int APS5_VABI EVP_CIPHER_CTX_cleanup_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(void);
+void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(LibreSslEvpCipherCtx* ctx);
+LibreSslEvpCipherCtx* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
+int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(LibreSslEvpCipherCtx* ctx, int pad);
 int APS5_VABI EVP_CIPHER_block_size_nid_postfix(void);
 int APS5_VABI EVP_CipherFinal_ex_nid_postfix(void);
 int APS5_VABI EVP_CipherInit_ex_nid_postfix(void);
