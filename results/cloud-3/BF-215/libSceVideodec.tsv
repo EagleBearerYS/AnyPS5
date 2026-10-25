@@ -1,0 +1,2 @@
+function	class	basis
+sceVideodecMapMemory	D	unknown signature: parameterless declaration whose debt says signature and behaviour are unverified (docs/dev/debt/libSceVideodec.md:15; core/libs/prx/libSceVideodec/Export.cpp:281); the sibling MapMemory exports also throw (core/libs/prx/libSceVideodec2/Unimplemented.cpp:19, core/libs/prx/libSceVdecwrap/Export.cpp:34), so nothing to forward to

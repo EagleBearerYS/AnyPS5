@@ -1,0 +1,5 @@
+function	class	basis
+scePsmUtilFinalize	D	unknown signature: parameterless declaration (core/libs/prx/libScePsmUtil/Export.cpp:9) with no credible prototype (docs/dev/debt/libScePsmUtil.md:5); the console's answer is not known
+scePsmUtilGetPsmIniFile	D	unknown signature: parameterless declaration (core/libs/prx/libScePsmUtil/Export.cpp:14) with no credible prototype (docs/dev/debt/libScePsmUtil.md:5); the output buffer and the ini file it names are not known
+scePsmUtilInitialize	D	unknown signature: parameterless declaration (core/libs/prx/libScePsmUtil/Export.cpp:19) with no credible prototype (docs/dev/debt/libScePsmUtil.md:5); the console's answer is not known
+scePsmUtilRegisterCallbacks	D	unknown signature: parameterless declaration (core/libs/prx/libScePsmUtil/Export.cpp:24) with no credible prototype (docs/dev/debt/libScePsmUtil.md:5); the callback record is not known

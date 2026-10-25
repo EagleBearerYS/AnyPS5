@@ -1,0 +1,3 @@
+function	class	basis
+sceGameCustomDataDialogGetResult	D	unknown signature: parameterless declaration (core/libs/prx/libSceGameCustomDataDialog/Export.cpp:72); Orbital has a prototype only for the A variant and none credible for this one (docs/dev/debt/libSceGameCustomDataDialog.md:9); it must write a result whose layout is unknown, so no argument-free answer exists (GetResultA at Export.cpp:51 needs its pointer)
+sceGameCustomDataDialogOpen	D	unknown signature: parameterless declaration (core/libs/prx/libSceGameCustomDataDialog/Export.cpp:77); Orbital has a prototype only for OpenA (Export.cpp:34, docs/dev/debt/libSceGameCustomDataDialog.md:5) and none credible for this one (debt :9); the non-A parameter layout is unknown

@@ -1,0 +1,2 @@
+function	class	basis
+sceImeDialogInitInternalWithSubInfo	D	unknown signature: parameterless pending declaration whose debt says signature and behaviour are unverified (docs/dev/debt/libSceImeDialog.md:14; core/libs/prx/libSceImeDialog/Export.cpp:211); the sub-info argument is not in shadPS4 or SharpProspero as the tree cites them (debt :10-11), so InitInternal (Export.cpp:202-204) cannot be reused without guessing

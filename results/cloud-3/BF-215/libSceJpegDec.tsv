@@ -1,0 +1,2 @@
+function	class	basis
+sceJpegDecDecodeWithInputControl	D	unknown signature: parameterless declaration (core/libs/prx/libSceJpegDec/Export.cpp:254) with no credible prototype (docs/dev/debt/libSceJpegDec.md:5); the input-control record that distinguishes it from sceJpegDecDecode (:164) is not known

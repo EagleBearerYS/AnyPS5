@@ -1,0 +1,4 @@
+function	class	basis
+sceNpTcsIntDownloadData	D	unknown signature: parameterless declaration (core/libs/prx/libSceNpTcs/Export.cpp:9) from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceNpTcs.md:5); it downloads from a PSN storage service the tree does not model
+sceNpTcsIntUploadDataToNewSlotAbort	D	unknown signature: parameterless declaration (core/libs/prx/libSceNpTcs/Export.cpp:14) from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceNpTcs.md:5); it aborts an upload to a PSN storage service the tree does not model
+sceNpTcsIntUploadDataToNewSlotBegin	D	unknown signature: parameterless declaration (core/libs/prx/libSceNpTcs/Export.cpp:19) from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceNpTcs.md:5); it starts an upload to a PSN storage service the tree does not model

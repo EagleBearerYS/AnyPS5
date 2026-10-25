@@ -1,0 +1,8 @@
+function	class	basis
+sceAc3EncCreateEncoder	D	unknown signature: parameterless import declaration (core/libs/prx/libSceAc3Enc/Export.cpp:9) with no credible prototype (docs/dev/debt/libSceAc3Enc.md:5); the encoder parameters and the handle it returns are not known
+sceAc3EncDeleteEncoder	D	unknown signature: parameterless import declaration (core/libs/prx/libSceAc3Enc/Export.cpp:14) with no credible prototype (docs/dev/debt/libSceAc3Enc.md:5); no encoder handle exists to delete
+sceAc3EncEncode	D	unknown signature: parameterless import declaration (core/libs/prx/libSceAc3Enc/Export.cpp:19) with no credible prototype (docs/dev/debt/libSceAc3Enc.md:5); input and output buffer conventions are not known
+sceAc3EncEncodeAsync	D	unknown signature: parameterless import declaration (core/libs/prx/libSceAc3Enc/Export.cpp:24) with no credible prototype (docs/dev/debt/libSceAc3Enc.md:5); the async completion model is not known
+sceAc3EncFlush	D	unknown signature: parameterless import declaration (core/libs/prx/libSceAc3Enc/Export.cpp:29) with no credible prototype (docs/dev/debt/libSceAc3Enc.md:5)
+sceAc3EncIsEncoding	D	unknown signature: parameterless import declaration (core/libs/prx/libSceAc3Enc/Export.cpp:34) with no credible prototype (docs/dev/debt/libSceAc3Enc.md:5); its answer depends on an encoder handle
+sceAc3EncWaitEncode	D	unknown signature: parameterless import declaration (core/libs/prx/libSceAc3Enc/Export.cpp:39) with no credible prototype (docs/dev/debt/libSceAc3Enc.md:5); its answer depends on an encoder handle and the async model

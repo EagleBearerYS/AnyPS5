@@ -1,0 +1,7 @@
+function	class	basis
+scePadTrackerCalibrate	D	unknown signature: parameterless declaration (core/libs/prx/libScePadTracker/Export.cpp:9) with no credible prototype (docs/dev/debt/libScePadTracker.md:5); calibration depends on a camera image the tree does not provide
+scePadTrackerGetWorkingMemorySize	D	unknown signature: parameterless declaration (core/libs/prx/libScePadTracker/Export.cpp:14) with no credible prototype (docs/dev/debt/libScePadTracker.md:5); the size it returns is a console constant nobody has measured
+scePadTrackerInit	D	unknown signature: parameterless declaration (core/libs/prx/libScePadTracker/Export.cpp:19) with no credible prototype (docs/dev/debt/libScePadTracker.md:5); the init record and work-memory convention are not known
+scePadTrackerReadState	D	unknown signature: parameterless declaration (core/libs/prx/libScePadTracker/Export.cpp:24) with no credible prototype (docs/dev/debt/libScePadTracker.md:5); the state record is not known, and the libScePad side it pairs with also throws (core/libs/prx/libScePad/Export.cpp:931)
+scePadTrackerTerm	D	unknown signature: parameterless declaration (core/libs/prx/libScePadTracker/Export.cpp:29) with no credible prototype (docs/dev/debt/libScePadTracker.md:5); there is no tracker state to tear down and the console's answer without Init is not known
+scePadTrackerUpdate	D	unknown signature: parameterless declaration (core/libs/prx/libScePadTracker/Export.cpp:34) with no credible prototype (docs/dev/debt/libScePadTracker.md:5); it consumes camera frames the tree does not provide
