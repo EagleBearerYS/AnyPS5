@@ -61,6 +61,19 @@ class UnbuiltExportTests(unittest.TestCase):
         })
         self.assertEqual(self.unbuilt(root, ["core/libs/prx/libc/src/exception/Exports.cpp"]), [Path("core/libs/prx/libc/src/exception/Orphan.cpp")])
 
+    def test_function_try_blocks_still_count_as_definitions(self):
+        for suffix in (" try", " noexcept try", "\n        noexcept\n        try"):
+            with self.subTest(suffix=suffix):
+                root = self.tree({
+                    "core/libs/prx/libSceExample/Built.cpp": "",
+                    "core/libs/prx/libSceExample/Try.cpp": (
+                        "int APS5_VABI sceExampleTry(int value)" + suffix
+                        + " { return value; } catch (...) { return -1; }\n"
+                    ),
+                })
+                self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]),
+                                 [Path("core/libs/prx/libSceExample/Try.cpp")])
+
     def test_a_build_without_library_sources_is_not_checked(self):
         root = self.tree({
             "core/libs/prx/libSceExample/Export.cpp": "int APS5_VABI sceExampleOpen(void) { return 0; }\n",
