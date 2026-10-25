@@ -5502,6 +5502,27 @@ VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std:
     Require(uploaded && !committed, "guest GPU memory is not available");
     Require(bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest buffer view");
     const auto* found = owner(address, address + bytes);
+    if (found == nullptr) {
+        std::fprintf(stderr, "[owner] view 0x%llx+0x%zx: %zu own regions (overlap %d), space %d with %zu base regions, uploaded %d, %zu writes\n", static_cast<unsigned long long>(address), bytes, regions.size(), regionsOverlap ? 1 : 0, space != nullptr ? 1 : 0, space != nullptr ? space->base.size() : std::size_t{0}, uploaded ? 1 : 0, writes.size());
+        std::size_t shown = 0;
+        for (const auto& r : regions) {
+            if (++shown > 64) break;
+            std::fprintf(stderr, "[owner]   own 0x%llx-0x%llx w%d hb%d buf%d dir%d mir%d pend%d sparse%d\n", static_cast<unsigned long long>(r.begin), static_cast<unsigned long long>(r.end), r.writable ? 1 : 0, r.hostBacked ? 1 : 0, r.buffer != nullptr ? 1 : 0, r.direct != nullptr ? 1 : 0, r.mirror != nullptr ? 1 : 0, r.pending ? 1 : 0, r.sparse ? 1 : 0);
+        }
+        shown = 0;
+        if (space != nullptr) {
+            for (const auto& r : space->base) {
+                if (++shown > 64) break;
+                std::fprintf(stderr, "[owner]   base 0x%llx-0x%llx dir%d mir%d\n", static_cast<unsigned long long>(r.begin), static_cast<unsigned long long>(r.end), r.direct != nullptr ? 1 : 0, r.mirror != nullptr ? 1 : 0);
+            }
+        }
+        shown = 0;
+        for (const auto& [b, e] : writes) {
+            if (++shown > 64) break;
+            std::fprintf(stderr, "[owner]   write 0x%llx-0x%llx\n", static_cast<unsigned long long>(b), static_cast<unsigned long long>(e));
+        }
+        std::fflush(stderr);
+    }
     Require(found != nullptr, "guest buffer has no GPU owner");
     const auto& region = *found;
     const auto describe = [&](const char* what) {
