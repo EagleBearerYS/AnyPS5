@@ -1,9 +1,8 @@
-BUSY BF-194
-since: 2026-10-25T01:05:20Z (claimed 2026-10-25T01:05:20Z)
-claimed: tasks/claimed/BF-194.md
-machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 38d463a6c)
-last: BF-191 done, result results/cloud-4/BF-191.md; feat/systemservice-running-app-identity at 7a4b965d6 on the fork (12 of 13 rows, sceShellCoreUtilGetAppEnterButtonAssign dropped)
-baseline: CI Linux mirror on 7a4b965d6 (upstream main 38d463a6c + 4 commits): 2192 tests, 2097 passed, 90 skipped, 5 failed (the IPv6 guest socket tests, now including guest_socket_options from main f334c156e1; check_skips flags only guest_sce_net, IPv6 loopback)
+READY 2026-10-25T01:43:31Z: finished BF-194, watching the board
+since: 2026-10-25T01:43:31Z (BF-194 done)
+machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main f4aabbb12)
+last: BF-194 done, result results/cloud-4/BF-194.md; feat/libkernel-sys-finish-merged-calls at cb56a3c2b on the fork (6 of 18 rows, 12 dropped with reasons)
+baseline: CI Linux mirror on cb56a3c2b (upstream main f4aabbb12 + 4 commits): 2196 tests, 2101 passed, 90 skipped, 5 failed (the IPv6 guest socket tests, guest_socket_options included; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
