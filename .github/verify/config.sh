@@ -1,0 +1,4 @@
+BASE=a512780d5867af46cc6e0a5c246b67322cd8f8b9
+REPEAT=20
+EXTRA_TESTS='guest_floating_point'
+NO_BEFORE=1
