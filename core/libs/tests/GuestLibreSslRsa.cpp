@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -36,9 +37,8 @@ struct TestRsa {
 static_assert(offsetof(TestRsaMethod, flags) == 72);
 static_assert(offsetof(TestRsa, meth) == 16 && offsetof(TestRsa, n) == 32 && sizeof(TestRsa) == 160);
 
-extern "C" {
-int APS5_VABI RSA_flags_nid_postfix(const TestRsa*);
-int APS5_VABI RSA_size_nid_postfix(const TestRsa*);
+static const LibreSslRsa* Rsa(const TestRsa* rsa) {
+    return reinterpret_cast<const LibreSslRsa*>(rsa);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -57,19 +57,19 @@ static void TestFlags() {
     TestRsa rsa {};
     rsa.meth = &method;
     Require(RSA_flags_nid_postfix(nullptr) == 0);
-    Require(RSA_flags_nid_postfix(&rsa) == 0);
+    Require(RSA_flags_nid_postfix(Rsa(&rsa)) == 0);
     method.flags = 0x0400;
-    Require(RSA_flags_nid_postfix(&rsa) == 0x0400);
+    Require(RSA_flags_nid_postfix(Rsa(&rsa)) == 0x0400);
     method.flags = -1;
-    Require(RSA_flags_nid_postfix(&rsa) == -1);
+    Require(RSA_flags_nid_postfix(Rsa(&rsa)) == -1);
     rsa.meth = nullptr;
-    RequireThrows([&] { RSA_flags_nid_postfix(&rsa); });
+    RequireThrows([&] { RSA_flags_nid_postfix(Rsa(&rsa)); });
 }
 
 static int Size(TestBignum* modulus) {
     TestRsa rsa {};
     rsa.n = modulus;
-    return RSA_size_nid_postfix(&rsa);
+    return RSA_size_nid_postfix(Rsa(&rsa));
 }
 
 static void TestSize() {
