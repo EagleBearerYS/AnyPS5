@@ -278,6 +278,12 @@ void CheckAmmWriteCommands() {
     Require(sceKernelWriteRemapCommand(nullptr, address, source, size, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelWriteModifyProtectCommand(nullptr, address, size, protection, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
     Require(untouched == ~std::uint64_t{0});
+    constexpr std::uint64_t wideType = std::uint64_t{1} << 32 | static_cast<std::uint64_t>(type);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMap(buffer, address, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapWithGpuMaskId(buffer, address, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirect(buffer, address, directOffset, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirectWithGpuMaskId(buffer, address, directOffset, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(buffer, address, size, type, protection, mask, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), static_cast<std::uint32_t>(mask), gpuMaskId, outSize); }, 0);
 }
 
 void CheckAmmWaitCompletion() {
