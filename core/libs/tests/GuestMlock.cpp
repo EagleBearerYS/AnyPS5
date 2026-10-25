@@ -29,8 +29,8 @@ static void RequireLockAllUnsupported(int flags) {
     try {
         mlockall_nid_postfix(flags);
 
-    } catch (const std::runtime_error&) {
-        rejected = true;
+    } catch (const std::runtime_error& error) {
+        rejected = std::string(error.what()) == "mlockall not implemented";
     }
     Require(rejected);
 }

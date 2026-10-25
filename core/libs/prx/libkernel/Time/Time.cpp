@@ -619,9 +619,8 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
     }
-    char requested[48];
-    std::snprintf(requested, sizeof(requested), "%lld.%09lld", static_cast<long long>(tp->tv_sec), static_cast<long long>(tp->tv_nsec));
-    throw std::runtime_error(std::string("clock_settime: setting CLOCK_REALTIME to ") + requested + " is not supported, the host clock is not changed");
+    NotImplemented_nid_no_patch("clock_settime");
+    return 0;
 }
 
 // ---------------------------------------------------------------------------

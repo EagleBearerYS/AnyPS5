@@ -136,8 +136,8 @@ static void CheckInternalMemoryAvailableSize() {
     try {
         sceKernelInternalMemoryGetAvailableSize(&available);
 
-    } catch (const std::logic_error&) {
-        threw = true;
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()) == "sceKernelInternalMemoryGetAvailableSize not implemented";
     }
     Require(threw && available == 1);
     Require(sceKernelInternalMemoryGetAvailableSize(nullptr) == -1);

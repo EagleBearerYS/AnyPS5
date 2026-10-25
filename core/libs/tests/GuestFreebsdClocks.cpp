@@ -232,12 +232,12 @@ static void RequireSettimeError(int clockId, const KernelTimespec* time, int err
     Require(clock_settime_nid_postfix(clockId, time) == -1 && *__error_nid_postfix() == error);
 }
 
-static bool SettimeThrows(const KernelTimespec& time, const char* requested) {
+static bool SettimeNotImplemented(const KernelTimespec& time) {
     try {
         clock_settime_nid_postfix(GUEST_CLOCK_REALTIME, &time);
 
     } catch (const std::runtime_error& error) {
-        return std::strstr(error.what(), requested) != nullptr;
+        return std::strcmp(error.what(), "clock_settime not implemented") == 0;
     }
     return false;
 }
@@ -256,9 +256,9 @@ static void SettimeValidatesLikeFreebsd() {
     RequireSettimeError(GUEST_CLOCK_REALTIME, &wholeSecondOfNanoseconds, 22);
     RequireSettimeError(GUEST_CLOCK_REALTIME, &negativeSeconds, 22);
     RequireSettimeError(GUEST_CLOCK_MONOTONIC, &negativeSeconds, 22);
-    Require(SettimeThrows(valid, "1767225600.000000005"));
-    Require(SettimeThrows(KernelTimespec{0, 0}, "0.000000000"));
-    Require(SettimeThrows(KernelTimespec{1, NANOS_PER_SECOND - 1}, "1.999999999"));
+    Require(SettimeNotImplemented(valid));
+    Require(SettimeNotImplemented(KernelTimespec{0, 0}));
+    Require(SettimeNotImplemented(KernelTimespec{1, NANOS_PER_SECOND - 1}));
 }
 
 static std::int32_t RuntimeDaylight(std::int32_t daylight) {
