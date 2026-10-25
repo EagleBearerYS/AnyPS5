@@ -1517,14 +1517,47 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
             const auto& failedSource = plan.descriptorSources[image.source];
             std::fprintf(stderr, "[image-source] image %u source %u: %u dwords%s\n", i, static_cast<unsigned>(image.source), failedSource.dwordCount, failedSource.tableColumn ? ", a table column" : "");
             for (std::uint32_t word = 0; word < failedSource.dwordCount && word < 8u; ++word) std::fprintf(stderr, "[image-source]   dword %u = %s\n", word, DescribeSourceValue(failedSource.dwords[word], 8).c_str());
-            for (std::size_t slot = 0; slot < plan.srtReads.size() && slot < 48u; ++slot) std::fprintf(stderr, "[image-source]   SRT read %zu at flat offset %u = %s\n", slot, plan.srtReads[slot].flatOffset, DescribeSourceValue(plan.srtReads[slot].value, 6).c_str());
+            for (std::size_t slot = 0; slot < plan.srtReads.size() && slot < 96u; ++slot) std::fprintf(stderr, "[image-source]   SRT read %zu at flat offset %u = %s\n", slot, plan.srtReads[slot].flatOffset, DescribeSourceValue(plan.srtReads[slot].value, 6).c_str());
             std::string flatWords;
-            for (std::size_t word = 0; word < snapshot.flattenedSrt.size() && word < 64u; ++word) {
+            for (std::size_t word = 0; word < snapshot.flattenedSrt.size() && word < 96u; ++word) {
                 char text[12];
                 std::snprintf(text, sizeof(text), " %08x", snapshot.flattenedSrt[word]);
                 flatWords += text;
             }
             std::fprintf(stderr, "[image-source]   flattened SRT (%zu words):%s\n", snapshot.flattenedSrt.size(), flatWords.c_str());
+            std::fprintf(stderr, "[image-source] image %u flags: class %u dimension %u mip mode %u read %d written %d atomic %d query only %d depth compare %d table %u first use pc 0x%x\n", i, static_cast<unsigned>(image.resourceClass), static_cast<unsigned>(image.dimension), static_cast<unsigned>(image.mipMode), image.read ? 1 : 0, image.written ? 1 : 0, image.atomic ? 1 : 0, image.dimensionQueryOnly ? 1 : 0, image.depthCompare ? 1 : 0, static_cast<unsigned>(image.table), image.firstUsePc);
+            const auto slotOf = [&](const IrValue* value) -> int {
+                if (value == nullptr) return -1;
+                value = value->Resolve();
+                if (value->Opcode() != IrOpcode::ReadConst || value->ArgumentCount() != 2 || !value->Argument(1)->Resolve()->HasImmediate()) return -1;
+                return static_cast<int>(value->Argument(1)->Resolve()->ImmediateU32());
+            };
+            const int firstSlot = failedSource.dwordCount != 0u ? slotOf(failedSource.dwords[0]) : -1;
+            for (std::uint32_t other = 0; other < plan.descriptorSources.size(); ++other) {
+                const auto& candidate = plan.descriptorSources[other];
+                if (other == image.source || candidate.dwordCount == 0u || firstSlot < 0) continue;
+                const int slot = slotOf(candidate.dwords[0]);
+                if (slot < firstSlot || slot >= firstSlot + static_cast<int>(failedSource.dwordCount)) continue;
+                std::string users;
+                for (std::uint32_t b = 0; b < plan.info.buffers.size(); ++b) if (plan.info.buffers[b].source == other) users += " buffer " + std::to_string(b);
+                for (std::uint32_t m = 0; m < plan.info.images.size(); ++m) if (plan.info.images[m].source == other) users += " image " + std::to_string(m);
+                for (std::uint32_t s = 0; s < plan.info.samplers.size(); ++s) if (plan.info.samplers[s].source == other) users += " sampler " + std::to_string(s);
+                std::fprintf(stderr, "[image-source] source %u also reads SRT slot %d (%u dwords), used by%s\n", other, slot, candidate.dwordCount, users.empty() ? " nothing listed" : users.c_str());
+            }
+            std::fprintf(stderr, "[image-source] control flow: %zu blocks\n", plan.controlFlow.size());
+            for (std::uint32_t block = 0; block < plan.controlFlow.size(); ++block) {
+                const auto& entry = plan.controlFlow[block];
+                if (std::find(entry.images.begin(), entry.images.end(), i) == entry.images.end()) continue;
+                std::string successors;
+                for (const auto next : entry.successors) successors += " " + std::to_string(next);
+                std::fprintf(stderr, "[image-source]   image %u is in block %u (successors%s)\n", i, block, successors.c_str());
+                for (std::uint32_t from = 0; from < plan.controlFlow.size(); ++from) {
+                    const auto& predecessor = plan.controlFlow[from];
+                    const auto at = std::find(predecessor.successors.begin(), predecessor.successors.end(), block);
+                    if (at == predecessor.successors.end()) continue;
+                    std::fprintf(stderr, "[image-source]     reached from block %u as its successor %d, condition %s\n", from, static_cast<int>(at - predecessor.successors.begin()), DescribeSourceValue(predecessor.condition, 10).c_str());
+                }
+            }
             char invalidText[320];
             std::snprintf(invalidText, sizeof(invalidText), "runtime image descriptor is invalid: image %u source %u r128 %d active %d words %08x %08x %08x %08x %08x %08x %08x %08x", i, static_cast<unsigned>(image.source), image.r128 ? 1 : 0, activity < activeSources.size() ? static_cast<int>(activeSources[activity]) : -1, descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
             throw std::runtime_error(invalidText);
