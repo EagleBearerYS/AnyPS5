@@ -301,6 +301,15 @@ int main() {
     Require(sceNetCtlGetInfoV6(6, reinterpret_cast<NetCtlInfoV6*>(infoV6)) == kErrInvalidCode);
     Require(sceNetCtlGetInfoV6(1, nullptr) == kErrInvalidAddr);
     if (stateV6 != kStateIpObtained) Require(sceNetCtlGetInfoV6(1, reinterpret_cast<NetCtlInfoV6*>(infoV6)) == kErrNotConnected);
+    if (stateV6 == kStateIpObtained) {
+        bool notImplemented = false;
+        try {
+            sceNetCtlGetInfoV6(1, reinterpret_cast<NetCtlInfoV6*>(infoV6));
+        } catch (const std::runtime_error& error) {
+            notImplemented = std::strcmp(error.what(), "sceNetCtlGetInfoV6 not implemented") == 0;
+        }
+        Require(notImplemented);
+    }
 
     const int result = sceNetCtlGetInfo(14, &info);
     if (result == kErrNotConnected) {
