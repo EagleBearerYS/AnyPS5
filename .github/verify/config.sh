@@ -1,0 +1,3 @@
+BASE=fe9d31edae26ac7bf6b880b88729ab0b541dacf5
+REPEAT=10
+EXTRA_TESTS='guest_kernel_sys|guest_ampr_markers|guest_amm_placement|guest_ampr_threads|guest_ampr_cpp_error|^guest_apr_read_'
