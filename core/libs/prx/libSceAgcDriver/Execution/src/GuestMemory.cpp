@@ -102,7 +102,6 @@ std::atomic<std::uint64_t> collectDirtyRuns{0};
 #endif
 std::atomic<std::uint64_t> trackerWaits{0};
 std::atomic<std::uint64_t> trackerAcquisitions{0};
-enum class CollectFailure { Unwatched, Outside, Incomplete, Count };
 constexpr const char* CollectFailureNames[static_cast<std::size_t>(CollectFailure::Count)] = {"unwatched", "outside", "incomplete"};
 struct CollectFailureSample {
     CollectFailure reason = CollectFailure::Count;
@@ -113,6 +112,7 @@ struct CollectFailureSample {
 std::atomic<std::uint64_t> collectFailures[static_cast<std::size_t>(CollectFailure::Count)] = {};
 std::mutex collectFailureMutex;
 std::array<CollectFailureSample, 12> collectFailureSamples{};
+thread_local CollectFailure lastCollectFailure = CollectFailure::Count;
 std::uintptr_t PagesBase();
 std::size_t PagesSize();
 std::uintptr_t ImagePagesBase();
@@ -1522,6 +1522,7 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
 
 std::uint64_t collectFailed(CollectFailure reason, std::uint64_t address, std::size_t bytes) {
     if (!MemoryProfiled()) return 0;
+    lastCollectFailure = reason;
     collectFailures[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(collectFailureMutex);
     CollectFailureSample* empty = nullptr;
@@ -1537,7 +1538,7 @@ std::uint64_t collectFailed(CollectFailure reason, std::uint64_t address, std::s
 }
 
 std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoized) {
-    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return collectFailed(CollectFailure::Outside, address, bytes);
     auto& tracker = Tracker();
     // Whole pages, so a page shared with the next range is collected with either.
     constexpr std::uint64_t page = 4096;
@@ -1614,6 +1615,14 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
 
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes) {
     return collectWrites(address, bytes, true);
+}
+
+CollectFailure LastCollectFailure() {
+    return lastCollectFailure;
+}
+
+const char* CollectFailureName(CollectFailure reason) {
+    return reason < CollectFailure::Count ? CollectFailureNames[static_cast<std::size_t>(reason)] : "unknown";
 }
 
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes) {

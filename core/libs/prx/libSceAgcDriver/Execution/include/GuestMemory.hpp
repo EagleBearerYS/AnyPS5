@@ -71,6 +71,9 @@ void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
+enum class CollectFailure { Unwatched, Outside, Incomplete, Count };
+CollectFailure LastCollectFailure();
+const char* CollectFailureName(CollectFailure reason);
 bool UnchangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // UnchangedSince for several ranges under one tracker lock: true only when every one holds.
 struct UnchangedQuery {
