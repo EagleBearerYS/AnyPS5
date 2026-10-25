@@ -1,4 +1,4 @@
-READY
-since: 2026-10-25T06:37:24Z
+BUSY BF-214 (a store through a type-0 T#: the hardware probe, and the null storage image behind it)
+since: 2026-10-25T07:28:12Z
 last: BF-207 done, results/cloud-1/BF-207.md: fork feat/libressl-rsa-public-key 87cf3c6ed3 stacked on #10449 0bf45bf1b2 (alvaroelpob's 3 commits kept); 6 of 8 implemented per LibreSSL 2.5.4 on mbedtls: RSA_new/RSA_free a60f615511, d2i_RSA_PUBKEY 0b6716f38f, RSA_public_encrypt/decrypt (PKCS1 v1.5, OAEP, none) 82617589b4, RSA_verify (15-object digest table) 87cf3c6ed3; RSA_verify_PKCS1_PSS/RSA_padding_add_PKCS1_PSS stay throws waiting on #9448 (EVP_MD); none dropped by the claim check (59 PRs at 06:19Z); CAVP 186-3 SigGen15 KAT; red 2/2, 2/2, 3/3, 1/1, green 0 failed of 34/70/181/132; differential vs real LibreSSL 2.5.4 6,033 cases 0 mismatches; first push 65c6c2b213 failed public_headers (duplicate malloc/free declarations), rewritten and force-pushed with lease; mirror 2213/2118/90/5 (all IPv6); merge-tree adds no conflict; conventions pass, 0 comment lines; before that BF-200
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
