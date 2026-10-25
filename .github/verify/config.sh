@@ -1,0 +1,4 @@
+BASE=7bcb8f42391331d1e30f55aee0797325ae25a163
+REPEAT=10
+EXTRA_TESTS='agc_driver_pointer_chase_table'
+BEFORE_REPEAT=3
