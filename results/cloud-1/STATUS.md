@@ -1,4 +1,4 @@
-READY
-since: 2026-10-25T09:45:36Z
+BUSY BF-227b (build BF-227's four remaining sourced rows as one PR: NpWebApi2 multipart x2, BluetoothHid ParamInitialize, NpProfileDialog Close)
+since: 2026-10-25T12:45:53Z
 last: BF-224 done, results/cloud-1/BF-224.md: 37 rows in #10879 #10890 #10880 #10881 #10892 #10900 (10 IpcInt left, not 13): 0 SOURCED, 35 SHAPE ONLY, 2 CONFLICT (sceNpManagerIntGetUserIdByOnlineId: shadPS4 b34556702e Stephen Miller says USER_NOT_FOUND signed out, PR returns SIGNED_OUT; sceNetInitParam: Vita3K's param init returns EBUSY/EINVAL and reads the param); leads: libSceNpAuth uses NpManager requests (same commit), prosper's unsourced scePadIsValidHandle; recovered signatures are boykopovar's empty-body commits, shapes only; per-row decompile/measurement asks; before that BF-219
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
