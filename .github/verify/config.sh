@@ -1,0 +1,3 @@
+BASE=4f073fa757144e1bbcfb23fe159b6b7e10d54d79
+REPEAT=10
+EXTRA_TESTS='guest_libressl_evp_cipher_ctx|guest_libressl_aes|guest_libressl_digest|guest_libressl_des|guest_libressl_runtime|guest_libressl_x509_errors|guest_libressl3_digest'
