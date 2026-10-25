@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 extern "C" {
@@ -166,8 +167,8 @@ int main() {
     try {
         sceRudpActivate(ctx, address, sizeof(address));
 
-    } catch (const std::runtime_error&) {
-        activationUnsupported = true;
+    } catch (const std::runtime_error& error) {
+        activationUnsupported = std::string(error.what()) == "sceRudpActivate not implemented";
     }
     Require(activationUnsupported);
 
