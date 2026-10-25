@@ -1,4 +1,4 @@
-READY
-since: 2026-10-25T16:35:18Z
+BUSY BF-242 (a failed join host import leaves a compute shader's guest buffer with no GPU owner)
+since: 2026-10-25T17:18:43Z
 last: BF-230 done, results/cloud-1/BF-230.md: perf/agc-template-write-index-v2 = a1345c6917 on main 85a4d7f8c8 (4 commits, 3 conflicts kept both, #8895 AnyPendingCpuWrites, #6292 AgcDriver::Mutex); writer audit no stale path; every source red with its break; x20 20/20, x10 10/10 off/on, focused 59/1/0 off/on/both switches; mirror 2168/91/6 unset and on (6 IPv6 incl. new guest_net_protocol); Village lookup 1607 -> 365 us/draw at 4096 (4.4x), wall 2203 -> 941; validation no new VUIDs; overlap 10 PRs get new conflicts, new #10894 note; draft PR body updated, Village pair (PC) pending; before that BF-227b
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
