@@ -1,5 +1,7 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/Ngs2Library.cmake)
 add_sce_ngs2_library(libSceNgs2.native)
+target_sources(libSceNgs2.native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp PROPERTIES COMPILE_OPTIONS $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=default>)
 
 if(BUILD_TESTING)
     foreach(ngs2Test IN ITEMS Render Atrac9 Filter Custom Parse Stream UserFx Report Geom VoiceIndex HandleErrors VoiceHandles)

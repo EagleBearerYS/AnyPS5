@@ -1,4 +1,5 @@
 #include "Ngs2Test.hpp"
+#include "prx/libSceNgs2.native/include/Api.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -279,8 +280,45 @@ static void CheckSetSampleRate() {
     Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
 }
 
+static bool ThrowsNotImplemented(int (APS5_VABI* function)(void), const char* name) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void CheckPendingExports() {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNgs2JobSchedulerResetOption, "sceNgs2JobSchedulerResetOption"},
+        {sceNgs2ModuleArrayEnumItems, "sceNgs2ModuleArrayEnumItems"},
+        {sceNgs2ModuleEnumConfigs, "sceNgs2ModuleEnumConfigs"},
+        {sceNgs2ModuleQueueEnumItems, "sceNgs2ModuleQueueEnumItems"},
+        {sceNgs2RackQueryInfo, "sceNgs2RackQueryInfo"},
+        {sceNgs2RackRunCommands, "sceNgs2RackRunCommands"},
+        {sceNgs2StreamCreate, "sceNgs2StreamCreate"},
+        {sceNgs2StreamCreateWithAllocator, "sceNgs2StreamCreateWithAllocator"},
+        {sceNgs2StreamDestroy, "sceNgs2StreamDestroy"},
+        {sceNgs2StreamQueryBufferSize, "sceNgs2StreamQueryBufferSize"},
+        {sceNgs2StreamQueryInfo, "sceNgs2StreamQueryInfo"},
+        {sceNgs2StreamResetOption, "sceNgs2StreamResetOption"},
+        {sceNgs2StreamRunCommands, "sceNgs2StreamRunCommands"},
+        {sceNgs2SystemQueryInfo, "sceNgs2SystemQueryInfo"},
+        {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
+    };
+    for (const auto& entry : exports) {
+        if (!ThrowsNotImplemented(entry.function, entry.name)) throw std::runtime_error(std::string(entry.name) + " did not throw its not-implemented error");
+    }
+}
+
 int main() {
     try {
+        CheckPendingExports();
         constexpr int systemError = static_cast<int>(0x804A8201u);
         constexpr int rackError = static_cast<int>(0x804A8202u);
         constexpr int outputError = static_cast<int>(0x804A8010u);
