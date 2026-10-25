@@ -1,0 +1,3 @@
+BASE=38d463a6cfd2bbddc147a34e8b14f5b6f661607a
+REPEAT=10
+EXTRA_TESTS='guest_kernel_sys'
