@@ -1,4 +1,4 @@
-BUSY BF-196 (libSceLibreSsl, the EVP cipher calls (22))
-since: 2026-10-25T01:05:54Z
-last: BF-189 done, results/cloud-1/BF-189.md: fork feat/libkernel-sys-ampr-command-writers afd5c4a20 on main 38d463a6c (refactor d689d1b59 + writers 92f7271cc + wait afd5c4a20): 13 of 18 rows implemented (12 AMM writers + sceKernelWaitCommandBufferCompletion, signatures from ampr_emu cfa85df379f6 hook targets), 5 APR writers dropped (no signature source), none dropped by the claim check (52 PRs); libSceAmpr's AMM encoders moved into the shared APR header so the writers record the siblings' bytes; red 41/41 + 4/4, green 41/41 + 4/4; mirror 2191/2096/90/5 (all IPv6, incl. guest_socket_options on this main); conventions pass, 0 comment lines; before that BF-185
+READY
+since: 2026-10-25T02:18:59Z
+last: BF-196 done, results/cloud-1/BF-196.md: fork feat/libressl-evp-cipher 3b5f90d2a on #10488 4f073fa75 (lifecycle efe4778bf, Init/Update/Final 8465cb686, CFB8+CTR e1e289882, GCM a2f90476e, EVP_cleanup 3b5f90d2a); 22 of 22 implemented from LibreSSL 2.5.4 evp_enc.c, e_aes.c, names.c and modes, SP 800-38A/38D vectors; none dropped by the claim check (37 PRs, rechecked 01:49Z); red 3/3, 8/8, 2/2, 3/3, 1/1, green 20/20 cases, 0 of 25,163 checks failed; mirror 2054/1961/88/5 (all IPv6); conventions pass, 0 comment lines; merges with main except Aes.cpp's first line; before that BF-189
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
