@@ -1,9 +1,8 @@
-BUSY BF-204
-since: 2026-10-25T05:35:58Z (claimed 2026-10-25T05:35:58Z)
-claimed: tasks/claimed/BF-204.md
-machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 52a8bed57)
-last: BF-201 done, result results/cloud-4/BF-201.md; feat/scepad-light-bar-and-handle-calls at 63ef18b43 on the fork (4 of 5 rows, scePadGetBluetoothAddress dropped)
-baseline: CI Linux mirror on 63ef18b43 (upstream main 52a8bed57 + 3 commits): 2211 tests, 2116 passed, 90 skipped, 5 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
+READY 2026-10-25T05:51:49Z: BF-204 done, waiting for a task
+since: 2026-10-25T05:51:49Z (BF-204 finished)
+machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main e7e3e9c19)
+last: BF-204 done, result results/cloud-4/BF-204.md; feat/npmanager-int-getters at bad1a7994 on the fork, stacked on BF-200 5997af6c1 (11 of 25 NpManagerInt getters report SCE_NP_ERROR_SIGNED_OUT, 14 stay throws)
+baseline: CI Linux mirror on bad1a7994 (upstream main d8db8faef + BF-200 3 commits + 4): 2210 tests, 2115 passed, 90 skipped, 5 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
