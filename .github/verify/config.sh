@@ -1,0 +1,3 @@
+BASE=b91a6a60c5abe08be4a315cf2e1f42c11f414564
+REPEAT=10
+EXTRA_TESTS='guest_filesystem'
