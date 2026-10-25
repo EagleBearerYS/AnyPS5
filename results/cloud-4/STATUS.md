@@ -1,5 +1,6 @@
-READY 2026-10-25T01:43:31Z: finished BF-194, watching the board
-since: 2026-10-25T01:43:31Z (BF-194 done)
+BUSY BF-201
+since: 2026-10-25T02:46:12Z (claimed 2026-10-25T02:46:12Z)
+claimed: tasks/claimed/BF-201.md
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main f4aabbb12)
 last: BF-194 done, result results/cloud-4/BF-194.md; feat/libkernel-sys-finish-merged-calls at cb56a3c2b on the fork (6 of 18 rows, 12 dropped with reasons)
 baseline: CI Linux mirror on cb56a3c2b (upstream main f4aabbb12 + 4 commits): 2196 tests, 2101 passed, 90 skipped, 5 failed (the IPv6 guest socket tests, guest_socket_options included; check_skips flags only guest_sce_net, IPv6 loopback)
