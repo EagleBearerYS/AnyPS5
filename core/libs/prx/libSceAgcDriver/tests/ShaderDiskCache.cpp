@@ -758,6 +758,7 @@ void verifyKeySensitivity() {
     changes("f16 denormal preservation", [](SampleRequest& sample) { sample.request.target.float16DenormPreserve = true; });
     changes("f32 denormal preservation", [](SampleRequest& sample) { sample.request.target.float32DenormPreserve = true; });
     changes("spanned waves", [](SampleRequest& sample) { sample.request.target.spannedWaves = true; });
+    changes("spanned table waves", [](SampleRequest& sample) { sample.request.target.spanTableWaves = true; });
     changes("robust buffer access 2", [](SampleRequest& sample) { sample.request.target.robustBufferAccess2 = true; });
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
