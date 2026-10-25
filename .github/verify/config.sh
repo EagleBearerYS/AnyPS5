@@ -1,0 +1,3 @@
+BASE=71741a70b61499ca392fb449f616b6898e73592c
+REPEAT=10
+EXTRA_TESTS='agc_spanned_wave_policy|agc_spanned_wave_guard|agc_spanned_wave_refusal|agc_shader_disk_cache|agc_driver_span_table_choice'
