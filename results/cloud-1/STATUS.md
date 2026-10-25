@@ -1,4 +1,4 @@
-READY
-since: 2026-10-25T02:48:22Z
+BUSY BF-207 (libSceLibreSsl, RSA public-key calls without BIGNUM (8))
+since: 2026-10-25T05:37:03Z
 last: BF-200 done, results/cloud-1/BF-200.md: fork feat/npmanager-idmapper-requests 5997af6c1 on main d8db8faef (IdMapper requests 5d9f8168d, NpManagerInt requests b1f6cc6a9, signed-out lookups 5997af6c1); 8 of 10 implemented: the 6 Create/Delete/AbortRequest over main's sceNpCreateRequest/DeleteRequest/AbortRequest pool (no limit on main), NpIdToAccountId and OnlineIdToAccountId SIGNED_OUT as sceNpGetAccountId (main 775); AccountIdToNpId/AccountIdToOnlineId stay throws waiting on #6990/#7412; none dropped by the claim check (10 PRs); signatures not in any public source, NP request convention; red 1/1 x3, green 3/3 cases; merge-tree adds no conflict with the 9 siblings; mirror 2210/2115/90/5 (all IPv6); conventions pass, 0 comment lines; before that BF-196
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
