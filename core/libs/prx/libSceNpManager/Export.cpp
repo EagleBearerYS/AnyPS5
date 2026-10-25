@@ -18,6 +18,8 @@ static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x8
 static constexpr int SCE_NP_ERROR_INVALID_SIZE = static_cast<int>(0x80550011);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
 static constexpr int SCE_NP_ERROR_CALLBACK_MAX = static_cast<int>(0x8055001D);
+static constexpr int NP_ID_MAPPER_REFUSED_ARGUMENT = static_cast<int>(0x80553083);
+static constexpr int NP_ID_MAPPER_REFUSED_REQUEST_ID = static_cast<int>(0x80553085);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
@@ -285,7 +287,9 @@ int APS5_VABI sceNpGetParentalControlInfoA(int reqId, int userId, int8_t* age, v
     return SignedOutRequest(reqId);
 }
 int APS5_VABI sceNpIdMapperAbortRequest(int reqId) {
-    return sceNpAbortRequest(reqId);
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 int APS5_VABI sceNpIdMapperAccountIdToNpId(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -296,16 +300,29 @@ int APS5_VABI sceNpIdMapperAccountIdToOnlineId(void) {
     return 0;
 }
 int APS5_VABI sceNpIdMapperCreateRequest(void) {
-    return AddRequest();
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 int APS5_VABI sceNpIdMapperDeleteRequest(int reqId) {
-    return sceNpDeleteRequest(reqId);
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
-int APS5_VABI sceNpIdMapperNpIdToAccountId(void) {
-    return SCE_NP_ERROR_SIGNED_OUT;
+int APS5_VABI sceNpIdMapperNpIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
-int APS5_VABI sceNpIdMapperOnlineIdToAccountId(void) {
-    return SCE_NP_ERROR_SIGNED_OUT;
+int APS5_VABI sceNpIdMapperOnlineIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 int APS5_VABI sceNpInGameMessageAbortHandle(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -357,7 +374,9 @@ int APS5_VABI sceNpIsPlusMember(int, bool* isMember) {
     return 0;
 }
 int APS5_VABI sceNpManagerIntAbortRequest(int reqId) {
-    return sceNpAbortRequest(reqId);
+    (void)reqId;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 int APS5_VABI sceNpManagerIntAddActiveSigninStateCallback(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -432,14 +451,17 @@ int APS5_VABI sceNpManagerIntCreateLoginRequest(void) {
     return 0;
 }
 int APS5_VABI sceNpManagerIntCreateRequest(void) {
-    return AddRequest();
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 int APS5_VABI sceNpManagerIntDeleteLoginContext(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpManagerIntDeleteRequest(int reqId) {
-    return sceNpDeleteRequest(reqId);
+    (void)reqId;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 int APS5_VABI sceNpManagerIntGetAccessTokenViaImplicitFlow(void) {
     NotImplemented_nid_no_patch(__func__);
