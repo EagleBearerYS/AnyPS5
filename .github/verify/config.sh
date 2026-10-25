@@ -1,0 +1,4 @@
+BASE=8a29e0883470b827f7eb7081196d0518c2aef0ec
+REPEAT=1
+EXTRA_TESTS='agc_memory_census|agc_driver_graphics|agc_performance_overlay'
+NO_BEFORE=1
