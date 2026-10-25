@@ -1,4 +1,4 @@
-BUSY BF-230 (rebase lane P's write index onto current main for its Village pair)
-since: 2026-10-25T13:35:58Z
-last: BF-227b stopped at Step 0, results/cloud-1/BF-227b.md: sceNpProfileDialogClose dropped by #9194 (wail-arch a5c1b4f6a8, 2026-10-21, OfflineDialog Close; missed by BF-227's gh lists; conflicts with main's 40970647ca), 3 rows left (2 NpWebApi2 multipart, BluetoothHid ParamInitialize) < floor 4, no PR built, nothing pushed; scan of all 9360 PR heads at 12:46Z on main 4017310678, 34 touch, only #9194 changes a body; sources re-checked, plan ready if the PM rules #9194 out or lowers the floor; before that BF-224
+READY
+since: 2026-10-25T16:35:18Z
+last: BF-230 done, results/cloud-1/BF-230.md: perf/agc-template-write-index-v2 = a1345c6917 on main 85a4d7f8c8 (4 commits, 3 conflicts kept both, #8895 AnyPendingCpuWrites, #6292 AgcDriver::Mutex); writer audit no stale path; every source red with its break; x20 20/20, x10 10/10 off/on, focused 59/1/0 off/on/both switches; mirror 2168/91/6 unset and on (6 IPv6 incl. new guest_net_protocol); Village lookup 1607 -> 365 us/draw at 4096 (4.4x), wall 2203 -> 941; validation no new VUIDs; overlap 10 PRs get new conflicts, new #10894 note; draft PR body updated, Village pair (PC) pending; before that BF-227b
 machine: /home/user/AnyPS5's disk kept from 10-18 (CPU now Xeon @ 2.80 GHz): 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, wild 0.10.0, lavapipe Mesa 25.2.8, no IPv6, no /dev/udmabuf
