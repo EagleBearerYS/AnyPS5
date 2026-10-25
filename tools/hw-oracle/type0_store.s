@@ -26,6 +26,10 @@
   s_waitcnt_vscnt null, 0x0
   buffer_gl0_inv
   buffer_gl1_inv
+  v_or_b32 v40, 0xd00d0000, v0
+  v_or_b32 v41, 0xd00d1000, v0
+  v_or_b32 v42, 0xd00d2000, v0
+  v_or_b32 v43, 0xd00d3000, v0
   image_load v[40:43], v[34:35], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D unorm glc
   s_waitcnt vmcnt(0)
   v_mov_b32 v50, 0x7f0

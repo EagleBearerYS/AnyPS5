@@ -856,6 +856,18 @@ class Type0StoreProbeTests(unittest.TestCase):
         unfinished["lanes"][7][11] = 0
         self.assertEqual(probe_type0_store.summary("type0-store", unfinished), "type0-store: error: the kernel did not finish every lane")
 
+    def test_summary_names_a_load_that_left_its_fill(self):
+        kept = self.lanes()
+        for lane, row in enumerate(kept["lanes"]):
+            row[5:9] = [probe_type0_store.LOAD_FILL | (word << 12) | lane for word in range(4)]
+        self.assertEqual(probe_type0_store.summary("type0-store", kept),
+                         "type0-store: ran; no dword changed in base-0xe00..base+0xf000; "
+                         "image_load returned d00d0000 d00d1000 d00d2000 d00d3000 (the fill it started from: the load wrote nothing)")
+        for row in kept["lanes"][:5]:
+            row[5] = 0
+        self.assertTrue(probe_type0_store.summary("type0-store", kept).endswith("(the fill it started from in 27 of 32 lanes)"))
+        self.assertNotIn("fill", probe_type0_store.summary("type0-store", self.lanes()))
+
     def test_a_fault_hang_or_failed_control_stops_the_remaining_cases(self):
         ran = json.dumps({"case": "control-store", "target": "gfx1030", "words": [],
                           **self.lanes([(1, (32, 0, 0x5e5e0000, 124, 0x5e5e001f))], loaded=lambda lane: 0x5e5e0000 | lane)})

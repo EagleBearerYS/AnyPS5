@@ -14,6 +14,7 @@ ROW_BYTES = LANES * 16
 INPUT_BYTES = 65536
 PATTERN = 0xA5A50000
 SENTINEL = 0x7E57AB1E
+LOAD_FILL = 0xD00D0000
 FORMAT_32_UINT = 20
 CONTROL_WIDTH = 64
 MODES = dict(ieee=0, denorm32=0, denorm16=3, dx10_clamp=1, round32=0, round16=0, fp16_overflow=0)
@@ -29,7 +30,9 @@ GPU work and save your files first. The probe stops at the first fault or hang u
 
 Each case runs one wave of 32 lanes on the local GPU. The T# base points at a buffer the probe owns, filled
 with a known pattern 3.5 KiB below and 60 KiB above the base. After the access, the kernel reports every
-changed dword of that buffer and what image_load through the same T# returns. The cases run in this order:
+changed dword of that buffer and what image_load through the same T# returns. Before the load, its four
+destination registers hold d00d0LLL, d00d1LLL, d00d2LLL and d00d3LLL in lane LLL, so a load that writes
+nothing shows that fill. The cases run in this order:
   control-store   a valid 2D linear 64x1 32_UINT image (TYPE 9), image_store at x = lane
   type0-store     the 8 words from PPSA01474 (#9749), TYPE 0, base replaced, image_store at x = lane
   type1-store     the same words with TYPE 1
@@ -124,6 +127,11 @@ def summary(case, result):
         last = max(changed, key=lambda entry: entry[2])
         text += f"{total} dwords changed, first at {offset(first[0])} = {first[1]:08x}, last at {offset(last[2])} = {last[3]:08x}"
     text += f"; image_load returned {loaded}"
+    kept = sum(all(lane[5 + word] == (LOAD_FILL | (word << 12) | index) for word in range(4)) for index, lane in enumerate(lanes))
+    if kept == LANES:
+        text += " (the fill it started from: the load wrote nothing)"
+    elif kept:
+        text += f" (the fill it started from in {kept} of {LANES} lanes)"
     if case.endswith("atomic"):
         text += f"; image_atomic_add returned {lanes[0][9]:08x}"
     if case.startswith("control") and not control_ok(case, lanes):
