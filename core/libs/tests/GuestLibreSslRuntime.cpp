@@ -82,5 +82,14 @@ int main() {
     Require(CRYPTO_malloc_nid_postfix(-1, nullptr, 0) == nullptr);
     Require(CRYPTO_set_mem_functions_nid_postfix(reinterpret_cast<void*>(&std::malloc), reinterpret_cast<void*>(&std::realloc), reinterpret_cast<void*>(&std::free)) == 0);
     Require(CRYPTO_set_mem_functions_nid_postfix(nullptr, nullptr, nullptr) == 0);
+
+    Require(SSL_library_init_nid_postfix() == 1);
+    Require(SSL_library_init_nid_postfix() == 1);
+    SSL_load_error_strings_nid_postfix();
+    PKCS12_PBE_add_nid_postfix();
+    OBJ_cleanup_nid_postfix();
+    OBJ_cleanup_nid_postfix();
+    CRYPTO_cleanup_all_ex_data_nid_postfix();
+    Require(ERR_peek_error_nid_postfix() == 0);
     std::puts("libSceLibreSsl runtime tests passed");
 }

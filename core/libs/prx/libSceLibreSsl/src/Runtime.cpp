@@ -54,4 +54,20 @@ int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void*, void*, void*) {
     return 0;
 }
 
+int APS5_VABI SSL_library_init_nid_postfix(void) {
+    return 1;
+}
+
+void APS5_VABI SSL_load_error_strings_nid_postfix(void) {
+}
+
+void APS5_VABI OBJ_cleanup_nid_postfix(void) {
+}
+
+void APS5_VABI PKCS12_PBE_add_nid_postfix(void) {
+}
+
+void APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void) {
+}
+
 }
