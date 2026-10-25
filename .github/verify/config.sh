@@ -1,0 +1,3 @@
+BASE=7a25f87620a9b862dc194dd0f659686b0f6cc8b0
+REPEAT=10
+EXTRA_TESTS='guest_ajm|guest_ajm_teardown|guest_ajm_vibration|guest_ajm_wvorbis'
