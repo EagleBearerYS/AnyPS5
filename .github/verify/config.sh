@@ -1,0 +1,3 @@
+BASE=f4aabbb122bcb5fabfe882798a9498a439de6e94
+REPEAT=10
+EXTRA_TESTS='guest_np_cpp_web_api_signed_out'
