@@ -1,0 +1,4 @@
+BASE=e5f23554c9c7b1929f1ef7a65f6ea33a24fd189e
+REPEAT=1
+EXTRA_TESTS='agc_shader_type_zero_image_materialization|agc_driver_pointer_chase_table|agc_driver_draw_write_ranges'
+NO_BEFORE=1
