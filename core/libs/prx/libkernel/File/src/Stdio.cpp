@@ -89,16 +89,7 @@ static int NativeMkdir(const std::filesystem::path& path, std::uint16_t mode) {
     (void)mode;
     return ::_wmkdir(path.wstring().c_str());
 }
-static int NativeChmod(const std::filesystem::path& path, int mode) {
-    RecordWrittenPath_nid_no_patch(path);
-    return ::_wchmod(path.wstring().c_str(), mode);
-}
-std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(int descriptor) {
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
-    if (handle == INVALID_HANDLE_VALUE) {
-        errno = EBADF;
-        return std::nullopt;
-    }
+static std::optional<std::filesystem::path> HandlePath(HANDLE handle) {
     std::wstring path(MAX_PATH, L'\0');
     auto length = ::GetFinalPathNameByHandleW(handle, path.data(), static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED);
     if (length >= path.size()) {
@@ -117,6 +108,32 @@ std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(in
     if (path.starts_with(LR"(\\?\UNC\)")) path.replace(0, 8, LR"(\\)");
     else if (path.starts_with(LR"(\\?\)") && path.size() > 6 && path[5] == L':' && path[6] == L'\\') path.erase(0, 4);
     return path;
+}
+std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(int descriptor) {
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return std::nullopt;
+    }
+    return HandlePath(handle);
+}
+static int NativeChmod(const std::filesystem::path& path, int mode) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+        RecordWrittenPath_nid_no_patch(path);
+        return ::_wchmod(path.wstring().c_str(), mode);
+    }
+    const HANDLE handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = WindowsOpenError_nid_no_patch(GetLastError());
+        return -1;
+    }
+    const auto target = HandlePath(handle);
+    CloseHandle(handle);
+    if (!target) return -1;
+    RecordWrittenPath_nid_no_patch(*target);
+    return ::_wchmod(target->wstring().c_str(), mode);
 }
 static int NativeFchmod(int descriptor, int mode) {
     const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
@@ -645,6 +662,15 @@ int File::DuplicateFrom(int fd, int start) {
 }
 
 static int LookupError(const std::filesystem::path& native) {
+#ifdef _WIN32
+    const auto named = native.has_filename() ? native : WithoutTrailingSeparator(native);
+    const DWORD attributes = GetFileAttributesW(named.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        FileStat target{};
+        if (!File::TryFillFileStat(named, &target)) return SceErrorFromErrno(errno) & 0xffff;
+        return native.has_filename() || (target.st_mode & 0170000) == 0040000 ? 0 : GUEST_ENOTDIR;
+    }
+#endif
     std::error_code error;
     const auto status = std::filesystem::status(native, error);
     if (std::filesystem::exists(status)) return native.has_filename() || std::filesystem::is_directory(status) ? 0 : GUEST_ENOTDIR;
@@ -894,10 +920,7 @@ int APS5_VABI _fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     KernelStatfs result{};
     result.f_version = KERNEL_STATFS_VERSION;
     if (const int error = NativeFstatfs(d, &result)) return PosixFailure(error);
-    if (buf == nullptr) return PosixFailure(GUEST_EFAULT);
-    const GuestArena::HostWrite destination(buf, sizeof(result));
-    if (!destination.Open()) return PosixFailure(GUEST_EFAULT);
-    std::memcpy(buf, &result, sizeof(result));
+    if (!GuestCopyOut_nid_no_patch(buf, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
     return 0;
 }
 
@@ -907,11 +930,13 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         if (fstat_nid_disambig1_nid_postfix(d, &ignored) != 0) return -1;
         return PosixFailure(GUEST_EFAULT);
     }
+    FileStat result{};
     if (GuestSockets::IsOpen(d)) {
-        if (const int error = GuestSockets::Stat(d, sb)) return PosixFailure(error);
-        return 0;
+        if (const int error = GuestSockets::Stat(d, &result)) return PosixFailure(error);
+    } else if (!File::FillFileStatFromDescriptor(d, &result)) {
+        return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     }
-    if (!File::FillFileStatFromDescriptor(d, sb)) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
     return 0;
 }
 
@@ -1065,8 +1090,10 @@ int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
-    if (!File::FillLinkStat(native, sb)) return PosixResult(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno));
+    if (const int error = ResolvePathError_nid_no_patch(path, native, true)) return PosixFailure(error);
+    FileStat result{};
+    if (!File::FillLinkStat(native, &result)) return PosixResult(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno));
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
     return 0;
 }
 
@@ -1097,11 +1124,14 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
         if (const int error = sceKernelFstat(d, &ignored)) return error;
         return SceErrorFromErrno(GUEST_EFAULT);
     }
+    FileStat result{};
     if (GuestSockets::IsOpen(d)) {
-        const int error = GuestSockets::Stat(d, sb);
-        return error == 0 ? 0 : SceErrorFromErrno(error);
+        const int error = GuestSockets::Stat(d, &result);
+        if (error != 0) return SceErrorFromErrno(error);
+    } else if (!File::FillFileStatFromDescriptor(d, &result)) {
+        return SceErrorFromErrno(errno);
     }
-    if (!File::FillFileStatFromDescriptor(d, sb)) return SceErrorFromErrno(errno);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GUEST_EFAULT);
     return 0;
 }
 
@@ -1572,6 +1602,7 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (IsPipeDescriptor(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
 #ifdef _WIN32
     const int sharedMemoryResult = File::SetSharedMemoryMode_nid_no_patch(d, mode);

@@ -213,6 +213,10 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         const auto status = std::filesystem::status(native, error);
         if (std::filesystem::exists(status) && !std::filesystem::is_directory(status)) return SceErrorFromErrno(ENOTDIR);
     }
+    if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL) && native.has_filename()) {
+        const DWORD attributes = GetFileAttributesW(native.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return SceErrorFromErrno(EEXIST);
+    }
 #endif
     if ((flags & SCE_KERNEL_O_NOFOLLOW) != 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) != (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) {
         constexpr int GuestEmlink = 31;
@@ -414,7 +418,9 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
     }
     if (directory && !std::filesystem::is_directory(status)) return SceErrorFromErrno(GuestEnotdir);
     if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-    if (!File::TryFillFileStat(metadataPath, sb)) return SceStatErrorFromErrno(errno);
+    FileStat result{};
+    if (!File::TryFillFileStat(metadataPath, &result)) return SceStatErrorFromErrno(errno);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GuestEfault);
     return 0;
 }
 
