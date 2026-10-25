@@ -1,0 +1,3 @@
+BASE=5d48c6233ed7eeb4987abc783d4899f8c3be20d5
+REPEAT=10
+EXTRA_TESTS='^agc_driver_host_write|^agc_driver_linear_target|agc_driver_storage_file_write|agc_driver_preparation_scope_settle|agc_driver_graphics|agc_driver_address_passes_draw_transitions|guest_kqueue|public_headers'
