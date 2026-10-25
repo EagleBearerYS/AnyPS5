@@ -1,0 +1,3 @@
+BASE=57f506f8119252b43b851b0de18689bc5015a586
+REPEAT=10
+EXTRA_TESTS='guest_appcontent|guest_rudp_pump'
