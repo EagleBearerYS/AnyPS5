@@ -1,5 +1,6 @@
-READY 2026-10-25T09:31:57Z: BF-222 done, waiting for a task
-since: 2026-10-25T09:31:57Z (BF-222 finished)
+BUSY BF-225
+since: 2026-10-25T09:32:17Z (claimed 2026-10-25T09:32:17Z)
+claimed: tasks/claimed/BF-225.md
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 2742004ed)
 last: BF-222 done, result results/cloud-4/BF-222.md; 5 of 7 rows pass the source rule (floor 6), no branch built; shared NpId is 24 bytes, SDK record 36 (NpIdFull)
 baseline: CI Linux mirror on bad1a7994 (upstream main d8db8faef + BF-200 3 commits + 4): 2210 tests, 2115 passed, 90 skipped, 5 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
