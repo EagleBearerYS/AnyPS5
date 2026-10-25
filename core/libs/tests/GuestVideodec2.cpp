@@ -19,6 +19,7 @@ using namespace SceVideodec2;
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
+static_assert(sizeof(HevcPictureInfo) == 0xb8 && offsetof(HevcPictureInfo, idrPictureFlag) == 0x93 && offsetof(HevcPictureInfo, frameCropBottomOffset) == 0xb4);
 
 namespace {
 
@@ -29,6 +30,7 @@ using namespace HevcFixture;
 
 constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
+constexpr std::array<std::size_t, 6> HevcDisplayOrderUnits{0, 3, 2, 1, 5, 4};
 
 constexpr std::array<std::uint8_t, 658> AvcIpppStream{
     0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a, 0xda, 0x11,
@@ -161,6 +163,23 @@ void testClip(std::uint32_t codec, std::uint32_t profile, const std::vector<std:
                 same.keyFrameFlag == vp9.keyFrameFlag && same.intraOnly == vp9.intraOnly && same.bitDepth == vp9.bitDepth && same.colorRange == vp9.colorRange && same.colorSpace == vp9.colorSpace && same.numFrames == vp9.numFrames &&
                 same.frameWidth == vp9.frameWidth && same.frameHeight == vp9.frameHeight && same.renderWidth == vp9.renderWidth && same.renderHeight == vp9.renderHeight && generic.guard == 0x123456789abcdef0ull, "generic picture info differs from the VP9 layout");
         } else checkThrows([&] { sceVideodec2GetVp9PictureInfo_nid_postfix(&output, &vp9); });
+        HevcPictureInfo hevc{sizeof(HevcPictureInfo)};
+        if (codec == CodecHevc) {
+            struct Guarded { HevcPictureInfo info{sizeof(HevcPictureInfo)}; std::uint64_t guard = 0x123456789abcdef0ull; } guarded;
+            check(sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &guarded.info) == 0 && guarded.info.isValid, "HEVC picture metadata missing");
+            const auto& info = guarded.info;
+            const auto unit = HevcDisplayOrderUnits[pictures];
+            check(info.thisSize == sizeof(HevcPictureInfo) && guarded.guard == 0x123456789abcdef0ull, "HEVC info overwrote its size or caller storage");
+            check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0, "HEVC picture timestamps differ");
+            check(info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.irapPictureFlag == (pictures == 0 ? 1 : 0), "HEVC random access flags differ");
+            check(info.generalProfileIdc == 1 && info.generalLevelIdc == 30 && info.bitDepthLumaMinus8 == 0 && info.bitDepthChromaMinus8 == 0, "HEVC profile, level or bit depth differs");
+            check(info.picWidthInLumaSamples == Width && info.picHeightInLumaSamples == Height && info.conformanceWindowFlag == 0 && info.frameCroppingFlag == 0, "HEVC picture geometry differs");
+            struct GuardedGeneric { HevcPictureInfo info{sizeof(HevcPictureInfo)}; std::uint64_t guard = 0x123456789abcdef0ull; } generic;
+            check(sceVideodec2GetPictureInfo_nid_postfix(&output, reinterpret_cast<AvcPictureInfo*>(&generic.info), nullptr) == 0, "generic HEVC picture info failed");
+            const auto& same = generic.info;
+            check(same.thisSize == sizeof(HevcPictureInfo) && same.isValid && same.ptsData == info.ptsData && same.dtsData == info.dtsData && same.attachedData == info.attachedData && same.idrPictureFlag == info.idrPictureFlag && same.irapPictureFlag == info.irapPictureFlag &&
+                same.generalProfileIdc == info.generalProfileIdc && same.generalLevelIdc == info.generalLevelIdc && same.picWidthInLumaSamples == info.picWidthInLumaSamples && same.picHeightInLumaSamples == info.picHeightInLumaSamples && generic.guard == 0x123456789abcdef0ull, "generic picture info differs from the HEVC layout");
+        } else checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &hevc); });
         check(hashNv12(buffer.data(), output.framePitch, output.frameHeight) == hashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
         ++pictures;
         return true;
@@ -751,6 +770,58 @@ void testConcurrentOwnership() {
     check(sceVideodec2DeleteDecoder_nid_postfix(keeper) == 0, "delete failed");
 }
 
+void testHevcPictureInfo() {
+    const DecoderConfigInfo largest{sizeof(DecoderConfigInfo), 1, CodecHevc, 2, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
+    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&largest, &memory) == 0, "HEVC memory query failed");
+    std::vector<std::uint8_t> buffer(memory.maxFrameBufferSize);
+    OutputInfo output{sizeof(OutputInfo)};
+    HevcPictureInfo info{sizeof(HevcPictureInfo)};
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(nullptr, &info); });
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&output, nullptr); });
+    output.frameBuffer = buffer.data();
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info) == 0 && !info.isValid, "HEVC unknown buffer reported a picture");
+    const auto decode = [&](std::uint64_t handle, const std::uint8_t* data, std::size_t size) {
+        const InputData input{sizeof(InputData), data, size, 7000, 7001, 7002};
+        FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+        output = OutputInfo{sizeof(OutputInfo)};
+        check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output) == 0, "HEVC metadata decode failed");
+        if (!output.isValid) check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "HEVC metadata flush failed");
+        check(output.isValid && output.codecType == CodecHevc, "HEVC metadata picture missing");
+    };
+    const auto query = [&] {
+        info = HevcPictureInfo{sizeof(HevcPictureInfo)};
+        check(sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info) == 0, "HEVC metadata query failed");
+        return info;
+    };
+    const auto cropped = createDecoder(CodecHevc, 1);
+    decode(cropped, HevcCroppedStream.data(), HevcCroppedStream.size());
+    info = HevcPictureInfo{sizeof(HevcPictureInfo) - 1};
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info); });
+    auto picture = query();
+    check(picture.isValid && picture.thisSize == sizeof(HevcPictureInfo) && picture.ptsData == 7000 && picture.dtsData == 7001 && picture.attachedData == 7002, "cropped HEVC picture timestamps differ");
+    check(picture.idrPictureFlag == 1 && picture.irapPictureFlag == 1, "cropped HEVC picture is not reported as IDR");
+    check(picture.picWidthInLumaSamples == 64 && picture.picHeightInLumaSamples == 40, "cropped HEVC coded size differs");
+    check(picture.conformanceWindowFlag == 1 && picture.confWinLeftOffset == 0 && picture.confWinRightOffset == 0 && picture.confWinTopOffset == 0 && picture.confWinBottomOffset == 2, "HEVC conformance window differs");
+    check(picture.frameCroppingFlag == 1 && picture.frameCropLeftOffset == 0 && picture.frameCropRightOffset == 0 && picture.frameCropTopOffset == 0 && picture.frameCropBottomOffset == 2, "HEVC frame cropping differs");
+    output.frameWidth = 1;
+    output.frameHeight = 1;
+    picture = query();
+    check(picture.picWidthInLumaSamples == 64 && picture.picHeightInLumaSamples == 40, "HEVC picture size follows the caller's output info");
+    check(sceVideodec2Reset_nid_postfix(cropped) == 0 && !query().isValid, "HEVC reset retained picture ownership");
+    check(sceVideodec2DeleteDecoder_nid_postfix(cropped) == 0, "delete failed");
+    const auto tenBit = createDecoder(CodecHevc, 2);
+    decode(tenBit, HevcMain10Stream.data(), HevcMain10Stream.size());
+    picture = query();
+    check(picture.isValid && picture.generalProfileIdc == 2 && picture.bitDepthLumaMinus8 == 2 && picture.bitDepthChromaMinus8 == 2, "Main 10 HEVC profile or bit depth differs");
+    check(sceVideodec2DeleteDecoder_nid_postfix(tenBit) == 0 && !query().isValid, "HEVC delete retained picture ownership");
+    const auto avc = createDecoder(1, 100);
+    publishAvc(avc, 1000, buffer);
+    output.frameBuffer = buffer.data();
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info); });
+    check(sceVideodec2DeleteDecoder_nid_postfix(avc) == 0, "delete failed");
+}
+
 }
 
 int main() {
@@ -785,6 +856,7 @@ int main() {
         testClip(CodecHevc, 1, hevcLengthPrefixed, HevcHashes);
         testClip(CodecVp9, 0, ivfFrames(), Vp9Hashes);
         testVp9PictureMetadata();
+        testHevcPictureInfo();
         testTenBit();
         testDecodeAfterFlush();
         testEmptyAccessUnit();
