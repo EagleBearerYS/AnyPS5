@@ -1,0 +1,4 @@
+BASE=e7e3e9c1984c293f06bff08428b8c89b7b932ac2
+REPEAT=3
+EXTRA_TESTS='agc_driver_label_wait_timeout_reason|agc_driver_copied_writer_label_order|agc_driver_copied_writer_label_order_drain'
+NO_BEFORE=1
