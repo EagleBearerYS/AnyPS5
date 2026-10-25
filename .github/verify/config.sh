@@ -1,0 +1,3 @@
+BASE=2742004ed28f765c7147db0e0269ff5868e9eb6f
+REPEAT=10
+EXTRA_TESTS='^agc_performance_overlay|^agc_address_copy|agc_driver_presentation_pass|agc_driver_present_mode|agc_resident_present|agc_performance_trace'
