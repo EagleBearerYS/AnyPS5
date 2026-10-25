@@ -1,0 +1,4 @@
+BASE=379b1dca32ecc4e3570ad0a53c69f019b70dbe59
+REPEAT=1
+EXTRA_TESTS='agc_shader_type_zero_image_materialization|agc_shader_srt_read_patching|agc_driver_pointer_chase_table'
+NO_BEFORE=1
