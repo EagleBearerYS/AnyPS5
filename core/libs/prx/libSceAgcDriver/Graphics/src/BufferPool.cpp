@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include <algorithm>
 #include <atomic>
@@ -265,6 +266,7 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
     if (addressable) allocation.pNext = &flags;
     allocation.allocationSize = blockBytes;
     allocation.memoryTypeIndex = memoryType;
+    const MemoryCensus::Scope census(MemoryCensus::Owner::PoolSlab);
     block->memory = AllocateMemory(allocation, "vkAllocateMemory buffer slab");
     if ((context.memory.memoryTypes[memoryType].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
         void* mapping = nullptr;

@@ -103,6 +103,7 @@ public:
         std::uint64_t variantBytes = 0;
     };
     DispatchCacheFootprint DispatchCacheSize();
+    DispatchCacheFootprint DrawCacheFootprint();
     static std::uint64_t DispatchCacheBytes();
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();

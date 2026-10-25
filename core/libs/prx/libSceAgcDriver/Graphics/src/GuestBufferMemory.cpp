@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -2936,6 +2937,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         return mirror;
     }
     try {
+        const MemoryCensus::Scope census(MemoryCensus::Owner::ImageMirror);
         mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     } catch (const std::runtime_error& error) {
         if (heap) {
@@ -4731,6 +4733,7 @@ CopyStats& Copies() {
 // shadow is its own VkDeviceMemory, retained by cached builds) is no error: nullptr, and the
 // region takes the path it would take without staging (Region::unstaged).
 std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes, VkBufferUsageFlags usage) {
+    const MemoryCensus::Scope census(MemoryCensus::Owner::Staging);
     try {
         return std::make_shared<Buffer>(context, bytes, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     } catch (const std::exception& error) {
