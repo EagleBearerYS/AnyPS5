@@ -48,6 +48,8 @@ struct EcGroup;
 struct EcKey;
 struct EcPoint;
 
+using EcdhKdf = void* (APS5_VABI*)(const void* in, std::size_t inLength, void* out, std::size_t* outLength);
+
 extern "C" {
 
 int APS5_VABI ASN1_INTEGER_get_nid_postfix(void);
@@ -103,7 +105,7 @@ int APS5_VABI DES_set_key_nid_postfix(const unsigned char* key, unsigned char* s
 void APS5_VABI DES_set_odd_parity_nid_postfix(unsigned char* key);
 int APS5_VABI DTLSv1_client_method_nid_postfix(void);
 int APS5_VABI DTLSv1_server_method_nid_postfix(void);
-int APS5_VABI ECDH_compute_key_nid_postfix(void);
+int APS5_VABI ECDH_compute_key_nid_postfix(void* out, std::size_t outLength, const EcPoint* publicKey, EcKey* key, EcdhKdf kdf);
 int APS5_VABI ECDSA_sign_nid_postfix(int type, const unsigned char* digest, int digestLength, unsigned char* signature, unsigned int* signatureLength, EcKey* key);
 int APS5_VABI ECDSA_size_nid_postfix(const EcKey* key);
 int APS5_VABI ECDSA_verify_nid_postfix(int type, const unsigned char* digest, int digestLength, const unsigned char* signature, int signatureLength, EcKey* key);

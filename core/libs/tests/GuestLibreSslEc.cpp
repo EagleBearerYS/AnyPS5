@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -652,7 +654,177 @@ static void CheckEcdsaArguments() {
     EC_KEY_free_nid_postfix(publicOnly);
 }
 
+static void* APS5_VABI ReverseKdf(const void* in, std::size_t inLength, void* out, std::size_t* outLength) {
+    const auto* source = static_cast<const unsigned char*>(in);
+    auto* target = static_cast<unsigned char*>(out);
+    const std::size_t count = inLength < *outLength ? inLength : *outLength;
+    for (std::size_t i = 0; i < count; ++i) target[i] = source[inLength - 1 - i];
+    *outLength = count;
+    return out;
+}
+
+static void* APS5_VABI FailingKdf(const void*, std::size_t, void*, std::size_t*) {
+    return nullptr;
+}
+
+static std::vector<unsigned char> SharedSecret(EcKey* key, const EcPoint* peer, std::size_t length) {
+    std::vector<unsigned char> out(length);
+    const int written = ECDH_compute_key_nid_postfix(out.data(), out.size(), peer, key, nullptr);
+    Require(written >= 0, "ECDH_compute_key");
+    out.resize(static_cast<std::size_t>(written));
+    return out;
+}
+
+static void CheckEcdhAgreement() {
+    for (const KnownPoint& known : KnownPoints) {
+        EcKey* first = GeneratedKey(known.nid);
+        EcKey* second = GeneratedKey(known.nid);
+        EcKey* third = GeneratedKey(known.nid);
+        const std::vector<unsigned char> left = SharedSecret(first, EC_KEY_get0_public_key_nid_postfix(second), known.field);
+        const std::vector<unsigned char> right = SharedSecret(second, EC_KEY_get0_public_key_nid_postfix(first), known.field);
+        Require(left.size() == known.field && left == right, "both sides of ECDH agree on a secret of the field size");
+        Require(SharedSecret(first, EC_KEY_get0_public_key_nid_postfix(third), known.field) != left, "another peer gives another secret");
+        std::vector<unsigned char> compressed{2};
+        compressed.insert(compressed.end(), left.begin(), left.end());
+        EcPoint* point = EC_POINT_new_nid_postfix(EC_KEY_get0_group_nid_postfix(first));
+        Require(Decode(EC_KEY_get0_group_nid_postfix(first), point, compressed) == 1, "the secret is the x of a point on the curve");
+        EC_POINT_free_nid_postfix(point);
+        EC_KEY_free_nid_postfix(third);
+        EC_KEY_free_nid_postfix(second);
+        EC_KEY_free_nid_postfix(first);
+    }
+}
+
+struct KnownGenerator {
+    int nid;
+    const char* compressed;
+};
+
+static constexpr KnownGenerator KnownGenerators[] = {
+    {409, "03188DA80EB03090F67CBF20EB43A18800F4FF0AFD82FF1012"},
+    {415, "036B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296"},
+    {711, "03DB4FF10EC057E9AE26B07D0280B7F4341DA5D1B1EAE06C7D"},
+    {712, "03A1455B334DF099DF30FC28A169A467E9E47075A90F7E650EB6B7A45C"},
+    {713, "02B70E0CBD6BB4BF7F321390B94A03C1D356C21122343280D6115C1D21"},
+    {714, "0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"},
+    {715, "03AA87CA22BE8B05378EB1C71EF320AD746E1D3B628BA79B9859F741E082542A385502F25DBF55296C3A545E3872760AB7"},
+    {716, "0200C6858E06B70404E9CD9E3ECB662395B4429C648139053FB521F828AF606B4D3DBAA14B5E77EFE75928FE1DC127A2FFA8DE3348B3C1856A429BF97E7E31C2E5BD66"},
+    {928, "038BD2AEB9CB7E57CB2C4B482FFC81B7AFB9DE27E1E3BD23C23A4453BD9ACE3262"},
+    {932, "031D1C64F068CF45FFA2A63A81B7C13F6B8847A3E77EF14FE3DB7FCAFE0CBD10E8E826E03436D646AAEF87B2E247D4AF1E"},
+    {934, "0281AEE4BDD82ED9645A21322E9C4C6A9385ED9F70B5D916C1B43B62EEF4D0098EFF3B1F78E2D0D48D50D1687B93B97D5F7C6D5047406A5E688B352209BCB9F822"},
+};
+
+static void CheckEcdhGenerator() {
+    static_assert(std::size(KnownGenerators) == std::size(KnownPoints));
+    for (std::size_t i = 0; i < std::size(KnownGenerators); ++i) {
+        const KnownGenerator& known = KnownGenerators[i];
+        Require(known.nid == KnownPoints[i].nid, "generators in the order of the known points");
+        EcKey* key = GeneratedKey(known.nid);
+        const EcGroup* group = EC_KEY_get0_group_nid_postfix(key);
+        EcPoint* generator = EC_POINT_new_nid_postfix(group);
+        Require(Decode(group, generator, Bytes(known.compressed)) == 1, "decoding the published generator");
+        const std::vector<unsigned char> publicKey = Encode(group, EC_KEY_get0_public_key_nid_postfix(key), 4);
+        const std::vector<unsigned char> x(publicKey.begin() + 1, publicKey.begin() + 1 + static_cast<std::ptrdiff_t>(KnownPoints[i].field));
+        Require(SharedSecret(key, generator, KnownPoints[i].field) == x, "ECDH with the generator gives the x of the key's public key");
+        EC_POINT_free_nid_postfix(generator);
+        EC_KEY_free_nid_postfix(key);
+    }
+}
+
+static void CheckEcdhPreviousGroupKey() {
+    EcKey* key = GeneratedKey(715);
+    EcGroup* group = EC_GROUP_new_by_curve_name_nid_postfix(415);
+    Require(EC_KEY_set_group_nid_postfix(key, group) == 1, "moving a P-384 key to P-256");
+    EcPoint* generator = EC_POINT_new_nid_postfix(group);
+    Require(Decode(group, generator, Bytes(KnownGenerators[1].compressed)) == 1, "decoding the P-256 generator");
+    const std::vector<unsigned char> x = SharedSecret(key, generator, 32);
+    EcKey* peer = GeneratedKey(415);
+    const std::vector<unsigned char> secret = SharedSecret(key, EC_KEY_get0_public_key_nid_postfix(peer), 32);
+    const std::vector<unsigned char> digest(32, 0x3c);
+    const std::vector<unsigned char> signature = Sign(digest, key);
+    int verified = 0;
+    for (const unsigned char prefix : {2, 3}) {
+        std::vector<unsigned char> encoded{prefix};
+        encoded.insert(encoded.end(), x.begin(), x.end());
+        EcKey* publicOnly = EC_KEY_new_by_curve_name_nid_postfix(415);
+        EcPoint* point = EC_POINT_new_nid_postfix(group);
+        Require(Decode(group, point, encoded) == 1 && EC_KEY_set_public_key_nid_postfix(publicOnly, point) == 1, "the reduced private key times the generator");
+        Require(SharedSecret(peer, point, 32) == secret, "ECDH reduces a private key kept from a larger group by the order");
+        verified += Verify(digest, signature, publicOnly);
+        EC_POINT_free_nid_postfix(point);
+        EC_KEY_free_nid_postfix(publicOnly);
+    }
+    Require(verified == 1, "ECDSA_sign reduces a private key kept from a larger group by the order");
+    EC_KEY_free_nid_postfix(peer);
+    EC_POINT_free_nid_postfix(generator);
+    EC_GROUP_free_nid_postfix(group);
+    EC_KEY_free_nid_postfix(key);
+}
+
+static void CheckEcdhOutput() {
+    EcKey* key = GeneratedKey(415);
+    EcKey* peer = GeneratedKey(415);
+    const EcPoint* peerKey = EC_KEY_get0_public_key_nid_postfix(peer);
+    const std::vector<unsigned char> secret = SharedSecret(key, peerKey, 32);
+    std::vector<unsigned char> out(40, 0xcc);
+    ERR_clear_error_nid_postfix();
+    Require(ECDH_compute_key_nid_postfix(out.data(), 31, peerKey, key, nullptr) == -1, "an output shorter than the secret without a KDF");
+    RequireError(43, 104, "ECDH_R_KEY_TRUNCATION");
+    Require(ECDH_compute_key_nid_postfix(out.data(), out.size(), peerKey, key, nullptr) == 32, "a longer output takes the whole secret");
+    Require(std::vector<unsigned char>(out.begin(), out.begin() + 32) == secret, "the secret is copied first");
+    Require(std::vector<unsigned char>(out.begin() + 32, out.end()) == std::vector<unsigned char>(8, 0), "the rest of a longer output is zeroed");
+    std::vector<unsigned char> derived(10, 0xcc);
+    Require(ECDH_compute_key_nid_postfix(derived.data(), derived.size(), peerKey, key, ReverseKdf) == 10, "a KDF sets the returned length");
+    for (std::size_t i = 0; i < derived.size(); ++i) Require(derived[i] == secret[31 - i], "the KDF receives the whole secret");
+    Require(ECDH_compute_key_nid_postfix(derived.data(), derived.size(), peerKey, key, FailingKdf) == -1, "a failing KDF");
+    RequireError(43, 102, "ECDH_R_KDF_FAILED");
+    EC_KEY_free_nid_postfix(peer);
+    EC_KEY_free_nid_postfix(key);
+}
+
+static void CheckEcdhArguments() {
+    EcKey* key = GeneratedKey(415);
+    EcKey* publicOnly = KnownKey(KnownPoints[1]);
+    const EcPoint* peerKey = EC_KEY_get0_public_key_nid_postfix(publicOnly);
+    std::vector<unsigned char> out(32);
+    ERR_clear_error_nid_postfix();
+    Require(ECDH_compute_key_nid_postfix(out.data(), out.size(), peerKey, publicOnly, nullptr) == -1, "ECDH_compute_key without a private key");
+    RequireError(43, 100, "ECDH_R_NO_PRIVATE_VALUE");
+    Require(ECDH_compute_key_nid_postfix(out.data(), static_cast<std::size_t>(INT_MAX) + 1, peerKey, key, nullptr) == -1, "an output length above INT_MAX");
+    RequireError(43, 65, "ERR_R_MALLOC_FAILURE for an output length above INT_MAX");
+    Require(ECDH_compute_key_nid_postfix(out.data(), out.size(), nullptr, key, nullptr) == -1, "a null peer key");
+    Require(ERR_get_error_nid_postfix() == ErrorCode(16, 106), "EC_R_POINT_AT_INFINITY for a null peer key");
+    RequireError(43, 101, "ECDH_R_POINT_ARITHMETIC_FAILURE for a null peer key");
+    EcPoint* point = EC_POINT_new_nid_postfix(EC_KEY_get0_group_nid_postfix(key));
+    Require(ECDH_compute_key_nid_postfix(out.data(), out.size(), point, key, nullptr) == -1, "a peer key at infinity");
+    Require(ERR_get_error_nid_postfix() == ErrorCode(16, 106), "EC_R_POINT_AT_INFINITY for a peer key at infinity");
+    RequireError(43, 101, "ECDH_R_POINT_ARITHMETIC_FAILURE for a peer key at infinity");
+    std::vector<unsigned char> offCurve = Bytes(KnownPoints[1].uncompressed);
+    offCurve.back() ^= 1;
+    Require(Decode(EC_KEY_get0_group_nid_postfix(key), point, offCurve) == 0, "a peer key off the curve");
+    ERR_clear_error_nid_postfix();
+    RequireThrows([&] { ECDH_compute_key_nid_postfix(out.data(), out.size(), point, key, nullptr); }, "ECDH_compute_key with a peer key off the curve");
+    RequireThrows([&] { ECDH_compute_key_nid_postfix(out.data(), out.size(), peerKey, nullptr, nullptr); }, "ECDH_compute_key of a null key");
+    RequireThrows([&] { ECDH_compute_key_nid_postfix(nullptr, out.size(), peerKey, key, nullptr); }, "ECDH_compute_key into a null output without a KDF");
+    EcKey* other = GeneratedKey(715);
+    RequireThrows([&] { ECDH_compute_key_nid_postfix(out.data(), out.size(), EC_KEY_get0_public_key_nid_postfix(other), key, nullptr); }, "ECDH_compute_key with another curve's peer key");
+    Require(EC_KEY_set_group_nid_postfix(key, nullptr) == 0, "dropping the key's group");
+    Require(ECDH_compute_key_nid_postfix(out.data(), out.size(), peerKey, key, nullptr) == -1, "ECDH_compute_key without a group");
+    Require(ERR_get_error_nid_postfix() == ErrorCode(16, 67), "ERR_R_PASSED_NULL_PARAMETER from EC_POINT_new without a group");
+    RequireError(43, 65, "ERR_R_MALLOC_FAILURE after EC_POINT_new fails");
+    EC_KEY_free_nid_postfix(other);
+    EC_POINT_free_nid_postfix(point);
+    EC_KEY_free_nid_postfix(publicOnly);
+    EC_KEY_free_nid_postfix(key);
+}
+
+static void InitializeHeap() {
+    void* const api[10] {};
+    ApplicationHeapRegister_nid_no_patch(api);
+}
+
 int main() {
+    InitializeHeap();
     CheckNamedCurves();
     CheckOtherNids();
     CheckSetGroup();
@@ -672,5 +844,10 @@ int main() {
     CheckEcdsaPreviousGroupKey();
     CheckEcdsaDigestTruncation();
     CheckEcdsaArguments();
+    CheckEcdhAgreement();
+    CheckEcdhGenerator();
+    CheckEcdhPreviousGroupKey();
+    CheckEcdhOutput();
+    CheckEcdhArguments();
     return 0;
 }
