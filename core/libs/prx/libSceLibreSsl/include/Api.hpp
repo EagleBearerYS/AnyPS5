@@ -426,7 +426,7 @@ const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t err
 int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void);
 int APS5_VABI d2i_PKCS12_bio_nid_postfix(void);
 int APS5_VABI d2i_PKCS12_fp_nid_postfix(void);
-int APS5_VABI d2i_RSA_PUBKEY_nid_postfix(void);
+LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length);
 int APS5_VABI d2i_X509_nid_postfix(void);
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(void);
 int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void);
