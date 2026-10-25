@@ -1,11 +1,15 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 
 struct TestBignum {
     std::uint64_t* d;
@@ -111,8 +115,105 @@ static void TestSize() {
     RequireThrows([] { RSA_size_nid_postfix(nullptr); });
 }
 
+constexpr int BignumStaticData = 0x02;
+constexpr int BignumMalloced = 0x01;
+
+struct Finishes {
+    int calls;
+    LibreSslRsa* rsa;
+};
+
+static Finishes finishes;
+
+static int APS5_VABI RecordFinish(LibreSslRsa* rsa) {
+    ++finishes.calls;
+    finishes.rsa = rsa;
+    return 1;
+}
+
+static void InitializeHeap() {
+    void* const api[10] {};
+    ApplicationHeapRegister_nid_no_patch(api);
+}
+
+static bool Zero(const void* data, std::size_t size) {
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    for (std::size_t index = 0; index < size; ++index)
+        if (bytes[index]) return false;
+    return true;
+}
+
+static TestBignum* AllocatedBignum(std::uint64_t value) {
+    auto* number = static_cast<TestBignum*>(malloc_nid_postfix(sizeof(TestBignum)));
+    auto* words = static_cast<std::uint64_t*>(malloc_nid_postfix(2 * sizeof(std::uint64_t)));
+    Require(number != nullptr && words != nullptr);
+    words[0] = value;
+    words[1] = 0;
+    *number = {words, 1, 2, 0, BignumMalloced};
+    return number;
+}
+
+static void TestNew() {
+    auto* rsa = RSA_new_nid_postfix();
+    Require(rsa != nullptr && rsa->meth != nullptr);
+    Require(rsa->pad == 0 && rsa->version == 0 && rsa->engine == nullptr && rsa->references == 1 && rsa->flags == 0x0006);
+    for (void* field : {rsa->n, rsa->e, rsa->d, rsa->p, rsa->q, rsa->dmp1, rsa->dmq1, rsa->iqmp, rsa->exData}) Require(field == nullptr);
+    for (void* field : {rsa->methodModN, rsa->methodModP, rsa->methodModQ, rsa->blinding, rsa->mtBlinding}) Require(field == nullptr);
+    const auto* method = rsa->meth;
+    Require(std::string(method->name) == "Eric Young's PKCS#1 RSA" && method->flags == 0 && method->appData == nullptr);
+    for (void* operation : method->operations) Require(operation != nullptr);
+    Require(method->sign == nullptr && method->verify == nullptr && method->keygen == nullptr);
+    Require(RSA_flags_nid_postfix(rsa) == 0);
+    auto* second = RSA_new_nid_postfix();
+    Require(second != nullptr && second != rsa && second->meth == method);
+    RSA_free_nid_postfix(second);
+    RSA_free_nid_postfix(rsa);
+}
+
+static void TestFree() {
+    RSA_free_nid_postfix(nullptr);
+    auto* rsa = RSA_new_nid_postfix();
+    std::uint64_t words[4] {0x1234, 0x5678, 0, 0};
+    TestBignum stored {words, 2, 4, 0, BignumStaticData};
+    rsa->n = &stored;
+    rsa->e = AllocatedBignum(65537);
+    rsa->d = AllocatedBignum(3);
+    rsa->references = 2;
+    RSA_free_nid_postfix(rsa);
+    Require(rsa->references == 1 && rsa->n == &stored && stored.top == 2);
+    RSA_free_nid_postfix(rsa);
+    Require(Zero(&stored, sizeof(stored)) && words[0] == 0x1234 && words[1] == 0x5678);
+
+    rsa = RSA_new_nid_postfix();
+    LibreSslRsaMethod method = *rsa->meth;
+    method.operations[7] = reinterpret_cast<void*>(RecordFinish);
+    rsa->meth = &method;
+    finishes = {};
+    RSA_free_nid_postfix(rsa);
+    Require(finishes.calls == 1 && finishes.rsa == rsa);
+    method.operations[7] = nullptr;
+    rsa = RSA_new_nid_postfix();
+    rsa->meth = &method;
+    RSA_free_nid_postfix(rsa);
+    Require(finishes.calls == 1);
+
+    int marker = 0;
+    for (int field = 0; field < 5; ++field) {
+        rsa = RSA_new_nid_postfix();
+        void** slots[] {&rsa->engine, &rsa->exData, &rsa->blinding, &rsa->mtBlinding, &rsa->methodModN};
+        *slots[field] = &marker;
+        RequireThrows([&] { RSA_free_nid_postfix(rsa); });
+    }
+    rsa = RSA_new_nid_postfix();
+    rsa->meth = nullptr;
+    RequireThrows([&] { RSA_free_nid_postfix(rsa); });
+}
+
 int main() {
+    InitializeHeap();
     TestFlags();
     TestSize();
+    TestNew();
+    TestFree();
     std::puts("libSceLibreSsl RSA tests passed");
 }
