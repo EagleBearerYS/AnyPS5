@@ -1,0 +1,3 @@
+BASE=d2b3ee3bcc8b3724ab953ea7d1b9419e07a38346
+REPEAT=10
+EXTRA_TESTS='guest_np_web_api2|guest_bluetooth_hid'
