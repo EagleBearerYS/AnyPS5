@@ -1,0 +1,3 @@
+BASE=042dc0ade7dcaac81d57d3b79d7cc3c941305494
+REPEAT=10
+EXTRA_TESTS='guest_pad|pad_sdl|ime_dialog_pad_keyboard|guest_ime_pad_route|guest_ime_dialog|agc_keyboard_overlay|^agc_performance_overlay'
