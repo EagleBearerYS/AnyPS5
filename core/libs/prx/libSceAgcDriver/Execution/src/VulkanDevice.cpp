@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -634,6 +635,7 @@ struct VulkanDevice::State {
         auto memory = std::make_shared<WorkgroupMemory>();
         memory->device = device;
         memory->destroyPool = DeviceFunction<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool");
+        const MemoryCensus::Scope census(MemoryCensus::Owner::Lds);
         memory->buffer = std::make_unique<Graphics::DeviceBuffer>(context, static_cast<std::size_t>(size), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -713,6 +715,7 @@ struct VulkanDevice::State {
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = memoryType;
+            const MemoryCensus::Scope census(MemoryCensus::Owner::Presentation);
             check(DeviceFunction<PFN_vkAllocateMemory>("vkAllocateMemory")(device, &allocation, nullptr, &uploadMemory), "vkAllocateMemory display upload");
             check(DeviceFunction<PFN_vkBindBufferMemory>("vkBindBufferMemory")(device, uploadBuffer, uploadMemory, 0), "vkBindBufferMemory display upload");
             check(DeviceFunction<PFN_vkMapMemory>("vkMapMemory")(device, uploadMemory, 0, pixels.size(), 0, &uploadMapping), "vkMapMemory display upload");
@@ -1185,7 +1188,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->window = window->context;
         APS5_LOG_OUT("Vulkan surface created surface=%p window=%p", reinterpret_cast<void*>(state->surface), state->window);
     }
-    state->deviceProc = state->InstanceFunction<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
+    state->deviceProc = MemoryCensus::Wrap(state->InstanceFunction<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr"));
     const auto enumerate = state->InstanceFunction<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
     std::uint32_t count = 0;
     check(enumerate(state->instance, &count, nullptr), "vkEnumeratePhysicalDevices");
@@ -4230,6 +4233,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.sampleLocationGridSizes = state->sampleLocationGridSizes;
     context.shaderStencilExport = state->shaderStencilExport;
     context.memoryProperties2 =state->memoryBudget ? state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2") : nullptr;
+    MemoryCensus::NoteDevice(context.device, context.physical, context.memoryProperties2, context.memory);
     context.singlePassStorage = state->storageImageWithoutFormat;
     context.cacheReclaim = Graphics::ReleaseTextureCaches;
     return context;

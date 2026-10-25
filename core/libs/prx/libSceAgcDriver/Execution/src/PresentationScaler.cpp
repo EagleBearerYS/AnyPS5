@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -54,6 +55,7 @@ void PresentationScaler::EnsureSourceImage(std::uint32_t width, std::uint32_t he
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocation.allocationSize = requirements.size;
     allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "presentation source");
+    const MemoryCensus::Scope census(MemoryCensus::Owner::Presentation);
     sourceMemory = Graphics::AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory presentation source", &sourceMemoryType, true);
     sourceBytes = requirements.size;
     Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, sourceImage, sourceMemory, 0), "vkBindImageMemory presentation source");
