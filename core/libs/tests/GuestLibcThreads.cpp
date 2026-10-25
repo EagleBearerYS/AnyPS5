@@ -1,3 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
@@ -8,32 +12,7 @@
 #include <thread>
 
 extern "C" {
-int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type);
-void APS5_VABI _Mtx_destroy_nid_postfix(void** handle);
-int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
-int APS5_VABI _Mtx_unlock_nid_postfix(void** handle);
-int APS5_VABI _Cnd_init_nid_postfix(void** handle);
-void APS5_VABI _Cnd_destroy_nid_postfix(void** handle);
-int APS5_VABI _Cnd_wait_nid_postfix(void** condition, void** mutex);
-int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle);
-int APS5_VABI _Cnd_signal_nid_postfix(void** handle);
 
-struct GuestPad {
-    unsigned (APS5_VABI* const* vtable)(GuestPad*);
-    void* condition;
-    void* mutex;
-    bool started;
-};
-
-void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad);
-void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad);
-void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad);
-void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread);
-int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code);
-int APS5_VABI _Thrd_detach_nid_postfix(void* thread);
-void RegisterPthreadCreate_nid_no_patch(int (APS5_VABI* fn)(void**, const void*, void* (APS5_VABI*)(void*), void*));
-void RegisterPthreadJoin_nid_no_patch(int (APS5_VABI* fn)(void*, void**));
-void RegisterPthreadDetach_nid_no_patch(int (APS5_VABI* fn)(void*));
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -77,10 +56,12 @@ static void MutexBasics() {
     RequireThrows<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&foreignMutex); });
     _Cnd_destroy_nid_postfix(&foreignCondition);
     _Mtx_destroy_nid_postfix(&mutex);
+
     Require(mutex == nullptr);
     RequireThrows<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&mutex); });
     void* emptyMutex = nullptr;
     _Mtx_destroy_nid_postfix(&emptyMutex);
+
     RequireThrows<std::invalid_argument>([] { _Mtx_destroy_nid_postfix(nullptr); });
 
     void* plainMutex = CreateMutex(plain);
@@ -98,11 +79,13 @@ static void MutexBasics() {
     Require(_Mtx_lock_nid_postfix(&defaultMutex) == success && _Mtx_lock_nid_postfix(&defaultMutex) == busy);
     Require(_Mtx_unlock_nid_postfix(&defaultMutex) == success);
     _Mtx_destroy_nid_postfix(&defaultMutex);
+
     void* unknownBitsMutex = nullptr;
     Require(_Mtx_init_nid_postfix(&unknownBitsMutex, tryable | 0x8) == success && unknownBitsMutex != nullptr);
     Require(_Mtx_lock_nid_postfix(&unknownBitsMutex) == success && _Mtx_lock_nid_postfix(&unknownBitsMutex) == busy);
     Require(_Mtx_unlock_nid_postfix(&unknownBitsMutex) == success);
     _Mtx_destroy_nid_postfix(&unknownBitsMutex);
+
     RequireThrows<std::invalid_argument>([] { _Mtx_init_nid_postfix(nullptr, tryable); });
     RequireThrows<std::invalid_argument>([] { _Mtx_lock_nid_postfix(nullptr); });
     RequireThrows<std::invalid_argument>([] { _Mtx_unlock_nid_postfix(nullptr); });
@@ -124,6 +107,7 @@ static void RecursiveMutex() {
     other.join();
     Require(acquired);
     _Mtx_destroy_nid_postfix(&mutex);
+
 }
 
 static void MutualExclusion() {
@@ -140,6 +124,7 @@ static void MutualExclusion() {
     for (auto& worker : workers) worker.join();
     Require(counter == 80000);
     _Mtx_destroy_nid_postfix(&mutex);
+
 }
 
 static void ConditionBroadcast() {
@@ -185,12 +170,15 @@ static void ConditionBroadcast() {
     RequireThrows<std::invalid_argument>([] { _Cnd_broadcast_nid_postfix(nullptr); });
     RequireThrows<std::invalid_argument>([] { _Cnd_init_nid_postfix(nullptr); });
     _Cnd_destroy_nid_postfix(&condition);
+
     Require(condition == nullptr);
     RequireThrows<std::invalid_argument>([&] { _Cnd_broadcast_nid_postfix(&condition); });
     void* emptyCondition = nullptr;
     _Cnd_destroy_nid_postfix(&emptyCondition);
+
     RequireThrows<std::invalid_argument>([] { _Cnd_destroy_nid_postfix(nullptr); });
     _Mtx_destroy_nid_postfix(&mutex);
+
 }
 
 static void ConditionSignal() {
@@ -198,6 +186,7 @@ static void ConditionSignal() {
     Require(_Cnd_init_nid_postfix(&condition) == success);
     Require(_Cnd_signal_nid_postfix(&condition) == success);
     _Cnd_destroy_nid_postfix(&condition);
+
 }
 
 struct TestPad {
@@ -239,6 +228,7 @@ static unsigned APS5_VABI TestPadGo(GuestPad* base) {
     auto* pad = reinterpret_cast<TestPad*>(base);
     pad->ran.store(true);
     _ZNSt4_Pad8_ReleaseEv_nid_postfix(base);
+
     return 42;
 }
 
@@ -247,15 +237,18 @@ static void PadLaunchAndJoin() {
     TestPad unregPad{};
     unregPad.vtable = vtable;
     _ZNSt4_PadC2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&unregPad));
+
     RegisterPthreadCreate_nid_no_patch(nullptr);
     RegisterPthreadJoin_nid_no_patch(nullptr);
     void* unregThread = nullptr;
     RequireThrows<std::runtime_error>([&] {
         _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&unregPad), &unregThread);
+
     });
     RequireThrows<std::runtime_error>([&] {
         int code = 0;
         _Thrd_join_nid_postfix(&unregPad, &code);
+
     });
     _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&unregPad));
 
@@ -265,10 +258,13 @@ static void PadLaunchAndJoin() {
     TestPad pad{};
     pad.vtable = vtable;
     _ZNSt4_PadC2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+
     void* thread = nullptr;
     _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &thread);
+
     Require(thread != nullptr && pad.started && pad.ran.load());
     _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+
     int code = 0;
     Require(_Thrd_join_nid_postfix(thread, &code) == success && code == 42);
     Require(_Thrd_join_nid_postfix(nullptr, &code) == 4);
@@ -288,10 +284,13 @@ static void PadDetach() {
     TestPad pad{};
     pad.vtable = vtable;
     _ZNSt4_PadC2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+
     void* thread = nullptr;
     _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &thread);
+
     Require(thread != nullptr && pad.ran.load());
     _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+
     Require(_Thrd_detach_nid_postfix(thread) == success);
     Require(_Thrd_detach_nid_postfix(nullptr) == 4);
 
@@ -299,7 +298,149 @@ static void PadDetach() {
     RegisterPthreadDetach_nid_no_patch(nullptr);
 }
 
+static void KernelKeys() {
+    Require(_Thrd_current_nid_postfix() == scePthreadSelf());
+    Require(_Thrd_id_nid_postfix() == scePthreadSelf());
+    int key = -1;
+    Require(_Tss_create_nid_postfix(&key, nullptr) == success && key >= 0);
+    int value = 0;
+    Require(_Tss_get_nid_postfix(key) == nullptr);
+    Require(_Tss_set_nid_postfix(key, &value) == success && _Tss_get_nid_postfix(key) == &value);
+    Require(_Tss_delete_nid_postfix(key) == success);
+}
+
+struct ForwardLog {
+    std::int32_t* flag;
+    void (APS5_VABI* function)(void);
+    int key;
+    void* value;
+    void* first;
+    void* second;
+};
+static ForwardLog forwardLog;
+
+static int APS5_VABI FakeOnce(std::int32_t* flag, void (APS5_VABI* function)(void)) {
+    forwardLog.flag = flag;
+    forwardLog.function = function;
+    return 7;
+}
+static int APS5_VABI FakeKeyCreate(int* key, void (APS5_VABI*)(void*)) { *key = 41; return 0x80020016; }
+static int APS5_VABI FakeKeyDelete(int key) { forwardLog.key = key; return 0x80020002; }
+static void* APS5_VABI FakeGetSpecific(int key) { forwardLog.key = key; return &forwardLog; }
+static int APS5_VABI FakeSetSpecific(int key, void* value) { forwardLog.key = key; forwardLog.value = value; return 0; }
+static int APS5_VABI FakeEqual(void* first, void* second) { forwardLog.first = first; forwardLog.second = second; return 1; }
+static void* APS5_VABI FakeSelf() { return &forwardLog.key; }
+static void APS5_VABI FakeExit(void*) { std::abort(); }
+static void APS5_VABI OnceTarget() {}
+
+static void ForwardedCalls() {
+    static const ThreadForwards_nid_no_patch fakes{FakeOnce, FakeKeyCreate, FakeKeyDelete, FakeGetSpecific, FakeSetSpecific, FakeEqual, FakeSelf, FakeExit};
+    RegisterThreadForwards_nid_no_patch(&fakes);
+    std::int32_t flag = 0;
+    _Call_once_nid_postfix(&flag, OnceTarget);
+
+    Require(forwardLog.flag == &flag && forwardLog.function == OnceTarget);
+    int key = 0;
+    Require(_Tss_create_nid_postfix(&key, nullptr) == static_cast<int>(0x80020016) && key == 41);
+    Require(_Tss_delete_nid_postfix(5) == static_cast<int>(0x80020002) && forwardLog.key == 5);
+    Require(_Tss_get_nid_postfix(6) == &forwardLog && forwardLog.key == 6);
+    Require(_Tss_set_nid_postfix(8, &flag) == success && forwardLog.key == 8 && forwardLog.value == &flag);
+    Require(_Thrd_equal_nid_postfix(&flag, &key) == 1 && forwardLog.first == &flag && forwardLog.second == &key);
+    Require(_Thrd_current_nid_postfix() == &forwardLog.key);
+    Require(_Thrd_id_nid_postfix() == &forwardLog.key);
+    Require(_Mtx_current_owns_nid_postfix(nullptr) == 1);
+
+    RegisterThreadForwards_nid_no_patch(nullptr);
+    RequireThrows<std::runtime_error>([] { _Thrd_current_nid_postfix(); });
+    RequireThrows<std::runtime_error>([] { _Thrd_id_nid_postfix(); });
+    RequireThrows<std::runtime_error>([] { _Tss_get_nid_postfix(0); });
+}
+
+struct VersionedShared {
+    PthreadMutex mutex = nullptr;
+    PthreadCond condition = nullptr;
+    std::atomic<int> stage{0};
+    int tryResult = -1;
+};
+
+static void* APS5_VABI VersionedWorker(void* argument) {
+    auto* shared = static_cast<VersionedShared*>(argument);
+    shared->tryResult = _ZNSt8__sce_v212_Mtx_trylockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&shared->mutex));
+    shared->stage = 1;
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&shared->mutex)) == success);
+    shared->stage = 2;
+    Require(_ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(reinterpret_cast<void**>(&shared->condition)) == success);
+    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&shared->mutex)) == success);
+    return reinterpret_cast<void*>(std::intptr_t{42});
+}
+
+static void* APS5_VABI DetachedWorker(void*) { return nullptr; }
+
+static void VersionedSync() {
+    PthreadMutex recursiveMutex = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+    Require(_ZNSt8__sce_v29_Mtx_initEPP13pthread_mutexi_nid_postfix(reinterpret_cast<void**>(&recursiveMutex), plain | recursive) == success && recursiveMutex != nullptr);
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&recursiveMutex)) == success);
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&recursiveMutex)) == success);
+    Require(_ZNSt8__sce_v212_Mtx_trylockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&recursiveMutex)) == success);
+    for (int unlock = 0; unlock < 3; ++unlock) Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&recursiveMutex)) == success);
+    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&recursiveMutex)) == success);
+
+    PthreadMutex plainMutex = nullptr;
+    Require(_ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(reinterpret_cast<void**>(&plainMutex), plain, "") == success);
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainMutex)) == success);
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainMutex)) == busy);
+    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainMutex)) == success);
+    PthreadCond unownedCondition = nullptr;
+    Require(_ZNSt8__sce_v29_Cnd_initEPP12pthread_cond_nid_postfix(reinterpret_cast<void**>(&unownedCondition)) == success);
+    Require(scePthreadMutexUnlock(&plainMutex) != 0);
+    Require(scePthreadCondWait(&unownedCondition, &plainMutex) != 0);
+    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainMutex)) == success);
+    Require(_ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&unownedCondition), reinterpret_cast<void**>(&plainMutex)) == success);
+    Require(_ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(reinterpret_cast<void**>(&unownedCondition)) == success);
+    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainMutex)) == success);
+
+    VersionedShared shared;
+    Require(_ZNSt8__sce_v29_Mtx_initEPP13pthread_mutexi_nid_postfix(reinterpret_cast<void**>(&shared.mutex), plain) == success);
+    Require(_ZNSt8__sce_v219_Cnd_init_with_nameEPP12pthread_condPKc_nid_postfix(reinterpret_cast<void**>(&shared.condition), "versioned") == success);
+    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&shared.mutex)) == success);
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, VersionedWorker, &shared, "versioned") == 0);
+    while (shared.stage.load() == 0) std::this_thread::yield();
+    while (shared.stage.load() == 1) Require(_ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&shared.condition), reinterpret_cast<void**>(&shared.mutex)) == success);
+    Require(shared.tryResult == busy);
+    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&shared.mutex)) == success);
+    int code = 0;
+    Require(_ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(thread, &code) == success && code == 42);
+    Require(_ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(thread, &code) == 4);
+    Require(_ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(reinterpret_cast<void**>(&shared.condition)) == success);
+    Require(_ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(reinterpret_cast<void**>(&shared.condition)) == success);
+    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&shared.mutex)) == success);
+
+    PthreadCond condition = nullptr;
+    Require(_ZNSt8__sce_v29_Cnd_initEPP12pthread_cond_nid_postfix(reinterpret_cast<void**>(&condition)) == success);
+    Require(_ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(reinterpret_cast<void**>(&condition)) == success);
+
+    Pthread detached = nullptr;
+    Require(scePthreadCreate(&detached, nullptr, DetachedWorker, nullptr, "detached") == 0);
+    Require(_ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(detached) == success);
+    Require(_ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(nullptr) == 4);
+    _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix();
+
+    Require(_ZNSt8__sce_v28_Thrd_idEv_nid_postfix() != nullptr);
+}
+
+static void ThreadHelpers() {
+    Require(_Thrd_yield_nid_postfix() == success);
+    std::thread other([&] {
+        Require(_Thrd_yield_nid_postfix() == success);
+    });
+    other.join();
+}
+
 int main() {
+    KernelKeys();
+    VersionedSync();
+    ForwardedCalls();
     MutexBasics();
     RecursiveMutex();
     MutualExclusion();
@@ -307,4 +448,5 @@ int main() {
     ConditionSignal();
     PadLaunchAndJoin();
     PadDetach();
+    ThreadHelpers();
 }
