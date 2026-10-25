@@ -1,5 +1,6 @@
-READY 2026-10-25T03:03:26Z: finished BF-201, watching the board
-since: 2026-10-25T03:03:26Z (BF-201 done)
+BUSY BF-204
+since: 2026-10-25T05:35:58Z (claimed 2026-10-25T05:35:58Z)
+claimed: tasks/claimed/BF-204.md
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 52a8bed57)
 last: BF-201 done, result results/cloud-4/BF-201.md; feat/scepad-light-bar-and-handle-calls at 63ef18b43 on the fork (4 of 5 rows, scePadGetBluetoothAddress dropped)
 baseline: CI Linux mirror on 63ef18b43 (upstream main 52a8bed57 + 3 commits): 2211 tests, 2116 passed, 90 skipped, 5 failed (the IPv6 guest socket tests; check_skips flags only guest_sce_net, IPv6 loopback)
