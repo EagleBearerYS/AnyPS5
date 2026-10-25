@@ -1,5 +1,6 @@
-READY 2026-10-25T15:11:18Z: BF-233 done; watching the board
-since: 2026-10-25T15:11:18Z (BF-233 finished)
+BUSY BF-237
+since: 2026-10-25T15:11:41Z (claimed 2026-10-25T15:11:31Z)
+claimed: tasks/claimed/BF-237.md
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 3a2c51afd2)
 last: BF-233 done, result results/cloud-4/BF-233.md; fork perf/agc-draw-cache-low-hit-bypass at 5729d4237b (#5404's draw-cache bypass under 5% hits ported to main 3a2c51afd2, APS5_DRAW_CACHE_BYPASS_PERCENT, co-authored by Benjamin Cortez); lane bench: 7.8 -> 0.2 MiB at 3.3% hits, ms per draw unchanged, no high-hit slowdown; Village pending (PC)
 baseline: CI Linux mirror on 5729d4237b (upstream main 3a2c51afd2 + 1): 2265 tests, 2168 passed, 91 skipped, 6 failed (the IPv6 guest socket tests, including guest_net_protocol; check_skips flags only guest_sce_net, IPv6 loopback)
