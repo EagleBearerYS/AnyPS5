@@ -308,6 +308,117 @@ static void CheckPointArguments() {
     EC_GROUP_free_nid_postfix(group);
 }
 
+static EcKey* GeneratedKey(int nid) {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(nid);
+    Require(key != nullptr && EC_KEY_generate_key_nid_postfix(key) == 1, "EC_KEY_generate_key");
+    return key;
+}
+
+static void CheckKeyGeneration() {
+    ERR_clear_error_nid_postfix();
+    for (const KnownPoint& known : KnownPoints) {
+        EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(known.nid);
+        const EcGroup* group = EC_KEY_get0_group_nid_postfix(key);
+        Require(EC_KEY_get0_public_key_nid_postfix(key) == nullptr, "a new key has no public key");
+        Require(EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key without a public key");
+        RequireError(16, 67, "ERR_R_PASSED_NULL_PARAMETER for a key without a public key");
+        Require(EC_KEY_generate_key_nid_postfix(key) == 1, "EC_KEY_generate_key");
+        const EcPoint* publicKey = EC_KEY_get0_public_key_nid_postfix(key);
+        Require(publicKey != nullptr && EC_KEY_check_key_nid_postfix(key) == 1, "a generated key checks");
+        const std::vector<unsigned char> first = Encode(group, publicKey, 4);
+        EcPoint* decoded = EC_POINT_new_nid_postfix(group);
+        Require(first.size() == 1 + 2 * known.field && Decode(group, decoded, first) == 1, "a generated public key is on the curve");
+        Require(EC_KEY_generate_key_nid_postfix(key) == 1 && EC_KEY_get0_public_key_nid_postfix(key) == publicKey, "generating again reuses the public key object");
+        Require(Encode(group, publicKey, 4) != first && EC_KEY_check_key_nid_postfix(key) == 1, "generating again makes a new key pair");
+        Require(ERR_get_error_nid_postfix() == 0, "no error from a good key");
+        EC_POINT_free_nid_postfix(decoded);
+        EC_KEY_free_nid_postfix(key);
+    }
+}
+
+static void CheckKeyPublicKeys() {
+    for (const KnownPoint& known : KnownPoints) {
+        EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(known.nid);
+        const EcGroup* group = EC_KEY_get0_group_nid_postfix(key);
+        EcPoint* point = EC_POINT_new_nid_postfix(group);
+        const std::vector<unsigned char> uncompressed = Bytes(known.uncompressed);
+        Require(Decode(group, point, uncompressed) == 1, "decoding a known public key");
+        Require(EC_KEY_set_public_key_nid_postfix(key, point) == 1, "EC_KEY_set_public_key");
+        const EcPoint* stored = EC_KEY_get0_public_key_nid_postfix(key);
+        Require(stored != nullptr && stored != point, "EC_KEY_set_public_key stores a copy");
+        EC_POINT_free_nid_postfix(point);
+        Require(Encode(group, stored, 4) == uncompressed, "the copy outlives the point it was made from");
+        Require(EC_KEY_check_key_nid_postfix(key) == 1, "a known public key without a private key checks");
+        Require(EC_KEY_set_public_key_nid_postfix(key, stored) == 1 && Encode(group, EC_KEY_get0_public_key_nid_postfix(key), 4) == uncompressed, "setting a key's own public key keeps its value");
+        point = EC_POINT_new_nid_postfix(group);
+        std::vector<unsigned char> offCurve = uncompressed;
+        offCurve.back() ^= 1;
+        Require(Decode(group, point, offCurve) == 0, "decoding a point off the curve");
+        RequireError(16, 107, "EC_R_POINT_IS_NOT_ON_CURVE from EC_POINT_oct2point");
+        Require(EC_KEY_set_public_key_nid_postfix(key, point) == 1, "setting a stored point off the curve");
+        Require(EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key of a point off the curve");
+        RequireError(16, 107, "EC_R_POINT_IS_NOT_ON_CURVE from EC_KEY_check_key");
+        Require(Decode(group, point, {0}) == 1 && EC_KEY_set_public_key_nid_postfix(key, point) == 1, "setting the point at infinity");
+        Require(EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key of the point at infinity");
+        RequireError(16, 106, "EC_R_POINT_AT_INFINITY");
+        Require(EC_KEY_set_public_key_nid_postfix(key, nullptr) == 0 && EC_KEY_get0_public_key_nid_postfix(key) == nullptr, "a null public key drops the previous one");
+        Require(ERR_get_error_nid_postfix() == 0, "no error queued for a null public key");
+        EC_POINT_free_nid_postfix(point);
+        EC_KEY_free_nid_postfix(key);
+    }
+}
+
+static void CheckKeyPairs() {
+    EcKey* first = GeneratedKey(415);
+    EcKey* second = GeneratedKey(415);
+    Require(EC_KEY_set_public_key_nid_postfix(first, EC_KEY_get0_public_key_nid_postfix(second)) == 1, "setting another key's public key");
+    Require(EC_KEY_check_key_nid_postfix(first) == 0, "a private key that does not match its public key");
+    RequireError(16, 123, "EC_R_INVALID_PRIVATE_KEY");
+    Require(EC_KEY_generate_key_nid_postfix(first) == 1 && EC_KEY_check_key_nid_postfix(first) == 1, "generating again repairs the pair");
+    EcGroup* larger = EC_GROUP_new_by_curve_name_nid_postfix(715);
+    EcGroup* smaller = EC_GROUP_new_by_curve_name_nid_postfix(415);
+    EcKey* moved = GeneratedKey(715);
+    Require(EC_KEY_set_group_nid_postfix(moved, smaller) == 1 && EC_KEY_set_public_key_nid_postfix(moved, EC_KEY_get0_public_key_nid_postfix(second)) == 1, "moving a P-384 key to P-256");
+    Require(EC_KEY_check_key_nid_postfix(moved) == 0, "a private key kept from a group with a larger order");
+    RequireError(16, 130, "EC_R_WRONG_ORDER");
+    EcKey* other = GeneratedKey(715);
+    Require(EC_KEY_set_group_nid_postfix(first, larger) == 1 && EC_KEY_set_public_key_nid_postfix(first, EC_KEY_get0_public_key_nid_postfix(other)) == 1, "moving a P-256 key to P-384");
+    Require(EC_KEY_check_key_nid_postfix(first) == 0, "a private key kept from a group with a smaller order");
+    RequireError(16, 123, "EC_R_INVALID_PRIVATE_KEY for a private key kept from a group with a smaller order");
+    EC_KEY_free_nid_postfix(other);
+    EC_KEY_free_nid_postfix(moved);
+    EC_GROUP_free_nid_postfix(smaller);
+    EC_GROUP_free_nid_postfix(larger);
+    EC_KEY_free_nid_postfix(second);
+    EC_KEY_free_nid_postfix(first);
+}
+
+static void CheckKeyArguments() {
+    ERR_clear_error_nid_postfix();
+    Require(EC_KEY_generate_key_nid_postfix(nullptr) == 0, "EC_KEY_generate_key of a null key");
+    RequireError(16, 67, "ERR_R_PASSED_NULL_PARAMETER for a null key");
+    EcKey* empty = EC_KEY_new_nid_postfix();
+    Require(EC_KEY_generate_key_nid_postfix(empty) == 0, "EC_KEY_generate_key without a group");
+    RequireError(16, 67, "ERR_R_PASSED_NULL_PARAMETER for a key without a group");
+    Require(EC_KEY_check_key_nid_postfix(nullptr) == 0, "EC_KEY_check_key of a null key");
+    RequireError(16, 67, "ERR_R_PASSED_NULL_PARAMETER from EC_KEY_check_key");
+    RequireThrows([] { EC_KEY_get0_public_key_nid_postfix(nullptr); }, "EC_KEY_get0_public_key of a null key");
+    EcKey* key = GeneratedKey(415);
+    RequireThrows([&] { EC_KEY_set_public_key_nid_postfix(nullptr, EC_KEY_get0_public_key_nid_postfix(key)); }, "EC_KEY_set_public_key of a null key");
+    Require(EC_KEY_set_public_key_nid_postfix(empty, EC_KEY_get0_public_key_nid_postfix(key)) == 0, "EC_KEY_set_public_key without a group");
+    RequireError(16, 67, "ERR_R_PASSED_NULL_PARAMETER from EC_KEY_set_public_key");
+    EcKey* other = GeneratedKey(715);
+    RequireThrows([&] { EC_KEY_set_public_key_nid_postfix(key, EC_KEY_get0_public_key_nid_postfix(other)); }, "EC_KEY_set_public_key with another curve's point");
+    EcGroup* group = EC_GROUP_new_by_curve_name_nid_postfix(715);
+    Require(EC_KEY_set_group_nid_postfix(key, group) == 1, "changing a key's group");
+    RequireThrows([&] { EC_KEY_check_key_nid_postfix(key); }, "EC_KEY_check_key of a public key from the previous group");
+    RequireThrows([&] { EC_KEY_generate_key_nid_postfix(key); }, "EC_KEY_generate_key into a public key from the previous group");
+    EC_GROUP_free_nid_postfix(group);
+    EC_KEY_free_nid_postfix(other);
+    EC_KEY_free_nid_postfix(key);
+    EC_KEY_free_nid_postfix(empty);
+}
+
 int main() {
     CheckNamedCurves();
     CheckOtherNids();
@@ -318,5 +429,9 @@ int main() {
     CheckCompressedRoots();
     CheckMalformedPoints();
     CheckPointArguments();
+    CheckKeyGeneration();
+    CheckKeyPublicKeys();
+    CheckKeyPairs();
+    CheckKeyArguments();
     return 0;
 }

@@ -21,10 +21,6 @@ struct EcGroup {
     mbedtls_ecp_group group;
 };
 
-struct EcKey {
-    std::unique_ptr<EcGroup> group;
-};
-
 struct EcNumber {
     EcNumber();
     ~EcNumber();
@@ -46,6 +42,13 @@ struct EcPoint {
     mbedtls_ecp_point point;
 };
 
+struct EcKey {
+    std::unique_ptr<EcGroup> group;
+    std::unique_ptr<EcPoint> publicKey{};
+    std::unique_ptr<EcNumber> privateKey{};
+};
+
+int EcRandom(void* context, unsigned char* output, std::size_t length);
 void EcPutError(int library, int reason);
 void EcCheck(int result, const char* operation);
 void EcRequireSameCurve(const EcGroup& group, const EcPoint& point, const char* function);
