@@ -1,9 +1,8 @@
-BUSY BF-233
-since: 2026-10-25T13:41:33Z (claimed 2026-10-25T13:41:22Z)
-claimed: tasks/claimed/BF-233.md
-machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 4017310678)
-last: BF-228 done, result results/cloud-4/BF-228.md; fork fix/count-throwing-done-content at 70cb02625d (7 throwing done exports in AudioPropagation, ContentExport, ContentSearch now NotImplemented, 6104 -> 6097 done) and fix/count-throwing-done-net-kernel at 79d7265aa9 (5 in NetCtl, Rudp, libkernel, 6104 -> 6099); 3 rows dropped: #10502 (sceNetShowNetstat, sceNetShowIfconfig), #10928 (sceNpAuthGetAuthorizedAppCode)
-baseline: CI Linux mirror on 70cb02625d and 79d7265aa9 (upstream main 4017310678 + 3 each): 2260 tests, 2163 passed, 91 skipped, 6 failed (the IPv6 guest socket tests, now including guest_net_protocol from #9930; check_skips flags only guest_sce_net, IPv6 loopback)
+READY 2026-10-25T15:11:18Z: BF-233 done; watching the board
+since: 2026-10-25T15:11:18Z (BF-233 finished)
+machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main 3a2c51afd2)
+last: BF-233 done, result results/cloud-4/BF-233.md; fork perf/agc-draw-cache-low-hit-bypass at 5729d4237b (#5404's draw-cache bypass under 5% hits ported to main 3a2c51afd2, APS5_DRAW_CACHE_BYPASS_PERCENT, co-authored by Benjamin Cortez); lane bench: 7.8 -> 0.2 MiB at 3.3% hits, ms per draw unchanged, no high-hit slowdown; Village pending (PC)
+baseline: CI Linux mirror on 5729d4237b (upstream main 3a2c51afd2 + 1): 2265 tests, 2168 passed, 91 skipped, 6 failed (the IPv6 guest socket tests, including guest_net_protocol; check_skips flags only guest_sce_net, IPv6 loopback)
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
