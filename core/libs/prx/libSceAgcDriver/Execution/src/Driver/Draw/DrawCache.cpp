@@ -26,6 +26,33 @@ bool Driver::drawEntries() {
     return entries;
 }
 
+std::uint32_t Driver::drawCacheBypassPercent() {
+    static const std::uint32_t percent = [] {
+        const char* text = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
+        return text != nullptr ? static_cast<std::uint32_t>(std::min<unsigned long long>(std::strtoull(text, nullptr, 10), 100)) : 5u;
+    }();
+    return percent;
+}
+
+DrawCacheBypass::DrawCacheBypass(std::uint32_t percent) : percent(std::min(percent, 100u)), minimumHits(Window * std::min(percent, 100u) / 100u) {}
+
+bool DrawCacheBypass::Skip() {
+    auto remaining = left.load(std::memory_order_relaxed);
+    while (remaining != 0) {
+        if (left.compare_exchange_weak(remaining, remaining - 1, std::memory_order_relaxed)) return true;
+    }
+    return false;
+}
+
+void DrawCacheBypass::Note(bool hit) {
+    if (minimumHits == 0) return;
+    if (hit) hits.fetch_add(1, std::memory_order_relaxed);
+    if (lookups.fetch_add(1, std::memory_order_relaxed) + 1 < Window) return;
+    const auto windowHits = hits.exchange(0, std::memory_order_relaxed);
+    lookups.store(0, std::memory_order_relaxed);
+    if (windowHits < minimumHits) left.store(BypassDraws, std::memory_order_relaxed);
+}
+
 bool Driver::drawDataHits() {
     static const bool hits = std::getenv("APS5_NO_DRAW_DATA_HITS") == nullptr;
     return hits;
