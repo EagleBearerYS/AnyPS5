@@ -26,6 +26,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentMode.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SwapchainImages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/KeyboardOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
@@ -520,6 +521,7 @@ struct VulkanDevice::State {
     std::unique_ptr<PresentationScaler> scaler;
     std::unique_ptr<PresentationPass> presentation;
     std::unique_ptr<PerformanceOverlay> overlay;
+    std::unique_ptr<PerformanceOverlay> keyboard;
     VkFormat surfaceFormat = VK_FORMAT_B8G8R8A8_UNORM;
     VkColorSpaceKHR surfaceColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     bool swapchainColorSpaces = false;
@@ -915,6 +917,7 @@ struct VulkanDevice::State {
             detiler.reset();
             colorTransfer.reset();
             overlay.reset();
+            keyboard.reset();
             presentation.reset();
             scaler.reset();
             hdrScaler.reset();
@@ -3546,6 +3549,9 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     auto& slot = state->presentSlots[state->presentCursor];
     require(!slot.inFlight, "presentation slot is still in flight");
     const bool overlay = PerformanceOverlay::Visible();
+    const auto keyboardView = SystemOverlayView();
+    const bool keyboard = keyboardView.has_value();
+    const bool drawsOver = overlay || keyboard;
     if (display != nullptr && resident == nullptr) {
         static_cast<void>(DisplayBufferSize(*display));
         state->colorTransfer->Upload(display->address, width, height, Graphics::ColorTileMode::RenderTarget, DisplayTexelBytes(display->pixelFormat));
@@ -3637,7 +3643,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         }
         if (drawn) {
             state->presentation->Bind(slotIndex, resident->Image(), width, height, display->pixelFormat, whiteNits, residentLayer);
-            state->presentation->RecordPresent(commands, slotIndex, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+            state->presentation->RecordPresent(commands, slotIndex, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawsOver ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         } else {
             scaler->RecordLetterbox(commands, width, height, barrier.image, state->extent.width, state->extent.height);
             if (direct) PresentationScaler::RecordBlitFrom(graphicsContext(), commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, width, height, residentFilter, barrier.image, state->extent.width, state->extent.height, residentLayer);
@@ -3675,11 +3681,15 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             Graphics::Recorder::CountBarriers(CommandClass::PresentBlit);
         }
     }
+    if (keyboard) {
+        if (!state->keyboard) state->keyboard = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
+        state->keyboard->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, LayOutKeyboard(*keyboardView, state->extent));
+    }
     if (overlay) {
         if (!state->overlay) state->overlay = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
         state->overlay->NotePresent(std::chrono::steady_clock::now(), clearOnly ? VkExtent2D{} : VkExtent2D{width, height}, OverlayPresentInfo{std::exchange(state->presentedAddress, 0), state->presentMode, presentCounters.acquireDrops});
-        state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-    } else if (!drawn) {
+        state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || keyboard ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    } else if (!drawn && !keyboard) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = 0;
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
