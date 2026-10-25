@@ -277,7 +277,7 @@ int APS5_VABI RSA_public_decrypt_nid_postfix(int length, const unsigned char* fr
 int APS5_VABI RSA_public_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding);
 int APS5_VABI RSA_sign_nid_postfix(void);
 int APS5_VABI RSA_size_nid_postfix(const LibreSslRsa* rsa);
-int APS5_VABI RSA_verify_nid_postfix(void);
+int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa);
 int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(void);
 int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(void);
 int APS5_VABI SSL_CIPHER_get_name_nid_postfix(void);

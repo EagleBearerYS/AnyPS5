@@ -645,6 +645,122 @@ static void TestPublicKeyChecks() {
     RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), nullptr, PaddingPkcs1); });
 }
 
+constexpr int DigestSha1 = 64;
+constexpr int DigestMd5Sha1 = 114;
+constexpr int DigestSha256 = 672;
+constexpr int RsaFlagSignVerify = 0x0040;
+
+static Bytes Sign(const Bytes& encoded) {
+    return Recover(Concat({{0x00, 0x01}, Bytes(253 - encoded.size(), 0xFF), {0x00}, encoded}));
+}
+
+static Bytes DigestInfo(const Bytes& object, const Bytes& parameter, const Bytes& digest) {
+    return Encode(0x30, Concat({Encode(0x30, Concat({Encode(0x06, object), parameter})), Encode(0x04, digest)}));
+}
+
+static int Verify(int type, const Bytes& digest, const Bytes& signature, LibreSslRsa* rsa) {
+    return RSA_verify_nid_postfix(type, digest.data(), static_cast<unsigned>(digest.size()), signature.data(), static_cast<unsigned>(signature.size()), rsa);
+}
+
+struct Verifies {
+    int calls;
+    int type;
+    const unsigned char* digest;
+    unsigned digestLength;
+    const unsigned char* signature;
+    unsigned signatureLength;
+    const LibreSslRsa* rsa;
+};
+
+static Verifies verifies;
+
+static int APS5_VABI RecordVerify(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, const LibreSslRsa* rsa) {
+    verifies = {verifies.calls + 1, type, digest, digestLength, signature, signatureLength, rsa};
+    return 55;
+}
+
+static void TestVerify() {
+    const auto spki = Hex(CavpSpki);
+    auto* rsa = Decode(spki, static_cast<long>(spki.size()));
+    const auto digest = Hex(CavpDigest);
+    const auto signature = Hex(CavpSignature);
+    Require(Verify(DigestSha256, digest, signature, rsa) == 1);
+    auto tampered = signature;
+    tampered[100] ^= 0x10;
+    Require(Verify(DigestSha256, digest, tampered, rsa) == 0);
+    auto wrong = digest;
+    wrong[31] ^= 1;
+    Require(Verify(DigestSha256, wrong, signature, rsa) == 0);
+    Require(Verify(DigestSha256, Bytes(digest.begin(), digest.end() - 1), signature, rsa) == 0);
+    Require(Verify(DigestSha256, Concat({digest, {0}}), signature, rsa) == 0);
+    for (int type : {DigestSha1, 0, 1, 673, 675, -1, 956, DigestMd5Sha1}) Require(Verify(type, digest, signature, rsa) == 0);
+    Require(Verify(DigestSha256, digest, Bytes(signature.begin() + 1, signature.end()), rsa) == 0);
+    Require(Verify(DigestSha256, digest, Concat({{0}, signature}), rsa) == 0);
+    const auto ssl = Pattern(36, 7);
+    const auto sslSignature = Sign(ssl);
+    Require(Verify(DigestMd5Sha1, ssl, sslSignature, rsa) == 1);
+    Require(Verify(DigestMd5Sha1, Bytes(ssl.begin(), ssl.end() - 1), sslSignature, rsa) == 0);
+    auto otherSsl = ssl;
+    otherSsl[35] ^= 1;
+    Require(Verify(DigestMd5Sha1, otherSsl, sslSignature, rsa) == 0);
+    Require(Verify(DigestMd5Sha1, ssl, Sign(Bytes(ssl.begin(), ssl.end() - 1)), rsa) == 0);
+    Require(Verify(DigestSha256, ssl, sslSignature, rsa) == 0);
+    RequireThrows([&] { RSA_verify_nid_postfix(DigestMd5Sha1, nullptr, 36, sslSignature.data(), 256, rsa); });
+    const auto sha256 = Hex("608648016503040201");
+    Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, Null, digest)), rsa) == 1);
+    Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, {}, digest)), rsa) == 1);
+    Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, {0x05, 0x81, 0x00}, digest)), rsa) == 1);
+    for (const auto& parameter : {Bytes {0x04, 0x00}, Bytes {0x05, 0x01, 0x00}, Bytes {0x30, 0x00}, Bytes {0x80, 0x00}, Bytes {0x01, 0x01, 0x00}, Concat({Null, Null})})
+        Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, parameter, digest)), rsa) == 0);
+    const auto algorithm = Encode(0x30, Concat({Encode(0x06, sha256), Null}));
+    Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), {0x00}})), rsa) == 0);
+    Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null}))), rsa) == 0);
+    Require(Verify(DigestSha256, digest, Sign(Encode(0x30, algorithm)), rsa) == 0);
+    Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x03, digest)}))), rsa) == 0);
+    Require(Verify(DigestSha256, digest, Sign(Encode(0x31, Concat({algorithm, Encode(0x04, digest)}))), rsa) == 0);
+    Require(Verify(DigestSha256, digest, Sign(Encode(0x04, digest)), rsa) == 0);
+    Require(Verify(0, digest, Sign(DigestInfo({}, Null, digest)), rsa) == 0);
+    Require(Verify(0, digest, Sign(DigestInfo({0x2A, 0x80}, Null, digest)), rsa) == 0);
+    RequireThrows([&] { Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x24, Encode(0x04, digest))}))), rsa); });
+    RequireThrows([&] { Verify(DigestSha256, digest, Sign(Concat({{0x30, 0x80}, algorithm, Encode(0x04, digest), {0x00, 0x00}})), rsa); });
+    const std::pair<int, const char*> objects[] {{3, "2a864886f70d0202"}, {4, "2a864886f70d0205"}, {41, "2b0e030212"}, {64, "2b0e03021a"}, {95, "55080365"},
+        {117, "2b24030201"}, {257, "2a864886f70d0204"}, {672, "608648016503040201"}, {673, "608648016503040202"}, {674, "608648016503040203"},
+        {675, "608648016503040204"}, {804, "28cf06030037"}, {809, "2a8503020209"}, {941, "2a85030701010202"}, {942, "2a85030701010203"}};
+    const auto hash = Pattern(20, 11);
+    for (std::size_t index = 0; index < std::size(objects); ++index) {
+        const auto encoded = Sign(DigestInfo(Hex(objects[index].second), Null, hash));
+        Require(Verify(objects[index].first, hash, encoded, rsa) == 1);
+        Require(Verify(objects[(index + 1) % std::size(objects)].first, hash, encoded, rsa) == 0);
+        Require(Verify(1, hash, encoded, rsa) == 0);
+    }
+    const auto unknown = Sign(DigestInfo({0x2A, 0x03, 0x04}, Null, hash));
+    for (int type : {-1, 956, 2000, DigestSha1, DigestSha256}) Require(Verify(type, hash, unknown, rsa) == 0);
+    for (int type : {0, 1, 955}) RequireThrows([&] { Verify(type, hash, unknown, rsa); });
+    const auto* defaultMethod = rsa->meth;
+    LibreSslRsaMethod method = *defaultMethod;
+    method.verify = reinterpret_cast<void*>(RecordVerify);
+    rsa->meth = &method;
+    verifies = {};
+    Require(Verify(DigestSha256, digest, signature, rsa) == 1 && verifies.calls == 0);
+    rsa->flags |= RsaFlagSignVerify;
+    Require(Verify(5, wrong, tampered, rsa) == 55);
+    Require(verifies.calls == 1 && verifies.type == 5 && verifies.digest == wrong.data() && verifies.digestLength == 32);
+    Require(verifies.signature == tampered.data() && verifies.signatureLength == 256 && verifies.rsa == rsa);
+    method.verify = nullptr;
+    Require(Verify(DigestSha256, digest, signature, rsa) == 1 && verifies.calls == 1);
+    rsa->meth = nullptr;
+    RequireThrows([&] { Verify(DigestSha256, digest, signature, rsa); });
+    rsa->flags &= ~RsaFlagSignVerify;
+    rsa->meth = defaultMethod;
+    RequireThrows([&] { Verify(DigestSha256, digest, signature, nullptr); });
+    RequireThrows([&] { RSA_verify_nid_postfix(DigestSha256, nullptr, 32, signature.data(), 256, rsa); });
+    Require(RSA_verify_nid_postfix(DigestSha256, nullptr, 32, tampered.data(), 256, rsa) == 0);
+    Require(RSA_verify_nid_postfix(DigestSha256, nullptr, 0, signature.data(), 256, rsa) == 0);
+    RequireThrows([&] { RSA_verify_nid_postfix(DigestSha256, digest.data(), 32, nullptr, 256, rsa); });
+    Require(RSA_verify_nid_postfix(DigestSha256, digest.data(), 32, nullptr, 255, rsa) == 0);
+    RSA_free_nid_postfix(rsa);
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -656,5 +772,6 @@ int main() {
     TestPublicDecrypt();
     TestPublicEncrypt();
     TestPublicKeyChecks();
+    TestVerify();
     std::puts("libSceLibreSsl RSA tests passed");
 }
