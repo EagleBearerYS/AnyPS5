@@ -1,5 +1,5 @@
-READY 2026-10-25T15:34:30Z: BF-237 done; watching the board
-since: 2026-10-25T15:34:30Z (BF-237 finished)
+STOPPED 2026-10-25T22:05:16Z: low usage
+since: 2026-10-25T22:05:16Z (stopped by the PM for low usage; no task held, last task BF-237 done)
 machine: same VM as on 10-18 (clone, Release build and board worktree kept): Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, ~13 GB free disk, Ubuntu 24.04, kernel 6.18.44, gcc 13.3.0, lavapipe Mesa 25.2.8, MinGW-w64 13 (g++-mingw-w64-x86-64-posix, added for BF-170's -fsyntax-only); origin and upstream fetched (upstream main d2b3ee3bcc)
 last: BF-237 done, result results/cloud-4/BF-237.md; fork feat/sourced-answers-np-bt-dialog at 684ffde83d on main d2b3ee3bcc (sceNpWebApi2CreateMultipartRequest and sceNpWebApi2SendMultipartRequest per shadPS4 e0845a12dc, sceBluetoothHidParamInitialize per SharpProspero 5dfdb4b0b1; 6111 -> 6114 done); before it BF-233 (perf/agc-draw-cache-low-hit-bypass at 5729d4237b)
 baseline: CI Linux mirror on aa0943f95e (main 3a2c51afd2 + 2): 2263 tests, 2165 passed, 91 skipped, 7 failed (the 6 IPv6 guest socket tests, and agc_driver_submit_progress under load, which passed 25 of 25 on re-runs); check_skips flags only guest_sce_net
