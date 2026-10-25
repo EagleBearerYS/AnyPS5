@@ -1,0 +1,3 @@
+BASE=7a4b965d6fcf73ea1d45e46d78f00ff4c511daaa
+REPEAT=10
+EXTRA_TESTS='^guest_system_service|^guest_system_exit|public_headers'
