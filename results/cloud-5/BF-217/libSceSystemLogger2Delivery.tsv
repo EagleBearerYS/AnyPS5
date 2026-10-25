@@ -1,0 +1,5 @@
+function	class	basis
+sceSystemLogger2DeliveryGetBatchResult	D	no credible prototype (docs/dev/debt/libSceSystemLogger2Delivery.md:5); private telemetry-delivery service whose batch-result record is unknown; no done neighbour (every libSceSystemLogger2 and NativeQueueClient call is still todo)
+sceSystemLogger2DeliveryGetResult	D	no credible prototype (docs/dev/debt/libSceSystemLogger2Delivery.md:5); private telemetry-delivery service whose result record is unknown; no done neighbour (every libSceSystemLogger2 and NativeQueueClient call is still todo)
+sceSystemLogger2DeliverySetBatchDeliveryEvent	D	no credible prototype (docs/dev/debt/libSceSystemLogger2Delivery.md:5); the event object and its trigger rules are unknown; no done neighbour (every libSceSystemLogger2 and NativeQueueClient call is still todo)
+sceSystemLogger2DeliveryTerminate	D	no credible prototype (docs/dev/debt/libSceSystemLogger2Delivery.md:5); the module exports no Initialize, so the state Terminate ends and its answer are unknown; no done neighbour (every libSceSystemLogger2 and NativeQueueClient call is still todo)

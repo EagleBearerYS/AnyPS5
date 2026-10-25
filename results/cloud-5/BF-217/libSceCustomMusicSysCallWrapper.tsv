@@ -1,0 +1,2 @@
+function	class	basis
+sceCustomMusicSelect	D	no credible prototype (docs/dev/debt/libSceCustomMusicSysCallWrapper.md:5); system custom-music (BGM) selection wrapper with no entry in Orbital db_types.json (https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json); every libSceCustomMusicCore neighbour is todo, so no in-tree answer

@@ -1,0 +1,5 @@
+function	class	basis
+sceSdecCreateSw	D	no credible prototype (docs/dev/debt/libSceVdecSavc.md:5); the software AVC decoder it creates is a missing subsystem and no Sdec form is done anywhere (the libSceVdecSavc2 and libSceVdecShevc Sdec rows are todo too) (core/libs/prx/libSceVdecSavc/Export.cpp:9)
+sceSdecDestroySw	D	no credible prototype (docs/dev/debt/libSceVdecSavc.md:5); no decoder instance exists to destroy (core/libs/prx/libSceVdecSavc/Export.cpp:14)
+sceSdecGetVersionSw	D	no credible prototype (docs/dev/debt/libSceVdecSavc.md:5); the version value and its output form are unknown (core/libs/prx/libSceVdecSavc/Export.cpp:19)
+sceSdecQueryMemorySw	D	no credible prototype (docs/dev/debt/libSceVdecSavc.md:5); query parameters and memory sizes unknown (core/libs/prx/libSceVdecSavc/Export.cpp:24)

@@ -1,0 +1,5 @@
+function	class	basis
+sceContentDeleteByIdListForSf	D	declared (const int64_t*, size_t) (core/libs/prx/libSceContentDelete/include/Api.hpp:10) with no recorded source and no debt line; after initialisation the console's answer for content absent from the empty host library is unknown, which is why sceContentDeleteById throws (core/libs/prx/libSceContentDelete/Export.cpp:36, docs/dev/debt/libSceContentDelete.md:5); only the NOT_INITIALIZED branch (core/libs/prx/libSceContentDelete/Export.cpp:35) is known
+sceContentDeleteGlobalMstat	D	signature unresolved, no export or caller found (docs/dev/debt/libSceContentDelete.md:10); allocator-statistics record unknown; no neighbour
+sceContentDeleteMemoryInitialize	D	signature unresolved (docs/dev/debt/libSceContentDelete.md:10); its relation to the 16 KiB heap sceContentDeleteInitialize checks (core/libs/prx/libSceContentDelete/Export.cpp:21, docs/dev/debt/libSceContentDelete.md:6) is unknown
+sceContentDeleteMemoryTerminate	D	signature unresolved (docs/dev/debt/libSceContentDelete.md:10); no memory state is kept to tear down (core/libs/prx/libSceContentDelete/Export.cpp:11) and the console answer is unknown

@@ -1,0 +1,7 @@
+function	class	basis
+sceScreenShotCapture	D	no credible prototype (docs/dev/debt/libSceScreenShot.md:11); arguments and output of a title-initiated capture unknown, and the project takes no screenshots (docs/dev/debt/libSceScreenShot.md:6; core/libs/prx/libSceScreenShot/Export.cpp:87)
+sceScreenShotGetAppInfo	D	no credible prototype (docs/dev/debt/libSceScreenShot.md:11); the app-info record is unknown (core/libs/prx/libSceScreenShot/Export.cpp:91)
+sceScreenShotGetDrcParam	D	no credible prototype (docs/dev/debt/libSceScreenShot.md:11); DRC parameter record and its default unknown (core/libs/prx/libSceScreenShot/Export.cpp:95)
+sceScreenShotIsVshScreenCaptureDisabled	D	no credible prototype (docs/dev/debt/libSceScreenShot.md:11); not shown to share sceScreenShotIsDisabled's (id, int*) arguments (core/libs/prx/libSceScreenShot/Export.cpp:73), and whether the system-software capture state is the same flag is unknown (core/libs/prx/libSceScreenShot/Export.cpp:99)
+sceScreenShotSetDrcParam	D	no credible prototype (docs/dev/debt/libSceScreenShot.md:11); DRC parameter record unknown, and a 0 that keeps nothing would be a silent stub with no title (core/libs/prx/libSceScreenShot/Export.cpp:103)
+sceScreenShotSetParam	D	no credible prototype (docs/dev/debt/libSceScreenShot.md:11); the screenshot parameter record is unknown, and a 0 that keeps nothing would be a silent stub with no title (core/libs/prx/libSceScreenShot/Export.cpp:107)

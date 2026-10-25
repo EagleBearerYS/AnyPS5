@@ -1,0 +1,6 @@
+function	class	basis
+sceVideoNativeExtEssential_CreateDecInstance	D	no credible prototype (docs/dev/debt/libSceVideoNativeExtEssential.md:5); the decoder instance it creates and its parameters are unknown, and the decoder is a missing subsystem (core/libs/prx/libSceVideoNativeExtEssential/Export.cpp:9)
+sceVideoNativeExtEssential_DestroyDecInstance	D	no credible prototype (docs/dev/debt/libSceVideoNativeExtEssential.md:5); no decoder instance exists (core/libs/prx/libSceVideoNativeExtEssential/Export.cpp:14)
+sceVideoNativeExtEssential_Finalize	D	no credible prototype (docs/dev/debt/libSceVideoNativeExtEssential.md:5); library state and the answer before Initialize unknown (core/libs/prx/libSceVideoNativeExtEssential/Export.cpp:19)
+sceVideoNativeExtEssential_Initialize	D	no credible prototype (docs/dev/debt/libSceVideoNativeExtEssential.md:5); initialization parameters and answers unknown (core/libs/prx/libSceVideoNativeExtEssential/Export.cpp:24)
+sceVideoNativeExtEssential_IsInit	D	no credible prototype (docs/dev/debt/libSceVideoNativeExtEssential.md:5); return encoding unknown and Initialize itself has no prototype (core/libs/prx/libSceVideoNativeExtEssential/Export.cpp:29)

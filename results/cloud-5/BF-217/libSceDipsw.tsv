@@ -1,0 +1,10 @@
+function	class	basis
+sceKernelCheckDipsw	D	no credible prototype: parameterless only to resolve imports, no ABI claim (docs/dev/debt/libSceDipsw.md:5); which switch it tests and the retail answer are unmeasured, and no done neighbour gives one (libkernel_sys sceKernelIsDevKit and sceKernelIsTestKit also throw, core/libs/prx/libkernel_sys/Export.Discovery.cpp:1430, :1510)
+sceKernelInitializeDipsw	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); what the initialization sets up and its result for an app process are unknown; no done Dipsw or kit-type neighbour (core/libs/prx/libkernel_sys/Export.Discovery.cpp:1430, :1510)
+sceKernelIsAssistMode	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); the answer is console mode state that is unmeasured, so a retail 0 would be a guess; kit-type neighbours sceKernelIsDevKit and sceKernelIsTestKit also throw (core/libs/prx/libkernel_sys/Export.Discovery.cpp:1430, :1510)
+sceKernelIsDevelopmentMode	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); the answer is console mode state that is unmeasured, so a retail 0 would be a guess; kit-type neighbours sceKernelIsDevKit and sceKernelIsTestKit also throw (core/libs/prx/libkernel_sys/Export.Discovery.cpp:1430, :1510)
+sceKernelIsDisableRazor	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); whether the Razor profiler is disabled is unmeasured console state, so any constant would be a guess; no done neighbour (core/libs/prx/libkernel_sys/Export.Discovery.cpp:1430, :1510)
+sceKernelReadDipswData	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); the dip-switch data block's size and layout are not public
+sceKernelSetDipsw	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); privileged switch write: switch numbering and the result for an app process are unknown
+sceKernelUnsetDipsw	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); privileged switch write: switch numbering and the result for an app process are unknown
+sceKernelWriteDipswData	D	no credible prototype (docs/dev/debt/libSceDipsw.md:5); the dip-switch data block's size and layout are not public, and a write's result for an app process is unknown

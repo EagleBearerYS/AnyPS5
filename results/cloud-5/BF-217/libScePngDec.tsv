@@ -1,0 +1,2 @@
+function	class	basis
+scePngDecDecodeWithInputControl	D	no-parameter declaration following shadPS4's pngdec.h, which gives no arguments either, not measured on a console (docs/dev/debt/libScePngDec.md:10; core/libs/prx/libScePngDec/Export.cpp:211); the input-control parameters and any streaming callback contract are unknown, so the done scePngDecDecode (:134) cannot be reused without guessing
