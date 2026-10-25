@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -19,7 +20,50 @@ template <typename Call> static bool ThrowsInvalidArgument(Call call) {
     return false;
 }
 
+static bool ThrowsNotImplemented(int (APS5_VABI* function)(void), const char* name) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void ResolvePendingExports() {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNpTrophy2SystemAbortHandle, "sceNpTrophy2SystemAbortHandle"},
+        {sceNpTrophy2SystemBuildGroupIconUri, "sceNpTrophy2SystemBuildGroupIconUri"},
+        {sceNpTrophy2SystemBuildRewardIconUri, "sceNpTrophy2SystemBuildRewardIconUri"},
+        {sceNpTrophy2SystemBuildTrophyIconUri, "sceNpTrophy2SystemBuildTrophyIconUri"},
+        {sceNpTrophy2SystemCheckCallback, "sceNpTrophy2SystemCheckCallback"},
+        {sceNpTrophy2SystemCheckNetSyncTitles, "sceNpTrophy2SystemCheckNetSyncTitles"},
+        {sceNpTrophy2SystemCreateContext, "sceNpTrophy2SystemCreateContext"},
+        {sceNpTrophy2SystemCreateHandle, "sceNpTrophy2SystemCreateHandle"},
+        {sceNpTrophy2SystemDebugLockTrophy, "sceNpTrophy2SystemDebugLockTrophy"},
+        {sceNpTrophy2SystemDebugUnlockTrophy, "sceNpTrophy2SystemDebugUnlockTrophy"},
+        {sceNpTrophy2SystemDestroyContext, "sceNpTrophy2SystemDestroyContext"},
+        {sceNpTrophy2SystemGetTrophyDetails, "sceNpTrophy2SystemGetTrophyDetails"},
+        {sceNpTrophy2SystemGetTrophyGroupConf, "sceNpTrophy2SystemGetTrophyGroupConf"},
+        {sceNpTrophy2SystemGetTrophySetArray, "sceNpTrophy2SystemGetTrophySetArray"},
+        {sceNpTrophy2SystemGetTrophyTitleConf, "sceNpTrophy2SystemGetTrophyTitleConf"},
+        {sceNpTrophy2SystemGetTrophyTitleDetails, "sceNpTrophy2SystemGetTrophyTitleDetails"},
+        {sceNpTrophy2SystemGetTrpIconByUri, "sceNpTrophy2SystemGetTrpIconByUri"},
+        {sceNpTrophy2SystemIsServerAvailable, "sceNpTrophy2SystemIsServerAvailable"},
+        {sceNpTrophy2SystemRegisterTitleSyncedCallback, "sceNpTrophy2SystemRegisterTitleSyncedCallback"},
+        {sceNpTrophy2SystemRegisterTitleUpdateCallback, "sceNpTrophy2SystemRegisterTitleUpdateCallback"},
+        {sceNpTrophy2SystemRemoveAll, "sceNpTrophy2SystemRemoveAll"},
+        {sceNpTrophy2SystemRemoveTitleData, "sceNpTrophy2SystemRemoveTitleData"},
+        {sceNpTrophy2SystemRemoveUserData, "sceNpTrophy2SystemRemoveUserData"},
+    };
+    for (const auto& entry : exports) Require(ThrowsNotImplemented(entry.function, entry.name));
+}
+
 int main() {
+    ResolvePendingExports();
     int userdata = 0;
     Require(sceNpTrophy2UnregisterUnlockCallback() == 0);
     Require(sceNpTrophy2RegisterUnlockCallback(reinterpret_cast<void*>(&OnUnlock), &userdata) == 0);
