@@ -35,6 +35,7 @@ namespace {
 
 using RsaCallback = int (APS5_VABI*)(LibreSslRsa* rsa);
 using RsaCrypt = int (APS5_VABI*)(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding);
+using RsaVerify = int (APS5_VABI*)(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, const LibreSslRsa* rsa);
 using Words = std::vector<std::uint64_t>;
 
 constexpr int OperationPublicEncrypt = 0;
@@ -44,6 +45,7 @@ constexpr int OperationInit = 6;
 constexpr int OperationFinish = 7;
 constexpr int RsaFlagCachePublic = 0x0002;
 constexpr int RsaFlagCachePrivate = 0x0004;
+constexpr int RsaFlagSignVerify = 0x0040;
 constexpr int RsaFlagNonFipsAllow = 0x0400;
 constexpr int BignumFlagStaticData = 0x02;
 constexpr int BignumFlagMalloced = 0x01;
@@ -56,6 +58,9 @@ constexpr int MaxModulusBits = 16384;
 constexpr int SmallModulusBits = 3072;
 constexpr int MaxPublicExponentBits = 64;
 constexpr int Sha1Bytes = 20;
+constexpr int DigestMd5Sha1 = 114;
+constexpr int ObjectTypeCount = 956;
+constexpr unsigned int Md5Sha1Bytes = 36;
 
 template<typename TFunction> TFunction Operation(const LibreSslRsaMethod& method, int index) {
     return reinterpret_cast<TFunction>(method.operations[index]);
@@ -519,6 +524,56 @@ int APS5_VABI DefaultPublicDecrypt(int length, const unsigned char* from, unsign
     }
 }
 
+struct DigestObject {
+    int type;
+    long length;
+    unsigned char object[9];
+};
+
+constexpr DigestObject DigestObjects[] {
+    {3, 8, {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x02}},
+    {4, 8, {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x05}},
+    {41, 5, {0x2B, 0x0E, 0x03, 0x02, 0x12}},
+    {64, 5, {0x2B, 0x0E, 0x03, 0x02, 0x1A}},
+    {95, 4, {0x55, 0x08, 0x03, 0x65}},
+    {117, 5, {0x2B, 0x24, 0x03, 0x02, 0x01}},
+    {257, 8, {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x04}},
+    {672, 9, {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01}},
+    {673, 9, {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02}},
+    {674, 9, {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03}},
+    {675, 9, {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04}},
+    {804, 6, {0x28, 0xCF, 0x06, 0x03, 0x00, 0x37}},
+    {809, 6, {0x2A, 0x85, 0x03, 0x02, 0x02, 0x09}},
+    {941, 8, {0x2A, 0x85, 0x03, 0x07, 0x01, 0x01, 0x02, 0x02}},
+    {942, 8, {0x2A, 0x85, 0x03, 0x07, 0x01, 0x01, 0x02, 0x03}},
+};
+
+bool SameDigestType(const Algorithm& algorithm, int type, const char* function) {
+    if (type < 0 || type >= ObjectTypeCount) return false;
+    for (const auto& digest : DigestObjects) {
+        const bool same = algorithm.objectLength == digest.length && !std::memcmp(algorithm.object, digest.object, static_cast<std::size_t>(digest.length));
+        if (digest.type == type) return same;
+        if (same) return false;
+    }
+    NotImplemented_nid_no_patch((std::string(function) + ": digest type " + std::to_string(type) + " with an object outside the digest table").c_str());
+}
+
+int VerifyDigestInfo(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* data, long length, const char* function) {
+    Element sequence;
+    if (!ReadTop(data, length, 16, sequence) || !sequence.constructed) return 0;
+    if (sequence.indefinite) UnsupportedEncoding(function, "indefinite-length SEQUENCE");
+    Cursor fields {sequence.content, sequence.length};
+    Algorithm algorithm;
+    Element hash;
+    if (!ReadAlgorithm(fields, algorithm, function) || !ReadPrimitive(fields, 4, hash, function) || fields.length) return 0;
+    if (sequence.end != data + length) return 0;
+    if (algorithm.parameter && !algorithm.nullParameter) return 0;
+    if (!SameDigestType(algorithm, type, function)) return 0;
+    if (static_cast<unsigned long>(hash.length) != digestLength) return 0;
+    RequireBuffer(digest, digestLength, function, "digest");
+    return !digestLength || !std::memcmp(digest, hash.content, digestLength);
+}
+
 int APS5_VABI DefaultPrivateEncrypt(int, const unsigned char*, unsigned char*, LibreSslRsa*, int) {
     NotImplemented_nid_no_patch("RSA_eay_private_encrypt");
 }
@@ -635,6 +690,23 @@ int APS5_VABI RSA_public_decrypt_nid_postfix(int length, const unsigned char* fr
     const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPublicDecrypt);
     if (!decrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_pub_dec");
     return decrypt(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa) {
+    if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null key");
+    if (rsa->flags & RsaFlagSignVerify) {
+        if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+        if (rsa->meth->verify) return reinterpret_cast<RsaVerify>(rsa->meth->verify)(type, digest, digestLength, signature, signatureLength, rsa);
+    }
+    if (signatureLength != static_cast<unsigned int>(RSA_size_nid_postfix(rsa))) return 0;
+    if (type == DigestMd5Sha1 && digestLength != Md5Sha1Bytes) return 0;
+    std::vector<unsigned char> block(signatureLength);
+    const int length = RSA_public_decrypt_nid_postfix(static_cast<int>(signatureLength), signature, block.data(), rsa, PaddingPkcs1);
+    if (length <= 0) return 0;
+    if (type != DigestMd5Sha1) return VerifyDigestInfo(type, digest, digestLength, block.data(), length, __func__);
+    if (length != static_cast<int>(Md5Sha1Bytes)) return 0;
+    RequireBuffer(digest, Md5Sha1Bytes, __func__, "digest");
+    return !std::memcmp(block.data(), digest, Md5Sha1Bytes);
 }
 
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length) {
