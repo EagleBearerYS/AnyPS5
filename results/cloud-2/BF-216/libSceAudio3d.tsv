@@ -1,0 +1,8 @@
+function	class	basis
+sceAudio3dPortCreate	D	unknown signature (docs/dev/debt/libSceAudio3d.md:18), declared (void); how it differs from the done sceAudio3dPortOpen (core/libs/prx/libSceAudio3d/Export.cpp:213) is not in the tree or a cited source
+sceAudio3dPortDestroy	D	unknown signature (docs/dev/debt/libSceAudio3d.md:19), declared (void); how it differs from the done sceAudio3dPortClose (core/libs/prx/libSceAudio3d/Export.cpp:174) is not in the tree or a cited source
+sceAudio3dPortGetStatus	D	unknown signature (docs/dev/debt/libSceAudio3d.md:20), declared (void); the status record and its fields are unknown
+sceAudio3dPortOpenEx	D	unknown signature (docs/dev/debt/libSceAudio3d.md:17), declared (void); the extended open parameters beyond sceAudio3dPortOpen's (core/libs/prx/libSceAudio3d/Export.cpp:213) are unknown
+sceAudio3dReportRegisterHandler	D	unknown signature (docs/dev/debt/libSceAudio3d.md:21), declared (void); the report handler's prototype, events and delivery are unknown
+sceAudio3dReportUnregisterHandler	D	unknown signature (docs/dev/debt/libSceAudio3d.md:22), declared (void); pairs with the unknown report registration
+sceAudio3dStrError	D	unknown signature (docs/dev/debt/libSceAudio3d.md:16), declared (void); the console's error strings are not in the tree or a cited source

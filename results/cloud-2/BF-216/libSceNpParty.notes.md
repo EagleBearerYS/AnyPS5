@@ -1,0 +1,22 @@
+# libSceNpParty (14 todo: C 2, D 12)
+
+- **What it is:** PSN party (voice chat group) state for titles: party state, id, members and member info, voice and session info, binary messages, event handlers. Also create, join and leave, voice-chat priority, the invitation-list UI and system-private handlers.
+- **Existing state** (`core/libs/prx/libSceNpParty/Export.cpp`):
+  - 12 done. The user is never in a party.
+    - `sceNpPartyGetState` (`:27`) writes `NP_PARTY_STATE_NOT_IN_PARTY` 2 (`:14`), and `GetStateAsUserA` (`:83`) forwards to it.
+    - `notInParty` (`:18`) answers `GetId`, `GetMembersA`, `GetMemberInfoA`, `GetMemberSessionInfo`, `GetMemberVoiceInfo` and `SendBinaryMessage`: INVALID_ARGUMENT 0x80552504 for null, otherwise NOT_IN_PARTY 0x80552506, nothing written.
+    - `g_initialized` (`:16`) backs Initialize (`:92`), Terminate (`:144`), CheckCallback (`:33`) and RegisterHandlerA (`:114`): ALREADY_INITIALIZED 0x80552502, NOT_INITIALIZED 0x80552503.
+  - Sources (`docs/dev/debt/libSceNpParty.md:5-7`): shadPS4 np_party.h and np_error.h for values, Orbital's type database for the A-form signatures. Nothing is measured on a PS5.
+  - Test: `guest_np_party_tests` (`core/libs/tests/GuestNpParty.cpp`), registered in `core/libs/CMakeLists.txt:514` and `:518` (`add_test(NAME guest_np_party ...)`).
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 2, D 12.
+- **C (2), real behaviour:** `sceNpPartyGetMembers` and `sceNpPartyGetMemberInfo` return NOT_IN_PARTY and write nothing, as their done A-forms do.
+  - This is a plain return, so the parameterless declarations (debt `:8`) can give it.
+  - The A-forms' null check cannot be applied without a prototype. The debt (`:6`) says the console's order of the null and party checks is not known, so the plain answer is one of the two possible console behaviours. It never reports success.
+- **D (12):** all are parameterless declarations with no prototype (debt `:8`).
+  - Answers that need an output or an argument: `GetStateAsUser` writes the state; `GetVoiceChatPriority` writes a priority. `RegisterHandler`'s A-form rejects a null table after its init check, so without a prototype a null table would get a made-up success.
+  - Answers not in the tree: Create, CreateA, Join (PSN party service), Leave and SetVoiceChatPriority with no party, ShowInvitationList and ShowInvitationListA (system UI).
+  - System-private handlers: RegisterPrivateHandler, UnregisterPrivateHandler.
+- **Batch proposal:** no family reaches 6. The 2 C rows fit one small PR, `feat(libSceNpParty): report no party from GetMembers and GetMemberInfo`. Tests extend `guest_np_party_tests`: both return 0x80552506 before and after Initialize, and leave a canary buffer passed as the first argument untouched.
+- **Caveats:**
+  - If a prototype is found matching the A-forms (`GetMembers(list*)`, `GetMemberInfo(memberId, info*)`, `GetStateAsUser(userId, state*)`, `RegisterHandler(handlers*, userdata)`), these become plain forwards: A for GetStateAsUser and RegisterHandler, and the two C rows gain the null check. Debt `:8` must then be updated.
+  - The NOT_IN_PARTY answer is the tree's offline model from shadPS4's error table, not a console measurement.

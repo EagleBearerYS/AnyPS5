@@ -1,0 +1,8 @@
+function	class	basis
+sceSdecCreateSwHevc	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecShevc.md:5); the software-HEVC decoder's configuration and memory records are unknown
+sceSdecDestroySwHevc	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecShevc.md:5); the decoder handle type is unknown
+sceSdecExecuteSwHevc	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecShevc.md:5); the input and result records are unknown; HEVC decoding itself exists through FFmpeg in libSceVideodec2 (core/libs/prx/libSceVideodec2/Export.cpp:280)
+sceSdecGetFrameSwHevc	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecShevc.md:5); the frame output record and pixel layout are unknown
+sceSdecGetVersionSwHevc	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecShevc.md:5); the version value and how it is returned are unknown
+sceSdecQueryMemorySwHevc	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecShevc.md:5); the memory-requirement record is unknown
+sceSdecResetSwHevc	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecShevc.md:5); the reset contract is unknown

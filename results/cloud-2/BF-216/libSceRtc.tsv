@@ -1,0 +1,2 @@
+function	class	basis
+sceRtcSetConf	D	the console passes its third and fourth arguments to the clock-set call with clock 0 (docs/dev/debt/libSceRtc.md:16), but what that pair selects and what the first two arguments do are unknown; the done setters keep only process-local clocks (sceRtcSetCurrentTick core/libs/prx/libSceRtc/Export.cpp:771 via setCurrentTick :146), so there is no configuration for it to change

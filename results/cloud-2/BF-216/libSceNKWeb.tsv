@@ -1,0 +1,3 @@
+function	class	basis
+sceNKWebInitialize	C	0: no NK web engine on the host (every libSceNKWebKit export is a throwing declaration, docs/dev/debt/libSceNKWebKit.md:5); takes no argument and returns a 32-bit status (docs/dev/debt/libSceNKWeb.md:5); returns success only so a caller can continue, as sceRemoteplayInitialize/Terminate return 0 for the absent Remote Play service (core/libs/prx/libSceRemoteplay/Export.cpp:20, :25); later NKWebKit calls still throw; silent stub, needs a title
+sceNKWebTerminate	C	0: no NK web engine state to release; takes no argument and returns a 32-bit status (docs/dev/debt/libSceNKWeb.md:5); pairs with Initialize, as sceRemoteplayTerminate returns 0 (core/libs/prx/libSceRemoteplay/Export.cpp:25); silent stub, needs a title

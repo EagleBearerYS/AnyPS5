@@ -1,0 +1,30 @@
+# libSceNpWebApi2 (7 todo: A 1, C 2, D 4)
+
+- **What it is:** the PS5 PSN web API client. Library and user contexts, requests (create, headers, send, read, response headers, timeouts, trace tags), multipart requests, memory-pool stats and push events (handles, filters, callbacks, push contexts). `Int*` calls are the system-internal forms.
+- **Existing state** (`core/libs/prx/libSceNpWebApi2/Export.cpp`):
+  - 32 done. The PSN web API has no service behind it: handles can be created, but requests fail.
+    - Ids come from one counter `g_nextHandle` (`:17`).
+    - Library contexts and pool sizes are kept in `g_pools` (`:24`) via `CreateLibraryContext` (`:26`). Push handles are kept in `pushHandles` (`:39`, `PushHandle` at `:33`).
+    - `sceNpWebApi2CreateRequest` (`:64`) hands out a counter id. `SendRequest` (`:178`), `ReadData` (`:171`) and the response-header getters (`:91`, `:99`) return UNAVAILABLE 0x80553406.
+    - Header, trace-tag, timeout, abort and delete calls accept any request id and keep nothing (`:43-59`, `:81`, `:226`; debt `:5-6`).
+  - Errors are at `:13-16`: INVALID_ARGUMENT 0x80553402, UNAVAILABLE 0x80553406, INVALID_CONTEXT 0x80553404 and INVALID_HANDLE 0x8055340D.
+  - Signatures follow shadPS4; some push and pool calls are confirmed on a PS5 (debt `:14-16`).
+  - Test: `guest_np_web_api2_tests` (`core/libs/tests/GuestNpWebApi2.cpp`), built at `libSceNpWebApi2/CMakeLists.txt:7` and registered at `:11`.
+- **Counts:** A 1, B-S 0, B-M 0, B-L 0, C 2, D 4.
+- **A (1):** `sceNpWebApi2CreateMultipartRequest` forwards to `sceNpWebApi2CreateRequest` with a null content parameter. Its signature is declared from shadPS4 (debt `:12`).
+- **C (2):**
+  - `sceNpWebApi2SendMultipartRequest`, real behaviour: UNAVAILABLE at once, as SendRequest, since no service is reachable.
+  - `sceNpWebApi2SetMultipartContentType`, silent stub: returns 0 and keeps nothing, as AddHttpRequestHeader does. The declaration has no parameters (debt `:10`), and the answer reads none.
+- **D (4):**
+  - `AddMultipartPart` must report a part index that SendMultipartRequest later takes; the form of that output is unknown.
+  - `IntCreateRequest` writes a request id through an output whose position is unknown.
+  - `IntPushEventCreateCtxIndFilter` and `IntPushEventCreateDestPs4CtxIndFilter`: shadPS4 also stubs the first without arguments, and the second has no prototype at all (debt `:10`, `:13`). How the filter id is reported is unknown.
+- **Batch proposal:** no family reaches 6. The A row and the two C rows fit one small PR, `feat(libSceNpWebApi2): offline multipart requests`. Tests extend `guest_np_web_api2_tests`:
+  - CreateMultipartRequest refuses a null request id with 0x80553402, and otherwise writes a fresh id;
+  - SendMultipartRequest on that id returns 0x80553406 and leaves the data untouched;
+  - SetMultipartContentType returns 0.
+  - A debt entry under Silent stubs must record SetMultipartContentType, and it needs a title.
+- **Caveats:**
+  - No title importing the multipart calls is recorded in the tree.
+  - AddMultipartPart stays D, so a title building a multipart request still throws there before it can send.
+  - The UNAVAILABLE answer is the tree's offline model, not a console measurement.

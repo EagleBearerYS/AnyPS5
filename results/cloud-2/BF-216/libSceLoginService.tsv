@@ -1,0 +1,2 @@
+function	class	basis
+sceLoginServiceRequestDevices	D	the 64-byte request is interpreted by the login-service backend and its fields are unresolved, and the answer for a valid request with no login service is not in the tree (docs/dev/debt/libSceLoginService.md:9); only null 0x813a0003 and uninitialized 0x813a0001 are known, and Initialize keeps no state to tell the second (core/libs/prx/libSceLoginService/Export.cpp:8; debt :5)

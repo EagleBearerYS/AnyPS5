@@ -1,0 +1,29 @@
+# libSceVideoRecordingP (18 todo: A 0, B-S 0, B-M 0, B-L 0, C 0, D 18)
+
+- **What it is:** game-side video recording, the clip recorder behind the AV capture service (Avcap2).
+  - It sizes, opens, starts, stops and closes a recording to a file, by global calls or by context handle.
+  - It gets and sets recorder info by selector and reports status, support info and video-out mode.
+  - It also covers rest-mode processing and a BGRA-to-NV12 helper.
+- **Existing state:** 6 done, in `core/libs/prx/libSceVideoRecordingP/Export.cpp`. The model is that no recorder is ever open.
+  - `sceVideoRecordingGetInfo` (`:54`) returns not-open 0x80a80006 for query selectors 0xa001-3, 0xa005 and 0xa00a-c, and 0x80a80003 for anything else.
+  - `sceVideoRecordingSetInfo` (`:158`) returns 0x80a80002 for a valid volume set (0x8002/0x8003), 0x80a80006 for 0xa004/0xa006 and 0x80a80003 otherwise. Both follow the native validation (`docs/dev/debt/libSceVideoRecordingP.md:5`).
+  - `GetStatus` (`:78`) returns None (`debt :19`). `Init` (`:94`), `SendCommand` (`:152`) and `Term` (`:182`) return 0, the firmware's answer per their commit.
+  - Parameter structs and their `static_assert`s are in `include/Api.hpp:7-39` and `Export.cpp:7-19`. There is no per-handle state.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 18.
+- **D families:**
+  - **Recorder lifecycle (7):** Open, Open2, Close, CloseByHandle, Start, Stop and Initialize.
+    - Open's mode, option and format semantics are incomplete (`debt :13`), and Initialize goes through the Avcap2 initializer (`debt :12`).
+    - The answers of Close, Start and Stop with nothing open are not recorded. Only GetInfo and SetInfo have measured not-open answers.
+    - A real recorder would also need a video encoder and muxer, which no public source defines for these parameters.
+  - **Sizing and defaults (4):** QueryMemSize, QueryMemSize2, QueryHddSize2 and `_sceVideoRecordingQueryParam`. The formulas and default values are unknown (`debt :7`, `:13`).
+  - **Queries (3):** GetInfoByHandle (`debt :8`), GetSupportInfo (an 18-byte payload with unresolved fields) and GetVideoOutMode (mode values unresolved, `debt :10`).
+  - **Rest mode (2):** RestModeProcessStart and RestModeProcessGetStatus. These are system-side processing whose native exports read no arguments (`debt :15`). Their results are unknown.
+  - **CopyBGRAtoNV12 (1):** the arguments are confirmed (`debt :9`), but the pitch, plane layout, colour matrix and range are not.
+  - **Unnamed NID iQS6DUtLybE (1):** it has no name, prototype or debt entry.
+- **Batch proposal:** none (no A, B or C rows). The existing tests are:
+  - `guest_video_recording_tests` (`core/libs/tests/GuestVideoRecording.cpp`, registered at `core/libs/prx/libSceVideoRecordingP/CMakeLists.txt:6` and `:10`);
+  - `guest_offline_imports_tests` (`core/libs/tests/GuestOfflineImports.cpp`, registered at `core/libs/CMakeLists.txt:558` and `:562`), which sweeps the GetInfo/SetInfo selectors.
+- **Caveats:**
+  - Close, Start and Stop would become C (real behaviour) if the module's answer before Open is recorded. 0x80a80006 is the likely candidate, but it is measured only for GetInfo and SetInfo selectors, so it is not used here.
+  - `GuestVideoRecording.cpp:43-50` asserts that QueryParam, QueryMemSize, Open, Start, Stop and Close throw. Any change to those rows must update the test.
+  - The debt is stale in two places. `debt :11` still says Init and Term throw, and `debt :19` says `sceVideoRecordingInit` throws, but both now return 0 (`Export.cpp:94`, `:182`). `debt :12` and `:15` note that Initialize, RestModeProcessStart and RestModeProcessGetStatus take no caller arguments, yet they are still declared with one.

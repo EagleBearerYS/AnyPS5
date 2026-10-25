@@ -1,0 +1,3 @@
+function	class	basis
+sceNpFriendListDialogGetResult	D	parameterless 3.20 declaration; Orbital has prototypes only for the A variants (docs/dev/debt/libSceNpFriendListDialog.md:9); the A-form (core/libs/prx/libSceNpFriendListDialog/Export.cpp:51) writes the cancel code through its argument (:57), so no plain return gives the answer
+sceNpFriendListDialogOpen	D	parameterless 3.20 declaration; Orbital has prototypes only for the A variants (docs/dev/debt/libSceNpFriendListDialog.md:9); the A-form (core/libs/prx/libSceNpFriendListDialog/Export.cpp:34) rejects a null parameter with ARG_NULL 0x80B8000D (:38) before finishing, so without the prototype a null parameter would get a made-up success

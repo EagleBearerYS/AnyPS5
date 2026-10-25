@@ -1,0 +1,22 @@
+# libSceCompanionHttpd (11 todo: D 11)
+
+- **What it is:** the HTTP server a title runs for the PlayStation companion (second-screen) app. Lifecycle, request callbacks, events, building a response (header, status, body), and the 2nd-screen status and user id.
+- **Existing state** (`core/libs/prx/libSceCompanionHttpd/Export.cpp`):
+  - 6 done. `CompanionHttpdState` (`:21`: mutex, initialized, started, callback, argument) behind `State()` (`:29`).
+    - OptParamInitialize zeroes the 0x60-byte block (`:38`, asserted at `:19`).
+    - Initialize (`:44`), RegisterRequestCallback (`:64`), Start (`:85`) and Stop (`:94`) track state.
+    - GetEvent (`:103`) always returns NO_EVENT 0x80E40008.
+  - Errors (`:11-17`) come from shadPS4's companion_error.h (`docs/dev/debt/libSceCompanionHttpd.md:11`).
+  - No HTTP server listens, so no companion device connects and the request callback is never called (debt `:11`). Not measured on a console.
+  - Test: `guest_companion_httpd_tests` (`core/libs/tests/GuestCompanionHttpd.cpp`), built at `libSceCompanionHttpd/CMakeLists.txt:12` and registered at `:16`.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 11.
+- **Functions that already behave but count as todo:** `sceCompanionHttpdTerminate` and `sceCompanionHttpdUnregisterRequestCallback` are done except for one branch each: terminating a started server (`:57`) and unregistering with no callback (`:79`). Their rows describe only that branch, whose console answer is unknown (debt `:11`).
+- **D families:**
+  - Response builders (3): AddHeader, SetStatus, SetBody. They act on the response a request callback receives, and that callback is never called (debt `:6`). A real server needs the companion app's discovery and pairing, which is private.
+  - Parameterless declarations with unverified signatures (6, debt `:7`):
+    - Get2ndScreenStatus and GetUserId: the output form and the no-connection value are not in the tree.
+    - Initialize2, RegisterRequestCallback2 and RegisterRequestBodyReceptionCallback: their done twins' checks read arguments.
+    - UnregisterRequestBodyReceptionCallback: the same unknown "nothing registered" answer as UnregisterRequestCallback.
+  - The two partial branches above.
+- **Batch proposal:** none (no A/B/C rows).
+- **Caveats:** the response builders are unreachable today: a title calls them only from inside the request callback. If a prototype for Get2ndScreenStatus is found and the console's not-connected value is recorded, it becomes C.

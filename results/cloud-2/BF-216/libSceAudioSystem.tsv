@@ -1,0 +1,3 @@
+function	class	basis
+sceAudioSystemSystemResume	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceAudioSystem.md:5); system audio-service resume, arguments and result for a game process unknown
+sceAudioSystemSystemSuspend	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceAudioSystem.md:5); system audio-service suspend, arguments and result for a game process unknown

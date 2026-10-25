@@ -1,0 +1,5 @@
+function	class	basis
+sceVideoDecoderArbitrationAcceptEvent	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVideoDecoderArbitration.md:5); event ids and the system arbitration protocol are unknown
+sceVideoDecoderArbitrationEnable	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVideoDecoderArbitration.md:5); system-side decoder sharing between processes, result for a game process unknown
+sceVideoDecoderArbitrationEnableSuspendMode	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVideoDecoderArbitration.md:5); suspend-mode semantics unknown
+sceVideoDecoderArbitrationInitialize	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVideoDecoderArbitration.md:5); initialization arguments and result unknown

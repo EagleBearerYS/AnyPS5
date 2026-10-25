@@ -1,0 +1,4 @@
+function	class	basis
+sceVorbisDecGetDecodePriority	D	declared (void), signature unknown, name from the NID database (docs/dev/debt/libSceVorbisDec.md:6); not a libvorbisfile function, so the ov_* mapping the 31 done exports follow (:5) does not cover it
+sceVorbisDecGetLastDecodeError	D	declared (void), signature unknown, name from the NID database (docs/dev/debt/libSceVorbisDec.md:7); not a libvorbisfile function, and which error it would keep and its encoding are unknown
+sceVorbisDecSetDecodePriority	D	declared (void), signature unknown, name from the NID database (docs/dev/debt/libSceVorbisDec.md:8); not a libvorbisfile function, and the priority values and their effect are unknown

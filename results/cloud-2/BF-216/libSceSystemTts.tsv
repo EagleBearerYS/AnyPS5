@@ -1,0 +1,6 @@
+function	class	basis
+sceSystemTtsCancel	D	system screen-reader speech: parameterless declaration (core/libs/prx/libSceSystemTts/Export.cpp:9) from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSystemTts.md:5); request identifier and errors unknown
+sceSystemTtsIsAccessibilityAvailable	D	accessibility predicate: parameterless declaration (core/libs/prx/libSceSystemTts/Export.cpp:14) with no credible prototype (docs/dev/debt/libSceSystemTts.md:5); whether the answer is returned or written, and its encoding, are unknown
+sceSystemTtsRegisterCallback	D	speech-event callback: parameterless declaration (core/libs/prx/libSceSystemTts/Export.cpp:19) with no credible prototype (docs/dev/debt/libSceSystemTts.md:5); callback type, user argument and event ids unknown
+sceSystemTtsSpeakRequest	D	system screen-reader speech: parameterless declaration (core/libs/prx/libSceSystemTts/Export.cpp:24) with no credible prototype (docs/dev/debt/libSceSystemTts.md:5); request layout unknown; the console's error with no speech engine is unknown even for libSceTextToSpeech2 (docs/dev/debt/libSceTextToSpeech2.md:9)
+sceSystemTtsUnregisterCallback	D	speech-event callback: parameterless declaration (core/libs/prx/libSceSystemTts/Export.cpp:29) with no credible prototype (docs/dev/debt/libSceSystemTts.md:5); callback identifier and errors unknown

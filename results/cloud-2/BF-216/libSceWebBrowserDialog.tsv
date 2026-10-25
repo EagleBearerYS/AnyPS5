@@ -1,0 +1,4 @@
+function	class	basis
+sceWebBrowserDialogGetEvent	D	parameterless declaration following shadPS4's no-argument stub (docs/dev/debt/libSceWebBrowserDialog.md:9); an event is written through an output whose layout, and the no-event answer, are not in the tree
+sceWebBrowserDialogNavigate	D	parameterless declaration following shadPS4's no-argument stub (docs/dev/debt/libSceWebBrowserDialog.md:9); the navigation parameter and its checks are unknown, and although the dialog is never RUNNING (Open finishes at once, core/libs/prx/libSceWebBrowserDialog/Export.cpp:101) the answer for navigating a non-running dialog is not in the tree
+sceWebBrowserDialogSetZoom	D	parameterless declaration following shadPS4's no-argument stub (docs/dev/debt/libSceWebBrowserDialog.md:9); zoom argument range and checks unknown, and the answer for a non-running dialog (core/libs/prx/libSceWebBrowserDialog/Export.cpp:101) is not in the tree

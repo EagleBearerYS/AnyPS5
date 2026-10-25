@@ -1,0 +1,23 @@
+# libSceSysUtil (24 todo: A 0, B-S 0, B-M 0, B-L 0, C 1, D 23)
+
+- **What it is:** the system-notification client. Callers ask ShellUI to show a notification: plain text, or text tied to an app, device, user or error code, plus "addressing" notifications and raw, NP-debug, TRC-check and web-debug notification requests. A PC has no ShellUI.
+- **Existing state:** 0 done.
+  - All 24 bodies in `core/libs/prx/libSceSysUtil/Export.cpp` (lines 9-127) call `NotImplemented_nid_no_patch` and return 0. There is no state, no constants and no error codes.
+  - Only `sceSysUtilSendSystemNotificationWithText(int32_t type, const char* message)` (`Export.cpp:9`) has a typed declaration, with no debt entry. The other 23 are parameterless. `docs/dev/debt/libSceSysUtil.md:5-8` says they come from the PS5 3.20 export inventory and aerolib with "no credible prototypes", and that the declarations are "not an ABI claim".
+  - There is no CMakeLists.txt. The default branch of the prx glob builds the library (`core/libs/CMakeLists.txt:159`). No guest test exists.
+- **Neighbour:** libkernel's done `sceKernelSendNotificationRequest` (`core/libs/prx/libkernel/System/src/Notification.cpp:38`) accepts only a 3120-byte, type-0 request on device 0. It prints the message as `[notification] …` to the host's stderr (`:67`) and returns 0 (`:85`).
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 1 (silent stub), D 23.
+- **C, silent stub (1):** `sceSysUtilSendSystemNotificationWithText` returns 0 after printing the message, as the kernel notification path does.
+  - It only affects the UI, so CONTRIBUTING allows it, but only with a title that calls it. No call site is recorded in the tree.
+  - The type codes, the null-message answer and any error codes are not in the tree. The stub must not dereference a null message.
+- **D families (23), all for the same reason (parameterless, no prototype):**
+  - System-notification variants (14): SendSystemNotification, SendSystemNotification2, and the WithAppId, WithAppInfo, WithAppName, WithAppNameRelatedToUser, WithDeviceId, WithDeviceIdRelatedToUser, WithErrorCode, WithParams, WithTextRelatedToUser, WithUserId, WithUserName and WithUserNameInfo forms. Their argument lists, the layouts they reference and their type codes are unknown. WithTextRelatedToUser cannot forward to WithText, because the user argument and its position are not known.
+  - Addressing notifications (4): SendAddressingSystemNotification and its WithDeviceId, WithUserId and WithUserName forms.
+  - Notification requests (4): SendNotificationRequest, SendNpDebugNotificationRequest, SendTrcCheckNotificationRequest and SendWebDebugNotificationRequest. Nothing ties SendNotificationRequest to the kernel's 3120-byte request, so it is not A.
+  - Parameter initialiser (1): SendSystemNotificationParamInit. The block's size, layout and defaults are unknown.
+- **Batch proposal:** none, because no A, B or C family reaches 6 rows.
+  - The single C row can go in alone once a title calls it, as `feat(libSceSysUtil): print system notification text`.
+  - That PR would need a new `core/libs/prx/libSceSysUtil/CMakeLists.txt` with a guest test, registered as `libSceVideoRecordingP/CMakeLists.txt:6,10` does. The test checks that WithText returns 0 for a message and does not fault on null.
+- **Caveats:**
+  - WithText's prototype has no debt entry or recorded source. Only the history says it was declared as a "verified" pending export and later changed from `void` to `int`.
+  - If a title shows that a variant shares WithText's arguments plus a user ID or app ID, that row can move to the same C stub.

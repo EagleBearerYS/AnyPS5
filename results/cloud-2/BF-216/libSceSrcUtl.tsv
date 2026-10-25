@@ -1,0 +1,10 @@
+function	class	basis
+sceSrcUtilityFinalize	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); the handle and finalization contract are unknown
+sceSrcUtilityFlush	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); what a flush emits from the converter's held samples is unknown
+sceSrcUtilityGetDelaySamples	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); the delay is a property of the console's converter filter, which is not in the tree or a cited source
+sceSrcUtilityGetHandleSize	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); the parameters and the console's handle size are unknown
+sceSrcUtilityGetPriority	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); what priority it reports is unknown
+sceSrcUtilityInitialize	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); the parameter record (rates, channels, format) is unknown
+sceSrcUtilityInitializeEx	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); how it extends Initialize is unknown
+sceSrcUtilityResample	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); buffer arguments and the console's filter are unknown; AJM's Catmull-Rom resampler (core/libs/prx/libSceAjm.native/src/Ajm.cpp:634) is a stand-in there, not this module's filter
+sceSrcUtilitySetPriority	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceSrcUtl.md:5); the priority values and their effect are unknown

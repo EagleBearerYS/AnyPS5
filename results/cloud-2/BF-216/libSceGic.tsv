@@ -1,0 +1,2 @@
+function	class	basis
+sceGicGetValue	D	parameterless declaration (core/libs/prx/libSceGic/Export.cpp:9) from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceGic.md:5); what value it reads, from what, and whether it returns it or writes it through an output are unknown; the library has no other export or state

@@ -1,0 +1,10 @@
+function	class	basis
+sceEditMp4Abort	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the edit session it aborts and its result are unknown
+sceEditMp4Edit	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the edit parameter record is unknown, and nothing in the tree writes MP4 (libSceAvPlayer only demuxes, core/libs/prx/libSceAvPlayer/src/Source.cpp:260)
+sceEditMp4GetStatus	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the status record and values are unknown
+sceEditMp4Initialize	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the initialization parameters and memory contract are unknown
+sceEditMp4InitializeParam	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the parameter record and its defaults are unknown
+sceEditMp4QueryMemSize	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the memory sizes the console module asks for are unknown
+sceEditMp4SetFinishCallback	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the callback prototype and when it fires are unknown
+sceEditMp4Terminate	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the termination contract is unknown
+sceEditMp4Unite	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceEditMp4.md:5); the unite (join) parameter record is unknown, and nothing in the tree writes MP4

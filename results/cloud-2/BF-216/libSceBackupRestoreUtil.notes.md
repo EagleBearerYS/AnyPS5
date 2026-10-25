@@ -1,0 +1,25 @@
+# libSceBackupRestoreUtil (16 todo: A 0, B-S 0, B-M 0, B-L 0, C 0, D 16)
+
+- **What it is:** going by the export names, the client of the system backup-and-restore service. It covers:
+  - preparing, running and cancelling a backup;
+  - restoring and cancelling a restore;
+  - reading backup info, parameters and progress, and deleting backup data;
+  - sizing a backup and listing the titles in it;
+  - Initialize and Terminate.
+  - It is system-side. Titles back up their own saves through libSceSaveData's done `sceSaveDataBackup` (`core/libs/prx/libSceSaveData/Export.cpp:42`).
+- **Existing state:** 0 done.
+  - All 16 bodies in `core/libs/prx/libSceBackupRestoreUtil/Export.cpp` (lines 9-87) are parameterless `NotImplemented_nid_no_patch` stubs. There is no state, no constants and no error codes.
+  - `docs/dev/debt/libSceBackupRestoreUtil.md:5` lists all 16 as names from the PS5 3.20 export inventory with "no credible prototypes", and says the declarations are "not an ABI claim".
+  - There is no CMakeLists.txt. The default branch of the prx glob builds the library (`core/libs/CMakeLists.txt:159`). No guest test exists.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 16.
+- **D families (all parameterless, no prototype, private system backup service):**
+  - Backup job (4): PrepareBackup, BackupData, CancelBackupData and GetBackupProgress.
+  - Backup data management (3): GetBackupDataInfo, GetBackupParam and DeleteBackupData.
+  - Restore job (3): RestoreData, CancelRestoreData and GetRestoreProgress.
+  - Required size (2): GetRequiredSize and CancelGetRequiredSize.
+  - Title list (2): GetTitles and CancelGetTitles.
+  - Lifecycle (2): Initialize and Terminate.
+  - Why there is no C: the answer without the service ("no backup", or a permission error for a game process) is not measured in the tree. Getters and progress calls may write outputs, which a parameterless declaration cannot express.
+- **Batch proposal:** none (no A, B or C rows), and no guest test exists.
+- **Caveats:**
+  - `sceSaveDataBackup` is a different API, a per-title save backup with a known prototype. It is not a forward target for any row here.

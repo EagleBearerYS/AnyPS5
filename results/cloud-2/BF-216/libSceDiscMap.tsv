@@ -1,0 +1,2 @@
+function	class	basis
+sceDiscMapGetPackageSize	C	real behaviour: return SCE_DISC_MAP_ERROR_NO_BITMAP_INFO 0x81100004 (core/libs/prx/libSceDiscMap/Export.cpp:8) before checking any argument and leave ret1/ret2 untouched, because this PC never has disc bitmap metadata; it is the confirmed no-bitmap answer both done neighbours give (Export.cpp:14, :23; docs/dev/debt/libSceDiscMap.md:5); (int64, int*, int*) from shadPS4 (debt :9); not measured for this export

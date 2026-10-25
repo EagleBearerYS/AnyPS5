@@ -1,0 +1,5 @@
+function	class	basis
+sceVdecCoreCreateDecoderBid	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecCore.native.md:5); the hardware decoder core's BID creation variant and its records are unknown
+sceVdecCoreCreateDecoderSvp	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecCore.native.md:5); the SVP creation variant (meaning not recorded) and its records are unknown
+sceVdecCoreMapMemory	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecCore.native.md:5); the memory record and the mapping it performs are unknown
+sceVdecCoreSetDecodeInputSvp	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVdecCore.native.md:5); the SVP decode-input record is unknown

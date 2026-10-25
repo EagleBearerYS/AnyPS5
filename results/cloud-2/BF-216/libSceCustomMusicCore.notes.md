@@ -1,0 +1,23 @@
+# libSceCustomMusicCore (18 todo: A 0, B-S 0, B-M 0, B-L 0, C 0, D 18)
+
+- **What it is:** going by the export names, the client of the system's custom/background-music service. It covers:
+  - BGM sessions: open, open2, start, stop, output, volume and close;
+  - the system audio volume;
+  - BGM authority and HDCP status;
+  - event, multicast-event and SP-message delivery;
+  - operation start and stop.
+- **Existing state:** 0 done.
+  - All 18 bodies in `core/libs/prx/libSceCustomMusicCore/Export.cpp` (lines 9-97) are parameterless `NotImplemented_nid_no_patch` stubs. There is no state, no constants and no error codes.
+  - `docs/dev/debt/libSceCustomMusicCore.md:5` lists all 18 as names from the PS5 3.20 export inventory with "no credible prototypes", and says the declarations are "not an ABI claim".
+  - There is no CMakeLists.txt. The default branch of the prx glob builds the library (`core/libs/CMakeLists.txt:159`). No guest test exists.
+- **Neighbour:** `sceSystemServiceIsBgmPlaying` and `sceShellCoreUtilIsBgmPlaying` (`core/libs/prx/libSceSystemService/Export.cpp:894`, `:898`) return 0, because no background music can play here. `docs/dev/debt/libSceSystemService.md:157` marks this as not measured.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 18.
+- **D families (all parameterless, no prototype, private system-service IPC):**
+  - BGM session (7): BgmOpen, BgmOpen2, BgmClose, BgmStart, BgmStop, BgmOutput and BgmSetAudioVolume.
+  - Events and messages (4): PostEvent, SendEvent, SendMulticastEvent and SendSpMessage.
+  - Operations (3): StartOperation, StartOperation2 and StopOperation.
+  - System audio volume (2): GetSystemAudioVolume and SetSystemAudioVolume.
+  - Status (2): GetBgmAuthorityStatus and GetHdcpStatus.
+  - Why there is no C: the "no music service" answer (an error, or "not authorised") is not measured anywhere in the tree. A parameterless declaration cannot carry an output, and these getters may write one.
+- **Batch proposal:** none (no A, B or C rows), and no guest test exists.
+- **Caveats:** IsBgmPlaying's 0 is the only BGM answer in the tree, and it is not a measurement, so it does not support C rows here.

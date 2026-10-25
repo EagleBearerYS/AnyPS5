@@ -1,0 +1,24 @@
+# libSceInvitationDialog (6 todo: C 3, D 3)
+
+- **What it is:** the system dialog in which a user picks friends to invite to a session (up to 16 recipients). It is a common dialog: Initialize, Open, UpdateStatus, Close, GetResult, Terminate.
+- **Existing state** (`core/libs/prx/libSceInvitationDialog/Export.cpp`):
+  - 0 done, and no status variable.
+  - `InvitationDialogResult` (56 bytes) and `InvitationDialogRecipients` (324 bytes) are declared in `include/Api.hpp:7-27`. The debt (`:5`) recovered them from the console module.
+  - Importers: Limbo (CUSA01664) imports Initialize, Open, UpdateStatus, GetResult and Terminate (commit f04d16d702). CUSA03312 imports Close (commit 7140ec1591).
+  - Built by the generic `Export.cpp` rule (`core/libs/CMakeLists.txt:159`).
+- **The common dialog pattern in the tree:**
+  - NpSnsFacebookDialog, NpFriendListDialog, PlayerSelectionDialog and WebBrowserDialog each keep a `g_status` (NONE 0, INITIALIZED 1, RUNNING 2, FINISHED 3).
+  - Open finishes at once, and GetResult reports USER_CANCELED. Their debts file this under Silent stubs (for example `docs/dev/debt/libSceNpSnsFacebookDialog.md`).
+  - Initialize, Terminate and UpdateStatus are identical across the four. Close differs.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 3, D 3.
+- **C (3), silent stubs on the common-dialog state machine:** Initialize, Terminate and UpdateStatus. Each is a plain return over a new `g_status` and reads no argument. Limbo imports all three.
+- **D (3):**
+  - `Open`: the parameter layout and its checks are not in the tree. Without a prototype, a null parameter would get a made-up success.
+  - `GetResult`: FINISHED is reachable only through Open. The 8 bytes at 0x00 come from the open parameter.
+  - `Close`: the done dialogs disagree on Close outside RUNNING, and only those states are reachable here. Facebook and FriendList finish and return 0; PlayerSelection and WebBrowser return NOT_RUNNING.
+- **Batch proposal:** none of 6 or more. The 3 C rows could ship together as `feat(libSceInvitationDialog): common-dialog status without a dialog`, but they let a title get only as far as Open.
+  - No guest test executable exists: there is no CMakeLists.txt for the library and no test under `core/libs/tests/` calls it.
+  - A new test would check: Initialize returns 0, then 0x80B80004; UpdateStatus returns 1; Terminate returns 0, then 0x80B80003; UpdateStatus returns 0 again.
+- **Caveats:**
+  - Silent stubs need a title they unblock. Limbo imports these calls, but whether it opens the dialog during normal play is not recorded.
+  - Open could become C (finish at once, cancelled) once its parameter layout is known. GetResult could then use the recovered result layout, with the status at 0x08 (debt `:5`). What a cancelled result writes into the recipients block is still unknown.

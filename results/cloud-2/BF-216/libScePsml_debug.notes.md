@@ -1,0 +1,28 @@
+# libScePsml_debug (18 todo: A 0, B-S 0, B-M 0, B-L 0, C 0, D 18)
+
+- **What it is:** the PS5 Pro ML upscaler client, MFSR (PSSR). Titles size and create shared resources and contexts in their own memory blocks, then write the upscaling dispatch packet into a GPU command buffer. The same `Export.cpp` also builds `libScePsml` (`core/libs/prx/libScePsml/CMakeLists.txt:1-2`, `core/libs/prx/libScePsml_debug/PsmlLibrary.cmake:2`), which counts 0/0 itself. The MFSR2 exports belong to the module the debt calls libScePsml_mfsr2. EnableSpecularAA and EnableQuality8K belong to libScePsml_specularAA and libScePsml_quality8K.
+- **Existing state:** 12 done, all MFSR1, in `core/libs/prx/libScePsml_debug/Export.cpp`.
+  - Errors are at `:17-19`: NOT_INITIALIZED 0x8A810001, INVALID_ARGUMENT 0x8A810005 and NULL_OUTPUT 0x8A810009.
+  - Constants are at `:20-23`: 2 MiB blocks, 4 context blocks, 52 shared blocks and 0x600 packet dwords.
+  - `MfsrObject` (`:60`) and `g_mfsrInitialized`, `g_mfsrMutex` and `g_mfsrObjects` (`:67-69`) hold bookkeeping-only shared-resource and context objects.
+  - Init is at `:150`. Shared resources are at `:155-176`, the 800M3_2 context at `:178-198`, and the queries at `:215-253`. Their semantics come from the APR-EMU fakelib (`docs/dev/debt/libScePsml_debug.md:13`).
+  - The MFSR2 parameter structs and their `static_assert`s are in `include/Api.hpp:34-85` and `Export.cpp:25-47`.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 18.
+- **Functions that already behave but count as todo (7):** CreateContext1100, CreateContext1300, GetContextBufferRequirement1100 and GetDispatchMfsrPacket900, 1000, 1100 and 1300.
+  - Before `scePsmlMfsrInit` they already return 0x8A810001, as the done MFSR calls do. They throw only after Init.
+  - `core/libs/tests/GuestPsml.cpp` checks the pre-Init answers of all seven (`:233-267`) and the post-Init throw of five (`:218-222`).
+- **D families:**
+  - **MFSR1 versioned dispatch (4: 900, 1000, 1100, 1300):** the debt says "the 0x158-byte template's packet routine is not understood" (`debt :13`). For 900 and 1000 the arguments are known from PPSA08330 and PPSA03016 (`debt :7`). For 1100 and 1300 they are unverified.
+  - **MFSR1 versioned setup (3: CreateContext1100, CreateContext1300, GetContextBufferRequirement1100):** the parameter layouts are unknown (`debt :7`, `:9`).
+  - **MFSR2 setup and release (6: Get{SharedResources,Context}InitRequirement, Create{SharedResources,Context}, Release{SharedResources,Context}):**
+    - The parameter layouts are recovered (`include/Api.hpp:34`, `:44`), but the requirement values and errors are not in the tree.
+    - Bookkeeping objects like MFSR1's would need a block count to check, and MFSR1's own values are not the system's (`debt :5`).
+    - Release can only ever see foreign handles while Create throws.
+  - **MFSR2 dispatch (2: GetDispatchPackets, GetDispatchPacketsSizeInDwords):** the packet is unknown. The size export is still declared parameterless, although the debt says it writes through the second argument (`debt :6`).
+  - **MFSR2 Init (1):** it is parameterless, but its success is only a project choice by analogy with `scePsmlMfsrInit` (`debt :14`), and on its own it unblocks nothing.
+  - **EnableSpecularAA and EnableQuality8K (2):** these are parameterless names from a NID hash. No debt entry remains: the "signatures unknown" entry was dropped from the debt file, but the declarations are unchanged.
+- **Batch proposal:** none (no A, B or C rows). The existing test is `guest_psml_tests` (`core/libs/tests/GuestPsml.cpp`, registered at `core/libs/prx/libScePsml_debug/CMakeLists.txt:5` and `:9`).
+- **Caveats:**
+  - The MFSR2 setup family would move to B-M (bookkeeping objects as for MFSR1) once its requirement values are measured. Release would move with it, and Init with it as an A-style mirror of `scePsmlMfsrInit`.
+  - No dispatch row can be implemented without a substitute upscaler, and none is defined by a public source.
+  - EnableSpecularAA and EnableQuality8K should get their debt entry back (unknown signature), since they still throw with `()` declarations.

@@ -1,0 +1,4 @@
+function	class	basis
+sceHubAppUtilDeeplinkToLiveDetailView	D	parameterless declaration from the PS5 3.20 export inventory, no credible prototype (docs/dev/debt/libSceHubAppUtil.md:5); deep link into a system hub view (no other app or home screen exists in AnyPS5), target arguments and the absent-app error unknown
+sceHubAppUtilDeeplinkToPSSubscriptions	D	parameterless 3.20 declaration, no credible prototype (docs/dev/debt/libSceHubAppUtil.md:5); deep link into the system PlayStation subscriptions view (no other app exists), arguments and the absent-app error unknown
+sceHubAppUtilGetInstallationStatus	D	parameterless 3.20 declaration, no credible prototype (docs/dev/debt/libSceHubAppUtil.md:5); what is queried, whether the status is returned or written, and its encoding are unknown

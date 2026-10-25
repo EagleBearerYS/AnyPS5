@@ -1,0 +1,23 @@
+# libScePatchCheckerClient (12 todo: A 0, B-S 0, B-M 0, B-L 0, C 0, D 12)
+
+- **What it is:** going by the export names, the client of the system patch-checker service. It covers:
+  - creating and destroying a handler;
+  - requesting a patch check (plain or by type), checking the result and cancelling;
+  - reading the patch package info and its applicable tick;
+  - enabling and disabling automatic patch download;
+  - Initialize and Terminate.
+- **Existing state:** 0 done.
+  - All 12 bodies in `core/libs/prx/libScePatchCheckerClient/Export.cpp` (lines 9-67) are parameterless `NotImplemented_nid_no_patch` stubs. There is no state, no constants and no error codes.
+  - `docs/dev/debt/libScePatchCheckerClient.md:5` lists all 12 as names from the PS5 3.20 export inventory with "no credible prototypes", and says the declarations are "not an ABI claim".
+  - There is no CMakeLists.txt. The default branch of the prx glob builds the library (`core/libs/CMakeLists.txt:159`). No guest test exists.
+- **Neighbour:** the title-facing patch check is libSceGameUpdate (7 of 7 done).
+  - It tracks initialization but connects no patch service, and `sceGameUpdateCreateRequest` throws after Init (`core/libs/prx/libSceGameUpdate/Export.cpp:61`).
+  - Its debt says "the service's offline response is still unknown" (`docs/dev/debt/libSceGameUpdate.md:5`). So the tree has no "no patch available" answer to reuse here either.
+- **Counts:** A 0, B-S 0, B-M 0, B-L 0, C 0, D 12.
+- **D families (all parameterless, no prototype, private system patch-check service):**
+  - Check requests (4): RequestCheckPatch, RequestCheckPatchByType, CheckPatch and Cancel.
+  - Handler and library lifecycle (4): CreateHandler, DestroyHandler, Initialize and Terminate.
+  - Package queries (2): GetPackageInfo and GetApplicableTick.
+  - Auto-download switch (2): EnableAutoDownload and DisableAutoDownload.
+- **Batch proposal:** none (no A, B or C rows), and no guest test exists.
+- **Caveats:** if the patch service's offline answer is ever measured for libSceGameUpdate, the check rows here could become C. They would still need prototypes first.

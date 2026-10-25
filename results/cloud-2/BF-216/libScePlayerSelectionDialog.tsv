@@ -1,0 +1,2 @@
+function	class	basis
+scePlayerSelectionDialogParamInitialize	D	partial: null already returns ARG_NULL (core/libs/prx/libScePlayerSelectionDialog/Export.cpp:83) and only a non-null parameter throws (:84); the 216-byte layout (core/libs/prx/libSceCommonDialog/CommonDialog.hpp:127, asserted :151), Open's checks (Export.cpp:37-52) and the base-parameter magic (CommonDialog.hpp:246) are in the tree, but the default field values the console writes (userId, maxPlayers, mode) are unverified (docs/dev/debt/libScePlayerSelectionDialog.md:9)

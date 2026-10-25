@@ -1,0 +1,15 @@
+function	class	basis
+sceVencCreateEncoder	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the encoder configuration record and handle are unknown, and nothing in the tree encodes video
+sceVencDeleteEncoder	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the encoder handle type is unknown and no encoder exists to delete
+sceVencGetConfig	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the encoder configuration record is unknown
+sceVencMapMemory	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the memory record and what the mapping does are unknown
+sceVencQueryHeader	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the stream-header output record is unknown
+sceVencQueryMemorySize	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the memory-requirement record and sizes are unknown
+sceVencQueryPreset	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); preset ids and their values are unknown
+sceVencSetConfig	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the encoder configuration record is unknown
+sceVencSetDecodedFrame	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the input frame record and pixel format are unknown
+sceVencSetPictureConfig	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the per-picture configuration record is unknown
+sceVencSetRateControlConfig	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the rate-control record and modes are unknown
+sceVencSetReferenceFrameInvalidationConfig	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the reference-invalidation record is unknown
+sceVencStartEncode	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the encode session and how output is delivered are unknown
+sceVencStopEncode	D	parameterless declaration from the PS5 3.20 export inventory with no credible prototype (docs/dev/debt/libSceVenc.md:5); the encode session semantics are unknown

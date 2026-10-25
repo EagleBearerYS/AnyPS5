@@ -1,0 +1,7 @@
+function	class	basis
+sceShareFactoryUtilBackToGameFromShareFactory	D	parameterless declaration from the PS5 3.20 export inventory, no credible prototype (docs/dev/debt/libSceShareFactoryUtil.md:5); returning from the Share Factory system app needs app switching, and no other app exists in AnyPS5
+sceShareFactoryUtilGetLaunchStatus	D	parameterless 3.20 declaration, no credible prototype (docs/dev/debt/libSceShareFactoryUtil.md:5); whether the status is returned or written, and its encoding, are unknown, so "not launched" cannot be given
+sceShareFactoryUtilGetLaunchStatusOfShareFactory	D	parameterless 3.20 declaration, no credible prototype (docs/dev/debt/libSceShareFactoryUtil.md:5); whether the status is returned or written, and its encoding, are unknown, so "not launched" cannot be given
+sceShareFactoryUtilInitialize	D	parameterless 3.20 declaration, no credible prototype (docs/dev/debt/libSceShareFactoryUtil.md:5); whether it takes arguments and checks them is unknown, and no title importer is recorded to justify a silent stub
+sceShareFactoryUtilLaunchShareFactory	D	parameterless 3.20 declaration, no credible prototype (docs/dev/debt/libSceShareFactoryUtil.md:5); launching the Share Factory system app, which does not exist here; launch parameters and the absent-app error are unknown
+sceShareFactoryUtilTerminate	D	parameterless 3.20 declaration, no credible prototype (docs/dev/debt/libSceShareFactoryUtil.md:5); pairs with Initialize, whose arguments and lifecycle checks are unknown; no title importer recorded
