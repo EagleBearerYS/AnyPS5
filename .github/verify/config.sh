@@ -1,0 +1,4 @@
+BASE=1928c54b4f2ae5d4dd22b71b66f75399f72a4a66
+REPEAT=10
+EXTRA_TESTS='^guest_system_service'
+NO_BEFORE=1
