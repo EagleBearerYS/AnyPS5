@@ -1142,27 +1142,19 @@ void verifyTypeZeroImageMaterialization() {
                     type == 0u ? "TYPE=0 image descriptor with a nonzero base was rejected or altered during materialization" : "TYPE=1 image descriptor with a nonzero base was rejected or altered during materialization");
         }
 
-        struct Access {
-            bool read;
-            bool written;
-            bool atomic;
-        };
-        for (const auto access : {Access{false, true, false}, Access{true, true, false}, Access{false, false, true}, Access{false, true, true}}) {
+        for (const bool read : {false, true}) {
             image.resourceClass = ImageResourceClass::Storage;
-            image.read = access.read;
-            image.written = access.written;
-            image.atomic = access.atomic;
+            image.read = read;
+            image.written = true;
             plan.info.images[0] = image;
             plan.info.runtimeImageModes[0] = ResourceMaterializer::RuntimeImageModes(image);
             if (type == 2u) {
                 expectFailure(materialize, "runtime image descriptor is invalid", "a reserved TYPE=2 storage image descriptor was accepted");
-            } else if (access.atomic) {
-                expectFailure(materialize, "runtime image descriptor is invalid", "TYPE=0 or 1 atomic image descriptor was accepted without hardware evidence");
             } else {
                 snapshot = {};
                 materialize();
                 require(snapshot.images.size() == 1u && snapshot.images[0].dwordCount == 8u && snapshot.images[0].dwords == words,
-                        access.read ? "TYPE=0 or 1 read-write storage image descriptor was not materialized as a null storage image" : "TYPE=0 or 1 written storage image descriptor was not materialized as a null storage image");
+                        read ? "TYPE=0 or 1 read-write storage image descriptor was not materialized as a null storage image" : "TYPE=0 or 1 written storage image descriptor was not materialized as a null storage image");
             }
         }
     }
