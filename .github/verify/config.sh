@@ -1,0 +1,4 @@
+BASE=a11c83a3c1ba41140602ce55c3455751c803281e
+REPEAT=10
+EXTRA_TESTS='agc_driver_draw_write_ranges|agc_driver_graphics|agc_shader_memory|agc_shader_type_zero_image_materialization'
+VALIDATION=1
