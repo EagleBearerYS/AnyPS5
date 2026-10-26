@@ -1,0 +1,4 @@
+BASE=18ef6be0cd2d929e2a6b466a8dd3fa9b79f0705a
+REPEAT=10
+EXTRA_TESTS='^guest_libressl'
+NO_BEFORE=1
