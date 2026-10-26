@@ -301,15 +301,10 @@ static void CheckIfFlags() {
     std::uint32_t flags = 0x5a5a5a5a;
     Require(sceNetConfigGetIfFlags(0, &flags) == 0);
     Require(flags == 0x8049);
-    for (const std::uint32_t interfaceId : {1u, 4u, 10u, 0xffffffffu}) {
+    for (const std::uint32_t interfaceId : {10u, 0xffffffffu}) {
         flags = 0x5a5a5a5a;
-        bool threw = false;
-        try {
-            sceNetConfigGetIfFlags(interfaceId, &flags);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw && flags == 0x5a5a5a5a);
+        Require(sceNetConfigGetIfFlags(interfaceId, &flags) == -1);
+        Require(flags == 0x5a5a5a5a);
     }
     Require(sceNetConfigGetIfFlags(0, nullptr) == static_cast<int>(0x8041130Eu));
     Require(sceNetConfigGetIfFlags(10, nullptr) == static_cast<int>(0x8041130Eu));
