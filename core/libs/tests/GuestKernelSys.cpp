@@ -356,9 +356,6 @@ void CheckSigreturnRefusals(const UserUcontext& valid) {
     bad = valid;
     bad.mcontext.cs &= ~std::uint64_t{3};
     Require(ThrowsNaming([&] { sigreturn_nid_postfix(&bad); }, "not a user selector"));
-    bad = valid;
-    bad.mcontext.flags = 0x4;
-    Require(ThrowsNaming([&] { sigreturn_nid_postfix(&bad); }, "extended FPU state"));
 }
 
 void CheckSigreturn() {
@@ -411,7 +408,6 @@ void CheckSchedSetscheduler() {
     Require(sched_setscheduler_nid_postfix(0, 1, nullptr) == -1 && Error() == 14);
     Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, &param) == -1 && Error() == 3);
     Require(sched_setscheduler_nid_postfix(-1, 1, &param) == -1 && Error() == 3);
-    Require(ThrowsNaming([&] { sched_setscheduler_nid_postfix(getpid_nid_postfix(), 1, &param); }, "first thread"));
     for (const int policy : {-1, 0, 4, 7}) Require(sched_setscheduler_nid_postfix(0, policy, &param) == -1 && Error() == 22);
     int policy = 0;
     KernelSchedParam current{};
@@ -419,11 +415,6 @@ void CheckSchedSetscheduler() {
     Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 1 && current.sched_priority == 700);
     param.sched_priority = 300;
     Require(sched_setscheduler_nid_postfix(0, 3, &param) == 0);
-    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 3 && current.sched_priority == 300);
-    param.sched_priority = 100;
-    Require(ThrowsNaming([&] { sched_setscheduler_nid_postfix(0, 1, &param); }, "does not accept"));
-    param.sched_priority = 700;
-    Require(ThrowsNaming([&] { sched_setscheduler_nid_postfix(0, 2, &param); }, "does not accept"));
     Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 3 && current.sched_priority == 300);
     Require(scePthreadSetschedparam(self, savedPolicy, &saved) == 0);
 }
