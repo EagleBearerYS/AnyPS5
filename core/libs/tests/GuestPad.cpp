@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
-#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -463,17 +462,16 @@ static void CheckLightBarResets(int handle) {
         Pad::SetLightBar(2, true, 40, 50, 60);
         Require(LightBarIs(0, true, 10, 20, 30) && LightBarIs(2, true, 40, 50, 60));
     };
+    const auto openPortReset = [] { return LightBarIs(0, false, 0, 0, 0) && LightBarIs(2, true, 40, 50, 60); };
     setBoth();
-    Require(scePadResetLightBarAll() == PAD_OK);
-    for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) Require(LightBarIs(port, false, 0, 0, 0));
-    Require(scePadResetLightBarAll() == PAD_OK);
-    Require(LightBarIs(0, false, 0, 0, 0));
+    Require(scePadResetLightBarAll() == PAD_OK && openPortReset());
+    Require(scePadResetLightBarAll() == PAD_OK && openPortReset());
     setBoth();
-    Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_SPECIAL) == PAD_OK);
-    for (const std::uint32_t type : {1u, 5u, 6u, 0xffu, 0xffffffffu}) Require(scePadResetLightBarAllByPortType(type) == PAD_ERROR_INVALID_ARG);
+    for (const std::uint32_t type : {1u, 2u}) Require(scePadResetLightBarAllByPortType(type) == PAD_OK);
+    for (const std::uint32_t type : {3u, 4u, 5u, 6u, 16u, 0xffu, 0xffffffffu}) Require(scePadResetLightBarAllByPortType(type) == PAD_ERROR_INVALID_ARG);
     Require(LightBarIs(0, true, 10, 20, 30) && LightBarIs(2, true, 40, 50, 60));
-    Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_STANDARD) == PAD_OK);
-    for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) Require(LightBarIs(port, false, 0, 0, 0));
+    Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_STANDARD) == PAD_OK && openPortReset());
+    Pad::SetLightBar(2, false, 0, 0, 0);
 }
 
 static bool VibrationIs(int port, std::uint8_t large, std::uint8_t small) {
@@ -488,14 +486,12 @@ static void CheckVibrationForce(int user, int handle) {
     Require(scePadSetVibration(handle, &weak) == PAD_OK && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(handle, &weak) == scePadSetVibration(handle, &weak) && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(handle, nullptr) == PAD_ERROR_INVALID_ARG && VibrationIs(0, 5, 6));
-    Require(scePadSetVibrationForce(handle + 1, &strong) == PAD_ERROR_INVALID_HANDLE && VibrationIs(0, 5, 6));
-    Require(scePadSetVibrationForce(-1, &strong) == PAD_ERROR_INVALID_HANDLE);
+    for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetVibrationForce(other, nullptr) == PAD_ERROR_INVALID_ARG);
     const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special >= PAD_SPECIAL_HANDLE);
     Require(scePadSetVibrationForce(special, &strong) == PAD_OK && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(special, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(special) == PAD_OK);
-    Require(scePadSetVibrationForce(special, &strong) == PAD_ERROR_INVALID_HANDLE);
     const PadVibrationParam off{0, 0};
     Require(scePadSetVibrationForce(handle, &off) == PAD_OK && VibrationIs(0, 0, 0));
 }
@@ -624,6 +620,13 @@ int main() {
     Require(scePadGetControllerType(PAD_HANDLE, &controllerType) == PAD_ERROR_NOT_INITIALIZED);
     Require(controllerType == -1);
     Require(scePadUnknown_n3kSX62fgNo() == static_cast<int>(0x80920005));
+    Require(!scePadIsValidHandle(PAD_HANDLE, PAD_PORT_TYPE_STANDARD));
+    const PadVibrationParam earlyVibration{1, 2};
+    for (const PadVibrationParam* param : {static_cast<const PadVibrationParam*>(nullptr), &earlyVibration}) Require(scePadSetVibrationForce(PAD_HANDLE, param) == PAD_ERROR_NOT_INITIALIZED);
+    Pad::SetLightBar(0, true, 1, 2, 3);
+    Require(scePadResetLightBarAll() == PAD_OK && LightBarIs(0, true, 1, 2, 3));
+    Require(scePadResetLightBarAllByPortType(3) == PAD_ERROR_INVALID_ARG && scePadResetLightBarAllByPortType(PAD_PORT_TYPE_STANDARD) == PAD_OK && LightBarIs(0, true, 1, 2, 3));
+    Pad::SetLightBar(0, false, 0, 0, 0);
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-pad-state-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup {
         std::filesystem::path path;
@@ -738,12 +741,8 @@ int main() {
     Require(scePadGetHandle(user, 0, 0) == noHandle);
     Require(!scePadIsValidHandle(handle, PAD_PORT_TYPE_STANDARD));
     Require(scePadSetLightBar(handle, &lightBar) == PAD_OK && LightBarIs(0, true, 255, 128, 64));
-    Require(scePadResetLightBarAll() == PAD_OK && LightBarIs(0, false, 0, 0, 0));
-    const PadVibrationParam closedVibration{9, 10};
-    Require(scePadSetVibrationForce(handle, &closedVibration) == scePadSetVibration(handle, &closedVibration) && VibrationIs(0, 9, 10));
-    Require(scePadSetVibrationForce(handle + 1, &closedVibration) == PAD_ERROR_INVALID_HANDLE);
-    const PadVibrationParam closedOff{0, 0};
-    Require(scePadSetVibrationForce(handle, &closedOff) == PAD_OK && VibrationIs(0, 0, 0));
+    Require(scePadResetLightBarAll() == PAD_OK && LightBarIs(0, true, 255, 128, 64));
+    Require(scePadResetLightBar(handle) == PAD_OK && LightBarIs(0, false, 0, 0, 0));
     Require(scePadUnknown_n3kSX62fgNo() == PAD_OK);
     Require(scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(true) == 0);
     Require(scePadSetAngularVelocityDeadbandState(handle, false) == 0);

@@ -614,6 +614,10 @@ int APS5_VABI scePadShareOutputDataWithFunctionType(std::int32_t source, std::in
 }
 
 int APS5_VABI scePadSetVibrationForce(std::int32_t handle, const PadVibrationParam* param) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (param == nullptr) return PAD_ERROR_INVALID_ARG;
+    const int port = PortOf(handle);
+    if (!SpecialHandle(handle) && !(port >= 0 && g_opened[port])) NotImplemented_nid_no_patch("scePadSetVibrationForce: a handle that is not open");
     return scePadSetVibration(handle, param);
 }
 
@@ -913,15 +917,14 @@ int APS5_VABI scePadGetInfoByPortType(std::int32_t type, PadPortInfo* info) {
 }
 
 int APS5_VABI scePadResetLightBarAll(void) {
-    for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) Pad::SetLightBar(port, false, 0, 0, 0);
+    if (!Pad::IsInitialized()) return PAD_OK;
+    for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) if (g_opened[port]) Pad::SetLightBar(port, false, 0, 0, 0);
     return PAD_OK;
 }
 
 int APS5_VABI scePadResetLightBarAllByPortType(std::uint32_t portType) {
-    if (portType == 3 || portType == 4 || portType == PAD_PORT_TYPE_REMOTE)
-        NotImplemented_nid_no_patch("scePadResetLightBarAllByPortType: port types 3, 4 and 16");
-    if (portType == PAD_PORT_TYPE_SPECIAL) return PAD_OK;
-    if (portType != PAD_PORT_TYPE_STANDARD) return PAD_ERROR_INVALID_ARG;
+    if (portType != PAD_PORT_TYPE_STANDARD && portType != 1 && portType != PAD_PORT_TYPE_SPECIAL) return PAD_ERROR_INVALID_ARG;
+    if (portType != PAD_PORT_TYPE_STANDARD) return PAD_OK;
     return scePadResetLightBarAll();
 }
 
