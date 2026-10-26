@@ -23,6 +23,7 @@ extern std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13];
 extern std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14];
 extern std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9];
 extern std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13];
+extern std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13];
 
 }
 
@@ -344,6 +345,15 @@ static void CheckTimeGetVtableObject() {
     }
 }
 
+static void CheckTimeGetWideVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&TestHeapAllocate);
@@ -368,6 +378,7 @@ int main() {
     CheckFacetGetcat();
     CheckCollateVtableObject();
     CheckTimeGetVtableObject();
+    CheckTimeGetWideVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
