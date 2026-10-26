@@ -1,0 +1,3 @@
+BASE=5b5d24cb223ede690fe5eab1fe2f7a1736b801a5
+REPEAT=10
+EXTRA_TESTS='^agc_driver_frame_replay'
