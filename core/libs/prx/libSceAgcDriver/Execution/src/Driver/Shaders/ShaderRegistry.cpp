@@ -138,7 +138,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
                 cache.erase(found);
             }
             const auto bytes = result->code.size() * sizeof(std::uint32_t);
-            while (!cache.empty() && (cache.size() >= 64 || cacheBytes + bytes > 8 * 1024 * 1024)) {
+            while (!cache.empty() && (cache.size() >= 4096 || cacheBytes + bytes > 64 * 1024 * 1024)) {
                 cacheBytes -= cache.back()->code.size() * sizeof(std::uint32_t);
                 cache.pop_back();
             }
@@ -1702,7 +1702,7 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
         try {
             entries = PrepareRegistered(*plan);
         } catch (const std::exception& error) {
-            APS5_LOG_ERR("Shader 0x%llx could not be prepared after registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
+            APS5_LOG_ERR("Shader 0x%llx snapshot=0x%llx could not be prepared after registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(snapshot.get())), error.what());
             failure = std::current_exception();
         } catch (...) {
             failure = std::current_exception();

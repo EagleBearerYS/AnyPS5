@@ -1,6 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -24,11 +26,6 @@
 #include <vector>
 
 #undef main
-
-extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-extern "C" int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-extern "C" int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 
 namespace {
 
@@ -449,6 +446,22 @@ void testControls() {
     }
     VideoOutColorSettings settings{};
     expectFailure([&] { sceVideoOutColorSettingsSetGamma(&settings, std::numeric_limits<float>::quiet_NaN()); });
+    expectFailure([&] { sceVideoOutColorSettingsSetGamma_(&settings, 1.0f, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutColorSettingsSetGamma_(&settings, 1.2f, sizeof(VideoOutColorSettings)) == 0, "gamma wrapper rejected valid size");
+    check(settings.gamma == 1.2f, "gamma wrapper failed to forward value");
+
+    expectFailure([&] { sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings)) == 0, "adjust color wrapper rejected valid size");
+
+    VideoOutColorSpaceConversionSettings cscSettings{};
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "default SDR to HDR wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "SDR to HDR conversion wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "adjust color space conversion wrapper rejected valid size");
     KernelEqueue queue = 0;
     check(sceKernelCreateEqueue(&queue, "VideoOut test") == 0, "event queue creation failed");
     auto owner = EqueuePin_nid_postfix(queue);

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -7,36 +10,15 @@
 #include <cstring>
 #include <ctime>
 #include <stdexcept>
+#include <string>
 #include <vector>
-struct SceKernelSystemSwVersion {
-    std::uint64_t size;
-    char versionString[0x1C];
-    std::uint32_t version;
-};
+
 static_assert(offsetof(SceKernelSystemSwVersion, size) == 0x00);
 static_assert(offsetof(SceKernelSystemSwVersion, versionString) == 0x08);
 static_assert(offsetof(SceKernelSystemSwVersion, version) == 0x24);
 static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
 extern "C" {
-std::int64_t APS5_VABI sysconf_nid_postfix(int);
-int APS5_VABI getpagesize_nid_postfix();
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sysctl_nid_postfix(const int*, std::uint32_t, void*, std::size_t*, const void*, std::size_t);
-int APS5_VABI sysctlbyname_nid_postfix(const char*, void*, std::size_t*, const void*, std::size_t);
-int APS5_VABI sysctlnametomib_nid_postfix(const char*, int*, std::size_t*);
-int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion*);
-int APS5_VABI sceKernelGetSystemExVersion(char*, char*);
-int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char*);
-int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t*);
-int APS5_VABI getpid_nid_postfix();
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t);
-int APS5_VABI munmap_nid_postfix(void*, std::size_t);
-std::uint64_t APS5_VABI sceKernelGetTscFrequency(void);
-struct GuestRlimitTest {
-    std::int64_t rlim_cur;
-    std::int64_t rlim_max;
-};
-int APS5_VABI getrlimit_nid_postfix(int resource, GuestRlimitTest* limit);
+
 extern char** environ_nid_postfix;
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -68,6 +50,7 @@ static void CheckProcessorCountSysctl() {
     const int unknown[] = {6, 99};
     try {
         sysctl_nid_postfix(unknown, 2, &value, &length, nullptr, 0);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -415,11 +398,7 @@ struct BootTimeval {
     std::int64_t tv_usec;
 };
 static_assert(sizeof(BootTimeval) == 16);
-struct BootTimespec {
-    std::int64_t tv_sec;
-    std::int64_t tv_nsec;
-};
-extern "C" int APS5_VABI clock_gettime_nid_postfix(int, BootTimespec*);
+
 static void CheckBootTimeSysctl() {
     const int mib[] = {1, 21};
     *__error_nid_postfix() = 13;
@@ -432,8 +411,8 @@ static void CheckBootTimeSysctl() {
     Require(sysctl_nid_postfix(mib, 2, &first, &length, nullptr, 0) == 0 && length == sizeof(first));
     Require(first.tv_sec > 0 && first.tv_sec <= static_cast<std::int64_t>(std::time(nullptr)));
     Require(first.tv_usec >= 0 && first.tv_usec < 1000000);
-    BootTimespec now{};
-    BootTimespec uptime{};
+    KernelTimespec now{};
+    KernelTimespec uptime{};
     Require(clock_gettime_nid_postfix(5, &uptime) == 0 && clock_gettime_nid_postfix(0, &now) == 0);
     const std::int64_t drift = (first.tv_sec + uptime.tv_sec - now.tv_sec) * 1000000 + first.tv_usec + uptime.tv_nsec / 1000 - now.tv_nsec / 1000;
     Require(drift > -1000000 && drift < 1000000);
@@ -515,6 +494,7 @@ static void CheckMeasuredAbsentSysctlMibs() {
         bool threw = false;
         try {
             sysctl_nid_postfix(entry.mib, entry.length, buffer, &length, buffer, sizeof(buffer));
+
         } catch (const std::runtime_error&) {
             threw = true;
         }
@@ -631,6 +611,7 @@ static void CheckOvercommitSysctl() {
     length = sizeof(value);
     try {
         sysctlbyname_nid_postfix("vm.overcommit", &value, &length, &value, sizeof(value));
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -799,6 +780,7 @@ static void CheckPseudoRandomMibSysctl() {
     bool threw = false;
     try {
         sysctl_nid_postfix(mib, 2, &value, &length, &value, sizeof(value));
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -890,6 +872,7 @@ static void CheckNameToMib() {
     bool threw = false;
     try {
         sysctlnametomib_nid_postfix(nullptr, mib, &size);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -897,6 +880,7 @@ static void CheckNameToMib() {
     threw = false;
     try {
         sysctlnametomib_nid_postfix("hw.ncpu", mib, nullptr);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -904,7 +888,55 @@ static void CheckNameToMib() {
     *__error_nid_postfix() = 13;
     Require(sysctlnametomib_nid_postfix("kern.anyps5_no_such_name", mib, &size) == -1 && *__error_nid_postfix() == 2);
 }
+static void CheckUnknownRootsAndTopLevelNames() {
+    for (const int root : {99, 10, 255, -1, -5}) {
+        const int mib[] = {root, 1};
+        int value = 0x5a5a5a5a;
+        std::size_t length = sizeof(value);
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(mib, 2, &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(value == 0x5a5a5a5a && length == sizeof(value));
+    }
+    struct TopLevel {
+        const char* name;
+        int number;
+    };
+    for (const TopLevel& node : {TopLevel{"sysctl", 0}, TopLevel{"kern", 1}, TopLevel{"vm", 2}, TopLevel{"vfs", 3}, TopLevel{"net", 4},
+                                 TopLevel{"debug", 5}, TopLevel{"hw", 6}, TopLevel{"machdep", 7}, TopLevel{"user", 8}, TopLevel{"p1003_1b", 9}}) {
+        for (const bool dotted : {false, true}) {
+            const std::string name = std::string(node.name) + (dotted ? "." : "");
+            int mib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+            std::size_t size = 3;
+            Require(sysctlnametomib_nid_postfix(name.c_str(), mib, &size) == 0 && size == 1 && mib[0] == node.number && mib[1] == 0x5a5a5a5a);
+            int value = 0x5a5a5a5a;
+            std::size_t length = sizeof(value);
+            *__error_nid_postfix() = 13;
+            Require(sysctlbyname_nid_postfix(name.c_str(), &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+            Require(value == 0x5a5a5a5a && length == sizeof(value));
+        }
+    }
+    int mib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t size = 3;
+    Require(sysctlnametomib_nid_postfix("hw.ncpu.", mib, &size) == 0 && size == 2 && mib[0] == 6 && mib[1] == 3);
+    for (const char* name : {"kern..", ".", "kern.anyps5.x", "kernel"}) {
+        size = 3;
+        *__error_nid_postfix() = 13;
+        Require(sysctlnametomib_nid_postfix(name, mib, &size) == -1 && *__error_nid_postfix() == 2);
+    }
+    int value = 0;
+    std::size_t length = sizeof(value);
+    Require(sysctlbyname_nid_postfix("hw.ncpu.", &value, &length, nullptr, 0) == 0 && value > 0 && length == sizeof(value));
+    std::string tooLong(1024, 'a');
+    length = sizeof(value);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix(tooLong.c_str(), &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 63);
+    tooLong.resize(1023);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix(tooLong.c_str(), &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+}
+
 int main() {
+    CheckUnknownRootsAndTopLevelNames();
     CheckProcessorCountSysctl();
     CheckPageSizeSysctl();
     CheckPhysicalMemorySysctl(5, "hw.physmem");
@@ -935,7 +967,7 @@ int main() {
     *__error_nid_postfix() = 13;
     Require(sysconf_nid_postfix(1) == 262144);
     Require(sysconf_nid_postfix(3) == 128);
-    GuestRlimitTest nofileLimit{};
+    GuestResourceLimit nofileLimit{};
     Require(getrlimit_nid_postfix(8, &nofileLimit) == 0);
     Require(sysconf_nid_postfix(5) == nofileLimit.rlim_cur);
     Require(sysconf_nid_postfix(47) == 0x4000);
