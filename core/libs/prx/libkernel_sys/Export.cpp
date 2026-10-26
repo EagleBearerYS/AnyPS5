@@ -203,11 +203,6 @@ void RequireGuestOwner(const char* call, std::uint32_t uid, std::uint32_t gid) {
     if (gid != 0 && gid != Unchanged) NotImplemented_nid_no_patch((std::string(call) + ": a group other than the guest group").c_str());
 }
 
-bool GuestOwner(std::uint32_t uid, std::uint32_t gid) {
-    constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
-    return (uid == 0 || uid == Unchanged) && (gid == 0 || gid == Unchanged);
-}
-
 bool IsSymbolicLink(const std::filesystem::path& native) {
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
@@ -779,20 +774,23 @@ int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interva
 int APS5_VABI chown_nid_postfix(const char* path, std::uint32_t uid, std::uint32_t gid) {
     FileStat status{};
     if (stat_nid_postfix(path, &status) != 0) return -1;
-    return GuestOwner(uid, gid) ? 0 : static_cast<int>(Fail(GuestEperm));
+    RequireGuestOwner("chown", uid, gid);
+    return 0;
 }
 
 int APS5_VABI lchown_nid_postfix(const char* path, std::uint32_t uid, std::uint32_t gid) {
     FileStat status{};
     if (lstat_nid_postfix(path, &status) != 0) return -1;
-    return GuestOwner(uid, gid) ? 0 : static_cast<int>(Fail(GuestEperm));
+    RequireGuestOwner("lchown", uid, gid);
+    return 0;
 }
 
 int APS5_VABI fchownat_nid_postfix(int fd, const char* path, std::uint32_t uid, std::uint32_t gid, int flag) {
     if (flag & ~GuestAtSymlinkNofollow) return static_cast<int>(Fail(GuestEinval));
     FileStat status{};
     if (fstatat_nid_postfix(fd, path, &status, flag) != 0) return -1;
-    return GuestOwner(uid, gid) ? 0 : static_cast<int>(Fail(GuestEperm));
+    RequireGuestOwner("fchownat", uid, gid);
+    return 0;
 }
 
 int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int flag) {
