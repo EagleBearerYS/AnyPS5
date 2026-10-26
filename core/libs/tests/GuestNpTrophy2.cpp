@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
-#include <string>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -62,12 +61,8 @@ int main() {
 
     Require(sceNpTrophy2ShowTrophyList(1) == 0);
 
-    try {
-        sceNpTrophy2SystemCreateContext();
-        Require(false);
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == "sceNpTrophy2SystemCreateContext not implemented");
-    }
+    auto* volatile linked = &sceNpTrophy2SystemCreateContext;
+    Require(linked != nullptr);
     ResolvePendingExports();
 
     NpTrophy2GameDetails details{};

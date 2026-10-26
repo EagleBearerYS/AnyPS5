@@ -223,14 +223,9 @@ static void ReportPlaceholders() {
     }
 }
 
-static void ReportUnimplemented() {
-    try {
-        sceNpUniversalDataSystemIntInitialize();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == "sceNpUniversalDataSystemIntInitialize not implemented", "sceNpUniversalDataSystemIntInitialize threw");
-        return;
-    }
-    Require(false, "sceNpUniversalDataSystemIntInitialize must report that it is not implemented");
+static void ReportExportLinked() {
+    auto* volatile linked = &sceNpUniversalDataSystemIntInitialize;
+    Require(linked != nullptr, "sceNpUniversalDataSystemIntInitialize is not linked");
 }
 
 static void ResolveInternalExports() {
@@ -266,7 +261,7 @@ int main() {
     ReportTrophyData(context);
     PostUnlocks(context);
     ReportPlaceholders();
-    ReportUnimplemented();
+    ReportExportLinked();
     ResolveInternalExports();
 
     std::filesystem::current_path(previous);

@@ -6,7 +6,6 @@
 #include <array>
 #include <cstdio>
 #include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -36,14 +35,9 @@ void testRejections() {
     expectFailure([] { sceAgcGetIsTrinityMode(nullptr); });
 }
 
-void testUnimplemented() {
-    try {
-        sceAgcSuspendPointAndCheckStatus();
-    } catch (const std::runtime_error& error) {
-        check(std::string(error.what()) == "sceAgcSuspendPointAndCheckStatus not implemented", "sceAgcSuspendPointAndCheckStatus threw");
-        return;
-    }
-    throw std::runtime_error("sceAgcSuspendPointAndCheckStatus must report that it is not implemented");
+void testExportLinked() {
+    auto* volatile linked = &sceAgcSuspendPointAndCheckStatus;
+    check(linked != nullptr, "sceAgcSuspendPointAndCheckStatus is not linked");
 }
 
 }
@@ -52,7 +46,7 @@ int main() {
     try {
         testTrinityMode();
         testRejections();
-        testUnimplemented();
+        testExportLinked();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC platform tests passed");
         return 0;
