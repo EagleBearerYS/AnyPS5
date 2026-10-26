@@ -1,0 +1,3 @@
+BASE=d82e3f95521bacfb58feae7d8c072a7ca6ce0c26
+REPEAT=10
+EXTRA_TESTS='^agc_shader_'
