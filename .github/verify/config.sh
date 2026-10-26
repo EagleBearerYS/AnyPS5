@@ -1,0 +1,4 @@
+BASE=e9698e7dadfdce12ec36647f0cc131c9147ff84d
+REPEAT=10
+EXTRA_TESTS='^agc|^video_out'
+NO_BEFORE=1
