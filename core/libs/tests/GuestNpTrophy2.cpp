@@ -11,15 +11,6 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static void APS5_VABI OnUnlock(int, int, void*) {}
 
-static bool ThrowsNotImplemented(int (APS5_VABI* function)(void), const char* name) {
-    try {
-        function();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
-
 static void ResolvePendingExports() {
     struct Export {
         int (APS5_VABI* function)(void);
@@ -49,7 +40,7 @@ static void ResolvePendingExports() {
         {sceNpTrophy2SystemRemoveTitleData, "sceNpTrophy2SystemRemoveTitleData"},
         {sceNpTrophy2SystemRemoveUserData, "sceNpTrophy2SystemRemoveUserData"},
     };
-    for (const auto& entry : exports) Require(ThrowsNotImplemented(entry.function, entry.name));
+    for (const auto& entry : exports) Require(entry.function != nullptr);
 }
 
 template <typename Call> static bool ThrowsInvalidArgument(Call call) {

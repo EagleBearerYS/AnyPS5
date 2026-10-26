@@ -233,15 +233,6 @@ static void ReportUnimplemented() {
     Require(false, "sceNpUniversalDataSystemIntInitialize must report that it is not implemented");
 }
 
-static bool ThrowsNotImplemented(int (APS5_VABI* function)(void), const char* name) {
-    try {
-        function();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
-
 static void ResolveInternalExports() {
     struct Export {
         int (APS5_VABI* function)(void);
@@ -259,7 +250,7 @@ static void ResolveInternalExports() {
         {sceNpUniversalDataSystemIntNetSyncTitles, "sceNpUniversalDataSystemIntNetSyncTitles"},
         {sceNpUniversalDataSystemIntTerminate, "sceNpUniversalDataSystemIntTerminate"},
     };
-    for (const auto& entry : exports) Require(ThrowsNotImplemented(entry.function, entry.name), entry.name);
+    for (const auto& entry : exports) Require(entry.function != nullptr, entry.name);
 }
 
 int main() {

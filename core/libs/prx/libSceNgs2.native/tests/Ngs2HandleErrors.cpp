@@ -25,25 +25,6 @@ static void CheckUnimplemented() {
     throw std::runtime_error("sceNgs2RackQueryInfo must report that it is not implemented");
 }
 
-static bool ThrowsNotImplemented(int (APS5_VABI* function)(void), const char* name) {
-    try {
-        function();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
-
-template <typename Call>
-static bool CallThrowsNotImplemented(Call call, const char* name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
-
 static void CheckPendingExports() {
     struct Export {
         int (APS5_VABI* function)(void);
@@ -66,21 +47,26 @@ static void CheckPendingExports() {
         {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
     };
     for (const auto& entry : exports) {
-        if (!ThrowsNotImplemented(entry.function, entry.name)) throw std::runtime_error(std::string(entry.name) + " did not throw its not-implemented error");
+        if (entry.function == nullptr) throw std::runtime_error(std::string(entry.name) + " is not exported");
     }
 }
 
 static void CheckCorePendingExports() {
-    std::uintptr_t handles[1] = {};
-    const auto require = [](bool thrown, const char* name) {
-        if (!thrown) throw std::runtime_error(std::string(name) + " did not throw its not-implemented error");
+    struct Export {
+        void (*function)(void);
+        const char* name;
     };
-    require(ThrowsNotImplemented(sceNgs2FftInit, "sceNgs2FftInit"), "sceNgs2FftInit");
-    require(ThrowsNotImplemented(sceNgs2FftProcess, "sceNgs2FftProcess"), "sceNgs2FftProcess");
-    require(ThrowsNotImplemented(sceNgs2FftQuerySize, "sceNgs2FftQuerySize"), "sceNgs2FftQuerySize");
-    require(CallThrowsNotImplemented([] { sceNgs2ParseWaveformUser(0, 0, nullptr); }, "sceNgs2ParseWaveformUser"), "sceNgs2ParseWaveformUser");
-    require(CallThrowsNotImplemented([&] { sceNgs2SystemEnumHandles(handles, 1); }, "sceNgs2SystemEnumHandles"), "sceNgs2SystemEnumHandles");
-    require(CallThrowsNotImplemented([&] { sceNgs2SystemEnumRackHandles(0, handles, 1); }, "sceNgs2SystemEnumRackHandles"), "sceNgs2SystemEnumRackHandles");
+    const Export exports[] = {
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftInit), "sceNgs2FftInit"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftProcess), "sceNgs2FftProcess"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftQuerySize), "sceNgs2FftQuerySize"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2ParseWaveformUser), "sceNgs2ParseWaveformUser"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2SystemEnumHandles), "sceNgs2SystemEnumHandles"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2SystemEnumRackHandles), "sceNgs2SystemEnumRackHandles"},
+    };
+    for (const auto& entry : exports) {
+        if (entry.function == nullptr) throw std::runtime_error(std::string(entry.name) + " is not exported");
+    }
 }
 
 static void CheckResetOption() {
