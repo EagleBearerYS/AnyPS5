@@ -1,0 +1,4 @@
+BASE=518d36eaec0ac37870a17b465bedb5551be91b42
+REPEAT=10
+EXTRA_TESTS='guest_kqueue|guest_freebsd_clocks|guest_mlock|guest_memory|guest_mmap_fixed_anonymous|guest_net_ctl|guest_rudp_context_lifecycle|^agc_driver_frame_replay'
+NO_BEFORE=1
