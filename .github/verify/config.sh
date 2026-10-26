@@ -1,0 +1,3 @@
+BASE=bc0971afbc4c61ccd6b1366e80367364ad54c710
+REPEAT=10
+EXTRA_TESTS='^agc_private_collect'
