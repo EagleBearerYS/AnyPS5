@@ -1,0 +1,3 @@
+BASE=684ffde83d2d24b70a99c9cfa478a8f394fed3ee
+REPEAT=10
+EXTRA_TESTS='guest_bluetooth_hid'
