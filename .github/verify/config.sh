@@ -1,0 +1,4 @@
+BASE=8403d317449b49a6fb714fbfd1e0a0c144a891b1
+REPEAT=10
+EXTRA_TESTS='^guest_rudp|^guest_appcontent'
+NO_BEFORE=1
