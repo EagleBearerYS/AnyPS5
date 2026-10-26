@@ -1,0 +1,3 @@
+BASE=8a9f6ca7bc24f068fa14019643f6f7b88e0e6089
+REPEAT=10
+EXTRA_TESTS='guest_appcontent|guest_rudp_context_lifecycle|guest_rudp_context_queries|guest_rudp_poll|guest_rudp_pump|guest_rudp_status|public_headers'
