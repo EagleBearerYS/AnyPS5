@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -1326,6 +1327,27 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     return {blend, routing->code};
 }
 
+void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
+    if (!state.depthBoundsTest || !state.depth || context.depthBounds) return;
+    ValidateDepthBounds(context, state);
+    Require(!context.depthRangeUnrestricted, "the depth bounds test without the depthBounds feature is emulated only where stored depth stays in [0, 1]");
+    Require(state.depth->format == VK_FORMAT_D32_SFLOAT || state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT, "the depth bounds test on a normalized depth target needs the depthBounds feature");
+    Require(!state.depthTest && !state.depthWrite, "the depth bounds test with depth testing needs the depthBounds feature");
+    Require(!pixel.posZ && !pixel.depthExportEnable, "the depth bounds test from a pixel program that reads or exports depth needs the depthBounds feature");
+    const auto keepsOnFail = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
+    Require(!state.stencilTest || (keepsOnFail(state.stencilFront) && keepsOnFail(state.stencilBack)), "the depth bounds test with a stencil test that writes on a failed test needs the depthBounds feature");
+    const bool upper = state.minDepthBounds <= 0.0f;
+    Require(upper || state.maxDepthBounds >= 1.0f, "the depth bounds test with both bounds inside (0, 1) needs the depthBounds feature");
+    const float bound = upper ? state.maxDepthBounds : state.minDepthBounds;
+    state.depthBoundsTest = false;
+    state.depthTest = true;
+    state.depthCompare = upper ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL;
+    state.depthBias = false;
+    state.depthBiasPerFace = false;
+    state.viewport.minDepth = bound;
+    state.viewport.maxDepth = bound;
+}
+
 void ApplyDepthRemap(const Context& context, State& state) {
     const auto& viewport = state.viewport;
     const bool inRange = viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1;
@@ -1912,7 +1934,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelY = 5;
     surface.dstSelZ = 6;
     surface.dstSelW = 7;
-    surface.dccAddress = color.dccAddress;
+    surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
     return surface;
@@ -2081,9 +2103,10 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
         Require(color.fmaskAddress != 0, "a compressed one-fragment color target without an FMASK address is unsupported");
     }
     if ((info & 0x10000000u) != 0) {
+        const auto dccHigh = find(cx, 0x3a8 + slot);
+        const auto dccBase = ((dccHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(dccHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x325 + stride)) << 8u);
         if (maxMip == 0) {
-            const auto dccHigh = find(cx, 0x3a8 + slot);
-            color.dccAddress = ((dccHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(dccHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x325 + stride)) << 8u);
+            color.dccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
             if (color.samples > 1) {
@@ -2091,11 +2114,15 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
                 color.dccControl = read(cx, 0x31e + stride);
                 if (!allowMultisampleDcc) Require((color.dccControl & 0x3ff80u) == 0, "multisampled DCC color transforms or lossy modes are not implemented");
             }
+        } else if (!volume && color.arrayLastSlice == 0 && slice == 0) {
+            color.chainDccAddress = dccBase;
+            color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
+            color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
         } else {
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                std::fprintf(stderr, "[gpu] DCC keys of mipmapped color targets are ignored\n");
+                std::fprintf(stderr, "[gpu] DCC keys of mipmapped array and 3D color targets are ignored\n");
             }
         }
     }

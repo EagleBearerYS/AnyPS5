@@ -38,7 +38,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 832, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 840, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -1352,7 +1352,7 @@ private:
         std::call_once(loadOnce, [&] {
             try {
                 auto journal = Journal::Instance().Load();
-                const auto limit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 1024u);
+                const auto limit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 4096u);
                 if (journal.entries.size() > limit) journal.entries.erase(journal.entries.begin(), journal.entries.end() - static_cast<std::ptrdiff_t>(limit));
                 loaded = std::move(journal);
             } catch (const std::exception& error) {
@@ -1438,7 +1438,7 @@ private:
             return;
         }
         const auto store = PipelineStoreTotals();
-        if (store.cached >= store.bound) {
+        if (store.cached >= store.bound && !PipelineStoreCanGrow()) {
             counters.skipped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
