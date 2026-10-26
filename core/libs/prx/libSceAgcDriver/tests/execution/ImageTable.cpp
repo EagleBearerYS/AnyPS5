@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SpannedWaves.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -2393,6 +2394,25 @@ void RunWave32SamplerPerWorkgroupTests(AgcDriver::VulkanDevice& device) {
     std::printf("wave32 sampler per workgroup: %u wave32 workgroups of %u threads alternate a clamping and a wrapping table S#, each sampled with its own\n", MaxGroups, Threads);
 }
 
+int RunSpannedWaveRefusal() {
+    const char* value = std::getenv("APS5_SPANNED_WAVE");
+    Require(value != nullptr && !AgcDriver::ParseSpannedWaveMode(value), "spanned wave refusal: APS5_SPANNED_WAVE holds no refused value");
+    const std::string refusal = std::string("APS5_SPANNED_WAVE is \"") + value + "\"";
+    try {
+        AgcDriver::VulkanDevice device;
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        if (message.find(refusal) != std::string::npos) {
+            std::printf("spanned wave refusal: %s\n", error.what());
+            return 0;
+        }
+        if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+        std::printf("skipped, no usable Vulkan device: %s\n", error.what());
+        return VulkanTestSkipped;
+    }
+    throw std::runtime_error("spanned wave refusal: a device opened with APS5_SPANNED_WAVE=" + std::string(value));
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2402,6 +2422,7 @@ int main(int argc, char** argv) {
 #else
         setenv("APS5_SRGB_SHADER_DECODE", "1", 1);
 #endif
+        if (argc == 2 && std::strcmp(argv[1], "--spanned-wave-refusal") == 0) return RunSpannedWaveRefusal();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (argc == 2 && std::strcmp(argv[1], "--nested") == 0) {
