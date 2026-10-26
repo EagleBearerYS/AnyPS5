@@ -1,0 +1,4 @@
+BASE=5d04f76ea421f7ae3c04f1a6d3020f75a4a5a779
+REPEAT=10
+EXTRA_TESTS='agc_spanned_wave_refusal|agc_driver_span_table_choice'
+VALIDATION=1
