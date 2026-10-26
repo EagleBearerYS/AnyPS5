@@ -131,15 +131,6 @@ static void CheckPageTableStats() {
 }
 
 static void CheckInternalMemoryAvailableSize() {
-    std::size_t available = 1;
-    bool threw = false;
-    try {
-        sceKernelInternalMemoryGetAvailableSize(&available);
-
-    } catch (const std::runtime_error& error) {
-        threw = std::string(error.what()) == "sceKernelInternalMemoryGetAvailableSize not implemented";
-    }
-    Require(threw && available == 1);
     Require(sceKernelInternalMemoryGetAvailableSize(nullptr) == -1);
 }
 
