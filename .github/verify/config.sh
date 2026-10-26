@@ -1,0 +1,3 @@
+BASE=380803b26dc6a586be22b020f573f6c7c54b914c
+REPEAT=10
+EXTRA_TESTS='guest_font|guest_system_font'
