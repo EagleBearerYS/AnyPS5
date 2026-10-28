@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "VulkanTestDevice.hpp"
 #include <SDL_loadso.h>
 #include <cstdio>
 #include <cstdlib>
@@ -13,7 +14,6 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 using AgcDriver::VulkanDevice;
-constexpr int VulkanTestSkipped = 77;
 
 struct Headless {
     std::uint32_t width;
