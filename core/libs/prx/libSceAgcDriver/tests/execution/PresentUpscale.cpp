@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "VulkanTestDevice.hpp"
 #include <SDL_loadso.h>
 #include <cstdio>
 #include <cstdlib>
@@ -13,7 +14,6 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 using AgcDriver::VulkanDevice;
-constexpr int VulkanTestSkipped = 77;
 
 struct Headless {
     std::uint32_t width;
@@ -78,7 +78,8 @@ void presentWithOverlay(const AgcDriver::PresentationWindow& window, bool fsr, b
         const std::string combination = std::string(fsr ? "FSR" : "no FSR") + (overlay ? " with the overlay" : " without the overlay");
         for (int frame = 0; frame < 3; ++frame) expectUpscaled(device, 960, 540, fsr, combination + ": a 960x540 display buffer in a 1084x610 window was " + (fsr ? "not upscaled" : "upscaled"));
     }
-    if (overlay) AgcDriver::PerformanceOverlay::Toggle();
+    for (int press = 0; overlay && press < 4 && AgcDriver::PerformanceOverlay::Visible(); ++press) AgcDriver::PerformanceOverlay::Toggle();
+    Require(!AgcDriver::PerformanceOverlay::Visible(), "the performance overlay did not hide again");
 }
 
 }
