@@ -1,0 +1,4 @@
+BASE=97c707a4f15131e65040e868bb55c9cd04fef3c7
+REPEAT=3
+EXTRA_TESTS='^agc_driver_native_depth'
+BEFORE_REPEAT=2
