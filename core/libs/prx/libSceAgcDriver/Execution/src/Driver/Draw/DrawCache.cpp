@@ -34,7 +34,7 @@ std::uint32_t Driver::drawCacheBypassPercent() {
     return percent;
 }
 
-DrawCacheBypass::DrawCacheBypass(std::uint32_t percent) : percent(std::min(percent, 100u)), minimumHits(Window * std::min(percent, 100u) / 100u) {}
+DrawCacheBypass::DrawCacheBypass(std::uint32_t percent) : percent(std::min(percent, 100u)), minimumHits((Window * std::min(percent, 100u) + 99u) / 100u) {}
 
 bool DrawCacheBypass::Skip() {
     auto remaining = left.load(std::memory_order_relaxed);

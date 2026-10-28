@@ -275,22 +275,22 @@ void LowHitRateBypassesTheCache() {
     const auto cachedColor = BrightestColorByte();
     Require(cachedColor == 64, mode + ": the cached draws of constant 0.25 wrote " + std::to_string(cachedColor) + ", expected 64");
     float distinct = 1000.0f;
-    const auto even = Submit(ScaledDraws(HitWindow(Window - 3, 32.0f, 103, distinct)));
-    Require(even.lookups == Window && even.hits == 102, mode + ": the first window made " + std::to_string(even.lookups) + " lookups with " + std::to_string(even.hits) + " hits, expected 2048 with 102");
-    const auto armed = Submit(ScaledDraws(HitWindow(Window, 16.0f, 103, distinct)));
-    Require(armed.lookups == 2 * Window && armed.hits == 203, mode + ": a window of 102 hits in 2048 lookups bypassed the draw cache, which needs fewer than 5%");
+    const auto even = Submit(ScaledDraws(HitWindow(Window - 3, 32.0f, 104, distinct)));
+    Require(even.lookups == Window && even.hits == 103, mode + ": the first window made " + std::to_string(even.lookups) + " lookups with " + std::to_string(even.hits) + " hits, expected 2048 with 103");
+    const auto armed = Submit(ScaledDraws(HitWindow(Window, 16.0f, 104, distinct)));
+    Require(armed.lookups == 2 * Window && armed.hits == 205, mode + ": a window of 103 hits in 2048 lookups bypassed the draw cache, which needs fewer than 5%");
     ColorMemory.fill(std::byte{0});
     const auto bypassed = SubmitConstantDraws(1);
     const auto bypassedColor = BrightestColorByte();
     PixelConstant[0] = 1.0f;
     ColorMemory.fill(std::byte{0});
     const auto refreshed = SubmitConstantDraws(1);
-    Require(bypassedColor == cachedColor && BrightestColorByte() == 255, mode + ": draws after a window of 101 hits wrote " + std::to_string(bypassedColor) + " and " + std::to_string(BrightestColorByte()) + ", expected the cached " + std::to_string(cachedColor) + " and 255");
+    Require(bypassedColor == cachedColor && BrightestColorByte() == 255, mode + ": draws after a window of 102 hits wrote " + std::to_string(bypassedColor) + " and " + std::to_string(BrightestColorByte()) + ", expected the cached " + std::to_string(cachedColor) + " and 255");
     if (!bypass) {
-        Require(refreshed.lookups == armed.lookups + 2, mode + ": draws after a window of 101 hits were not looked up");
+        Require(refreshed.lookups == armed.lookups + 2, mode + ": draws after a window of 102 hits were not looked up");
         return;
     }
-    Require(bypassed.lookups == armed.lookups && refreshed.lookups == armed.lookups && refreshed.inserts == armed.inserts, mode + ": draws after a window of 101 hits in 2048 lookups were still looked up or inserted");
+    Require(bypassed.lookups == armed.lookups && refreshed.lookups == armed.lookups && refreshed.inserts == armed.inserts, mode + ": draws after a window of 102 hits in 2048 lookups were still looked up or inserted");
     const auto rest = Submit(ScaledDraws(std::vector<float>(BypassDraws - 2, 32.0f)));
     Require(rest.lookups == armed.lookups && rest.inserts == armed.inserts, mode + ": the bypass ended before 16384 draws");
     const auto resumed = Submit(ScaledDraws({32.0f}));
