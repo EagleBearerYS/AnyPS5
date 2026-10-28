@@ -1,0 +1,3 @@
+BASE=9fc181dde54f4682e043687b153a9e540d0368b8
+REPEAT=10
+EXTRA_TESTS='guest_raise_exception'
