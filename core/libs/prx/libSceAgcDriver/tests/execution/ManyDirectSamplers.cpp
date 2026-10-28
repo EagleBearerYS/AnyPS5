@@ -210,6 +210,11 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        const auto limits = device->graphicsContext().limits;
+        if (limits.maxPerStageDescriptorSamplers < Elements || limits.maxDescriptorSetSamplers < Elements) {
+            std::printf("skipped, the device binds fewer than %u samplers per stage or set\n", Elements);
+            return VulkanTestSkipped;
+        }
         Fill();
         CheckPairing(*device);
         CheckBorder(*device);
