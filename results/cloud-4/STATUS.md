@@ -1,5 +1,5 @@
-BUSY BF-255
-machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 22 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at fix/audiodec-m4aac-extension-modes b3b6178347); origin and upstream fetched, upstream main f8f5b24b77; lavapipe only, no GPU, no IPv6
+READY 2026-10-28T21:21:39Z: BF-255 done
+machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 22 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at feat/savedata-backup-progress-sourced 5fed277cf2); origin and upstream fetched, upstream main 319621ba2e; lavapipe only, no GPU, no IPv6
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
