@@ -1,5 +1,2 @@
-BUSY BF-254
-since: 2026-10-28T19:58:17Z
-claimed: 2026-10-28T19:57:51Z
-step: building the counters on 6275369b6c (CI flags)
-previous: BF-165 done, results/cloud-2/BF-165.md
+READY 2026-10-28T20:42:13Z: BF-254 done, results/cloud-2/BF-254.md (diag/9508-walk-memo-bytes 21284736e9; 85 passed, 21 skipped, 0 failed of 106)
+machine: 4 vCPU, 15 GiB RAM, 9.7 GB disk free, lavapipe only, no GPU; /home/user/AnyPS5 Release build kept (checkout diag/9508-walk-memo-bytes)
