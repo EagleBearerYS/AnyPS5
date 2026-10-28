@@ -121,6 +121,19 @@ void CheckOwners(std::string_view block) {
     Require(resources.objectBytes >= resources.entries * sizeof(AgcDriver::Graphics::ShaderResources), "a cached resource object is smaller than its struct");
 }
 
+void CheckPipelines(std::string_view block) {
+    const auto line = Line(block, "[mem-census] pipelines (driver memory): ");
+    const auto compute = After(line, "compute ");
+    Require(compute >= 1 && After(line, " live (dispatch ") >= 1, "the dispatches left no live compute pipeline: " + std::string(line));
+    After(line, "graphics ");
+    After(line, "library parts ");
+    After(line, "modules ");
+    After(line, "library-retained ");
+    Require(line.find(" per compute (") != std::string_view::npos, "the compute create-info was not probed: " + std::string(line));
+    Require(line.find(" per module (") != std::string_view::npos, "no module create-info was probed: " + std::string(line));
+    Require(line.find("; est ") != std::string_view::npos, "no estimate was printed: " + std::string(line));
+}
+
 void CheckGroups(std::string_view block) {
 #ifdef _WIN32
     const auto line = Line(block, "[mem-census] unattributed private ");
@@ -150,6 +163,7 @@ int main() {
         std::cout << block;
         CheckPools(block);
         CheckOwners(block);
+        CheckPipelines(block);
         CheckGroups(block);
         Dispatches(*device);
         std::cout << "memory census block tests passed\n";

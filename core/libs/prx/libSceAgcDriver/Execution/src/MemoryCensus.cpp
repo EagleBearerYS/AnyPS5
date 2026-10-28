@@ -59,6 +59,29 @@ constexpr const char* ProbeMeasureName = "rss";
 
 thread_local Owner currentOwner = Owner::Untagged;
 thread_local PoolKind currentPoolKind = PoolKind::Other;
+thread_local ObjectOwner currentObjectOwner = ObjectOwner::Utility;
+
+enum class PipelineKind : std::uint8_t { Monolithic, Linked, LibraryPart, Compute, Count };
+constexpr std::size_t PipelineKindCount = static_cast<std::size_t>(PipelineKind::Count);
+constexpr std::size_t ModuleProbe = PipelineKindCount;
+constexpr std::size_t ObjectProbeCount = PipelineKindCount + 1;
+constexpr std::array<const char*, ObjectOwnerCount> ObjectOwnerNames{"utility", "pipeline objects", "library", "dispatch"};
+constexpr std::array<std::uint32_t, ObjectProbeCount> ObjectProbeCopies{4, 4, 4, 4, 16};
+
+struct ObjectRecord {
+    PipelineKind kind = PipelineKind::Monolithic;
+    ObjectOwner owner = ObjectOwner::Utility;
+};
+
+struct ObjectProbe {
+    std::uint64_t epoch = ~std::uint64_t{0};
+    std::int64_t bytes = 0;
+    std::uint32_t copies = 0;
+    std::uint64_t probes = 0;
+    std::uint64_t failures = 0;
+};
+
+std::uint64_t processBytes();
 
 struct Allocation {
     Owner owner = Owner::Untagged;
@@ -94,6 +117,10 @@ struct Tally {
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     PFN_vkGetPhysicalDeviceMemoryProperties2 properties2 = nullptr;
     VkPhysicalDeviceMemoryProperties memory{};
+    std::map<std::pair<VkDevice, VkPipeline>, ObjectRecord> pipelines;
+    std::map<std::pair<VkDevice, VkShaderModule>, ObjectOwner> modules;
+    std::array<ObjectProbe, ObjectProbeCount> objectProbes{};
+    std::uint64_t censusEpoch = 0;
 };
 
 Tally& tally() {
@@ -242,6 +269,97 @@ VKAPI_ATTR void VKAPI_CALL destroyDescriptorPool(VkDevice device, VkDescriptorPo
     reinterpret_cast<PFN_vkDestroyDescriptorPool>(state.resolver(device, "vkDestroyDescriptorPool"))(device, pool, callbacks);
 }
 
+template<typename Handle, typename Create, typename Destroy>
+void probeObjects(Tally& state, std::size_t kind, Create create, Destroy destroy) {
+    std::lock_guard lock(state.mutex);
+    auto& probe = state.objectProbes[kind];
+    if (probe.epoch == state.censusEpoch) return;
+    probe.epoch = state.censusEpoch;
+    std::vector<Handle> made;
+    made.reserve(ObjectProbeCopies[kind]);
+    const auto before = processBytes();
+    for (std::uint32_t copy = 0; copy < ObjectProbeCopies[kind]; ++copy) {
+        Handle handle = VK_NULL_HANDLE;
+        if (create(&handle) != VK_SUCCESS || handle == VK_NULL_HANDLE) break;
+        made.push_back(handle);
+    }
+    const auto after = processBytes();
+    for (const auto handle : made) destroy(handle);
+    if (made.empty()) {
+        ++probe.failures;
+        return;
+    }
+    probe.bytes = static_cast<std::int64_t>(after) - static_cast<std::int64_t>(before);
+    probe.copies = static_cast<std::uint32_t>(made.size());
+    ++probe.probes;
+}
+
+PipelineKind graphicsKind(const VkGraphicsPipelineCreateInfo& info) {
+    if ((info.flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0) return PipelineKind::LibraryPart;
+    for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next != nullptr; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR && reinterpret_cast<const VkPipelineLibraryCreateInfoKHR*>(next)->libraryCount != 0) return PipelineKind::Linked;
+    }
+    return PipelineKind::Monolithic;
+}
+
+void notePipelines(Tally& state, VkDevice device, std::uint32_t count, const VkPipeline* pipelines, PipelineKind (*kindOf)(std::uint32_t, const void*), const void* infos) {
+    if (pipelines == nullptr) return;
+    std::lock_guard lock(state.mutex);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (pipelines[index] != VK_NULL_HANDLE) state.pipelines[{device, pipelines[index]}] = {kindOf(index, infos), currentObjectOwner};
+    }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL createShaderModule(VkDevice device, const VkShaderModuleCreateInfo* info, const VkAllocationCallbacks* callbacks, VkShaderModule* module) {
+    auto& state = tally();
+    const auto real = reinterpret_cast<PFN_vkCreateShaderModule>(state.resolver(device, "vkCreateShaderModule"));
+    const auto destroy = reinterpret_cast<PFN_vkDestroyShaderModule>(state.resolver(device, "vkDestroyShaderModule"));
+    if (info != nullptr && destroy != nullptr) probeObjects<VkShaderModule>(state, ModuleProbe, [&](VkShaderModule* copy) { return real(device, info, nullptr, copy); }, [&](VkShaderModule copy) { destroy(device, copy, nullptr); });
+    const auto result = real(device, info, callbacks, module);
+    if (result != VK_SUCCESS || module == nullptr || *module == VK_NULL_HANDLE) return result;
+    std::lock_guard lock(state.mutex);
+    state.modules[{device, *module}] = currentObjectOwner;
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL destroyShaderModule(VkDevice device, VkShaderModule module, const VkAllocationCallbacks* callbacks) {
+    auto& state = tally();
+    if (module != VK_NULL_HANDLE) {
+        std::lock_guard lock(state.mutex);
+        state.modules.erase({device, module});
+    }
+    reinterpret_cast<PFN_vkDestroyShaderModule>(state.resolver(device, "vkDestroyShaderModule"))(device, module, callbacks);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL createGraphicsPipelines(VkDevice device, VkPipelineCache cache, std::uint32_t count, const VkGraphicsPipelineCreateInfo* infos, const VkAllocationCallbacks* callbacks, VkPipeline* pipelines) {
+    auto& state = tally();
+    const auto real = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(state.resolver(device, "vkCreateGraphicsPipelines"));
+    const auto destroy = reinterpret_cast<PFN_vkDestroyPipeline>(state.resolver(device, "vkDestroyPipeline"));
+    if (count != 0 && infos != nullptr && destroy != nullptr) probeObjects<VkPipeline>(state, static_cast<std::size_t>(graphicsKind(infos[0])), [&](VkPipeline* copy) { return real(device, VK_NULL_HANDLE, 1, infos, nullptr, copy); }, [&](VkPipeline copy) { destroy(device, copy, nullptr); });
+    const auto result = real(device, cache, count, infos, callbacks, pipelines);
+    notePipelines(state, device, count, pipelines, [](std::uint32_t index, const void* created) { return graphicsKind(static_cast<const VkGraphicsPipelineCreateInfo*>(created)[index]); }, infos);
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL createComputePipelines(VkDevice device, VkPipelineCache cache, std::uint32_t count, const VkComputePipelineCreateInfo* infos, const VkAllocationCallbacks* callbacks, VkPipeline* pipelines) {
+    auto& state = tally();
+    const auto real = reinterpret_cast<PFN_vkCreateComputePipelines>(state.resolver(device, "vkCreateComputePipelines"));
+    const auto destroy = reinterpret_cast<PFN_vkDestroyPipeline>(state.resolver(device, "vkDestroyPipeline"));
+    if (count != 0 && infos != nullptr && destroy != nullptr) probeObjects<VkPipeline>(state, static_cast<std::size_t>(PipelineKind::Compute), [&](VkPipeline* copy) { return real(device, VK_NULL_HANDLE, 1, infos, nullptr, copy); }, [&](VkPipeline copy) { destroy(device, copy, nullptr); });
+    const auto result = real(device, cache, count, infos, callbacks, pipelines);
+    notePipelines(state, device, count, pipelines, [](std::uint32_t, const void*) { return PipelineKind::Compute; }, infos);
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks* callbacks) {
+    auto& state = tally();
+    if (pipeline != VK_NULL_HANDLE) {
+        std::lock_guard lock(state.mutex);
+        state.pipelines.erase({device, pipeline});
+    }
+    reinterpret_cast<PFN_vkDestroyPipeline>(state.resolver(device, "vkDestroyPipeline"))(device, pipeline, callbacks);
+}
+
 VKAPI_ATTR void VKAPI_CALL destroyDevice(VkDevice device, const VkAllocationCallbacks* callbacks) {
     auto& state = tally();
     const auto real = reinterpret_cast<PFN_vkDestroyDevice>(state.resolver(device, "vkDestroyDevice"));
@@ -259,6 +377,8 @@ VKAPI_ATTR void VKAPI_CALL destroyDevice(VkDevice device, const VkAllocationCall
         }
         std::erase_if(state.pools, [&](const auto& entry) { return entry.first.first == device; });
         std::erase_if(state.layouts, [&](const auto& entry) { return entry.first.first == device; });
+        std::erase_if(state.pipelines, [&](const auto& entry) { return entry.first.first == device; });
+        std::erase_if(state.modules, [&](const auto& entry) { return entry.first.first == device; });
         if (state.device == device) state.device = VK_NULL_HANDLE;
     }
     real(device, callbacks);
@@ -277,6 +397,11 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* na
     if (name != nullptr && std::strcmp(name, "vkCreateDescriptorSetLayout") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&createDescriptorSetLayout);
     if (name != nullptr && std::strcmp(name, "vkDestroyDescriptorSetLayout") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyDescriptorSetLayout);
     if (name != nullptr && std::strcmp(name, "vkDestroyDevice") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyDevice);
+    if (name != nullptr && std::strcmp(name, "vkCreateShaderModule") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&createShaderModule);
+    if (name != nullptr && std::strcmp(name, "vkDestroyShaderModule") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyShaderModule);
+    if (name != nullptr && std::strcmp(name, "vkCreateGraphicsPipelines") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&createGraphicsPipelines);
+    if (name != nullptr && std::strcmp(name, "vkCreateComputePipelines") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&createComputePipelines);
+    if (name != nullptr && std::strcmp(name, "vkDestroyPipeline") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyPipeline);
     return tally().resolver(device, name);
 }
 
@@ -734,6 +859,64 @@ std::string cacheLine(VkDevice device) {
     return line + text;
 }
 
+std::string pipelineLine(VkDevice device) {
+    std::array<std::array<std::uint64_t, ObjectOwnerCount>, PipelineKindCount> live{};
+    std::array<std::uint64_t, ObjectOwnerCount> modules{};
+    std::array<ObjectProbe, ObjectProbeCount> probes{};
+    {
+        auto& state = tally();
+        std::lock_guard lock(state.mutex);
+        for (const auto& [key, record] : state.pipelines) ++live[static_cast<std::size_t>(record.kind)][static_cast<std::size_t>(record.owner)];
+        for (const auto& [key, owner] : state.modules) ++modules[static_cast<std::size_t>(owner)];
+        probes = state.objectProbes;
+        ++state.censusEpoch;
+    }
+    const auto store = Graphics::PipelineStoreTotals();
+    const auto libraries = device != VK_NULL_HANDLE ? Graphics::PipelineLibraryCountersOf(device) : Graphics::PipelineLibraryCounters{};
+    const auto sum = [](const std::array<std::uint64_t, ObjectOwnerCount>& counts) {
+        std::uint64_t total = 0;
+        for (const auto count : counts) total += count;
+        return total;
+    };
+    const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
+    const auto at = [](PipelineKind kind) { return static_cast<std::size_t>(kind); };
+    const auto owner = [](ObjectOwner value) { return static_cast<std::size_t>(value); };
+    const auto& monolithic = live[at(PipelineKind::Monolithic)];
+    const auto& linked = live[at(PipelineKind::Linked)];
+    const auto& parts = live[at(PipelineKind::LibraryPart)];
+    const auto& compute = live[at(PipelineKind::Compute)];
+    std::array<std::uint64_t, ObjectOwnerCount> graphicsOwners{};
+    for (std::size_t index = 0; index < ObjectOwnerCount; ++index) graphicsOwners[index] = monolithic[index] + linked[index];
+    const auto graphics = sum(graphicsOwners);
+    const auto moduleCount = sum(modules);
+    const auto outside = store.live > store.cached ? store.live - store.cached : 0;
+    char text[1536];
+    std::snprintf(text, sizeof(text), "[mem-census] pipelines (driver memory): graphics %llu live (store %llu of %llu pipeline objects, outside the store %llu; monolithic %llu, linked %llu; owners: pipeline objects %llu, library %llu, utility %llu), library parts %llu live (built %llu), compute %llu live (dispatch %llu, utility %llu), modules %llu live (library-retained %llu; created by pipeline objects %llu, library %llu, dispatch %llu, utility %llu)",
+        count(graphics), count(store.cached), count(store.live), count(outside), count(sum(monolithic)), count(sum(linked)), count(graphicsOwners[owner(ObjectOwner::PipelineObjects)]), count(graphicsOwners[owner(ObjectOwner::Library)]), count(graphicsOwners[owner(ObjectOwner::Utility)] + graphicsOwners[owner(ObjectOwner::Dispatch)]),
+        count(sum(parts)), count(libraries.built[0] + libraries.built[1] + libraries.built[2] + libraries.built[3]), count(sum(compute)), count(compute[owner(ObjectOwner::Dispatch)]), count(sum(compute) - compute[owner(ObjectOwner::Dispatch)]),
+        count(moduleCount), count(libraries.retainedModules), count(modules[owner(ObjectOwner::PipelineObjects)]), count(modules[owner(ObjectOwner::Library)]), count(modules[owner(ObjectOwner::Dispatch)]), count(modules[owner(ObjectOwner::Utility)]));
+    std::string line = text;
+    line += "; probe (";
+    line += ProbeMeasureName;
+    line += " delta of copies of the next create-info of each kind after a census, created and destroyed under the census lock):";
+    constexpr std::array<const char*, ObjectProbeCount> probeNames{"monolithic", "linked", "library part", "compute", "module"};
+    const std::array<std::uint64_t, ObjectProbeCount> liveCounts{sum(monolithic), sum(linked), sum(parts), sum(compute), moduleCount};
+    double estimate = 0.0;
+    for (std::size_t kind = 0; kind < ObjectProbeCount; ++kind) {
+        const auto& probe = probes[kind];
+        if (probe.probes == 0 || probe.copies == 0) {
+            std::snprintf(text, sizeof(text), " %s not probed (%llu failures)%s", probeNames[kind], count(probe.failures), kind + 1 < ObjectProbeCount ? "," : "");
+        } else {
+            const auto each = static_cast<double>(probe.bytes) / static_cast<double>(probe.copies);
+            estimate += each * static_cast<double>(liveCounts[kind]);
+            std::snprintf(text, sizeof(text), " %+.1f KiB per %s (%u copies, %llu probes, %llu failures)%s", each / 1024.0, probeNames[kind], probe.copies, count(probe.probes), count(probe.failures), kind + 1 < ObjectProbeCount ? "," : "");
+        }
+        line += text;
+    }
+    std::snprintf(text, sizeof(text), "; est %.1f MiB\n", estimate / 1048576.0);
+    return line + text;
+}
+
 std::string allocatorLine(std::uint64_t& heap) {
     char text[384];
 #ifdef _WIN32
@@ -935,6 +1118,7 @@ std::string buildBlock() {
         handle = tally().device;
     }
     block += cacheLine(handle);
+    block += pipelineLine(handle);
     std::uint64_t heap = 0;
     block += allocatorLine(heap);
     block += unattributedLine(walk);
@@ -985,6 +1169,17 @@ PoolScope::PoolScope(PoolKind kind) {
 
 PoolScope::~PoolScope() {
     if (active) currentPoolKind = previous;
+}
+
+ObjectScope::ObjectScope(ObjectOwner owner) {
+    if (!Enabled()) return;
+    previous = currentObjectOwner;
+    currentObjectOwner = owner;
+    active = true;
+}
+
+ObjectScope::~ObjectScope() {
+    if (active) currentObjectOwner = previous;
 }
 
 PFN_vkGetDeviceProcAddr Wrap(PFN_vkGetDeviceProcAddr resolver) {

@@ -5362,6 +5362,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
 // and what the journal replay builds on its own threads before that use.
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::span<const std::uint32_t> layoutKey, VkShaderStageFlags pushStages, std::uint64_t programAddress) {
     PerformanceTimer timing("Vulkan.ComputePipeline");
+    const MemoryCensus::ObjectScope census(MemoryCensus::ObjectOwner::Dispatch);
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = std::chrono::steady_clock::now();
     auto objects = std::make_shared<ComputePipelineObjects>();
@@ -5426,6 +5427,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
 VkPipeline VulkanDevice::splitComputePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, ComputePipelineObjects& objects, const std::array<std::uint32_t, 3>& base) {
     std::lock_guard lock(objects.splitMutex);
     if (const auto found = objects.splitPipelines.find(base); found != objects.splitPipelines.end()) return found->second;
+    const MemoryCensus::ObjectScope census(MemoryCensus::ObjectOwner::Dispatch);
     std::array<ShaderRecompiler::PipelineSpecializationConstant, ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetWords> offsets{};
     for (std::uint32_t component = 0; component < offsets.size(); ++component) offsets[component] = {ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetBase + component, base[component]};
     const Graphics::PipelineSpecialization specialization(shader, offsets);

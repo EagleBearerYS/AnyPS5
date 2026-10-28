@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -29,6 +30,8 @@
 namespace AgcDriver::Graphics {
 
 namespace {
+
+std::atomic<std::uint64_t> livePipelineObjects{0};
 
 bool LogicOpFormat(VkFormat format) {
     switch (format) {
@@ -449,6 +452,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
+    const MemoryCensus::ObjectScope census(MemoryCensus::ObjectOwner::PipelineObjects);
     for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
     if (state.depth) boundAttachments.push_back(true);
     sampleLocationsEnabled = ValidateSampleLocations(context, state);
@@ -738,6 +742,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
         }
+        if (pipeline != VK_NULL_HANDLE) livePipelineObjects.fetch_add(1, std::memory_order_relaxed);
         if (alternateAlpha) {
             blend.pAttachments = secondChannels.data();
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
@@ -774,6 +779,7 @@ Pipeline::~Pipeline() {
 }
 
 void Pipeline::release() noexcept {
+    if (pipeline != VK_NULL_HANDLE) livePipelineObjects.fetch_sub(1, std::memory_order_relaxed);
     framebuffers.clear();
     if (optimized != nullptr) optimized->Release();
     optimized.reset();
@@ -794,6 +800,7 @@ void Pipeline::release() noexcept {
 }
 
 void Pipeline::Abandon() noexcept {
+    if (pipeline != VK_NULL_HANDLE) livePipelineObjects.fetch_sub(1, std::memory_order_relaxed);
     if (optimized != nullptr) optimized->released.store(true);
     optimized.reset();
     for (auto& entry : framebuffers) entry.framebuffer->Abandon();
@@ -1341,6 +1348,7 @@ PipelineStoreCounters PipelineStoreTotals() {
     auto totals = store.totals;
     totals.cached = store.entries.size();
     totals.bound = storeBound(store);
+    totals.live = livePipelineObjects.load(std::memory_order_relaxed);
     return totals;
 }
 

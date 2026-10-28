@@ -20,6 +20,9 @@ enum class Owner : std::uint8_t { Untagged, PoolSlab, HeapMirror, ImageMirror, S
 enum class PoolKind : std::uint8_t { Other, Chain, Dedicated, Count };
 inline constexpr std::size_t PoolKindCount = static_cast<std::size_t>(PoolKind::Count);
 
+enum class ObjectOwner : std::uint8_t { Utility, PipelineObjects, Library, Dispatch, Count };
+inline constexpr std::size_t ObjectOwnerCount = static_cast<std::size_t>(ObjectOwner::Count);
+
 bool Enabled();
 
 class Scope {
@@ -43,6 +46,18 @@ public:
 
 private:
     PoolKind previous = PoolKind::Other;
+    bool active = false;
+};
+
+class ObjectScope {
+public:
+    explicit ObjectScope(ObjectOwner owner);
+    ~ObjectScope();
+    ObjectScope(const ObjectScope&) = delete;
+    ObjectScope& operator=(const ObjectScope&) = delete;
+
+private:
+    ObjectOwner previous = ObjectOwner::Utility;
     bool active = false;
 };
 
