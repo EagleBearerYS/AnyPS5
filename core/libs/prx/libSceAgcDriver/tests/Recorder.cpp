@@ -7336,6 +7336,19 @@ bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
         image->Refresh();
         Require(proved() == written, "a CPU write of the target over its pending key store was answered from the proof");
         Require(storePending(), "the key store landed before its batch was retired");
+        const auto note = image->KeyProof().pendingNote;
+        Require(note != 0, "the refresh over the pending key store took no proof of its write note");
+        {
+            Recorder other(base);
+            for (std::uint64_t i = 1; i < note; ++i) other.NotePendingWrite(0x1000, 16);
+            other.NotePendingWrite(resource.dccAddress, keyCount);
+            other.Activate();
+            const auto crossed = proved();
+            image->Refresh();
+            Require(proved() == crossed, "a refresh with another recorder active, holding the same write note over the keys, was answered from the first recorder's proof");
+            other.Sync();
+            recorder.Activate();
+        }
         recorder.Sync();
         Require(std::all_of(keys, keys + keyCount, [](std::uint8_t key) { return key == 0xff; }), "the uncompressed key store did not land");
         const auto landed = proved();

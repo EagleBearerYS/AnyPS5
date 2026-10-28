@@ -755,7 +755,7 @@ DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t 
     if (note == 0) return {};
     const auto collected = GuestMemory::CollectWrites(resource.dccAddress, count);
     if (collected == 0) return {};
-    return {keys, collected, note};
+    return {keys, collected, note, recorder->Id()};
 }
 
 bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, const DccKeyProof& proof) {
@@ -763,7 +763,7 @@ bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t gu
     const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return false;
     auto* recorder = Recorder::Active();
-    if (recorder == nullptr || recorder->NewestWriteNote(resource.dccAddress, count) != proof.pendingNote) return false;
+    if (recorder == nullptr || recorder->Id() != proof.pendingRecorder || recorder->NewestWriteNote(resource.dccAddress, count) != proof.pendingNote) return false;
     const auto info = recorder->DescribePendingWrite(resource.dccAddress, count);
     return info.has_value() && !info->signaled;
 }
