@@ -1066,7 +1066,7 @@ private:
         for (std::uint32_t dword = 0; dword < 4u; dword++) {
             const auto address = ImageTableAbi::ScalarAddressDword(pointer, chase.offset, chase.immediate + dword * 4u);
             if (!address.has_value() || (*address & 3u) != 0u || !AddressAccessible(*address)) return std::nullopt;
-            descriptor.dwords[dword] = Read(*address);
+            descriptor.dwords[dword] = chase.edits[dword].Apply(Read(*address));
             descriptor.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
             tables.ranges.emplace_back(*address, sizeof(std::uint32_t));
         }

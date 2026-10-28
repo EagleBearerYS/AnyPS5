@@ -1023,9 +1023,25 @@ private:
         return handle->Opcode() == IrOpcode::GetBufferResource && handle->ArgumentCount() == 4u;
     }
 
+    static IrValue* EditedWord(IrValue* word, DescriptorWordEdit& edit) {
+        word = word->Resolve();
+        std::uint32_t operand = 0;
+        if (word->ArgumentCount() != 2u) return word;
+        if (word->Opcode() == IrOpcode::ShiftLeftLogical32) {
+            if (!immediateU32(word->Argument(1), operand) || operand > 31u) return word;
+            edit.shift = operand;
+            return word->Argument(0)->Resolve();
+        }
+        if (word->Opcode() != IrOpcode::BitwiseAnd32 && word->Opcode() != IrOpcode::BitwiseOr32) return word;
+        const bool left = immediateU32(word->Argument(0), operand);
+        if (!left && !immediateU32(word->Argument(1), operand)) return word;
+        (word->Opcode() == IrOpcode::BitwiseAnd32 ? edit.mask : edit.bits) = operand;
+        return word->Argument(left ? 1u : 0u)->Resolve();
+    }
+
     bool ChaseVsharp(IrValue& handle, IrValue*& pointer, PointerChase& chase) const {
         for (std::uint32_t dword = 0; dword < 4u; dword++) {
-            IrValue* word = handle.Argument(dword)->Resolve();
+            IrValue* word = EditedWord(handle.Argument(dword), chase.edits[dword]);
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarAddressMemory(*word, memoryIndex);
             std::uint32_t offset = 0;
