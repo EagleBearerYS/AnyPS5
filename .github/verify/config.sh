@@ -1,0 +1,3 @@
+BASE=68200c47ea5a5b205204e58269c6ed9cb6acfde6
+REPEAT=10
+EXTRA_TESTS='guest_net_boolean_readback|guest_sce_net|guest_socket_descriptor_flags|guest_socket_error|guest_socket_options|public_headers'
