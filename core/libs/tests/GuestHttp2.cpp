@@ -29,13 +29,14 @@ int main() {
     Require(box > 0 && context > 0 && tmpl > 0 && request > 0);
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
     Require(Throws([&] { sceHttp2SetCookieBox(tmpl, box); }));
-    Require(Throws([&] { sceHttp2CookieFlush(box); }));
+    Require(sceHttp2CookieFlush(box) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 0) == 0);
     Require(Throws([&] { sceHttp2SetResolveRetry(tmpl, 3); }));
     Require(sceHttp2SetRequestNoContentLength(request) == 0);
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "bad:name", "value", 0); }));
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "x-header", "value\r\ninjected: yes", 0); }));
-    Require(Throws([&] { sceHttp2AddRequestHeader(request, "connection", "keep-alive", 0); }));
+    Require(Throws([&] { sceHttp2AddRequestHeader(request, "keep-alive", "timeout=5", 0); }));
+    Require(sceHttp2AddRequestHeader(request, "connection", "keep-alive", 0) == static_cast<int>(0x804311FE));
     Require(Throws([] { sceHttp2WebSocketSetPingInterval(0, 1000000); }));
     for (const int id : {tmpl, request}) {
         Require(Throws([&] { sceHttp2SetMinSslVersion(id, 0); }));

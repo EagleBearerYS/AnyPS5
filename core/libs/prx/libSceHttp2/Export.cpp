@@ -4,16 +4,23 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "Transport.hpp"
+#include "Cookies.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
 #include <mutex>
 #include <memory>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <type_traits>
 #include <unordered_map>
 
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
+static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
+static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
+static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
 
 enum class Http2Kind : std::uint8_t { Context, Template, Request, CookieBox };
 
@@ -21,7 +28,7 @@ struct Http2Handle {
     Http2Kind kind;
     int owner;
     std::size_t poolSize;
-    std::shared_ptr<std::byte[]> cookieMemory;
+    std::shared_ptr<void> cookieMemory;
     int sslContext = 0;
     int version = 0;
     Http2::Settings settings;
@@ -59,15 +66,48 @@ static void ReleaseOwnedHandles(int owner) {
     }
 }
 
+bool Http2CookieBoxExists(int cookieBoxId) {
+    std::lock_guard lock(g_handlesMutex);
+    return FindHandle(cookieBoxId, Http2Kind::CookieBox) != nullptr;
+}
+
+static bool HasSettings(const Http2Handle& handle) {
+    return handle.kind == Http2Kind::Template || handle.kind == Http2Kind::Request;
+}
+
 template<class TUpdate>
-static int Update(int id, const char* function, TUpdate update) {
+static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindAnyHandle(id);
     if (!handle) return ERROR_INVALID_ID;
-    if (handle->kind != Http2Kind::Template && handle->kind != Http2Kind::Request) NotImplemented_nid_no_patch(function);
+    if (!HasSettings(*handle)) {
+        if (otherKindsAreInvalid) return ERROR_INVALID_ID;
+        NotImplemented_nid_no_patch(function);
+    }
     if (handle->transport) NotImplemented_nid_no_patch(function);
-    update(handle->settings);
-    return 0;
+    if constexpr (std::is_void_v<std::invoke_result_t<TUpdate, Http2::Settings&>>) {
+        update(handle->settings);
+        return 0;
+    } else {
+        return update(handle->settings);
+    }
+}
+
+template<class TRead>
+static int Read(int id, TRead read) {
+    std::lock_guard lock(g_handlesMutex);
+    const auto* handle = FindAnyHandle(id);
+    if (!handle || !HasSettings(*handle)) return ERROR_INVALID_ID;
+    return read(handle->settings);
+}
+
+static bool IsConnectionHeader(const char* name) {
+    static constexpr char Connection[] = "connection";
+    for (std::size_t i = 0; i < sizeof(Connection); ++i) {
+        const char c = name[i] >= 'A' && name[i] <= 'Z' ? static_cast<char>(name[i] - 'A' + 'a') : name[i];
+        if (c != Connection[i]) return false;
+    }
+    return true;
 }
 
 static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
@@ -86,7 +126,9 @@ static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
 extern "C" {
 
 int APS5_VABI sceHttp2AddRequestHeader(int id, const char* name, const char* value, uint32_t mode) {
-    return Update(id, __func__, [&](auto& settings) { Http2::AddHeader(settings, name, value, mode); });
+    if (mode > 1) return ERROR_INVALID_VALUE;
+    if (name && IsConnectionHeader(name)) return ERROR_HTTP_INVALID_VALUE;
+    return Update(id, __func__, [&](auto& settings) { return Http2::AddHeader(settings, name, value, mode); }, true);
 }
 
 int APS5_VABI sceHttp2CreateRequestWithURL(int tmpl_id, const char* method, const char* url, uint64_t content_length) {
@@ -191,17 +233,11 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
 }
 
 int APS5_VABI sceHttp2SetAuthEnabled(int id, int is_enable) {
-    return Update(id, __func__, [&](auto& settings) {
-        if (is_enable != 0 && is_enable != 1) NotImplemented_nid_no_patch("sceHttp2SetAuthEnabled");
-        settings.auth = is_enable != 0;
-    });
+    return Update(id, __func__, [&](auto& settings) { settings.auth = is_enable != 0; }, true);
 }
 
 int APS5_VABI sceHttp2SetAutoRedirect(int id, int enable) {
-    return Update(id, __func__, [&](auto& settings) {
-        if (enable != 0 && enable != 1) NotImplemented_nid_no_patch("sceHttp2SetAutoRedirect");
-        settings.redirect = enable != 0;
-    });
+    return Update(id, __func__, [&](auto& settings) { settings.redirect = enable; }, true);
 }
 
 int APS5_VABI sceHttp2SetConnectionWaitTimeOut(int id, uint32_t usec) {
@@ -310,15 +346,16 @@ int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolSt
 }
 
 int APS5_VABI sceHttp2CookieFlush(int id) {
-    NotImplemented_nid_no_patch(__func__);
+    Http2FlushCookies(id);
     return 0;
 }
 
 int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
     if (poolSize < 0x10000) return static_cast<int>(0x817b121du);
-    if (poolSize > std::numeric_limits<std::size_t>::max() - 0x3fff) throw std::overflow_error("sceHttp2CreateCookieBox: pool size overflow");
-    const auto allocationSize = (poolSize + 0x3fff) & ~std::size_t{0x3fff};
-    auto memory = std::make_shared<std::byte[]>(allocationSize);
+    const auto mappedSize = (poolSize + 0x3fff) & ~std::size_t{0x3fff};
+    void* address = nullptr;
+    if (const int result = sceKernelMapNamedFlexibleMemory(&address, mappedSize, 3, 0, "SceHttp2CookieBox"); result != 0) return result;
+    std::shared_ptr<void> memory(address, [mappedSize](void* mapped) { sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), mappedSize); });
     std::lock_guard lock(g_handlesMutex);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     g_handles.emplace(id, Http2Handle{Http2Kind::CookieBox, 0, poolSize, std::move(memory)});
@@ -326,9 +363,12 @@ int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
 }
 
 int APS5_VABI sceHttp2DeleteCookieBox(int cookie_box_id) {
-    std::lock_guard lock(g_handlesMutex);
-    if (!FindHandle(cookie_box_id, Http2Kind::CookieBox)) return ERROR_INVALID_ID;
-    g_handles.erase(cookie_box_id);
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (!FindHandle(cookie_box_id, Http2Kind::CookieBox)) return ERROR_INVALID_ID;
+        g_handles.erase(cookie_box_id);
+    }
+    Http2ForgetCookies(cookie_box_id);
     return 0;
 }
 
@@ -373,14 +413,9 @@ int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint3
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceHttp2AddCookie(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2AuthCacheFlush(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttp2AuthCacheFlush(int lib_http2_ctx_id) {
+    std::lock_guard lock(g_handlesMutex);
+    return FindHandle(lib_http2_ctx_id, Http2Kind::Context) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2CookieExport(void) {
@@ -393,19 +428,20 @@ int APS5_VABI sceHttp2CookieImport(void) {
     return 0;
 }
 
-int APS5_VABI sceHttp2GetAuthEnabled(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttp2GetAuthEnabled(int id, int* is_enable) {
+    return Read(id, [&](const auto& settings) {
+        if (!is_enable) throw std::invalid_argument("sceHttp2GetAuthEnabled: null out-pointer");
+        *is_enable = settings.auth ? 1 : 0;
+        return 0;
+    });
 }
 
-int APS5_VABI sceHttp2GetAutoRedirect(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2GetCookie(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttp2GetAutoRedirect(int id, int* enable) {
+    return Read(id, [&](const auto& settings) {
+        if (!enable) return ERROR_INVALID_VALUE;
+        *enable = settings.redirect;
+        return 0;
+    });
 }
 
 int APS5_VABI sceHttp2GetCookieBox(void) {
@@ -413,39 +449,27 @@ int APS5_VABI sceHttp2GetCookieBox(void) {
     return 0;
 }
 
-int APS5_VABI sceHttp2GetCookieStats(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttp2RedirectCacheFlush(int lib_http2_ctx_id) {
+    (void)lib_http2_ctx_id;
     return 0;
 }
 
-int APS5_VABI sceHttp2RedirectCacheFlush(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttp2RemoveRequestHeader(int id, const char* name) {
+    if (!name) return ERROR_NOT_FOUND;
+    std::string key = name;
+    for (char& c : key) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return Update(id, __func__, [&](auto& settings) {
+        return std::erase_if(settings.headers, [&](const auto& header) { return header.first == key; }) ? 0 : ERROR_NOT_FOUND;
+    }, true);
 }
 
-int APS5_VABI sceHttp2RemoveRequestHeader(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetAuthInfoCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxNumPerDomain(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttp2SetAuthInfoCallback(int id, Http2AuthInfoCallback cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.authInfoCallback = reinterpret_cast<void*>(cb_func);
+        settings.authInfoArgument = user_arg;
+    }, true);
 }
 
 int APS5_VABI sceHttp2SetCookieRecvCallback(void) {
@@ -458,9 +482,11 @@ int APS5_VABI sceHttp2SetCookieSendCallback(void) {
     return 0;
 }
 
-int APS5_VABI sceHttp2SetPreSendCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttp2SetPreSendCallback(int id, void* cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.preSendCallback = cb_func;
+        settings.preSendArgument = user_arg;
+    }, true);
 }
 
 }
