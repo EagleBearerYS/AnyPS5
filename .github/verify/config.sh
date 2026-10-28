@@ -1,0 +1,3 @@
+BASE=b5a199bac2b3f1b42b136dc28aef303781185288
+REPEAT=3
+EXTRA_TESTS='agc_driver_pointer_chase_edited_table|^agc_driver_pointer|^agc_driver_nested|^agc_shader_disk_cache'
