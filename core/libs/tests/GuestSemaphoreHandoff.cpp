@@ -93,6 +93,22 @@ static void CheckPassesOverALargerNeed() {
     Require(sceKernelDeleteSema(sem) == SCE_OK);
 }
 
+static void CheckDeletedRefusesFreeTokens() {
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "handoff-deleted", SemaFifo, 2, 2, nullptr) == SCE_OK);
+    {
+        std::lock_guard<std::mutex> lock(sem->mutex);
+        sem->deleted = true;
+    }
+    Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_KERNEL_ERROR_EACCES);
+    {
+        std::lock_guard<std::mutex> lock(sem->mutex);
+        Require(sem->tokenCount == 2);
+        sem->deleted = false;
+    }
+    Require(sceKernelDeleteSema(sem) == SCE_OK);
+}
+
 static void CheckServesInOrder(std::uint32_t attr, int firstPriority, int secondPriority, bool firstServedFirst) {
     released = 0;
     KernelSema sem = nullptr;
@@ -129,6 +145,7 @@ int main() {
         Require(sceKernelDeleteSema(sem) == SCE_OK);
     }
     CheckPassesOverALargerNeed();
+    CheckDeletedRefusesFreeTokens();
     CheckServesInOrder(SemaFifo, 700, 700, true);
     CheckServesInOrder(SemaFifo, 767, 256, true);
     CheckServesInOrder(SemaPriority, 767, 256, false);

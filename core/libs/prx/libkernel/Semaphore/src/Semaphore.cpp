@@ -101,6 +101,10 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  const auto traceSyncWaitEnd = [&](int result) {
   if (TraceSync()) std::fprintf(stderr, "[sema] wait end %p '%s' result=0x%x have=%d caller=%p\n", static_cast<void*>(sem), sem->name.c_str(), result, sem->tokenCount, caller);
  };
+ if (sem->deleted) {
+  traceSyncWaitEnd(SCE_KERNEL_ERROR_EACCES);
+  return SCE_KERNEL_ERROR_EACCES;
+ }
  if (sem->tokenCount >= need) {
   sem->tokenCount -= need;
   traceSyncWaitEnd(KERNEL_SEMA_OK);
