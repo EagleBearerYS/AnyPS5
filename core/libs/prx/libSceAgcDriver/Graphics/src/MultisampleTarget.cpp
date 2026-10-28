@@ -1278,12 +1278,16 @@ bool sameStorageForm(const Context& context, VkFormat rendered, VkFormat request
     return storage != VK_FORMAT_UNDEFINED && storage == HostStorageFormat(context, requested);
 }
 
+VkFormat sampledFormat(const Context& context, std::uint32_t guestFormat) {
+    return IsRepackedTextureFormat(guestFormat) ? ResolveTextureFormat(guestFormat) : SampledTextureFormat(context, guestFormat);
+}
+
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType) {
     std::lock_guard lock(targetsMutex());
     discardRetiredTargets();
-    const auto format = ResolveTextureFormat(resource.format);
+    const auto format = sampledFormat(context, resource.format);
     const MultisampleTarget* other = nullptr;
     for (const auto& target : targets()) {
         if (!target->active->load(std::memory_order_acquire)) continue;
@@ -1306,7 +1310,7 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
 std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
     std::lock_guard lock(targetsMutex());
     discardRetiredTargets();
-    const auto format = ResolveTextureFormat(resource.format);
+    const auto format = sampledFormat(context, resource.format);
     const MultisampleTarget* other = nullptr;
     for (const auto& target : targets()) {
         if (!target->active->load(std::memory_order_acquire)) continue;
