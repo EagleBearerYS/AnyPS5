@@ -926,6 +926,65 @@ static void CheckSinhOverflowErrno() {
     }
 }
 
+static bool AsinhWithinUlps(std::uint64_t result, std::uint64_t expected, std::uint64_t ulps) {
+    return ((result ^ expected) >> 63) == 0 && (result > expected ? result - expected : expected - result) <= ulps;
+}
+
+static void CheckAsinhMsunBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x0000000000000000ull, 0x0000000000000000ull}, {0x0000000000000001ull, 0x0000000000000001ull},
+        {0x000fffffffffffffull, 0x000fffffffffffffull}, {0x3c90000000000000ull, 0x3c90000000000000ull},
+        {0x3e2ffffffffffffeull, 0x3e2ffffffffffffeull}, {0x3e2fffffffffffffull, 0x3e2fffffffffffffull},
+        {0x3e30000000000000ull, 0x3e30000000000000ull}, {0x3e30000000000001ull, 0x3e30000000000001ull},
+        {0x3fe0000000000000ull, 0x3fdecc2caec5160aull}, {0x3ff0000000000000ull, 0x3fec34366179d427ull},
+        {0x3ffffffffffffffeull, 0x3ff719218313d086ull}, {0x3fffffffffffffffull, 0x3ff719218313d087ull},
+        {0x4000000000000000ull, 0x3ff719218313d087ull}, {0x4000000000000001ull, 0x3ff719218313d088ull},
+        {0x40000000ffffffffull, 0x3ff71922680cf8fbull},
+        {0x40000000022b9b89ull, 0x3ff719218504c3dbull}, {0x400000003975b451ull, 0x3ff71921b67892afull},
+        {0x41b0000027529ad0ull, 0x403419ecb987ee2bull}, {0x41b00000c4233f8eull, 0x403419ecc354f82full},
+        {0x41b00000f8114bd4ull, 0x403419ecc693d8c6ull}, {0x3fc858aceb437920ull, 0x3fc833b16e1536cfull},
+        {0x3fcfb2fb91be23b8ull, 0x3fcf623e1dc2a7a9ull}, {0x3fd3d86039728f38ull, 0x3fd38a4bb16cd986ull},
+        {0x3fd4f018ee15f210ull, 0x3fd494d053c63f5aull}, {0x3fd604e5888b9750ull, 0x3fd59b3a3e84d0f4ull},
+        {0x3fd7781dc03644bcull, 0x3fd6f902e56b239full}, {0x3fd93948915edbd0ull, 0x3fd89cd215ce473aull},
+        {0x3fdbd5bf8a15f854ull, 0x3fdb0650596801feull}, {0x3fded53018738f74ull, 0x3fddbff057eac993ull},
+        {0x3ff11a74b868ac6full, 0x3fedbcdc2899ca28ull}, {0x3ff3070681bd56f0ull, 0x3ff0251226fd5bb4ull},
+        {0x3ff55fe87b9ca7c4ull, 0x3ff19a41c3590934ull},
+    };
+    for (const auto& [input, expected] : cases) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
+            const std::uint64_t result = std::bit_cast<std::uint64_t>(asinh_nid_postfix(std::bit_cast<double>(input | sign)));
+            if (result != (expected | sign)) {
+                std::fprintf(stderr, "Guest asinh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input | sign), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected | sign));
+                std::abort();
+            }
+        }
+    }
+}
+
+static void CheckAsinhLargeArguments() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x4000000100000000ull, 0x3ff71922680cf8fcull}, {0x4000000100000001ull, 0x3ff71922680cf8fdull},
+        {0x4008000000000000ull, 0x3ffd185b507edc0eull}, {0x4024000000000000ull, 0x4007fc5c506d2bdbull},
+        {0x408f400000000000ull, 0x401e67530a363e15ull}, {0x41affffffffffffeull, 0x403419ecb712c481ull},
+        {0x41afffffffffffffull, 0x403419ecb712c481ull}, {0x41b0000000000000ull, 0x403419ecb712c481ull},
+        {0x41b00000ffffffffull, 0x403419ecc712c401ull}, {0x41b0000100000000ull, 0x403419ecc712c400ull},
+        {0x41b0000100000001ull, 0x403419ecc712c400ull}, {0x4202a05f20000000ull, 0x4037b810429a7c2aull},
+        {0x54b249ad2594c37dull, 0x406cde73f84a4f2cull}, {0x7fefffffffffffffull, 0x408633ce8fb9f87dull},
+    };
+    for (const auto& [input, expected] : cases) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
+            const std::uint64_t result = std::bit_cast<std::uint64_t>(asinh_nid_postfix(std::bit_cast<double>(input | sign)));
+            if (!AsinhWithinUlps(result, expected | sign, 4)) {
+                std::fprintf(stderr, "Guest asinh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input | sign), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected | sign));
+                std::abort();
+            }
+        }
+    }
+    Require(asinh_nid_postfix(std::numeric_limits<double>::infinity()) == std::numeric_limits<double>::infinity());
+    Require(asinh_nid_postfix(-std::numeric_limits<double>::infinity()) == -std::numeric_limits<double>::infinity());
+    Require(std::isnan(asinh_nid_postfix(std::numeric_limits<double>::quiet_NaN())));
+}
+
 static void CheckRoundingNaNConsoleBits() {
     constexpr std::uint64_t cases[][2] = {
         {0x7ff0000000000001ull, 0x7ff8000000000001ull}, {0xfff4000000000123ull, 0xfffc000000000123ull}, {0x7ff8000000000456ull, 0x7ff8000000000456ull},
@@ -2373,6 +2432,8 @@ int main() {
     CheckSinhMsunBits();
     CheckSinhLargeArguments();
     CheckSinhOverflowErrno();
+    CheckAsinhMsunBits();
+    CheckAsinhLargeArguments();
     CheckRoundingNaNConsoleBits();
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});

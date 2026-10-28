@@ -2728,6 +2728,21 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    set_tests_properties(agc_driver_runtime_formatted_store PROPERTIES TIMEOUT 30)
+    foreach(mode IN ITEMS x1 x2 x3 x1_d16 x2_d16 x3_d16 x4_d16)
+        string(REGEX REPLACE "_d16$" "" components "${mode}")
+        set(arguments "--${components}")
+        if(mode MATCHES "_d16$")
+            list(APPEND arguments --d16)
+        endif()
+        add_test(NAME agc_driver_runtime_formatted_store_${mode} COMMAND agc_driver_runtime_formatted_store_tests ${arguments})
+        set_tests_properties(agc_driver_runtime_formatted_store_${mode} PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_runtime_formatted_store_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test(NAME agc_driver_job_manager_compute_capacity COMMAND agc_driver_job_manager_compute_tests barrier_capacity_overflow)
     set_tests_properties(agc_driver_job_manager_compute_capacity PROPERTIES
         ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 20 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
@@ -3374,6 +3389,20 @@ if(BUILD_TESTING)
             endif()
         endforeach()
     endforeach()
+    add_test(NAME agc_driver_depth_plane_cpu_write_after_page_unwatch COMMAND agc_driver_depth_plane_partial_store_tests --cpu-write-after-page-unwatch)
+    set_tests_properties(agc_driver_depth_plane_cpu_write_after_page_unwatch PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_cpu_write_after_page_unwatch PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_depth_plane_cpu_write_after_partial_unwatch COMMAND agc_driver_depth_plane_partial_store_tests --cpu-write-after-partial-unwatch)
+    set_tests_properties(agc_driver_depth_plane_cpu_write_after_partial_unwatch PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_cpu_write_after_partial_unwatch PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_depth_plane_cpu_write_after_memo COMMAND agc_driver_depth_plane_partial_store_tests --cpu-write-after-memo)
     set_tests_properties(agc_driver_depth_plane_cpu_write_after_memo PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
