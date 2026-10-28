@@ -24,6 +24,7 @@ int main(int argc, char** argv) {
         {sceAudiodecInitialize, "sceAudiodecInitialize"},
         {sceAudiodecRegisterCodec, "sceAudiodecRegisterCodec"},
         {sceAudiodecTerminate, "sceAudiodecTerminate"},
+        {sceAudiodecTerminate, "sceAudiodecTerminateMissing"},
     };
     if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAudiodecNotExported")) return 1;
     std::puts("libSceAudiodec.native pending exports are exported");
