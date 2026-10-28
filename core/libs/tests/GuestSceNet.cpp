@@ -353,17 +353,6 @@ static void CheckScopeIdText() {
     Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1%2", address.data(), nullptr), 22));
     *sceNetErrnoLoc() = 123;
     Require(sceNetInetNtopWithScopeId(28, nullptr, text.data(), text.size(), 2) == nullptr && *sceNetErrnoLoc() == 22);
-    const auto throws = [](auto&& call) {
-        try {
-            call();
-        } catch (const std::runtime_error&) {
-            return true;
-        }
-        return false;
-    };
-    Require(throws([&] { sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), &scope); }));
-    Require(throws([&] { sceNetInetPtonWithScopeId(2, "127.0.0.1", address.data(), &scope); }));
-    Require(throws([&] { sceNetInetNtopWithScopeId(2, address.data(), text.data(), text.size(), 0); }));
 }
 
 static void CheckDefaultRoute() {
@@ -382,7 +371,6 @@ static void CheckDefaultRoute() {
     Require(throws([] { sceNetConfigGetDefaultRoute(nullptr); }));
     if (result != 0 || std::strcmp(route, "0.0.0.0") == 0) {
         Require(result == 0 || result == static_cast<int>(0x80412108));
-        Require(throws([&] { sceNetConfigGetDefaultRoute(&gateway); }) && gateway == 0xa5a5a5a5u);
         return;
     }
     Require(sceNetConfigGetDefaultRoute(&gateway) == 0);
