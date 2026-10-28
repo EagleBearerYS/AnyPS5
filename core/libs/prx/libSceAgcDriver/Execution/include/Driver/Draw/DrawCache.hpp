@@ -172,7 +172,8 @@ public:
 
 private:
     std::uint32_t percent, minimumHits;
-    std::atomic<std::uint32_t> lookups{0}, hits{0}, left{0};
+    std::atomic<std::uint64_t> window{0};
+    std::atomic<std::uint32_t> left{0};
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);

@@ -46,11 +46,13 @@ bool DrawCacheBypass::Skip() {
 
 void DrawCacheBypass::Note(bool hit) {
     if (minimumHits == 0) return;
-    if (hit) hits.fetch_add(1, std::memory_order_relaxed);
-    if (lookups.fetch_add(1, std::memory_order_relaxed) + 1 < Window) return;
-    const auto windowHits = hits.exchange(0, std::memory_order_relaxed);
-    lookups.store(0, std::memory_order_relaxed);
-    if (windowHits < minimumHits) left.store(BypassDraws, std::memory_order_relaxed);
+    auto current = window.load(std::memory_order_relaxed);
+    std::uint32_t lookups = 0, hits = 0;
+    do {
+        lookups = static_cast<std::uint32_t>(current) + 1u;
+        hits = static_cast<std::uint32_t>(current >> 32u) + (hit ? 1u : 0u);
+    } while (!window.compare_exchange_weak(current, lookups < Window ? (std::uint64_t{hits} << 32u) | lookups : 0u, std::memory_order_relaxed));
+    if (lookups == Window && hits < minimumHits) left.store(BypassDraws, std::memory_order_relaxed);
 }
 
 bool Driver::drawDataHits() {
