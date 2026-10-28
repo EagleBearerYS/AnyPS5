@@ -1694,7 +1694,7 @@ enum class DepthAliasCase { Mismatched, Matching, Partial, UnprovenWord, OtherCl
 constexpr std::string_view depthAliasRefusal = "native multisample depth or HTILE aliases a multisampled colour target whose samples are only on the host";
 constexpr std::string_view unprovenHtileRefusal = "native multisample depth initial HTILE does not prove its clear value";
 constexpr std::string_view unprovenStencilHtileRefusal = "native multisample stencil initial HTILE does not prove its clear value";
-constexpr std::string_view guestDepthWriteRefusal = "guest writes over native multisample depth are not implemented";
+constexpr std::string_view guestHtileWriteRefusal = "guest writes over native multisample depth are not implemented (HTILE 0x";
 
 enum class HtileLayout { DepthOnly, Stencil, NoStencil };
 
@@ -1826,7 +1826,7 @@ void CheckAliasedDepth(Context context, std::uint32_t fragments, const AliasedDe
         recorder.Sync();
         read();
     }
-    if (refilled && !kept) TargetRefuses([&] { CachedSampledTexture(context, words); }, which == DepthAliasCase::HtileWordThenSameFill ? guestDepthWriteRefusal : depthAliasRefusal);
+    if (refilled && !kept) TargetRefuses([&] { CachedSampledTexture(context, words); }, which == DepthAliasCase::HtileWordThenSameFill ? guestHtileWriteRefusal : depthAliasRefusal);
     if (which == DepthAliasCase::NewTargetAfterImport) {
         auto other = color;
         other.format = VK_FORMAT_R16G16_SFLOAT;
