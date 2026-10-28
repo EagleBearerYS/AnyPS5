@@ -35,4 +35,10 @@ int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key) {
     return Retain_nid_no_patch(key->references);
 }
 
+int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
+    if (!ctx)
+        throw std::invalid_argument("SSL_CTX_up_ref requires a context");
+    return Retain_nid_no_patch(ctx->references);
+}
+
 }

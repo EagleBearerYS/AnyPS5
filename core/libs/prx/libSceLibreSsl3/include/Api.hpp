@@ -64,7 +64,7 @@ int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void);
 int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_max_proto_version_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_min_proto_version_nid_postfix(void);
-int APS5_VABI SSL_CTX_up_ref_nid_postfix(void);
+int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx);
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(void);
 int APS5_VABI SSL_get_client_random_nid_postfix(void);
 int APS5_VABI SSL_up_ref_nid_postfix(void);
