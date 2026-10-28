@@ -47,9 +47,19 @@ struct LibreSsl3Rsa {
     void* mtBlinding;
 };
 
+struct LibreSsl3SslCtx {
+    const void* method;
+    const void* quicMethod;
+    void* cipherList;
+    void* certStore;
+    std::int64_t sessionTimeout;
+    std::int32_t references;
+};
+
 static_assert(sizeof(LibreSsl3EvpPkey) == 32);
 static_assert(offsetof(LibreSsl3EvpPkey, references) == 4);
 static_assert(sizeof(LibreSsl3EcKey) == 64);
 static_assert(offsetof(LibreSsl3EcKey, references) == 48);
 static_assert(sizeof(LibreSsl3Rsa) == 152);
 static_assert(offsetof(LibreSsl3Rsa, references) == 104);
+static_assert(offsetof(LibreSsl3SslCtx, references) == 40);
