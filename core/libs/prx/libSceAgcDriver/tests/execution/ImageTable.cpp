@@ -492,6 +492,16 @@ alignas(256) constexpr std::array<std::uint32_t, 61> PointerChaseWordsCode{
     0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffe3u, 0xbefe042eu, 0x7e120202u, 0x34101286u,
     0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 60> PointerChaseEditedCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf0d8012u, 0xbf84000bu, 0xf4080f16u, 0xfa000030u, 0xbf8cc07fu, 0x873dff3du, 0x0000ffffu, 0x8f3e843eu,
+    0x883fff3fu, 0x30000000u, 0xf4240b1eu, 0xfa000030u, 0xbf8cc07fu, 0xf40c0916u, 0xfa000000u, 0xbf8cc07fu,
+    0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffe4u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u,
+    0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 50> PointerFixedVsharpCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -2606,6 +2616,91 @@ void RunPointerChaseWordsTests(AgcDriver::VulkanDevice& device) {
     std::puts("pointer table with two chase links in one V#: a T# at a record pointer chased through words 0 and 1 or words 2 and 3 of one V# at the pointer plus 0x60, each taken in its own groups, checked with a moved second link");
 }
 
+void RunPointerChaseEditedTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 4> nodes{};
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 4> links{};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    const std::array<std::uint32_t, 4> imageOf{0u, 1u, 0u, 1u};
+    std::array<std::uint32_t, 4> next{};
+    const auto address = [](const void* data) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data)); };
+    const auto chase = [&](std::uint32_t from, std::uint32_t to) {
+        links[from][0x30u / 4u] = static_cast<std::uint32_t>(address(nodes[to].data()));
+        links[from][0x34u / 4u] = static_cast<std::uint32_t>(address(nodes[to].data()) >> 32u);
+        auto descriptor = Buffer(links[from].data(), 4u);
+        descriptor[1] |= 4u << 16u;
+        descriptor[3] &= ~0x30000000u;
+        std::copy(descriptor.begin(), descriptor.end(), nodes[from].begin() + 0x30u / 4u);
+        next[from] = to;
+    };
+    for (std::uint32_t node = 0; node < 4u; ++node) {
+        std::copy(images[imageOf[node]].begin(), images[imageOf[node]].end(), nodes[node].begin());
+        chase(node, node == 3u ? 3u : (node + 1u) % 3u);
+    }
+    const std::array<std::uint32_t, 4> recordNode{2u, 0u, 1u, 2u};
+    for (std::uint32_t record = 0; record < 4u; ++record) {
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(address(nodes[recordNode[record]].data()));
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(address(nodes[recordNode[record]].data()) >> 32u);
+    }
+    const std::string name = "pointer table with an edited chase V#";
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    };
+    const Registration registeredNodes(nodes.data(), sizeof(nodes));
+    const Registration registeredLinks(links.data(), sizeof(links));
+    const auto run = [&](std::span<const std::uint32_t> code) {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(nodes.data()), std::as_bytes(std::span(nodes))},
+            {reinterpret_cast<std::uintptr_t>(links.data()), std::as_bytes(std::span(links))},
+        };
+        const auto inputTable = Table;
+        const auto inputNodes = nodes;
+        const auto inputLinks = links;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u);
+        Require(Table == inputTable && nodes == inputNodes && links == inputLinks, name + ": dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        return result;
+    };
+    const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = keys[group][0];
+        Keys[group * 4u + 1u] = keys[group][1];
+        Keys[group * 4u + 2u] = group;
+    }
+    const auto sampled = [&](std::uint32_t group) {
+        return std::function<std::uint32_t(std::uint32_t)>([&, group](std::uint32_t x) {
+            auto node = recordNode[keys[group][x < 32u ? 0u : 1u]];
+            if ((group & 1u) != 0u) node = next[node];
+            return std::bit_cast<std::uint32_t>(imageOf[node] != 0u ? OtherFloatTexels[x] : FloatTexels[x]);
+        });
+    };
+    const auto taken = run(PointerChaseEditedCode);
+    Require(!Faulted(taken), name + ": the T# behind the edited V# faulted:\n" + taken.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(taken, group, Lanes, sampled(group), name + ": the T# at the record pointer or at the pointer read through the edited V# in group " + std::to_string(group));
+    chase(0u, 3u);
+    const auto moved = run(PointerChaseEditedCode);
+    Require(!Faulted(moved), name + ": the T# behind a moved link faulted:\n" + moved.log);
+    Require(moved.artifactId == taken.artifactId, name + ": moving a link behind the edited V# recompiled the shader");
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(moved, group, Lanes, sampled(group), name + ": the T# after node 0's link moved to node 3 in group " + std::to_string(group));
+    std::puts("pointer table with an edited chase V#: a T# at a record pointer or at the pointer read at 0x30 through a V# from the record pointer plus 0x30 whose words 1, 2 and 3 the shader ANDs with 0xffff, shifts left by 4 and ORs with 0x30000000, a V# that covers the read only after those edits, checked for taken and skipped steps and a moved link");
+}
+
 void RunPointerFixedVsharpTests(AgcDriver::VulkanDevice& device, std::uint32_t descriptorOffset) {
     Fill();
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
@@ -3007,6 +3102,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-chase-words") == 0) {
             RunPointerChaseWordsTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-chase-edited") == 0) {
+            RunPointerChaseEditedTests(*device);
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-fixed") == 0) {
