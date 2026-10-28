@@ -1,0 +1,5 @@
+BASE=a0ee9b5c5f156924b77226180c7aa5a1a6a86d57
+REPEAT=1
+EXTRA_TESTS='agc_storage_pending_key_refresh|agc_pending_key_stores|agc_driver_image_table_vouched_lookups'
+BEFORE_REPEAT=1
+VALIDATION=1
