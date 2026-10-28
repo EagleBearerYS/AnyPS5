@@ -37,12 +37,22 @@ struct PointerHop {
 
 inline constexpr std::uint32_t MaxPointerChaseDepth = 4;
 
+struct DescriptorWordEdit {
+    std::uint32_t shift = 0;
+    std::uint32_t mask = 0xffffffffu;
+    std::uint32_t bits = 0;
+
+    [[nodiscard]] std::uint32_t Apply(std::uint32_t word) const { return ((word << shift) & mask) | bits; }
+    bool operator==(const DescriptorWordEdit& other) const = default;
+};
+
 struct PointerChase {
     std::uint32_t offset = 0;
     std::uint32_t immediate = 0;
     std::uint32_t readOffset = 0;
     std::uint32_t readImmediate = 0;
     std::uint32_t readHighImmediate = 0;
+    std::array<DescriptorWordEdit, 4> edits {};
 
     bool operator==(const PointerChase& other) const = default;
 };
