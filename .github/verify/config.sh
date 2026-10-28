@@ -1,0 +1,4 @@
+BASE=a0308d1c190a24ea796b01f632775b9f970e1061
+REPEAT=1
+EXTRA_TESTS='agc_driver_pointer_chase_edited_table|agc_driver_pointer_chase_table|agc_driver_pointer_chase_words_table'
+VALIDATION=1
