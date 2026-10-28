@@ -1,0 +1,4 @@
+BASE=319621ba2e578bd053b0baba2877fe70520e0737
+REPEAT=5
+EXTRA_TESTS='agc_driver_graphics|agc_bda_staging'
+BEFORE_REPEAT=2
