@@ -1,0 +1,3 @@
+BASE=f3eb573e6fc3bd38261690d850c21b45b88f705b
+REPEAT=10
+EXTRA_TESTS='agc_recorder_command_buffer_release|agc_repeat_storage_guard|agc_driver_recorder|agc_recorder_read_list'
