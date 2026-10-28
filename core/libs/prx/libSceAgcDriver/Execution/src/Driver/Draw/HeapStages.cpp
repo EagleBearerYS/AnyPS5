@@ -8,12 +8,15 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -251,10 +254,226 @@ constexpr std::size_t HeapWalkDrain = 2;
 
 constexpr std::size_t HeapWalkSeenKeys = 1u << 16;
 
+constexpr std::size_t HeapWalkReportedThreads = 16;
+
+constexpr auto HeapWalkReportWindow = std::chrono::seconds(10);
+
+std::size_t heapWalkMemoKeys() {
+    static const std::size_t keys = [] {
+        const char* text = std::getenv("APS5_HEAP_WALK_MEMO_KEYS");
+        if (text == nullptr) return HeapWalkMemoKeys;
+        char* end = nullptr;
+        const auto value = std::strtoull(text, &end, 10);
+        return end != text && value != 0 ? static_cast<std::size_t>(value) : HeapWalkMemoKeys;
+    }();
+    return keys;
+}
+
+bool heapWalkStats() {
+    static const bool enabled = std::getenv("APS5_PIPELINE_STATS") != nullptr;
+    return enabled;
+}
+
+template <typename TValue>
+std::uint64_t ownedBytes(const std::vector<TValue>& values) {
+    return static_cast<std::uint64_t>(values.capacity()) * sizeof(TValue);
+}
+
+std::uint64_t ownedBytes(const std::vector<bool>& values) {
+    return (static_cast<std::uint64_t>(values.capacity()) + 7u) / 8u;
+}
+
+template <typename TValue>
+std::uint64_t sharedBytes(const ShaderRecompiler::SharedValues<TValue>& values) {
+    return static_cast<std::uint64_t>(values.size()) * sizeof(TValue);
+}
+
+std::uint64_t bindingBytes(const ShaderRecompiler::DescriptorBinding& binding) {
+    return ownedBytes(binding.guestDescriptor) + ownedBytes(binding.samplerDepthCompare) + ownedBytes(binding.imageWritten) +
+           ownedBytes(binding.imageDepthCompare) + ownedBytes(binding.imageAtomic) + ownedBytes(binding.imageAtomic64) +
+           ownedBytes(binding.imageShapes) + ownedBytes(binding.bufferAtomic) + ownedBytes(binding.bufferWritten) +
+           ownedBytes(binding.samplerUnnormalized) + ownedBytes(binding.samplerIntegerBorder) + ownedBytes(binding.samplerCoordinatesIgnored) +
+           ownedBytes(binding.imageUnnormalized) + ownedBytes(binding.imageUnnormalizedBaseLevel) + ownedBytes(binding.imageSamplers) +
+           ownedBytes(binding.bufferRead) + ownedBytes(binding.bufferExtent);
+}
+
+std::uint64_t resultBytes(const ShaderRecompiler::RecompileResult& result) {
+    auto bytes = sizeof(ShaderRecompiler::RecompileResult) + ownedBytes(result.vertexInputPatches) + ownedBytes(result.runtimeImageResources) +
+                 ownedBytes(result.vertexInputs) + ownedBytes(result.parameterExports) + ownedBytes(result.fragmentParameters) +
+                 ownedBytes(result.stencilReferences) + ownedBytes(result.specialization) + ownedBytes(result.heapSlotWords) +
+                 ownedBytes(result.bindings) + ownedBytes(result.pushConstants) + ownedBytes(result.vertexAttributes) +
+                 ownedBytes(result.imageTablePoison) + ownedBytes(result.imageTableRanges) + ownedBytes(result.imageTableReadRanges) +
+                 ownedBytes(result.heapUserWords) + ownedBytes(result.shaderDataUserWords);
+    if (result.meshBarycentrics.has_value()) bytes += ownedBytes(result.meshBarycentrics->parameters);
+    for (const auto& binding : result.bindings) bytes += bindingBytes(binding);
+    for (const auto& ranges : result.imageTableReadRanges) bytes += ownedBytes(ranges);
+    return bytes;
+}
+
+std::uint64_t captureBytes(const ShaderRecompiler::ResourceCapture& capture) {
+    const auto& snapshot = capture.snapshot;
+    auto bytes = sizeof(ShaderRecompiler::ResourceCapture) + ownedBytes(snapshot.buffers) + ownedBytes(snapshot.images) +
+                 ownedBytes(snapshot.samplers) + ownedBytes(snapshot.flattenedSrt) + ownedBytes(snapshot.userData) +
+                 ownedBytes(snapshot.srtPoison) + ownedBytes(snapshot.tables.tables) + ownedBytes(snapshot.tables.ranges) +
+                 ownedBytes(capture.readTrace.leaves) + ownedBytes(capture.readTrace.otherReads) + ownedBytes(capture.userDataUse.reads);
+    for (const auto& column : snapshot.tables.tables)
+        bytes += sharedBytes(column.codes) + sharedBytes(column.words) + sharedBytes(column.readRanges);
+    return bytes;
+}
+
+std::uint64_t wordsBytes(const ShaderRecompiler::HeapStageWords& words) {
+    auto bytes = sizeof(ShaderRecompiler::HeapStageWords) + ownedBytes(words.userData) + ownedBytes(words.flattenedSrt) +
+                 ownedBytes(words.vertexAttributes) + ownedBytes(words.bindings);
+    for (const auto& binding : words.bindings) bytes += ownedBytes(binding);
+    return bytes;
+}
+
+std::uint64_t entryVectorBytes(const HeapWalkEntry& entry) {
+    return ownedBytes(entry.userData) + ownedBytes(entry.ranges) + ownedBytes(entry.values) + ownedBytes(entry.accessible) +
+           ownedBytes(entry.userDataUse.reads);
+}
+
+struct HeapWalkCounts {
+    std::uint64_t currentKeys = 0;
+    std::uint64_t previousKeys = 0;
+    std::uint64_t entries = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t memoOnlyEntries = 0;
+    std::uint64_t memoOnlyBytes = 0;
+    std::uint64_t inserts = 0;
+    std::uint64_t dropped = 0;
+};
+
+struct HeapWalkRegistry {
+    std::mutex mutex;
+    std::unordered_map<const void*, HeapWalkCounts> threads;
+    std::chrono::steady_clock::time_point printed = std::chrono::steady_clock::now();
+};
+
+HeapWalkRegistry& heapWalkRegistry() {
+    static auto* registry = new HeapWalkRegistry;
+    return *registry;
+}
+
+double mebibytes(std::uint64_t bytes) {
+    return static_cast<double>(bytes) / (1024.0 * 1024.0);
+}
+
+void printHeapWalkCounts(std::unordered_map<const void*, HeapWalkCounts>& threads) {
+    HeapWalkCounts total;
+    std::vector<const HeapWalkCounts*> ordered;
+    ordered.reserve(threads.size());
+    for (auto& [thread, counts] : threads) {
+        total.currentKeys += counts.currentKeys;
+        total.previousKeys += counts.previousKeys;
+        total.entries += counts.entries;
+        total.bytes += counts.bytes;
+        total.memoOnlyEntries += counts.memoOnlyEntries;
+        total.memoOnlyBytes += counts.memoOnlyBytes;
+        total.inserts += std::exchange(counts.inserts, 0);
+        total.dropped += std::exchange(counts.dropped, 0);
+        ordered.push_back(&counts);
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const HeapWalkCounts* left, const HeapWalkCounts* right) { return left->bytes > right->bytes; });
+    std::string perThread;
+    for (std::size_t index = 0; index < ordered.size() && index < HeapWalkReportedThreads; ++index) {
+        const auto& counts = *ordered[index];
+        char item[160];
+        std::snprintf(item, sizeof(item), " <%llu/%llu, %llu, %.1f, %.1f>", static_cast<unsigned long long>(counts.currentKeys),
+                      static_cast<unsigned long long>(counts.previousKeys), static_cast<unsigned long long>(counts.entries),
+                      mebibytes(counts.bytes), mebibytes(counts.memoOnlyBytes));
+        perThread += item;
+    }
+    if (ordered.size() > HeapWalkReportedThreads) perThread += " +" + std::to_string(ordered.size() - HeapWalkReportedThreads) + " more";
+    std::fprintf(stderr,
+                 "[gpu-heap] walk memo (10 s): %zu threads; total %llu entries (%llu keys), %.1f MiB, memo-only %llu entries / %.1f MiB; "
+                 "inserts %llu, dropped %llu; per thread:%s\n",
+                 threads.size(), static_cast<unsigned long long>(total.entries),
+                 static_cast<unsigned long long>(total.currentKeys + total.previousKeys), mebibytes(total.bytes),
+                 static_cast<unsigned long long>(total.memoOnlyEntries), mebibytes(total.memoOnlyBytes),
+                 static_cast<unsigned long long>(total.inserts), static_cast<unsigned long long>(total.dropped), perThread.c_str());
+}
+
+void publishHeapWalkCounts(const void* thread, const HeapWalkCounts& counts, std::chrono::steady_clock::time_point now) {
+    auto& registry = heapWalkRegistry();
+    std::lock_guard lock(registry.mutex);
+    auto& stored = registry.threads[thread];
+    const auto inserts = stored.inserts + counts.inserts;
+    const auto dropped = stored.dropped + counts.dropped;
+    stored = counts;
+    stored.inserts = inserts;
+    stored.dropped = dropped;
+    if (now - registry.printed < HeapWalkReportWindow) return;
+    registry.printed = now;
+    printHeapWalkCounts(registry.threads);
+}
+
+void forgetHeapWalkCounts(const void* thread) {
+    auto& registry = heapWalkRegistry();
+    std::lock_guard lock(registry.mutex);
+    registry.threads.erase(thread);
+}
+
 struct HeapWalkMemo {
     std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>> current;
     std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>> previous;
     std::vector<std::uint64_t> seen = std::vector<std::uint64_t>(HeapWalkSeenKeys, 0);
+    std::uint64_t inserts = 0;
+    std::uint64_t dropped = 0;
+    std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
+    std::size_t keyCap = heapWalkMemoKeys();
+    bool stats = heapWalkStats();
+
+    HeapWalkMemo() = default;
+    HeapWalkMemo(const HeapWalkMemo&) = delete;
+    HeapWalkMemo& operator=(const HeapWalkMemo&) = delete;
+
+    ~HeapWalkMemo() {
+        if (stats) forgetHeapWalkCounts(this);
+    }
+
+    HeapWalkCounts Measure() const {
+        using Ways = std::unordered_map<std::uint64_t, std::vector<HeapWalkEntry>>;
+        HeapWalkCounts counts;
+        counts.currentKeys = current.size();
+        counts.previousKeys = previous.size();
+        counts.bytes = sizeof(HeapWalkMemo) + ownedBytes(seen) + (current.bucket_count() + previous.bucket_count()) * sizeof(void*);
+        std::unordered_set<const void*> counted;
+        const auto once = [&counted](const void* shared) { return shared != nullptr && counted.insert(shared).second; };
+        for (const Ways* generation : {&current, &previous}) {
+            for (const auto& [key, ways] : *generation) {
+                counts.bytes += sizeof(Ways::value_type) + 2u * sizeof(void*) + ways.capacity() * sizeof(HeapWalkEntry);
+                for (const auto& entry : ways) {
+                    ++counts.entries;
+                    const auto own = entryVectorBytes(entry);
+                    counts.bytes += own;
+                    const bool memoOnly = entry.result != nullptr && entry.result.use_count() == 1;
+                    const bool newResult = once(entry.result.get());
+                    const bool newCapture = once(entry.capture.get());
+                    const bool newWords = once(entry.words.get());
+                    const auto result = (newResult || memoOnly) && entry.result != nullptr ? resultBytes(*entry.result) : 0u;
+                    const auto capture = (newCapture || memoOnly) && entry.capture != nullptr ? captureBytes(*entry.capture) : 0u;
+                    const auto words = (newWords || memoOnly) && entry.words != nullptr ? wordsBytes(*entry.words) : 0u;
+                    counts.bytes += (newResult ? result : 0u) + (newCapture ? capture : 0u) + (newWords ? words : 0u);
+                    if (!memoOnly) continue;
+                    ++counts.memoOnlyEntries;
+                    counts.memoOnlyBytes += sizeof(HeapWalkEntry) + own + result + (entry.capture.use_count() == 1 ? capture : 0u) +
+                                            (entry.words.use_count() == 1 ? words : 0u);
+                }
+            }
+        }
+        return counts;
+    }
+
+    void Report() {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - window < HeapWalkReportWindow) return;
+        window = now;
+        auto counts = Measure();
+        counts.inserts = std::exchange(inserts, 0);
+        counts.dropped = std::exchange(dropped, 0);
+        publishHeapWalkCounts(this, counts, now);
+    }
 
     bool admit(std::uint64_t key) {
         auto& last = seen[(key ^ (key >> 29)) & (HeapWalkSeenKeys - 1u)];
@@ -275,8 +494,13 @@ struct HeapWalkMemo {
     }
 
     std::vector<HeapWalkEntry>& slot(std::uint64_t key) {
-        for (std::size_t drained = 0; drained < HeapWalkDrain && !previous.empty(); ++drained) previous.erase(previous.begin());
-        if (current.size() >= HeapWalkMemoKeys && !current.contains(key)) {
+        for (std::size_t drained = 0; drained < HeapWalkDrain && !previous.empty(); ++drained) {
+            dropped += previous.begin()->second.size();
+            previous.erase(previous.begin());
+        }
+        if (current.size() >= keyCap && !current.contains(key)) {
+            if (stats)
+                for (const auto& [old, ways] : previous) dropped += ways.size();
             previous = std::move(current);
             current.clear();
         }
@@ -398,9 +622,14 @@ void rememberWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderI
                   const std::vector<std::uint32_t>& values, const AddressRanges& accessible,
                   const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture,
                   const std::shared_ptr<const ShaderRecompiler::RecompileResult>& result, const ShaderRecompiler::HeapStageWords& words) {
-    auto& ways = heapWalkMemo().slot(memoKey);
-    if (ways.size() >= HeapWalkWays) ways.pop_back();
+    auto& memo = heapWalkMemo();
+    auto& ways = memo.slot(memoKey);
+    if (ways.size() >= HeapWalkWays) {
+        ways.pop_back();
+        ++memo.dropped;
+    }
     ways.emplace(ways.begin());
+    ++memo.inserts;
     auto& entry = ways.front();
     entry.variant = invocation.VariantId();
     entry.pushOffset = invocation.Request().layout.pushConstantOffsetBytes;
@@ -437,8 +666,10 @@ MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocatio
 
     Graphics::HeapCostScope memoCost(Graphics::HeapCost::WalkMemo);
     if (memoOn) {
+        auto& memo = heapWalkMemo();
+        if (memo.stats) memo.Report();
         memoKey = walkMemoKey(invocation, userData, shaderBase);
-        auto* found = heapWalkMemo().find(memoKey);
+        auto* found = memo.find(memoKey);
         memoKnown = found != nullptr;
         for (std::size_t way = 0; found != nullptr && way < found->size(); ++way) {
             const auto& entry = (*found)[way];
