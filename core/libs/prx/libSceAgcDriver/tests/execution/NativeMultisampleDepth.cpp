@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -2121,6 +2122,8 @@ void CheckAliasedDepthRead(Context context, std::uint32_t fragments, const Alias
     }
     Require(std::equal(probe.begin(), probe.end(), memory.Data()), "a guest read returned bytes other than guest memory after it returned");
     const auto published = matching(memory.Data(), hostPattern);
+    const auto noted = matching(memory.Data(), aliasPattern);
+    const auto kept = matching(memory.Data(), 0x5c5c5c5cu);
     const auto guards = HasResidentDepthGuards_nid_no_patch();
     std::string next;
     const auto serial = DepthSurfacesSerial();
@@ -2132,7 +2135,7 @@ void CheckAliasedDepthRead(Context context, std::uint32_t fragments, const Alias
     } catch (const std::exception& error) {
         next = std::string("refused (") + error.what() + ")";
     }
-    std::printf("Aliased depth guest read samples=%u clear=%u htile=%u word=0x%08x depth %s: returned, %zu of %zu guest plane words now the host colour 0x%08x (were 0x5c5c5c5c), HTILE %s, stencil %s, resident depth guard %s, colour target over the plane %s; next depth bind and sample: %s\n", fragments, htile.one, static_cast<std::uint32_t>(htile.layout), htile.word, depthWritten ? "host-written" : "not host-written", published, bytes / sizeof(std::uint32_t), hostPattern, htileKept() ? "unchanged" : "changed", stencilKept() ? "unchanged" : "changed", guards ? "kept" : "gone", alias ? "still resident" : "gone", next.c_str());
+    std::printf("Aliased depth guest read samples=%u clear=%u htile=%u word=0x%08x depth %s: returned, of %zu guest plane words (all 0x5c5c5c5c before) %zu now hold the host colour 0x%08x, %zu the noted fill 0x%08x and %zu still 0x5c5c5c5c, HTILE %s, stencil %s, resident depth guard %s, colour target over the plane %s; next depth bind and sample: %s\n", fragments, htile.one, static_cast<std::uint32_t>(htile.layout), htile.word, depthWritten ? "host-written" : "not host-written", bytes / sizeof(std::uint32_t), published, hostPattern, noted, aliasPattern, kept, htileKept() ? "unchanged" : "changed", stencilKept() ? "unchanged" : "changed", guards ? "kept" : "gone", alias ? "still resident" : "gone", next.c_str());
 }
 
 void CheckStencilView(Context context, std::uint32_t fragments) {
@@ -2949,12 +2952,15 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--aliased-depth-read") {
             const auto supported = [&](std::uint32_t samples, HtileLayout layout) { return DepthSupported(context, layout == HtileLayout::NoStencil ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D32_SFLOAT_S8_UINT, samples) && (layout == HtileLayout::NoStencil || (context.limits.framebufferStencilSampleCounts & samples) != 0u) && (context.limits.framebufferColorSampleCounts & samples) != 0u; };
             Require(supported(4u, HtileLayout::DepthOnly), "the aliased depth guest read diagnostic requires sampled D32S8 and multisampled colour with four samples");
+            TextureDetiler detiler(context);
+            auto detiled = context;
+            detiled.detiler = &detiler;
             std::uint32_t checked = 0u, unavailable = 0u;
             for (const auto samples : {2u, 4u, 8u}) {
                 for (const auto& htile : aliasedDepthHtiles) {
                     if (!supported(samples, htile.layout)) { unavailable += 2u; continue; }
                     for (const bool written : {false, true}) {
-                        CheckAliasedDepthRead(context, samples, htile, written);
+                        CheckAliasedDepthRead(detiled, samples, htile, written);
                         ++checked;
                     }
                 }
