@@ -64,6 +64,7 @@ struct Allocation {
     Owner owner = Owner::Untagged;
     std::uint32_t type = 0;
     std::uint64_t bytes = 0;
+    std::uint64_t mapped = 0;
 };
 
 struct SetRecord {
@@ -123,7 +124,7 @@ VKAPI_ATTR VkResult VKAPI_CALL allocateMemory(VkDevice device, const VkMemoryAll
     const auto real = reinterpret_cast<PFN_vkAllocateMemory>(state.resolver(device, "vkAllocateMemory"));
     const auto result = real(device, info, callbacks, memory);
     if (result != VK_SUCCESS || info == nullptr || memory == nullptr || *memory == VK_NULL_HANDLE || info->memoryTypeIndex >= VK_MAX_MEMORY_TYPES) return result;
-    const Allocation allocation{imported(info) ? Owner::HostImport : currentOwner, info->memoryTypeIndex, info->allocationSize};
+    const Allocation allocation{imported(info) ? Owner::HostImport : currentOwner, info->memoryTypeIndex, info->allocationSize, 0};
     std::lock_guard lock(state.mutex);
     state.live[{device, *memory}] = allocation;
     state.bytes[static_cast<std::size_t>(allocation.owner)][allocation.type] += allocation.bytes;
@@ -145,6 +146,24 @@ VKAPI_ATTR void VKAPI_CALL freeMemory(VkDevice device, VkDeviceMemory memory, co
         }
     }
     reinterpret_cast<PFN_vkFreeMemory>(state.resolver(device, "vkFreeMemory"))(device, memory, callbacks);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mapMemory(VkDevice device, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void** data) {
+    auto& state = tally();
+    const auto result = reinterpret_cast<PFN_vkMapMemory>(state.resolver(device, "vkMapMemory"))(device, memory, offset, size, flags, data);
+    if (result != VK_SUCCESS || data == nullptr || *data == nullptr) return result;
+    std::lock_guard lock(state.mutex);
+    if (const auto found = state.live.find({device, memory}); found != state.live.end()) found->second.mapped = reinterpret_cast<std::uintptr_t>(*data);
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL unmapMemory(VkDevice device, VkDeviceMemory memory) {
+    auto& state = tally();
+    {
+        std::lock_guard lock(state.mutex);
+        if (const auto found = state.live.find({device, memory}); found != state.live.end()) found->second.mapped = 0;
+    }
+    reinterpret_cast<PFN_vkUnmapMemory>(state.resolver(device, "vkUnmapMemory"))(device, memory);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL createDescriptorPool(VkDevice device, const VkDescriptorPoolCreateInfo* info, const VkAllocationCallbacks* callbacks, VkDescriptorPool* pool) {
@@ -248,6 +267,8 @@ VKAPI_ATTR void VKAPI_CALL destroyDevice(VkDevice device, const VkAllocationCall
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
     if (name != nullptr && std::strcmp(name, "vkAllocateMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&allocateMemory);
     if (name != nullptr && std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&freeMemory);
+    if (name != nullptr && std::strcmp(name, "vkMapMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&mapMemory);
+    if (name != nullptr && std::strcmp(name, "vkUnmapMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&unmapMemory);
     if (name != nullptr && std::strcmp(name, "vkCreateDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&createDescriptorPool);
     if (name != nullptr && std::strcmp(name, "vkDestroyDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyDescriptorPool);
     if (name != nullptr && std::strcmp(name, "vkResetDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&resetDescriptorPool);
@@ -259,6 +280,15 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* na
     return tally().resolver(device, name);
 }
 
+#ifdef _WIN32
+struct PrivateRegion {
+    std::uint64_t begin;
+    std::uint64_t end;
+    std::uint64_t allocationBase;
+    DWORD protect;
+};
+#endif
+
 struct Walk {
     std::array<std::uint64_t, RegionClassCount> committed{};
     std::array<std::uint64_t, RegionClassCount> resident{};
@@ -268,6 +298,11 @@ struct Walk {
     bool haveCommitted = false;
     bool haveResident = false;
     double milliseconds = 0.0;
+#ifdef _WIN32
+    std::vector<PrivateRegion> privateRegions;
+#else
+    std::vector<PrivateMapping> privateMappings;
+#endif
 };
 
 #ifdef _WIN32
@@ -295,6 +330,7 @@ Walk walkAddressSpace(std::uint64_t arenaBegin, std::uint64_t arenaEnd) {
             const auto type = begin < arenaEnd && end > arenaBegin ? RegionClass::Arena : region.Type == MEM_IMAGE ? RegionClass::Image : region.Type == MEM_MAPPED ? RegionClass::Mapped : RegionClass::Private;
             walk.committed[static_cast<std::size_t>(type)] += region.RegionSize;
             if (type == RegionClass::Arena && region.Type == MEM_MAPPED) walk.arenaShared += region.RegionSize;
+            if (type == RegionClass::Private) walk.privateRegions.push_back({begin, end, reinterpret_cast<std::uint64_t>(region.AllocationBase), region.Protect});
             if (!runs.empty() && runs.back().type == type && runs.back().end == begin) runs.back().end = end;
             else runs.push_back({begin, end, type});
         }
@@ -329,7 +365,7 @@ Walk walkAddressSpace(std::uint64_t arenaBegin, std::uint64_t arenaEnd) {
     Walk walk;
     std::FILE* file = std::fopen("/proc/self/smaps", "r");
     if (file == nullptr) return walk;
-    SmapsParser parser(arenaBegin, arenaEnd);
+    SmapsParser parser(arenaBegin, arenaEnd, true);
     char* line = nullptr;
     std::size_t capacity = 0;
     ssize_t length = 0;
@@ -340,6 +376,7 @@ Walk walkAddressSpace(std::uint64_t arenaBegin, std::uint64_t arenaEnd) {
     walk.resident = parser.Totals().resident;
     walk.swapped = parser.Totals().swapped;
     walk.regions = parser.Totals().regions;
+    walk.privateMappings = std::move(parser.PrivateMappings());
     return walk;
 }
 
@@ -733,6 +770,153 @@ std::string allocatorLine(std::uint64_t& heap) {
     return text;
 }
 
+std::vector<std::uint64_t> mappedDeviceMemory() {
+    auto& state = tally();
+    std::vector<std::uint64_t> mapped;
+    std::lock_guard lock(state.mutex);
+    for (const auto& [key, allocation] : state.live) {
+        if (allocation.mapped != 0) mapped.push_back(allocation.mapped);
+    }
+    return mapped;
+}
+
+#ifdef _WIN32
+constexpr std::uint64_t LargeHeapBlock = 512u * 1024u;
+constexpr std::size_t HeapRecordLimit = 65536;
+
+std::string protectionText(DWORD protect) {
+    std::string text;
+    switch (protect & 0xffu) {
+        case PAGE_NOACCESS: text = "none"; break;
+        case PAGE_READONLY: text = "r"; break;
+        case PAGE_READWRITE: text = "rw"; break;
+        case PAGE_WRITECOPY: text = "wc"; break;
+        case PAGE_EXECUTE: text = "x"; break;
+        case PAGE_EXECUTE_READ: text = "rx"; break;
+        case PAGE_EXECUTE_READWRITE: text = "rwx"; break;
+        case PAGE_EXECUTE_WRITECOPY: text = "rxwc"; break;
+        default: text = "other"; break;
+    }
+    if ((protect & PAGE_GUARD) != 0) text += "+guard";
+    if ((protect & PAGE_NOCACHE) != 0) text += "+nocache";
+    if ((protect & PAGE_WRITECOMBINE) != 0) text += "+writecombine";
+    return text;
+}
+
+std::uint64_t allocationBase(std::uint64_t address) {
+    MEMORY_BASIC_INFORMATION region{};
+    return VirtualQuery(reinterpret_cast<const void*>(address), &region, sizeof(region)) == sizeof(region) ? reinterpret_cast<std::uint64_t>(region.AllocationBase) : 0u;
+}
+
+struct HeapSegments {
+    std::vector<std::uint64_t> bases;
+    std::vector<std::uint64_t> largeBlocks;
+    std::uint64_t committed = 0;
+    std::uint64_t largeBytes = 0;
+    std::size_t heaps = 0;
+    std::size_t unwalked = 0;
+    bool truncated = false;
+};
+
+class HeapHold {
+public:
+    explicit HeapHold(HANDLE heap) : heap(heap), held(HeapLock(heap) != 0) {}
+    ~HeapHold() {
+        if (held) HeapUnlock(heap);
+    }
+    HeapHold(const HeapHold&) = delete;
+    HeapHold& operator=(const HeapHold&) = delete;
+    bool Held() const { return held; }
+
+private:
+    HANDLE heap;
+    bool held;
+};
+
+HeapSegments heapSegments() {
+    HeapSegments segments;
+    std::vector<HANDLE> heaps(GetProcessHeaps(0, nullptr) + 16u);
+    heaps.resize(GetProcessHeaps(static_cast<DWORD>(heaps.size()), heaps.data()));
+    segments.heaps = heaps.size();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> regions;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> busy;
+    regions.reserve(HeapRecordLimit);
+    busy.reserve(HeapRecordLimit);
+    for (const auto heap : heaps) {
+        const HeapHold hold(heap);
+        if (!hold.Held()) {
+            ++segments.unwalked;
+            continue;
+        }
+        PROCESS_HEAP_ENTRY entry{};
+        while (HeapWalk(heap, &entry)) {
+            const auto data = reinterpret_cast<std::uint64_t>(entry.lpData);
+            if ((entry.wFlags & PROCESS_HEAP_REGION) != 0) {
+                if (regions.size() < regions.capacity()) regions.emplace_back(data, entry.Region.dwCommittedSize);
+                else segments.truncated = true;
+            } else if ((entry.wFlags & PROCESS_HEAP_ENTRY_BUSY) != 0 && entry.cbData >= LargeHeapBlock) {
+                if (busy.size() < busy.capacity()) busy.emplace_back(data, entry.cbData);
+                else segments.truncated = true;
+            }
+        }
+    }
+    for (const auto& [data, committed] : regions) {
+        segments.committed += committed;
+        if (const auto base = allocationBase(data)) segments.bases.push_back(base);
+    }
+    std::sort(segments.bases.begin(), segments.bases.end());
+    segments.bases.erase(std::unique(segments.bases.begin(), segments.bases.end()), segments.bases.end());
+    for (const auto& [data, bytes] : busy) {
+        const auto base = allocationBase(data);
+        if (base == 0 || std::binary_search(segments.bases.begin(), segments.bases.end(), base)) continue;
+        segments.largeBlocks.push_back(base);
+        segments.largeBytes += bytes;
+    }
+    std::sort(segments.largeBlocks.begin(), segments.largeBlocks.end());
+    return segments;
+}
+
+std::string unattributedLine(const Walk& walk) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto segments = heapSegments();
+    const auto walked = std::chrono::steady_clock::now();
+    AllocationGroups groups;
+    std::size_t inSegments = 0;
+    std::uint64_t segmentBytes = 0;
+    for (const auto& region : walk.privateRegions) {
+        if (std::binary_search(segments.bases.begin(), segments.bases.end(), region.allocationBase)) {
+            ++inSegments;
+            segmentBytes += region.end - region.begin;
+            continue;
+        }
+        groups.Add(region.allocationBase, region.end, region.end - region.begin, protectionText(region.protect));
+    }
+    groups.Tag(segments.largeBlocks, TagHeapBlock);
+    const auto mapped = mappedDeviceMemory();
+    groups.Tag(mapped, TagDeviceMemory);
+    char text[768];
+    std::snprintf(text, sizeof(text), "; excluded: %zu private regions (%.1f MiB) in %zu heap segments (%.1f MiB committed by HeapWalk) of %zu process heaps (%zu not walked%s); tagged: %zu allocations holding %zu large heap blocks outside the segments (%.1f MiB), %zu holding mapped device memory (%zu mappings); heap walk %.1f ms, grouping %.1f ms\n", inSegments, mib(segmentBytes), segments.bases.size(), mib(segments.committed), segments.heaps, segments.unwalked, segments.truncated ? ", records truncated" : "", groups.Tagged(TagHeapBlock), segments.largeBlocks.size(), mib(segments.largeBytes), groups.Tagged(TagDeviceMemory), mapped.size(), std::chrono::duration<double, std::milli>(walked - started).count(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - walked).count());
+    return "[mem-census] unattributed private (MEM_PRIVATE committed outside the guest arena and the process heaps' segments, by allocation base): " + GroupsText(groups, 16) + text;
+}
+#else
+std::string unattributedLine(const Walk& walk) {
+    const auto started = std::chrono::steady_clock::now();
+    AllocationGroups groups;
+    std::uint64_t runStart = 0;
+    std::uint64_t runEnd = 0;
+    for (const auto& mapping : walk.privateMappings) {
+        if (mapping.begin != runEnd) runStart = mapping.begin;
+        runEnd = mapping.end;
+        groups.Add(runStart, mapping.end, mapping.resident, mapping.permissions, mapping.name);
+    }
+    const auto mapped = mappedDeviceMemory();
+    groups.Tag(mapped, TagDeviceMemory);
+    char text[256];
+    std::snprintf(text, sizeof(text), "; tagged: %zu holding mapped device memory (%zu mappings); grouping %.1f ms\n", groups.Tagged(TagDeviceMemory), mapped.size(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    return "[mem-census] anonymous private (resident bytes of private anonymous mappings outside the guest arena, by contiguous run of mappings): " + GroupsText(groups, 16) + text;
+}
+#endif
+
 std::string buildBlock() {
     const auto started = std::chrono::steady_clock::now();
     std::uint64_t total = 0;
@@ -753,6 +937,7 @@ std::string buildBlock() {
     block += cacheLine(handle);
     std::uint64_t heap = 0;
     block += allocatorLine(heap);
+    block += unattributedLine(walk);
     const auto at = [](RegionClass type) { return static_cast<std::size_t>(type); };
     char text[512];
 #ifdef _WIN32

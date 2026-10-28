@@ -121,6 +121,19 @@ void CheckOwners(std::string_view block) {
     Require(resources.objectBytes >= resources.entries * sizeof(AgcDriver::Graphics::ShaderResources), "a cached resource object is smaller than its struct");
 }
 
+void CheckGroups(std::string_view block) {
+#ifdef _WIN32
+    const auto line = Line(block, "[mem-census] unattributed private ");
+#else
+    const auto line = Line(block, "[mem-census] anonymous private ");
+#endif
+    const auto groups = After(line, "): ");
+    const auto classes = After(line, "; by size <1 MiB ") + After(line, ", 1-4 MiB ") + After(line, ", 4-16 MiB ") + After(line, ", 16-64 MiB ") + After(line, ", >=64 MiB ");
+    Require(groups >= 1 && classes == groups, "the size classes do not add up to the allocations: " + std::string(line));
+    Require(line.find("; largest: 0x") != std::string_view::npos, "no largest allocation was printed: " + std::string(line));
+    Require(line.find(" ms") != std::string_view::npos, "the grouping cost was not printed: " + std::string(line));
+}
+
 }
 
 int main() {
@@ -137,6 +150,7 @@ int main() {
         std::cout << block;
         CheckPools(block);
         CheckOwners(block);
+        CheckGroups(block);
         Dispatches(*device);
         std::cout << "memory census block tests passed\n";
         return 0;

@@ -11,7 +11,7 @@ namespace {
 
 using AgcDriver::MemoryCensus::RegionClass;
 
-void Check(bool condition, const char* message) {
+void Check(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
@@ -77,6 +77,19 @@ void SumsSmaps() {
     orphan.Line("Rss: 100 kB");
     orphan.Line("");
     Check(orphan.Totals().regions == 0 && Resident(orphan.Totals(), RegionClass::Private) == 0, "a field before any region header was counted");
+    Check(parser.PrivateMappings().empty(), "a parser not asked to record private mappings recorded some");
+    AgcDriver::MemoryCensus::SmapsParser recording(ArenaBegin, ArenaEnd, true);
+    rest = text;
+    while (!rest.empty()) {
+        const auto end = rest.find('\n');
+        recording.Line(rest.substr(0, end));
+        rest = end == std::string_view::npos ? std::string_view{} : rest.substr(end + 1);
+    }
+    const auto& mappings = recording.PrivateMappings();
+    Check(mappings.size() == 2, "the parser did not record the two private mappings");
+    Check(mappings[0].begin == 0x7f1234400000ull && mappings[0].end == 0x7f1234800000ull && mappings[0].resident == 2048u * 1024u && mappings[0].permissions == "rw-p" && mappings[0].name.empty(), "the anonymous mapping was recorded wrong or a malformed line was counted");
+    Check(mappings[1].begin == 0xffffffffff600000ull && mappings[1].resident == 4u * 1024u && mappings[1].permissions == "--xp" && mappings[1].name == "[vsyscall]", "the named private mapping was recorded wrong");
+    Check(recording.Totals().resident == totals.resident, "recording private mappings changed the totals");
 }
 
 void ParsesStatus() {
@@ -136,6 +149,36 @@ void EstimatesProbes() {
     Check(ProbeEstimate(group, {4096, 8192, 0}) == 3u * 4096u, "sets were scaled with no probed set");
 }
 
+void GroupsAllocations() {
+    using AgcDriver::MemoryCensus::AllocationGroups;
+    using AgcDriver::MemoryCensus::SizeClassOf;
+    constexpr std::uint64_t Mebibyte = 1ull << 20u;
+    Check(SizeClassOf(0) == 0 && SizeClassOf(Mebibyte - 1) == 0 && SizeClassOf(Mebibyte) == 1 && SizeClassOf(4 * Mebibyte) == 2 && SizeClassOf(16 * Mebibyte) == 3 && SizeClassOf(64 * Mebibyte - 1) == 3 && SizeClassOf(64 * Mebibyte) == 4, "a size class boundary is wrong");
+    AllocationGroups groups;
+    groups.Add(0x1000, 0x3000, 0x2000, "rw");
+    groups.Add(0x1000, 0x5000, 0x2000, "rw");
+    groups.Add(0x1000, 0x6000, 0x1000, "r");
+    groups.Add(0x10000000, 0x10500000, 5 * Mebibyte, "rw", "[heap]");
+    groups.Add(0x20000000, 0x24600000, 70 * Mebibyte, "rwx");
+    groups.Add(0x30000000, 0x30001000, 0, "rw");
+    Check(groups.Count() == 4 && groups.Bytes() == 0x5000 + 75 * Mebibyte, "regions of one allocation were not merged or bytes were lost");
+    const auto classes = groups.Histogram();
+    Check(classes[0].count == 2 && classes[0].bytes == 0x5000 && classes[1].count == 0 && classes[2].count == 1 && classes[2].bytes == 5 * Mebibyte && classes[3].count == 0 && classes[4].count == 1 && classes[4].bytes == 70 * Mebibyte, "the size histogram is wrong");
+    const std::vector<std::uint64_t> blocks{0x5, 0x6000, 0x20000010};
+    groups.Tag(blocks, AgcDriver::MemoryCensus::TagHeapBlock);
+    const std::vector<std::uint64_t> device{0x2000};
+    groups.Tag(device, AgcDriver::MemoryCensus::TagDeviceMemory);
+    Check(groups.Tagged(AgcDriver::MemoryCensus::TagHeapBlock) == 1 && groups.Tagged(AgcDriver::MemoryCensus::TagDeviceMemory) == 1, "an address outside every allocation or at an allocation's end was tagged");
+    const auto largest = groups.Largest(2);
+    Check(largest.size() == 2 && largest[0].base == 0x20000000 && largest[1].base == 0x10000000 && largest[1].name == "[heap]", "the largest allocations are wrong");
+    const auto merged = groups.Largest(16);
+    Check(merged.size() == 4 && merged[2].base == 0x1000 && merged[2].regions == 3 && merged[2].protections == "rw/r", "the merged allocation lost its regions or protections");
+    const auto text = AgcDriver::MemoryCensus::GroupsText(groups, 2);
+    Check(text.find("4 allocations 75.0 MiB; by size <1 MiB 2 (0.0 MiB), 1-4 MiB 0 (0.0 MiB), 4-16 MiB 1 (5.0 MiB), 16-64 MiB 0 (0.0 MiB), >=64 MiB 1 (70.0 MiB)") == 0, "the histogram text is wrong: " + text);
+    Check(text.find("; largest: 0x20000000 70.0 MiB 1 regions rwx (heap block), 0x10000000 5.0 MiB 1 regions rw [heap]") != std::string::npos, "the largest allocations text is wrong: " + text);
+    Check(AgcDriver::MemoryCensus::GroupsText(AllocationGroups{}, 16).find("0 allocations 0.0 MiB") == 0, "an empty grouping does not print zero allocations");
+}
+
 }
 
 int main() {
@@ -146,6 +189,7 @@ int main() {
         Remainders();
         PlansProbes();
         EstimatesProbes();
+        GroupsAllocations();
         std::cout << "memory census parsing tests passed\n";
         return 0;
     } catch (const std::exception& error) {

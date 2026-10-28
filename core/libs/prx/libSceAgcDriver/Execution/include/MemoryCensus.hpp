@@ -101,19 +101,64 @@ struct RegionTotals {
 
 RegionClass ClassifyMapping(std::uint64_t begin, std::uint64_t end, std::string_view permissions, std::uint64_t inode, std::string_view path, std::uint64_t arenaBegin, std::uint64_t arenaEnd);
 
+struct PrivateMapping {
+    std::uint64_t begin = 0;
+    std::uint64_t end = 0;
+    std::uint64_t resident = 0;
+    std::string permissions;
+    std::string name;
+};
+
 class SmapsParser {
 public:
-    SmapsParser(std::uint64_t arenaBegin, std::uint64_t arenaEnd) : arenaBegin(arenaBegin), arenaEnd(arenaEnd) {}
+    SmapsParser(std::uint64_t arenaBegin, std::uint64_t arenaEnd, bool recordPrivate = false) : arenaBegin(arenaBegin), arenaEnd(arenaEnd), recordPrivate(recordPrivate) {}
     void Line(std::string_view line);
     const RegionTotals& Totals() const { return totals; }
+    std::vector<PrivateMapping>& PrivateMappings() { return privateMappings; }
 
 private:
     std::uint64_t arenaBegin;
     std::uint64_t arenaEnd;
+    bool recordPrivate;
     RegionClass current = RegionClass::Private;
     bool inRegion = false;
     RegionTotals totals;
+    std::vector<PrivateMapping> privateMappings;
 };
+
+inline constexpr std::uint32_t TagHeapBlock = 1;
+inline constexpr std::uint32_t TagDeviceMemory = 2;
+
+class AllocationGroups {
+public:
+    struct Group {
+        std::uint64_t base = 0;
+        std::uint64_t end = 0;
+        std::uint64_t bytes = 0;
+        std::uint32_t regions = 0;
+        std::string protections;
+        std::string name;
+        std::uint32_t tags = 0;
+    };
+    struct SizeClass {
+        std::uint64_t count = 0;
+        std::uint64_t bytes = 0;
+    };
+    static constexpr std::size_t SizeClassCount = 5;
+    void Add(std::uint64_t group, std::uint64_t end, std::uint64_t bytes, std::string_view protection, std::string_view name = {});
+    void Tag(std::span<const std::uint64_t> addresses, std::uint32_t tag);
+    std::array<SizeClass, SizeClassCount> Histogram() const;
+    std::vector<Group> Largest(std::size_t count) const;
+    std::uint64_t Bytes() const;
+    std::size_t Count() const { return groups.size(); }
+    std::size_t Tagged(std::uint32_t tag) const;
+
+private:
+    std::vector<Group> groups;
+};
+
+std::size_t SizeClassOf(std::uint64_t bytes);
+std::string GroupsText(const AllocationGroups& groups, std::size_t largest);
 
 struct StatusTotals {
     std::uint64_t rss = 0;
