@@ -7338,20 +7338,22 @@ bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
         Require(storePending(), "the key store landed before its batch was retired");
         const auto proof = image->KeyProof();
         Require(proof.pendingNote != 0, "the refresh over the pending key store took no proof of its write note");
+        bool crossed = false;
+        bool own = false;
         {
             Recorder other(base);
             for (std::uint64_t i = 1; i < proof.pendingNote; ++i) other.NotePendingWrite(0x1000, 16);
             other.NotePendingWrite(resource.dccAddress, keyCount);
             std::lock_guard gpu(GpuMutex());
             other.Activate();
-            const bool crossed = PendingKeyProofHolds(resource, surfaceBytes, proof);
+            crossed = PendingKeyProofHolds(resource, surfaceBytes, proof);
             recorder.Activate();
-            const bool own = PendingKeyProofHolds(resource, surfaceBytes, proof);
+            own = PendingKeyProofHolds(resource, surfaceBytes, proof);
             other.Sync();
-            Require(!crossed, "the pending key proof held with another recorder active, holding the same write note over the keys");
-            Require(own, "the pending key proof did not hold again with its own recorder active");
         }
         recorder.Sync();
+        Require(!crossed, "the pending key proof held with another recorder active, holding the same write note over the keys");
+        Require(own, "the pending key proof did not hold again with its own recorder active");
         Require(std::all_of(keys, keys + keyCount, [](std::uint8_t key) { return key == 0xff; }), "the uncompressed key store did not land");
         const auto landed = proved();
         image->Refresh();
