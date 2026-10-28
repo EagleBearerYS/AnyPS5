@@ -29,6 +29,7 @@ struct SpirvTargetOptions {
     bool spannedWaves = false;
     bool spanTableWaves = false;
     bool robustBufferAccess2 = false;
+    bool exactRobustLoads = false;
     bool float32FlushToZero = false;
     bool float32DenormPreserve = false;
     bool fusedExactArithmetic = false;
