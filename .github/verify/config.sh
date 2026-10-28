@@ -1,0 +1,3 @@
+BASE=0cd07dc4ab25d924cbcebee5e0468a1b785042f7
+REPEAT=10
+EXTRA_TESTS='guest_libressl_error|guest_libressl_runtime|guest_libressl_x509_errors'
