@@ -23,6 +23,7 @@
 #include <new>
 #include <shared_mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/include/ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
@@ -464,6 +465,16 @@ struct SourceKeyHash {
     }
 };
 
+struct SourceTable {
+    PrimedSharedMutex mutex;
+    std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash> sources;
+};
+
+SourceTable& sourceTable() {
+    static SourceTable table;
+    return table;
+}
+
 bool FailureMemo() {
     static const bool memo = std::getenv("APS5_NO_FAILURE_MEMO") == nullptr;
     return memo;
@@ -480,9 +491,9 @@ bool diskPlans() {
 bool sameLayout(const BindingLayout& left, const BindingLayout& right);
 
 std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, bool reclaim = true, const SourceHandle* preparedHandle = nullptr) {
-    static PrimedSharedMutex mutex;
-    // Entries whose code hashes alike share a bucket; the code comparison picks the right one.
-    static std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash> sources;
+    auto& table = sourceTable();
+    auto& mutex = table.mutex;
+    auto& sources = table.sources;
     struct SourceKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, SourceKeyStorage>();
     RecompileCacheKey::Build(request, key);
@@ -1557,6 +1568,36 @@ std::uint64_t patchBytes(const MemoPatch& patch) {
     return total;
 }
 
+std::uint64_t valueBytes(const IrValue& value) {
+    return static_cast<std::uint64_t>(sizeof(IrValue)) + vectorBytes(value.Arguments()) + vectorBytes(value.OperandUses());
+}
+
+std::uint64_t blockBytes(const IrBlock& block, bool ownsValues) {
+    auto total = static_cast<std::uint64_t>(sizeof(IrBlock)) + vectorBytes(block.Predecessors()) + vectorBytes(block.Successors()) + static_cast<std::uint64_t>(block.Instructions().size()) * 3u * sizeof(void*);
+    if (ownsValues) {
+        for (const auto* value : block.Instructions()) total += valueBytes(*value);
+    }
+    return total;
+}
+
+std::uint64_t planBytes(const IrResourcePlan& plan) {
+    const auto& compact = plan.compact;
+    auto total = static_cast<std::uint64_t>(sizeof(IrResourcePlan)) + vectorBytes(plan.blockStorage) + vectorBytes(plan.memoryInfo) + vectorBytes(plan.descriptorSources) + vectorBytes(plan.controlFlow) + vectorBytes(plan.materializationSources) + vectorBytes(plan.srtReads) + vectorBytes(plan.guardedSrtSlots) + vectorBytes(plan.cleanFlatSlots) + vectorBytes(plan.pureFlatSlots) + vectorBytes(compact.values) + vectorBytes(compact.arguments) + vectorBytes(compact.sourceDwords) + vectorBytes(compact.srtReads) + vectorBytes(compact.conditions);
+    for (const auto& value : plan.valueStorage) total += valueBytes(value);
+    for (const auto& block : plan.blockStorage) {
+        if (block != nullptr) total += blockBytes(*block, false);
+    }
+    return total;
+}
+
+std::uint64_t programBytes(const IrProgram& program) {
+    auto total = static_cast<std::uint64_t>(sizeof(IrProgram)) + vectorBytes(program.Blocks()) + vectorBytes(program.BlockOrder()) + planBytes(program.Resources());
+    for (const auto& block : program.Blocks()) {
+        if (block != nullptr) total += blockBytes(*block, true);
+    }
+    return total;
+}
+
 std::atomic<std::uint64_t>& resultMemoBudgetBytes() {
     static std::atomic<std::uint64_t> budget{[] {
         const char* value = std::getenv("APS5_RESULT_MEMO_MB");
@@ -2111,6 +2152,52 @@ void SetResultMemoTrimHook(std::function<void()> hook) {
 
 std::uint64_t ResultMemoBytes() {
     return resultMemoCounters().heldBytes.load(std::memory_order_relaxed);
+}
+
+SourceTableFootprint SourceFootprint() {
+    SourceTableFootprint footprint;
+    std::vector<std::shared_ptr<SourceEntry>> entries;
+    {
+        auto& table = sourceTable();
+        std::shared_lock lock(table.mutex);
+        footprint.keys = table.sources.size();
+        footprint.tableBytes = static_cast<std::uint64_t>(table.sources.bucket_count()) * sizeof(void*);
+        for (const auto& [key, bucket] : table.sources) {
+            footprint.tableBytes += sizeof(std::pair<const std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>>) + 2u * sizeof(void*) + vectorBytes(key) + vectorBytes(bucket);
+            entries.insert(entries.end(), bucket.begin(), bucket.end());
+        }
+    }
+    std::unordered_set<const void*> plans;
+    std::unordered_set<const void*> modules;
+    for (const auto& source : entries) {
+        std::unique_lock lock(source->mutex, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            ++footprint.busy;
+            continue;
+        }
+        ++footprint.sources;
+        footprint.codeBytes += sizeof(SourceEntry) + vectorBytes(source->code) + vectorBytes(source->linkedCallFallbacks);
+        if (source->plan != nullptr && plans.insert(source->plan.get()).second) {
+            ++footprint.plans;
+            footprint.planBytes += planBytes(*source->plan);
+        }
+        if (source->program != nullptr) {
+            ++footprint.programs;
+            footprint.programBytes += programBytes(*source->program);
+        }
+        for (const auto& variant : source->variants) {
+            if (variant == nullptr) continue;
+            ++footprint.variants;
+            const auto words = variant->artifact.spirv.Words();
+            if (words.empty() || !modules.insert(words.data()).second) continue;
+            const auto owned = variant->artifact.spirv.OwnedBytes();
+            footprint.spirvHeapBytes += owned;
+            if (owned == 0) footprint.spirvViewBytes += words.size_bytes();
+        }
+        footprint.memoTables += (source->memo != nullptr ? 1u : 0u) + (source->maskedMemo != nullptr ? 1u : 0u);
+    }
+    footprint.memoTableBytes = footprint.memoTables * sizeof(ResultMemoTable);
+    return footprint;
 }
 
 }

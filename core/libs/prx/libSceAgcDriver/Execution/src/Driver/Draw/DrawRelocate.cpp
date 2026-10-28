@@ -21,6 +21,22 @@ std::uint64_t AlignedWord(std::uint32_t word) {
     return word & ~std::uint32_t {3};
 }
 
+template<typename Map>
+std::uint64_t HashMapBytes(const Map& map) {
+    return static_cast<std::uint64_t>(map.bucket_count()) * sizeof(void*) + static_cast<std::uint64_t>(map.size()) * (sizeof(typename Map::value_type) + 2u * sizeof(void*));
+}
+
+}
+
+Driver::RelocationFootprint Driver::DrawRelocationFootprint() {
+    std::lock_guard cacheLock(drawCacheMutex);
+    RelocationFootprint footprint{drawRelocations.size(), drawRelocationTrials.size(), drawAliases.size(), HashMapBytes(drawRelocations), HashMapBytes(drawRelocationTrials), HashMapBytes(drawAliases)};
+    for (const auto& [identity, shape] : drawRelocations) {
+        if (shape == nullptr) continue;
+        footprint.relocationBytes += sizeof(DrawRelocation) + 2u * sizeof(void*) + shape->words.capacity() * sizeof(RelocatableUserWord) + shape->banned.capacity() * sizeof(std::uint32_t);
+        for (const auto& word : shape->words) footprint.relocationBytes += word.reads.capacity() * sizeof(std::pair<std::int64_t, std::uint32_t>);
+    }
+    return footprint;
 }
 
 bool Driver::drawRelocationEnabled() {

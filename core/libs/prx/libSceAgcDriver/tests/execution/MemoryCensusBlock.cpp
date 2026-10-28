@@ -1,10 +1,12 @@
 #include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -103,6 +105,22 @@ void CheckPools(std::string_view block) {
     Require(probes.find("chain maxSets ") != std::string_view::npos && probes.find(" est ") != std::string_view::npos, "the chain create-info was not probed: " + std::string(probes));
 }
 
+void CheckOwners(std::string_view block) {
+    const auto line = Line(block, "[mem-census] driver: ");
+    After(line, "; never erased: draw relocations ");
+    After(line, "relocation trials ");
+    After(line, "draw aliases ");
+    After(line, "resource cache ");
+    Require(After(line, "; recompiler sources ") >= 1, "the compiled shader has no source key: " + std::string(line));
+    const auto sources = ShaderRecompiler::SourceFootprint();
+    Require(sources.keys >= 1 && sources.sources >= 1 && sources.plans >= 1 && sources.variants >= 1, "the source table footprint misses the compiled shader");
+    Require(sources.codeBytes >= sizeof(code) && sources.planBytes > 0 && sources.tableBytes > 0, "the source table footprint counts no code, plan or table bytes");
+    Require(sources.spirvHeapBytes + sources.spirvViewBytes > 0, "the source table footprint counts no SPIR-V");
+    if (std::getenv("ANYPS5_NO_SHADER_CACHE") != nullptr) Require(sources.spirvViewBytes == 0 && sources.spirvHeapBytes > 0, "SPIR-V compiled with the shader cache off is not on the heap");
+    const auto resources = AgcDriver::Graphics::SharedResourceCache().Measure();
+    Require(resources.objectBytes >= resources.entries * sizeof(AgcDriver::Graphics::ShaderResources), "a cached resource object is smaller than its struct");
+}
+
 }
 
 int main() {
@@ -118,6 +136,7 @@ int main() {
         }
         std::cout << block;
         CheckPools(block);
+        CheckOwners(block);
         Dispatches(*device);
         std::cout << "memory census block tests passed\n";
         return 0;

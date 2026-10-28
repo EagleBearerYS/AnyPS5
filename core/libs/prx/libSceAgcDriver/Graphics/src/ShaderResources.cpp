@@ -4132,6 +4132,22 @@ std::uint64_t ResourceCache::TableElements() const {
     return tables;
 }
 
+ResourceCache::Footprint ResourceCache::Measure() const {
+    std::lock_guard lock(mutex);
+    Footprint footprint;
+    footprint.entries = entries.size();
+    footprint.indexBytes = static_cast<std::uint64_t>(index.bucket_count() + evictedKeys.bucket_count() + usedKeys.bucket_count()) * sizeof(void*) + static_cast<std::uint64_t>(entries.size()) * (sizeof(decltype(entries)::value_type) + 2u * sizeof(void*)) + static_cast<std::uint64_t>(index.size()) * (sizeof(decltype(index)::value_type) + 2u * sizeof(void*)) + static_cast<std::uint64_t>(evictedOrder.size()) * (sizeof(std::size_t) + 2u * sizeof(void*)) + static_cast<std::uint64_t>(evictedKeys.size()) * (sizeof(decltype(evictedKeys)::value_type) + 2u * sizeof(void*)) + static_cast<std::uint64_t>(usedKeys.size()) * (sizeof(std::size_t) + 2u * sizeof(void*));
+    std::unordered_set<const ShaderResources*> seen;
+    for (const auto& [key, resources] : entries) {
+        footprint.indexBytes += 2u * static_cast<std::uint64_t>(key.capacity()) * sizeof(std::uint32_t);
+        if (resources == nullptr || !seen.insert(resources.get()).second) continue;
+        footprint.objectBytes += resources->HeldBytes();
+        footprint.tableElements += resources->TableElements();
+        footprint.tableBytes += resources->TableBytes();
+    }
+    return footprint;
+}
+
 void ResourceCache::erase(const Key& key) {
     const auto found = index.find(key);
     if (found == index.end()) return;
@@ -4348,6 +4364,31 @@ void DescriptorCache::Free(const SetAllocation& allocation, std::shared_ptr<cons
     if (--pool.liveSets != 0) return;
     if (resetPool(context.device, pool.handle, 0) != VK_SUCCESS) std::terminate();
     pool.exhausted = false;
+}
+
+namespace {
+template<typename T>
+std::uint64_t capacityBytes(const std::vector<T>& values) {
+    return static_cast<std::uint64_t>(values.capacity()) * sizeof(T);
+}
+
+std::uint64_t capacityBytes(const std::vector<bool>& values) {
+    return (static_cast<std::uint64_t>(values.capacity()) + 7u) / 8u;
+}
+}
+
+std::uint64_t ShaderResources::TableBytes() const {
+    auto total = capacityBytes(tableStages);
+    for (const auto& table : tableStages) total += capacityBytes(table.map) + capacityBytes(table.poison) + capacityBytes(table.messages) + capacityBytes(table.elementTextures) + capacityBytes(table.samplerRejections);
+    for (const auto& writes : tableWrites) total += capacityBytes(writes.runs);
+    return total;
+}
+
+std::uint64_t ShaderResources::HeldBytes() const {
+    auto total = static_cast<std::uint64_t>(sizeof(ShaderResources)) + TableBytes() + capacityBytes(describedRanges) + capacityBytes(imageRecords) + capacityBytes(layoutKey) + capacityBytes(srtGuardFaults) + capacityBytes(multisampleSources) + capacityBytes(fragmentLayoutKey) + capacityBytes(allocations) + capacityBytes(descriptorBuffers) + capacityBytes(descriptorImages) + capacityBytes(descriptorWrites) + capacityBytes(writeOnlyRanges) + capacityBytes(textures) + capacityBytes(textureFirstLayer) + capacityBytes(textureBaseLevel) + capacityBytes(textureSrgb) + capacityBytes(storageTextures) + capacityBytes(multisampleStorageViews) + capacityBytes(storageMips) + capacityBytes(storageKeys) + capacityBytes(storageFirstLayer) + capacityBytes(storageWritten) + capacityBytes(storageAtomic) + capacityBytes(storageAtomic64) + capacityBytes(samplers) + capacityBytes(samplerSources) + capacityBytes(directRegions) + capacityBytes(validatedTextures) + capacityBytes(pushPatches) + capacityBytes(dataPatches) + capacityBytes(bindings) + capacityBytes(layoutBindingFlags) + capacityBytes(fragmentBindingFlags) + capacityBytes(refreshResourceKey) + capacityBytes(deferredImages);
+    for (const auto& allocation : allocations) total += capacityBytes(allocation.dataWords);
+    for (const auto& binding : bindings) total += capacityBytes(binding.allocations) + capacityBytes(binding.imageAllocations);
+    return total;
 }
 
 DescriptorCache::Stats DescriptorCache::Counters() const {

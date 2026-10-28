@@ -277,6 +277,8 @@ function(add_shader_recompiler target runtimeTarget)
             MaterializeShader
             RegistrationResult
             ResolveSource
+            ResultMemoBytes
+            SourceFootprint
             ResourceMaterializer::EvaluateNanoseconds
             ResourceMaterializer::MaterializeNanoseconds
             ReleaseUndrawnResourcePlan

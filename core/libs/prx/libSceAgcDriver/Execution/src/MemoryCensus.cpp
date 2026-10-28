@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -10,6 +11,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "Recompiler.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -675,15 +677,24 @@ std::string cacheLine(VkDevice device) {
     auto& driver = DriverDetail::Driver::Get();
     const auto draw = driver.DrawCacheSize();
     const auto dispatch = driver.DispatchCacheSize();
-    const auto resources = Graphics::SharedResourceCache().Size();
+    const auto relocations = driver.DrawRelocationFootprint();
+    Graphics::ResourceCache::Footprint resources;
+    {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        resources = Graphics::SharedResourceCache().Measure();
+    }
+    const auto sources = ShaderRecompiler::SourceFootprint();
     const auto mirrors = Graphics::MirrorCounters();
     const auto store = Graphics::PipelineStoreTotals();
     const auto libraries = device != VK_NULL_HANDLE ? Graphics::PipelineLibraryCountersOf(device) : Graphics::PipelineLibraryCounters{};
     std::uint64_t parts = 0;
     for (const auto built : libraries.built) parts += built;
-    char text[768];
-    std::snprintf(text, sizeof(text), "[mem-census] driver: draw cache %zu entries, %.1f MiB of variants; dispatch cache %zu entries, %.1f MiB of variants; resource cache %zu entries; heap mirrors %llu, %.0f MiB of device memory; log queue %.1f MiB; pipelines: store %llu cached (bound %llu), library parts %llu, linked %llu, optimized %llu (APS5_NO_GPL drops the parts, links and optimized relinks for monolithic pipelines)\n", draw.entries, mib(draw.variantBytes), dispatch.entries, mib(dispatch.variantBytes), resources, static_cast<unsigned long long>(mirrors.heapMirrors), mib(mirrors.heapBytes), mib(AsyncLog::Get().QueuedBytes()), static_cast<unsigned long long>(store.cached), static_cast<unsigned long long>(store.bound), static_cast<unsigned long long>(parts), static_cast<unsigned long long>(libraries.linked), static_cast<unsigned long long>(libraries.optimized));
-    return text;
+    const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
+    char text[1024];
+    std::snprintf(text, sizeof(text), "[mem-census] driver: draw cache %zu entries, %.1f MiB of variants; dispatch cache %zu entries, %.1f MiB of variants; resource cache %zu entries (%.1f MiB of keys and index, %.1f MiB of objects, %llu table elements in %.1f MiB of table structures); heap mirrors %llu, %.0f MiB of device memory; log queue %.1f MiB; pipelines: store %llu cached (bound %llu), library parts %llu, linked %llu, optimized %llu (APS5_NO_GPL drops the parts, links and optimized relinks for monolithic pipelines)", draw.entries, mib(draw.variantBytes), dispatch.entries, mib(dispatch.variantBytes), resources.entries, mib(resources.indexBytes), mib(resources.objectBytes), count(resources.tableElements), mib(resources.tableBytes), count(mirrors.heapMirrors), mib(mirrors.heapBytes), mib(AsyncLog::Get().QueuedBytes()), count(store.cached), count(store.bound), count(parts), count(libraries.linked), count(libraries.optimized));
+    std::string line = text;
+    std::snprintf(text, sizeof(text), "; never erased: draw relocations %zu entries %.1f MiB, relocation trials %zu entries %.1f MiB, draw aliases %zu entries %.1f MiB; recompiler sources %llu keys, %llu sources (%llu busy, not counted), %.1f MiB of table, %.1f MiB of code, %llu plans %.1f MiB, %llu IR programs %.1f MiB, %llu variants with %.1f MiB of SPIR-V on the heap and %.1f MiB file-backed, %llu memo tables %.1f MiB (memo results %.1f MiB)\n", relocations.relocations, mib(relocations.relocationBytes), relocations.trials, mib(relocations.trialBytes), relocations.aliases, mib(relocations.aliasBytes), count(sources.keys), count(sources.sources), count(sources.busy), mib(sources.tableBytes), mib(sources.codeBytes), count(sources.plans), mib(sources.planBytes), count(sources.programs), mib(sources.programBytes), count(sources.variants), mib(sources.spirvHeapBytes), mib(sources.spirvViewBytes), count(sources.memoTables), mib(sources.memoTableBytes), mib(ShaderRecompiler::ResultMemoBytes()));
+    return line + text;
 }
 
 std::string allocatorLine(std::uint64_t& heap) {

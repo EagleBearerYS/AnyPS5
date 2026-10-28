@@ -628,6 +628,7 @@ public:
     }
 
     [[nodiscard]] std::span<const std::uint32_t> Words() const { return holder ? holder->Words() : std::span<const std::uint32_t>{}; }
+    [[nodiscard]] std::size_t OwnedBytes() const { return holder != nullptr && holder->owner == nullptr ? holder->words.capacity() * sizeof(std::uint32_t) : 0; }
     [[nodiscard]] SpirvContentHash ContentHash() const {
         if (holder == nullptr) return {};
         if (holder->hashed.load(std::memory_order_acquire)) return {holder->hashLow.load(std::memory_order_relaxed), holder->hashHigh.load(std::memory_order_relaxed)};
@@ -842,6 +843,24 @@ struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
 void SetResultMemoBudget(std::uint64_t bytes);
 [[nodiscard]] std::uint64_t ResultMemoBytes();
+
+struct SourceTableFootprint {
+    std::uint64_t keys = 0;
+    std::uint64_t sources = 0;
+    std::uint64_t busy = 0;
+    std::uint64_t tableBytes = 0;
+    std::uint64_t codeBytes = 0;
+    std::uint64_t plans = 0;
+    std::uint64_t planBytes = 0;
+    std::uint64_t programs = 0;
+    std::uint64_t programBytes = 0;
+    std::uint64_t variants = 0;
+    std::uint64_t spirvHeapBytes = 0;
+    std::uint64_t spirvViewBytes = 0;
+    std::uint64_t memoTables = 0;
+    std::uint64_t memoTableBytes = 0;
+};
+[[nodiscard]] SourceTableFootprint SourceFootprint();
 void SetResultMemoTrimHook(std::function<void()> hook);
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is

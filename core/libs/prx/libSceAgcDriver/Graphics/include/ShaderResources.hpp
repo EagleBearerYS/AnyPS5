@@ -255,6 +255,8 @@ public:
     bool HasCachedStorageImages() const;
     bool HoldsReleasedTexture() const;
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }
+    std::uint64_t TableBytes() const;
+    std::uint64_t HeldBytes() const;
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
@@ -720,6 +722,14 @@ public:
     void SetBase(std::size_t entries, std::size_t shrinkWindow);
     std::uint64_t TableElements() const;
     static std::uint64_t TableElementBudget();
+    struct Footprint {
+        std::size_t entries = 0;
+        std::uint64_t indexBytes = 0;
+        std::uint64_t objectBytes = 0;
+        std::uint64_t tableElements = 0;
+        std::uint64_t tableBytes = 0;
+    };
+    Footprint Measure() const;
     static constexpr std::size_t InitialEntries = 1024;
     static constexpr std::size_t MaximumEntries = 16384;
 
