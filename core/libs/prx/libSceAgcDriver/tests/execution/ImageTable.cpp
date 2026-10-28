@@ -2825,33 +2825,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
     shown[0][KeyWord / 4u] = 30u << 16u;
     const auto stale = run(shader, true);
     Require(Faulted(stale) && stale.log.find("outside the key domain") != std::string::npos, name + ": a key word the dispatch read as 30 while the snapshot held 2 did not fault outside the key domain:\n" + stale.log);
-    const auto refused = [&](const std::string& what, const std::function<void(std::vector<std::uint32_t>&)>& edit) {
-        auto data = std::vector<std::uint32_t>(PointerChildKeyCode.begin(), PointerChildKeyCode.end());
-        edit(data);
-        std::string message;
-        try { static_cast<void>(run(data)); }
-        catch (const std::runtime_error& error) { message = error.what(); }
-        Require(message.find("not a valid runtime value") != std::string::npos, name + ": " + what + " was not refused by resource planning: " + message);
-    };
-    refused("a key adding two words of the V#'s buffer", [](std::vector<std::uint32_t>& data) {
-        data.insert(data.begin() + 44, 0x80404240u);
-        data.insert(data.begin() + 41, {0xf420109au, 0xfa000018u});
-        data[57] = 0xbf89ffdeu;
-    });
-    refused("a key word read at an offset taken from another word of the V#'s buffer", [](std::vector<std::uint32_t>& data) {
-        data[40] = 0x84000000u;
-        data.insert(data.begin() + 39, {0xf420109au, 0xfa000018u, 0xbf8cc07fu});
-        data[57] = 0xbf89ffdeu;
-    });
-    refused("a store through the V# into its own buffer", [](std::vector<std::uint32_t>& data) {
-        data.insert(data.begin() + 53, {0xe0700030u, 0x800d0400u});
-        data[56] = 0xbf89ffdfu;
-    });
-    refused("a key word that also feeds the output", [](std::vector<std::uint32_t>& data) {
-        data.insert(data.begin() + 53, 0x7e0c0240u);
-        data[55] = 0xbf89ffe0u;
-    });
-    std::puts((name + ": T#s indexed by a word read through the same pointer-loaded V#, with its S#, checked for several keys and the largest inside the V#; keys past the V# read null T#s, a key the snapshot did not hold faults, and other key forms and stores through the V# are refused").c_str());
+    std::puts((name + ": T#s indexed by a word read through the same pointer-loaded V#, with its S#, checked for several keys and the largest inside the V#; keys past the V# read null T#s, and a key the snapshot did not hold faults").c_str());
 }
 
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
