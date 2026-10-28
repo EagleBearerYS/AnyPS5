@@ -1819,6 +1819,27 @@ struct SaveDataBackup {
     std::uint8_t reserved[32];
 };
 
+struct SaveDataCheckBackupData {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    SaveDataParam* param;
+    SaveDataIcon* icon;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataRestoreBackupData {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    const void* fingerprint;
+    std::uint32_t unused;
+    std::uint8_t reserved[32];
+    std::int32_t pad2;
+};
+
 struct SaveDataConvert {
     std::int32_t user_id;
     std::int32_t pad;

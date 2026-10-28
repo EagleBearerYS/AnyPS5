@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <random>
 #include <set>
 #include <string>
@@ -19,6 +21,7 @@ constexpr std::uint32_t MountReadWrite = 2;
 constexpr std::uint32_t MountCreate = 4;
 constexpr std::uint32_t MountCreate2 = 32;
 constexpr int SaveDataErrorParameter = -2137063424;
+constexpr int SaveDataErrorNotInitialized = -2137063423;
 constexpr int SaveDataErrorNotMounted = -2137063420;
 constexpr int SaveDataErrorBusy = -2137063421;
 constexpr int SaveDataErrorNotFound = -2137063416;
@@ -66,6 +69,15 @@ void CheckUnmountedCalls() {
     SaveDataEvent emptyEvent{};
     Check(sceSaveDataGetEventResult(nullptr, &emptyEvent) == SaveDataErrorNotFound, "getEventResult on empty queue returns NOT_FOUND");
     Check(sceSaveDataGetEventResult(&emptyEvent, nullptr) == SaveDataErrorParameter, "getEventResult null result pointer is PARAMETER");
+    SceSaveDataDirName dirName{};
+    std::memcpy(dirName.data, "fresh", sizeof("fresh"));
+    SaveDataCheckBackupData check{};
+    check.dir_name = &dirName;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotInitialized, "checkBackupData before initialize is NOT_INITIALIZED");
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &dirName;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotInitialized, "restoreBackupData before initialize is NOT_INITIALIZED");
+    Check(sceSaveDataUmountWithBackup(&point) == SaveDataErrorNotInitialized, "umountWithBackup before initialize is NOT_INITIALIZED");
 }
 
 void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
@@ -236,6 +248,94 @@ void CheckInvalidNamesAreRejected() {
     MountAndCheck("after", MountReadWrite | MountCreate2, 1u, "CREATE2 after the rejected names");
 }
 
+void WriteText(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << text;
+    Check(static_cast<bool>(file), "writes " + path.string());
+}
+
+std::string ReadText(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+bool MountSave(SceSaveDataDirName* dirName, std::uint32_t mode, SaveDataMountResult* result) {
+    SaveDataMount3 mount{};
+    mount.user_id = 7;
+    mount.dir_name = dirName;
+    mount.mount_mode = mode;
+    return sceSaveDataMount3(&mount, result) == 0;
+}
+
+void CheckBackups() {
+    std::filesystem::create_directories("app0/sce_sys");
+    WriteText("app0/sce_sys/param.json", "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}");
+    SceSaveDataDirName kept{};
+    std::memcpy(kept.data, "kept", sizeof("kept"));
+    SceSaveDataDirName fresh{};
+    std::memcpy(fresh.data, "fresh", sizeof("fresh"));
+    SaveDataCheckBackupData check{};
+    SaveDataRestoreBackupData restore{};
+    Check(sceSaveDataCheckBackupData(nullptr) == SaveDataErrorParameter, "checkBackupData null block is PARAMETER");
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorParameter, "checkBackupData null dir_name is PARAMETER");
+    Check(sceSaveDataRestoreBackupData(nullptr) == SaveDataErrorParameter, "restoreBackupData null block is PARAMETER");
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorParameter, "restoreBackupData null dir_name is PARAMETER");
+    Check(sceSaveDataUmountWithBackup(nullptr) == SaveDataErrorParameter, "umountWithBackup null point is PARAMETER");
+    check.dir_name = &fresh;
+    restore.dir_name = &fresh;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData without a backup is NOT_FOUND");
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData without a backup is NOT_FOUND");
+
+    SaveDataMountResult mounted{};
+    Check(MountSave(&kept, MountReadWrite | MountCreate2, &mounted), "the backed-up save mounts");
+    const auto data = std::filesystem::path("_sd") / "kept" / "data.bin";
+    WriteText(data, "first");
+    const char backedUpTitle[] = "Backed Up";
+    Check(sceSaveDataSetParam(&mounted.mount_point, 1, backedUpTitle, sizeof(backedUpTitle)) == 0, "the backed-up save takes a title");
+    check.dir_name = &kept;
+    restore.dir_name = &kept;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorBusy, "checkBackupData of a mounted save is BUSY");
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorBusy, "restoreBackupData of a mounted save is BUSY");
+    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup succeeds");
+    SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "umountWithBackup unmounts the save");
+
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "umountWithBackup posts an event");
+    Check(event.type == 1, "the event is UMOUNT_BACKUP, got type " + std::to_string(event.type));
+    Check(event.error_code == 0, "the backup succeeded, error " + std::to_string(event.error_code));
+    Check(event.user_id == 7, "the event names the mounting user");
+    Check(std::strncmp(event.title_id.data, "PPSA00000", sizeof(event.title_id.data)) == 0, "the event names the running title");
+    Check(std::strncmp(event.dir_name.data, "kept", sizeof(event.dir_name.data)) == 0, "the event names the save");
+
+    SaveDataParam param{};
+    check.param = &param;
+    Check(sceSaveDataCheckBackupData(&check) == 0, "checkBackupData finds the backup");
+    Check(std::strcmp(param.title, backedUpTitle) == 0, "checkBackupData fills param from the backup");
+    SceSaveDataTitleId running{};
+    std::memcpy(running.data, "PPSA00000", sizeof("PPSA00000"));
+    check.title_id = &running;
+    Check(sceSaveDataCheckBackupData(&check) == 0, "checkBackupData with the running title's id finds the backup");
+
+    WriteText(data, "second");
+    WriteText(std::filesystem::path("_sd") / "kept" / "added.bin", "added");
+    Check(MountSave(&kept, MountReadWrite, &mounted), "the save mounts again after the backup");
+    const char changedTitle[] = "Changed";
+    Check(sceSaveDataSetParam(&mounted.mount_point, 1, changedTitle, sizeof(changedTitle)) == 0, "the title changes after the backup");
+    Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "the changed save unmounts");
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "restoreBackupData succeeds");
+    Check(ReadText(data) == "first", "restoreBackupData puts back a file changed after the backup");
+    Check(!std::filesystem::exists(std::filesystem::path("_sd") / "kept" / "added.bin"), "restoreBackupData removes a file added after the backup");
+    char title[128]{};
+    Check(MountSave(&kept, MountReadWrite, &mounted), "the restored save mounts");
+    Check(sceSaveDataGetParam(&mounted.mount_point, 1, title, sizeof(title), nullptr) == 0 && std::strcmp(title, backedUpTitle) == 0, "restoreBackupData puts back the backed-up title");
+    Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "the restored save unmounts");
+    SaveDataDelete del{};
+    del.dir_name = &kept;
+    Check(sceSaveDataDelete(&del) == 0, "the backed-up save is deleted");
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "deleting a save deletes its backup");
+}
+
 }
 
 int main() {
@@ -253,6 +353,7 @@ int main() {
     CheckFailedMountKeepsResult();
     CheckEquivalentMounts();
     CheckInvalidNamesAreRejected();
+    CheckBackups();
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);
