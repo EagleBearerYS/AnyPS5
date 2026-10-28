@@ -285,6 +285,29 @@ void testMarkerSpans() {
     expectFailure([&] { sceAgcDcbPushMarkerSpan(&dcb.buffer, nullptr, 4, 0); });
 }
 
+void testEndOfPipeAddressPatch() {
+    const auto label = [](std::uintptr_t address) { return reinterpret_cast<const volatile Label*>(address); };
+    std::array<std::uint32_t, 8> release{};
+    release[0] = Agc::Command::Header(0x49u, 8);
+    release[2] = 1u << 29u;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789abcu)) == 0 && release[3] == 0x56789abcu && release[4] == 0x1234u, "RELEASE_MEM address patch mismatch");
+    release[2] = 2u << 29u;
+    const auto before = release;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789ab4u)); });
+    check(release == before, "a 64-bit RELEASE_MEM accepted a label that is not 8-byte aligned");
+    check(sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789ab8u)) == 0 && release[3] == 0x56789ab8u, "64-bit RELEASE_MEM address patch mismatch");
+    std::array<std::uint32_t, 6> event{};
+    event[0] = Agc::Command::Header(0x47u, 6);
+    event[3] = (1u << 29u) | 0x00ab0000u;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x123456789abcu)) == 0 && event[2] == 0x56789abcu && event[3] == ((1u << 29u) | 0x00ab1234u), "EVENT_WRITE_EOP address patch did not keep the control bits");
+    const auto eventBefore = event;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x1000000000000u)); });
+    check(event == eventBefore, "an EVENT_WRITE_EOP accepted an address above 48 bits");
+    event[0] = Agc::Command::Header(0x47u, 5);
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x1000u)); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(nullptr, label(0x1000u)); });
+}
+
 void testWorkloads() {
     Storage dcb;
     const std::uint32_t ids[2] = {3, 4};
@@ -1041,6 +1064,7 @@ int main(int argc, char** argv) {
         testJumpTargetPatch();
         testMarkerSpans();
         testWorkloads();
+        testEndOfPipeAddressPatch();
         testWorkloadStreams();
         testIndexBuffer();
         testIndexIndirectArgs();

@@ -1214,7 +1214,37 @@ float APS5_VABI sinhf_nid_postfix(float x) {
     return x * 1.0e37f;
 }
 
-double APS5_VABI asinh_nid_postfix(double x) { return std::asinh(x); }
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_asinh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_asinh.c */
+double APS5_VABI asinh_nid_postfix(double x) {
+    const double one = 1.0;
+    const double ln2 = 6.93147180559945286227e-01;
+    const double huge = 1.0e300;
+    const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x7ff00000) return x + x;
+    if (ix < 0x3e300000 && huge + x > one) return x;
+    double w;
+    if (ix > 0x41b00000) {
+        w = log_nid_postfix(std::fabs(x)) + ln2;
+    } else if (ix > 0x40000000) {
+        const double t = std::fabs(x);
+        w = log_nid_postfix(2.0 * t + one / (std::sqrt(x * x + one) + t));
+    } else {
+        const double t = x * x;
+        w = log1p_nid_postfix(std::fabs(x) + t / (one + std::sqrt(one + t)));
+    }
+    return hx > 0 ? w : -w;
+}
 float APS5_VABI asinhf_nid_postfix(float x) { return std::asinh(x); }
 double APS5_VABI acosh_nid_postfix(double x) { return std::acosh(x); }
 float APS5_VABI acoshf_nid_postfix(float x) {
