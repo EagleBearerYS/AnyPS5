@@ -1,4 +1,4 @@
-READY 2026-10-28T16:17:28Z: BF-251 done
+BUSY BF-255
 machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 22 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at fix/audiodec-m4aac-extension-modes b3b6178347); origin and upstream fetched, upstream main f8f5b24b77; lavapipe only, no GPU, no IPv6
 setup report:
 RESULT:
