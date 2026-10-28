@@ -1,2 +1,5 @@
-READY 2026-10-28T03:18:19Z: back on the original account
-machine: 4 vCPU, 15 GiB RAM, 4.1 GB disk free (finished tasks' build trees can be cleared for more), lavapipe only, no GPU; /home/user/AnyPS5 clone and Release build kept (checkout a61c30bff6, rebuild per task), origin and upstream fetched (upstream main 3ca715ee15)
+BUSY BF-254
+since: 2026-10-28T19:58:17Z
+claimed: 2026-10-28T19:57:51Z
+step: fetching #9508 head 6275369b6c and setting up the build
+previous: BF-165 done, results/cloud-2/BF-165.md
