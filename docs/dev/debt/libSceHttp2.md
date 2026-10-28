@@ -6,6 +6,19 @@
 
 ### Unknown function info
 
+- [Additional HTTP2 exports](../../../core/libs/prx/libSceHttp2/InventoryExports.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceHttp2GetAllTrailingHeaders` | `CjxqMyx2-pU` |
+| `sceHttp2SetProxyWithURL` | `fkKvmzFNBe8` |
+| `sceHttp2SetRequestServerName` | `zx9s1Lk+O90` |
+| `sceHttp2SetStripGZIPHeadersEnabled` | `mMWZm0+7XHM` |
+| `sceHttp2WebSocketClose` | `v2hFBiyS13w` |
+| `sceHttp2WebSocketSendDataMessage` | `D1IAo-CNswA` |
+| `sceHttp2WebSocketSendTextMessage` | `jSHMX1oSE+E` |
+| `sceHttp2WebSocketSetCloseTimeout` | `4PUc7B6Zr+c` |
+
 - [sceHttp2DeleteCookieBox](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - imported by PPSA35943's Unity player. The `(int cookieBoxId)` signature follows [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Net/Http2.cs#L215-L217). A box `sceHttp2CreateCookieBox` returned is discarded; an unknown or already deleted id returns the library's invalid-id error (0x817B1100), as [prosper](https://github.com/mattias800/prosper/blob/b1bec57186a0/prosper/src/hle/net/hle_http2.cpp#L512-L523) does; not measured on a console
 - [libSceHttp2 cookie boxes](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - `sceHttp2CreateCookieBox` takes a machine-sized pool size and requires at least 64 KiB. On 13.42 the pool is rounded up to 16 KiB (wrapping to 0 for `SIZE_MAX`) and mapped with `sceKernelMapNamedFlexibleMemory`, whose error is returned unchanged; the host maps it the same way under an assumed name, but does not reproduce native cookie-heap bookkeeping, identifier ranges or retained request references. Its delete signature and invalid-ID error are confirmed. `sceHttp2SetRequestNoContentLength` takes only the request id. `sceHttp2CookieFlush` empties a cookie box and answers 0 for any other id. Nonzero cookie-box binding by `sceHttp2SetCookieBox` throws
 - [libSceHttp2 cookie store](../../../core/libs/prx/libSceHttp2/Cookies.cpp) (libSceHttp2) - behavior follows a run of `GuestHttp2Cookies.cpp`'s sequence against 13.42's `libSceHttp2.sprx` ([#10534](https://github.com/boykopovar/AnyPS5/pull/10534)). Not reproduced: the `0x817B1076` stack check below 0x1FD0 bytes of stack, and the pool size is not enforced. Assumed, not measured on libSceHttp2: the default total limit of 3000 with the 10 oldest dropped past it, and the NUL, space, NUL written after the header (both libSceHttp's), which of no match and null `cookie`/`required` is checked first, public-suffix rules for `Domain`, and dates beyond the tested ones. Equal-length paths come out with the first stored last, a rule inferred from the runs
