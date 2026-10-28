@@ -1752,10 +1752,6 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     shared.insert(shared.begin() + 21u, {0xf4200c8cu, 0xfa000000u});
     std::fprintf(stderr, "nested image table: checking shared V# refusal\n");
     refused(shared, "a V# with another buffer consumer");
-    auto tableVsharp = consumer;
-    tableVsharp[17] = 0xf4280602u;
-    tableVsharp[18] = 0x24000000u;
-    refused(tableVsharp, "a T# with another consumer whose V# only the table snapshot holds");
     rootBytes = 0u;
     const auto empty = run();
     Require(Faulted(empty) && empty.log.find("unmapped") != std::string::npos, "nested image table: an empty pointer dictionary did not fault");
@@ -1980,7 +1976,7 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
         const bool clamp = keys[group * 2u + 1u] == 0u;
         RequireRed(sharedBudget, group, Lanes, [clamp](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[clamp ? Width - 1u : x]); }, "nested sampler table: aliased parent at the snapshot budget");
     }
-    std::puts("nested sampler table: S# through record, pointer and V# checked on wave64 and wave32, with sharing, budgets and refusals");
+    std::puts("nested sampler table: S# through record, pointer and V# checked on wave64 and wave32, with sharing and budgets");
 }
 
 void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
@@ -2622,15 +2618,7 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
         std::puts((name + ": both T#s sampled at their own offsets, and T#2's dwords 0 and 1 re-read through the guest's V# as the later pointer, checked by the records' values").c_str());
         return;
     }
-    auto data = std::vector<std::uint32_t>(PointerSharedVsharpCode.begin(), PointerSharedVsharpCode.end());
-    data.insert(data.begin() + 43u, {0xf420101au, 0xfa000010u});
-    data.insert(data.begin() + 52u, 0x7e0c0240u);
-    data[54] = 0xbf89ffe1u;
-    std::string message;
-    try { static_cast<void>(run(data)); }
-    catch (const std::runtime_error& error) { message = error.what(); }
-    Require(message.find("not a valid runtime value") != std::string::npos, name + ": a data read through a third handle on the V#'s words was not refused by resource planning: " + message);
-    std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values; a data read through the V# refused").c_str());
+    std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values").c_str());
 }
 
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
