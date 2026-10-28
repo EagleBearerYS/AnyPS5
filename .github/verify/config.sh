@@ -1,0 +1,4 @@
+BASE=04fefebe901d9ff4b29acc7d6c4c28d66643d86f
+REPEAT=20
+EXTRA_TESTS='guest_filesystem'
+NO_BEFORE=1
